@@ -538,6 +538,62 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
 #[path = "../../../tests/support/input_resource_world.rs"]
 mod resource_world;
 
+/// Auditing / #832-A: the real next-generation producer preserves every
+/// PB #2781 objection as its own stable audit_objections[index] item.
+#[test]
+fn audit_repair_receives_separately_indexed_real_objections() {
+    let golden: Value =
+        serde_json::from_str(include_str!("../../../tests/fail_fast/pb-2781.json")).unwrap();
+    let objections = &golden["records"][1]["reply"]["objections"];
+    let mut w = resource_world::World::new();
+    w.reply("issue", 2713);
+    let generation = w.controller.world().unwrap().nodes[0].generation;
+    w.controller
+        .observe(
+            "audit-disagrees",
+            Observation::WorkerReply {
+                node: NodeId(0),
+                generation,
+                role: "audit".into(),
+                reply: golden["records"][1]["reply"].clone(),
+                model: None,
+                plan_check: None,
+            },
+        )
+        .unwrap();
+    resource_world::World::drain(&mut w.controller);
+    let retry = w.launches.lock().unwrap().last().unwrap().clone();
+    assert_eq!(
+        w.controller.world().unwrap().nodes[0].phase,
+        Phase::Ingesting
+    );
+    assert!(retry.generation > generation);
+    let mut config =
+        tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
+    config.github.repos[0].owner = "owner".into();
+    config.github.repos[0].name = "sandbox".into();
+    config.github.repos[0].installation_id = 3;
+    config.store = w.settings.clone();
+    config.workers.runs = w.root.path().join("runs");
+    config.models.key_file = w.root.path().join("fixture-key");
+    config.hindsight.endpoint = "http://127.0.0.1:9".parse().unwrap();
+    let supervisor = Supervisor::new(
+        &config,
+        &w.root.path().join("records"),
+        &mut crate::store_support::ownership(),
+    )
+    .unwrap();
+    let mut store = Store::open(&w.settings).unwrap();
+    let snapshot = store.load().unwrap();
+    let request = supervisor
+        .request(&retry, "ingest", &mut store, &snapshot)
+        .unwrap();
+    assert_eq!(&request["inputs"]["audit_objections"], objections);
+    let items = request["inputs"]["audit_objections"].as_array().unwrap();
+    assert_eq!(items.len(), objections.as_array().unwrap().len());
+    typed_round_trip::<tl3_contracts::roles::ingest_input::IngestInput>(&request["inputs"]);
+}
+
 /// Q7/Q51/#833: the retry sees the rejected declaration before producing its next reply.
 #[test]
 fn ingest_validation_retry_receives_the_safe_kind_diagnostic() {

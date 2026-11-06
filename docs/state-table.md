@@ -329,7 +329,12 @@ protected-path handling and Q50 infrastructure recovery retain their paths.
 
 The recorded steps are `checks_failed`, `changes_requested`, `ci_failed`,
 `maker_cant_meet`, `maker_needs_files`, `maker_out_of_room`,
-`reviewer_out_of_room`, `plan_cant_meet`, and `publication_body`.
+`reviewer_out_of_room`, `plan_cant_meet`, `publication_body`, and `audit_disagreement`.
+
+Q27, Rob, 2026-11-05: "832 a please." ([#832](https://github.com/RobTand/trustladderiii/issues/832))
+After one named ingest repair, a second audit disagreement stops for TL3 review
+at `audit_disagreement` under both `fail_fast` settings. It spends no credit,
+creates no question and retains both readings and the open named objections.
 
 **Publication body refusal** ([#629](https://github.com/RobTand/trustladderiii/issues/629)):
 only an `OpenPr` effect receiving `BodyPolicyRefused` stops for TL3 review at
@@ -370,10 +375,15 @@ An independent agent checks ingest's output against the original issue. It can b
 | Required protected edits confirmed (Q57) | From declared goals, footprint or audit evidence | Stopping(NotActionable) | No credit spent or Rob question; record reason `protected_paths` |
 | Audit agrees with the measures | | Unplanned | Post the measures to the issue in plain language |
 | Audit agrees with an early end | | Stopping(Duplicate, AlreadyDone or NotActionable) | |
-| Audit disagrees | First time | Ingesting | Re-run ingest with the audit's objections, in a new generation |
-| Audit disagrees | Second time | AwaitingRob(audit disagreement) | Ask Rob, showing both readings |
+| Audit disagrees | First time | Ingesting | Re-run ingest once with the audit's separately indexed `audit_objections` items, in a new generation |
+| Audit disagrees | Second time, either `fail_fast` value (#832-A) | Stopping(Stopped), stop for TL3 review | Record `audit_disagreement`, both readings and the open named objections. No question, notice asking Rob or credit spent. Intake has no split path. |
 
-If Rob keeps ingest's reading, the request continues to Unplanned when the dispute was about measures. When it was about an early end, it goes to Stopping with ingest's proposed outcome.
+Audit-disagreement questions already open when this change deploys remain answerable;
+no new question of this kind is created and no live question is migrated. If Rob
+keeps ingest's reading on an already-open question, the request continues to
+Unplanned when the dispute was about measures. When it was about an early end,
+it goes to Stopping with ingest's proposed outcome. Change and stop also keep
+their existing behavior.
 
 ### Unplanned
 
@@ -567,6 +577,8 @@ Coordinator defaults, for Rob to check: the ladder clamps at its last entry. A c
 
 ### Publishing
 
+Direct delivery variant ([#830](https://github.com/RobTand/trustladderiii/issues/830), Q27 approved by Rob, 2026-11-05): for a repository configured with `delivery = "direct"`, step 4 uses GitHub's SHA-pinned merge API behind the same Enqueue effect. At execution, reread the open PR and its head, TL3's passed Checking and independent approval on that exact head, the own-app approval check, the repository's allowed merge methods, and every still-required protection check. Fence the epoch and durably record the attempt's intent before each upstream write. The adapter adds "delivered directly (CI bypassed by repo config)" to the PR body before merging. A pending protection check waits for check/webhook evidence without a timer or retry charge. A failed protection check follows the existing enqueue CI-failure row below; an observed conflict follows the publication Conflict rule. A permission refusal or otherwise unexplained merge refusal raises an effect incident. The approval check, holds, pause, stop, effect fences and postmortems remain in force. Q52's Mergify missing-check rule and Mergify dequeue handling apply only to queue delivery.
+
 The publishing sequence has four steps:
 
 1. Push the branch.
@@ -584,7 +596,7 @@ When the last step confirms, the leaf moves to Queued.
 | Check-suite or check-run evidence | All check suites on the approved head have completed, but a required context from the expected app is absent | Publishing, enqueue pending | Open a deduplicated repo setup incident naming the head, context and expected app. No failure count or credit charge. (Q52, Rob, 2026-11-01) |
 | Required check reports | The context and expected app match an open missing-check incident on that head | Publishing | Clear that incident; evaluate the reported check normally (Q52) |
 | `clear incident <id>` | Rob names an open missing-check incident | Publishing | Clear the incident; required-check enforcement still applies (Q52) |
-| Check-suite or check-run evidence | Mergify waits on unmet queue-entry conditions on the approved head. Every check suite on it has completed, and so has every check other than Mergify's own | Publishing, enqueue pending | Open a deduplicated repo setup incident naming the head, the unmet conditions and the failed checks outside the required set. No failure count or credit charge. (#447; clarification recorded in #735, not a new rule) |
+| Check-suite or check-run evidence | Mergify waits on unmet queue-entry conditions on the approved head. Every check other than Mergify's own has completed. Every suite has completed, except that, for #447 only, a queued suite with a positive read of zero check runs is nonblocking once Mergify's queue check on the same head has since completed | Publishing, enqueue pending | On TL3's own PR, once Mergify's queue check on the same head has completed, failed non-required head checks evidenced by the unmet conditions count as change failures and go first to maker repair with the checks, summaries and unmet conditions, subject to Q50's environment classification. Otherwise open a deduplicated repo setup incident naming the head, the unmet conditions and the failed checks outside the required set, with no failure count or credit charge. #447; #854 (2026-11-06, program lead, under Rob's Q50/Q51 rules). |
 
 Publication guards report a Conflict fact when the checked head conflicts with current main, including before the push or PR opening completes and before enqueue. Rebasing uses the same credit and recheck rules as a conflict in Queued. A clean main advance needs no rebase; publish the checked head and let Mergify update the merge tree.
 
@@ -596,7 +608,7 @@ These clarify how the controller already applies Q52 and #447 (#735). They add n
 
 - **Unreadable statuses.** A requirement with no expected app can be met by a legacy commit status. If GitHub refuses the status read (HTTP 403 or 404), its absence can't be known, so no missing-check incident opens for it. The refused read opens a check-setup incident instead.
 - **Clearing in any open phase.** When the missing context reports on its head from the expected app, TL3 clears the incident in whatever open phase the leaf is in, not only in Publishing. A closed leaf's incidents have already cleared with it.
-- **The blocked-queue incident (#447)** opens only for the approved head, while the leaf is Queued or still enqueuing. Like a missing-check incident, it never reaches the kernel, and it clears when its head stops being the node's head or approved head, or the leaf closes.
+- **The blocked-queue incident (#447)** opens only for the approved head, while the leaf is Queued or still enqueuing, after the maker-repair precedence above. The setup incident itself never reaches the kernel, and it clears when its head stops being the node's head or approved head, or the leaf closes. #854 (2026-11-06, program lead, under Rob's Q50/Q51 rules).
 
 ### A failed round
 
@@ -611,13 +623,15 @@ These clarify how the controller already applies Q52 and #447 (#735). They add n
 
 ### Queued
 
+With direct delivery ([#830](https://github.com/RobTand/trustladderiii/issues/830)), this phase acknowledges the same Enqueue effect before consuming the existing merged or refused fact; it adds no kernel transition. An already-merged PR converges without another merge write. A moved head or HTTP 409 follows the outside-push row and returns to Checking. A lost response or restart reconciles PR state first. If the PR remains open, a fresh attempt rechecks the exact-head preconditions and records a new fenced intent before retrying the pinned PUT. An HTTP 405 after a racing merge rereads and converges to the merged fact. GitHub's pinned, single-merge operation permits at most one successful merge, including when an old issuer races the retry. An observed or recorded merge suppresses later writes. The status/board says "delivered directly (CI bypassed by repo config)"; default-branch CI still runs and its failures remain visible to the repo leads. The Mergify-specific rows below do not apply to direct delivery.
+
 | Event | Condition | Next | Effects |
 |---|---|---|---|
 | CI failed | A test failed on the code | A failed round | Dequeue |
 | CI failed | The runner or its setup failed | See "Failures" | Enqueue again, when the failure rules allow |
 | Conflict | | Rebasing | Rebase onto main, in a new generation |
 | GitHub or Mergify stalled | No incident is already open | Queued, waiting on an incident | Raise an incident. A probe or Rob clears the first; only Rob clears later incidents. See "Looks and stalls" and Q7. |
-| Check-suite or check-run evidence | Mergify waits on unmet queue-entry conditions on the approved head. Every check suite on it has completed, and so has every check other than Mergify's own | Queued | Open a deduplicated repo setup incident naming the head, the unmet conditions and the failed checks outside the required set. No failure count or credit charge. (#447; clarification recorded in #735, not a new rule) |
+| Check-suite or check-run evidence | Mergify waits on unmet queue-entry conditions on the approved head. Every check other than Mergify's own has completed. Every suite has completed, except that, for #447 only, a queued suite with a positive read of zero check runs is nonblocking once Mergify's queue check on the same head has since completed | Queued | On TL3's own PR, once Mergify's queue check on the same head has completed, failed non-required head checks evidenced by the unmet conditions count as change failures and go first to maker repair with the checks, summaries and unmet conditions, subject to Q50's environment classification. Otherwise open a deduplicated repo setup incident naming the head, the unmet conditions and the failed checks outside the required set, with no failure count or credit charge. #447; #854 (2026-11-06, program lead, under Rob's Q50/Q51 rules). |
 
 ### Rebasing
 
@@ -657,7 +671,7 @@ The node holds no slot and no files while it waits. Each question is in plain la
 
 | Question | Answers it offers |
 |---|---|
-| Audit disagreement | Continue (ingest's reading stands), change the request, stop |
+| Audit disagreement, already open before #832-A deployed only | Continue (ingest's reading stands), change the request, stop. No new question of this kind is created. |
 | Needs splitting (slice one only) | Change the request, stop |
 | Can't meet | Try again with guidance, change the request, stop |
 | Out of credit | Add credit, change the request, stop |

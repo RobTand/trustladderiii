@@ -36,6 +36,7 @@ pub enum PlanRepair {
 #[serde(rename_all = "snake_case")]
 pub enum RepairUnavailable {
     Disabled,
+    FailedWork,
     InputAllowance,
     MessageLimit,
     FormatAllowanceConsumed,

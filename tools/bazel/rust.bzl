@@ -64,6 +64,8 @@ _SCENARIO_SHARDS = {
 # libtest-shards.json (#731). The controller library ran 362 tests serially in
 # one 249-324 s action.
 _LIBTEST_SHARDS = {
+    # #830: 62.427 s serial, measured at 34901a132a (da4bea96).
+    "tl3-controller/direct_merge": 8,
     "tl3-controller/quota_hold": 16,
     "tl3-controller/input_resources": 10,
     "tl3-controller/approval_race": 27,
@@ -150,8 +152,9 @@ _CONTROLLER_RUNTIME = {
 # Shared modules and runtime fixtures outside tests/NAME/. The per-test glob
 # includes its own module tree; these are the cross-tree reads Cargo cannot see.
 _CONTROLLER_TEST_SOURCES = {
+    "tests/direct_merge.rs": ["tests/mergify.rs", "tests/mergify/**", "tests/support/**", "tests/fixtures/mergify/**"],
     "tests/input_resources.rs": ["tests/support/**"],
-    "src/lib.rs": ["tests/worker_events_io/**", "tests/support/input_resource_world.rs"],
+    "src/lib.rs": ["tests/worker_events_io/**", "tests/support/input_resource_world.rs", "tests/fail_fast/pb-2781.json"],
     # CC-P: exact source replay and persistent differential schedules.
     "tests/prismabuild_schedule/main.rs": ["tests/prismabuild_schedule/io.rs", "tests/prismabuild_schedule/reference.rs", "tests/prismabuild_schedule/extracted.rs", "tests/prismabuild_schedule/io_schedule-regressions.txt"],
     "tests/worker_checker.rs": ["tests/worker_checker/**"],

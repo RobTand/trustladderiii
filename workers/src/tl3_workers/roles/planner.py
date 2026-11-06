@@ -1083,11 +1083,14 @@ def check_reply(inputs, reply, *, rehearsals=None, plan_errors=None):
         execution["pieces"] = pieces
         execution["aggregate_tool_turns"] = sum(piece["estimated_tool_turns"] for piece in pieces)
         execution["aggregate_allowed_tool_turns"] = sum(piece["allowed_tool_turns"] for piece in pieces)
+    failed_work = False
     if rehearsals is not None and rehearsals.failure:
+        failed_work = True
         violations.append(named(rehearsals.failure.get('rule', 'rehearsal.exhausted'), rehearsals.failure['message'], {'receipt': rehearsals.failure}))
     elif rehearsals is not None and reply['kind'] == 'cant_meet':
         rejected = next((item for item in reversed(rehearsals.candidates) if item['status'] == 'refused'), None)
         if rejected is not None:
+            failed_work = True
             violations.append(named(rejected.get('rule', 'rehearsal.missing_receipt'), rejected['message'], {'receipt': rejected}))
     mismatch = PlanConsistencyError(uncovered, missing_forced, draft=raw_draft,
                                     selectors=selectors, missing_proof=missing_proof,
@@ -1122,6 +1125,8 @@ def check_reply(inputs, reply, *, rehearsals=None, plan_errors=None):
         mismatch.base_nodes = base_nodes
         mismatch.base_sources = base_sources
         repair_error = PlanConsistencyError.semantic(raw_draft, reply, violations, inputs, mismatch)
+        if failed_work:
+            repair_error.unavailable_reason = 'failed_work'
         if missing_goals:
             reply['violations'].append('Planner coverage correction attempts: 0.')
             repair_error.completed_reply = deepcopy(reply)

@@ -1,6 +1,7 @@
 """Small required Verus proofs with declared source, spec and toolchain inputs."""
 
 load("//tools/bazel:verus_toolchain.bzl", "VerusToolchainInfo")
+load("@rules_python//python:defs.bzl", "py_binary")
 
 def _verus_test_impl(ctx):
     if ctx.attr.expected_obligations <= 0:
@@ -77,6 +78,18 @@ def verus_proofs():
             )
 
     if native.package_name() == "crates/mergify":
+        verus_test(
+            name = "verus_queue_entry",
+            src = "proofs/queue_entry.rs",
+            srcs = ["src/decide/queue_entry.rs"],
+            expected_obligations = 4,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
         verus_test(
             name = "verus_delivery",
             src = "proofs/delivery.rs",
@@ -213,6 +226,25 @@ def verus_proofs():
             )
 
     if native.package_name() == "crates/controller":
+        # #830: direct delivery, full SHA pins, approval, known merge and write order.
+        py_binary(
+            name = "direct_merge_resources",
+            srcs = ["proofs/direct_merge_resources.py"],
+            main = "proofs/direct_merge_resources.py",
+            visibility = ["//visibility:public"],
+        )
+        verus_test(
+            name = "verus_direct_merge",
+            src = "proofs/direct_merge.rs",
+            srcs = ["src/adapters/direct_merge/decide.rs"],
+            expected_obligations = 10,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
         native.exports_files(["src/kernel_boundary.rs"])
         verus_test(
             name = "verus_quota_wake",
@@ -292,6 +324,18 @@ def verus_proofs():
             src = "proofs/classifier.rs",
             srcs = ["src/classifier/decision.rs"],
             expected_obligations = 6,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+        verus_test(
+            name = "verus_ingest",
+            src = "proofs/ingest.rs",
+            srcs = ["//crates/contracts:src/roles/ingest_retention.rs"],
+            expected_obligations = 4,
             tags = ["rust", "verus"],
             size = "small",
             timeout = "short",
@@ -844,7 +888,7 @@ def verus_proofs():
             "facts_merge_ignored_result": ("kernel::facts_merge_lemmas#ignored_result", 1),
             "facts_merge_open_result": ("kernel::facts_merge_lemmas#open_result", 1),
             "plan_check": ("kernel::plan_check", 1),
-            "plan_check_witness": ("kernel::plan_check_witness", 3),
+            "plan_check_witness": ("kernel::plan_check_witness", 5),
         }
         for name, (module, count) in groups.items():
             verus_test(
