@@ -84,7 +84,7 @@ pub(super) fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
         final(m).last_cmd == old(m).last_cmd,
         progress_gate_leaf_steps::confirm_input(*old(m), kind)
             ==> *final(m) == progress_gate_leaf_steps::cleanup_confirmed(*old(m), kind),
-] proof [reveal(distance);] {
+] {
     kernel_snapshot! { before_cleanup = *m }
     kernel_snapshot! { before_confirmed = *m }
     m.fx_failures = 0;

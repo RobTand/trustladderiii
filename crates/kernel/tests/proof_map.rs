@@ -50,6 +50,8 @@ const ADDITIONAL_PROOFS: &[&str] = &[
 
 const LIB: &str = include_str!("../src/lib.rs");
 const PROOFS: &str = include_str!("../src/proofs.rs");
+const RETIREMENT_CORE: &str = include_str!("../verus/retirement.rs");
+const RETIREMENT_FRAMES: &str = include_str!("../verus/retirement_frames.rs");
 const RETIREMENT_APPLY: &str = include_str!("../verus/retirement_apply.rs");
 const RETIREMENT_NODE: &str = include_str!("../verus/retirement_node.rs");
 const VERUS_GROUPS: &str = include_str!("../../../tools/bazel/verus.bzl");
@@ -197,18 +199,59 @@ fn every_event_and_phase_has_a_proof() {
         );
         proven.insert(retired.to_string());
     }
-    for function in [
-        "merge_input_distance",
-        "node_frame",
-        "fact_preserves_node",
-        "fact_preserves_world",
-        "verify_selected_apply",
-        "infrastructure_frame",
-        "infrastructure_result",
+    for (function, source, group, module, count) in [
+        (
+            "merge_input_distance",
+            RETIREMENT_CORE,
+            "retirement",
+            "retirement",
+            2,
+        ),
+        (
+            "node_frame",
+            RETIREMENT_FRAMES,
+            "retirement_frames",
+            "retirement_frames",
+            3,
+        ),
+        (
+            "fact_preserves_node",
+            RETIREMENT_NODE,
+            "retirement_node",
+            "retirement_node",
+            1,
+        ),
+        (
+            "fact_preserves_world",
+            RETIREMENT_APPLY,
+            "retirement_apply",
+            "retirement_apply",
+            2,
+        ),
+        (
+            "verify_selected_apply",
+            RETIREMENT_APPLY,
+            "retirement_apply",
+            "retirement_apply",
+            2,
+        ),
+        (
+            "infrastructure_frame",
+            RETIREMENT_FRAMES,
+            "retirement_frames",
+            "retirement_frames",
+            3,
+        ),
+        (
+            "infrastructure_result",
+            RETIREMENT_FRAMES,
+            "retirement_frames",
+            "retirement_frames",
+            3,
+        ),
     ] {
-        assert!(VERUS_GROUPS.contains(&format!(
-            "\"retirement_{function}\": (\"kernel::retirement#{function}\", 1)"
-        )));
+        assert!(source.contains(&format!("fn {function}(")));
+        assert!(VERUS_GROUPS.contains(&format!("\"{group}\": (\"kernel::{module}\", {count})")));
     }
     assert!(VERUS_GROUPS.contains("\"retirement_witness\": (\"kernel::retirement_witness\","));
     let missing: Vec<_> = mapped.difference(&proven).collect();

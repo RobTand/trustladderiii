@@ -68,6 +68,7 @@ pub(super) fn cleanup_round_exec(mut w: World) -> (result: World) [
         result.nodes@[1].footprint == w.nodes@[1].footprint,
         result.nodes@[1].holds == (w.nodes@[1].holds && w.nodes@[1].pos != 3),
 ] proof [
+    reveal(updated);
     reveal(world_headroom); reveal_with_fuel(open_prefix, 5);
     reveal(empty_outbox); reveal(storage_ordered); reveal(footprint::ordered_table); reveal(retirement_wide::accepted);
     reveal(retirement::node_rules); reveal(retirement_wide_domain); reveal(retirement_wide_accepted);
@@ -105,6 +106,7 @@ pub(super) fn teardown(mut w: World) -> (result: World) [
         frame(w, result, 1), result.nodes@[1].phase == Phase::Closed(Outcome::Stopped),
         !result.nodes@[1].holds, result.nodes@[1].footprint == w.nodes@[1].footprint,
 ] proof [
+    reveal(updated);
     reveal(world_headroom); reveal_with_fuel(open_prefix, 5);
     reveal(empty_outbox); reveal(storage_ordered); reveal(footprint::ordered_table); reveal(retirement_wide::accepted);
     reveal(retirement::node_rules); reveal(retirement::stopped);

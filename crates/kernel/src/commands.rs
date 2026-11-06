@@ -45,7 +45,7 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
                 && final(w).next_question == old(w).next_question,
         command == Command::Resume ==> final(w).next_question == old(w).next_question,
         progress_gate_apply::resume_post(old(w).nodes@[i as int], final(w).nodes@[i as int], id, command),
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);] {
+] {
     if id <= w.nodes[i].last_cmd {
         kernel_proof! { reveal(progress_gate_apply::resume_post); reveal(progress_gate_apply::resumed); }
         return; // a repeated command
@@ -57,6 +57,7 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
             && node_checked(*w, w.nodes@[i as int]) { resume_decreases(*w, w.nodes@[i as int]); }
     }
     w.nodes[i].last_cmd = id;
+    kernel_proof! { cleanup_lemmas::resource_distance(before_command_node@, w.nodes@[i as int]); }
     match command {
         Command::Stop => {
             enter_stopping(&mut w.nodes[i], Outcome::Stopped);
@@ -74,6 +75,7 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         Command::Resume => {
             w.nodes[i].paused = false;
             kernel_proof! {
+                cleanup_lemmas::resource_distance(Node { paused: false, ..before_command_node@ }, w.nodes@[i as int]);
                 reveal(progress_gate_apply::resumed); reveal(progress_gate_apply::resume_post);
                 assert(progress_gate_apply::resume_post(before_command_node@, w.nodes@[i as int], id, command));
             }

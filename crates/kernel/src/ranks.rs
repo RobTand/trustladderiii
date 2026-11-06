@@ -6,7 +6,7 @@ use super::*;
 use vstd::prelude::*;
 
 #[cfg(verus_keep_ghost)]
-pub(super) use super::progress_gate_leaf_ranks::*;
+pub(super) use super::rank_specs::*;
 
 impl Node {
     kernel_fn! {
@@ -15,7 +15,7 @@ impl Node {
         /// (2), or giving one back (1).
         fn pending(&self) -> (result: u64) [
             ensures result as int == pending_rank(*self), result <= 3,
-        ] proof [progress_gate_leaf_ranks::rank_definitions_all();] {
+        ] proof [rank_specs::rank_definitions_all();] {
             if self.phase.is_closed() {
                 return 0;
             }
@@ -57,7 +57,7 @@ impl Node {
         #[allow(clippy::collapsible_if)]
         pub fn distance(&self) -> (result: u64) [
             ensures result as int == node_distance(*self), result <= 4096,
-        ] proof [progress_gate_leaf_ranks::rank_definitions_all(); reveal(distance); reveal(effect_distance); reveal(current_item);] {
+        ] proof [rank_specs::rank_definitions_all(); reveal(distance); reveal(effect_distance); reveal(current_item);] {
             if self.phase.is_closed() {
                 return 0;
             }
@@ -116,7 +116,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), _context),
-    ] proof [progress_gate_leaf_ranks::rank_definitions_all(); reveal(advance_post); reveal(distance);] {
+    ] proof [rank_specs::rank_definitions_all(); reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.phase.is_closed() {
             return false;
@@ -147,7 +147,7 @@ kernel_fn! {
             result == advance_enabled(*old(node), context),
             progress_gate_leaf_steps::advance_details(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket)),
-    ] proof [progress_gate_leaf_ranks::rank_definitions_all(); reveal(advance_post); reveal(distance); reveal(progress_gate_leaf_steps::advance_details);] {
+    ] proof [rank_specs::rank_definitions_all(); reveal(advance_post); reveal(distance); reveal(progress_gate_leaf_steps::advance_details);] {
         let n = *node;
         match n.phase {
             Phase::Publishing => {
@@ -175,7 +175,7 @@ kernel_fn! {
             result == advance_enabled(*old(node), context),
             progress_gate_leaf_steps::advance_details(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket)),
-    ] proof [progress_gate_leaf_ranks::rank_definitions_all(); reveal(advance_post); reveal(distance); reveal(progress_gate_leaf_steps::advance_details);] {
+    ] proof [rank_specs::rank_definitions_all(); reveal(advance_post); reveal(distance); reveal(progress_gate_leaf_steps::advance_details);] {
         let n = *node;
         if n.paused {
             return pause_node(node);
@@ -195,7 +195,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [progress_gate_leaf_ranks::rank_definitions_all(); reveal(advance_post); reveal(distance);] {
+    ] proof [rank_specs::rank_definitions_all(); reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.paused {
             return pause_node(node);
@@ -227,7 +227,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [progress_gate_leaf_ranks::rank_definitions_all(); reveal(advance_post); reveal(distance);] {
+    ] proof [rank_specs::rank_definitions_all(); reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.paused {
             return pause_node(node);
@@ -250,7 +250,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [progress_gate_leaf_ranks::rank_definitions_all(); reveal(advance_post); reveal(distance);] {
+    ] proof [rank_specs::rank_definitions_all(); reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.paused {
             return pause_node(node);
@@ -274,7 +274,7 @@ kernel_fn! {
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
             result ==> final(node).phase == (Phase::Planning { must_split: false }),
-    ] proof [progress_gate_leaf_ranks::rank_definitions_all(); reveal(advance_post); reveal(distance);] {
+    ] proof [rank_specs::rank_definitions_all(); reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.paused || !context.admit {
             return false;
@@ -299,7 +299,7 @@ kernel_fn! {
             result == advance_enabled(*old(node), _context),
             progress_gate_leaf_steps::advance_details(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket)),
-    ] proof [progress_gate_leaf_ranks::rank_definitions_all(); reveal(advance_post); reveal(distance); reveal(progress_gate_leaf_steps::advance_details);] {
+    ] proof [rank_specs::rank_definitions_all(); reveal(advance_post); reveal(distance); reveal(progress_gate_leaf_steps::advance_details);] {
         let m = &mut *node;
         m.holds = false;
         m.pos += 1;
@@ -323,12 +323,8 @@ kernel_fn! {
             *old(_next_ticket), *final(_next_ticket)),
     ] {
         let n = *node;
-        kernel_proof! { progress_gate_leaf_steps::teardown_item(n, kind); }
+        kernel_proof! { progress_gate_leaf_steps::teardown_cases(n, *_next_ticket, out.len, context, kind); }
         if n.question.is_some() {
-            kernel_proof! {
-                progress_gate_leaf_steps::stutter_rank(n, *_next_ticket);
-                progress_gate_leaf_steps::inactive_details(n, *node, *_next_ticket, *_next_ticket);
-            }
             return false; // waiting for Rob
         }
         let gone = match kind {
@@ -344,15 +340,9 @@ kernel_fn! {
                 m.pool = false;
             }
             m.pos += 1;
-            kernel_proof! {
-                progress_gate_leaf_steps::teardown_result(n, *node, kind, *_next_ticket);
-            }
             return true;
         }
         emit_node(node, context.node, kind, out);
-        kernel_proof! {
-            progress_gate_leaf_steps::teardown_result(n, *node, kind, *_next_ticket);
-        }
         true
     }
 }

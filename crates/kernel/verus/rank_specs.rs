@@ -1,4 +1,4 @@
-//! #771 / #806: unchanged rank specifications and lemmas, grouped independently.
+//! #771 / #805 / #806: shared mathematical ranks, capacities and progress lemmas.
 use super::*;
 
 verus! {

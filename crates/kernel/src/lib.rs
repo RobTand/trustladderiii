@@ -2255,5 +2255,25 @@ mod progress_gate_leaf_sequence;
 mod progress_gate_leaf_witness;
 
 #[cfg(verus_keep_ghost)]
-#[path = "../verus/progress_gate_leaf_ranks.rs"]
-mod progress_gate_leaf_ranks;
+#[path = "../verus/rank_specs.rs"]
+mod rank_specs;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_leaf_advance.rs"]
+mod progress_gate_leaf_advance;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_leaf_execute.rs"]
+mod progress_gate_leaf_execute;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_leaf_preserve.rs"]
+mod progress_gate_leaf_preserve;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_leaf_world.rs"]
+mod progress_gate_leaf_world;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_leaf_construct.rs"]
+mod progress_gate_leaf_construct;

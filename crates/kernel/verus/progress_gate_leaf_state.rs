@@ -27,6 +27,7 @@ pub(super) open spec fn tracked(n: Node) -> bool {
 }
 
 /// #806: exact result of one real tracked advance; all cases are source-connected.
+#[verifier::opaque]
 pub(super) open spec fn updated(w: World, i: int) -> Node {
     let n = w.nodes@[i];
     if n.phase is Ready {
@@ -47,6 +48,60 @@ pub(super) open spec fn frame(before: World, after: World, i: int) -> bool {
         && after.next_ticket == before.next_ticket
 }
 
+/// Q48 / #806: expose scheduler input facts for one world, before mutation.
+pub(super) proof fn advance_input(w: World, i: int)
+    requires domain(w), retirement_wide::accepted(w), low(w), storage_ordered(w), 0 <= i < 4,
+    ensures scheduling_safe(w), world_headroom(w), advance_pre(w.nodes@[i], w.next_ticket, 0),
+{
+    reveal(retirement_wide::accepted); reveal(retirement::node_rules);
+    reveal(world_headroom); reveal(storage_ordered); reveal_with_fuel(open_prefix, 5);
+}
+
+/// Q48 / #806: exact node-local scheduler result, folded before checker composition.
+pub(super) proof fn advance_result(before: World, after: World, i: int, changed: bool)
+    requires domain(before), retirement_wide::accepted(before), low(before), storage_ordered(before),
+        0 <= i < 4, tracked(before.nodes@[i]),
+        before.nodes@[i].generation <= 1000, before.nodes@[i].next_seq <= 1000,
+        before.nodes@[i].phase is Ready ==> before.nodes@[i].ticket.is_some(),
+        after.nodes@ == before.nodes@.update(i, after.nodes@[i]),
+        after.gates@ == before.gates@, after.file_sets@ == before.file_sets@,
+        after.dependencies@ == before.dependencies@, after.fail_fast == before.fail_fast,
+        after.pool_capacity == before.pool_capacity, after.next_question == before.next_question,
+        advance_post(before.nodes@[i], after.nodes@[i], before.next_ticket, after.next_ticket, changed),
+        progress_gate_leaf_steps::advance_details(before.nodes@[i], after.nodes@[i], before.next_ticket, after.next_ticket),
+        before.nodes@[i].phase == Phase::Queued ==> !changed,
+        before.nodes@[i].phase is Ready ==> after.nodes@[i] == retirement_gate::slot_node(
+            before.nodes@[i], before.next_ticket, retirement_gate::slot(before, i) && retirement_gate::line(before, i))
+            && after.next_ticket == retirement_gate::slot_ticket(before.nodes@[i], before.next_ticket),
+    ensures frame(before, after, i), after.nodes@[i] == updated(before, i), low(after),
+        storage_ordered(after), after.nodes@[i].generation <= before.nodes@[i].generation + 1,
+        after.nodes@[i].next_seq <= before.nodes@[i].next_seq + 1,
+{
+    reveal(updated); reveal(advance_post); reveal(progress_gate_leaf_steps::advance_details);
+    reveal(retirement_gate::slot_node); reveal(storage_ordered); reveal(footprint::ordered_table);
+    reveal(retirement_wide::accepted); reveal(retirement::node_rules);
+    assert forall|j: int| 0 <= j < 4 implies after.nodes@[j].generation <= 1024
+        && after.nodes@[j].next_seq <= 1024 && after.nodes@[j].credit.start <= 1024
+        && after.nodes@[j].credit.earned <= 1024 && after.nodes@[j].credit.added <= 1024
+        && after.nodes@[j].credit.spent <= 1024 by {}
+}
+
+/// Q48 / #806: fold the complete production checker from its independent
+/// node, pair, capacity and ticket conditions, without exposing another world.
+pub(super) proof fn fold_safe(w: World)
+    requires domain(w), w.gates@.len() > 0, w.pool_capacity > 0,
+        forall|r: int| 0 <= r < w.gates@.len() ==> w.gates@[r].w > 0
+            && retirement_wide::holders(w, RepoId(r as u64), 4) <= w.gates@[r].w,
+        forall|j: int| 0 <= j < 4 ==> retirement::node_rules(w, w.nodes@[j]),
+        forall|a: int, b: int| 0 <= a < b < 4 ==> retirement_wide::pair(w, a, b),
+        pool_users(w.nodes@, 4) <= w.pool_capacity,
+        forall|a: int, b: int| 0 <= a < 4 && 0 <= b < 4 && a != b ==>
+            (w.nodes@[a].ticket.is_some() ==> w.nodes@[a].ticket != w.nodes@[b].ticket),
+    ensures retirement_wide::accepted(w),
+{
+    reveal(retirement_wide::accepted);
+}
+
 /// Q48: exact single-node update preserves every production checker condition.
 pub(super) proof fn update_safe(before: World, after: World, i: int)
     requires domain(before), retirement_wide::accepted(before), low(before), 0 <= i < 4,
@@ -54,61 +109,12 @@ pub(super) proof fn update_safe(before: World, after: World, i: int)
         frame(before, after, i), after.nodes@[i] == updated(before, i),
     ensures domain(after), retirement_wide::accepted(after),
 {
-    reveal(retirement_wide::accepted); reveal(retirement::node_rules);
-    reveal(retirement_gate::slot_node);
-    reveal_with_fuel(potential_prefix, 5); reveal_with_fuel(retirement_gate::slot_count, 5);
-    assert forall|j: int| 0 <= j < 4 implies retirement::node_rules(after, after.nodes@[j]) by {
-        retirement_frames::node_frame(before, after, before.nodes@[j]);
-        footprint::storage_frame(before, after, before.nodes@[j].footprint, before.nodes@[j].footprint);
-    }
-    assert forall|a: int, b: int| 0 <= a < b < 4 implies retirement_wide::pair(after, a, b) by {
-        footprint::storage_frame(before, after, before.nodes@[a].footprint, before.nodes@[b].footprint);
-        assert(retirement_wide::pair(before, a, b));
-        assert(after.nodes@[a].footprint == before.nodes@[a].footprint);
-        assert(after.nodes@[b].footprint == before.nodes@[b].footprint);
-        if after.nodes@[i].holds && !before.nodes@[i].holds {
-            assert(retirement_gate::slot(before, i));
-            if a == i && after.nodes@[b].holds {
-                assert(footprint::disjoint(before, before.nodes@[b].footprint, before.nodes@[i].footprint));
-                footprint::inline_disjoint_symmetric(before, before.nodes@[i].footprint, before.nodes@[b].footprint);
-            }
-            if b == i && after.nodes@[a].holds {
-                assert(footprint::disjoint(before, before.nodes@[a].footprint, before.nodes@[i].footprint));
-            }
-        } else { assert(retirement_wide::pair(before, a, b)); }
-    }
+    progress_gate_leaf_preserve::update_node(before, after, i);
+    progress_gate_leaf_preserve::update_pairs(before, after, i);
+    progress_gate_leaf_preserve::update_capacity(before, after, i);
+    progress_gate_leaf_preserve::update_tickets(before, after, i);
+    fold_safe(after);
 }
 }
 
-kernel_fn! {
-/// Q48 / #806: advance the original leaf through the real scheduler and checker.
-pub(super) fn advance_leaf(mut w: World, i: usize) -> (result: World) [
-    requires domain(w), retirement_wide::accepted(w), low(w), storage_ordered(w),
-        i < 4, tracked(w.nodes@[i as int]),
-        w.nodes@[i as int].generation <= 1000, w.nodes@[i as int].next_seq <= 1000,
-        w.nodes@[i as int].phase is Ready ==> w.nodes@[i as int].ticket.is_some(),
-    ensures domain(result), retirement_wide::accepted(result), storage_ordered(result),
-        frame(w, result, i as int), result.nodes@[i as int] == updated(w, i as int),
-        low(result), result.nodes@[i as int].generation <= w.nodes@[i as int].generation + 1,
-        result.nodes@[i as int].next_seq <= w.nodes@[i as int].next_seq + 1,
-] proof [
-    reveal(empty_outbox); reveal(advance_post); reveal(progress_gate_leaf_steps::advance_details); reveal(storage_ordered);
-    reveal(retirement_wide::accepted); reveal(retirement::node_rules);
-    reveal_with_fuel(open_prefix, 5); reveal_with_fuel(potential_prefix, 5);
-    reveal(retirement_wide_domain); reveal(retirement_wide_accepted);
-] {
-    kernel_snapshot! { before = w }
-    let mut out = Outbox::new();
-    let changed = advance(&mut w, i, &mut out);
-    kernel_proof! {
-        if before@.nodes@[i as int].phase == Phase::Queued { assert(!changed); }
-        reveal(retirement_gate::slot_node);
-        assert(w.nodes@[i as int] == updated(before@, i as int));
-        assert(frame(before@, w, i as int));
-        update_safe(before@, w, i as int);
-    }
-    let checked = w.check();
-    assert!(checked.is_ok());
-    w
-}
-}
+pub(super) use super::progress_gate_leaf_advance::advance_leaf;

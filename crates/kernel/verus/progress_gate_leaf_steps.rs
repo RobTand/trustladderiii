@@ -111,6 +111,36 @@ pub(super) proof fn teardown_item(n: Node, kind: EffectKind)
 {
 }
 
+/// Stop row / #806: prove the contracts for each actual branch before its
+/// assignments. The executable caller only matches its final node to these values.
+pub(super) proof fn teardown_cases(n: Node, ticket: u64, out_len: usize,
+    context: AdvanceContext, kind: EffectKind)
+    requires advance_pre(n, ticket, out_len), !n.waiting_incident, n.effect.is_none(),
+        current_item(n) == Some(Item::Teardown(kind)),
+    ensures n.phase is Stopping, n.pos < 5, n.next_seq < u64::MAX,
+        out_len as int + 2 <= OUTBOX as int,
+        advance_enabled(n, context) == n.question.is_none(),
+        advance_post(n, n, ticket, ticket, false),
+        n.question.is_some() ==> advance_details(n, n, ticket, ticket),
+        n.question.is_none() && gone(n, kind) ==> {
+            let after = Node { pos: (n.pos + 1) as u8, pool: n.pool && kind != EffectKind::StopRun, ..n };
+            advance_post(n, after, ticket, ticket, true) && advance_details(n, after, ticket, ticket)
+        },
+        n.question.is_none() && !gone(n, kind) ==>
+            advance_post(n, emitted(n, kind), ticket, ticket, true)
+                && advance_details(n, emitted(n, kind), ticket, ticket),
+{
+    teardown_item(n, kind);
+    stutter_rank(n, ticket);
+    if n.question.is_some() {
+        inactive_details(n, n, ticket, ticket);
+    } else if gone(n, kind) {
+        skipped_result(n, Node { pos: (n.pos + 1) as u8, pool: n.pool && kind != EffectKind::StopRun, ..n }, kind, ticket);
+    } else {
+        emitted_result(n, emitted(n, kind), kind, ticket);
+    }
+}
+
 /// #806: unrelated states satisfy the conditional step detail vacuously.
 pub(super) proof fn inactive_details(n: Node, after: Node, before_ticket: u64, after_ticket: u64)
     requires !(teardown_shape(n) && n.effect.is_none()),
@@ -167,22 +197,28 @@ pub(super) proof fn emitted_details(n: Node, after: Node, kind: EffectKind, tick
     reveal(advance_details);
 }
 
-/// Stop row / #806: fold both unchanged local transition contracts together.
-pub(super) proof fn teardown_result(n: Node, after: Node, kind: EffectKind, ticket: u64)
+/// Stop row / #806: fold the skipped real transition contracts without a
+/// conditional update in the executable caller's query.
+pub(super) proof fn skipped_result(n: Node, after: Node, kind: EffectKind, ticket: u64)
     requires !n.waiting_incident, n.effect.is_none(), n.question.is_none(),
-        current_item(n) == Some(Item::Teardown(kind)), n.next_seq < u64::MAX,
-        after == if gone(n, kind) {
-            Node { pos: (n.pos + 1) as u8, pool: n.pool && kind != EffectKind::StopRun, ..n }
-        } else { emitted(n, kind) },
+        current_item(n) == Some(Item::Teardown(kind)), gone(n, kind),
+        after == (Node { pos: (n.pos + 1) as u8, pool: n.pool && kind != EffectKind::StopRun, ..n }),
     ensures advance_post(n, after, ticket, ticket, true), advance_details(n, after, ticket, ticket),
 {
-    if gone(n, kind) {
-        skipped_rank(n, after, kind, ticket);
-        skipped_details(n, after, kind, ticket);
-    } else {
-        emitted_rank(n, after, kind, ticket);
-        emitted_details(n, after, kind, ticket);
-    }
+    skipped_rank(n, after, kind, ticket);
+    skipped_details(n, after, kind, ticket);
+}
+
+/// Stop row / #806: fold the emitted real transition contracts independently
+/// of the resource-already-gone branch.
+pub(super) proof fn emitted_result(n: Node, after: Node, kind: EffectKind, ticket: u64)
+    requires !n.waiting_incident, n.effect.is_none(), n.question.is_none(),
+        current_item(n) == Some(Item::Teardown(kind)), n.next_seq < u64::MAX, !gone(n, kind),
+        after == emitted(n, kind),
+    ensures advance_post(n, after, ticket, ticket, true), advance_details(n, after, ticket, ticket),
+{
+    emitted_rank(n, after, kind, ticket);
+    emitted_details(n, after, kind, ticket);
 }
 
 /// #806: five cleanup agenda entries; each advance plus confirmation consumes
