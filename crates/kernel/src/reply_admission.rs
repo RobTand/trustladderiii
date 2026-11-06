@@ -107,20 +107,28 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
                     && final(w).next_question == old(w).next_question
                     && *final(out) == *old(out)
             }),
-] {
+        (reply == Reply::AuditDisagrees && old(w).nodes@[i as int].phase == Phase::Auditing
+            && old(w).nodes@[i as int].audit_rounds >= 1
+            && current_item(old(w).nodes@[i as int]) == Some(Item::Await)
+            && old(w).nodes@[i as int].run == Some(generation) ==> {
+                let n = final(w).nodes@[i as int];
+                n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none()
+                    && n.review_stop == Some(ReviewStop::AuditDisagreement)
+                    && n.credit == old(w).nodes@[i as int].credit
+                    && final(w).next_question == old(w).next_question
+                    && *final(out) == *old(out)
+            }),
+] hide [successful_reply_input, node_checked, current_item, settle_shape, arithmetic_consistent, node_headroom] {
     kernel_snapshot! { before_reply = *w }
     kernel_snapshot! { before_outputs = *out }
+    kernel_proof! {
+        port_review_dispatch::progress_admitted(*w, w.nodes@[i as int], generation, reply);
+    }
     let n = &w.nodes[i];
     if n.phase.is_stopping() {
         // The run or job ended on its own, so teardown needn't stop it.
         let m = &mut w.nodes[i];
-        if m.run == Some(generation) {
-            m.run = None;
-            m.pool = false;
-        }
-        if m.job == Some(generation) {
-            m.job = None;
-        }
+        release_stopping_reply(m, generation);
         kernel_proof! { footprint::valid_under_table_growth(before_reply@, *w, w.nodes@[i as int].footprint); }
         kernel_proof! {
             progress_gate_contracts::table_order_frame(before_reply@, *w);
@@ -148,13 +156,6 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         return; // stale
     }
     // A reply that breaks its schema or names the wrong commit counts as a failed run.
-    kernel_proof! {
-        if successful_reply_input(*n, reply) {
-            if let Reply::PlanLeaf { footprint, .. } = reply {
-                if footprint::footprint_empty(n.footprint) { footprint::inline_is_valid(*w, 1); }
-            }
-        }
-    }
     if !accepts(w, n, &reply) {
         run_failed(w, i, out);
         kernel_proof! { footprint::valid_under_table_growth(before_reply@, *w, w.nodes@[i as int].footprint); }
@@ -170,7 +171,10 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         return;
     }
     admitted_reply(w, i, generation, reply, out);
-
+    kernel_proof! {
+        port_replies_admission::audit_stop_reply(before_reply@, *w, i as int,
+            generation, reply, before_outputs@, *out);
+    }
 }
 }
 
@@ -231,7 +235,7 @@ fn admitted_reply(w: &mut World, i: usize, _generation: u64, reply: Reply,
                     && final(w).next_question == old(w).next_question
                     && *final(out) == *old(out)
             }),
-] proof [reveal(port_review_reply::accepted_reply);] {
+] proof [reveal(port_review_reply::accepted_reply); reveal(port_review_reply::transition_post);] {
     kernel_snapshot! { before_reply = *w }
     kernel_snapshot! { before_outputs = *out }
     end_operation(&mut w.nodes[i]);
@@ -271,7 +275,11 @@ fn admitted_reply(w: &mut World, i: usize, _generation: u64, reply: Reply,
         }
     }    kernel_proof! {
         if let Reply::MakerNeedsFiles { .. } = reply {
-            port_review_admission::unselected(after_operation@, *w, i as int,
+            assert(port_replies_maker::transition_post(after_operation@, *w, i as int,
+                after_operation@.nodes@[i as int], reply, before_outputs@, *out)) by {
+                reveal(port_replies_maker::transition_post);
+            }
+            port_replies_maker::unselected_maker(after_operation@, *w, i as int,
                 after_operation@.nodes@[i as int], reply, before_outputs@, *out);
         }
         port_review_admission::accepted(before_reply@, after_operation@, *w, i as int,
@@ -316,23 +324,39 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        // #806 W1: opaque exact maker-file result, isolated from unrelated admission queries.
+        port_replies_maker::files_post(*old(w), *final(w), i as int, old(w).nodes@[i as int],
+            files, fits, *old(out), *final(out)),
         // #806 W1: generic output preservation for the separately owned file handler.
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
-] proof [reveal(retry_bounds); reveal(footprint::ordered_table);] {
+] proof [reveal(retry_bounds);] {
     kernel_snapshot! { before_files = *w }
+    kernel_snapshot! { files_outputs = *out }
     if fits && !files.is_empty() && w.nodes[i].credit.can_spend(1) {
         let footprint = w.union_footprints(w.nodes[i].footprint, files);
         kernel_snapshot! { after_union = *w }
+        kernel_proof! {
+            port_replies_maker::union_intro(before_files@.file_sets@, w.file_sets@,
+                before_files@.nodes@[i as int].footprint, files, footprint);
+        }
         let m = &mut w.nodes[i];
         m.credit.spend(1);
         m.footprint = footprint;
         m.holds = false;
         set_phase(m, Phase::Ready(Resume::Making));
-        kernel_proof! { footprint::valid_under_table_growth(after_union@, *w, footprint); }
+        kernel_proof! {
+            footprint::valid_under_table_growth(after_union@, *w, footprint);
+            progress_gate_contracts::table_order_frame(after_union@, *w);
+            port_replies_maker::files_paid(before_files@, *w, i as int, files, fits, files_outputs@, *out);
+        }
     } else if fits && !files.is_empty() && w.fail_fast {
         // Q54 stops retries, not credit decisions: Rob funds the extension.
         let footprint = w.union_footprints(w.nodes[i].footprint, files);
         kernel_snapshot! { after_union = *w }
+        kernel_proof! {
+            port_replies_maker::union_intro(before_files@.file_sets@, w.file_sets@,
+                before_files@.nodes@[i as int].footprint, files, footprint);
+        }
         w.nodes[i].footprint = footprint;
         ask_rob(
             w,
@@ -342,10 +366,18 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
             1,
             out,
         );
-        kernel_proof! { footprint::valid_under_table_growth(after_union@, *w, footprint); }
+        kernel_proof! {
+            footprint::valid_under_table_growth(after_union@, *w, footprint);
+            progress_gate_contracts::table_order_frame(after_union@, *w);
+            port_replies_maker::files_ask(before_files@, *w, i as int, files, fits, files_outputs@, *out);
+        }
     } else {
         out_of_room(w, i, ReviewStop::MakerNeedsFiles, out);
-        kernel_proof! { footprint::valid_under_table_growth(before_files@, *w, w.nodes@[i as int].footprint); }
+        kernel_proof! {
+            footprint::valid_under_table_growth(before_files@, *w, w.nodes@[i as int].footprint);
+            progress_gate_contracts::table_order_frame(before_files@, *w);
+            port_replies_maker::files_room(before_files@, *w, i as int, files, fits, files_outputs@, *out);
+        }
     }
     }
 }
@@ -380,18 +412,28 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
                     && final(w).next_question == old(w).next_question
                     && *final(out) == *old(out)
             }),
+        (reply == Reply::AuditDisagrees && old(w).nodes@[i as int].phase == Phase::Auditing
+            && old(w).nodes@[i as int].audit_rounds >= 1 ==> {
+                let n = final(w).nodes@[i as int];
+                n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none()
+                    && n.review_stop == Some(ReviewStop::AuditDisagreement)
+                    && n.credit == old(w).nodes@[i as int].credit
+                    && final(w).next_question == old(w).next_question
+                    && *final(out) == *old(out)
+            }),
         // #806 W1 worker-family contract, separate from W2's shared forwarding.
         port_replies_contracts::transition_post(*old(w), *final(w), i as int,
             old(w).nodes@[i as int], reply, *old(out), *final(out)),
 ] proof [reveal(port_review_reply::transition_post); reveal(progress_gate_contracts::maker_transition); reveal(distance);
     reveal(port_review_reply::accepted_reply);
-    reveal(port_replies_contracts::transition_post); reveal(reply_bounds);] {
+    reveal(port_replies_contracts::transition_post); reveal(port_replies_maker::transition_post); reveal(reply_bounds);] {
     kernel_snapshot! { worker_before = *w }
     match reply {
         Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees
             | Reply::AuditDisagrees | Reply::ProtectedPaths => {
                 reply_ingest(w, i, reply, out);
-                kernel_proof! { if worker_before@.dependencies@.len() == 0
+                kernel_proof! { if (worker_before@.dependencies@.len() == 0
+                    || !matches!(reply, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_)))
                     && port_replies_contracts::ingest_accepted(worker_before@.nodes@[i as int], reply) {
                     port_replies_handlers::ingest_exact(worker_before@.nodes@[i as int], w.nodes@[i as int],
                         worker_before@.next_question, worker_before@.fail_fast, reply);
@@ -400,6 +442,24 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
         Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet => reply_plan(w, i, reply, out),
         Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit => reply_plan_check(w, i, reply, out),
         _ => reply_work(w, i, reply, out),
+    }
+}
+}
+
+#[cfg(all(test, not(verus_keep_ghost)))]
+pub(super) mod stopping_reference;
+
+kernel_fn! {
+/// Q30 / #806: release the matching stopping run/job; statements moved verbatim.
+fn release_stopping_reply(m: &mut Node, generation: u64) -> (result: ()) [
+    ensures *final(m) == port_review_reply::stopping_reply(*old(m), generation),
+] {
+    if m.run == Some(generation) {
+        m.run = None;
+        m.pool = false;
+    }
+    if m.job == Some(generation) {
+        m.job = None;
     }
 }
 }

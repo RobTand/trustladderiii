@@ -426,6 +426,110 @@ pub fn unmet_conditions(check: &CheckRun) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// #854 D2 attribution identities, separate from #447's display strings.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum QueueEntryCondition {
+    ScopesMissing,
+    Check { name: String, app: Option<String> },
+}
+
+impl QueueEntryCondition {
+    /// The caller supplies a failed non-required current-head check.
+    pub fn matches(&self, check: &CheckRun) -> bool {
+        match self {
+            Self::ScopesMissing => true,
+            Self::Check { name, app } => {
+                *name == check.name
+                    && app
+                        .as_ref()
+                        .is_none_or(|slug| check.app.as_ref().is_some_and(|app| app.slug == *slug))
+            }
+        }
+    }
+}
+
+/// #854 D2 / #447: attribution follows only known unmet condition groups.
+/// Satisfied groups and unknown/malformed nodes supply no check evidence.
+/// Bounds cover input bytes, decoded JSON recursion, tree depth and node count;
+/// exceeding a bound discards attribution and preserves the setup/stall path.
+/// `unmet_conditions` retains its existing top-level display contract.
+pub fn queue_entry_conditions(check: &CheckRun) -> Vec<QueueEntryCondition> {
+    const MAX_SUMMARY_BYTES: usize = 256 * 1024;
+    const MAX_NODES: usize = 256;
+    const MAX_DEPTH: usize = 16;
+    let parse = || -> Option<Vec<QueueEntryCondition>> {
+        let summary = check.output.as_ref()?.summary.as_deref()?;
+        if summary.len() > MAX_SUMMARY_BYTES {
+            return None;
+        }
+        // serde_json's default recursion limit also bounds decoding before traversal.
+        let payload: serde_json::Value = serde_json::from_slice(&payload_bytes(summary)?).ok()?;
+        if payload.get("version")?.as_u64()? != 1 || payload.get("state")?.as_str()? != "waiting" {
+            return None;
+        }
+        let roots = payload.get("required_conditions")?.as_array()?;
+        if roots.len() > MAX_NODES {
+            return None;
+        }
+        let mut pending: Vec<_> = roots.iter().rev().map(|node| (node, 0)).collect();
+        let mut visited = 0;
+        let mut result = Vec::new();
+        while let Some((node, depth)) = pending.pop() {
+            visited += 1;
+            if visited > MAX_NODES || depth > MAX_DEPTH {
+                return None;
+            }
+            let (Some(description), Some(false)) = (
+                node.get("description").and_then(serde_json::Value::as_str),
+                node.get("match").and_then(serde_json::Value::as_bool),
+            ) else {
+                continue;
+            };
+            let children = match node.get("subconditions") {
+                None => &[][..],
+                Some(serde_json::Value::Array(children)) => children.as_slice(),
+                Some(_) => continue,
+            };
+            if matches!(description, "any of" | "all of") {
+                if visited + pending.len() + children.len() > MAX_NODES {
+                    return None;
+                }
+                pending.extend(children.iter().rev().map(|child| (child, depth + 1)));
+            } else if children.is_empty() {
+                if description == "scopes-available" {
+                    result.push(QueueEntryCondition::ScopesMissing);
+                    continue;
+                }
+                let identity = ["check-success = ", "check-neutral = ", "check-skipped = "]
+                    .into_iter()
+                    .find_map(|prefix| description.strip_prefix(prefix));
+                let Some(identity) = identity else {
+                    continue;
+                };
+                let (app, name) = if let Some(qualified) = identity.strip_prefix('@') {
+                    let Some((app, name)) = qualified.split_once('/') else {
+                        continue;
+                    };
+                    if app.is_empty() {
+                        continue;
+                    }
+                    (Some(app.to_owned()), name)
+                } else {
+                    (None, identity)
+                };
+                if !name.is_empty() {
+                    result.push(QueueEntryCondition::Check {
+                        name: name.into(),
+                        app,
+                    });
+                }
+            }
+        }
+        Some(result)
+    };
+    parse().unwrap_or_default()
+}
+
 /// Positive versioned evidence that every queue entry condition is met, but the
 /// PR has neither a queue rule nor an active queue attempt. Missing fields are
 /// unknown, unlike `unmet_conditions`, which is also used for display.

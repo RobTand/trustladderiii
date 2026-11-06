@@ -90,6 +90,7 @@ pub(super) fn reply_plan(w: &mut World, i: usize, reply: Reply,
             worker_before@.nodes@[i as int], reply, worker_outputs@, *out)) by {
             reveal(port_replies_contracts::transition_post);
             reveal(port_review_reply::accepted_reply);
+            reveal(port_replies_maker::transition_post);
             reveal(port_failfast_diversion::plan_retry_post);
         }
     }
@@ -119,7 +120,9 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(port_replies_contracts::transition_post); reveal(port_review_reply::transition_post); reveal(port_review_reply::transition); reveal(port_review_retry::recheck_post); reveal(progress_gate_contracts::maker_transition); reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds);] {
+] proof [reveal(port_replies_maker::transition_post);
+    reveal(port_replies_maker::work_result); reveal(port_review_retry::rung_post);
+    reveal(port_review_reply::accepted_reply); reveal(port_replies_contracts::transition_post); reveal(port_review_reply::transition_post); reveal(port_review_reply::transition); reveal(port_review_retry::recheck_post); reveal(progress_gate_contracts::maker_transition); reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds);] {
     match reply {
         Reply::MakerDone { head } => {
             let m = &mut w.nodes[i];
@@ -213,6 +216,7 @@ pub(super) fn reply_rebase(w: &mut World, i: usize, reply: Reply,
             rebase_before@.nodes@[i as int], reply, rebase_outputs@, *out)) by {
             reveal(port_review_reply::transition_post);
             reveal(port_replies_contracts::transition_post);
+            reveal(port_replies_maker::transition_post);
             reveal(port_review_reply::transition);
         }
     }

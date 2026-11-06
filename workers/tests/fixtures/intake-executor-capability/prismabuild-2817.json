@@ -1,0 +1,352 @@
+{
+  "repo": "RobTand/prismabuild",
+  "issue": 2817,
+  "trace_ids": {
+    "planner": "tr-911f1fdc7fe09d00902679458dcc03a1",
+    "audit": "tr-b0ade14e20a8c0def3b17da5f9a0e6c5",
+    "ingest": "tr-1d3f8a87a57f7af65b59b75176335c06"
+  },
+  "tool_capabilities": [
+    {
+      "artifacts": [
+        "action_key",
+        "cas_receipt",
+        "sha",
+        "logs",
+        "terminal_verdict"
+      ],
+      "executor": "prismabuild_pytest",
+      "methods": [
+        "red_green",
+        "declared_symptom",
+        "head",
+        "base_head",
+        "subject_observer",
+        "forced_reproduction.environment",
+        "forced_reproduction.patches"
+      ],
+      "protected_files": [],
+      "runner_features": [
+        "base_head",
+        "repeat",
+        "parallel",
+        "always_tests",
+        "native_threads_1"
+      ],
+      "tool": "run_tests"
+    },
+    {
+      "artifacts": [
+        "action_key",
+        "cas_receipt",
+        "input_tree",
+        "output_tree",
+        "artifact_sha256",
+        "logs",
+        "terminal_verdict"
+      ],
+      "executor": "prismabuild_generator",
+      "methods": [
+        "configured_generation"
+      ],
+      "protected_files": [],
+      "runner_features": [
+        "git_index",
+        "scoped_outputs",
+        "idempotent_import"
+      ],
+      "tool": "run_generator"
+    }
+  ],
+  "ingest": {
+    "kind": "brief",
+    "brief": "SOURCE: Issue #2817, \"[P1] Capability config silently discards malformed dependency entries\". It was code-checked on origin/main 39d66e87. The issue says it claims no runtime reproduction. I read the current source. I ran no tests.\n\nPROBLEM. In src/prismabuild/pbtest_capabilities.py, parse_config reads a capability's \"dependencies\" list. It checks that the list is a nonempty list. Then it builds two lists with comprehensions that both use `isinstance(entry, dict)`. The first keeps dict entries with no \"kind\" key and sends them to dependency_digest.validate_requirements. The second keeps dict entries with a \"kind\" key and sends them to dependency_digest.validate_observations. An element that is not a dict (None, a string, an integer, a list) is dropped before either validator sees it. When at least one valid exact-file entry is present, parse_config succeeds. It then seals a weaker requirement list than the author wrote. Example: [valid_file_requirement, null] becomes [valid_file_requirement]. This is a fail-open configuration gate. The module docstring says dependency entries are validated by the one owner, dependency_digest. The issue says dependency_digest.validate_sealed already rejects non-object entries at its own boundary.\n\nWHAT I READ. validate_requirements and validate_observations already reject non-dict entries when they receive them. validate_requirements requires a nonempty list. validate_observations requires each observation interpreter_path to match a pinned exact-file entry. The existing tests are in tests/test_pbtest_capability_cohorts.py. tools/fleet/pbtest.py calls pbtest_capabilities.load_config, which calls parse_config. A ValueError from parse_config therefore reaches the pbtest refusal path. The existing test test_an_invalid_config_refuses_by_name shows that path prints the message and returns 2.\n\nBEHAVIOUR WANTED. Reject every malformed dependency element before the partition into valid object entries. Raise ValueError with a message that names the capability and the dependency problem. Reuse the existing validators. Keep existing normalization (sorted unique tags, sorted deduplicated file requirements). Keep every accepted valid configuration producing the same parsed output.\n\nTEST WANTED (from the issue). In tests/test_pbtest_capability_cohorts.py, parameterize `bad` over None, \"/fleet/dependency\", 17 and []. Call parse_config with {\"schema\": \"prismabuild.pbtest_capabilities.v1\", \"capabilities\": {\"producer\": {\"tags\": [\"x86\"], \"dependencies\": [{\"path\": \"/fleet/tool\", \"sha256\": \"a\" * 64}, bad]}}}. Assert pytest.raises(ValueError) and a message that identifies the capability/dependency problem. On the base, parse_config does not raise, so the base failure is a missing exception. Keep two positive controls. One is a valid mixed exact-file and distribution configuration. The other is a tags-only capability. No dependency file needs to exist for this parse test.\n\nSCOPE. Edit src/prismabuild/pbtest_capabilities.py and tests. No change is needed in dependency_digest.py or in claim logic. I found no protected path that the work must edit. The two named files are not protected. I expect no generated file (BUILD.bazel) to change, because the test goes into an existing file. If a BUILD change turns out to be needed, use the configured generator and never hand-edit.\n\nNOT INCLUDED (from the issue). No new dependency kinds, descriptor fields, tag behavior, or key changes for valid configuration. No consumer-visible JSON field-set changes, CLI flag or exit-code changes, action identity or key changes, queue or attempt schema changes, CAS layout changes, bell protocol changes or SDK wire changes. No protected-path edits.\n\nEXECUTION REQUIREMENTS FROM THE ISSUE (unverified claims; the issue text is the only source). Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools. Respect GATE_WINDOW. Use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc. Keep --jobs at 16 or fewer. Declare aggregate CPU and memory demand and bound native threads. Verify terminal records, logs and CAS receipts. The red test is deterministic and uses private fixtures with no fleet, GPU or multi-host dependency.\n\nCAPABILITY GAP AND UNCERTAINTY. The supplied run_tests tool (executor prismabuild_pytest) supports the native_threads_1 runner feature. It returns the action key, CAS receipt, sha, logs and terminal verdict. It exposes no setting for BuildBuddy pool selection, the --bazelrc path, the --jobs limit or GATE_WINDOW. The run_tests receipt shows only the action key, exit status and digests. I therefore cannot show that those entrypoint options were used. I list them as a separate requirement in the evidence contract, so the audit can judge them. Do not claim they were observed. I did not run the red test. The exact base failure text is unknown to me. It is expected to be a missing ValueError. The memories supplied do not apply to this issue, so I used none. The issue names no merge prerequisite and no exact branch name.\n\nThese declared files are too large to read whole. Read them by range with read's offset and limit, or find lines with grep first, and change them with edit's unique exact-text replacement: tools/fleet/pbtest.py (126274 bytes).",
+    "goals": [
+      {
+        "description": "In src/prismabuild/pbtest_capabilities.py, make parse_config reject every malformed dependency element before it splits the valid object entries into exact-file and distribution lists. A malformed element is anything that is not a JSON object (None, a string, an integer, a list). Raise ValueError. The message must name the capability and say that the dependency entry is invalid. Reuse the existing dependency_digest validators. Do not change dependency_digest.py.",
+        "stage": "maker",
+        "verification": "test",
+        "proof_obligation": {
+          "kind": "assertion",
+          "observer": "new",
+          "subjects": [
+            "src/prismabuild/pbtest_capabilities.py::parse_config"
+          ],
+          "source": "issue.body",
+          "quote": "Assert `pytest.raises(ValueError)` and a message identifying the capability/dependency problem. Main returns a parsed config containing just the `/fleet/tool` requirement."
+        }
+      },
+      {
+        "description": "In tests/test_pbtest_capability_cohorts.py, add a parameterized test. It sets `bad` to None, \"/fleet/dependency\", 17 and []. It calls parse_config with capability \"producer\", tags [\"x86\"], and dependencies [{\"path\": \"/fleet/tool\", \"sha256\": \"a\" * 64}, bad]. It asserts pytest.raises(ValueError) and a message that identifies the capability and dependency problem. The test must use no fleet, no GPU and no real dependency files.",
+        "stage": "maker",
+        "verification": "test"
+      },
+      {
+        "description": "Add positive-control tests in the same test file. One uses a valid mixed exact-file and installed_distribution configuration. It must still parse to the same normalized output as before. The other uses a tags-only capability. It must still parse with empty files and observations. Existing tests in the file must still pass.",
+        "stage": "maker",
+        "verification": "test"
+      },
+      {
+        "description": "Keep the change inside scope. Edit only src/prismabuild/pbtest_capabilities.py and tests. Add no new dependency kinds, descriptor fields or tag behavior. Do not change keys, JSON field sets, CLI flags, exit codes, queue or CAS formats, or protocols. Do not edit protected paths. Do not hand-edit generated files.",
+        "stage": "maker",
+        "verification": "review"
+      },
+      {
+        "description": "Run the new and existing capability tests through run_tests on the prismabuild_pytest executor with native threads bounded (native_threads_1). Show that the new malformed-entry test fails on the base and passes on the head, and that the positive controls and existing tests pass on the head. Keep the action key, CAS receipt, sha, logs and terminal verdict as artifacts. The BuildBuddy pool, --bazelrc, --jobs and GATE_WINDOW requirements have no matching run_tests setting. Report them as unverified.",
+        "stage": "checking",
+        "verification": "test"
+      }
+    ],
+    "memory_ids": [],
+    "evidence_contract": [
+      {
+        "tool": "run_tests",
+        "executor": "prismabuild_pytest",
+        "runner_features": [
+          "native_threads_1"
+        ],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [
+          "red_green"
+        ],
+        "protected_files": [],
+        "requirement": "Run the new malformed-dependency test and the existing capability tests with native threads bounded. The test must fail on the base and pass on the head. Verify terminal records, logs and CAS receipts.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "Declare aggregate CPU/memory demand and bound native threads. Verify terminal records, logs and CAS receipts."
+        }
+      },
+      {
+        "tool": "run_tests",
+        "executor": "buildbuddy_self_hosted_pools",
+        "runner_features": [],
+        "artifacts": [],
+        "methods": [],
+        "protected_files": [],
+        "requirement": "Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools, respect GATE_WINDOW, use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, and keep --jobs at 16 or fewer. No supplied tool capability exposes these settings, so this is an unsupported capability gap.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools, respect GATE_WINDOW, use `--bazelrc=$HOME/.config/buildbuddy/pb.bazelrc`, and keep `--jobs` at 16 or fewer."
+        }
+      }
+    ],
+    "evidence_errors": [
+      "Unsupported evidence requirement: Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools, respect GATE_WINDOW, use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, and keep --jobs at 16 or fewer. No supplied tool capability exposes these settings, so this is an unsupported capability gap. (executor=buildbuddy_self_hosted_pools)."
+    ]
+  },
+  "audit": {
+    "verdict": "agree",
+    "objections": [],
+    "evidence_contract": [
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [
+          "red_green"
+        ],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Declare aggregate CPU/memory demand and bound native threads. Verify terminal records, logs and CAS receipts.",
+          "source": "issue.body"
+        },
+        "requirement": "Run the new malformed-dependency test and the existing capability tests with native threads bounded. The test must fail on the base and pass on the head. Verify terminal records, logs and CAS receipts.",
+        "runner_features": [
+          "native_threads_1"
+        ],
+        "tool": "run_tests"
+      },
+      {
+        "artifacts": [],
+        "executor": "buildbuddy_self_hosted_pools",
+        "methods": [],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools, respect GATE_WINDOW, use `--bazelrc=$HOME/.config/buildbuddy/pb.bazelrc`, and keep `--jobs` at 16 or fewer.",
+          "source": "issue.body"
+        },
+        "requirement": "Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools, respect GATE_WINDOW, use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, and keep --jobs at 16 or fewer. No supplied tool capability exposes these settings, so this is an unsupported capability gap.",
+        "runner_features": [],
+        "tool": "run_tests"
+      },
+      {
+        "tool": "run_tests",
+        "executor": "prismabuild_pytest",
+        "runner_features": [
+          "native_threads_1"
+        ],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [
+          "red_green"
+        ],
+        "protected_files": [],
+        "requirement": "Run the new malformed-dependency test and the existing capability tests with native threads bounded. The new test must fail on the base and pass on the head. The failure on base must be a missing ValueError, not a setup error. Keep the terminal records, logs and CAS receipts.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "Declare aggregate CPU/memory demand and bound native threads. Verify terminal records, logs and CAS receipts."
+        }
+      },
+      {
+        "tool": "run_tests",
+        "executor": "buildbuddy_self_hosted_pools",
+        "runner_features": [],
+        "artifacts": [],
+        "methods": [],
+        "protected_files": [],
+        "requirement": "Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools. Respect GATE_WINDOW. Use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc. Keep --jobs at 16 or fewer. No supplied tool capability exposes these settings. This requirement is unsupported and must be reported as unverified, not as met.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools, respect GATE_WINDOW, use `--bazelrc=$HOME/.config/buildbuddy/pb.bazelrc`, and keep `--jobs` at 16 or fewer."
+        }
+      }
+    ],
+    "evidence_errors": [
+      "Unsupported evidence requirement: Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools, respect GATE_WINDOW, use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, and keep --jobs at 16 or fewer. No supplied tool capability exposes these settings, so this is an unsupported capability gap. (executor=buildbuddy_self_hosted_pools).",
+      "Unsupported evidence requirement: Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools. Respect GATE_WINDOW. Use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc. Keep --jobs at 16 or fewer. No supplied tool capability exposes these settings. This requirement is unsupported and must be reported as unverified, not as met. (executor=buildbuddy_self_hosted_pools)."
+    ]
+  },
+  "planner": {
+    "kind": "cant_meet",
+    "report": "Unsupported evidence requirement: Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools, respect GATE_WINDOW, use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, and keep --jobs at 16 or fewer. No supplied tool capability exposes these settings, so this is an unsupported capability gap. (executor=buildbuddy_self_hosted_pools).\nUnsupported evidence requirement: Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools. Respect GATE_WINDOW. Use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc. Keep --jobs at 16 or fewer. No supplied tool capability exposes these settings. This requirement is unsupported and must be reported as unverified, not as met. (executor=buildbuddy_self_hosted_pools).\nUnsupported evidence requirement: Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools, respect GATE_WINDOW, use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, and keep --jobs at 16 or fewer. No supplied tool capability exposes these settings. This is an unsupported capability gap. (executor=buildbuddy_self_hosted_pools).",
+    "violations": [],
+    "evidence_contract": [
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [
+          "red_green"
+        ],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Declare aggregate CPU/memory demand and bound native threads. Verify terminal records, logs and CAS receipts.",
+          "source": "issue.body"
+        },
+        "requirement": "Run the new malformed-dependency test and the existing capability tests with native threads bounded. The test must fail on the base and pass on the head. Verify terminal records, logs and CAS receipts.",
+        "runner_features": [
+          "native_threads_1"
+        ],
+        "tool": "run_tests"
+      },
+      {
+        "artifacts": [],
+        "executor": "buildbuddy_self_hosted_pools",
+        "methods": [],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools, respect GATE_WINDOW, use `--bazelrc=$HOME/.config/buildbuddy/pb.bazelrc`, and keep `--jobs` at 16 or fewer.",
+          "source": "issue.body"
+        },
+        "requirement": "Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools, respect GATE_WINDOW, use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, and keep --jobs at 16 or fewer. No supplied tool capability exposes these settings, so this is an unsupported capability gap.",
+        "runner_features": [],
+        "tool": "run_tests"
+      },
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [
+          "red_green"
+        ],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Declare aggregate CPU/memory demand and bound native threads. Verify terminal records, logs and CAS receipts.",
+          "source": "issue.body"
+        },
+        "requirement": "Run the new malformed-dependency test and the existing capability tests with native threads bounded. The new test must fail on the base and pass on the head. The failure on base must be a missing ValueError, not a setup error. Keep the terminal records, logs and CAS receipts.",
+        "runner_features": [
+          "native_threads_1"
+        ],
+        "tool": "run_tests"
+      },
+      {
+        "artifacts": [],
+        "executor": "buildbuddy_self_hosted_pools",
+        "methods": [],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools, respect GATE_WINDOW, use `--bazelrc=$HOME/.config/buildbuddy/pb.bazelrc`, and keep `--jobs` at 16 or fewer.",
+          "source": "issue.body"
+        },
+        "requirement": "Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools. Respect GATE_WINDOW. Use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc. Keep --jobs at 16 or fewer. No supplied tool capability exposes these settings. This requirement is unsupported and must be reported as unverified, not as met.",
+        "runner_features": [],
+        "tool": "run_tests"
+      },
+      {
+        "tool": "run_tests",
+        "executor": "prismabuild_pytest",
+        "runner_features": [
+          "native_threads_1"
+        ],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [
+          "red_green"
+        ],
+        "protected_files": [],
+        "requirement": "Run the new malformed-dependency test and the existing capability tests with native threads bounded. The new test must fail on the base and pass on the head. The failure on base must be a missing ValueError, not a setup error. Verify and keep the terminal records, logs and CAS receipts.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "Declare aggregate CPU/memory demand and bound native threads. Verify terminal records, logs and CAS receipts."
+        }
+      },
+      {
+        "tool": "run_tests",
+        "executor": "buildbuddy_self_hosted_pools",
+        "runner_features": [],
+        "artifacts": [],
+        "methods": [],
+        "protected_files": [],
+        "requirement": "Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools, respect GATE_WINDOW, use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, and keep --jobs at 16 or fewer. No supplied tool capability exposes these settings. This is an unsupported capability gap.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools, respect GATE_WINDOW, use `--bazelrc=$HOME/.config/buildbuddy/pb.bazelrc`, and keep `--jobs` at 16 or fewer."
+        }
+      }
+    ],
+    "evidence_errors": [
+      "Unsupported evidence requirement: Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools, respect GATE_WINDOW, use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, and keep --jobs at 16 or fewer. No supplied tool capability exposes these settings, so this is an unsupported capability gap. (executor=buildbuddy_self_hosted_pools).",
+      "Unsupported evidence requirement: Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools. Respect GATE_WINDOW. Use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc. Keep --jobs at 16 or fewer. No supplied tool capability exposes these settings. This requirement is unsupported and must be reported as unverified, not as met. (executor=buildbuddy_self_hosted_pools).",
+      "Unsupported evidence requirement: Run validation through the published PrismaBuild entrypoint on BuildBuddy self-hosted pools, respect GATE_WINDOW, use --bazelrc=$HOME/.config/buildbuddy/pb.bazelrc, and keep --jobs at 16 or fewer. No supplied tool capability exposes these settings. This is an unsupported capability gap. (executor=buildbuddy_self_hosted_pools)."
+    ]
+  }
+}

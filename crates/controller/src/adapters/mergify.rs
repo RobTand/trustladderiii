@@ -1,5 +1,6 @@
 pub(crate) mod ci_evidence;
 mod head_checks;
+mod queue_entry;
 mod waiting_requeue;
 pub(crate) use waiting_requeue::PROGRESS_PREFIX as REQUEUE_PROGRESS_PREFIX;
 
@@ -1373,7 +1374,7 @@ struct BodyHeal {
 }
 
 /// #447: Mergify waits on queue conditions while every check suite on the head
-/// has completed, so nothing still running can meet them. Returns the unmet
+/// is nonblocking under #854 D1, so nothing still running can meet them. Returns the unmet
 /// conditions and the failed checks outside TL3's required set.
 pub(crate) fn queue_blocked(
     state: &tl3_mergify::Observation,
@@ -1474,7 +1475,8 @@ async fn queue_facts(
                 .is_some_and(|check| !tl3_mergify::unmet_conditions(check).is_empty())
         {
             let suites = github.check_suites(&repo_name, &pull.head.sha).await?;
-            let completed = facts::suites_completed(&suite_statuses(&suites));
+            let completed =
+                queue_entry::suites_completed(github, &repo_name, state, &suites).await?;
             let required: Vec<_> = checks
                 .missing
                 .iter()
@@ -1482,15 +1484,9 @@ async fn queue_facts(
                 .cloned()
                 .collect();
             if let Some((conditions, failed)) = queue_blocked(state, completed, &required) {
-                facts.push(QueueFact {
-                    repository: repo.clone(),
-                    number: pull.number,
-                    evidence: Evidence::QueueBlocked {
-                        head: pull.head.sha.clone(),
-                        conditions,
-                        failed,
-                    },
-                });
+                facts.push(
+                    queue_entry::failure(github, repo, state, conditions, failed, snapshot).await?,
+                );
             }
         }
         facts.extend(

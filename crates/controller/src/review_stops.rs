@@ -26,6 +26,7 @@ pub(crate) fn step_name(step: ReviewStop) -> &'static str {
         ReviewStop::ReviewerOutOfRoom => "reviewer_out_of_room",
         ReviewStop::PlanCantMeet => "plan_cant_meet",
         ReviewStop::PublicationBody => "publication_body",
+        ReviewStop::AuditDisagreement => "audit_disagreement",
     }
 }
 
@@ -42,6 +43,9 @@ fn step_text(step: ReviewStop) -> &'static str {
         ReviewStop::PlanCantMeet => "planning found no way to meet the request",
         ReviewStop::PublicationBody => {
             "TL3 generated a pull request body that violates its publication contract"
+        }
+        ReviewStop::AuditDisagreement => {
+            "the independent audit still disagreed after one ingest repair"
         }
     }
 }
@@ -143,6 +147,38 @@ impl Controller {
         commit: &mut Commit,
     ) -> Result<()> {
         for (index, n) in world.nodes.iter().enumerate() {
+            // #832-A: retain the first reading and audit in the same commit
+            // that starts the one repair, before the next ingest replaces it.
+            if previous.nodes.get(index).is_some_and(|old| {
+                old.phase == tl3_kernel::Phase::Auditing && old.audit_rounds == 0
+            }) && n.audit_rounds == 1
+                && n.phase == tl3_kernel::Phase::Ingesting
+            {
+                let id = index.to_string();
+                let stored = |table: &str| {
+                    snapshot
+                        .rows
+                        .iter()
+                        .find(|row| row.table == table && row.id == id)
+                        .map(|row| row.value.clone())
+                };
+                let audit = commit.rows.iter().rev().find_map(|row| match row {
+                    RowChange::Put {
+                        table,
+                        id: row_id,
+                        value,
+                    } if table == "audits" && *row_id == id => Some(value.clone()),
+                    _ => None,
+                });
+                if let (Some(reading), Some(audit)) = (stored("briefs"), audit) {
+                    commit.rows.push(put(
+                        "audit_repairs",
+                        id,
+                        json!({"reading":question_findings::audit_reading(&reading),
+                            "audit":audit, "generation":n.generation}),
+                    ));
+                }
+            }
             let Some(step) = n.review_stop else {
                 continue;
             };

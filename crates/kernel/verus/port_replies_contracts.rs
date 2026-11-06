@@ -82,8 +82,8 @@ pub(super) open spec fn transitioned(n: Node, id: u64, fast: bool, reply: Reply)
             let rounds = if n.audit_rounds < u8::MAX { (n.audit_rounds + 1) as u8 } else { u8::MAX };
             let updated = Node { audit_rounds: rounds, ..n };
             if n.audit_rounds == 0 { retirement::phased(updated, Phase::Ingesting) }
-            else { asked(updated, id, QKind::AuditDisagreement,
-                match n.early_end { Some(e) => Cont::Stop(early_outcome(e)), None => Cont::Unplanned }, 0) }
+            else { retirement::stopped(Node { review_stop: Some(ReviewStop::AuditDisagreement),
+                ..updated }, Outcome::Stopped) }
         },
         Reply::PlanLeaf { footprint, fits } => {
             if fits && !footprint::footprint_empty(footprint)
@@ -135,7 +135,6 @@ pub(super) open spec fn ingest_stable(source: Node, after: Node) -> bool {
         && after.rechecks == source.rechecks
         && after.review_restarted == source.review_restarted
         && after.priority == source.priority
-        && after.review_stop == source.review_stop
         && after.planning_started == source.planning_started
         && after.waiting_prerequisite == source.waiting_prerequisite
 
@@ -144,8 +143,9 @@ pub(super) open spec fn ingest_stable(source: Node, after: Node) -> bool {
 /// Ingest/audit rows / #806: branch-local updates, separate from the stable frame.
 #[verifier::opaque]
 pub(super) open spec fn ingest_changes(source: Node, after: Node, id: u64, reply: Reply) -> bool {
-        let stop = reply == Reply::ProtectedPaths || reply == Reply::AuditAgrees && source.early_end.is_some();
-        let ask = reply == Reply::AuditDisagrees && source.audit_rounds >= 1;
+        let audit_stop = reply == Reply::AuditDisagrees && source.audit_rounds >= 1;
+        let stop = reply == Reply::ProtectedPaths
+            || reply == Reply::AuditAgrees && source.early_end.is_some() || audit_stop;
         after.generation as int == source.generation as int + 1
         && after.pos == 0 && after.ticket.is_none()
         && after.effect == match source.effect {
@@ -157,16 +157,12 @@ pub(super) open spec fn ingest_changes(source: Node, after: Node, id: u64, reply
             Reply::AuditAgrees => match source.early_end {
                 Some(e) => Phase::Stopping(early_outcome(e)), None => Phase::Unplanned,
             },
-            Reply::AuditDisagrees => if ask { Phase::AwaitingRob } else { Phase::Ingesting },
+            Reply::AuditDisagrees => if audit_stop { Phase::Stopping(Outcome::Stopped) } else { Phase::Ingesting },
             _ => source.phase,
         }
-        && after.holds == if ask { false } else { source.holds }
-        && after.question == if stop { None } else if ask {
-            Some(Question { id, kind: QKind::AuditDisagreement,
-                cont: match source.early_end {
-                    Some(e) => Cont::Stop(early_outcome(e)), None => Cont::Unplanned,
-                }, cost: 0, clarified: false })
-        } else { source.question }
+        && after.holds == source.holds
+        && after.question == if stop { None } else { source.question }
+        && after.review_stop == if audit_stop { Some(ReviewStop::AuditDisagreement) } else { source.review_stop }
         && after.waiting_incident == if stop { false } else { source.waiting_incident }
         && after.incident_needs_rob == if stop { false } else { source.incident_needs_rob }
         && after.audit_rounds == if reply == Reply::AuditDisagrees {
@@ -268,10 +264,9 @@ pub(super) open spec fn plan_post(source: Node, after: Node, id: u64, fast: bool
     source.phase is Planning ==> plan_stable(source, after) && plan_changes(source, after, id, fast, cant)
 }
 
-/// #806 frame: only exhausted audit/planner retries and PlanSplit allocate questions.
+/// #806 / #832-A frame: only planner retries and PlanSplit allocate questions.
 pub(super) open spec fn asks(n: Node, fast: bool, reply: Reply) -> bool {
     match reply {
-        Reply::AuditDisagrees => n.audit_rounds >= 1,
         Reply::PlanSplit => true,
         Reply::PlanCantMeet => !(fast) && n.plan_retries >= 1,
         Reply::PlanLeaf { footprint, fits } => n.plan_retries >= 1
@@ -318,16 +313,18 @@ pub(super) open spec fn retry_post(before: World, after: World, i: int,
 #[verifier::opaque]
 pub(super) open spec fn transition_post(before: World, after: World, i: int,
     source: Node, reply: Reply, out_before: Outbox, out_after: Outbox) -> bool {
-    selected(reply) && before.dependencies@.len() == 0
+    (selected(reply) && (before.dependencies@.len() == 0
+        || !matches!(reply, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_)))
         && port_review_reply::accepted_reply(before, source, reply) ==> {
         node_post(source, after.nodes@[i], before.next_question, before.fail_fast, reply)
             && after.next_question == (before.next_question
                 + if asks(source, before.fail_fast, reply) { 1u64 } else { 0u64 }) as u64
             && after.file_sets@ == before.file_sets@
             && (retirement::notices_only(out_before) ==> retirement::notices_only(out_after))
+            && (reply == Reply::AuditDisagrees ==> out_after == out_before)
             && (reply == Reply::PlanCantMeet ==> port_failfast_diversion::plan_result(
                 source, after.nodes@[i], before.fail_fast, true,
                 before.next_question, after.next_question, out_before, out_after))
-    }
+    }) && port_replies_maker::transition_post(before, after, i, source, reply, out_before, out_after)
 }
 }

@@ -474,6 +474,8 @@ pub enum ReviewStop {
     ReviewerOutOfRoom,
     PlanCantMeet,
     PublicationBody,
+    /// Auditing / #832-A: the one ingest repair did not resolve the audit.
+    AuditDisagreement,
 }
 
 /// Where a node goes when Rob says carry on.
@@ -2331,3 +2333,51 @@ mod reply_equivalence;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_failfast_apply.rs"]
 mod port_failfast_apply;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_replies_maker.rs"]
+mod port_replies_maker;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_replies_maker_frames.rs"]
+mod port_replies_maker_frames;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_replies_maker_admission.rs"]
+mod port_replies_maker_admission;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_replies_maker_exec.rs"]
+mod port_replies_maker_exec;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_replies_maker_witness.rs"]
+mod port_replies_maker_witness;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_frames.rs"]
+mod port_review_frames;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_properties.rs"]
+mod port_review_properties;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_safety.rs"]
+mod port_review_safety;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_world.rs"]
+mod port_review_world;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_witness.rs"]
+mod port_review_witness;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_failure.rs"]
+mod port_review_failure;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_dispatch.rs"]
+mod port_review_dispatch;

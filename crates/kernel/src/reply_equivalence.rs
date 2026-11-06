@@ -72,8 +72,10 @@ fn replies(head: HeadId, files: Footprint, bits: u8) -> [Reply; 21] {
 fn compare(world: &World, i: usize, generation: u64, reply: Reply, outputs: Outbox) {
     let mut actual = world.clone();
     let mut expected = world.clone();
+    let mut previous = world.clone();
     let mut actual_out = outputs;
     let mut expected_out = outputs;
+    let mut previous_out = outputs;
     let actual_ok = catch_unwind(AssertUnwindSafe(|| {
         on_reply(&mut actual, i, generation, reply, &mut actual_out);
     }))
@@ -82,6 +84,28 @@ fn compare(world: &World, i: usize, generation: u64, reply: Reply, outputs: Outb
         reference::reference_on_reply(&mut expected, i, generation, reply, &mut expected_out);
     }))
     .is_ok();
+    let previous_ok = catch_unwind(AssertUnwindSafe(|| {
+        reply_admission::stopping_reference::reference_on_reply(
+            &mut previous,
+            i,
+            generation,
+            reply,
+            &mut previous_out,
+        );
+    }))
+    .is_ok();
+    assert_eq!(
+        actual_ok, previous_ok,
+        "stopping extraction panic parity for {reply:?}"
+    );
+    assert_eq!(
+        actual, previous,
+        "stopping extraction world parity for {reply:?}"
+    );
+    assert_eq!(
+        actual_out, previous_out,
+        "stopping extraction output parity for {reply:?}"
+    );
     assert_eq!(actual_ok, expected_ok, "panic parity for {reply:?}");
     assert_eq!(actual, expected, "world parity for {reply:?}");
     assert_eq!(actual_out, expected_out, "all output slots for {reply:?}");

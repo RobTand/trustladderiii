@@ -218,6 +218,8 @@ pub struct CheckSuite {
     pub head_sha: String,
     pub status: String,
     pub conclusion: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

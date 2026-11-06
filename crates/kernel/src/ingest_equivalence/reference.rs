@@ -1,4 +1,4 @@
-//! Verbatim pre-refactor reply_ingest body from b7781f1da8, test-only.
+//! Verbatim unextracted #832-A reply_ingest body from main 6a1f337adc, test-only.
 use super::*;
 
 pub(super) fn reference(w: &mut World, i: usize, reply: Reply, out: &mut Outbox) {
@@ -23,11 +23,8 @@ pub(super) fn reference(w: &mut World, i: usize, reply: Reply, out: &mut Outbox)
                 // Ingest revises once with the audit's objections.
                 set_phase(m, Phase::Ingesting);
             } else {
-                let cont = match m.early_end {
-                    Some(e) => Cont::Stop(e.outcome()),
-                    None => Cont::Unplanned,
-                };
-                ask_rob(w, i, QKind::AuditDisagreement, cont, 0, out);
+                // Q27, #832-A: intake cannot split. The one repair is spent.
+                stop_for_review(m, ReviewStop::AuditDisagreement);
             }
         }
         Reply::ProtectedPaths => enter_stopping(&mut w.nodes[i], Outcome::NotActionable),
