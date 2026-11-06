@@ -33,6 +33,13 @@ fn flux_document() -> Value {
 }
 
 #[test]
+fn flux_requires_an_explicit_backend_cli() {
+    let mut document = flux_document();
+    document["flux"].as_table_mut().unwrap().remove("backend_cli");
+    assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
+}
+
+#[test]
 fn execution_selection_validates_only_the_selected_backend() {
     use tl3_config::{ExecutionBackend, SelectedExecution};
     let legacy = Config::parse(EXAMPLE).unwrap();
