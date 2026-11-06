@@ -69,7 +69,12 @@ fn row<'a>(
 
 /// Old arrays and conflict objects remain readable until this node gets its first
 /// canonical document. Legacy projections keep question and evidence readers compatible.
-fn load(snapshot: &Snapshot, changes: &[RowChange], node: NodeId) -> Result<Document> {
+fn load(
+    snapshot: &Snapshot,
+    changes: &[RowChange],
+    node: NodeId,
+    clearing_conflict: bool,
+) -> Result<Document> {
     let id = node.0.to_string();
     if let Some(value) = row(snapshot, changes, "feedback", &id) {
         return crate::decode_stored(value.clone());
@@ -84,14 +89,16 @@ fn load(snapshot: &Snapshot, changes: &[RowChange], node: NodeId) -> Result<Docu
             .map(|v| crate::decode_stored(v.clone()))
             .transpose()?
             .unwrap_or_default(),
+        // Clearing old context does not need to decode fields that will be deleted.
         conflict: row(snapshot, changes, "rebase_conflicts", &id)
+            .filter(|_| !clearing_conflict)
             .map(|v| crate::decode_stored(v.clone()))
             .transpose()?,
     })
 }
 
 pub(crate) fn read(snapshot: &Snapshot, node: NodeId) -> Result<Document> {
-    load(snapshot, &[], node)
+    load(snapshot, &[], node, false)
 }
 
 fn save(commit: &mut Commit, node: NodeId, document: &Document) -> Result<()> {
@@ -99,12 +106,16 @@ fn save(commit: &mut Commit, node: NodeId, document: &Document) -> Result<()> {
     commit
         .rows
         .push(put("feedback", id.clone(), serde_json::to_value(document)?));
-    commit
-        .rows
-        .push(put("maker_findings", id.clone(), json!(document.maker)));
-    commit
-        .rows
-        .push(put("findings", id.clone(), json!(document.planner)));
+    if !document.maker.is_empty() {
+        commit
+            .rows
+            .push(put("maker_findings", id.clone(), json!(document.maker)));
+    }
+    if !document.planner.is_empty() {
+        commit
+            .rows
+            .push(put("findings", id.clone(), json!(document.planner)));
+    }
     match &document.conflict {
         Some(conflict) => commit
             .rows
@@ -118,7 +129,7 @@ fn save(commit: &mut Commit, node: NodeId, document: &Document) -> Result<()> {
 }
 
 pub(crate) fn maker_history(snapshot: &Snapshot, commit: &Commit, node: NodeId) -> Result<Value> {
-    Ok(json!(load(snapshot, &commit.rows, node)?.maker))
+    Ok(json!(load(snapshot, &commit.rows, node, false)?.maker))
 }
 
 impl Document {
@@ -225,7 +236,7 @@ pub(crate) fn record(
         if stale(node) {
             continue;
         }
-        let mut document = load(snapshot, &commit.rows, node)?;
+        let mut document = load(snapshot, &commit.rows, node, false)?;
         let mut detailed = false;
         if cause == FailedRoundCause::ChangesRequested
             && let Some(review) = &evidence.review
@@ -268,7 +279,18 @@ pub(crate) fn record(
     if let Event::Reply { node, reply, .. } = event
         && !stale(node)
     {
-        let mut document = load(snapshot, &commit.rows, node)?;
+        let clearing_conflict = matches!(
+            (&evidence.rebase, reply),
+            (Some(Rebase::Clean), Reply::RebaseClean { .. })
+        );
+        let legacy_conflict = row(
+            snapshot,
+            &commit.rows,
+            "rebase_conflicts",
+            &node.0.to_string(),
+        )
+        .is_some();
+        let mut document = load(snapshot, &commit.rows, node, clearing_conflict)?;
         let before = document.clone();
         if let Some(planner) = &evidence.planner
             && matches!(
@@ -311,7 +333,7 @@ pub(crate) fn record(
             (Some(Rebase::Clean), Reply::RebaseClean { .. }) => document.conflict = None,
             _ => {}
         }
-        if document != before {
+        if document != before || clearing_conflict && legacy_conflict {
             document.generation = world.nodes[node.0 as usize].generation;
             save(commit, node, &document)?;
         }
@@ -326,7 +348,7 @@ pub(crate) fn guidance(
     generation: u64,
     text: &Value,
 ) -> Result<()> {
-    let mut document = load(snapshot, &commit.rows, node)?;
+    let mut document = load(snapshot, &commit.rows, node, false)?;
     document.planner.push(
         text.as_str()
             .ok_or(Error::Invalid("invalid findings"))?
@@ -353,7 +375,14 @@ pub(crate) fn record_world(
             continue;
         }
         let id = NodeId(index as u64);
-        let mut document = load(snapshot, &commit.rows, id)?;
+        let legacy_conflict = row(
+            snapshot,
+            &commit.rows,
+            "rebase_conflicts",
+            &id.0.to_string(),
+        )
+        .is_some();
+        let mut document = load(snapshot, &commit.rows, id, closed)?;
         let before = document.clone();
         if replanning {
             for item in &document.maker {
@@ -366,7 +395,7 @@ pub(crate) fn record_world(
         if closed {
             document.conflict = None;
         }
-        if document != before {
+        if document != before || closed && legacy_conflict {
             document.generation = node.generation;
             save(commit, id, &document)?;
         }

@@ -511,24 +511,26 @@ fn try_again_guidance_reaches_the_planner_through_console_intake() {
 fn legacy_rows_survive_the_first_canonical_feedback_write() {
     let mut f = Fixture::new();
     f.seed(Phase::Making, 2);
-    crate::git_tests::documents(
-        &mut f.controller.store,
-        &[
-            (
-                "maker_findings",
-                json!([{"kind":"failed_check", "goal_ids":[], "report":"legacy check"}]),
-            ),
-            ("findings", json!(["legacy planner guidance"])),
-            (
-                "rebase_conflicts",
-                json!({"head":f.repo.head,"target":f.repo.base,"files":["README.md"]}),
-            ),
-            (
-                "worker_failures",
-                json!({"failure_message":"old failure must not be reused"}),
-            ),
-        ],
-    );
+    let snapshot = f.controller.snapshot().unwrap();
+    let mut commit = Commit::new("legacy-documents", json!(null), &snapshot);
+    for (table, value) in [
+        (
+            "maker_findings",
+            json!([{"kind":"failed_check", "goal_ids":[], "report":"legacy check"}]),
+        ),
+        ("findings", json!(["legacy planner guidance"])),
+        (
+            "rebase_conflicts",
+            json!({"head":f.repo.head,"target":f.repo.base,"files":["README.md"]}),
+        ),
+        (
+            "worker_failures",
+            json!({"failure_message":"old failure must not be reused"}),
+        ),
+    ] {
+        commit.rows.push(crate::put(table, "0".into(), value));
+    }
+    f.controller.store.commit(&commit).unwrap();
     assert!(f.maker()["feedback"].to_string().contains("legacy check"));
     assert!(
         f.maker()["feedback"]
@@ -550,4 +552,62 @@ fn legacy_rows_survive_the_first_canonical_feedback_write() {
             .contains("old failure must not be reused")
     );
     assert_eq!(f.planner()["findings"], json!(["legacy planner guidance"]));
+}
+
+#[test]
+fn infrastructure_ci_failure_creates_no_maker_feedback() {
+    let mut f = Fixture::new();
+    f.seed(Phase::Queued, 3);
+    f.observe(Observation::CiFailed {
+        node: NodeId(0),
+        infra: true,
+        checks: vec![],
+        failed_tests: vec![],
+    });
+    assert!(
+        !f.controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "feedback" || row.table == "maker_findings")
+    );
+    assert!(f.maker().get("feedback").is_none());
+}
+
+#[test]
+fn closing_a_request_clears_rebase_conflict_context() {
+    let mut f = Fixture::new();
+    f.seed(Phase::Rebasing, 1);
+    f.observe(Observation::RebaseConflict {
+        node: NodeId(0),
+        generation: 10,
+        head: f.repo.head.clone(),
+        target: f.repo.base.clone(),
+        files: vec!["README.md".into()],
+    });
+    f.observe(Observation::Steering {
+        node: NodeId(0),
+        command: tl3_kernel::Command::Stop,
+    });
+    assert!(f.controller.world().unwrap().nodes[0].phase.is_closed());
+    assert!(
+        !f.controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "rebase_conflicts")
+    );
+    assert!(
+        f.controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .find(|row| row.table == "feedback")
+            .unwrap()
+            .value["conflict"]
+            .is_null()
+    );
 }
