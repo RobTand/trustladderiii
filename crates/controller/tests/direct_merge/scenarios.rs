@@ -601,25 +601,96 @@ fn r1_board_retains_actual_delivery_mode_after_configuration_change() {
 }
 
 
+fn store_direct_check_event(fixture: &DirectFixture, settings: &tl3_config::Store, id: &str) {
+    let check = fixture.api.state.lock().unwrap().head_checks.iter()
+        .find(|check| check["name"] == "Sandbox tests").unwrap().clone();
+    let mut body = webhook_fixture();
+    body["action"] = json!("completed");
+    body["repository"]["owner"]["login"] = json!("owner");
+    body["repository"]["name"] = json!("sandbox");
+    body["installation"] = json!({"id":3});
+    body["check_run"] = check;
+    assert!(Store::open(settings).unwrap().receive_ingress("github-webhook", id, "check_run", &serde_json::to_vec(&body).unwrap()).unwrap());
+}
+
 #[test]
-fn r1_restart_reconciles_unlanded_put_before_exactly_one_retry() {
+fn r2_a_restart_after_put_requires_new_post_recovery_event() {
     let mut database = support::Database::start();
-    let settings = database.create("direct_uncertain_restart");
-    let fixture = DirectFixture::new();
+    let settings = database.create("direct_r2_restart");
+    let mut fixture = DirectFixture::new();
+    fixture.check(Some("success"));
     fixture.direct.lock().unwrap().status = Some(503);
-    let (controller, delivery) = fixture.start(&settings);
+    let (controller, _) = fixture.start(&settings);
     assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
     drop(controller);
+    fixture.wakes = direct_merge::Wakes::default();
     fixture.direct.lock().unwrap().status = None;
-    let reads = fixture.direct.lock().unwrap().reads;
-    let mut adapter = direct_merge::Adapter::new(fixture.api.clients(), 0,
-        &fixture.root.path().join("direct"), settings.clone()).unwrap();
-    assert!(matches!(adapter.reconcile(&delivery).unwrap(), Reconciliation::Found(_)));
-    assert!(fixture.direct.lock().unwrap().reads >= reads + 2);
+    let mut restarted = fixture.open(&settings);
+    drain(&mut restarted);
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1, "restart cannot reauthorize a consumed attempt");
+    store_direct_check_event(&fixture, &settings, "post-recovery");
+    drain(&mut restarted);
     assert_eq!(fixture.direct.lock().unwrap().puts.len(), 2);
     assert_eq!(fixture.direct.lock().unwrap().successes, 1);
-    assert!(matches!(adapter.reconcile(&delivery).unwrap(), Reconciliation::Found(_)));
+}
+
+#[test]
+fn r2_a_crash_before_cursor_advance_cannot_replay_authorization() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_r2_replay");
+    let mut fixture = DirectFixture::new();
+    fixture.check(None);
+    let (controller, _) = fixture.start(&settings);
+    drop(controller);
+    fixture.check(Some("success"));
+    fixture.direct.lock().unwrap().status = Some(503);
+    let adapter = fixture.adapter(&settings).with_write_boundary(|b| {
+        if b == (direct_merge::WriteBoundary { write: direct_merge::Write::Merge, after: true }) {
+            panic!("crash after PUT before translator cursor advance");
+        }
+    });
+    let mut controller = fixture.open_adapter(&settings, adapter);
+    store_direct_check_event(&fixture, &settings, "replayed-authorizer");
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ingress::drain(&mut controller))).is_err());
+    let mut store = Store::open(&settings).unwrap();
+    let cursor = store.translator_cursor("github-translator:mergify").unwrap();
+    assert!(store.ingress_after(cursor).unwrap().iter().any(|e|e.delivery_key == "replayed-authorizer"), "crash must leave the event replayable");
+    drop(controller);
+    fixture.wakes = direct_merge::Wakes::default();
+    fixture.direct.lock().unwrap().status = None;
+    let mut restarted = fixture.open(&settings);
+    drain(&mut restarted);
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1, "replayed event cannot reauthorize PUT");
+    store_direct_check_event(&fixture, &settings, "fresh-after-replay");
+    drain(&mut restarted);
     assert_eq!(fixture.direct.lock().unwrap().puts.len(), 2);
+}
+
+#[test]
+fn r2_a_older_queued_event_cannot_reauthorize_put() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_r2_queued");
+    let fixture = DirectFixture::new();
+    fixture.check(None);
+    let (controller, _) = fixture.start(&settings);
+    drop(controller);
+    fixture.check(Some("success"));
+    fixture.direct.lock().unwrap().status = Some(503);
+    let direct = fixture.direct.clone();
+    let adapter = fixture.adapter(&settings).with_write_boundary(move |b| {
+        if b == (direct_merge::WriteBoundary { write: direct_merge::Write::Merge, after: true }) {
+            direct.lock().unwrap().status = None;
+        }
+    });
+    let mut controller = fixture.open_adapter(&settings, adapter);
+    store_direct_check_event(&fixture, &settings, "first-authorizer");
+    store_direct_check_event(&fixture, &settings, "already-queued");
+    ingress::drain(&mut controller).unwrap();
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1, "events already queued at PUT cannot authorize its retry");
+    store_direct_check_event(&fixture, &settings, "new-after-put");
+    drain(&mut controller);
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 2);
+    assert_eq!(fixture.direct.lock().unwrap().successes, 1);
 }
 
 #[test]
