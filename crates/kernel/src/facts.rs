@@ -161,7 +161,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 final(w).nodes@[i as int], infra, old(w).fail_fast, old(w).next_question, final(w).next_question),
             _ => true,
         },
-] {
+] hide [current_item, items] {
     kernel_snapshot! { before_transition = *w }
     kernel_snapshot! { before_out = *out }
     match fact {
