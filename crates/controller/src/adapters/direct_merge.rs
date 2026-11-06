@@ -114,10 +114,14 @@ struct Journal {
     store: tl3_config::Store,
 }
 impl Journal {
-    fn remember_delivery(&self, d: &Delivery, merged: &Merged, boundary: impl Fn(bool)) -> Result<()> {
+    fn remember_delivery(
+        &self,
+        d: &Delivery,
+        merged: &Merged,
+        boundary: impl Fn(bool),
+    ) -> Result<()> {
         let records = Records::new(&self.records_root);
-        let intent: Option<Intent> =
-            read_file(&records.path(&d.key).with_extension("intent"))?;
+        let intent: Option<Intent> = read_file(&records.path(&d.key).with_extension("intent"))?;
         if !intent.is_some_and(|intent| intent.action == "Merge" && intent.head == merged.head) {
             return Ok(());
         }
@@ -173,7 +177,11 @@ impl Journal {
             crate::ingress::GitHubDelivery::CatchUp { .. } => tx.query_opt(
                 "SELECT sequence FROM tl3_ingress WHERE event_name = 'catch-up' AND payload = $1 ORDER BY sequence DESC LIMIT 1", &[&serde_json::to_vec(delivery)?]),
         }.map_err(tl3_store::Error::from)?;
-        row.map(|row| u64::try_from(row.get::<_, i64>(0)).map_err(|_| Error::Invalid("negative direct event sequence"))).transpose()
+        row.map(|row| {
+            u64::try_from(row.get::<_, i64>(0))
+                .map_err(|_| Error::Invalid("negative direct event sequence"))
+        })
+        .transpose()
     }
 }
 
@@ -198,7 +206,11 @@ impl Adapter {
         fs::create_dir_all(records)?;
         let recovery_through = ingress_highwater(&store)?;
         let wakes = Wakes::default();
-        wakes.bind(Journal { epoch, records_root: records.to_owned(), store: store.clone() });
+        wakes.bind(Journal {
+            epoch,
+            records_root: records.to_owned(),
+            store: store.clone(),
+        });
         Ok(Self {
             recovery_through,
             records_root: records.to_owned(),
@@ -545,10 +557,15 @@ impl Adapter {
         Ok(Completion::confirmed(observations))
     }
     fn journal(&self) -> Journal {
-        Journal { epoch: self.epoch, records_root: self.records_root.clone(), store: self.store.clone() }
+        Journal {
+            epoch: self.epoch,
+            records_root: self.records_root.clone(),
+            store: self.store.clone(),
+        }
     }
     fn remember_delivery(&self, d: &Delivery, merged: &Merged) -> Result<()> {
-        self.journal().remember_delivery(d, merged, |after| self.boundary(Write::History, after))
+        self.journal()
+            .remember_delivery(d, merged, |after| self.boundary(Write::History, after))
     }
     fn merged(&self, d: &Delivery, merged: Merged) -> Result<Completion> {
         self.remember_delivery(d, &merged)?;
@@ -648,10 +665,16 @@ impl Adapter {
         if self.wakes.sleeping(&d.key) {
             return Err(Error::ChecksPending);
         }
-        let intent: Option<Intent> = read_file(&self.records.path(&d.key).with_extension("intent"))?;
+        let intent: Option<Intent> =
+            read_file(&self.records.path(&d.key).with_extension("intent"))?;
         let event = self.wakes.event(&d.key).unwrap_or(0);
-        let attempted = intent.as_ref().is_some_and(|i| i.action == "Merge" || i.consumed_through.is_some());
-        let consumed = intent.as_ref().and_then(|i| i.consumed_through).unwrap_or(0);
+        let attempted = intent
+            .as_ref()
+            .is_some_and(|i| i.action == "Merge" || i.consumed_through.is_some());
+        let consumed = intent
+            .as_ref()
+            .and_then(|i| i.consumed_through)
+            .unwrap_or(0);
         let authorized = decide::authorized(attempted, event, consumed, self.recovery_through);
         // At most one annotation and one merge per call. A pending check never loops.
         for _ in 0..2 {
@@ -675,7 +698,11 @@ impl Adapter {
                         let path = self.records.path(&d.key).with_extension("intent");
                         let previous: Option<Intent> = read_file(&path)?;
                         let consumed_through = if plan.third == Step::Merge {
-                            Some(decide::consume(event, ingress_highwater(&self.store)?, consumed))
+                            Some(decide::consume(
+                                event,
+                                ingress_highwater(&self.store)?,
+                                consumed,
+                            ))
                         } else {
                             previous.as_ref().and_then(|i| i.consumed_through)
                         };

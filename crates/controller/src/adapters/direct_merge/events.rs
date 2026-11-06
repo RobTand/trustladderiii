@@ -65,18 +65,43 @@ impl Translator {
                 None
             };
             if let Some(evidence) = evidence {
-                if let Evidence::Merged { head, checks_passed } = &evidence
+                if let Evidence::Merged {
+                    head,
+                    checks_passed,
+                } = &evidence
                     && let Some(journal) = self.wakes.journal()
                 {
-                    let mut deliveries: Vec<Delivery> = snapshot.pending_effects.iter()
-                        .map(|effect| crate::hydrate(effect, snapshot)).collect::<Result<_>>()?;
-                    for row in snapshot.rows.iter().filter(|r| matches!(r.table.as_str(), "watches" | "retiring_effects")) {
+                    let mut deliveries: Vec<Delivery> = snapshot
+                        .pending_effects
+                        .iter()
+                        .map(|effect| crate::hydrate(effect, snapshot))
+                        .collect::<Result<_>>()?;
+                    for row in snapshot
+                        .rows
+                        .iter()
+                        .filter(|r| matches!(r.table.as_str(), "watches" | "retiring_effects"))
+                    {
                         deliveries.push(crate::decode_stored(row.value.clone())?);
                     }
                     for mut delivery in deliveries {
-                        if delivery.node() == node && matches!(delivery.output, Output::Effect { kind: EffectKind::Enqueue, .. }) {
+                        if delivery.node() == node
+                            && matches!(
+                                delivery.output,
+                                Output::Effect {
+                                    kind: EffectKind::Enqueue,
+                                    ..
+                                }
+                            )
+                        {
                             delivery.pull_request = Some(pull.number);
-                            journal.remember_delivery(&delivery, &Merged { head: head.clone(), checks_passed: *checks_passed }, |_| {})?;
+                            journal.remember_delivery(
+                                &delivery,
+                                &Merged {
+                                    head: head.clone(),
+                                    checks_passed: *checks_passed,
+                                },
+                                |_| {},
+                            )?;
                         }
                     }
                 }
@@ -103,7 +128,13 @@ impl Translator {
         sha: Option<&str>,
         event: &GitHubDelivery,
     ) -> Result<Vec<Input>> {
-        let Some(sequence) = self.wakes.journal().map(|j| j.event_sequence(event)).transpose()?.flatten() else {
+        let Some(sequence) = self
+            .wakes
+            .journal()
+            .map(|j| j.event_sequence(event))
+            .transpose()?
+            .flatten()
+        else {
             return Ok(vec![]);
         };
         let mut inputs = Vec::new();
@@ -192,7 +223,13 @@ impl GitHubTranslator for Translator {
                 }
                 Some(Event::PullRequestSynchronized { pull_request, .. }) => {
                     let mut inputs = self.input(snapshot, &repo, pull_request, true)?;
-                    inputs.extend(self.wakes(snapshot, &repo, Some(pull_request.number), None, delivery)?);
+                    inputs.extend(self.wakes(
+                        snapshot,
+                        &repo,
+                        Some(pull_request.number),
+                        None,
+                        delivery,
+                    )?);
                     Ok(inputs)
                 }
                 Some(

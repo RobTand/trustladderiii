@@ -11,6 +11,8 @@ verus! {
 /// approval is Q41 (docs/state-machine.md:132,487), not canonical Q44 (:495).
 /// Publishing/Queued docs/state-table.md:526,570; outside push :667; epoch :755.
 /// Witnesses reach both upstream writes, refusal, and the absorbing merged state.
+/// R2 review A additionally checks durable event consumption and recovery exclusion.
+/// The real shell saves consume() in the Merge intent before PUT and reloads it.
 /// No loop bound: the production decision is straight-line over arbitrary full SHA values.
 fn witnesses() {
     let h = decide::Head { upper: 1, lower: 2 };

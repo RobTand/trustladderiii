@@ -80,7 +80,8 @@ pub struct Plan {
 /// approval: docs/state-table.md:507,518; approval-check publishing step: :531.
 /// Base Publishing/Queued rows :526,:570; outside push :667; effects :724-747;
 /// epoch fence :755. No-write after a known merge refines #830's Converges rule.
-/// #830 retry clarification: writes require restart/event authorization; timers only observe.
+/// #830 r2 clarification: recovered consumed attempts need a new post-recovery event.
+/// Initial attempts may run once; timers only observe.
 /// Straight-line, unbounded in head values. Each write plan is executed in field order.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out.sha.upper == f.approved.upper && out.sha.lower == f.approved.lower,
@@ -162,5 +163,9 @@ pub fn authorized(attempted: bool, event: u64, consumed: u64, recovered: u64) ->
 ))]
 pub fn consume(event: u64, received: u64, previous: u64) -> u64 {
     let through = if event > received { event } else { received };
-    if previous > through { previous } else { through }
+    if previous > through {
+        previous
+    } else {
+        through
+    }
 }
