@@ -287,13 +287,17 @@ fn already_merged_405_reconciles_without_failure() {
 }
 
 #[test]
-fn restart_at_every_direct_write_converges() {
+fn restart_at_direct_write_cuts_0_to_7_converges() { restart_direct_write_cuts(0..8); }
+#[test]
+fn restart_at_direct_write_cuts_8_to_15_converges() { restart_direct_write_cuts(8..16); }
+#[test]
+fn restart_at_direct_write_cuts_16_to_19_converges() { restart_direct_write_cuts(16..20); }
+fn restart_direct_write_cuts(cuts: std::ops::Range<usize>) {
     use std::sync::atomic::{AtomicUsize, Ordering};
     // Fence, intent, annotation, merge and receipt, before and after each. The
     // real Records writer performs fsync/rename; the callback never replaces it.
     let mut database = support::Database::start();
-    let mut boundaries = Vec::new();
-    for cut in 0..24 {
+    for cut in cuts {
         let settings = database.create(&format!("direct_crash_{cut}"));
         let fixture = DirectFixture::new();
         fixture.check(None);
@@ -313,12 +317,18 @@ fn restart_at_every_direct_write_converges() {
             });
         let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| issuer.execute(&delivery)));
         let count = seen.load(Ordering::SeqCst);
-        if crashed.is_ok() {
-            assert_eq!(cut, count, "all preceding boundaries must have crashed");
-            assert_eq!(cut, boundaries.len());
-            break;
+        assert!(crashed.is_err(), "mandatory boundary {cut} did not crash");
+        assert_eq!(count, cut + 1);
+        assert_eq!(trace.lock().unwrap().len(), cut + 1);
+        if cut == 19 {
+            for write in [direct_merge::Write::Fence, direct_merge::Write::Intent,
+                direct_merge::Write::Annotation, direct_merge::Write::Merge,
+                direct_merge::Write::History, direct_merge::Write::Receipt] {
+                for after in [false, true] {
+                    assert!(trace.lock().unwrap().contains(&direct_merge::WriteBoundary { write, after }), "unreached {write:?}/{after}");
+                }
+            }
         }
-        boundaries.push(*trace.lock().unwrap().last().unwrap());
         drop(issuer);
         // A restart has no in-memory sleeping effects.
         let mut adapter = direct_merge::Adapter::new(fixture.api.clients(), 0,
@@ -334,12 +344,6 @@ fn restart_at_every_direct_write_converges() {
         drain(&mut restarted);
         assert!(matches!(restarted.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged)));
         assert_eq!(fixture.direct.lock().unwrap().successes, 1);
-    }
-    for write in [direct_merge::Write::Fence, direct_merge::Write::Intent,
-        direct_merge::Write::Annotation, direct_merge::Write::Merge, direct_merge::Write::History, direct_merge::Write::Receipt] {
-        for after in [false, true] {
-            assert!(boundaries.contains(&direct_merge::WriteBoundary { write, after }), "unreached {write:?}/{after}");
-        }
     }
 }
 
@@ -542,10 +546,17 @@ fn r1_retirement_reclaims_terminal_direct_records() {
 }
 
 #[test]
-fn r1_retirement_crashes_preserve_consumed_merge_and_delivery_history() {
+fn r1_retirement_crash_before_intent_delete() { retirement_crash(0); }
+#[test]
+fn r1_retirement_crash_after_intent_delete() { retirement_crash(1); }
+#[test]
+fn r1_retirement_crash_before_receipt_delete() { retirement_crash(2); }
+#[test]
+fn r1_retirement_crash_after_receipt_delete() { retirement_crash(3); }
+fn retirement_crash(cut: usize) {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let mut database = support::Database::start();
-    for cut in 0..4 {
+    {
         let settings = database.create(&format!("direct_reclaim_crash_{cut}"));
         let fixture = DirectFixture::new();
         fixture.check(None);
