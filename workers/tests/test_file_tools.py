@@ -1102,6 +1102,14 @@ def test_undeclared_change_explains_the_needs_files_reply(tree):
     assert 'reply kind needs_files with files ["src/new.py"]' in result.text
 
 
+def test_tool_refusal_has_no_terminal_reply_phrase(tree):
+    root, _ = tree
+    with Worktree(root, footprint=["src/code.py"]) as worktree:
+        result = invoke(tools_for(worktree, {"delete"})["delete"], "src/new.py")
+    assert result.status == "error"
+    assert "cant_meet" not in result.text
+
+
 @pytest.mark.parametrize("op", ["write", "edit", "delete"])
 def test_change_gate_is_used_before_any_mutation(tree, op, monkeypatch):
     root, _ = tree
