@@ -406,11 +406,11 @@ impl Respond for Api {
             return ResponseTemplate::new(*status);
         }
         match (method, path) {
-            ("GET", "/repos/owner/sandbox/branches/main") => ResponseTemplate::new(200).set_body_json(
+            ("GET", "/repos/owner/sandbox/branches/main" | "/repos/owner/sandbox/branches/release") => ResponseTemplate::new(200).set_body_json(
                 if state.classic { json!({"protection":{"required_status_checks":{
                     "contexts":if state.restricted.as_ref().is_some_and(|(read, _)| read == "status") {json!(["Sandbox tests", "legacy-only"])} else {json!(["Sandbox tests"])}, "checks":if state.classic_context_only {json!([])} else {json!([{"context":"Sandbox tests","app_id":15368}])}}}}) }
                 else { json!({"protected":false}) }),
-            ("GET", "/repos/owner/sandbox/rules/branches/main") => ResponseTemplate::new(200).set_body_json(
+            ("GET", "/repos/owner/sandbox/rules/branches/main" | "/repos/owner/sandbox/rules/branches/release") => ResponseTemplate::new(200).set_body_json(
                 if state.required { json!([{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Sandbox tests","integration_id":state.required_app}]}}]) } else { json!([]) }),
             ("GET", path) if path.ends_with("/statuses") => ResponseTemplate::new(200).set_body_json(state.statuses.clone()),
             ("GET", "/repos/owner/sandbox/actions/runs") => {

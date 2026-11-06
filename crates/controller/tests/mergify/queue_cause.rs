@@ -459,7 +459,7 @@ fn batch_health(controller: &mut Controller, api: &Server, config: &Bootstrap, n
     controller.drive_once().unwrap();
 }
 
-pub(super) const REVIEW_MODES: &[&str] = &["witness-before", "before-post", "paused-before-post", "retry-no-time", "incomplete-reporters", "lint-only-health", "reporter-overflow"];
+pub(super) const REVIEW_MODES: &[&str] = &["witness-before", "before-post", "paused-before-post", "retry-no-time", "incomplete-reporters", "lint-only-health", "reporter-overflow", "retargeted"];
 
 /// #854b r1: real Controller/adapter schedules requested by the review.
 pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
@@ -557,6 +557,26 @@ pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
             assert_eq!(controller.world().unwrap().nodes[0].phase,Phase::Queued,"r1.4: lint does not prove our failing identities healthy");
             assert_eq!(api.state.lock().unwrap().requeues,0);
             assert_eq!(controller.world().unwrap().nodes[0].credit.spent,0);
+        }
+        "retargeted" => {
+            {
+                let mut state=api.state.lock().unwrap();
+                state.pull["base"]["ref"]=json!("release");
+                state.cause_fixture.as_mut().unwrap().parsed=true;
+            }
+            let prior:Value=serde_json::from_str(include_str!("../fixtures/mergify/pq3221/prior-drafts.json")).unwrap();
+            let mut checks:Value=serde_json::from_str(include_str!("../fixtures/mergify/pq3221/prior-checks.json")).unwrap();
+            for c in checks["check_runs"].as_array_mut().unwrap() {if c["conclusion"]=="failure" {c["output"]["summary"]=json!("FAILED: tests/queue_cause.py::test_gate");}}
+            let changes=serde_json::from_value(json!({"repository":"owner/sandbox","issues":[],"comments":[],"labels":[],"pull_requests":prior,"check_runs":checks["check_runs"],"check_suites":[]})).unwrap();
+            for input in Translator::new(api.clients()).unwrap().catch_up(&config.repos[0],&changes,&controller.snapshot().unwrap()).unwrap() {ingress::apply(&mut controller,input).unwrap();}
+            failure(&mut controller,&api,&config);
+            let facts=queue_facts(&mut controller);
+            let failed=facts.iter().find(|f| f["evidence"].get("CiFailed").is_some()).unwrap();
+            assert!(failed["evidence"]["CiFailed"]["details"]["cause"].get("Environment").is_none(),"r1.5: old-destination draft cannot select Environment");
+            assert_eq!(failed["evidence"]["CiFailed"]["details"]["context"]["branch"],"release");
+            health(&mut controller,&api,&config,"2026-11-06T03:00:00Z","ffffffffffffffffffffffffffffffffffffffff");
+            controller.look_now().unwrap();controller.look_now().unwrap();
+            assert_eq!(api.state.lock().unwrap().requeues,0,"old destination merge cannot authorize our retargeted PR");
         }
         _ => panic!("unknown review schedule {mode}"),
     }
