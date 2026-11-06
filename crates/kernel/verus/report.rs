@@ -261,8 +261,10 @@ pub(in super::super) proof fn stop_agreement(r0: Seq<ReportEntry>, middle: Seq<R
     ensures agrees_except_ci_failed(r0, r1, node, before, after, cause, entries, ci_gap),
 {
     reveal(agrees_except_ci_failed);
+    assert((ci_gap || forwards(r0, middle, entries))
+        && stop_cause(middle, r1, node, before, after, cause));
     assert(exists|m: Seq<ReportEntry>| (ci_gap || forwards(r0, m, entries))
-        && stop_cause(m, r1, node, before, after, cause));
+        && #[trigger] stop_cause(m, r1, node, before, after, cause));
 }
 
 }

@@ -136,7 +136,7 @@ pub(super) closed spec fn agrees_except_ci_failed(r0: Seq<ReportEntry>, r1: Seq<
     node: NodeId, before: Phase, after: Phase, cause: StopCause,
     entries: Seq<ReportEntry>, ci_gap: bool) -> bool {
     exists|middle: Seq<ReportEntry>| (ci_gap || forwards(r0, middle, entries))
-        && stop_cause(middle, r1, node, before, after, cause)
+        && #[trigger] stop_cause(middle, r1, node, before, after, cause)
 }
 
 
@@ -350,6 +350,33 @@ impl StopCause {
             _ => if pr_closed { StopCause::PrClosed } else if user_stop { StopCause::UserStop }
                 else { match review { Some(kind) => StopCause::ReviewStop(kind), None => StopCause::UserStop } },
         }
+    }
+}
+}
+
+kernel_fn! {
+/// Fact reporting is isolated from the fact handlers' world frames.
+pub(super) fn record_fact(report: &mut Report, node: NodeId, before: Phase, after: Phase,
+    fact: Fact, ci: Option<FailedRoundCause>) -> (result: ()) [
+    ensures agrees_except_ci_failed(old(report).entries@, final(report).entries@,
+        node, before, after, stop_kind(after,
+            if fact is CiFailed { Some(ReviewStop::CiFailed) } else { None },
+            fact is PrClosedByPerson, false), Seq::empty(), fact is CiFailed),
+] {
+    kernel_snapshot! { r0 = report.entries@ }
+    if matches!(fact, Fact::CiFailed { .. }) {
+        if let Some(cause) = ci {
+            report.record_failed_round(node, cause);
+        }
+    }
+    kernel_snapshot! { middle = report.entries@ }
+    let review = if matches!(fact, Fact::CiFailed { .. }) { Some(ReviewStop::CiFailed) } else { None };
+    let cause = StopCause::from_phase(after, review, matches!(fact, Fact::PrClosedByPerson), false);
+    report.record_stop(node, before, after, cause);
+    kernel_proof! {
+        if !(fact is CiFailed) { lemmas::unchanged(r0@); }
+        lemmas::stop_agreement(r0@, middle@, report.entries@,
+            node, before, after, cause, Seq::empty(), fact is CiFailed);
     }
 }
 }

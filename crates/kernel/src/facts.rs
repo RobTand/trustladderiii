@@ -13,7 +13,8 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox, rep
         dependencies::edges_indexable(*old(w)), old(w).next_question < u64::MAX,
     ensures report::agrees_except_ci_failed(old(report).entries@, final(report).entries@,
             NodeId(i as u64), old(w).nodes@[i as int].phase, final(w).nodes@[i as int].phase,
-            report::stop_kind(final(w).nodes@[i as int].phase, final(w).nodes@[i as int].review_stop,
+            report::stop_kind(final(w).nodes@[i as int].phase,
+                if fact is CiFailed { Some(ReviewStop::CiFailed) } else { None },
                 fact is PrClosedByPerson, false), Seq::empty(), fact is CiFailed),
         (fact_progress_input(*old(w), i as int, fact)
             ==> progress_measure(*final(w)) < progress_measure(*old(w))
@@ -66,28 +67,19 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox, rep
 ] proof [reveal(dependencies::dependency_frame);] {
 
     kernel_snapshot! { before_fact = *w }
-    kernel_snapshot! { before_report = report.entries@ }
     let before_phase = w.nodes[i].phase;
     kernel_proof! {
         if fact_progress_input(*w, i as int, fact) { fact_witness_premises(*w, i as int, fact); }
     }
-    match fact {
-        Fact::DependencyRemove { kind, number } => w.remove_dependency(i, kind, number),
-        Fact::Dependency { target, status } => w.dependency_fact(i, target, status, out),
+    let ci = match fact {
+        Fact::DependencyRemove { kind, number } => { w.remove_dependency(i, kind, number); None },
+        Fact::Dependency { target, status } => { w.dependency_fact(i, target, status, out); None },
         Fact::PrMerged {
             head,
             checks_passed,
-        } => pr_merged(w, i, head, checks_passed, out),
-        _ => {
-            let failed = fact_transition(w, i, fact, out);
-            if matches!(fact, Fact::CiFailed { .. }) {
-                if let Some(cause) = failed {
-                    report.record_failed_round(NodeId(i as u64), cause);
-                }
-            }
-
-        }
-    }
+        } => { pr_merged(w, i, head, checks_passed, out); None },
+        _ => fact_transition(w, i, fact, out),
+    };
 
     kernel_proof! {
         if fact_progress_input(before_fact@, i as int, fact) {
@@ -98,17 +90,7 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox, rep
             }
         }
     }
-    kernel_snapshot! { before_stop_report = report.entries@ }
-    let after = w.nodes[i].phase;
-    let cause = StopCause::from_phase(after, w.nodes[i].review_stop,
-        matches!(fact, Fact::PrClosedByPerson), false);
-    report.record_stop(NodeId(i as u64), before_phase, after, cause);
-    kernel_proof! {
-        if !(fact is CiFailed) { report::lemmas::unchanged(before_report@); }
-        report::lemmas::stop_agreement(before_report@, before_stop_report@, report.entries@,
-            NodeId(i as u64), before_fact@.nodes@[i as int].phase, after, cause,
-            Seq::empty(), fact is CiFailed);
-    }
+    report::record_fact(report, NodeId(i as u64), before_phase, w.nodes[i].phase, fact, ci);
 
 }
 }
@@ -408,8 +390,7 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
     kernel_snapshot! { prepared_ci = *w }
     kernel_snapshot! { prepared_out = *out }
     if !infra {
-        let mut unused_report = Report::new();
-        failed_round(w, i, ReviewStop::CiFailed, out, &mut unused_report);
+        failed_round_unreported(w, i, ReviewStop::CiFailed, out);
 
         kernel_proof! {
             facts_ci_failed_lemmas::retry_frame(prepared_ci@, *w, i, prepared_out@, *out);
@@ -499,5 +480,22 @@ fn infrastructure_retry(m: &mut Node) -> (result: Option<bool>) [
         let needs_rob = m.run_incidents >= 2;
         Some(needs_rob)
     }
+}
+}
+
+kernel_fn! {
+/// Forward the retry state contract while discarding its local report.
+fn failed_round_unreported(w: &mut World, i: usize, step: ReviewStop,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+] {
+    let mut unused_report = Report::new();
+    failed_round(w, i, step, out, &mut unused_report);
 }
 }

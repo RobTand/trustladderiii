@@ -28,8 +28,8 @@ CASES = {
         'match world.counter_exhaustion() {',
         'match None::<CounterExhaustion> {',
         '//crates/kernel:verus_step_checked'),
-    'report_ci_failed_runtime': ('crates/kernel/src/facts.rs',
-        'report.record_failed_round(NodeId(i as u64), cause);',
+    'report_ci_failed_runtime': ('crates/kernel/src/report.rs',
+        'report.record_failed_round(node, cause);',
         'let _ = cause;',
         '//crates/kernel:test_test_step_report'),
     'audit_disagreement_asks': (
