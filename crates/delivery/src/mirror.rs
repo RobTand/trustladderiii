@@ -447,8 +447,11 @@ pub fn approval_decision(before: Approval, prior: bool, predecessor: bool, read:
     approval_dispatch(prior, predecessor, before.grant != Grant::None, read)
 }
 
-/// store:2182 excludes finals. Recovery is scheduled through existing durable
-/// watches/teardown, restart's closed-node look, and approval/message news rows.
+/// store:2182 excludes finals. Recovery needs a retained watch or teardown.
+/// Startup's look_now only visits allowances; cleanup_ended_looks deletes those
+/// for closed nodes (looks.rs:323-340,377-416,648-668,2073-2084). Restart alone
+/// therefore supplies no closed-node recovery event. R1's deterministic red
+/// records this production gap; approval/message news have separate entry paths.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -457,24 +460,20 @@ pub enum Recovery {
     Pending,
     Watch,
     Teardown,
-    ClosedNodeLook,
     ApprovalNews,
     MessageNews,
 }
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     out == if matches!(state, State::Intended | State::Sent | State::Uncertain | State::Cancelling) {Recovery::Pending}
-    else if closed_restart {Recovery::ClosedNodeLook}
     else if teardown {Recovery::Teardown}
     else if watch {Recovery::Watch} else {Recovery::None},
 ))]
-pub fn recovery(state: State, closed_restart: bool, teardown: bool, watch: bool) -> Recovery {
+pub fn recovery(state: State, teardown: bool, watch: bool) -> Recovery {
     if matches!(
         state,
         State::Intended | State::Sent | State::Uncertain | State::Cancelling
     ) {
         Recovery::Pending
-    } else if closed_restart {
-        Recovery::ClosedNodeLook
     } else if teardown {
         Recovery::Teardown
     } else if watch {

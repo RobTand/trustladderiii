@@ -18,29 +18,24 @@ fn reconciliation_agrees_with_quiescent_upstream(before: Upstream, held: bool)
     let after = mirror::committed(State::Uncertain,action,Ack::Confirmed);
     assert((after == State::Confirmed) == (before.copies > 0));
 }
-/// State-table :753 / F3: final keys leave pending_effects. A late create after
-/// cancellation is recovered through restart's CLOSED-NODE look and teardown,
-/// not through another pending-effect read of the final key. Success is
-/// conditional on the real look/teardown being run after quiescence. No network
-/// fairness or unconditional progress is claimed.
-fn late_landing_after_final_uses_closed_node_recovery() {
+/// State-table Effects late-landing paragraph / F3, R1 counterexample. Final
+/// keys leave pending_effects. Startup retires their closed-node allowances,
+/// so a create landing after teardown has no scheduled recovery. This witness
+/// records the missing guarantee, rather than assuming a closed-node look.
+/// Bound: one original request, one restart; the pending reconciliation lemma
+/// above remains valid. Full post-final Converges is BLOCKED on the owner fix.
+fn late_landing_after_final_exposes_missing_recovery() {
     let old=issue(Upstream {copies:0,incorrect:0,outstanding:0,repair_debt:0,found:false});
     let absent=read(lose_response(old),Class::Converges);
     assert(!absent.found);
     let cancelled=mirror::committed(State::Cancelling,mirror::Action::Cancel,Ack::Retryable);
     assert(cancelled == State::Cancelled);
-    let checked_1=mirror::recovery(cancelled,false,false,false);
+    let checked_1=mirror::recovery(cancelled,false,false);
     assert(checked_1 == mirror::Recovery::None);
     let zombie=land(restart(absent),Class::Converges,true,OnceLaws {atomic_original_key_dedup:false,stable_operation_identity:false});
-    // ingress::Sources::run invokes Controller::look_now at startup; the original
-    // Cancelled key stays final and cleanup is a distinct operation.
-    let scheduled=mirror::recovery(cancelled,true,false,false);
-    assert(scheduled == mirror::Recovery::ClosedNodeLook);
-    let looked=read(zombie,Class::Converges);
-    assert(looked.found);
-    let cleanup=issue(looked);
-    let clean=land_teardown(cleanup);
-    assert(clean.copies == 0 && clean.outstanding == 0);
+    let scheduled=mirror::recovery(cancelled,false,false);
+    assert(scheduled == mirror::Recovery::None);
+    assert(zombie.copies == 1 && zombie.outstanding == 0);
     assert(cancelled == State::Cancelled);
 }
 /// R1: history commits, input enqueue and consume are distinct crash cuts.
