@@ -193,7 +193,8 @@ def test_request236_generated_builds_fit_with_inspection_and_all_source_checks(r
         assert tree.generator == "python3 tools/bazel/build_files.py"
         for name in GENERATED_BUILDS:
             with pytest.raises(ValueError, match="Cannot hand-edit generated outputs"):
-                tree._check_write(name)
+                with tree.check_change(name, 'write'):
+                    pytest.fail("change gate admitted generated output")
 
 
 @pytest.mark.parametrize("declared", [0, 560])

@@ -2,7 +2,7 @@
 
 from tl3_workers.roles.base import Role
 from tl3_workers.prerequisites import check_prerequisites
-from tl3_workers.evidence import preflight
+from tl3_workers.evidence import check_contract, preflight
 from tl3_workers.ingest_retention import preserve_verbatim
 from tl3_workers.contracts import schema
 from tl3_workers.exploration import ExplorationBudget
@@ -19,6 +19,7 @@ BRIEF_CHARACTERS = next(
 def check_memory_ids(inputs, reply):
     if "forecast" in reply:
         raise ValueError("only code may supply a forecast")
+    check_contract(inputs, reply, role='ingest')
     preflight(inputs, reply)
     if reply["kind"] == "brief":
         check_prerequisites(inputs, reply)
