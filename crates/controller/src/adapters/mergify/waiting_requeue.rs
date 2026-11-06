@@ -615,10 +615,18 @@ impl Adapter {
     }
     /// #854b uses the same per-head command receipt as Q58. Human holds and
     /// pauses still fence dispatch; unknown POSTs are reconciled, never replayed.
-    pub(super) fn queue_hold_command(&mut self, delivery: &Delivery, snapshot: &Snapshot) -> Result<()> {
+    pub(super) fn queue_hold_command(
+        &mut self,
+        delivery: &Delivery,
+        snapshot: &Snapshot,
+    ) -> Result<()> {
         let github = &self.clients[&delivery.repository.installation];
-        let events = self.runtime.block_on(github.issue_events(&full_name(&delivery.repository), enqueue(delivery)?.0))?;
-        if self.human_hold_in_events(delivery, Some(snapshot), &events)? { return Ok(()); }
+        let events = self.runtime.block_on(
+            github.issue_events(&full_name(&delivery.repository), enqueue(delivery)?.0),
+        )?;
+        if self.human_hold_in_events(delivery, Some(snapshot), &events)? {
+            return Ok(());
+        }
         let _ = self.queue_command(delivery, None)?;
         Ok(())
     }
@@ -668,4 +676,35 @@ impl Adapter {
 }
 fn refused(class: &'static str) -> Reconciliation {
     Reconciliation::Found(Box::new(Completion::permanent(class)))
+}
+
+impl Adapter {
+    pub(super) fn retest_hold(&mut self, delivery: &Delivery) -> Result<()> {
+        let Some(snapshot) = self.snapshot()? else {
+            return Ok(());
+        };
+        let Some(head) = delivery.head_sha.as_deref() else {
+            return Ok(());
+        };
+        let Some(hold) = crate::queue_cause::held(&snapshot, delivery.node(), head)? else {
+            return Ok(());
+        };
+        if hold.repository != delivery.repository
+            || hold.number != delivery.pull_request.unwrap_or_default()
+            || hold.witness.is_none()
+        {
+            return Ok(());
+        }
+        let world = crate::snapshot::decode(&snapshot)?;
+        let current = &world.nodes[delivery.node().0 as usize];
+        if current.phase != tl3_kernel::Phase::Queued
+            || current.paused
+            || current.waiting_incident
+            || approved_head(&snapshot, current.approved)? != head
+        {
+            return Ok(());
+        }
+        self.queue_hold_command(delivery, &snapshot)?;
+        Ok(())
+    }
 }

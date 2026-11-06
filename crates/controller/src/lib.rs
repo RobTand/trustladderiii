@@ -3053,7 +3053,9 @@ impl Controller {
                 };
                 // A closed node takes only a merge it has not recorded. A later
                 // active enqueue must still be able to consume head evidence.
-                let Some(kind) = fact.evidence.kind() else { return Ok(None); };
+                let Some(kind) = fact.evidence.kind() else {
+                    return Ok(None);
+                };
                 if !queue::admit(kind, view) {
                     return Ok(None);
                 }
@@ -3119,25 +3121,29 @@ impl Controller {
                     }
                     _ => false,
                 };
-                let route =
-                    match queue::route(fact.evidence.kind().expect("queue evidence"), view, head_current, approved_head) {
-                        queue::Route::Record => core::Route::Record,
-                        queue::Route::Skip => core::Route::Skip,
-                        queue::Route::SetupIncident
-                        | queue::Route::MissingIncident
-                        | queue::Route::BlockedIncident
-                        | queue::Route::ClearIncident => core::Route::Incident,
-                        queue::Route::Kernel(kernel) => core::Route::Kernel(match kernel {
-                            queue::KernelFact::PrMerged { checks_passed } => {
-                                KernelFact::PrMerged { checks_passed }
-                            }
-                            queue::KernelFact::CiFailed { infra } => KernelFact::CiFailed { infra },
-                            queue::KernelFact::Conflict => KernelFact::Conflict,
-                            queue::KernelFact::PrDequeuedByPerson => KernelFact::PrDequeuedByPerson,
-                            queue::KernelFact::PrClosedByPerson => KernelFact::PrClosedByPerson,
-                            queue::KernelFact::PushByOther => KernelFact::PushByOther,
-                        }),
-                    };
+                let route = match queue::route(
+                    fact.evidence.kind().expect("queue evidence"),
+                    view,
+                    head_current,
+                    approved_head,
+                ) {
+                    queue::Route::Record => core::Route::Record,
+                    queue::Route::Skip => core::Route::Skip,
+                    queue::Route::SetupIncident
+                    | queue::Route::MissingIncident
+                    | queue::Route::BlockedIncident
+                    | queue::Route::ClearIncident => core::Route::Incident,
+                    queue::Route::Kernel(kernel) => core::Route::Kernel(match kernel {
+                        queue::KernelFact::PrMerged { checks_passed } => {
+                            KernelFact::PrMerged { checks_passed }
+                        }
+                        queue::KernelFact::CiFailed { infra } => KernelFact::CiFailed { infra },
+                        queue::KernelFact::Conflict => KernelFact::Conflict,
+                        queue::KernelFact::PrDequeuedByPerson => KernelFact::PrDequeuedByPerson,
+                        queue::KernelFact::PrClosedByPerson => KernelFact::PrClosedByPerson,
+                        queue::KernelFact::PushByOther => KernelFact::PushByOther,
+                    }),
+                };
                 let kind = match &fact.evidence {
                     Evidence::ChecksUnavailable { .. } => core::EvidenceKind::Setup,
                     Evidence::CheckMissing { .. } => core::EvidenceKind::Missing,

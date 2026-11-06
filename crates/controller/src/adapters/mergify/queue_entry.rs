@@ -109,6 +109,7 @@ pub(super) async fn failure(
         {
             // Only failed checks identified by active unmet conditions supply evidence.
             let mut details = ci_evidence::read_checks(github, &full_name(repo), &checks).await;
+            details.context = Some(queue_cause::context(&state.pull_request));
             details.checks.insert(
                 0,
                 crate::findings::CiFailure {

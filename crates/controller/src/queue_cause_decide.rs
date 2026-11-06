@@ -5,7 +5,11 @@ use vstd::prelude::*;
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Attribution { Change, Environment, Unattributed }
+pub enum Attribution {
+    Change,
+    Environment,
+    Unattributed,
+}
 
 /// Environment requires an independent, same-base fingerprint match. After the
 /// shared retry has been spent, every subsequent failure uses today's Q54 path.
@@ -17,16 +21,25 @@ pub enum Attribution { Change, Environment, Unattributed }
         (!retried && !matching && !positive_change) ==> (out == Attribution::Unattributed),
 ))]
 pub fn attribute(positive_change: bool, matching: bool, retried: bool) -> Attribution {
-    if retried { Attribution::Change }
-    else if matching { Attribution::Environment }
-    else if positive_change { Attribution::Change }
-    else { Attribution::Unattributed }
+    if retried {
+        Attribution::Change
+    } else if matching {
+        Attribution::Environment
+    } else if positive_change {
+        Attribution::Change
+    } else {
+        Attribution::Unattributed
+    }
 }
 
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HoldAction { Wait, Requeue, Incident }
+pub enum HoldAction {
+    Wait,
+    Requeue,
+    Incident,
+}
 
 /// The persisted command budget is consumed before sending. Q58 and #854 share
 /// it. At the existing allowance bound, a wait ends TL3-side, never via Rob.
@@ -39,7 +52,11 @@ pub enum HoldAction { Wait, Requeue, Incident }
         (!witness && expired) ==> (out == HoldAction::Incident),
 ))]
 pub fn hold(witness: bool, spent: bool, expired: bool) -> HoldAction {
-    if witness && !spent { HoldAction::Requeue }
-    else if expired { HoldAction::Incident }
-    else { HoldAction::Wait }
+    if witness && !spent {
+        HoldAction::Requeue
+    } else if expired {
+        HoldAction::Incident
+    } else {
+        HoldAction::Wait
+    }
 }

@@ -22,10 +22,10 @@ mod merge_closure;
 mod missing_checks;
 #[path = "mergify/ordering.rs"]
 mod ordering;
-#[path = "mergify/queue_entry.rs"]
-mod queue_entry;
 #[path = "mergify/queue_cause.rs"]
 mod queue_cause;
+#[path = "mergify/queue_entry.rs"]
+mod queue_entry;
 #[path = "mergify/requeue.rs"]
 mod requeue;
 mod support;
@@ -2783,7 +2783,10 @@ fn main() {
             queue_cause::scenario(&database.create(&format!("queue_cause_{mode}")), mode);
         }
         database.stop();
-        println!("{} Mergify scenarios passed; no skips; no live upstream calls", queue_cause::MODES.len());
+        println!(
+            "{} Mergify scenarios passed; no skips; no live upstream calls",
+            queue_cause::MODES.len()
+        );
         return;
     }
     if let Some(mode) = std::env::args()
@@ -3368,7 +3371,10 @@ fn main() {
         ));
     }
     for mode in queue_cause::MODES {
-        scenario!(queue_cause::scenario(&database.create(&format!("queue_cause_{mode}")), mode));
+        scenario!(queue_cause::scenario(
+            &database.create(&format!("queue_cause_{mode}")),
+            mode
+        ));
     }
     database.stop();
     waiting_requeue::run(Some((&mut shard, scenario_count)));

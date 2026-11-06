@@ -83,7 +83,9 @@ pub(crate) fn bounded(mut details: QueueCiEvidence) -> QueueCiEvidence {
         test.message = safe(&test.message, findings::MAX_MESSAGE_CHARS.min(remaining));
         remaining = remaining.saturating_sub(test.message.chars().count());
     }
-    if !details.complete { details.fingerprint = None; }
+    if !details.complete {
+        details.fingerprint = None;
+    }
     details
 }
 
@@ -196,7 +198,11 @@ pub(super) async fn read_checks(
             .rev()
             .collect::<String>();
         for test in parsed {
-            fingerprint_parts.push((check.app.as_ref().map(|app| app.id), check.name.clone(), test.test.clone()));
+            fingerprint_parts.push((
+                check.app.as_ref().map(|app| app.id),
+                check.name.clone(),
+                test.test.clone(),
+            ));
             if seen.insert(test.test.clone()) {
                 details.failed_tests.push(test);
             }
@@ -231,7 +237,8 @@ pub(super) async fn read_queue(
     let mut details = match draft {
         Some(number) => match github.pull_request(repo, number).await {
             Ok(pull) if is_merge_queue_pr(&pull) => {
-                context = queue_cause::batch_context(&pull).filter(|context| context.members.contains(&state.pull_request.number));
+                context = queue_cause::batch_context(&pull)
+                    .filter(|context| context.members.contains(&state.pull_request.number));
                 match github.check_runs(repo, &pull.head.sha).await {
                     Ok(checks) => read_checks(github, repo, &checks).await,
                     Err(_) => QueueCiEvidence::default(),

@@ -6,6 +6,7 @@ pub use mergify_io::{Error, Result, decode_stored, executor};
 pub use mergify_io::{evidence, snapshot};
 pub use tl3_controller::looks;
 pub use tl3_controller::pr_body;
+pub use tl3_controller::queue_cause;
 pub use tl3_controller::{Repository, adoption, input_errors};
 pub mod findings {
     pub use tl3_controller::findings::*;

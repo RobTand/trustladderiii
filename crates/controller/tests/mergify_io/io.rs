@@ -287,9 +287,25 @@ fn run(schedule: &Schedule, entry: Entry, new: bool, cut: Option<Cut>) -> Run {
         }
     })
 }
+// #854b adds source-bound attribution metadata. The frozen extraction reference
+// predates these fields. Compare every prior field and every I/O/write byte;
+// Controller scenarios separately assert the new metadata and changed routes.
+fn prior_evidence(value: &mut Value) {
+    match value {
+        Value::Array(values) => for value in values { prior_evidence(value); },
+        Value::Object(fields) => {
+            if let Some(details) = fields.get_mut("CiFailed").and_then(|value| value.get_mut("details")).and_then(Value::as_object_mut) {
+                details.remove("context"); details.remove("fingerprint");
+            }
+            for value in fields.values_mut() { prior_evidence(value); }
+        }
+        _ => {}
+    }
+}
+fn prior_run(mut run: Run) -> Run { prior_evidence(&mut run.result); run }
 pub(super) fn compare(schedule: &Schedule, entry: Entry) -> ::std::result::Result<usize, String> {
-    let old = run(schedule, entry, false, None);
-    let new = run(schedule, entry, true, None);
+    let old = prior_run(run(schedule, entry, false, None));
+    let new = prior_run(run(schedule, entry, true, None));
     if old != new {
         return Err(format!(
             "I/O schedule divergence\nschedule={schedule:?}\nentry={entry:?}\nold outcome={}\nnew outcome={}\nold calls={:?}\nnew calls={:?}",
@@ -309,8 +325,8 @@ pub(super) fn compare(schedule: &Schedule, entry: Entry) -> ::std::result::Resul
     for write in 0..writes {
         for after in [false, true] {
             let cut = Some(Cut { write, after });
-            let old = run(schedule, entry, false, cut);
-            let new = run(schedule, entry, true, cut);
+            let old = prior_run(run(schedule, entry, false, cut));
+            let new = prior_run(run(schedule, entry, true, cut));
             if old != new {
                 return Err(format!(
                     "crash boundary divergence: {schedule:?}, {entry:?}, {cut:?}\nold={old:#?}\nnew={new:#?}"
@@ -1409,8 +1425,8 @@ pub(super) mod c1_payloads {
         p: &Payloads,
         execute: impl Fn(bool, &Delivery) -> Value,
     ) -> Report {
-        let old = record(p, false, None, &execute);
-        let new = record(p, true, None, &execute);
+        let old = prior_run(record(p, false, None, &execute));
+        let new = prior_run(record(p, true, None, &execute));
         assert_eq!(old, new, "C1 payload divergence: {p:?}");
         let mut receipt_crashes = 0;
         let mut post_seen = false;
@@ -1431,8 +1447,8 @@ pub(super) mod c1_payloads {
             }
             for after in [false, true] {
                 let cut = Some(Cut { write, after });
-                let a = record(p, false, cut, &execute);
-                let b = record(p, true, cut, &execute);
+                let a = prior_run(record(p, false, cut, &execute));
+                let b = prior_run(record(p, true, cut, &execute));
                 assert_eq!(a, b, "C1 payload crash divergence: {p:?}, {cut:?}");
                 if post_seen && call.op == "file.rename" && call.args.ends_with(".reruns") {
                     assert_eq!(a.result, json!("crash"));

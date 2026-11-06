@@ -1,7 +1,7 @@
 pub(crate) mod ci_evidence;
 mod head_checks;
-mod queue_entry;
 mod queue_cause;
+mod queue_entry;
 mod waiting_requeue;
 pub(crate) use waiting_requeue::PROGRESS_PREFIX as REQUEUE_PROGRESS_PREFIX;
 
@@ -284,7 +284,12 @@ impl QueueFact {
     }
     pub(crate) fn identity(&self) -> String {
         let mut evidence = match &self.evidence {
-            Evidence::Gate(gate) => format!("gate:{}:{}:{}", gate.context.base, gate.context.batch.as_deref().unwrap_or("main"), gate.at),
+            Evidence::Gate(gate) => format!(
+                "gate:{}:{}:{}",
+                gate.context.base,
+                gate.context.batch.as_deref().unwrap_or("main"),
+                gate.at
+            ),
             Evidence::ChecksUnavailable { permissions } => {
                 let mut gaps = permissions.clone();
                 gaps.sort();
