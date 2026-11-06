@@ -49,9 +49,11 @@ pub(super) fn bounded(reader: impl Read) -> std::io::Result<Vec<u8>> {
 impl Flux {
     fn ensure_generation(&self) -> Result<()> {
         let Some((run, expected)) = self.options.instance_generation.split_once('/') else { return Ok(()); };
-        let output = Command::new("/usr/bin/systemctl").env_clear().envs(&self.options.environment)
-            .args(["--user", "show", &format!("flux-vanilla-{run}.service"), "-p", "InvocationID", "--value"]).output()?;
-        if !output.status.success() || output.stdout.len() > 128 || std::str::from_utf8(&output.stdout).ok().map(str::trim) != Some(expected) {
+        let mut command = Command::new("/usr/bin/systemctl");
+        command.env_clear().envs(&self.options.environment)
+            .args(["--user", "show", &format!("flux-vanilla-{run}.service"), "-p", "InvocationID", "--value"]);
+        let output = self.capture_command(command, None)?;
+        if !output.success || output.stdout.len() > 128 || std::str::from_utf8(&output.stdout).ok().map(str::trim) != Some(expected) {
             return Err(BackendError::unknown("rank-zero systemd InvocationID unavailable or changed; retained IDs remain unknown"));
         }
         Ok(())
@@ -66,14 +68,44 @@ impl Flux {
     }
     pub(super) fn capture_owned(&self, args: &[String]) -> Result<Captured> {
         self.ensure_generation()?;
-        let mut child = self.command().args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
-        let stdout = child.stdout.take().ok_or_else(|| BackendError::unknown("native stdout unavailable"))?;
-        let stderr = child.stderr.take().ok_or_else(|| BackendError::unknown("native stderr unavailable"))?;
+        let mut command = self.command();
+        command.args(args);
+        self.capture_command(command, None)
+    }
+
+    pub(super) fn capture_command(&self, mut command: Command, input: Option<Vec<u8>>) -> Result<Captured> {
+        use std::os::unix::process::CommandExt;
+        use std::io::Write;
+        use std::time::{Duration, Instant};
+        if self.stop.is_stopped() { return Err(BackendError::unknown("local observation stopped")); }
+        let child = command.process_group(0).stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
+            .stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+        let mut observer = Observer::new(child, self.stop.clone());
+        let stdin = observer.child.stdin.take();
+        let writer = std::thread::spawn(move || -> std::io::Result<()> {
+            if let (Some(mut pipe), Some(input)) = (stdin, input) { pipe.write_all(&input)?; }
+            Ok(())
+        });
+        let stdout = observer.child.stdout.take().ok_or_else(|| BackendError::unknown("native stdout unavailable"))?;
+        let stderr = observer.child.stderr.take().ok_or_else(|| BackendError::unknown("native stderr unavailable"))?;
         let stdout = std::thread::spawn(move || bounded(stdout));
         let stderr = std::thread::spawn(move || bounded(stderr));
-        let status = child.wait()?;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let status = loop {
+            if self.stop.is_stopped() || Instant::now() >= deadline { break None; }
+            match observer.child.try_wait() {
+                Ok(Some(status)) => break Some(status),
+                Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+                Err(_) => break None,
+            }
+        };
+        // Kill any local descendants still holding pipes, then reap before joining readers.
+        drop(observer);
+        let written = writer.join().map_err(|_| BackendError::unknown("native stdin writer stopped"))?;
         let stdout = stdout.join().map_err(|_| BackendError::unknown("native stdout reader stopped"))??;
         let stderr = stderr.join().map_err(|_| BackendError::unknown("native stderr reader stopped"))??;
+        written?;
+        let status = status.ok_or_else(|| BackendError::unknown("local native subprocess stopped or deadline expired; execution remains unknown"))?;
         Ok(Captured { stdout, stderr, success: status.success(), status: ProcessStatus::new(status) })
     }
     pub(super) fn job_environment(&self, record: &Record) -> Result<std::collections::BTreeMap<String, String>> {
@@ -122,19 +154,9 @@ impl Flux {
     }
 
     pub(super) fn matches(&self, record: &Record, spec: &Jobspec) -> Result<bool> {
-        let mut command = vec![record.request.runner.executable.to_string_lossy().into_owned()];
-        command.extend(record.request.runner.arguments.clone());
-        Ok(spec.attributes.system.job.name == record.intent.correlation
-            && spec.attributes.system.cwd == record.request.tree.root
-            && spec.attributes.system.environment == self.job_environment(record)?
-            && spec.tasks.len() == 1 && spec.tasks[0].command == command
-            && spec.attributes.user.delivery_key == record.intent.correlation
-            && spec.attributes.user.request_digest == record.intent.request_digest
-            && spec.attributes.user.tree_digest == record.request.tree.input_digest
-            && spec.attributes.user.runner_digest == record.request.runner.executable_digest
-            && spec.attributes.user.runtime_digest == record.request.runtime.manifest_digest
-            && spec.attributes.system.shell.options.output.stdout.path == record.intent.output_dir.join("stdout")
-            && spec.attributes.system.shell.options.output.stderr.path == record.intent.output_dir.join("stderr"))
+        let reference = record.jobspec.as_ref().ok_or_else(|| BackendError::unknown("original jobspec was not retained before dispatch"))?;
+        let retained: Jobspec = serde_json::from_slice(&checked_blob(reference, &record.intent.output_dir)?)?;
+        Ok(*spec == retained)
     }
 }
 
@@ -142,32 +164,10 @@ impl Flux {
 pub(super) struct Jobs { pub jobs: Vec<Job> }
 #[derive(Deserialize)]
 pub(super) struct Job { pub jobid: String, pub name: String }
-#[derive(Deserialize)]
-pub(super) struct Jobspec { pub attributes: Attributes, pub tasks: Vec<Task> }
-#[derive(Deserialize)]
-pub(super) struct Task { pub command: Vec<String> }
-#[derive(Deserialize)]
-pub(super) struct Attributes { pub system: System, pub user: User }
-#[derive(Deserialize)]
-pub(super) struct User {
-    pub delivery_key: String, pub request_digest: String, pub tree_digest: String,
-    pub runner_digest: String, pub runtime_digest: String,
-}
-#[derive(Deserialize)]
-pub(super) struct System {
-    pub cwd: std::path::PathBuf, pub environment: std::collections::BTreeMap<String, String>,
-    pub job: JobName, pub shell: Shell,
-}
-#[derive(Deserialize)]
-pub(super) struct JobName { pub name: String }
-#[derive(Deserialize)]
-pub(super) struct Shell { pub options: ShellOptions }
-#[derive(Deserialize)]
-pub(super) struct ShellOptions { pub output: OutputOptions }
-#[derive(Deserialize)]
-pub(super) struct OutputOptions { pub stdout: OutputPath, pub stderr: OutputPath }
-#[derive(Deserialize)]
-pub(super) struct OutputPath { pub path: PathBuf }
+/// Exact native original, including resources, placement constraints, duration and task shape.
+#[derive(Deserialize, Serialize, PartialEq, Eq)]
+#[serde(transparent)]
+pub(super) struct Jobspec(serde_json::Value);
 
 #[derive(Deserialize)]
 struct NativeEvent {

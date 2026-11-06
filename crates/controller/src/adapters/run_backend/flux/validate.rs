@@ -72,6 +72,13 @@ pub(super) fn request(request: &Request, intent: &SubmissionIntent, options: &Op
     if request.runner.arguments.iter().any(|s| s.len() > 16_384 || s.chars().any(char::is_control) || safe(s).map_or(true, |v| v != *s)) {
         return Err(BackendError::invalid("invalid trusted-runner arguments"));
     }
+    if let Some(cleanup) = &request.runtime.cleanup {
+        if !absolute(&cleanup.executable) || !cleanup.executable.starts_with("/mnt/shared")
+            || !hex(&cleanup.executable_digest, 64) || cleanup.arguments.len() > 128
+            || cleanup.arguments.iter().any(|argument| argument.len() > 4096 || safe(argument).map_or(true, |value| value != *argument)) {
+            return Err(BackendError::invalid("independent cleanup must be an immutable trusted shared executable"));
+        }
+    }
     match &request.runtime.runtime {
         ExecutionRuntime::Native { interpreter } => {
             if !absolute(interpreter) { return Err(BackendError::invalid("explicit native interpreter required")); }
@@ -80,7 +87,8 @@ pub(super) fn request(request: &Request, intent: &SubmissionIntent, options: &Op
             let digest = image.rsplit_once("sha256:").map(|(_, digest)| digest);
             if !absolute(executable) || !absolute(trusted_root) || !absolute(interpreter) || !trusted_root.starts_with("/mnt/shared")
                 || !digest.is_some_and(|digest| hex(digest, 64)) || request.runtime.expected_image.as_ref() != Some(image)
-                || !request.environment.contains_key("HOME") || !request.environment.contains_key("XDG_RUNTIME_DIR") {
+                || request.environment.get("HOME").map(String::as_str) != Some("/home/rob") || request.environment.get("XDG_RUNTIME_DIR").map(String::as_str) != Some("/run/user/1000")
+                || request.runtime.image.is_none() || request.runtime.cleanup.is_none() {
                 return Err(BackendError::invalid("rootless Podman requires pinned image, explicit executable/interpreter and shared trusted inputs"));
             }
             let Some(host) = &request.runtime.host_dependency else { return Err(BackendError::invalid("rootless image/architecture availability requires a justified eligible host")); };
@@ -116,8 +124,33 @@ pub(super) fn preflight(request: &Request) -> Result<()> {
     let preflight: RuntimePreflight = serde_json::from_slice(&checked_blob(&request.runtime.preflight, Path::new("/mnt/shared"))?)?;
     if preflight.schema != "tl3.runtime_preflight.v1" || preflight.architecture != request.runtime.architecture
         || preflight.image_identity != request.runtime.expected_image || !preflight.identity_verified
+        || preflight.image != request.runtime.image
         || (matches!(request.runtime.runtime, ExecutionRuntime::RootlessPodman { .. }) && !preflight.image_present) {
         return Err(BackendError::invalid("runtime/image identity or architecture is missing or unqualified"));
+    }
+    if let Some(cleanup) = &request.runtime.cleanup {
+        if digest(&read(&cleanup.executable)?) != cleanup.executable_digest || !std::fs::metadata(&cleanup.executable)?.permissions().readonly() {
+            return Err(BackendError::invalid("trusted cleanup executable changed or is mutable"));
+        }
+    }
+    if let ExecutionRuntime::RootlessPodman { mode, .. } = &request.runtime.runtime {
+        if preflight.mode != Some(*mode) || match mode {
+            ContainerMode::InJob => !preflight.no_cgroups_supported || !preflight.init_available,
+            ContainerMode::OwnScope => !preflight.user_scope_supported,
+        } { return Err(BackendError::invalid("selected container mode prerequisites are missing; no fallback")); }
+        let image = request.runtime.image.as_ref().ok_or_else(|| BackendError::invalid("prepared image identity missing"))?;
+        if request.runtime.expected_image.as_ref() != Some(&image.reference) || image.platform != "linux/amd64"
+            || !image.reference.ends_with(&format!("@{}", image.index_digest.as_ref().unwrap_or(&image.manifest_digest)))
+            || [&image.manifest_digest, &image.config_digest].iter().any(|pin| !pin.strip_prefix("sha256:").is_some_and(|hash| hex(hash, 64))) {
+            return Err(BackendError::invalid("image index/manifest/config/platform identity mismatch"));
+        }
+        let inventory: serde_json::Value = serde_json::from_slice(&checked_blob(&image.inventory, Path::new("/mnt/shared"))?)?;
+        let profiles = inventory.get("profiles").and_then(serde_json::Value::as_array).ok_or_else(|| BackendError::invalid("ops inventory profiles unavailable"))?;
+        let matches: Vec<_> = profiles.iter().filter(|profile| profile.get("profile").and_then(serde_json::Value::as_str) == Some(image.profile.as_str())).collect();
+        if matches.len() != 1 || [("registry_ref", &image.reference), ("manifest_digest", &image.manifest_digest), ("config_digest", &image.config_digest), ("platform", &image.platform)].iter()
+            .any(|(key, expected)| matches[0].get(*key).and_then(serde_json::Value::as_str) != Some(expected.as_str())) {
+            return Err(BackendError::invalid("prepared image identity differs from digest-checked ops inventory"));
+        }
     }
     if let ExecutionRuntime::RootlessPodman { trusted_root, .. } = &request.runtime.runtime
         && !trusted_root.join("runner.py").is_file() {

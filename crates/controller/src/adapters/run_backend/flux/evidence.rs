@@ -40,6 +40,7 @@ pub(super) fn runtime_binding(record: &Record, facts: &RuntimeBindingInput) -> R
         if mapped != cores || resources::idset(&facts.host.allowed_cpus)? != pus {
             return Err(BackendError::invalid("host CPU affinity does not match mapped native grant"));
         }
+        if facts.host.host != "dl380g10" || facts.host.rank != 0 { return Err(BackendError::invalid("runtime host differs from first-cut placement")); }
         let cgroup = cgroup_path(&facts.host.cgroup)?;
         if let ExecutionRuntime::RootlessPodman { mode, memory_limit_bytes, .. } = record.request.runtime.runtime {
             let container = facts.container.as_ref().ok_or_else(|| BackendError::invalid("inside-container affinity/cgroup evidence missing"))?;
@@ -56,7 +57,9 @@ pub(super) fn runtime_binding(record: &Record, facts: &RuntimeBindingInput) -> R
                 ContainerMode::OwnScope => {
                     let scope = facts.container_scope.as_ref().ok_or_else(|| BackendError::invalid("own_scope unit/cpuset/memory evidence missing"))?;
                     let prefix = format!("tl3-{}-{}", record.intent.correlation, binding.id.job);
-                    if !scope.unit.starts_with(&prefix) || !scope.unit.ends_with(".scope") || !token(&scope.unit)
+                    let owned = record.runtime_ownership.as_ref().and_then(|ownership| ownership.container.as_ref()).ok_or_else(|| BackendError::invalid("container ownership not retained"))?;
+                    let retained_scope = owned.scope.as_ref().ok_or_else(|| BackendError::invalid("scope ownership not retained"))?;
+                    if scope.container_id != owned.id || retained_scope.unit != scope.unit || retained_scope.invocation_id != scope.invocation_id || retained_scope.cgroup != child || !scope.unit.starts_with(&prefix) || !scope.unit.ends_with(".scope") || !token(&scope.unit)
                         || !hex(&scope.invocation_id, 32) || cgroup_path(&scope.cgroup)? != child || child == cgroup
                         || resources::idset(&scope.cpuset_effective)? != pus
                         || scope.memory_max != memory_limit_bytes.map(|bytes| bytes.get()) || scope.memory_swap_max != Some(0) {
@@ -138,7 +141,7 @@ impl Flux {
         let log = safe(&String::from_utf8_lossy(&raw[..raw.len().min(65_536)]))?;
         let retained = blob(&out.join("retained-stdout.txt"), log.as_bytes())?;
         blob(&out.join("stdout-digests.json"), &serde_json::to_vec(&serde_json::json!({"raw":input.stdout,"retained":retained,"truncated":raw.len()>65_536}))?)?;
-        let cleanup_complete = input.cleanup.as_ref().is_some_and(|reference| cleanup_stopped(&record, &input.run, reference).unwrap_or(false));
+        let cleanup_complete = input.cleanup.as_ref().is_some_and(|reference| self.retain_cleanup(owner, reference).is_ok_and(|result| result.stopped));
         let report = RunnerReport {
             schema: "tl3.runner_report.v1".into(), run: input.run.clone(), request_digest: record.intent.request_digest.clone(), tree: record.request.tree.clone(),
             runner_digest: record.request.runner.executable_digest.clone(), runtime_digest: record.request.runtime.manifest_digest.clone(), suite: record.request.suite.clone(),
@@ -155,6 +158,8 @@ impl Flux {
         let collected = (|| -> Result<(Vec<BlobRef>, Option<RunnerReport>)> {
             let out = &record.intent.output_dir;
             let mut evidence = vec![];
+            if let Some(spec) = &record.jobspec { checked_blob(spec, out)?; evidence.push(spec.clone()); }
+            if let Some(cleanup) = &record.cleanup_evidence { checked_blob(cleanup, out)?; evidence.push(cleanup.clone()); }
             evidence.push(blob(&out.join("events.json"), &serde_json::to_vec(&record.events)?)?);
             let history = self.capture(&["job", "eventlog", "--format=json", &binding.id.job])?;
             if !history.success { return Err(BackendError::unknown("retained native eventlog unavailable")); }
@@ -204,9 +209,14 @@ impl Flux {
             Ok((evidence, report))
         })();
         let Ok((evidence, report)) = collected else {
+            self.mark_cleanup_debt(&record)?;
             return Ok(Observation::Unknown { binding: Some(binding), reason: "terminal observation has incomplete, conflicting or unavailable evidence".into() });
         };
-        let Some((ending, reason)) = classify(&record, report.as_ref()) else {
+        let record = self.journal.load(owner)?;
+        let cleanup_complete = record.cleanup_evidence.as_ref().is_some_and(|reference| cleanup_stopped(&record, &binding.id, reference).unwrap_or(false))
+            || report.as_ref().is_some_and(|report| report.cleanup_complete);
+        let Some((ending, reason)) = classify(&record, report.as_ref(), cleanup_complete) else {
+            self.mark_cleanup_debt(&record)?;
             return Ok(Observation::Unknown { binding: Some(binding), reason: "native completion lacks semantic report or authoritative cleanup/loss evidence".into() });
         };
         let report_ref = if report.is_some() {
@@ -226,6 +236,7 @@ impl Flux {
             || receipt.intent != record.intent || receipt.binding != record.binding
             || receipt.tree != record.request.tree || receipt.runner != record.request.runner
             || receipt.runtime != record.request.runtime || receipt.reservation != record.request.reservation
+            || receipt.runtime_ownership != record.runtime_ownership || receipt.cleanup != record.cleanup_evidence
             || receipt.ending != terminal.ending || receipt.reason != terminal.reason || receipt.native_events != record.events {
             return Err(invalid());
         }
@@ -301,24 +312,10 @@ impl Flux {
 }
 
 fn cleanup_stopped(record: &Record, run: &BackendId, reference: &BlobRef) -> Result<bool> {
-    let facts: CleanupFacts = serde_json::from_slice(&checked_blob(reference, &record.intent.output_dir)?)?;
-    if facts.schema != "tl3.cleanup_facts.v1" || facts.run != *run || facts.request_digest != record.intent.request_digest
-        || facts.scopes.is_empty() || facts.scopes.len() > 1024 { return Ok(false); }
-    let mut identities = BTreeSet::new();
-    let mut process = false;
-    let mut container = false;
-    for scope in facts.scopes {
-        if scope.identity.is_empty() || scope.identity.len() > 4096 || safe(&scope.identity)? != scope.identity
-            || !identities.insert((format!("{:?}", scope.kind), scope.identity)) || scope.present || scope.running == Some(true) { return Ok(false); }
-        match scope.kind {
-            OwnedScopeKind::ProcessGroup => { if scope.reaped_status.is_none() { return Ok(false); } process = true; }
-            OwnedScopeKind::PodmanContainer => container = true,
-        }
-    }
-    Ok(process && (!matches!(record.request.runtime.runtime, ExecutionRuntime::RootlessPodman { .. }) || container))
+    super::cleanup::stopped(record, run, reference)
 }
 
-fn classify(record: &Record, report: Option<&RunnerReport>) -> Option<(Ending, &'static str)> {
+fn classify(record: &Record, report: Option<&RunnerReport>, cleanup_complete: bool) -> Option<(Ending, &'static str)> {
     if !record.events.iter().any(|event| matches!(event.fact, NativeFact::Clean)) { return None; }
     let started = record.events.iter().position(|event| matches!(event.fact, NativeFact::Start));
     let finish = record.events.iter().enumerate().find_map(|(index, event)| match &event.fact {
@@ -326,16 +323,15 @@ fn classify(record: &Record, report: Option<&RunnerReport>) -> Option<(Ending, &
     });
     let cancel = record.events.iter().position(|event| matches!(&event.fact, NativeFact::Exception { exception_type, severity: 0, .. } if exception_type == "cancel"));
     let fatal = record.events.iter().position(|event| matches!(&event.fact, NativeFact::Exception { exception_type, severity: 0, .. } if exception_type != "cancel"));
+    if !cleanup_complete { return None; }
     if fatal.is_some() {
-        if !report.is_some_and(|report| report.cleanup_complete) { return None; }
         return Some((Ending::InfraLost, "authoritative native fatal exception; preserve raw wait status and partial output"));
     }
-    let report = report?;
-    if !report.cleanup_complete { return None; }
     // A complete finish/report before a later cancellation preserves the original outcome.
     if cancel.is_some() && !finish.is_some_and(|(finish, _)| cancel.is_some_and(|cancel| finish < cancel)) {
         return record.cancel_requested.then_some((Ending::Cancelled, "cancel intent, native cancel exception, clean and trusted stopped-scope evidence"));
     }
+    let report = report?;
     if report.outcome == ReportOutcome::RefusedBeforeTests && report.tests_started == 0 {
         return Some((Ending::Refused, "trusted wrapper refused before tests with terminal cleanup"));
     }

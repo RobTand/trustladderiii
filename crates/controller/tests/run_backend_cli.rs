@@ -79,7 +79,7 @@ impl Fixture {
         immutable(&p.join("runner"), b"#!/bin/sh\nexit 0\n", true);
         immutable(&p.join("runner.json"), b"{\"runner\":1}", false);
         immutable(&p.join("runtime.json"), b"{\"runtime\":1}", false);
-        immutable(&p.join("preflight.json"), &serde_json::to_vec(&RuntimePreflight { schema: "tl3.runtime_preflight.v1".into(), architecture: "x86_64".into(), image_identity: None, image_present: false, identity_verified: true }).unwrap(), false);
+        immutable(&p.join("preflight.json"), &serde_json::to_vec(&RuntimePreflight { schema: "tl3.runtime_preflight.v1".into(), architecture: "x86_64".into(), image_identity: None, image_present: false, identity_verified: true, image: None, mode: None, no_cgroups_supported: false, init_available: false, user_scope_supported: false }).unwrap(), false);
         let preflight = fs::read(p.join("preflight.json")).unwrap();
         let membership = serde_json::to_vec(&Membership { schema: "tl3.membership.v1".into(), cases: vec![CaseIdentity { target: "unit".into(), name: "case".into() }] }).unwrap();
         let request = Request {
@@ -94,7 +94,7 @@ impl Fixture {
             runtime: RuntimeIdentity { manifest: p.join("runtime.json"), manifest_digest: digest(b"{\"runtime\":1}"),
                 runtime: ExecutionRuntime::Native { interpreter: "/usr/bin/python3".into() }, architecture: "x86_64".into(), expected_image: None,
                 preflight: BlobRef { sha256: digest(&preflight), bytes: preflight.len() as u64, path: p.join("preflight.json") },
-                host_dependency: Some(HostDependency { host: "dl380g10".into(), reason: "fixture of the provisioned amd64 image dependency".into() }) },
+                host_dependency: Some(HostDependency { host: "dl380g10".into(), reason: "fixture of the provisioned amd64 image dependency".into() }), image: None, cleanup: None },
             scratch_root: "/var/tmp/flux-vanilla".into(), no_progress_seconds: None, walltime_seconds: 60.try_into().unwrap(),
         };
         let intent = SubmissionIntent { backend: BackendTag::Flux, instance: "fixture-generation".into(), uri: "local:///fixture".into(), owner: "fixture-owner".into(),
@@ -110,23 +110,33 @@ mode=$(cat "$fixture/mode")
 case "$1" in
 submit)
     printf '%s\n' "$@" > "$fixture/args"
-    if [ "$mode" = unknown ]; then exit 1; fi
-    printf 'fABC\n';;
-jobs) cat "$fixture/jobs.json";;
+    /usr/bin/python3 "$fixture/jobspec.py" "$fixture" "$@";;
+jobs) if [ "$mode" = quiet-jobs ]; then touch "$fixture/watching"; exec /bin/sleep 300; fi; cat "$fixture/jobs.json";;
 cancel) printf 'acknowledged\n';;
 resource)
     case "$3" in --states=all) cat "$fixture/all.json";; --states=free) cat "$fixture/free.json";; *) exit 9;; esac;;
 job)
     case "$2" in
+    submit) if [ "$mode" = unknown ]; then exit 1; fi; printf 'fABC\n';;
     info)
+        if [ "$mode" = quiet-info ]; then touch "$fixture/watching"; exec /bin/sleep 300; fi
         if [ "$3" = --original ]; then cat "$fixture/jobspec.json"; else cat "$fixture/all.json"; fi;;
     eventlog)
         if [ "$mode" = quiet ]; then touch "$fixture/watching"; exec /bin/sleep 300; fi
         if [ "$mode" = interrupted ]; then head -n 1 "$fixture/events"; exit 1; fi
         cat "$fixture/events";;
-    status) printf '{"result":1}\n';;
+    status) if [ "$mode" = quiet-collect ]; then touch "$fixture/watching"; exec /bin/sleep 300; fi; printf '{"result":1}\n';;
     *) exit 9;; esac;;
 *) exit 9;; esac
+"#).unwrap();
+        fs::write(p.join("jobspec.py"), r#"import json,sys,pathlib
+root=pathlib.Path(sys.argv[1]);args=sys.argv[2:]
+def option(prefix): return next(item[len(prefix):] for item in args if item.startswith(prefix))
+environment=dict(item[6:].split('=',1) for item in args if item.startswith('--env=') and '=' in item[6:])
+user=dict(item[15:].split('=',1) for item in args if item.startswith('--setattr=user.'))
+runner=next(i for i,item in enumerate(args) if not item.startswith('-') and item.startswith('/mnt/shared/'))
+spec={'tasks':[{'command':args[runner:]}], 'resources':[{'type':'core','count':int(args[args.index('-c')+1])}], 'attributes':{'user':user,'system':{'duration':option('-t') if any(item.startswith('-t=') for item in args) else args[args.index('-t')+1], 'constraints':option('--requires='), 'cwd':option('--cwd='),'environment':environment,'job':{'name':option('--job-name=')}, 'shell':{'options':{'output':{'stdout':{'path':option('--output=')},'stderr':{'path':option('--error=')}}}}}}}
+text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
 "#).unwrap();
         fs::set_permissions(&native, fs::Permissions::from_mode(0o555)).unwrap();
         fs::write(p.join("mode"), "normal").unwrap();
@@ -151,31 +161,27 @@ job)
     fn submit(&self) -> Value {
         let frames = self.call(json!({"op":"submit","request":self.request,"intent":self.intent}));
         assert_eq!(frames.last().unwrap()["kind"], "result", "{frames:?}");
-        if self.root.path().join("args").exists() { self.jobspec(); }
         frames.last().unwrap()["result"]["submission"].clone()
     }
-    fn jobspec(&self) {
-        let args = fs::read_to_string(self.root.path().join("args")).unwrap();
-        let args: Vec<_> = args.lines().collect();
-        let mut env = serde_json::Map::new();
-        let mut user = serde_json::Map::new();
-        for arg in &args {
-            if let Some(item) = arg.strip_prefix("--env=") && let Some((key, value)) = item.split_once('=') { env.insert(key.into(), json!(value)); }
-            if let Some(item) = arg.strip_prefix("--setattr=user.") && let Some((key, value)) = item.split_once('=') { user.insert(key.into(), json!(value)); }
-        }
-        let runner = self.request.runner.executable.to_str().unwrap();
-        let command = args.iter().position(|arg| *arg == runner).unwrap();
-        let spec = json!({"tasks":[{"command":args[command..]}],"attributes":{"user":user,"system":{"cwd":self.request.tree.root,"environment":env,
-            "job":{"name":self.intent.correlation},"shell":{"options":{"output":{"stdout":{"path":self.intent.output_dir.join("stdout")},"stderr":{"path":self.intent.output_dir.join("stderr")}}}}}}});
-        fs::write(self.root.path().join("jobspec.json"), spec.to_string()).unwrap();
+    fn ownership(&self) -> RuntimeOwnership {
+        RuntimeOwnership { run: BackendId { backend: BackendTag::Flux, instance: self.intent.instance.clone(), uri: self.intent.uri.clone(), job: "fABC".into() },
+            owner: Owner { owner: self.intent.owner.clone(), correlation: self.intent.correlation.clone() }, request_digest: self.intent.request_digest.clone(),
+            host: "dl380g10".into(), rank: 0, launcher: ProcessIdentity { pid: 1234, start_ticks: 5678 }, process_group: 1234, container: None }
     }
     fn report(&self, outcome: ReportOutcome, cleanup_complete: bool) {
         let out = &self.intent.output_dir;
         fs::write(out.join("membership.json"), &self.membership).unwrap();
-        let cleanup_bytes = serde_json::to_vec(&CleanupFacts { schema: "tl3.cleanup_facts.v1".into(),
-            run: BackendId { backend: BackendTag::Flux, instance: self.intent.instance.clone(), uri: self.intent.uri.clone(), job: "fABC".into() }, request_digest: self.intent.request_digest.clone(),
-            scopes: vec![OwnedScopeObservation { kind: OwnedScopeKind::ProcessGroup, identity: "owned-fixture-process".into(), present: false, running: Some(false), reaped_status: Some(0) }] }).unwrap();
+        let owned = self.ownership();
+        let frames = self.call(json!({"op":"retain_runtime","owner":self.intent.owner,"correlation":self.intent.correlation,"ownership":owned}));
+        assert_eq!(frames.last().unwrap()["kind"], "result", "{frames:?}");
+        let cleanup_bytes = serde_json::to_vec(&CleanupEvidence { schema: "tl3.cleanup_evidence.v1".into(), ownership: owned,
+            launcher: ProcessStop::Reaped { status: 0 }, process_group_probe_errno: Some(3), container: None }).unwrap();
         fs::write(out.join("cleanup.txt"), &cleanup_bytes).unwrap();
+        if cleanup_complete {
+            let frames = self.call(json!({"op":"retain_cleanup","owner":self.intent.owner,"correlation":self.intent.correlation,
+                "evidence":BlobRef { sha256: digest(&cleanup_bytes), bytes: cleanup_bytes.len() as u64, path: out.join("cleanup.txt") }}));
+            assert_eq!(frames.last().unwrap()["result"]["cleanup"]["stopped"], true, "{frames:?}");
+        }
         let report = RunnerReport {
             schema: "tl3.runner_report.v1".into(), run: BackendId { backend: BackendTag::Flux, instance: self.intent.instance.clone(), uri: self.intent.uri.clone(), job: "fABC".into() },
             request_digest: self.intent.request_digest.clone(), tree: self.request.tree.clone(), runner_digest: self.request.runner.executable_digest.clone(), runtime_digest: self.request.runtime.manifest_digest.clone(),
@@ -207,7 +213,7 @@ fn acceptance_unknown_never_resubmits_and_original_jobspec_recovers_one_match() 
     fs::write(f.root.path().join("mode"), "unknown").unwrap();
     assert_eq!(f.submit()["kind"], "unknown");
     assert_eq!(f.submit()["kind"], "unknown");
-    assert_eq!(f.calls().lines().filter(|line| line.starts_with("submit ")).count(), 1);
+    assert_eq!(f.calls().lines().filter(|line| line.starts_with("job submit ")).count(), 1);
     fs::write(f.root.path().join("mode"), "normal").unwrap();
     f.report(ReportOutcome::Passed, true);
     f.events(&completed(0));
@@ -227,7 +233,7 @@ fn orphan_zero_two_and_conflicting_matches_remain_unknown() {
         f.submit();
         fs::write(f.root.path().join("jobs.json"), json!({"jobs":(0..matches).map(|_|json!({"name":f.intent.correlation,"jobid":"fABC"})).collect::<Vec<_>>()} ).to_string()).unwrap();
         assert_eq!(f.attach().last().unwrap()["result"]["observation"]["kind"], "unknown");
-        assert_eq!(f.calls().lines().filter(|line| line.starts_with("submit ")).count(), 1);
+        assert_eq!(f.calls().lines().filter(|line| line.starts_with("job submit ")).count(), 1);
     }
     let f = Fixture::new();
     fs::write(f.root.path().join("mode"), "unknown").unwrap();
@@ -281,7 +287,7 @@ fn posix_and_five_endings_require_semantic_and_cleanup_evidence() {
     f.request.reservation.memory_guarantee = MemoryGuarantee::RequireAdmission;
     f.intent.request_digest = digest(&serde_json::to_vec(&f.request).unwrap());
     assert_eq!(f.submit()["terminal"]["ending"], "refused");
-    assert!(!f.calls().contains("submit "));
+    assert!(!f.calls().contains("job submit "));
     let f = Fixture::new(); f.submit(); f.report(ReportOutcome::EnvironmentLost, true);
     f.events(&[json!({"name":"exception","context":{"type":"exec","severity":0,"note":"owned execution lost"}}), json!({"name":"clean"})]);
     assert_eq!(f.attach().last().unwrap()["result"]["observation"]["terminal"]["ending"], "infra-lost");
