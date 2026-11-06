@@ -1060,7 +1060,11 @@ fn a_restart_after_a_review_stop_files_a_new_request_and_leaves_the_stop_alone()
 
 #[test]
 fn a_stored_world_from_before_fail_fast_decodes_with_it_off() {
-    let tl3_kernel::StepResult { world: world, outputs: _, .. } = tl3_kernel::step(
+    let tl3_kernel::StepResult {
+        world: world,
+        outputs: _,
+        ..
+    } = tl3_kernel::step(
         tl3_kernel::World::new(&[1], 1),
         Event::NewRequest {
             repo: tl3_kernel::RepoId(0),

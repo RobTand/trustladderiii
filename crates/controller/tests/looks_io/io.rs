@@ -390,7 +390,11 @@ pub(super) fn observe(key: &str, observation: Observation) -> Result<()> {
             serde_json::to_vec(&value).unwrap(),
         );
         if let Observation::Kernel(event) = observation {
-            let tl3_kernel::StepResult { world: world, outputs: outputs, .. } = tl3_kernel::step(r.world.clone(), event);
+            let tl3_kernel::StepResult {
+                world: world,
+                outputs: outputs,
+                ..
+            } = tl3_kernel::step(r.world.clone(), event);
             r.world = world;
             for (index, output) in outputs.iter().enumerate() {
                 r.files.insert(

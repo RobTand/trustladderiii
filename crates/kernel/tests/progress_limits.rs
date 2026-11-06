@@ -4,7 +4,11 @@
 use tl3_kernel::*;
 
 fn send(world: World, event: Event) -> World {
-    let tl3_kernel::StepResult { world: world, outputs: _, .. } = step(world, event);
+    let tl3_kernel::StepResult {
+        world: world,
+        outputs: _,
+        ..
+    } = step(world, event);
     assert!(world.valid(), "invalid world after {event:?}: {world:#?}");
     world
 }
@@ -91,7 +95,11 @@ fn exhausted_command_ids_ignore_resume_stop_and_replacement() {
     let world = paused_unplanned(u64::MAX);
     for id in [0, u64::MAX - 1, u64::MAX] {
         for command in [Command::Resume, Command::Stop, Command::ChangeRequest] {
-            let tl3_kernel::StepResult { world: after, outputs: out, .. } = step(
+            let tl3_kernel::StepResult {
+                world: after,
+                outputs: out,
+                ..
+            } = step(
                 world.clone(),
                 Event::Command {
                     node: NodeId(0),

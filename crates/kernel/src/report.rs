@@ -57,9 +57,18 @@ pub enum ReplyKind {
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReportEntry {
-    FailedRound { node: NodeId, cause: FailedRoundCause },
-    Stopped { node: NodeId, cause: StopCause },
-    Stale { node: NodeId, reply_kind: ReplyKind },
+    FailedRound {
+        node: NodeId,
+        cause: FailedRoundCause,
+    },
+    Stopped {
+        node: NodeId,
+        cause: StopCause,
+    },
+    Stale {
+        node: NodeId,
+        reply_kind: ReplyKind,
+    },
 }
 
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]

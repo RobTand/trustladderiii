@@ -2109,7 +2109,11 @@ impl Controller {
         if !self.input_checkpoint(snapshot, commit)? {
             return Ok(());
         }
-        let tl3_kernel::StepResult { world: mut world, outputs: mut outputs, .. } = tl3_kernel::step(world, event);
+        let tl3_kernel::StepResult {
+            world: mut world,
+            outputs: mut outputs,
+            ..
+        } = tl3_kernel::step(world, event);
         outputs.splice(0..0, dependency_outputs);
         self.announce_dependency_endings(
             snapshot,

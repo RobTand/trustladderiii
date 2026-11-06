@@ -71,7 +71,11 @@ impl Run {
     }
 
     fn send(&mut self, event: Event) {
-        let tl3_kernel::StepResult { world: w, outputs: out, .. } = step(self.w.clone(), event);
+        let tl3_kernel::StepResult {
+            world: w,
+            outputs: out,
+            ..
+        } = step(self.w.clone(), event);
         assert!(w.valid(), "invalid world after {event:?}:\n{w:#?}");
         for o in out {
             if let Out::Notice { notice, .. } = o {

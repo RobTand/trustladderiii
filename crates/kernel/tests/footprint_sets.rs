@@ -32,7 +32,8 @@ fn reply(w: &mut World, node: NodeId, reply: Reply) {
                 seq: e.seq,
                 ack: Ack::Confirmed,
             },
-        ).world;
+        )
+        .world;
     }
     *w = step(
         w.clone(),
@@ -41,7 +42,8 @@ fn reply(w: &mut World, node: NodeId, reply: Reply) {
             generation: w.nodes[i].generation,
             reply,
         },
-    ).world;
+    )
+    .world;
     assert!(w.valid(), "invalid world after {reply:?}:\n{w:#?}");
 }
 
@@ -53,7 +55,8 @@ fn plan(w: &mut World, files: &BTreeSet<FileId>) -> NodeId {
             repo: RepoId(0),
             priority: Priority::Unranked,
         },
-    ).world;
+    )
+    .world;
     let node = NodeId(w.nodes.len() as u64 - 1);
     let footprint = w.intern_footprint(files.iter().copied());
     reply(w, node, Reply::IngestDone { size: 1 });

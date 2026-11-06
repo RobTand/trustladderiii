@@ -215,7 +215,14 @@ fn random_walks_keep_every_rule() {
             let witnessed = w.witness() == Some(event);
             measure_reference::compare(&w);
             let before = w.measure();
-            let (StepResult { world: next, outputs: out, .. }, passes) = step_with_passes(w.clone(), event);
+            let (
+                StepResult {
+                    world: next,
+                    outputs: out,
+                    ..
+                },
+                passes,
+            ) = step_with_passes(w.clone(), event);
             measure_reference::compare(&next);
             let size = next.nodes.len().min(4);
             passes_by_size[size] = passes_by_size[size].max(passes);
