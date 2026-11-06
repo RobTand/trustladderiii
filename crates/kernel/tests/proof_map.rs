@@ -121,6 +121,14 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
         "progress_from_unplanned_waiting_one",
         "progress_unplanned_waiting",
     ),
+    // #806: W6 slice one uses the universal real-advance theorem and executable covers.
+    ("advance_ingesting", "port_advance_phase"),
+    ("advance_auditing", "port_advance_phase"),
+    ("advance_unplanned", "port_advance_phase"),
+    ("advance_planning", "port_advance_phase"),
+    ("advance_ready", "port_advance_phase"),
+    ("advance_making", "port_advance_phase"),
+    ("advance_checking", "port_advance_phase"),
 ];
 
 /// Quoted names between the proof-map markers in lib.rs.
