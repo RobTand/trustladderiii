@@ -377,6 +377,16 @@ CASES = {
         '    m.run = None;\n    if m.run == Some(generation) {\n        m.run = None;\n        m.pool = false;\n    }',
         '//crates/kernel:lib_test_tl3_kernel'),
 
+
+    'review_stopping_node': ('crates/kernel/src/allocation.rs',
+        '                m.phase = Phase::Stopping(Outcome::Merged);',
+        '                m.phase = Phase::Stopping(Outcome::Stopped);',
+        '//crates/kernel:verus_review_stopping_node'),
+    'review_stopping_node_duplicate': ('crates/kernel/src/allocation.rs',
+        '    match m.phase {\n        Phase::Closed(_) => {}',
+        '    m.question = None;\n    match m.phase {\n        Phase::Closed(_) => {}',
+        '//crates/kernel:lib_test_tl3_kernel'),
+
 }
 
 

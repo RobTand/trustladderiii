@@ -4,6 +4,7 @@ use proptest::prelude::*;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 mod reference;
+mod stopping_reference;
 
 fn phases() -> [Phase; 23] {
     [
@@ -149,6 +150,45 @@ fn every_reply_and_admission_branch_matches() {
     assert_eq!(comparisons, 4830);
 }
 
+fn compare_stopping(node: Node, outcome: Outcome) {
+    let mut actual = node;
+    let mut expected = node;
+    let actual_ok = catch_unwind(AssertUnwindSafe(|| enter_stopping(&mut actual, outcome))).is_ok();
+    let expected_ok = catch_unwind(AssertUnwindSafe(|| {
+        stopping_reference::reference_enter_stopping(&mut expected, outcome);
+    })).is_ok();
+    assert_eq!(actual_ok, expected_ok, "stop panic parity for {node:?}, {outcome:?}");
+    assert_eq!(actual, expected, "stop full-node parity for {node:?}, {outcome:?}");
+}
+
+/// #806 standing rule: every phase and outcome, generation edge, and effect/question branch.
+#[test]
+fn every_stopping_branch_matches() {
+    let outcomes = [Outcome::Merged, Outcome::Stopped, Outcome::Replaced,
+        Outcome::NotActionable, Outcome::Duplicate, Outcome::AlreadyDone];
+    let mut comparisons = 0;
+    for phase in phases() {
+        for outcome in outcomes {
+            for generation in [0, 7, u64::MAX - 1, u64::MAX] {
+                for flags in 0u8..8 {
+                    let mut node = Node::new(RepoId(1));
+                    node.phase = phase;
+                    node.generation = generation;
+                    node.waiting_incident = flags & 1 != 0;
+                    node.incident_needs_rob = flags & 2 != 0;
+                    node.effect = (flags & 4 != 0).then_some(InFlight {
+                        seq: 3, kind: EffectKind::ClosePr, cancelling: false });
+                    node.question = Some(Question { id: 9, kind: QKind::OutOfCredit,
+                        cont: Cont::Nowhere, cost: 0, clarified: false });
+                    compare_stopping(node, outcome);
+                    comparisons += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(comparisons, 4416);
+}
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: 512, ..ProptestConfig::default() })]
     /// #806 standing rule: arbitrary payloads, counters, ownership and existing outputs.
@@ -197,6 +237,10 @@ proptest! {
         if raw[47] & 1 != 0 { node.review_stop = Some(ReviewStop::ChangesRequested); }
         if raw[48] & 1 != 0 {
             node.pos = if node.phase == Phase::Making { 2 } else { 1 };
+        }
+        for outcome in [Outcome::Merged, Outcome::Stopped, Outcome::Replaced,
+            Outcome::NotActionable, Outcome::Duplicate, Outcome::AlreadyDone] {
+            compare_stopping(node, outcome);
         }
         world.nodes.push(node); world.nodes.push(Node::new(RepoId(1)));
         world.next_question = wide[7]; world.next_ticket = wide[0];
