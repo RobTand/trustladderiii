@@ -23,12 +23,16 @@ def launch_context():
 
 
 def podman_command(tree, image, scratch, threads, *, mode, cpus=None, memory=None,
-                   executable='podman', harness=None, interpreter='python3'):
+                   executable='podman', harness=None, interpreter='python3', oci_runtime=None, init_path=None):
     harness = Path(harness) if harness is not None else Path(__file__).resolve().parent
     if mode == 'in_job':
         if cpus is not None or memory is not None:
             raise ValueError('in_job cannot set independent CPU or memory limits')
         prefix = [str(executable), 'run', '--cgroups=disabled', '--init']
+        if oci_runtime is not None:
+            prefix.append(f'--runtime={oci_runtime}')
+        if init_path is not None:
+            prefix.append(f'--init-path={init_path}')
     elif mode == 'own_scope':
         if not cpus or type(memory) is not int or memory <= 0:
             raise ValueError('own_scope requires Rust-mapped CPUs and a positive memory limit')
@@ -336,15 +340,20 @@ def journal_path(path):
 
 
 def command(tree, scratch):
+    import shutil
+
     check_rootless_directory(os.environ)
     context = launch_context()
     configured = context['runtime']
     if configured['mode'] == 'own_scope':
         raise RuntimeError('OwnScope requires Rust-mapped launch CPUs and durable cleanup registration')
+    oci_runtime, init_path = shutil.which('crun'), shutil.which('catatonit')
+    if not oci_runtime or not init_path:
+        raise RuntimeError('InJob requires provisioned compatible crun and catatonit')
     return podman_command(tree, configured['image'], scratch, context['native_threads'],
                           mode=configured['mode'],
                           executable=configured['executable'], harness=configured['trusted_root'],
-                          interpreter=configured['interpreter'])
+                          interpreter=configured['interpreter'], oci_runtime=oci_runtime, init_path=init_path)
 
 
 def prepare_scratch():
