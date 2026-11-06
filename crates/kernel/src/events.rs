@@ -72,15 +72,17 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
                 },
             _ => true,
         },
-        // W3: owner-command clauses are independent of reply-arm contracts.
+        // W3: ack/owner-command clauses are independent of reply-arm contracts.
         match event {
+            Event::Ack { node, seq, ack } => node.0 < old(w).nodes@.len()
+                ==> port_acks_specs::ack_post(*old(w), *final(w), node.0 as usize, seq, ack, *old(out), *final(out)),
             Event::Command { node, id, command } => node.0 < old(w).nodes@.len()
                 && port_acks_specs::owner_command(command) ==> port_acks_specs::command_post(
                     *old(w), *final(w), node.0 as usize, id, command, *old(out), *final(out)),
             _ => true,
         },
         progress_gate_apply::resume_apply_post(*old(w), *final(w), event),
-] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
+] hide [node_checked] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table);] {
     kernel_snapshot! { before_apply = *w }
     kernel_snapshot! { before_apply_out = *out }
     kernel_proof! { events_lemmas::selected_input(before_apply@, event); }
@@ -124,6 +126,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
             if let Some(i) = w.index(node) {
                 on_ack(w, i, seq, ack, out);
                 kernel_proof! {
+                    port_acks_frames::finish_ack(before_apply@, *w, i, seq, ack, before_apply_out@, *out);
                     if progress_input(before_apply@, event) {
                         assert(w.nodes@ =~= before_apply@.nodes@.update(i as int, w.nodes@[i as int]));
                         progress::lift_node_progress(before_apply@, *w, i as int);

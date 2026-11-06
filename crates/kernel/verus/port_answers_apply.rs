@@ -1,6 +1,6 @@
 //! #806: real apply, complete checker and answer assertions for all eight answers.
-use super::port_answers_model::*;
 use super::*;
+use super::port_answers_model::*;
 
 verus! {
 /// #806: carry an unchanged node through the one monotone question allocation.
