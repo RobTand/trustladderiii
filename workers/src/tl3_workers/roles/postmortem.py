@@ -22,7 +22,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from tl3_workers import judges, tracing
 from tl3_workers.contracts import read_json, read_reply
 from tl3_workers.roles.base import Role
-from tl3_workers.reply_check import ReplyViolation, check_reply as rust_check_reply
+from tl3_workers.reply_check import ReplyCheckInfrastructureError, ReplyViolation, check_reply as rust_check_reply
 from tl3_workers.turns import TurnControl, repaired
 
 
@@ -432,18 +432,15 @@ def _judged_run(model, request, workdir, emit):
             try:
                 result = _checked(inputs, envelope(written, grades))
             except ValidationError as error:
-                from dataclasses import replace
-                from tl3_workers.rules import CantMeet, Name, Violation
+                from tl3_workers.rules import Violation
                 # The model edits the inner object, not the code-owned envelope.
-                error.rule_violations = tuple(
-                    Violation(item.rule, {**item.facts, 'pointer': item.facts['pointer'].removeprefix('/postmortem')})
-                    if (item.facts['pointer'] == '/postmortem'
-                        or item.facts['pointer'].startswith('/postmortem/')) else
-                    Violation(replace(item.rule,
-                        names=lambda facts: (Name('symbol', 'tl3_workers.roles.postmortem::envelope'),),
-                        repair=lambda facts: CantMeet('the invalid field belongs to the code-owned envelope')),
-                        item.facts)
-                    for item in getattr(error, 'rule_violations', ()))
+                violations = getattr(error, 'rule_violations', ())
+                if any(item.facts['pointer'] != '/postmortem'
+                       and not item.facts['pointer'].startswith('/postmortem/') for item in violations):
+                    raise ReplyCheckInfrastructureError('reply validator returned invalid output') from error
+                error.rule_violations = tuple(Violation(item.rule, {
+                    **item.facts, 'pointer': item.facts['pointer'].removeprefix('/postmortem')})
+                    for item in violations)
                 raise
             try:
                 written["recommendations"], dropped = applicable(

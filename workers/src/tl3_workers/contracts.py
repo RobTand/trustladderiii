@@ -174,7 +174,7 @@ def _applicable_errors(error):
             yield from _applicable_errors(child)
 
 
-def schema_violations(errors, root_schema=None):
+def schema_violations(errors, root_schema=None, *, role='schema'):
     """Translate every schema failure into facts, without jsonschema's reply echo."""
     from dataclasses import replace
     from tl3_workers.rules import Allowed, Edit, Name, Rule, Violation, at
@@ -192,12 +192,38 @@ def schema_violations(errors, root_schema=None):
         return (Name('field', facts['pointer']),)
 
     row = Rule('schema.validation', check, names, lambda facts: facts['allowed'],
-               lambda facts: Edit(Name('field', facts['pointer']), facts.get('op', 'replace'), facts['allowed']))
+               lambda facts: Edit(Name('field', facts['pointer']), facts.get('op', 'replace'), facts['allowed']),
+               roles=frozenset((role,)))
+
+    def constraint_allowed(error, constraint):
+        context = error
+        while context.parent is not None:
+            context = context.parent
+        source = root_schema or context.schema
+        if isinstance(constraint, dict):
+            constraint = dict(constraint)
+            if any(node['$ref'].startswith('#') for node in _refs(constraint)):
+                constraint['$defs'] = source.get('$defs', {})
+            if '$id' in source:
+                constraint['$id'] = source['$id']
+        return Allowed('schema', constraint)
+
     result = []
+    required_fields = set()
     for parent in errors:
         for error in _applicable_errors(parent):
             pointer = ''.join('/' + str(part).replace('~', '~0').replace('/', '~1')
                               for part in error.absolute_path)
+            if error.validator == 'required':
+                for key in error.validator_value:
+                    field = pointer + '/' + key.replace('~', '~0').replace('/', '~1')
+                    if key in error.instance or field in required_fields:
+                        continue
+                    required_fields.add(field)
+                    constraint = error.schema.get('properties', {}).get(key, {})
+                    result.append(Violation(replace(row, id='schema.required'), {
+                        'pointer': field, 'allowed': constraint_allowed(error, constraint), 'op': 'add'}))
+                continue
             if error.validator == 'additionalProperties' and error.validator_value is False:
                 import re
                 extra = set(error.instance) - error.schema.get('properties', {}).keys()
@@ -209,14 +235,7 @@ def schema_violations(errors, root_schema=None):
                         'allowed': Allowed('enum', []), 'op': 'remove', 'bad_value': error.instance[key]}))
                 continue
             if error.validator in ('oneOf', 'anyOf', 'not', 'unevaluatedProperties'):
-                context = error
-                while context.parent is not None:
-                    context = context.parent
-                source = root_schema or context.schema
-                constraint = {**error.schema, '$defs': source.get('$defs', {})}
-                if '$id' in source:
-                    constraint['$id'] = source['$id']
-                allowed = Allowed('schema', constraint)
+                allowed = constraint_allowed(error, error.schema)
             else:
                 allowed = Allowed(error.validator, error.validator_value)
             result.append(Violation(replace(row, id='schema.' + error.validator.lower()),

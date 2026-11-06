@@ -643,7 +643,6 @@ def test_repair_reports_schema_and_independent_missing_contract():
     ({'const': 'done'}, 'maybe', 'done'),
     ({'pattern': '^ok$'}, 'bad', 'ok'),
     ({'type': 'integer'}, 'bad', 2),
-    ({'required': ['name']}, {}, {'name': 'ok'}),
     ({'minLength': 2}, '', 'ok'),
 ])
 def test_schema_row_rendered_repair_passes_its_guard(constraint, bad, good):
@@ -655,30 +654,30 @@ def test_schema_row_rendered_repair_passes_its_guard(constraint, bad, good):
     violations = schema_violations(validator.iter_errors(original))
     assert len(violations) == 1
     violation = violations[0]
-    text = violation.render()
+    text = violation.render(role='schema')
     assert '/a~1b~0c' in text and 'Allowed' in text and 'replace' in text
     assert json.dumps(next(iter(constraint.values()))) in text
     facts = {**violation.facts, 'reply': original}
-    register(violation.rule, facts, good)
+    register(replace(violation.rule, example=facts, witness=good), roles=('schema',))
     fixed = apply_edit(original, violation.rule.repair(facts), good)
-    assert permits(original, fixed, violations)
+    assert permits(violations, original, fixed, role='schema')
     assert validator.is_valid(fixed)
-    assert not permits(original, {**fixed, 'untouched': False}, violations)
-    assert not permits(original, {**fixed, 'untouched': 1}, violations)
+    assert not permits(violations, original, {**fixed, 'untouched': False}, role='schema')
+    assert not permits(violations, original, {**fixed, 'untouched': 1}, role='schema')
 
 
 def test_evidence_row_has_a_bounded_renderable_repair():
     from tl3_workers.evidence import CONTRACT_MISSING, contract_violations
     from tl3_workers.rules import apply_edit, permits, register
     facts = {'inputs': {'tool_capabilities': []}, 'reply': {'kind': 'brief'}}
-    register(CONTRACT_MISSING, facts, [])
+    register(replace(CONTRACT_MISSING, example=facts, witness=[]), roles=('ingest',))
     violations = contract_violations(**facts)
-    text = violations[0].render()
+    text = violations[0].render(role='ingest')
     assert '/evidence_contract' in text and 'array' in text and 'add' in text
     fixed = apply_edit(facts['reply'], CONTRACT_MISSING.repair(violations[0].facts), [])
-    assert permits(facts['reply'], fixed, violations)
+    assert permits(violations, facts['reply'], fixed, role='ingest')
     assert not contract_violations(facts['inputs'], fixed)
-    assert not permits(facts['reply'], {**fixed, 'evidence_contract': 'not an array'}, violations)
+    assert not permits(violations, facts['reply'], {**fixed, 'evidence_contract': 'not an array'}, role='ingest')
 
 
 def test_registration_rejects_unrenderable_and_self_rejecting_rows():
@@ -686,36 +685,37 @@ def test_registration_rejects_unrenderable_and_self_rejecting_rows():
     from tl3_workers.rules import Allowed, CantMeet, Edit, register
     facts = {'inputs': {'tool_capabilities': []}, 'reply': {}}
     with pytest.raises(ValueError, match='renderable repair'):
-        register(replace(CONTRACT_MISSING, repair=lambda facts: None), facts, [])
+        register(replace(CONTRACT_MISSING, repair=lambda facts: None, example=facts, witness=[]), roles=('ingest',))
     with pytest.raises(ValueError, match='renderable repair'):
-        register(replace(CONTRACT_MISSING, repair=lambda facts: CantMeet('')), facts)
+        register(replace(CONTRACT_MISSING, repair=lambda facts: CantMeet(''), example=facts), roles=('ingest',))
     wrong = replace(CONTRACT_MISSING,
         repair=lambda facts: Edit(facts['field'], 'add', Allowed('type', 'string')),
         allowed=lambda facts: Allowed('type', 'string'))
     with pytest.raises(ValueError, match='own witness'):
-        register(wrong, facts, [])
+        register(replace(wrong, example=facts, witness=[]), roles=('ingest',))
     self_rejecting = replace(CONTRACT_MISSING, check=lambda facts: ({'field': EVIDENCE_FIELD},))
     with pytest.raises(ValueError, match='own witness'):
-        register(self_rejecting, facts, [])
+        register(replace(self_rejecting, example=facts, witness=[]), roles=('ingest',))
 
 
 def test_typed_subjects_and_gating_report_all_independent_violations():
     from tl3_workers.rules import Allowed, CantMeet, Edit, Name, Rule, evaluate, register, render_all
     subjects = (Name('field', '/proof/observer_support/1'), Name('path', 'tests/test_x.py'),
                 Name('symbol', 'tests/test_x.py::test_x'))
-    row = Rule('proof.subject', lambda facts: ({}, {}), lambda facts: subjects,
-               lambda facts: Allowed('enum', ['observer']), lambda facts: CantMeet('subject identity differs'))
-    text = render_all(evaluate((row,), {}))
+    row = register(Rule('proof.subject', lambda facts: ({}, {}), lambda facts: subjects,
+               lambda facts: Allowed('enum', ['observer']), lambda facts: CantMeet('subject identity differs'),
+               example={'reply': {}}, witness={'kind': 'cant_meet'}), roles=('planner', 'maker'))
+    text = render_all(evaluate((row,), {}, role='planner'), role='planner')
     assert text.count('proof.subject') == 2
     assert 'reply field' in text and 'source path' in text and 'symbol' in text
     assert 'Further checks were not run' not in text
     calls = []
     later = replace(row, id='proof.later', check=lambda facts: calls.append(True) or ())
     gating = replace(row, gating=True)
-    found = evaluate((gating, later), {})
+    found = evaluate((gating, later), {}, role='planner')
     assert not calls and len(found) == 2
-    assert all('Further checks were not run' in item.render() for item in found)
-    register(gating, {'reply': {}})
+    assert all('Further checks were not run' in item.render(role='planner') for item in found)
+    register(replace(gating, example={'reply': {}}), roles=('planner',))
     with pytest.raises(ValueError, match='field pointer'):
         Edit(subjects[1], 'replace', Allowed('enum', ['observer']))
 
@@ -729,10 +729,10 @@ def test_schema_remove_extra_field_uses_the_same_guard():
     original = {'kind': 'remark', 'extra': 'x' * 20_000}
     violations = schema_violations(validator.iter_errors(original))
     violation, = violations
-    register(violation.rule, {**violation.facts, 'reply': original})
+    register(replace(violation.rule, example={**violation.facts, 'reply': original}), roles=('schema',))
     fixed = apply_edit(original, violation.rule.repair(violation.facts))
-    assert permits(original, fixed, violations) and validator.is_valid(fixed)
-    assert '/extra' in violation.render() and 'remove' in violation.render()
+    assert permits(violations, original, fixed, role='schema') and validator.is_valid(fixed)
+    assert '/extra' in violation.render(role='schema') and 'remove' in violation.render(role='schema')
 
 
 def test_all_schema_rows_survive_the_legacy_message_limit():
@@ -758,8 +758,8 @@ def test_composite_schema_row_preserves_reference_context():
         {'type': 'object', 'properties': {'kind': {'const': 'y'}}, 'required': ['kind']}]}
     bad = {'kind': 'unknown', 'item': 3}
     violation, = schema_violations(Draft202012Validator(proposal).iter_errors(bad))
-    register(violation.rule, {**violation.facts, 'reply': bad}, {'kind': 'x', 'item': 'ok'})
-    assert 'oneOf' in violation.render() and 'replace' in violation.render()
+    register(replace(violation.rule, example={**violation.facts, 'reply': bad}, witness={'kind': 'x', 'item': 'ok'}), roles=('schema',))
+    assert 'oneOf' in violation.render(role='schema') and 'replace' in violation.render(role='schema')
 
 
 def test_pilot_repair_rejects_changes_outside_its_row():
@@ -782,6 +782,7 @@ def test_worker_rule_adapter_reuses_the_harness_core():
     from tl3_workers import rules as adapter
     assert adapter.Rule is core.Rule and adapter.Violation is core.Violation
     assert adapter.permits is core.permits and adapter.register is core.register
+    assert adapter.PLANNER is core.terminal_for('planner') and adapter.MAKER is core.terminal_for('maker')
     assert isinstance(adapter.Allowed('type', 'array'), core.Allowed)
     assert adapter.Allowed('type', 'array').accepts([])
     assert not adapter.Allowed('type', 'array').accepts('not an array')
@@ -807,13 +808,13 @@ def test_required_rows_add_only_the_missing_properties(nested):
         edit = item.rule.repair(item.facts)
         value = 'ok' if edit.pointer.value.endswith('/a~1b~0c') else 3
         assert edit.op == 'add' and edit.allowed.accepts(value)
-        assert 'add reply field' in item.render()
-        register(item.rule, {**item.facts, 'reply': before}, value)
+        assert 'add reply field' in item.render(role='schema')
+        register(replace(item.rule, example={**item.facts, 'reply': before}, witness=value), roles=('schema',))
         fixed = apply_edit(fixed, edit, value)
-    assert validator.is_valid(fixed) and permits(before, fixed, violations)
-    assert not permits(before, {**fixed, 'untouched': False}, violations)
+    assert validator.is_valid(fixed) and permits(violations, before, fixed, role='schema')
+    assert not permits(violations, before, {**fixed, 'untouched': False}, role='schema')
     if nested:
-        assert not permits(before, {**fixed, 'box': {**fixed['box'], 'kept': False}}, violations)
+        assert not permits(violations, before, {**fixed, 'box': {**fixed['box'], 'kept': False}}, role='schema')
 
 
 def test_cant_meet_registration_requires_a_terminal_reply_form():
@@ -822,7 +823,7 @@ def test_cant_meet_registration_requires_a_terminal_reply_form():
                lambda facts: (Name('symbol', 'tests/test_x.py::test_x'),),
                lambda facts: Allowed('enum', []), lambda facts: CantMeet('identity differs'))
     with pytest.raises(ValueError, match='terminal reply form'):
-        register(row, {'reply': {}})
+        register(replace(row, example={'reply': {}}, witness={'kind': 'cant_meet'}), roles=('postmortem',))
 
 
 def test_allowed_value_equality_crosses_the_adapter_boundary():
@@ -831,6 +832,12 @@ def test_allowed_value_equality_crosses_the_adapter_boundary():
     assert CoreAllowed('enum', ['ok']) == Allowed('enum', ['ok'])
     assert Allowed('enum', ['ok']) == CoreAllowed('enum', ['ok'])
     assert CoreAllowed('const', True) != Allowed('const', 1)
+    from tl3_workers.rules import Edit, Name, Rule, register
+    row = register(Rule('test.membership', lambda facts: () if facts['reply']['value'] == 'ok' else ({},),
+        lambda facts: (Name('field', '/value'),), lambda facts: CoreAllowed('enum', ['ok']),
+        lambda facts: Edit(Name('field', '/value'), 'replace', Allowed('enum', ['ok'])),
+        example={'reply': {'value': 'bad'}}, witness='ok'), roles=('schema',))
+    assert row.id == 'test.membership'
 
 
 def test_symbol_names_use_source_path_and_python_qualname():
@@ -840,3 +847,30 @@ def test_symbol_names_use_source_path_and_python_qualname():
                     'pkg/mod.py::Class..method'):
         with pytest.raises(ValueError, match='path::qualname'):
             Name('symbol', invalid)
+
+
+def test_planner_terminal_reply_passes_the_one_repair_turn():
+    from tl3_workers.rules import Allowed, CantMeet, Name, Rule, evaluate, permits, register, terminal_for
+    from tl3_workers.turns import TurnControl, repaired
+    before, terminal = {'kind': 'leaf'}, {'kind': 'cant_meet', 'report': 'subject identity differs'}
+    row = register(Rule('proof.identity', lambda facts: ({},),
+        lambda facts: (Name('symbol', 'tests/test_x.py::test_x'),),
+        lambda facts: Allowed('enum', []), lambda facts: CantMeet('identity differs'),
+        example={'reply': before}, witness=terminal), roles=('planner', 'maker'))
+    violations = evaluate((row,), {'reply': before}, role='planner')
+    assert permits(violations[0], before, terminal, role='planner')
+    assert permits(row, before, terminal, role='maker')
+    assert not permits(violations, before, {'kind': 'leaf', 'edited': True}, role='planner')
+    for role in ('planner', 'maker'):
+        assert terminal_for(role).phrase in violations[0].render(role=role)
+    error = ValueError('refused')
+    error.rule_violations, error.rule_role = violations, 'planner'
+
+    def check(reply):
+        if reply['kind'] != 'cant_meet':
+            raise error
+        return reply
+
+    replies, history, control = iter((before, terminal)), [], TurnControl()
+    assert repaired(control, history, lambda: next(replies), check) == terminal
+    assert control.repair_attempts == 1 and len(history) == 1

@@ -3,13 +3,15 @@
 from jsonschema import Draft202012Validator
 
 from tl3_harness.rules import (
-    Allowed as MembershipAllowed, CantMeet, Edit, Facts, Name, Rule, Violation,
-    apply_edit, at, evaluate, permits, register, render_all,
+    Allowed as MembershipAllowed, CantMeet, Edit, Facts, Name, Rule, TerminalForm, Violation,
+    apply_edit, at, evaluate, permits, register, register_terminal, render_all, terminal_for,
 )
 
+from tl3_harness.terminal_forms import PLANNER, MAKER
+
 __all__ = [
-    'Allowed', 'CantMeet', 'Edit', 'Facts', 'Name', 'Rule', 'Violation',
-    'apply_edit', 'at', 'evaluate', 'permits', 'register', 'render_all',
+    'Allowed', 'CantMeet', 'Edit', 'Facts', 'Name', 'Rule', 'TerminalForm', 'Violation',
+    'apply_edit', 'at', 'evaluate', 'permits', 'register', 'register_terminal', 'render_all', 'terminal_for', 'PLANNER', 'MAKER',
 ]
 
 

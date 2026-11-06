@@ -38,6 +38,7 @@ py_library(
         "selector_identity.py",
         "supervision.py",
         "symptoms.py",
+        "terminal_forms.py",
         "test_tool.py",
         "trees.py",
     ],
