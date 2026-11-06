@@ -23,6 +23,23 @@ pub enum WaitRecord {
 }
 
 pub trait Executor {
+    fn generator_configured(&self, _repository: &crate::Repository) -> bool {
+        false
+    }
+
+    fn check_generation(
+        &mut self,
+        _delivery: &Delivery,
+    ) -> Result<Option<crate::generation::Report>> {
+        Ok(None)
+    }
+    fn prepare_generated_repair(
+        &mut self,
+        _delivery: &Delivery,
+    ) -> Result<Option<crate::generation::Report>> {
+        Ok(None)
+    }
+
     fn input_incident(
         &mut self,
         _notice: &crate::input_errors::IncidentNotice,
