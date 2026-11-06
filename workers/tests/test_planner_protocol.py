@@ -641,3 +641,30 @@ def test_every_footprint_repair_line_asks_only_for_what_its_guard_accepts(planne
                         failures.append(f'{footprint} {rule}: line also asks {clause.strip()!r}, '
                                         f'which the {footprint} guard rejects; it accepts only {intent!r}')
     assert not failures, '\n'.join(failures)
+
+
+@pytest.mark.parametrize('case', ['proof.omitted', 'split.forecast_fits', 'check.tests_empty'])
+def test_a1_empty_allowed_set_is_an_explicit_terminal_row(planner_request, monkeypatch, case):
+    """PQ #2648 twice, and the TESTS_FILL fallback, must not promise impossible edits."""
+    from tl3_workers.roles import planner
+    from tl3_workers.rules import CantMeet, permits
+
+    monkeypatch.chdir(planner_request['worktree'])
+    inputs = planner_request['inputs']
+    inputs['repair_plan_consistency'] = True
+    draft = copy.deepcopy(SPLIT if case.startswith('split.') else LEAF)
+    if case == 'proof.omitted':
+        draft['checks'][0].pop('proof')
+    elif case == 'check.tests_empty':
+        draft['checks'][0]['node_ids'] = []
+    with pytest.raises(planner.PlanConsistencyError) as caught:
+        planner.check_reply(inputs, draft)
+    error = caught.value
+    assert 'return cant_meet' in error.repair_text
+    assert 'State the expected assertion message' not in error.repair_text
+    assert 'Replace only the invalid split reason' not in error.repair_text
+    rows = getattr(error, 'rule_violations', ())
+    matching = [item for item in rows if item.rule.id == case]
+    assert matching, 'every refusal must be a row, including fallback footprints'
+    assert any(isinstance(item.rule.repair(item.facts), CantMeet) for item in matching)
+    assert permits(rows, error.raw_draft, CANT_MEET, role='planner')
