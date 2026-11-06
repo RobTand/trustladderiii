@@ -185,13 +185,13 @@ class ForcingRehearsals:
         if errors:
             return {'status': 'refused', 'message': '\n'.join(errors)}
         try:
-            parsed = Forcing.parse(forcing)
+            parsed = Forcing.parse(forcing, check_index=None, role='planner')
             if not isinstance(tests, list) or not tests or len(tests) > 256:
                 raise HarnessInputError(named('rehearsal.selector_count', 'A rehearsal needs 1 to 256 exact base test selectors', dict(count=len(tests), minimum=1, maximum=256)))
             selected = Check('rehearsal', Kind.DEMONSTRATING, tuple(tests),
                              declared_symptom=declared_symptom).tests
         except HarnessInputError as error:
-            return {'status': 'refused', 'message': str(error)}
+            return {'status': 'refused', 'message': 'In the rehearse_forcing tool argument: ' + str(error)}
         wanted = identity(self.base_sha, selected, parsed, declared_symptom)
         if self.infrastructure or self.failure:
             return deepcopy(self.infrastructure or self.failure)
@@ -248,7 +248,7 @@ class ForcingRehearsals:
                 self.active['stage'] = stage
                 inflight = self.active['inflight']
                 self.worktree.pb_reattach = {True: inflight} if inflight else {}
-                tool = make_test_tool(self.worktree, timeout_seconds=REHEARSAL_SECONDS,
+                tool = make_test_tool(self.worktree, timeout_seconds=REHEARSAL_SECONDS, role='planner',
                                       **({'forcing': parsed} if stage == 'forced' else {}),
                                       **({'declared_symptom': declared_symptom} if declared_symptom else {}))
                 observed = tool(list(selected), base=True, **(

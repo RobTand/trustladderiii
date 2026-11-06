@@ -206,7 +206,9 @@ def test_request233_source_goal_checks_the_selected_method(request233, monkeypat
     if method == 'supported':
         assert reply['violations'] == [], reply
     else:
-        assert any('source assertion proof' in item for item in reply['violations']), reply
+        rule = {'symptom': 'proof.observer_kind', 'old_assertion': 'proof.new_observer',
+                'wrong_subject': 'proof.subject_missing'}[method]
+        assert any(getattr(item, 'rule', None) == rule for item in reply['violations']), reply
     assert calls == []
 
 
@@ -336,7 +338,7 @@ def test_review696_module_selector_reaches_exact_node_violation_before_applicabi
                         {'kind': 'regression', 'node_ids': [subject_path + '::test_wrong_head'], 'goal_ids': [1]}]}
     validate('planner-reply', reply)
     check_reply(inputs, reply)
-    exact = [m for m in reply['violations'] if m.startswith('Checks must name exact pytest node IDs')]
+    exact = [m for m in reply['violations'] if m.startswith('check.selector_inexact:')]
     assert len(exact) == 1, reply
     # #691: proof rules are validated alongside selectors, so a proof on a regression check is also named.
     allowed = {exact[0]} | ({'A subject/observer proof requires a demonstrating or reproducing check.'}

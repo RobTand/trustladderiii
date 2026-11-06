@@ -101,7 +101,8 @@ def test_pq3312_scratch_write_is_refused_with_an_actionable_message(maker_reques
         # The repair maker's attempt to undo it: an empty write is refused too.
         emptied = call("write", path="tests/test_zz_diag.py", content="")
     assert refusal.status == "error", refusal.text
-    assert refusal.text.startswith("tests/test_zz_diag.py is not a declared file")
+    assert refusal.text.startswith("worktree.change.footprint:")
+    assert "tests/test_zz_diag.py is not a declared file" in refusal.text
     assert all(path in refusal.text for path in PQ3312_FILES)
     assert "Scratch or diagnostic files are not allowed" in refusal.text
     for way in ("read", "grep", "diff", "run_tests", "needs_files"):
@@ -115,7 +116,8 @@ def test_pq3312_edit_of_an_undeclared_tracked_file_is_refused(maker_request, mon
     with _pq3312_tools(maker_request, monkeypatch) as (root, call):
         refusal = call("edit", path="greeting.py", old="goodbye", new="hello")
     assert refusal.status == "error"
-    assert refusal.text.startswith("greeting.py is not a declared file")
+    assert refusal.text.startswith("worktree.change.footprint:")
+    assert "greeting.py is not a declared file" in refusal.text
     assert (root / "greeting.py").read_text() == "def greet(): return 'goodbye'\n"
 
 

@@ -13,6 +13,7 @@ class Role:
     input_schema: str
     reply_schema: str
     tools: Mapping[str, str] = field(default_factory=dict)
+    reply_contract: Callable | None = None
     check_reply: Callable[[dict, dict], None] | None = None
     run: Callable[[object, dict, object, Callable[[dict], None]], dict] | None = None
     code_only_fields: tuple[str, ...] = ()

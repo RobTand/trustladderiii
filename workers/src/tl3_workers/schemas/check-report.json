@@ -543,7 +543,8 @@
     "ReportSchema": {
       "enum": [
         "tl3.checks.v1",
-        "tl3.checks.v2"
+        "tl3.checks.v2",
+        "tl3.checks.v3"
       ],
       "type": "string"
     },
@@ -1086,6 +1087,12 @@
         },
         "pre_existing": {
           "type": "boolean"
+        },
+        "proof_refusal": {
+          "maxLength": 65536,
+          "minLength": 1,
+          "title": "899: additive v3 diagnostic; older reports retain the ordinary message.",
+          "type": "string"
         },
         "test": {
           "minLength": 1,

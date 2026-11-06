@@ -9,7 +9,7 @@ import tempfile
 import time
 from typing import Protocol
 
-from .limits import MAX_DETAILED_FAILURES, MAX_MESSAGE_CHARS, MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES, MAX_RESULT_BYTES, RESULT_ENVELOPE_BYTES, validate_check_plan
+from .limits import MAX_PROOF_MESSAGE_CHARS, MAX_DETAILED_FAILURES, MAX_MESSAGE_CHARS, MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES, MAX_RESULT_BYTES, RESULT_ENVELOPE_BYTES, validate_check_plan
 from .model import (ALWAYS_CHECK, SELECTED_CHECK, Check, FailureNotes, Forcing, HarnessInputError, ProofRefusal, Kind, Outcome, Result, TestResult, Verdict,
                     NATIVE_THREAD_ENVIRONMENT, judge)
 from .node_ids import validate_always_tests
@@ -218,10 +218,16 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
 
 
 def refused(plan: tuple[Check, ...], message: str) -> tuple[Result, ...]:
-    """A failing round that tells the maker what to undo; nothing ran."""
-    return tuple(Result(check.name, check.kind, Verdict.FAIL, tuple(
-        TestResult(test, Outcome.UNCOLLECTED, Outcome.UNCOLLECTED, False, False, message[:MAX_MESSAGE_CHARS])
+    """Keep complete trusted proof rows within the existing result byte budget."""
+    from .model import ProofMessage
+    message = ProofMessage(str(message)) if isinstance(message, ProofRefusal) else message
+    results = tuple(Result(check.name, check.kind, Verdict.FAIL, tuple(
+        TestResult(test, Outcome.UNCOLLECTED, Outcome.UNCOLLECTED, False, False,
+                   message if isinstance(message, ProofMessage) else message[:MAX_MESSAGE_CHARS])
         for test in check.tests), forcing=check.forcing, declared_symptom=check.declared_symptom) for check in plan)
+    if isinstance(message, ProofMessage):
+        result_json(results)
+    return results
 
 
 def listed(instruction: str, changed: list[str]) -> str:
@@ -258,13 +264,23 @@ def configuration_changes(repo: Path, root: Path, base: str, base_tree: Path, he
         if not base_tree.exists():
             export(repo, fork, base_tree)
     configuration = tool.changed_configuration(base_tree, head_tree)
+    syntax_refusal = None
     try:
         permitted = conftest_subjects(base_tree, head_tree, plan)
-    except (ProofRefusal, SyntaxError, OSError):
+    except SyntaxError as error:
+        syntax_refusal = str(ProofRefusal('proof.source.unparsable', module=error.filename or '', bad_value=error.msg, line=error.lineno))
+        permitted = set()
+    except (ProofRefusal, OSError):
         permitted = set()
     configuration = [name for name in configuration if name not in permitted]
     paths = changed_protected(repo, fork, head, protected)
-    return changed_files_message(configuration, paths) if configuration or paths else None
+    if configuration or paths:
+        message = changed_files_message(configuration, paths)
+        if syntax_refusal:
+            from .model import ProofMessage
+            return ProofMessage(message + '\n' + syntax_refusal)
+        return message
+    return None
 
 
 class TestTool(Protocol):
@@ -538,7 +554,7 @@ def forcing_tamper_diff(repo, base, head):
 def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                container: Container, reviewed: str | None = None, tool: TestTool = PYTEST,
                protected: tuple[str, ...] = (), selected_tests: int | None = None,
-               always_tests: tuple[str, ...] = (), selected_failures: tuple[str, ...] = ()) -> tuple[Result, ...]:
+               always_tests: tuple[str, ...] = (), selected_failures: tuple[str, ...] = (), footprint: tuple[str, ...] = (), generated: tuple[str, ...] = ()) -> tuple[Result, ...]:
     """Run one round inside one admitted PB action, from trusted installed code. `protected`
     holds the repository's protected path patterns; a change to any of them is refused.
     With `selected_tests`, complete execution groups whose imports reach the change
@@ -654,8 +670,13 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             staged = root / f"proof-{index}"
             subject = reviewed_tree if check.kind == Kind.REPRODUCING else old
             try:
-                receipt = assemble_proof(subject, new, staged, check, config)
-            except (ProofRefusal, SyntaxError, OSError) as error:
+                receipt = assemble_proof(subject, new, staged, check, config, role='maker', check_index=index, footprint=footprint, protected=protected, generated=generated)
+            except SyntaxError as error:
+                refusal = ProofRefusal('proof.source.unparsable', module=error.filename or '', bad_value=error.msg, line=error.lineno)
+                return refused(plan, refusal.for_check(check, 'maker', index, footprint=footprint, protected=protected, generated=generated))
+            except ProofRefusal as error:
+                return refused(plan, error)
+            except OSError as error:
                 return refused(plan, str(error))
             subject_files = sorted({name.split('::', 1)[0] for name in receipt['subjects']})
             proof_subjects = dict.fromkeys(check.tests, subject_files)
@@ -759,7 +780,14 @@ def result_json(results: tuple[Result, ...]) -> str:
             if test['head_forced'] is None:
                 del test['head_forced']
             if id(test) in retained:
-                test['message'] = test['message'][:MAX_MESSAGE_CHARS].encode(errors='backslashreplace').decode()[:MAX_MESSAGE_CHARS]
+                from .model import ProofMessage
+                if isinstance(test['message'], ProofMessage):
+                    if len(test['message']) > MAX_PROOF_MESSAGE_CHARS:
+                        raise HarnessInputError('Complete proof refusal exceeds the bounded result byte budget for a proof message.')
+                    test['proof_refusal'] = str(test['message'])
+                    test['message'] = test['message'][:MAX_MESSAGE_CHARS]
+                else:
+                    test['message'] = test['message'][:MAX_MESSAGE_CHARS].encode(errors='backslashreplace').decode()[:MAX_MESSAGE_CHARS]
             else:
                 test['message'] = ''
     encoded = json.dumps(reports, sort_keys=True, separators=(',', ':'))

@@ -56,6 +56,8 @@ def test_wire_tools_identical_on_tool_turn_final_and_repair(tmp_path, role_name)
             runtime._run_agent(agent, history, lambda _: None)
     definitions = [json.dumps(body.get("tools"), ensure_ascii=False).encode() for body in sent]
     assert all(value == definitions[0] for value in definitions), "phase changes must preserve tools and order"
+    names = {tool['function']['name'] for tool in sent[0].get('tools', [])}
+    assert ('delete' in names) == ('delete' in ROLES[role_name].tools)
     if role_name in TOOL_ROLES:
         assert sent[0]["tools"]
         assert sent[-1].get("tool_choice") == "none", "repair disables calling without removing definitions"

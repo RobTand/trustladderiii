@@ -1,0 +1,56 @@
+[
+  {
+    "id": "prismaquant-2648",
+    "source": "https://github.com/RobTand/prismaquant/issues/2648",
+    "route": "Run any required development checks through PrismaBuild at priority -10. No checks were run during this issue-only triage.",
+    "verification": "tests/test_generate_transition_rewrites.py passes.",
+    "original_paragraph": "Run any required development checks through PrismaBuild at priority -10. No checks were run during this issue-only triage.",
+    "original_is_route_only": true,
+    "source_sha256": "7439b74733a9f44fafe294a34d50f12c2ff82c6221d042a993adfdac19d091f4"
+  },
+  {
+    "id": "prismaquant-2629",
+    "source": "https://github.com/RobTand/prismaquant/issues/2629",
+    "route": "Run any required development checks through PrismaBuild at priority -10. No checks were run during this issue-only triage.",
+    "verification": "tests/test_duplication_baseline.py passes.",
+    "original_paragraph": "Run any required development checks through PrismaBuild at priority -10. No checks were run during this issue-only triage.",
+    "original_is_route_only": true,
+    "source_sha256": "ed3addf6695e7bdf7915060a023317b60fc9bd62238567a0cdcce169e8e1248b"
+  },
+  {
+    "id": "prismaquant-3299",
+    "source": "https://github.com/RobTand/prismaquant/issues/3299",
+    "route": "Read each run's own verdict and log; record skips. Print only allowlisted status, returncode, hashes, sizes and timestamps.",
+    "verification": "the new or changed test fails on base and passes on head via run_tests (TL3 records both)",
+    "original_paragraph": "5. Test-first evidence: the new or changed test fails on base and passes on head via run_tests (TL3 records both); separate RED/GREEN commits are not required. Read each run's own verdict and log; record skips. Print only allowlisted status, returncode, hashes, sizes and timestamps.",
+    "original_is_route_only": false,
+    "source_sha256": "0e4e986237144d67a4389a6a096d301dabd33f73411098032cfcfeadbc88c0ce"
+  },
+  {
+    "id": "prismabuild-2783",
+    "source": "https://github.com/RobTand/prismabuild/issues/2783",
+    "route": "Run development tests only through admitted PrismaBuild with the published entrypoints; read the execution policy and operating guide first. Reserve aggregate demand, bound native threads, preserve assigned affinity, and allow portable work on any eligible worker. Read the actual terminal verdict, logs and CAS receipts with allowlisted fields only; acknowledgement is not a pass.",
+    "verification": "Base stdout must contain a sentinel; head must equal the literal failed envelope with LF and no diagnostics.",
+    "original_paragraph": "Run development tests only through admitted PrismaBuild with the published entrypoints; read the execution policy and operating guide first. Reserve aggregate demand, bound native threads, preserve assigned affinity, and allow portable work on any eligible worker. Read the actual terminal verdict, logs and CAS receipts with allowlisted fields only; acknowledgement is not a pass. Record skips and missing tools, add no skips/retries/quarantine. Free remote compute exceptions and CI ownership remain Rob's policy. No actual tests have run for this source scope analysis.",
+    "original_is_route_only": false,
+    "source_sha256": "b7e97ac1e4828a75a3e6f03679e2069cb81f22b8bd7db5ee13b918a2ee2ca0d0"
+  },
+  {
+    "id": "prismabuild-2823",
+    "source": "https://github.com/RobTand/prismabuild/issues/2823",
+    "route": "Run validation through TL3's normal admitted PrismaBuild `run_tests`. Declare aggregate CPU/memory demand and bound native threads. Verify terminal records, logs and CAS receipts.",
+    "verification": "Assert `preflight()` returns its existing 1 and stderr identifies `resolve_example_dev_pin.py` and timeout/refusal, with no pytest invocation.",
+    "original_paragraph": "The red test is deterministic and uses private fixtures or injected failures, with no fleet, GPU or multi-host dependency. Run validation through TL3's normal admitted PrismaBuild `run_tests`. Declare aggregate CPU/memory demand and bound native threads. Verify terminal records, logs and CAS receipts.",
+    "original_is_route_only": false,
+    "source_sha256": "61facc2a1d6135370e4f5cdd039d6c85253abd89c9838cf99cf79c1e8671c431"
+  },
+  {
+    "id": "prismaquant-2798",
+    "source": "https://github.com/RobTand/prismaquant/issues/2798",
+    "route": null,
+    "verification": "Run any required GPU or served validation through PrismaBuild; CPU checks alone do not establish serving or numerical qualification. Keep the exact original measurement scope.",
+    "original_paragraph": "The original scope includes runtime, checkpoint or measurement dependencies. Run any required GPU or served validation through PrismaBuild; CPU checks alone do not establish serving or numerical qualification. Keep the exact original measurement scope.",
+    "original_is_route_only": false,
+    "source_sha256": "b5b2b43702ebca7eae844192e56c0e664993bb659966ec221eea13fb9db09c23"
+  }
+]

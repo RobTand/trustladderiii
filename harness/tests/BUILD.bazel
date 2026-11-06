@@ -224,6 +224,7 @@ tl3_py_test(
     name = "test_subject_observer",
     srcs = ["test_subject_observer.py"],
     deps = [
+        ":proof_row_cases",
         ":conftest",
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
@@ -328,5 +329,29 @@ tl3_py_test(
         ":conftest",
         "//harness/src/tl3_harness",
         "@tl3_pip//pytest",
+    ],
+)
+
+py_library(
+    name = "proof_row_cases",
+    srcs = ["proof_row_cases.py"],
+)
+
+tl3_py_test(
+    name = "test_proof_rows",
+    srcs = ["test_proof_rows.py"],
+    deps = [
+        ":proof_row_cases",
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_staging_modes",
+    srcs = ["test_staging_modes.py"],
+    deps = [
+        ":conftest",
+        "//harness/src/tl3_harness",
     ],
 )
