@@ -137,6 +137,12 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
         "port_deps_s2_verify_registration",
     ),
     ("apply_dependency_remove", "port_deps_s2_removal"),
+    // #806 W7 slice 2b: real on_ack and apply adoption theorem with executable covers.
+    ("apply_adoption_at_most_once", "port_deps_2b_adoption"),
+    (
+        "apply_adoption_has_no_maker_credit",
+        "port_deps_2b_adoption",
+    ),
     // #806: W6 slice one uses the universal real-advance theorem and executable covers.
     ("advance_ingesting", "port_advance_phase"),
     ("advance_auditing", "port_advance_phase"),

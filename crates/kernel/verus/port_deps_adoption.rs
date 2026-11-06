@@ -90,13 +90,13 @@ pub(super) proof fn local_fields(b: Node, a: Node, qb: u64, qa: u64,
     i: usize, seq: u64, ob: Outbox, oa: Outbox)
     requires preparing(b), b.generation < u64::MAX, seq == b.effect.unwrap().seq,
         port_acks_specs::ack_local(b, a, qb, qa, i, seq, Ack::Confirmed, ob, oa),
-    ensures fields(b, a), qa == qb, oa == ob,
+    ensures fields(b, a), qa == qb, oa.len == ob.len, oa.items@ == ob.items@,
 {
     reveal(port_acks_specs::ack_local); reveal(port_acks_specs::ack_output);
     reveal(port_acks_specs::ack_emissions); reveal(port_acks_specs::appended);
     reveal(preparing);
     assert(oa.items@ =~= ob.items@);
-    assert(oa == ob);
+    assert(port_acks_specs::ack_local(b, a, qb, qb, i, seq, Ack::Confirmed, ob, ob));
     port_acks_frames::ack_adoption_fields(b, a, qb, i, seq, ob);
     reveal(fields);
 }
