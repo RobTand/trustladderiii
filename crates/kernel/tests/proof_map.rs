@@ -55,6 +55,11 @@ const VERUS_GROUPS: &str = include_str!("../../../tools/bazel/verus.bzl");
 
 // #806: these names retain their event/phase coverage after Kani retirement.
 const VERUS_RETIREMENTS: &[(&str, &str)] = &[
+    ("apply_dependency", "dependency_retirement_fact"),
+    (
+        "dependency_abandoned_never_releases",
+        "dependency_retirement_abandoned",
+    ),
     // #832: new semantic replies are covered by Verus; Kani stays frozen.
     ("apply_plan_check_rejected", "plan_check_witness"),
     ("apply_plan_check_needs_split", "plan_check_witness"),
@@ -124,13 +129,8 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
     ("dependency_no_cycle", "port_deps_register_preserves"),
     ("dependency_waiting_holds_nothing", "port_deps_terminal"),
     ("dependency_delivered_releases", "port_deps_delivery_cover"),
-    (
-        "dependency_abandoned_never_releases",
-        "port_deps_abandoned_cover",
-    ),
     ("pool_grant_is_priority_ordered", "port_deps_pool_grant"),
     ("pool_order_is_strict_priority", "port_deps_pool_key"),
-    ("apply_dependency", "port_deps_s2_dependency_fact"),
     (
         "apply_dependency_registration",
         "port_deps_s2_verify_registration",

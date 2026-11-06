@@ -459,6 +459,7 @@ impl Controller {
         controller.recover_postmortems()?;
         controller.reconcile_worker_waits()?;
         controller.migrate_model_quota_deadlines()?;
+        controller.recover_prerequisites()?;
         Ok(controller)
     }
 
@@ -986,6 +987,17 @@ impl Controller {
             self.retry_held_effects(source);
         }
         Ok(())
+    }
+
+    /// #849 / Q51: retain the completion's typed cause before its observations.
+    pub(crate) fn observe_completion(&mut self, key: &str, completion: Completion) -> Result<()> {
+        let snapshot = self.store.load()?;
+        let effect = self
+            .store
+            .effect(key)?
+            .ok_or(Error::Invalid("missing completed effect"))?;
+        let delivery = hydrate(&effect, &snapshot)?;
+        self.look_observations(&delivery, completion)
     }
 
     pub(crate) fn queue_observation(
@@ -1627,6 +1639,9 @@ impl Controller {
                     .observations
                     .iter()
                     .any(|observation| matches!(observation, Observation::Quota { .. }));
+                if let Some(class) = completion.failure_class.as_deref() {
+                    self.failure_allowance(&snapshot, &delivery.key, class, &mut commit)?;
+                }
                 for (index, observation) in completion.observations.iter().enumerate() {
                     self.queue_observation(
                         &snapshot,
@@ -2959,6 +2974,21 @@ impl Controller {
         let mut outside_paths_total = 0;
         let mut detailed_review = false;
         let event = match observation {
+            Observation::PrerequisiteRead {
+                repository,
+                kind,
+                number,
+                ..
+            } => {
+                if self.bootstrap.repos.contains(&repository) {
+                    let fact = self
+                        .adapters
+                        .get(executor::Upstream::GitHub)?
+                        .prerequisite_detail(&repository, kind, number)?;
+                    self.external_dependency_fact(snapshot, world, fact, commit)?;
+                }
+                return Ok(None);
+            }
             Observation::Prerequisite(fact) => {
                 self.external_dependency_fact(snapshot, world, fact, commit)?;
                 return Ok(None);
@@ -4350,6 +4380,7 @@ fn observation_upstream(
             ..
         }) => None,
         Observation::GitHubComment { .. }
+        | Observation::PrerequisiteRead { .. }
         | Observation::Prerequisite(_)
         | Observation::LinkedRequest { .. }
         | Observation::PullRequest { .. } => Some(Upstream::GitHub),

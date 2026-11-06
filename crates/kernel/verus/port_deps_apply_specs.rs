@@ -3,7 +3,8 @@ use super::port_deps_specs::*;
 use super::*;
 
 verus! {
-/// #806: an external declaration has no executable graph traversal.
+/// #806 / #839: external-row preparation follows revocable delivery and abandoned recovery.
+/// The revocation predicate is the frozen owner definition, not a second policy.
 #[verifier::opaque]
 pub(super) open spec fn prepared(w: World, i: int, target: DependencyTarget,
     status: DependencyStatus) -> Option<(Option<usize>, Dependency)> {
@@ -13,8 +14,11 @@ pub(super) open spec fn prepared(w: World, i: int, target: DependencyTarget,
     } else { None };
     if target.number == 0 || (match existing {
         Some(k) => w.dependencies@[k as int].rejected
-            || w.dependencies@[k as int].status != DependencyStatus::Pending
-            || (status == DependencyStatus::Pending && target.request == w.dependencies@[k as int].target.request),
+            || !(w.dependencies@[k as int].status == DependencyStatus::Pending
+                || (w.dependencies@[k as int].status == DependencyStatus::Abandoned && status == DependencyStatus::Delivered)
+                || (dependency_retirement::revocable(w.nodes@[i]) && status == DependencyStatus::Pending))
+            || (w.dependencies@[k as int].status == DependencyStatus::Pending
+                && status == DependencyStatus::Pending && target.request == w.dependencies@[k as int].target.request),
         None => w.nodes@[i].planning_started || !(match w.nodes@[i].phase { Phase::Ingesting | Phase::Auditing | Phase::Unplanned => true, _ => false }),
     }) { None } else { Some((existing, Dependency { node: NodeId(i as u64), target, status, rejected: false })) }
 }

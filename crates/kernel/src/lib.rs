@@ -38,6 +38,9 @@ mod checking;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/cleanup_lemmas.rs"]
 mod cleanup_lemmas;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/dependency_retirement.rs"]
+mod dependency_retirement;
 mod events;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/events_lemmas.rs"]
@@ -66,6 +69,10 @@ mod retirement_witness;
 verus! {
 /// #806: domain of the retired two-node Kani consistency checks.
 pub closed spec fn retirement_domain(w: World) -> bool { retirement::domain(w) }
+/// #839: unrestricted counters in the original single-node dependency harness.
+pub closed spec fn dependency_retirement_domain(w: World) -> bool { dependency_retirement::domain(w) }
+/// #839: full consistency, including every original dependency assertion.
+pub closed spec fn dependency_retirement_accepted(w: World) -> bool { dependency_retirement::accepted(w) }
 /// #806: complete acceptance predicate, equivalent to the real checker in this domain.
 pub closed spec fn retirement_accepted(w: World) -> bool { retirement::accepted(w) }
 }

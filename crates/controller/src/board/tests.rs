@@ -8,6 +8,7 @@ fn request(id: u64, phase: Phase) -> Request {
     let mut node = Node::new(RepoId(0));
     node.phase = phase;
     Request {
+        direct_delivery: false,
         id: NodeId(id),
         node,
         repo: "RobTand/tl3-sandbox".into(),
@@ -22,6 +23,7 @@ fn request(id: u64, phase: Phase) -> Request {
         maker_model: None,
         question_context: None,
         quota_hold: None,
+        prerequisites: vec![],
     }
 }
 

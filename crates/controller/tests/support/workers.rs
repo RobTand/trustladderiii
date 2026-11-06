@@ -124,6 +124,14 @@ impl<F: FnMut(&Delivery, &mut Completion)> Executor for Workers<F> {
     ) -> Result<tl3_kernel::DependencyStatus> {
         self.primary().prerequisite(repository, kind, number)
     }
+    fn prerequisite_detail(
+        &mut self,
+        repository: &tl3_controller::Repository,
+        kind: tl3_kernel::PrerequisiteKind,
+        number: u64,
+    ) -> Result<tl3_controller::merge_dependencies::ExternalFact> {
+        self.primary().prerequisite_detail(repository, kind, number)
+    }
     fn implementation(&self) -> &'static str {
         match &self.real {
             Some(real) => real.implementation(),
@@ -189,6 +197,12 @@ impl<F: FnMut(&Delivery, &mut Completion)> Executor for Workers<F> {
     fn quota_resume_ms(&mut self, delivery: &Delivery, announced: u64, now: u64) -> Result<u64> {
         self.backend(delivery)
             .quota_resume_ms(delivery, announced, now)
+    }
+    fn quota_candidates(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<Vec<tl3_controller::looks::QuotaModel>> {
+        self.backend(delivery).quota_candidates(delivery)
     }
     fn stop_stalled(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.backend(delivery).stop_stalled(delivery)

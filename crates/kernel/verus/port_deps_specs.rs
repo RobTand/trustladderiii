@@ -2,22 +2,12 @@
 use super::*;
 
 verus! {
-/// State-table terminal prerequisites: every occurrence of this declaration key
-/// is terminal. Valid checked tables contain exactly one occurrence.
-pub(super) open spec fn terminal_key(w: World, i: int, target: DependencyTarget) -> bool {
-    (exists|k: int| 0 <= k < w.dependencies@.len()
-        && key(w.dependencies@[k], i, target))
-        && (forall|k: int| 0 <= k < w.dependencies@.len()
-            && key(w.dependencies@[k], i, target)
-            ==> w.dependencies@[k].rejected || w.dependencies@[k].status != DependencyStatus::Pending)
-}
-
 /// State-table prerequisite identity is owner, kind, and external number.
 pub(super) open spec fn key(d: Dependency, i: int, target: DependencyTarget) -> bool {
     d.node == NodeId(i as u64) && d.target.kind == target.kind && d.target.number == target.number
 }
 
-/// #806: a retained Pending declaration accepts either terminal observation.
+/// #806: a retained Pending declaration accepts either Delivered or Abandoned observations.
 pub(super) open spec fn pending_key(w: World, i: int, target: DependencyTarget) -> bool {
     target.number > 0
         && (match target.request { None => true, Some(n) => n.0 < w.nodes@.len()
@@ -53,7 +43,7 @@ pub(super) open spec fn unchanged(a: World, b: World) -> bool {
         && a.next_ticket == b.next_ticket && a.next_question == b.next_question && a.fail_fast == b.fail_fast
 }
 
-/// State-table prerequisite terminal observation: the real handler changes
+/// State-table prerequisite observation: the real handler changes
 /// exactly one matching table row, with no bound on other declarations.
 #[verifier::opaque]
 pub(super) open spec fn resolved(before: World, after: World, i: int,
@@ -88,7 +78,6 @@ pub(super) open spec fn handler_post(before: World, after: World, i: int,
             ==> after.dependencies@ == before.dependencies@.push(Dependency {
                 node: NodeId(i as u64), target, status,
                 rejected: cycle_rejected(before, i, target, status) }))
-        && (terminal_key(before, i, target) ==> unchanged(before, after) && out == old_out)
         && (pending_key(before, i, target) && status != DependencyStatus::Pending ==> {
             resolved(before, after, i, target, status)
                 && recorded_output(old_out, out, i as usize, Dependency {
@@ -99,7 +88,7 @@ pub(super) open spec fn handler_post(before: World, after: World, i: int,
 }
 
 /// #806: original prerequisite constructors have one external declaration.
-/// The universal terminal/waiting theorems do not inherit this witness bound.
+/// The universal graph/waiting theorems do not inherit this witness bound.
 pub(super) open spec fn checker_dependencies(w: World) -> bool {
     if w.dependencies@.len() == 0 {
         forall|i: int| 0 <= i < w.nodes@.len() ==> !w.nodes@[i].credit.withheld

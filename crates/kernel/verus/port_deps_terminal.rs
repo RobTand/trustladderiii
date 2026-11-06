@@ -1,24 +1,8 @@
-//! #693 / #806 W7: terminality and waiting over arbitrary prerequisite tables.
+//! #693 / #806 W7: waiting over arbitrary prerequisite tables.
 use super::port_deps_specs::*;
 use super::*;
 
 verus! {
-/// State-table terminal prerequisite facts / #806: every subsequent observation
-/// of a terminal key is silent and leaves the whole real World unchanged.
-pub(super) fn terminal_stutters(mut world: World, i: usize,
-    target: DependencyTarget, status: DependencyStatus) -> (result: (World, Outbox))
-    requires step_scope(world), i < world.nodes@.len(), i <= u64::MAX as int,
-        terminal_key(world, i as int, target),
-    ensures unchanged(world, result.0), result.1.len == 0,
-{
-    let ghost before = world;
-    let mut out = Outbox::new();
-    proof { reveal(step_scope); reveal(empty_outbox); }
-    apply(&mut world, Event::Fact { node: NodeId(i as u64), fact: Fact::Dependency { target, status } }, &mut out);
-    proof { reveal(handler_post); }
-    (world, out)
-}
-
 /// State-table prerequisite wait / #806: a blocked Unplanned root cannot own
 /// delivery resources or spendable credit, and the real advance is a full stutter.
 pub(super) fn waiting_holds_nothing(mut world: World, i: usize, blocker: usize)

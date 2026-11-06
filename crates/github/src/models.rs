@@ -87,6 +87,43 @@ pub struct PullHead {
     pub repo: Option<Repository>,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MergeMethod {
+    Merge,
+    Squash,
+    Rebase,
+}
+
+/// Repository merge settings, read again for every direct delivery attempt.
+#[derive(Clone, Debug, Deserialize)]
+pub struct MergeSettings {
+    pub allow_merge_commit: bool,
+    pub allow_squash_merge: bool,
+    pub allow_rebase_merge: bool,
+}
+
+impl MergeSettings {
+    pub fn method(&self) -> Option<MergeMethod> {
+        if self.allow_squash_merge {
+            Some(MergeMethod::Squash)
+        } else if self.allow_merge_commit {
+            Some(MergeMethod::Merge)
+        } else if self.allow_rebase_merge {
+            Some(MergeMethod::Rebase)
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct MergeResult {
+    pub merged: bool,
+    pub sha: Option<String>,
+    pub message: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct CheckRun {
     pub id: u64,

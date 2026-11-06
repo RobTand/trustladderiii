@@ -85,68 +85,6 @@ pub(super) fn waiting_cover() -> (result: World)
     after
 }
 
-/// #806 original abandonment cover: real apply announces once, any later status
-/// stutters silently, and real advance keeps the original root blocked forever.
-pub(super) fn abandoned_cover(repeated_status: DependencyStatus) -> (result: (World, Outbox))
-    ensures blocked(result.0, DependencyStatus::Abandoned),
-        result.0.nodes@[0].waiting_prerequisite.is_some(),
-        result.1.len == 1 && result.1.items@[0] == Some(Out::Notice {
-            node: NodeId(0), notice: Notice::Note(NoteKind::DependencyAbandoned { number: 2761 }) }),
-{
-    let mut world = waiting_world();
-    let ghost before = world;
-    let mut out = Outbox::new();
-    proof { reveal(empty_outbox); reveal(storage_ordered); checked_reserves(world); reveal(step_scope);
-        reveal(blocked); reveal(target); reveal(pending_key); reveal(key);
-        assert(world.dependencies@.len() == 1);
-        assert(world.dependencies@[0].target == target());
-        assert(key(world.dependencies@[0], 0, target()));
-        assert forall|k: int| 0 <= k < world.dependencies@.len()
-            && key(world.dependencies@[k], 0, target()) implies world.dependencies@[k].target == target()
-                && !world.dependencies@[k].rejected
-                && world.dependencies@[k].status == DependencyStatus::Pending by { assert(k == 0); }
-        assert(pending_key(world, 0, target())); }
-    apply(&mut world, Event::Fact { node: NodeId(0), fact: Fact::Dependency {
-        target: DependencyTarget { kind: PrerequisiteKind::Issue, number: 2761, request: None },
-        status: DependencyStatus::Abandoned } }, &mut out);
-    proof {
-        reveal(handler_post); reveal(resolved); reveal(dependencies::dependency_frame);
-        reveal(recorded_output);
-        assert(world.dependencies@.len() == 1);
-        dependencies::prerequisite_definition(world, NodeId(0));
-        dependencies::delivered_definition(world.dependencies@, NodeId(0));
-        reveal(original_node); reveal(initial_node);
-        assert(world.nodes@[0].credit.withheld);
-        assert(original_node(world.nodes@[0]));
-        assert(world.dependencies@ =~= seq![Dependency { node: NodeId(0), target: target(),
-            status: DependencyStatus::Abandoned, rejected: false }]);
-        assert(world.dependencies@[0].node == NodeId(0));
-        assert(world.dependencies@[0].status == DependencyStatus::Abandoned);
-        dependencies::delivered_definition(world.dependencies@, NodeId(0));
-        assert(!dependencies::delivered(world.dependencies@, NodeId(0)));
-        assert(world.nodes@[0].waiting_prerequisite.is_some());
-        assert(blocked(world, DependencyStatus::Abandoned));
-        blocked_is_checked(world, DependencyStatus::Abandoned); reveal(port_deps_checker_accepted);
-    }
-    let accepted = world.check();
-    assert(accepted.is_ok());
-    proof { reveal(storage_ordered); checked_reserves(world); reveal(step_scope); }
-    let (world, repeated_out) = port_deps_terminal::terminal_stutters(world, 0,
-        DependencyTarget { kind: PrerequisiteKind::Issue, number: 2761, request: None }, repeated_status);
-    assert(repeated_out.len == 0);
-    proof { reveal(unchanged); blocked_is_checked(world, DependencyStatus::Abandoned);
-        reveal(port_deps_checker_accepted); }
-    let accepted = world.check();
-    assert(accepted.is_ok());
-    let (world, waiting_out, balance) = port_deps_terminal::waiting_holds_nothing(world, 0, 0);
-    assert(waiting_out.len == 0 && balance == 0);
-    proof { reveal(unchanged); blocked_is_checked(world, DependencyStatus::Abandoned);
-        reveal(port_deps_checker_accepted); }
-    let accepted = world.check();
-    assert(accepted.is_ok());
-    (world, out)
-}
-
 /// #806: the original root after delivery, before the separate admission move.
 pub(super) open spec fn ready_for_admission(w: World) -> bool {
     w.nodes@.len() == 1 && original_node(w.nodes@[0])

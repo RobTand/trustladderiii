@@ -1,4 +1,4 @@
-//! #806 W7: the three original dependency apply harnesses, without counter bounds.
+//! #806 W7: registration of external prerequisites, without counter bounds.
 use super::port_deps_single::{accepted, dependencies_ok, domain};
 use super::port_deps_specs::*;
 use super::*;
@@ -22,9 +22,8 @@ pub(super) proof fn scope(w: World)
 /// #806: an exact external declaration preserves the original arbitrary node's complete checks.
 pub(super) proof fn external_preserves(w: World, v: World, target: DependencyTarget,
     status: DependencyStatus, out: Outbox, next: Outbox)
-    requires domain(w), accepted(w), w.dependencies@.len() <= 1,
+    requires domain(w), accepted(w), w.dependencies@.len() == 0,
         target.kind == PrerequisiteKind::Issue, target.number > 0, target.request.is_none(),
-        w.dependencies@.len() == 1 ==> w.dependencies@[0].target == target,
         port_deps_apply_specs::external_post(w, v, 0, target, status, out, next),
     ensures domain(v), accepted(v),
 {
@@ -36,40 +35,9 @@ pub(super) proof fn external_preserves(w: World, v: World, target: DependencyTar
     dependencies::delivered_definition(w.dependencies@, NodeId(0));
     dependencies::delivered_definition(v.dependencies@, NodeId(0));
     footprint::storage_frame(w, v, w.nodes@[0].footprint, w.nodes@[0].footprint);
-    if w.dependencies@.len() == 1 {
-        assert(exists|k: usize| k < w.dependencies@.len() && key(w.dependencies@[k as int], 0, target)) by {
-            assert(key(w.dependencies@[0], 0, target));
-        }
-    }
     assert(v.dependencies@.len() <= 1);
     assert forall|k: int| 0 <= k < v.dependencies@.len() implies v.dependencies@[k].node == NodeId(0)
         && v.dependencies@[k].target.request.is_none() && !v.dependencies@[k].rejected by { assert(k == 0); }
-}
-
-/// #806 apply_dependency: all statuses, exact terminal retention, phase and complete checker.
-pub(super) fn dependency_fact(mut w: World, status: DependencyStatus) -> (result: (World, Outbox))
-    requires domain(w), accepted(w), w.dependencies@.len() == 1,
-        w.dependencies@[0].target == (DependencyTarget { kind: PrerequisiteKind::Issue, number: 2761, request: None }),
-    ensures accepted(result.0), result.0.nodes@[0].phase == w.nodes@[0].phase,
-        result.0.dependencies@.len() == 1,
-        result.0.dependencies@[0].status == if w.dependencies@[0].status == DependencyStatus::Pending {
-            status
-        } else { w.dependencies@[0].status },
-{
-    let ghost before = w;
-    proof { scope(w); reveal(domain); reveal(accepted); reveal(dependencies_ok); reveal(empty_outbox); }
-    let checked = w.check(); assert(checked.is_ok());
-    let target = DependencyTarget { kind: PrerequisiteKind::Issue, number: 2761, request: None };
-    let mut out = Outbox::new(); let ghost before_out = out; proof { reveal(empty_outbox); }
-    apply(&mut w, Event::Fact { node: NodeId(0), fact: Fact::Dependency { target, status } }, &mut out);
-    proof {
-        external_preserves(before, w, target, status, before_out, out);
-        reveal(port_deps_apply_specs::external_post); reveal(port_deps_apply_specs::prepared);
-        reveal(key); reveal(unchanged); reveal(dependencies::dependency_frame);
-        scope(w);
-    }
-    let checked = w.check(); assert(checked.is_ok());
-    (w, out)
 }
 
 /// #806 apply_dependency_registration: every original phase and full-width ledger is covered.

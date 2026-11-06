@@ -10,10 +10,155 @@ use tl3_store::{Commit, RowChange, Snapshot};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExternalFact {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
     pub repository: Repository,
     pub kind: PrerequisiteKind,
     pub number: u64,
     pub status: DependencyStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Q59 / #839: controller evidence preserves the reason a prerequisite blocks.
+/// Closed evidence satisfies admission; Stopped still describes an open issue.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrerequisiteState {
+    Open,
+    Delivered,
+    ClosedUnmerged { reason: ClosedPrerequisiteReason },
+    Stopped,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClosedPrerequisiteReason {
+    NotPlanned,
+    PullRequestClosed,
+    IssueClosed,
+}
+
+/// Direct and transitive facts for a dependent's look. No upstream read occurs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PrerequisiteEvidence {
+    pub dependent: NodeId,
+    pub target: DependencyTarget,
+    pub state: PrerequisiteState,
+}
+
+impl PrerequisiteEvidence {
+    pub fn waiting_text(&self) -> String {
+        let number = self.target.number;
+        match self.state {
+            PrerequisiteState::Open => format!("waiting for #{number} to merge"),
+            PrerequisiteState::Delivered => format!("#{number}: delivered"),
+            PrerequisiteState::Stopped => format!("waiting for #{number}: stopped"),
+            PrerequisiteState::ClosedUnmerged { reason } => {
+                let reason = match reason {
+                    ClosedPrerequisiteReason::NotPlanned => " (not planned)",
+                    ClosedPrerequisiteReason::PullRequestClosed
+                    | ClosedPrerequisiteReason::IssueClosed => "",
+                };
+                format!("#{number}: closed without merge{reason}; dependency satisfied")
+            }
+        }
+    }
+}
+
+/// Rob, 2026-11-05, #839 (Q27): truly closed prerequisites satisfy admission.
+fn kernel_status(_kind: PrerequisiteKind, status: DependencyStatus) -> DependencyStatus {
+    match status {
+        DependencyStatus::Abandoned => DependencyStatus::Delivered,
+        other => other,
+    }
+}
+
+pub fn pr_status(pr: &tl3_github::PullRequest) -> DependencyStatus {
+    if pr.merged_at.is_some() {
+        DependencyStatus::Delivered
+    } else if pr.state == "closed" {
+        DependencyStatus::Abandoned
+    } else {
+        DependencyStatus::Pending
+    }
+}
+
+/// #839 / Q49 / Q59: a snapshot supplies typed look evidence, including a
+/// terminal cause further up a chain. The visited set also bounds rejected cycles.
+pub fn prerequisite_evidence(
+    snapshot: &Snapshot,
+    world: &World,
+    node: NodeId,
+) -> Result<Vec<PrerequisiteEvidence>> {
+    let commit = Commit::new("prerequisite-projection", json!(null), snapshot);
+    let requests = bindings(snapshot, &commit)?;
+    let mut evidence = Vec::new();
+    let mut pending = vec![node];
+    let mut seen = BTreeSet::new();
+    while let Some(dependent) = pending.pop() {
+        if !seen.insert(dependent) {
+            continue;
+        }
+        let Some(request) = requests.get(&dependent) else {
+            continue;
+        };
+        for dependency in world.dependencies().iter().filter(|d| d.node == dependent) {
+            let status = retained_fact(
+                snapshot,
+                &commit,
+                &request.repo,
+                dependency.target.kind,
+                dependency.target.number,
+            )?
+            .map_or(dependency.status, |fact| fact.status);
+            let state = match status {
+                DependencyStatus::Delivered => PrerequisiteState::Delivered,
+                DependencyStatus::Abandoned => PrerequisiteState::ClosedUnmerged {
+                    reason: match dependency.target.kind {
+                        PrerequisiteKind::Issue => {
+                            match retained_fact(
+                                snapshot,
+                                &commit,
+                                &request.repo,
+                                dependency.target.kind,
+                                dependency.target.number,
+                            )?
+                            .and_then(|fact| fact.reason)
+                            .as_deref()
+                            {
+                                None | Some("not_planned") => ClosedPrerequisiteReason::NotPlanned,
+                                _ => ClosedPrerequisiteReason::IssueClosed,
+                            }
+                        }
+                        PrerequisiteKind::PullRequest => {
+                            ClosedPrerequisiteReason::PullRequestClosed
+                        }
+                    },
+                },
+                DependencyStatus::Pending => match dependency
+                    .target
+                    .request
+                    .and_then(|id| world.nodes.get(id.0 as usize))
+                {
+                    Some(root) if matches!(root.phase, Phase::Closed(Outcome::Stopped)) => {
+                        PrerequisiteState::Stopped
+                    }
+                    _ => PrerequisiteState::Open,
+                },
+            };
+            evidence.push(PrerequisiteEvidence {
+                dependent,
+                target: dependency.target,
+                state,
+            });
+            if !dependency.rejected
+                && state == PrerequisiteState::Open
+                && let Some(root) = dependency.target.request
+            {
+                pending.push(root);
+            }
+        }
+    }
+    Ok(evidence)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -26,7 +171,7 @@ struct Declaration {
 pub fn issue_status(issue: &tl3_github::Issue) -> DependencyStatus {
     match (issue.state.as_str(), issue.state_reason.as_deref()) {
         ("closed", Some("completed")) => DependencyStatus::Delivered,
-        ("closed", Some("not_planned")) => DependencyStatus::Abandoned,
+        ("closed", _) => DependencyStatus::Abandoned,
         _ => DependencyStatus::Pending,
     }
 }
@@ -34,7 +179,7 @@ pub fn issue_status(issue: &tl3_github::Issue) -> DependencyStatus {
 pub(crate) fn dependency_note(notice: tl3_kernel::Notice) -> Option<String> {
     match notice {
         tl3_kernel::Notice::Note(NoteKind::DependencyAbandoned { number }) => Some(format!(
-            "Prerequisite #{number} was closed as not planned. This request will wait until you change or stop it."
+            "Prerequisite #{number} closed without merging. Closed prerequisites satisfy the dependency; planning checks whether the missing code is needed."
         )),
         tl3_kernel::Notice::Note(NoteKind::DependencyCycle { number }) => Some(format!(
             "Waiting for #{number} would create a cycle. This request will wait until you change or stop it."
@@ -219,16 +364,17 @@ fn retained_fact(
     )
     .map(decode_stored::<ExternalFact>)
     .transpose()
-    .map(|fact| fact.filter(|f| f.status != DependencyStatus::Pending))
 }
 
 fn retain_fact(
-    snapshot: &Snapshot,
+    _snapshot: &Snapshot,
     commit: &mut Commit,
     fact: ExternalFact,
 ) -> Result<ExternalFact> {
     if let Some(previous) =
-        retained_fact(snapshot, commit, &fact.repository, fact.kind, fact.number)?
+        retained_fact(_snapshot, commit, &fact.repository, fact.kind, fact.number)?
+        && let (Some(previous_at), Some(incoming_at)) = (previous.updated_at, fact.updated_at)
+        && incoming_at < previous_at
     {
         return Ok(previous);
     }
@@ -240,7 +386,161 @@ fn retain_fact(
     Ok(fact)
 }
 
+fn record_closure(node: NodeId, fact: &ExternalFact, commit: &mut Commit) {
+    if fact.status != DependencyStatus::Abandoned {
+        return;
+    }
+    use crate::contracts::prerequisites::{Closure, Kind};
+    let closure = Closure {
+        kind: match fact.kind {
+            PrerequisiteKind::Issue => Kind::Issue,
+            PrerequisiteKind::PullRequest => Kind::PullRequest,
+        },
+        number: fact.number,
+        reason: fact.reason.clone().unwrap_or_else(|| match fact.kind {
+            PrerequisiteKind::Issue => "not_planned".into(),
+            PrerequisiteKind::PullRequest => "closed_without_merge".into(),
+        }),
+    };
+    commit.rows.push(put(
+        "prerequisite_closures",
+        format!("{}:{:?}:{}", node.0, fact.kind, fact.number),
+        json!(closure),
+    ));
+}
+
+pub(crate) fn closures(
+    snapshot: &Snapshot,
+    node: NodeId,
+) -> Result<Vec<crate::contracts::prerequisites::Closure>> {
+    let prefix = format!("{}:", node.0);
+    snapshot
+        .rows
+        .iter()
+        .filter(|row| row.table == "prerequisite_closures" && row.id.starts_with(&prefix))
+        .map(|row| decode_stored(row.value.clone()))
+        .collect()
+}
+
 impl Controller {
+    /// #839: expose the same durable prerequisite facts to looks and status.
+    pub fn prerequisite_evidence(&mut self, node: NodeId) -> Result<Vec<PrerequisiteEvidence>> {
+        let snapshot = self.store.load()?;
+        let world = crate::snapshot::decode(&snapshot)?;
+        prerequisite_evidence(&snapshot, &world, node)
+    }
+
+    /// Q59 / #839: one current read per unstarted prerequisite identity at open.
+    /// Historical closures cannot establish current state after a reopen.
+    pub(crate) fn recover_prerequisites(&mut self) -> Result<()> {
+        let snapshot = self.store.load()?;
+        let mut world = crate::snapshot::decode(&snapshot)?;
+        let mut commit = Commit::new(
+            format!("prerequisite-open:{}", snapshot.revision.get()),
+            json!({"prerequisite_open":true}),
+            &snapshot,
+        );
+        let requests = bindings(&snapshot, &commit)?;
+        let mut seen = BTreeSet::new();
+        let mut outputs = Vec::new();
+        let mut invalidated = false;
+        for dependency in world.dependencies().to_vec() {
+            if dependency.rejected
+                || world.nodes[dependency.node.0 as usize].planning_started
+                || world.nodes[dependency.node.0 as usize].phase.is_closed()
+            {
+                continue;
+            }
+            let Some(request) = requests.get(&dependency.node) else {
+                continue;
+            };
+            if !self.bootstrap.repos.contains(&request.repo) {
+                continue;
+            }
+            if dependency.status == DependencyStatus::Delivered {
+                if !self.apply_fact(
+                    &snapshot,
+                    &mut world,
+                    Event::Fact {
+                        node: dependency.node,
+                        fact: Fact::Dependency {
+                            target: dependency.target,
+                            status: DependencyStatus::Pending,
+                        },
+                    },
+                    &mut outputs,
+                    &mut commit,
+                )? {
+                    return Ok(());
+                }
+                invalidated = true;
+            }
+            let key = fact_key(
+                &request.repo,
+                dependency.target.kind,
+                dependency.target.number,
+            );
+            if !self.bootstrap.repos.contains(&request.repo) || !seen.insert(key.clone()) {
+                continue;
+            }
+            if retained_fact(
+                &snapshot,
+                &commit,
+                &request.repo,
+                dependency.target.kind,
+                dependency.target.number,
+            )?
+            .is_some()
+            {
+                commit.rows.push(RowChange::Delete {
+                    table: "prerequisite_facts".into(),
+                    id: key.clone(),
+                });
+            }
+            let queued = snapshot.rows.iter().any(|row| row.table == "inbox" && matches!(
+                serde_json::from_value::<executor::Observation>(row.value.clone()),
+                Ok(executor::Observation::PrerequisiteRead { repository, kind, number, .. })
+                    if same_repository(&repository, &request.repo) && kind == dependency.target.kind && number == dependency.target.number
+            ));
+            for row in snapshot.rows.iter().filter(|row| row.table == "inbox") {
+                if matches!(serde_json::from_value::<executor::Observation>(row.value.clone()),
+                    Ok(executor::Observation::Prerequisite(ref fact))
+                        if same_repository(&fact.repository, &request.repo)
+                            && fact.kind == dependency.target.kind
+                            && fact.number == dependency.target.number)
+                {
+                    commit.rows.push(RowChange::Delete {
+                        table: "inbox".into(),
+                        id: row.id.clone(),
+                    });
+                }
+            }
+            if queued {
+                continue;
+            }
+            commit.rows.push(put(
+                "inbox",
+                format!(
+                    "external:prerequisite-open:{}:{key}",
+                    snapshot.revision.get()
+                ),
+                json!(executor::Observation::PrerequisiteRead {
+                    node: dependency.node,
+                    repository: request.repo.clone(),
+                    kind: dependency.target.kind,
+                    number: dependency.target.number,
+                }),
+            ));
+        }
+        if invalidated {
+            self.record_kernel_result(&snapshot, world, outputs, &mut commit)?;
+        }
+        if !commit.rows.is_empty() {
+            self.store.commit(&commit)?;
+        }
+        Ok(())
+    }
+
     fn apply_fact(
         &self,
         snapshot: &Snapshot,
@@ -276,7 +576,7 @@ impl Controller {
     pub(crate) fn prepare_merge_dependencies(
         &mut self,
         snapshot: &Snapshot,
-        world: &World,
+        _world: &World,
         node: NodeId,
         reply: &Value,
         commit: &mut Commit,
@@ -342,43 +642,33 @@ impl Controller {
             let observed = self
                 .adapters
                 .get(executor::Upstream::GitHub)?
-                .prerequisite(&request.repo, kind, number)?;
+                .prerequisite_detail(&request.repo, kind, number)?;
+            let observed_at = observed.updated_at;
+            let observed_reason = observed.reason.clone();
+            let observed = observed.status;
             let root = bound_root(&requests, snapshot, &request.repo, kind, number);
-            let status =
-                if let Some(fact) = retained_fact(snapshot, commit, &request.repo, kind, number)? {
-                    fact.status
-                } else {
-                    let observed = if root
-                        .is_some_and(|root| root_status(world, root) == DependencyStatus::Delivered)
-                    {
-                        DependencyStatus::Delivered
-                    } else {
-                        observed
-                    };
-                    let status = if observed == DependencyStatus::Pending {
-                        root.map_or(observed, |root| root_status(world, root))
-                    } else {
-                        observed
-                    };
-                    retain_fact(
-                        snapshot,
-                        commit,
-                        ExternalFact {
-                            repository: request.repo.clone(),
-                            kind,
-                            number,
-                            status,
-                        },
-                    )?
-                    .status
-                };
+            // Current GitHub state wins over a bound request's historical ending.
+            let status = observed;
+            let fact = retain_fact(
+                snapshot,
+                commit,
+                ExternalFact {
+                    updated_at: observed_at,
+                    reason: observed_reason,
+                    repository: request.repo.clone(),
+                    kind,
+                    number,
+                    status,
+                },
+            )?;
+            record_closure(node, &fact, commit);
             declarations.push(Declaration {
                 target: DependencyTarget {
                     kind,
                     number,
                     request: root,
                 },
-                status,
+                status: kernel_status(kind, fact.status),
                 source_quote: quote.into(),
             });
         }
@@ -507,10 +797,15 @@ impl Controller {
             // Persist on the transition, even when no current request waits.
             if root_status(world, root) == DependencyStatus::Delivered {
                 for &(kind, number) in &identities {
+                    if retained_fact(snapshot, commit, &request.repo, kind, number)?.is_some() {
+                        continue;
+                    }
                     retain_fact(
                         snapshot,
                         commit,
                         ExternalFact {
+                            updated_at: None,
+                            reason: None,
                             repository: request.repo.clone(),
                             kind,
                             number,
@@ -551,6 +846,7 @@ impl Controller {
                     dependency.target.number,
                 )?
                 .map_or_else(|| root_status(world, bound), |fact| fact.status);
+                let status = kernel_status(dependency.target.kind, status);
                 let ending = (bound == root && world.nodes[root.0 as usize].phase.is_closed())
                     .then(|| {
                         format!(
@@ -625,6 +921,7 @@ impl Controller {
                     .transpose()?
                     .is_some_and(|r| same_repository(&r.repo, &fact.repository))
             {
+                record_closure(dependency.node, &fact, commit);
                 self.apply_fact(
                     snapshot,
                     world,
@@ -632,7 +929,7 @@ impl Controller {
                         node: dependency.node,
                         fact: Fact::Dependency {
                             target: dependency.target,
-                            status: fact.status,
+                            status: kernel_status(fact.kind, fact.status),
                         },
                     },
                     &mut outputs,
@@ -668,12 +965,21 @@ mod tests {
         db: &mut Database,
         name: &str,
     ) -> (Repo, Controller, Repository, tl3_config::Store) {
+        fixture_with_capacity(db, name, 4, 3)
+    }
+
+    fn fixture_with_capacity(
+        db: &mut Database,
+        name: &str,
+        pool: u8,
+        gate: u32,
+    ) -> (Repo, Controller, Repository, tl3_config::Store) {
         let repo = Repo::new();
         let mut config =
             tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
         config.store = db.create(name);
-        config.limits.agent_pool = 4;
-        config.limits.w = 3;
+        config.limits.agent_pool = pool;
+        config.limits.w = gate;
         let bootstrap = Bootstrap::from_config(&config).unwrap();
         let repository = bootstrap.repos[0].clone();
         for number in [42, 2761, 2772, 2779] {
@@ -788,6 +1094,7 @@ mod tests {
             seed.rows.push(put(&table, id, value));
         }
         c.store.commit(&seed).unwrap();
+        seed_current_delivery(&mut c, &repository, 2761);
         let before = c.world().unwrap();
         let endings = |snapshot: &Snapshot| {
             snapshot
@@ -919,6 +1226,25 @@ mod tests {
         );
     }
 
+    fn seed_current_delivery(c: &mut Controller, repo: &Repository, number: u64) {
+        let snapshot = c.snapshot().unwrap();
+        let mut commit = Commit::new("seed-current-delivery", json!(null), &snapshot);
+        retain_fact(
+            &snapshot,
+            &mut commit,
+            ExternalFact {
+                repository: repo.clone(),
+                kind: PrerequisiteKind::Issue,
+                number,
+                status: DependencyStatus::Delivered,
+                reason: Some("completed".into()),
+                updated_at: Some("2026-11-04T00:00:00Z".parse().unwrap()),
+            },
+        )
+        .unwrap();
+        c.store.commit(&commit).unwrap();
+    }
+
     fn event(c: &mut Controller, event: Event) {
         let snapshot = c.snapshot().unwrap();
         let world = crate::snapshot::decode(&snapshot).unwrap();
@@ -980,6 +1306,10 @@ mod tests {
     }
 
     fn ingest_brief(c: &mut Controller, node: NodeId, numbers: &[u64]) {
+        ingest_brief_kind(c, node, numbers, "issue");
+    }
+
+    fn ingest_brief_kind(c: &mut Controller, node: NodeId, numbers: &[u64], kind: &str) {
         let quote = format!(
             "Merge prerequisites: {}",
             numbers
@@ -1003,7 +1333,7 @@ mod tests {
                 role: "ingest".into(),
                 plan_check: None,
                 model: None,
-                reply: json!({"kind":"brief", "brief":"Implement after prerequisites merge", "goals":[{"description":"Implement", "verification":"test"}], "memory_ids":[], "files":[], "forecast":{"tokenizer":"o200k_base", "brief_tokens":1,"file_tokens":{},"overhead_tokens":0,"tokens":1,"fit_tokens":100,"context_tokens":150,"fits":true}, "merge_prerequisites": numbers.iter().map(|n| json!({"kind":"issue", "number":n,"source_quote":quote})).collect::<Vec<_>>()}),
+                reply: json!({"kind":"brief", "brief":"Implement after prerequisites merge", "goals":[{"description":"Implement", "verification":"test"}], "memory_ids":[], "files":[], "forecast":{"tokenizer":"o200k_base", "brief_tokens":1,"file_tokens":{},"overhead_tokens":0,"tokens":1,"fit_tokens":100,"context_tokens":150,"fits":true}, "merge_prerequisites": numbers.iter().map(|n| json!({"kind":kind, "number":n,"source_quote":quote})).collect::<Vec<_>>()}),
             },
         );
     }
@@ -1017,6 +1347,8 @@ mod tests {
         observation(
             c,
             Observation::Prerequisite(ExternalFact {
+                updated_at: None,
+                reason: None,
                 repository: repo.clone(),
                 kind: PrerequisiteKind::Issue,
                 number,
@@ -1045,6 +1377,8 @@ mod tests {
             c.observe(
                 &format!("unserved-{index}"),
                 Observation::Prerequisite(ExternalFact {
+                    updated_at: None,
+                    reason: None,
                     repository,
                     kind: PrerequisiteKind::Issue,
                     number: 810,
@@ -1076,6 +1410,8 @@ mod tests {
         c.observe(
             "missing-number",
             Observation::Prerequisite(ExternalFact {
+                updated_at: None,
+                reason: None,
                 repository: repo,
                 kind: PrerequisiteKind::Issue,
                 number: 0,
@@ -1182,6 +1518,7 @@ mod tests {
             Reply::IngestEarlyEnd(EarlyEnd::AlreadyDone),
         );
         reply(&mut c, restarted, Reply::AuditAgrees);
+        external(&mut c, &repo, 2761, DependencyStatus::Delivered);
         assert_eq!(
             c.world().unwrap().nodes[1].phase,
             Phase::Planning { must_split: false }
@@ -1189,7 +1526,7 @@ mod tests {
     }
 
     #[test]
-    fn abandonment_and_cycles_remain_blocked_and_emit_one_note() {
+    fn closure_releases_predecessor_but_rejected_cycle_stays_blocked() {
         let mut db = Database::start();
         let (_repo, mut c, repo) = fixture(&mut db, "prerequisite_abandoned");
         let a = intake(&mut c, &repo, 2761);
@@ -1209,12 +1546,17 @@ mod tests {
             .iter()
             .filter(|r| r.payload.to_string().contains("DependencyAbandoned"))
             .count();
-        assert_eq!(notes, 1);
-        assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Unplanned);
+        assert_eq!(notes, 0);
+        assert_eq!(
+            c.world().unwrap().nodes[0].phase,
+            Phase::Planning { must_split: false }
+        );
+        assert_eq!(c.world().unwrap().nodes[1].phase, Phase::Unplanned);
+        assert!(c.world().unwrap().dependencies()[1].rejected);
     }
 
     #[test]
-    fn declaration_reconciles_already_observed_delivery_for_active_root() {
+    fn declaration_reads_current_open_state_after_observed_delivery() {
         let mut db = Database::start();
         let (_repo, mut c, repo) = fixture(&mut db, "observed_delivery");
         intake(&mut c, &repo, 2761);
@@ -1223,15 +1565,12 @@ mod tests {
         let waiter = intake(&mut c, &repo, 42);
         ingest(&mut c, waiter, &[2761]);
         let world = c.world().unwrap();
-        assert_eq!(world.dependencies()[0].status, DependencyStatus::Delivered);
-        assert_eq!(
-            world.nodes[waiter.0 as usize].phase,
-            Phase::Planning { must_split: false }
-        );
+        assert_eq!(world.dependencies()[0].status, DependencyStatus::Pending);
+        assert_eq!(world.nodes[waiter.0 as usize].phase, Phase::Unplanned);
     }
 
     #[test]
-    fn declaration_reconciles_already_observed_abandonment_for_active_root() {
+    fn declaration_reads_current_open_state_after_observed_abandonment() {
         let mut db = Database::start();
         let (_repo, mut c, repo) = fixture(&mut db, "observed_abandonment");
         intake(&mut c, &repo, 2761);
@@ -1241,7 +1580,7 @@ mod tests {
         ingest(&mut c, waiter, &[2761]);
         assert_eq!(
             c.world().unwrap().dependencies()[0].status,
-            DependencyStatus::Abandoned
+            DependencyStatus::Pending
         );
         assert_eq!(
             c.world().unwrap().nodes[waiter.0 as usize].phase,
@@ -1250,7 +1589,7 @@ mod tests {
     }
 
     #[test]
-    fn reingest_retains_abandonment_and_announces_once() {
+    fn reingest_retains_historical_closure_but_waits_for_current_open_state() {
         let mut db = Database::start();
         let (_repo, mut c, repo) = fixture(&mut db, "reingest_abandoned");
         intake(&mut c, &repo, 2761);
@@ -1263,9 +1602,10 @@ mod tests {
             Phase::Ingesting
         );
         ingest(&mut c, waiter, &[2761]);
+        assert!(!closures(&c.snapshot().unwrap(), waiter).unwrap().is_empty());
         assert_eq!(
             c.world().unwrap().dependencies()[0].status,
-            DependencyStatus::Abandoned
+            DependencyStatus::Pending
         );
         assert_eq!(
             c.world().unwrap().nodes[waiter.0 as usize].phase,
@@ -1278,7 +1618,7 @@ mod tests {
                 .iter()
                 .filter(|r| r.payload.to_string().contains("DependencyAbandoned"))
                 .count(),
-            1
+            0
         );
     }
 
@@ -1375,7 +1715,7 @@ mod tests {
     #[test]
     fn completion_without_waiters_retains_delivery_for_later_declaration() {
         let mut db = Database::start();
-        let (_repo, mut c, repo) = fixture(&mut db, "completion_without_waiters");
+        let (fake_repo, mut c, repo) = fixture(&mut db, "completion_without_waiters");
         let root = intake(&mut c, &repo, 2761);
         reply(&mut c, root, Reply::IngestEarlyEnd(EarlyEnd::AlreadyDone));
         reply(&mut c, root, Reply::AuditAgrees);
@@ -1387,6 +1727,12 @@ mod tests {
                 .unwrap()
                 .status,
             DependencyStatus::Delivered
+        );
+        crate::adapters::github::set_fake_issue(
+            &fake_repo.root.path().join("fakes"),
+            &serde_json::from_value(json!({"number":2761,"title":"Delivered", "body":null,
+                "state":"closed","state_reason":"completed","updated_at":"2026-11-04T00:00:00Z"}))
+            .unwrap(),
         );
         let waiter = intake(&mut c, &repo, 42);
         ingest(&mut c, waiter, &[2761]);
@@ -1436,11 +1782,12 @@ mod tests {
             ("open", None, DependencyStatus::Pending),
             ("closed", Some("completed"), DependencyStatus::Delivered),
             ("closed", Some("not_planned"), DependencyStatus::Abandoned),
-            ("closed", None, DependencyStatus::Pending),
+            ("closed", None, DependencyStatus::Abandoned),
         ] {
             let issue = serde_json::from_value(json!({"number":2761,"title":"Prerequisite","body":null,"state":state,"state_reason":reason,"updated_at":"2026-11-03T23:00:00Z","pull_request":null})).unwrap();
             assert_eq!(issue_status(&issue), expected);
         }
     }
+    mod closed_prerequisites;
     mod refusal_properties;
 }

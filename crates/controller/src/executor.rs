@@ -122,6 +122,13 @@ impl Delivery {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Observation {
     Prerequisite(crate::merge_dependencies::ExternalFact),
+    /// One bounded prerequisite read queued by controller open (#839).
+    PrerequisiteRead {
+        node: NodeId,
+        repository: crate::Repository,
+        kind: tl3_kernel::PrerequisiteKind,
+        number: u64,
+    },
     ScratchSaved {
         node: NodeId,
         reference: String,
@@ -413,6 +420,23 @@ pub trait Executor {
         Err(crate::Error::Invalid(
             "adapter cannot read merge prerequisites",
         ))
+    }
+    /// #839: the same prerequisite read also preserves the upstream closure reason.
+    fn prerequisite_detail(
+        &mut self,
+        repository: &crate::Repository,
+        kind: tl3_kernel::PrerequisiteKind,
+        number: u64,
+    ) -> Result<crate::merge_dependencies::ExternalFact> {
+        let status = self.prerequisite(repository, kind, number)?;
+        Ok(crate::merge_dependencies::ExternalFact {
+            updated_at: None,
+            repository: repository.clone(),
+            kind,
+            number,
+            status,
+            reason: None,
+        })
     }
     fn implementation(&self) -> &'static str {
         std::any::type_name::<Self>()

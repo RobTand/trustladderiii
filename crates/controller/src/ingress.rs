@@ -139,6 +139,9 @@ pub fn apply(controller: &mut Controller, input: Input) -> Result<()> {
             controller.intake_proposed(issue, Some(proposed))?;
         }
         Input::AdoptionClarification(question) => controller.queue_adoption_question(question)?,
+        Input::Completion { key, completion } => {
+            controller.observe_completion(&key, *completion)?
+        }
         Input::Observation { key, observation } => controller.observe(&key, observation)?,
     }
     Ok(())
@@ -494,7 +497,13 @@ fn prerequisite_issue(repository: &Repository, issue: &tl3_github::Issue) -> Opt
         tl3_kernel::PrerequisiteKind::Issue,
         issue.number,
         crate::merge_dependencies::issue_status(issue),
-        &issue.updated_at.to_rfc3339(),
+        issue.updated_at,
+        Some(
+            issue
+                .state_reason
+                .clone()
+                .unwrap_or_else(|| "unspecified".into()),
+        ),
     )
 }
 
@@ -503,12 +512,9 @@ fn prerequisite_pr(repository: &Repository, pr: &tl3_github::PullRequest) -> Opt
         repository,
         tl3_kernel::PrerequisiteKind::PullRequest,
         pr.number,
-        if pr.merged_at.is_some() {
-            tl3_kernel::DependencyStatus::Delivered
-        } else {
-            tl3_kernel::DependencyStatus::Pending
-        },
-        &pr.updated_at.to_rfc3339(),
+        crate::merge_dependencies::pr_status(pr),
+        pr.updated_at,
+        Some("closed_without_merge".into()),
     )
 }
 
@@ -517,11 +523,9 @@ fn prerequisite_input(
     kind: tl3_kernel::PrerequisiteKind,
     number: u64,
     status: tl3_kernel::DependencyStatus,
-    at: &str,
+    at: chrono::DateTime<chrono::Utc>,
+    reason: Option<String>,
 ) -> Option<Input> {
-    if status == tl3_kernel::DependencyStatus::Pending {
-        return None;
-    }
     Some(Input::Observation {
         key: format!(
             "prerequisite:{}/{}/{}:{kind:?}:{number}:{at}:{status:?}",
@@ -530,6 +534,8 @@ fn prerequisite_input(
             repository.installation
         ),
         observation: Observation::Prerequisite(crate::merge_dependencies::ExternalFact {
+            updated_at: Some(at),
+            reason,
             repository: repository.clone(),
             kind,
             number,
@@ -581,6 +587,11 @@ fn inputs(id: &str, event: Option<Event>, bootstrap: &Bootstrap) -> Vec<Input> {
                 ..
             }
             | Event::PullRequestClosed {
+                context,
+                pull_request,
+                ..
+            }
+            | Event::PullRequestReopened {
                 context,
                 pull_request,
                 ..
@@ -1190,6 +1201,67 @@ mod priority_tests {
             let fact = |input: &Input| matches!(input, Input::Observation { observation: Observation::Prerequisite(fact), .. } if fact.number == 2761 && fact.status == expected && fact.repository == repository);
             assert!(webhook.iter().any(fact));
             assert!(fact(&catch_up.unwrap()));
+        }
+    }
+
+    /// #839 / Q59: an unmerged PR closure is an upstream fact, not silence.
+    #[test]
+    fn closed_unmerged_pr_survives_webhook_and_catch_up() {
+        let config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+        let bootstrap = Bootstrap::from_config(&config).unwrap();
+        let repository = bootstrap.repos[0].clone();
+        let body = json!({"action":"closed", "repository":{"id":9,"name":repository.name,"owner":{"id":3,"login":repository.owner}}, "installation":{"id":repository.installation}, "sender":{"id":7,"login":"requester"}, "pull_request":{"number":2761,"user":{"id":7,"login":"requester"},"state":"closed","merged_at":null,"merged":false,"head":{"ref":"feature","sha":"abc","repo":null},"base":{"ref":"main","sha":"def","repo":null},"updated_at":"2026-11-03T23:00:00Z"}});
+        let delivery = tl3_github::webhook::parse(
+            "t839-closed-pr",
+            "pull_request",
+            body.to_string().as_bytes(),
+        )
+        .unwrap();
+        let pr = serde_json::from_value(body["pull_request"].clone()).unwrap();
+        let webhook = inputs("t839-closed-pr", delivery.event, &bootstrap);
+        let catch_up = prerequisite_pr(&repository, &pr);
+        let fact = |input: &Input| matches!(input, Input::Observation { observation: Observation::Prerequisite(fact), .. } if fact.number == 2761 && fact.kind == tl3_kernel::PrerequisiteKind::PullRequest && fact.status == tl3_kernel::DependencyStatus::Abandoned);
+        assert!(
+            webhook.iter().any(fact),
+            "closed PR webhook lost the prerequisite fact"
+        );
+        assert!(
+            catch_up.as_ref().is_some_and(fact),
+            "catch-up lost the prerequisite fact"
+        );
+    }
+    /// #839: reopened issues and PRs deliver current Pending facts to waiters.
+    #[test]
+    fn reopened_prerequisites_survive_webhooks_and_catch_up() {
+        let config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+        let bootstrap = Bootstrap::from_config(&config).unwrap();
+        let repository = bootstrap.repos[0].clone();
+        for (event, key) in [("issues", "issue"), ("pull_request", "pull_request")] {
+            let mut body = json!({"action":"reopened", "repository":{"id":9,"name":repository.name,"owner":{"id":3,"login":repository.owner}}, "installation":{"id":repository.installation}, "sender":{"id":7,"login":"requester"}});
+            body[key] = if key == "issue" {
+                json!({"number":2761,"title":"Prerequisite","body":null,"state":"open","state_reason":null,"updated_at":"2026-11-05T23:35:00Z"})
+            } else {
+                json!({"number":2761,"user":{"id":7,"login":"requester"},"state":"open","merged_at":null,"merged":false,"head":{"ref":"feature","sha":"abc","repo":null},"base":{"ref":"main","sha":"def","repo":null},"updated_at":"2026-11-05T23:35:00Z"})
+            };
+            let delivery =
+                tl3_github::webhook::parse("t839-reopened", event, body.to_string().as_bytes())
+                    .unwrap();
+            let webhook = inputs("t839-reopened", delivery.event, &bootstrap);
+            assert!(webhook.iter().any(|input| matches!(input, Input::Observation { observation: Observation::Prerequisite(fact), .. } if fact.status == tl3_kernel::DependencyStatus::Pending && fact.updated_at.is_some())));
+            let catch_up = if key == "issue" {
+                prerequisite_issue(
+                    &repository,
+                    &serde_json::from_value(body[key].clone()).unwrap(),
+                )
+            } else {
+                prerequisite_pr(
+                    &repository,
+                    &serde_json::from_value(body[key].clone()).unwrap(),
+                )
+            };
+            assert!(
+                matches!(catch_up, Some(Input::Observation { observation: Observation::Prerequisite(fact), .. }) if fact.status == tl3_kernel::DependencyStatus::Pending)
+            );
         }
     }
 }

@@ -1116,7 +1116,9 @@ fn queue_failure(settings: &tl3_config::Store, conflict: bool, infra: bool) {
     }
     ingress::drain(&mut controller).unwrap();
     // Consume just the queue fact. Subsequent maker/rebase work is outside this scenario.
-    assert!(controller.drive_once().unwrap());
+    while queue_facts(&mut controller).is_empty() {
+        assert!(controller.drive_once().unwrap());
+    }
     let facts = queue_facts(&mut controller);
     assert_eq!(facts.len(), 1);
     assert_kernel_facts(settings, 1);
@@ -1253,7 +1255,9 @@ fn person_actions(settings: &tl3_config::Store, action: &str) {
         ingress::apply(&mut controller, input).unwrap();
     }
     ingress::drain(&mut controller).unwrap();
-    controller.drive_once().unwrap();
+    while queue_facts(&mut controller).is_empty() {
+        assert!(controller.drive_once().unwrap());
+    }
     assert_eq!(queue_facts(&mut controller).len(), 1);
     assert_kernel_facts(settings, 1);
     if action == "unlabeled" {

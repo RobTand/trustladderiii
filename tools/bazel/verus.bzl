@@ -1,6 +1,7 @@
 """Small required Verus proofs with declared source, spec and toolchain inputs."""
 
 load("//tools/bazel:verus_toolchain.bzl", "VerusToolchainInfo")
+load("@rules_python//python:defs.bzl", "py_binary")
 
 def _verus_test_impl(ctx):
     if ctx.attr.expected_obligations <= 0:
@@ -213,6 +214,25 @@ def verus_proofs():
             )
 
     if native.package_name() == "crates/controller":
+        # #830: direct delivery, full SHA pins, approval, known merge and write order.
+        py_binary(
+            name = "direct_merge_resources",
+            srcs = ["proofs/direct_merge_resources.py"],
+            main = "proofs/direct_merge_resources.py",
+            visibility = ["//visibility:public"],
+        )
+        verus_test(
+            name = "verus_direct_merge",
+            src = "proofs/direct_merge.rs",
+            srcs = ["src/adapters/direct_merge/decide.rs"],
+            expected_obligations = 10,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
         native.exports_files(["src/kernel_boundary.rs"])
         verus_test(
             name = "verus_quota_wake",
@@ -498,6 +518,17 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::dependency_retirement_domain": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement_accepted": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::domain": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::edge_domain": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::edge_rules": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::accepted": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::revocable": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::expected": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::prepared": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::fact_result": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::dependency_retirement::pristine": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::progress_gate_check_result": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::gate_apply_checker_domain": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::gate_apply_checker_accepted": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -656,7 +687,6 @@ def verus_proofs():
             "kernel::port_advance_witness::original_domain": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_deps_checker_accepted": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_deps_graph_result": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
-            "kernel::port_deps_specs::terminal_key": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_deps_specs::key": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_deps_specs::pending_key": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_deps_specs::new_key": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -806,6 +836,13 @@ def verus_proofs():
             "dependencies_dependency_path": ("kernel::dependencies#World::dependency_path", 7),
             "dependencies_find_dependency": ("kernel::dependencies#World::find_dependency", 2),
             "dependencies_first_undelivered": ("kernel::dependencies#World::first_undelivered", 2),
+            "dependency_retirement_fact": ("kernel::dependency_retirement#verify_fact", 1),
+            "dependency_retirement_preserves": ("kernel::dependency_retirement#preserves", 1),
+            "dependency_retirement_abandoned": ("kernel::dependency_retirement#verify_abandoned", 1),
+            "dependency_retirement_waiting_world": ("kernel::dependency_retirement#waiting_world", 1),
+            "dependency_retirement_fact_witness": ("kernel::dependency_retirement#fact_witness", 1),
+            "dependency_retirement_abandoned_witness": ("kernel::dependency_retirement#abandoned_witness", 1),
+            "dependencies_update_allowed": ("kernel::dependencies#update_allowed", 1),
             "dependencies_prepare_dependency": ("kernel::dependencies#World::prepare_dependency", 1),
             "dependencies": ("kernel::dependencies#World::record_dependency", 1),
             "dependencies_remove_dependency": ("kernel::dependencies#World::remove_dependency", 2),
@@ -972,7 +1009,7 @@ def verus_proofs():
             "port_advance_step_teardown_emit": ("kernel::port_advance_step_frames#teardown_emit", 1),
             "port_advance_step_release_frame": ("kernel::port_advance_step_frames#release_frame", 1),
             "port_deps_contract_gaps": ("kernel::port_deps_contract_gaps", 2),
-            "port_deps_terminal": ("kernel::port_deps_terminal", 2),
+            "port_deps_terminal": ("kernel::port_deps_terminal", 1),
             "port_deps_graph_singleton_bit": ("kernel::port_deps_graph#singleton_bit", 2),
             "port_deps_graph_added_bit": ("kernel::port_deps_graph#added_bit", 2),
             "port_deps_graph_initial_mask": ("kernel::port_deps_graph#initial_mask", 1),
@@ -989,7 +1026,6 @@ def verus_proofs():
             "port_deps_blocked_is_checked": ("kernel::port_deps_witness#blocked_is_checked", 1),
             "port_deps_waiting_world": ("kernel::port_deps_witness#waiting_world", 1),
             "port_deps_waiting_cover": ("kernel::port_deps_witness#waiting_cover", 1),
-            "port_deps_abandoned_cover": ("kernel::port_deps_witness#abandoned_cover", 1),
             "port_deps_register_preserves": ("kernel::port_deps_cycles#register_preserves", 1),
             "port_deps_chain_is_acyclic": ("kernel::port_deps_cycles#chain_is_acyclic", 1),
             "port_deps_chain_world": ("kernel::port_deps_cycles#chain_world", 1),
@@ -1017,13 +1053,10 @@ def verus_proofs():
             "port_deps_s2_kept": ("kernel::port_deps_apply_specs#kept", 1),
             "port_deps_s2_scope": ("kernel::port_deps_apply#scope", 1),
             "port_deps_s2_external_preserves": ("kernel::port_deps_apply#external_preserves", 1),
-            "port_deps_s2_dependency_fact": ("kernel::port_deps_apply#dependency_fact", 1),
             "port_deps_s2_verify_registration": ("kernel::port_deps_apply#registration", 1),
             "port_deps_s2_preserves": ("kernel::port_deps_remove#preserves", 1),
             "port_deps_s2_removal": ("kernel::port_deps_remove#removal", 1),
             "port_deps_s2_removal_cover": ("kernel::port_deps_remove#removal_cover", 1),
-            "port_deps_s2_fact_world": ("kernel::port_deps_apply_witness#fact_world", 1),
-            "port_deps_s2_fact_cover": ("kernel::port_deps_apply_witness#fact_cover", 1),
             "port_deps_s2_registration_world": ("kernel::port_deps_apply_witness#registration_world", 1),
             "port_deps_s2_registration_cover": ("kernel::port_deps_apply_witness#registration_cover", 1),
         }

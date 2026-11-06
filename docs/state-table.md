@@ -149,7 +149,7 @@ Workers report liveness, as a heartbeat, and progress, such as new tool results,
 ## Node facts
 
 - **Children:** each child's status.
-- **Dependencies:** pending, delivered or abandoned. In slice one, ingest declares same-repo merge prerequisites on the request root, naming another request root or an external issue/PR fact. Completed issues, merged PRs and requests closed as done deliver; issues closed as not planned abandon. A stopped request with an open issue stays pending. Root merge prerequisites moved from slice two into slice one by Rob's 2026-11-03 decision [#693](https://github.com/RobTand/trustladderiii/issues/693). Planner reuse links and dependencies between leaves remain slice two.
+- **Dependencies:** pending, delivered or abandoned. In slice one, ingest declares same-repo merge prerequisites on the request root, naming another request root or an external issue/PR fact. Rob, 2026-11-05, #839 (Q27): 'If it's truly closed, the prerequisite should just continue.' [Decision](https://github.com/RobTand/trustladderiii/issues/839#issuecomment-6671251113). Any closed issue or PR satisfies the dependency, including an unmerged PR, not planned or TL3 not actionable. A stopped request with an open issue stays pending and status names `stopped`. Truly closed means currently closed: a reopen retracts provisional delivery before the dependent starts planning, and a later closure can deliver again. The existing planning admission boundary keeps an already-started attempt running; its closure evidence remains historical. The dependent retains a typed closure record with the prerequisite identity and reason in both its plan input and postmortem input. Normal planning checks determine whether missing code prevents the work. Root merge prerequisites moved from slice two into slice one by Rob's 2026-11-03 decision [#693](https://github.com/RobTand/trustladderiii/issues/693). Planner reuse links and dependencies between leaves remain slice two.
 - **Measures:** each with its lineage and status: unmet, provisionally met, or confirmed met.
 - **Escalations:** the frozen batch, and the queue behind it.
 - **PR:** every PR number the node has used, the base commit, the current head, and every head that passed checks and review, with its tree.
@@ -386,14 +386,14 @@ Settle admits the node to planning when all three hold:
 In slice one, ingest and audit run before this wait. While prerequisites block
 admission, the root holds no slot, file lock, agent-pool grant or spendable credit.
 Starting credit is withheld until admission. Status says "waiting for #N to merge".
-Delivery and abandonment arrive through Fact in every phase, including Closed.
-Terminal prerequisite facts stay terminal, including when observed before a
-declaration. Re-ingest preserves the status and announcement identity of each
+Closure and merge evidence arrive through Fact in every phase, including Closed. A truly closed prerequisite is delivered for admission.
+Delivered prerequisite facts stay delivered after first planning admission.
+Before admission, current Open evidence revokes an earlier delivery, including
+one observed before a declaration. Historical abandoned edges are upgraded to delivered on closure evidence. Re-ingest preserves the status and announcement identity of each
 retained target, removing only targets no longer declared through Fact.
 No prerequisite may be added after
 first planning admission. A declaration that would close a wait-graph cycle is
-rejected, retained as a blocking declaration, and announced once. An abandoned
-prerequisite also posts one note and blocks until Rob changes or stops the request.
+rejected, retained as a blocking declaration, and announced once. A closed unmerged prerequisite releases the dependency and leaves its identity and reason in the dependent's typed plan and postmortem evidence; no question or incident is required.
 Every request ending is announced to its waiters. A restart of an open prerequisite
 issue rebinds its pending waiters to the new root. On release, planning pins the
 current configured default branch before its worker starts.
@@ -567,6 +567,8 @@ Coordinator defaults, for Rob to check: the ladder clamps at its last entry. A c
 
 ### Publishing
 
+Direct delivery variant ([#830](https://github.com/RobTand/trustladderiii/issues/830), Q27 approved by Rob, 2026-11-05): for a repository configured with `delivery = "direct"`, step 4 uses GitHub's SHA-pinned merge API behind the same Enqueue effect. At execution, reread the open PR and its head, TL3's passed Checking and independent approval on that exact head, the own-app approval check, the repository's allowed merge methods, and every still-required protection check. Fence the epoch and durably record the attempt's intent before each upstream write. The adapter adds "delivered directly (CI bypassed by repo config)" to the PR body before merging. A pending protection check waits for check/webhook evidence without a timer or retry charge. A failed protection check follows the existing enqueue CI-failure row below; an observed conflict follows the publication Conflict rule. A permission refusal or otherwise unexplained merge refusal raises an effect incident. The approval check, holds, pause, stop, effect fences and postmortems remain in force. Q52's Mergify missing-check rule and Mergify dequeue handling apply only to queue delivery.
+
 The publishing sequence has four steps:
 
 1. Push the branch.
@@ -610,6 +612,8 @@ These clarify how the controller already applies Q52 and #447 (#735). They add n
 - **Not enough credit for the next step:** release the slot and files, and go to AwaitingRob(out of credit, continue to that step).
 
 ### Queued
+
+With direct delivery ([#830](https://github.com/RobTand/trustladderiii/issues/830)), this phase acknowledges the same Enqueue effect before consuming the existing merged or refused fact; it adds no kernel transition. An already-merged PR converges without another merge write. A moved head or HTTP 409 follows the outside-push row and returns to Checking. A lost response or restart reconciles PR state first. If the PR remains open, a fresh attempt rechecks the exact-head preconditions and records a new fenced intent before retrying the pinned PUT. An HTTP 405 after a racing merge rereads and converges to the merged fact. GitHub's pinned, single-merge operation permits at most one successful merge, including when an old issuer races the retry. An observed or recorded merge suppresses later writes. The status/board says "delivered directly (CI bypassed by repo config)"; default-branch CI still runs and its failures remain visible to the repo leads. The Mergify-specific rows below do not apply to direct delivery.
 
 | Event | Condition | Next | Effects |
 |---|---|---|---|
@@ -710,7 +714,8 @@ Closed is final. It accepts only two kinds of event: a late merge, covered under
 | PR closed by a person | Record it | Stopping(Stopped), from any phase except Stopping and Closed. Rob gets a note saying how to start the request again. |
 | PR dequeued by a person | Record it | In Queued: release the slot and files, go to Ready(Publishing from step 4), and add a pause owned by Rob. Rob gets a note. Resuming puts the PR back in the queue. |
 | Effect permanently failed | Raise an incident | Outside Stopping: release any slot and files, and go to AwaitingRob(effect failed). The continuation retries the failed effect and carries on. A leaf that held a slot carries on through Ready; any other node returns to the same phase. For Stopping, see Stopping. |
-| Dependency delivered or abandoned | Mark it | Settle decides what follows |
+| Prerequisite merged or truly closed (#839, Q27) | Mark delivered; retain typed closure reason on dependent if unmerged | Settle admits planning when every prerequisite resolves; an open stopped prerequisite keeps waiting |
+| Prerequisite reopened before dependent planning (#839, Q27) | Replace provisional delivery with pending current state; keep historical closure evidence | Wait again. A later closure can deliver. Once planning_started is true, reopening does not roll back that attempt |
 | Incident cleared, by a probe, by Rob, or by a new release for a TL3-side incident (Q51) | Clear the wait | The waiting operation runs again, first requesting a slot if it gave one back |
 | Run failed | | See "Failures" |
 | Look | Read the upstream's record | What the look finds enters as replies, acknowledgements and facts |

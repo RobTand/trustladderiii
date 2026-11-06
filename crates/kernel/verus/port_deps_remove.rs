@@ -1,9 +1,9 @@
-//! #806 W7: real stable prerequisite removal and preservation of terminal rows.
+//! #806 W7: real stable prerequisite removal and preservation of observed rows.
 use super::port_deps_single::{accepted, dependencies_ok, domain};
 use super::*;
 
 verus! {
-/// #806 original removal table: one Pending row and one distinct terminal row.
+/// #806 original removal table: one Pending row and one distinct observed row.
 pub(super) open spec fn table(w: World) -> bool {
     w.dependencies@.len() == 2
         && w.dependencies@[0] == (Dependency { node: NodeId(0),
@@ -14,7 +14,7 @@ pub(super) open spec fn table(w: World) -> bool {
         && !w.dependencies@[1].rejected && w.dependencies@[1].status != DependencyStatus::Pending
 }
 
-/// #806: removing the changed declaration preserves every terminal outcome and checker rule.
+/// #806: removing the changed declaration preserves the other row during removal and every checker rule.
 pub(super) proof fn preserves(w: World, v: World)
     requires domain(w), accepted(w), table(w),
         port_deps_apply_specs::removed(w, v, 0, PrerequisiteKind::Issue, 2761),
