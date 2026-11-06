@@ -304,6 +304,16 @@ CASES = {
                                '    if !approved {',
                                '    if approved {',
                                '//crates/kernel:verus_facts_merge'),
+    'review_admitted_release': ('crates/kernel/src/reply_admission.rs',
+                                '    end_operation(&mut w.nodes[i]);',
+                                '    let _ = i;',
+                                '//crates/kernel:verus_review_admission_admitted_reply'),
+    'review_admitted_duplicate': ('crates/kernel/src/reply_admission.rs',
+                                  '            reply_transition(w, i, reply, out);',
+                                  '            reply_transition(w, i, reply, out);\n'
+                                  '            reply_transition(w, i, reply, out);',
+                                  '//crates/kernel:lib_test_tl3_kernel'),
+
 }
 
 

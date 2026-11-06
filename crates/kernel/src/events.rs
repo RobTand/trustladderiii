@@ -74,6 +74,12 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
         },
         progress_gate_apply::resume_apply_post(*old(w), *final(w), event),
         match event {
+            Event::Reply { node, generation, reply } => node.0 < old(w).nodes@.len()
+                ==> port_review_reply::reply_post(*old(w), *final(w), node.0 as int,
+                    generation, reply, *old(out), *final(out)),
+            _ => true,
+        },
+        match event {
             Event::Fact { node, fact } => retirement_retry::selected(fact) && node.0 < old(w).nodes@.len() ==> {
                 final(w).nodes@ == old(w).nodes@.update(node.0 as int,
                     retirement_retry::fact_result(old(w).nodes@[node.0 as int], fact, old(w).fail_fast, old(w).next_question).0)

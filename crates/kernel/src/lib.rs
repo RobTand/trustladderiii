@@ -567,7 +567,8 @@ impl Credit {
         /// State-table credit ledger: one unit per paid retry or continuation.
         fn spend(&mut self, cost: u64) -> (result: ()) [
             requires old(self).spent as int + cost as int <= u64::MAX as int,
-            ensures final(self).spent as int == old(self).spent as int + cost as int,
+            ensures *final(self) == (Credit { spent: (old(self).spent + cost) as u64, ..*old(self) }),
+                final(self).spent as int == old(self).spent as int + cost as int,
                 final(self).start == old(self).start,
                 final(self).earned == old(self).earned,
                 final(self).added == old(self).added,
@@ -2278,3 +2279,26 @@ mod port_advance_contracts;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement_gate_bridge.rs"]
 mod retirement_gate_bridge;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_retry.rs"]
+mod port_review_retry;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_reply.rs"]
+mod port_review_reply;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_output.rs"]
+mod port_review_output;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_retry_lemmas.rs"]
+mod port_review_retry_lemmas;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_admission.rs"]
+mod port_review_admission;
+
+#[cfg(all(test, not(verus_keep_ghost)))]
+mod reply_equivalence;
