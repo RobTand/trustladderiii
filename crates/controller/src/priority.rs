@@ -200,7 +200,9 @@ impl crate::Controller {
                         node,
                         fact: tl3_kernel::Fact::Priority(*priority),
                     },
-                    &mut commit, None)?;
+                    &mut commit,
+                    None,
+                )?;
             }
         }
         Ok(commit)

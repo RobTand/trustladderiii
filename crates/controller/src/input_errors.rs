@@ -358,8 +358,16 @@ impl Controller {
         if row.table == "inbox" {
             let observation: Observation = crate::decode_stored(row.value.clone())?;
             let mut feedback = crate::feedback::Evidence::default();
-            match self.translate(snapshot, &mut world, observation.clone(), &mut commit, &mut feedback) {
-                Ok(Some(event)) => self.apply(snapshot, world, event, &mut commit, Some(&feedback))?,
+            match self.translate(
+                snapshot,
+                &mut world,
+                observation.clone(),
+                &mut commit,
+                &mut feedback,
+            ) {
+                Ok(Some(event)) => {
+                    self.apply(snapshot, world, event, &mut commit, Some(&feedback))?
+                }
                 Ok(None) => {}
                 Err(error) => {
                     // This entire transaction is discarded on an error too;

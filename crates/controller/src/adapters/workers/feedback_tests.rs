@@ -15,42 +15,90 @@ impl Fixture {
     fn new() -> Self {
         let repo = Repo::new();
         let mut db = Database::start();
-        let mut config = tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
+        let mut config =
+            tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
         config.store = db.create("step_feedback");
         config.workers.runs = repo.root.path().join("runs");
-        let supervisor = Supervisor::new(&config, &repo.root.path().join("records"), &mut crate::store_support::ownership()).unwrap();
-        let mut controller = Controller::open(Store::open(&config.store).unwrap(), crate::adapters::simulation(&repo.root.path().join("fakes")).unwrap(), Bootstrap::from_config(&config).unwrap()).unwrap();
-        controller.intake(LabelledIssue {
-            delivery: "feedback".into(), owner: "RobTand".into(), repo: "tl3-sandbox".into(), installation: 1,
-            number: 42, title: "Repair the failing check".into(), actor: config.github.rob.id,
-            label: "tl3".into(), labels: vec![],
-        }).unwrap();
+        let supervisor = Supervisor::new(
+            &config,
+            &repo.root.path().join("records"),
+            &mut crate::store_support::ownership(),
+        )
+        .unwrap();
+        let mut controller = Controller::open(
+            Store::open(&config.store).unwrap(),
+            crate::adapters::simulation(&repo.root.path().join("fakes")).unwrap(),
+            Bootstrap::from_config(&config).unwrap(),
+        )
+        .unwrap();
+        controller
+            .intake(LabelledIssue {
+                delivery: "feedback".into(),
+                owner: "RobTand".into(),
+                repo: "tl3-sandbox".into(),
+                installation: 1,
+                number: 42,
+                title: "Repair the failing check".into(),
+                actor: config.github.rob.id,
+                label: "tl3".into(),
+                labels: vec![],
+            })
+            .unwrap();
         controller.store.put_worker_materials("0", &json!({"base_checkout":{"repository":repo.path,"commit":repo.base}, "maker": {
             "brief":"Return hello.", "goals":[{"id":"greeting","description":"Return hello.","verification":"test"}],
             "plan":{"files":["README.md"],"checks":[{"name":"hello","kind":"demonstrating","tests":["test_greeting.py::test_hello"],"goal_ids":["greeting"]}]}
         }})).unwrap();
-        crate::git_tests::documents(&mut controller.store, &[
-            ("briefs", json!({"kind":"brief", "brief":"Return hello.", "goals":[{"description":"Return hello.","verification":"test"}],"memory_ids":[]})),
-            ("goals", json!([{"id":"greeting","description":"Return hello.","verification":"test"}])),
-        ]);
-        Self { controller, supervisor, config, repo, _db: db }
+        crate::git_tests::documents(
+            &mut controller.store,
+            &[
+                (
+                    "briefs",
+                    json!({"kind":"brief", "brief":"Return hello.", "goals":[{"description":"Return hello.","verification":"test"}],"memory_ids":[]}),
+                ),
+                (
+                    "goals",
+                    json!([{"id":"greeting","description":"Return hello.","verification":"test"}]),
+                ),
+            ],
+        );
+        Self {
+            controller,
+            supervisor,
+            config,
+            repo,
+            _db: db,
+        }
     }
 
     fn seed(&mut self, phase: Phase, pos: u8) {
         let snapshot = self.controller.snapshot().unwrap();
         let mut world = self.controller.world().unwrap();
-        let repo = self.controller.store.intern_repo("RobTand", "tl3-sandbox").unwrap();
-        let path = self.controller.store.intern_path(repo, "README.md").unwrap();
+        let repo = self
+            .controller
+            .store
+            .intern_repo("RobTand", "tl3-sandbox")
+            .unwrap();
+        let path = self
+            .controller
+            .store
+            .intern_path(repo, "README.md")
+            .unwrap();
         let footprint = world.intern_footprint([tl3_kernel::FileId(path.get() as u64)]);
         let n = &mut world.nodes[0];
         n.phase = phase;
         n.pos = pos;
         n.head = Some(self.controller.head(NodeId(0), &self.repo.head).unwrap());
         n.generation = 10;
-        n.run = matches!(phase, Phase::Making | Phase::Reviewing | Phase::Planning { .. } | Phase::Rebasing).then_some(10);
+        n.run = matches!(
+            phase,
+            Phase::Making | Phase::Reviewing | Phase::Planning { .. } | Phase::Rebasing
+        )
+        .then_some(10);
         n.job = (phase == Phase::Checking).then_some(10);
         n.effect = (phase == Phase::Publishing).then_some(tl3_kernel::InFlight {
-            kind: tl3_kernel::EffectKind::PostApproval, seq: 1, cancelling: true,
+            kind: tl3_kernel::EffectKind::PostApproval,
+            seq: 1,
+            cancelling: true,
         });
         n.next_seq = 2;
         n.pool = n.run.is_some() && phase != Phase::Rebasing;
@@ -66,14 +114,28 @@ impl Fixture {
         n.attempt = 1;
         n.credit.start = 100;
         n.credit.ready = true;
-        assert!(world.valid(), "seed must be a valid settled world: {:?}", world.check());
-        let mut commit = Commit::new(format!("feedback-seed-{}", snapshot.revision.get()), json!(null), &snapshot);
-        commit.rows.extend(crate::snapshot::changes(&crate::snapshot::encode(&self.controller.world().unwrap()).unwrap(), crate::snapshot::encode(&world).unwrap()));
+        assert!(
+            world.valid(),
+            "seed must be a valid settled world: {:?}",
+            world.check()
+        );
+        let mut commit = Commit::new(
+            format!("feedback-seed-{}", snapshot.revision.get()),
+            json!(null),
+            &snapshot,
+        );
+        commit.rows.extend(crate::snapshot::changes(
+            &crate::snapshot::encode(&self.controller.world().unwrap()).unwrap(),
+            crate::snapshot::encode(&world).unwrap(),
+        ));
         self.controller.store.commit(&commit).unwrap();
     }
 
     fn observe(&mut self, observation: Observation) {
-        let key = format!("failure-{}", self.controller.snapshot().unwrap().revision.get());
+        let key = format!(
+            "failure-{}",
+            self.controller.snapshot().unwrap().revision.get()
+        );
         self.controller.observe(&key, observation).unwrap();
         assert!(self.controller.drive_once().unwrap());
     }
@@ -83,19 +145,45 @@ impl Fixture {
         let mut world = self.controller.world().unwrap();
         let before = crate::snapshot::encode(&world).unwrap();
         change(&mut world);
-        assert!(world.valid(), "changed fixture must stay settled: {:?}", world.check());
-        let mut commit = Commit::new(format!("fixture-change-{}", snapshot.revision.get()), json!(null), &snapshot);
-        commit.rows.extend(crate::snapshot::changes(&before, crate::snapshot::encode(&world).unwrap()));
+        assert!(
+            world.valid(),
+            "changed fixture must stay settled: {:?}",
+            world.check()
+        );
+        let mut commit = Commit::new(
+            format!("fixture-change-{}", snapshot.revision.get()),
+            json!(null),
+            &snapshot,
+        );
+        commit.rows.extend(crate::snapshot::changes(
+            &before,
+            crate::snapshot::encode(&world).unwrap(),
+        ));
         self.controller.store.commit(&commit).unwrap();
     }
 
     fn planner(&mut self) -> Value {
         let snapshot = self.controller.snapshot().unwrap();
-        self.supervisor.build_request(&self.repo.delivery(), "planner", &mut Store::open(&self.config.store).unwrap(), &snapshot).unwrap()["inputs"].clone()
+        self.supervisor
+            .build_request(
+                &self.repo.delivery(),
+                "planner",
+                &mut Store::open(&self.config.store).unwrap(),
+                &snapshot,
+            )
+            .unwrap()["inputs"]
+            .clone()
     }
 
     fn worker(&mut self, role: &str, reply: Value) {
-        self.observe(Observation::WorkerReply { node: NodeId(0), generation: 10, role: role.into(), reply, model: None, plan_check: None });
+        self.observe(Observation::WorkerReply {
+            node: NodeId(0),
+            generation: 10,
+            role: role.into(),
+            reply,
+            model: None,
+            plan_check: None,
+        });
     }
 
     fn maker(&mut self) -> Value {
@@ -105,7 +193,15 @@ impl Fixture {
         delivery.generation = n.generation;
         delivery.attempt = n.attempt;
         delivery.round = n.round;
-        self.supervisor.build_request(&delivery, "maker", &mut Store::open(&self.config.store).unwrap(), &snapshot).unwrap()["inputs"].clone()
+        self.supervisor
+            .build_request(
+                &delivery,
+                "maker",
+                &mut Store::open(&self.config.store).unwrap(),
+                &snapshot,
+            )
+            .unwrap()["inputs"]
+            .clone()
     }
 }
 
@@ -115,13 +211,30 @@ fn publishing_enqueue_without_inflight_enqueue_delivers_ci_feedback() {
     // #862: the agenda is at Enqueue while an earlier effect is retiring.
     f.seed(Phase::Publishing, 3);
     f.observe(Observation::CiFailed {
-        node: NodeId(0), infra: false,
-        checks: vec![crate::findings::CiFailure { name: "test_greeting".into(), summary: "expected hello, got goodbye".into(), url: Some("https://ci.invalid/check/42".into()) }],
+        node: NodeId(0),
+        infra: false,
+        checks: vec![crate::findings::CiFailure {
+            name: "test_greeting".into(),
+            summary: "expected hello, got goodbye".into(),
+            url: Some("https://ci.invalid/check/42".into()),
+        }],
     });
     assert_eq!(f.controller.world().unwrap().nodes[0].round, 1);
     let inputs = f.maker();
-    assert!(inputs["feedback"].to_string().contains("expected hello, got goodbye"), "the D2 repair maker needs the failing check: {inputs}");
-    assert!(f.controller.snapshot().unwrap().rows.iter().any(|r| r.table == "maker_findings" || r.table == "feedback"));
+    assert!(
+        inputs["feedback"]
+            .to_string()
+            .contains("expected hello, got goodbye"),
+        "the D2 repair maker needs the failing check: {inputs}"
+    );
+    assert!(
+        f.controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "maker_findings" || r.table == "feedback")
+    );
 }
 
 #[test]
@@ -129,25 +242,52 @@ fn failed_run_details_reach_the_retry_maker() {
     let mut f = Fixture::new();
     f.seed(Phase::Making, 2);
     f.observe(Observation::WorkerFailed {
-        node: NodeId(0), generation: 10, failure_class: "worker_exit".into(), failure_message: "maker exited during reproduction".into(),
+        node: NodeId(0),
+        generation: 10,
+        failure_class: "worker_exit".into(),
+        failure_message: "maker exited during reproduction".into(),
     });
     let inputs = f.maker();
-    assert!(inputs["feedback"].to_string().contains("maker exited during reproduction"), "retry needs its failure evidence: {inputs}");
+    assert!(
+        inputs["feedback"]
+            .to_string()
+            .contains("maker exited during reproduction"),
+        "retry needs its failure evidence: {inputs}"
+    );
 }
-
 
 #[test]
 fn failed_checks_reach_the_fix_maker() {
     let mut f = Fixture::new();
     f.seed(Phase::Checking, 1);
     f.observe(Observation::Checks {
-        node: NodeId(0), generation: 10, action_key: "a".repeat(64), base_sha: f.repo.base.clone(), sha: f.repo.head.clone(),
-        changed_paths: vec![], failed_tests: vec![crate::findings::FailedTest { test: "test_hello.py::test_greeting".into(), message: "hello is missing".into() }],
-        report: true, pass: false, results: vec![],
+        node: NodeId(0),
+        generation: 10,
+        action_key: "a".repeat(64),
+        base_sha: f.repo.base.clone(),
+        sha: f.repo.head.clone(),
+        changed_paths: vec![],
+        failed_tests: vec![crate::findings::FailedTest {
+            test: "test_hello.py::test_greeting".into(),
+            message: "hello is missing".into(),
+        }],
+        report: true,
+        pass: false,
+        results: vec![],
     });
     assert_eq!(f.controller.world().unwrap().nodes[0].round, 1);
-    assert_eq!(f.maker()["feedback"][0]["failed_tests"][0]["message"], "hello is missing");
-    assert!(f.controller.snapshot().unwrap().rows.iter().any(|r| r.table == "check_reports"));
+    assert_eq!(
+        f.maker()["feedback"][0]["failed_tests"][0]["message"],
+        "hello is missing"
+    );
+    assert!(
+        f.controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "check_reports")
+    );
 }
 
 #[test]
@@ -157,33 +297,69 @@ fn review_blockers_reach_the_fix_maker_once() {
     f.worker("reviewer", json!({"verdict":"changes", "blocking_findings":[{"citation":{"kind":"goal","id":"greeting"},"problem":"Missing greeting", "evidence":"Returns goodbye"}], "findings":[]}));
     let inputs = f.maker();
     assert_eq!(inputs["feedback"].as_array().unwrap().len(), 1);
-    assert_eq!(inputs["feedback"][0]["report"], "Missing greeting: Returns goodbye");
+    assert_eq!(
+        inputs["feedback"][0]["report"],
+        "Missing greeting: Returns goodbye"
+    );
     assert_eq!(inputs["current_review_findings"][0]["id"], "review-10-0");
     let snapshot = f.controller.snapshot().unwrap();
-    let stored = snapshot.rows.iter().find(|r| r.table == "feedback").unwrap();
-    assert_eq!(stored.value["generation"], f.controller.world().unwrap().nodes[0].generation);
+    let stored = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "feedback")
+        .unwrap();
+    assert_eq!(
+        stored.value["generation"],
+        f.controller.world().unwrap().nodes[0].generation
+    );
 }
 
 #[test]
 fn maker_cant_meet_report_reaches_the_next_maker() {
     let mut f = Fixture::new();
     f.seed(Phase::Making, 2);
-    f.worker("maker", json!({"kind":"cant_meet", "report":"The public API cannot represent the goal"}));
+    f.worker(
+        "maker",
+        json!({"kind":"cant_meet", "report":"The public API cannot represent the goal"}),
+    );
     assert_eq!(f.controller.world().unwrap().nodes[0].attempt, 2);
-    assert!(f.maker()["feedback"][0]["report"].as_str().unwrap().contains("The public API cannot represent the goal"));
+    assert!(
+        f.maker()["feedback"][0]["report"]
+            .as_str()
+            .unwrap()
+            .contains("The public API cannot represent the goal")
+    );
 }
 
 #[test]
 fn stale_kernel_and_worker_replies_create_no_feedback() {
     for observation in [
-        Observation::Kernel(Event::Reply { node: NodeId(0), generation: 9, reply: Reply::MakerCantMeet }),
-        Observation::WorkerReply { node: NodeId(0), generation: 9, role: "maker".into(), reply: json!({"kind":"cant_meet","report":"stale"}), model: None, plan_check: None },
-        Observation::Kernel(Event::Reply { node: NodeId(0), generation: 9, reply: Reply::ChangesRequested }),
+        Observation::Kernel(Event::Reply {
+            node: NodeId(0),
+            generation: 9,
+            reply: Reply::MakerCantMeet,
+        }),
+        Observation::WorkerReply {
+            node: NodeId(0),
+            generation: 9,
+            role: "maker".into(),
+            reply: json!({"kind":"cant_meet","report":"stale"}),
+            model: None,
+            plan_check: None,
+        },
+        Observation::Kernel(Event::Reply {
+            node: NodeId(0),
+            generation: 9,
+            reply: Reply::ChangesRequested,
+        }),
     ] {
         let mut f = Fixture::new();
         f.seed(Phase::Making, 2);
         f.observe(observation);
-        assert!(!f.controller.snapshot().unwrap().rows.iter().any(|r| ["feedback", "maker_findings", "findings", "rebase_conflicts"].contains(&r.table.as_str())));
+        assert!(!f.controller.snapshot().unwrap().rows.iter().any(|r| {
+            ["feedback", "maker_findings", "findings", "rebase_conflicts"]
+                .contains(&r.table.as_str())
+        }));
         assert!(f.maker().get("feedback").is_none());
     }
 }
@@ -192,10 +368,23 @@ fn stale_kernel_and_worker_replies_create_no_feedback() {
 fn replan_carries_the_current_failure_to_the_planner() {
     let mut f = Fixture::new();
     f.seed(Phase::Making, 2);
-    f.change(|w| { w.nodes[0].attempt = 3; w.nodes[0].round = 1; });
-    f.worker("maker", json!({"kind":"cant_meet", "report":"Need a different plan"}));
-    assert!(matches!(f.controller.world().unwrap().nodes[0].phase, Phase::Planning { .. }));
-    assert!(f.planner()["findings"].to_string().contains("Need a different plan"));
+    f.change(|w| {
+        w.nodes[0].attempt = 3;
+        w.nodes[0].round = 1;
+    });
+    f.worker(
+        "maker",
+        json!({"kind":"cant_meet", "report":"Need a different plan"}),
+    );
+    assert!(matches!(
+        f.controller.world().unwrap().nodes[0].phase,
+        Phase::Planning { .. }
+    ));
+    assert!(
+        f.planner()["findings"]
+            .to_string()
+            .contains("Need a different plan")
+    );
 }
 
 #[test]
@@ -204,24 +393,64 @@ fn planner_violations_and_report_reach_its_retry() {
     f.seed(Phase::Planning { must_split: false }, 1);
     f.worker("planner", json!({"kind":"cant_meet", "report":"Need a smaller request", "files":["README.md"], "violations":["Bad selector", "Bad selector"],
         "forecast":{"tokenizer":"o200k_base","brief_tokens":1,"file_tokens":{"README.md":0},"overhead_tokens":0,"tokens":1,"fit_tokens":100,"context_tokens":150,"fits":true}}));
-    assert_eq!(f.planner()["findings"], json!(["Bad selector", "Need a smaller request"]));
+    assert_eq!(
+        f.planner()["findings"],
+        json!(["Bad selector", "Need a smaller request"])
+    );
 }
 
 #[test]
 fn rebase_conflict_is_head_scoped_and_cleared_on_rebased() {
     let mut f = Fixture::new();
     f.seed(Phase::Rebasing, 1);
-    f.observe(Observation::RebaseConflict { node: NodeId(0), generation: 10, head: f.repo.head.clone(), target: f.repo.base.clone(), files: vec!["README.md".into()] });
-    assert!(f.maker()["feedback"].to_string().contains("Resolve the merge"));
+    f.observe(Observation::RebaseConflict {
+        node: NodeId(0),
+        generation: 10,
+        head: f.repo.head.clone(),
+        target: f.repo.base.clone(),
+        files: vec!["README.md".into()],
+    });
+    assert!(
+        f.maker()["feedback"]
+            .to_string()
+            .contains("Resolve the merge")
+    );
     let snapshot = f.controller.snapshot().unwrap();
     let mut delivery = f.repo.delivery();
     delivery.head_sha = Some("b".repeat(40));
-    let other = f.supervisor.build_request(&delivery, "maker", &mut Store::open(&f.config.store).unwrap(), &snapshot).unwrap();
-    assert!(!other["inputs"]["feedback"].to_string().contains("Resolve the merge"));
+    let other = f
+        .supervisor
+        .build_request(
+            &delivery,
+            "maker",
+            &mut Store::open(&f.config.store).unwrap(),
+            &snapshot,
+        )
+        .unwrap();
+    assert!(
+        !other["inputs"]["feedback"]
+            .to_string()
+            .contains("Resolve the merge")
+    );
     f.seed(Phase::Rebasing, 1);
-    f.observe(Observation::Rebased { node: NodeId(0), generation: 10, sha: f.repo.head.clone() });
-    assert!(!f.maker()["feedback"].to_string().contains("Resolve the merge"));
-    assert!(!f.controller.snapshot().unwrap().rows.iter().any(|r| r.table == "rebase_conflicts"));
+    f.observe(Observation::Rebased {
+        node: NodeId(0),
+        generation: 10,
+        sha: f.repo.head.clone(),
+    });
+    assert!(
+        !f.maker()["feedback"]
+            .to_string()
+            .contains("Resolve the merge")
+    );
+    assert!(
+        !f.controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "rebase_conflicts")
+    );
 }
 
 #[test]
@@ -229,18 +458,60 @@ fn try_again_guidance_reaches_the_planner_through_console_intake() {
     let mut f = Fixture::new();
     f.seed(Phase::Making, 2);
     f.change(|w| {
-        w.nodes[0].phase = Phase::AwaitingRob; w.nodes[0].pos = 0;
-        w.nodes[0].run = None; w.nodes[0].pool = false; w.nodes[0].holds = false;
-        w.nodes[0].question = Some(tl3_kernel::Question { id: 1, kind: tl3_kernel::QKind::CantMeet,
-            cont: tl3_kernel::Cont::Planning { must_split: false }, cost: 1, clarified: false });
+        w.nodes[0].phase = Phase::AwaitingRob;
+        w.nodes[0].pos = 0;
+        w.nodes[0].run = None;
+        w.nodes[0].pool = false;
+        w.nodes[0].holds = false;
+        w.nodes[0].question = Some(tl3_kernel::Question {
+            id: 1,
+            kind: tl3_kernel::QKind::CantMeet,
+            cont: tl3_kernel::Cont::Planning { must_split: false },
+            cost: 1,
+            clarified: false,
+        });
         w.next_question = 2;
     });
     tl3_store::ConsoleCommands::open(&f.config.store).unwrap().submit("00000000-0000-4000-8000-000000000921", 0,
         &json!({"kind":"answer", "question":1, "choice":{"answer":"try_again", "guidance":"Use the public API"}})).unwrap();
     crate::ingress::drain(&mut f.controller).unwrap();
     for _ in 0..8 {
-        if f.controller.snapshot().unwrap().rows.iter().any(|r| r.table == "findings") { break; }
+        if f.controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "findings")
+        {
+            break;
+        }
         assert!(f.controller.drive_once().unwrap());
     }
-    assert!(f.planner()["findings"].as_array().unwrap().contains(&json!("Use the public API")));
+    assert!(
+        f.planner()["findings"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("Use the public API"))
+    );
+}
+
+#[test]
+fn legacy_rows_survive_the_first_canonical_feedback_write() {
+    let mut f = Fixture::new();
+    f.seed(Phase::Making, 2);
+    crate::git_tests::documents(&mut f.controller.store, &[
+        ("maker_findings", json!([{"kind":"failed_check", "goal_ids":[], "report":"legacy check"}])),
+        ("findings", json!(["legacy planner guidance"])),
+        ("rebase_conflicts", json!({"head":f.repo.head,"target":f.repo.base,"files":["README.md"]})),
+        ("worker_failures", json!({"failure_message":"old failure must not be reused"})),
+    ]);
+    assert!(f.maker()["feedback"].to_string().contains("legacy check"));
+    assert!(f.maker()["feedback"].to_string().contains("Resolve the merge"));
+    assert_eq!(f.planner()["findings"], json!(["legacy planner guidance"]));
+    f.observe(Observation::Kernel(Event::Reply {node:NodeId(0),generation:10,reply:Reply::RunFailed}));
+    let inputs = f.maker();
+    assert!(inputs["feedback"].to_string().contains("legacy check"));
+    assert!(inputs["feedback"].to_string().contains("Resolve the merge"));
+    assert!(!inputs["feedback"].to_string().contains("old failure must not be reused"));
+    assert_eq!(f.planner()["findings"], json!(["legacy planner guidance"]));
 }

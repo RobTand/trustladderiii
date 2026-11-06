@@ -555,7 +555,11 @@ impl Controller {
         if !self.input_checkpoint(snapshot, commit)? {
             return Ok(false);
         }
-        let tl3_kernel::StepResult { world: next, outputs: emitted, .. } = tl3_kernel::step(world.clone(), event);
+        let tl3_kernel::StepResult {
+            world: next,
+            outputs: emitted,
+            ..
+        } = tl3_kernel::step(world.clone(), event);
         *world = next;
         outputs.extend(emitted);
         if !commit.result.is_object() {
@@ -1298,10 +1302,17 @@ mod tests {
         );
         let mut feedback = crate::feedback::Evidence::default();
         if let Some(event) = c
-            .translate(&snapshot, &mut world, observation, &mut commit, &mut feedback)
+            .translate(
+                &snapshot,
+                &mut world,
+                observation,
+                &mut commit,
+                &mut feedback,
+            )
             .unwrap()
         {
-            c.apply(&snapshot, world, event, &mut commit, Some(&feedback)).unwrap();
+            c.apply(&snapshot, world, event, &mut commit, Some(&feedback))
+                .unwrap();
         }
         c.store.commit(&commit).unwrap();
     }
@@ -1504,7 +1515,9 @@ mod tests {
                 repo: tl3_kernel::RepoId(0),
                 priority: tl3_kernel::Priority::Unranked,
             },
-            &mut commit, None)
+            &mut commit,
+            None,
+        )
         .unwrap();
         c.store.commit(&commit).unwrap();
         confirm(&mut c, restarted);

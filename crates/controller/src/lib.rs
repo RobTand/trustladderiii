@@ -8,8 +8,8 @@ extern crate self as tl3_controller;
 
 pub mod adoption;
 mod approval_delivery;
-pub mod findings;
 mod feedback;
+pub mod findings;
 pub mod outcome;
 pub mod queue_cause;
 mod queue_cause_decide;
@@ -807,7 +807,9 @@ impl Controller {
                     node,
                     fact: Fact::Priority(priority),
                 },
-                commit, None)?;
+                commit,
+                None,
+            )?;
         }
         Ok(())
     }
@@ -1778,7 +1780,9 @@ impl Controller {
                     seq,
                     ack: Ack::Retryable,
                 },
-                &mut commit, None)?;
+                &mut commit,
+                None,
+            )?;
         }
         if approval_delivery::is_approval(delivery) {
             queue_retirement(&mut commit, delivery);
@@ -1929,7 +1933,9 @@ impl Controller {
                 snapshot,
                 snapshot::decode(snapshot)?,
                 Event::Ack { node, seq, ack },
-                &mut commit, None)?;
+                &mut commit,
+                None,
+            )?;
         }
         if completion.ack == Ack::Permanent && delivery.is_postmortem() {
             // #403: a postmortem never posts or raises an incident; it fails.
@@ -2108,7 +2114,11 @@ impl Controller {
         if !self.input_checkpoint(snapshot, commit)? {
             return Ok(());
         }
-        let tl3_kernel::StepResult { mut world, mut outputs, report } = tl3_kernel::step(world, event);
+        let tl3_kernel::StepResult {
+            mut world,
+            mut outputs,
+            report,
+        } = tl3_kernel::step(world, event);
         outputs.splice(0..0, dependency_outputs);
         self.announce_dependency_endings(
             snapshot,
@@ -2134,7 +2144,15 @@ impl Controller {
                 json!({"reason":reason}),
             ));
         }
-        feedback::record(&mut self.store, snapshot, &world, event, &report, feedback, commit)?;
+        feedback::record(
+            &mut self.store,
+            snapshot,
+            &world,
+            event,
+            &report,
+            feedback,
+            commit,
+        )?;
         self.record_kernel_result(snapshot, world, outputs, commit)?;
         if !commit.result.is_object() {
             commit.result = json!({});
@@ -2682,9 +2700,9 @@ impl Controller {
         }
         for row in &snapshot.rows {
             if (row.table == "delivery_outcomes"
-                    && row.value["node"]
-                        .as_u64()
-                        .is_some_and(|node| closed.contains(&NodeId(node))))
+                && row.value["node"]
+                    .as_u64()
+                    .is_some_and(|node| closed.contains(&NodeId(node))))
                 || (row.table == "queue_holds" && retired_hold(&row.value)?)
                 || row.table == "check_reports"
                     && row
@@ -3663,6 +3681,7 @@ impl Controller {
                 {
                     return Ok(None);
                 }
+                feedback.failure_message = Some(failure_message.clone());
                 commit.rows.push(put(
                     "worker_failures",
                     node.0.to_string(),
@@ -3825,7 +3844,9 @@ impl Controller {
                     }
                     if route == worker::ReviewRoute::Changes {
                         feedback.review = Some(feedback::review_findings(
-                            &blockers, &criteria["head_sha"], generation,
+                            &blockers,
+                            &criteria["head_sha"],
+                            generation,
                         )?);
                     }
                 }
@@ -4086,7 +4107,11 @@ impl Controller {
                 {
                     return Ok(None);
                 }
-                feedback.rebase = Some(feedback::Rebase::Conflict { head, target, files });
+                feedback.rebase = Some(feedback::Rebase::Conflict {
+                    head,
+                    target,
+                    files,
+                });
                 Event::Reply {
                     node,
                     generation,

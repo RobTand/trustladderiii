@@ -13,6 +13,8 @@ pub use evidence::check_ingest_reply;
 mod facts;
 mod fake;
 #[cfg(test)]
+mod feedback_tests;
+#[cfg(test)]
 mod input_contract_tests;
 pub(crate) mod json;
 pub(crate) mod ladder;
@@ -28,8 +30,6 @@ mod source;
 mod source_error;
 #[cfg(test)]
 mod startup_tests;
-#[cfg(test)]
-mod feedback_tests;
 mod trace;
 #[cfg(test)]
 mod trace_tests;
@@ -416,7 +416,11 @@ impl Supervisor {
                 inputs["check_base_sha"] = base.clone();
             }
             let feedback = crate::feedback::read(snapshot, delivery.node())?;
-            let items = feedback.maker_input(inputs.get("feedback"), delivery.round, delivery.head_sha.as_deref())?;
+            let items = feedback.maker_input(
+                inputs.get("feedback"),
+                delivery.round,
+                delivery.head_sha.as_deref(),
+            )?;
             if !items.is_empty() {
                 inputs["feedback"] = json!(items);
             }
