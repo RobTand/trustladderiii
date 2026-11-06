@@ -1210,6 +1210,90 @@ exit "$status"
         }
     }
 
+    /// #817 review 2 (Flux safety): the lease is a PrismaBuild-internal file, so
+    /// a lease TL3 cannot read as a v1 claim lease gives no liveness verdict,
+    /// and only a lease stale past 3x PrismaBuild's lease timeout reads lost.
+    /// The wait stays alive in every other case; it is never an error.
+    #[test]
+    fn lease_without_a_lost_verdict_keeps_wait_alive() {
+        let f = Repo::new();
+        let client = wait_client(f.root.path(), &f.head);
+        let queue = f.root.path().join("queue");
+        let key = "a".repeat(64);
+        fs::rename(
+            queue.join("ready").join(format!("{key}.json")),
+            queue.join("claimed").join(format!("{key}.json")),
+        )
+        .unwrap();
+        let runtime = crate::executor::runtime().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64();
+        let v1 = "prismaquant.prismabuild.pool_lease.v1";
+        let cases = [
+            (
+                "unknown schema",
+                serde_json::json!({"schema": "prismabuild.pool_lease.v2",
+                "action_key": key, "heartbeat_unix": 0.0, "owner": "o", "host": "h"}),
+                true,
+            ),
+            (
+                "v1 without heartbeat",
+                serde_json::json!({"schema": v1,
+                "action_key": key, "owner": "o", "host": "h"}),
+                true,
+            ),
+            (
+                "v1 negative heartbeat",
+                serde_json::json!({"schema": v1,
+                "action_key": key, "heartbeat_unix": -1.0, "owner": "o", "host": "h"}),
+                true,
+            ),
+            (
+                "stale by 2x the lease timeout",
+                serde_json::json!({"schema": v1,
+                "action_key": key, "heartbeat_unix": now - 600.0, "owner": "o", "host": "h"}),
+                true,
+            ),
+            (
+                "stale past 3x the lease timeout",
+                serde_json::json!({"schema": v1,
+                "action_key": key, "heartbeat_unix": now - 1_000.0, "owner": "o", "host": "h"}),
+                false,
+            ),
+        ];
+        for (case, lease, alive) in cases {
+            fs::write(
+                queue.join("claimed").join(format!("{key}.lease")),
+                serde_json::to_vec(&lease).unwrap(),
+            )
+            .unwrap();
+            let record = read_wait(&client, runtime, &key, &f.path);
+            assert!(
+                if alive {
+                    matches!(record, Ok(crate::executor::WaitRecord::Alive))
+                } else {
+                    matches!(record, Ok(crate::executor::WaitRecord::Ended))
+                },
+                "{case}: expected alive={alive}, read {:?}",
+                record
+                    .as_ref()
+                    .map(|r| matches!(r, crate::executor::WaitRecord::Alive))
+            );
+        }
+        // A non-JSON lease (a format TL3 does not know) is no verdict either.
+        fs::write(
+            queue.join("claimed").join(format!("{key}.lease")),
+            "flux-lease 1",
+        )
+        .unwrap();
+        assert!(matches!(
+            read_wait(&client, runtime, &key, &f.path),
+            Ok(crate::executor::WaitRecord::Alive)
+        ));
+    }
+
     #[test]
     fn hostile_read_wait() {
         crate::git_tests::hostile(
