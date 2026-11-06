@@ -79,7 +79,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
                     generation, reply, *old(out), *final(out)),
             _ => true,
         },
-] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
+] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table);] {
     kernel_snapshot! { before_apply = *w }
     kernel_proof! { events_lemmas::selected_input(before_apply@, event); }
     match event {

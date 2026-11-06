@@ -253,7 +253,7 @@ CASES = {
     'allocation_stopping_outcome': ('crates/kernel/src/allocation.rs',
                                      'm.phase = Phase::Stopping(Outcome::Merged);',
                                      'm.phase = Phase::Stopping(Outcome::Stopped);',
-                                     '//crates/kernel:verus_allocation_enter_stopping'),
+                                     '//crates/kernel:verus_review_stopping_node'),
     'allocation_incident_rob': ('crates/kernel/src/allocation.rs',
                                'm.incident_needs_rob = needs_rob;',
                                'm.incident_needs_rob = !needs_rob;',
