@@ -932,6 +932,9 @@ def verus_proofs():
             "port_advance_step_release_frame": ("kernel::port_advance_step_frames#release_frame", 1),
             "port_advance_step_finished_quiet": ("kernel::port_advance_step_frames#finished_quiet", 1),
             "port_advance_step_finished_close": ("kernel::port_advance_step_frames#finished_close", 1),
+            "port_advance_teardown_rank_question": ("kernel::port_advance_teardown_rank#question", 1),
+            "port_advance_teardown_rank_absent": ("kernel::port_advance_teardown_rank#absent", 1),
+            "port_advance_teardown_rank_emission": ("kernel::port_advance_teardown_rank#emission", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

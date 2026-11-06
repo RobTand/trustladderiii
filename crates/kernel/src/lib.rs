@@ -2284,3 +2284,7 @@ mod port_review_output;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_advance_step_frames.rs"]
 mod port_advance_step_frames;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_advance_teardown_rank.rs"]
+mod port_advance_teardown_rank;

@@ -958,18 +958,13 @@ kernel_fn! {
                 Node { pool: n.pool && kind != EffectKind::StopRun, pos: (n.pos + 1) as u8, ..n }
             } else { port_advance_contracts::emitted(n, kind) };
         assert(n.phase is Stopping);
+        assert(pending_rank(n) == 0 && pending_rank(after) == 0);
         if n.question.is_some() {
-            assert(advance_post(n, after, ticket, ticket, advance_enabled(n, context))) by { reveal(advance_post); reveal(distance); }
+            port_advance_teardown_rank::question(n, ticket, context, kind);
         } else if port_advance_contracts::gone(n, kind) {
-            match kind {
-                EffectKind::StopRun => { assert(advance_post(n, after, ticket, ticket, advance_enabled(n, context))) by { reveal(advance_post); reveal(distance); } },
-                EffectKind::WithdrawJob => { assert(advance_post(n, after, ticket, ticket, advance_enabled(n, context))) by { reveal(advance_post); reveal(distance); } },
-                EffectKind::ClosePr => { assert(advance_post(n, after, ticket, ticket, advance_enabled(n, context))) by { reveal(advance_post); reveal(distance); } },
-                EffectKind::RemoveWorktree => { assert(advance_post(n, after, ticket, ticket, advance_enabled(n, context))) by { reveal(advance_post); reveal(distance); } },
-                _ => {},
-            }
+            port_advance_teardown_rank::absent(n, ticket, context, kind);
         } else {
-            assert(advance_post(n, after, ticket, ticket, advance_enabled(n, context))) by { reveal(advance_post); reveal(distance); }
+            port_advance_teardown_rank::emission(n, ticket, context, kind);
         }
     ] {
         kernel_snapshot! { advance_out = *out }
