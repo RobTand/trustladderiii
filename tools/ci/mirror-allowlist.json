@@ -965,6 +965,11 @@
     "owner": "#915"
   },
   {
+    "path": "harness/tests/fixtures/subject_observer/proof_before_r1.py.txt",
+    "detector": "frozen-copy",
+    "owner": "#899/proof-assembly-differential-reference"
+  },
+  {
     "path": "tools/ci/test_bazel_workspace.py",
     "detector": "source-include",
     "owner": "#878"

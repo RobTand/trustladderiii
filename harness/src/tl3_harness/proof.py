@@ -619,15 +619,18 @@ def _assemble_proof(base: Path, head: Path, destination: Path, check, config):
                 ast.literal_eval(statement.value)
             except (ValueError, TypeError, SyntaxError):
                 continue
-            validate_support(text, name)
-            guard(text, item)
+            collect(validate_support, text, name, field='/proof/observer_support')
+            collect(guard, text, item)
             if '*' in bound_names(old):
-                raise ProofRefusal('proof.support.literal_wildcard', module=name, symbol=symbol)
-            validate_partial_literal(text, new, name, symbol)
+                violations.extend(ProofRefusal('proof.support.literal_wildcard', module=name, symbol=symbol,
+                                               field='/proof/observer_support').violations)
+            collect(validate_partial_literal, text, new, name, symbol, field='/proof/observer_support')
             imports.append(text)
             bound.add(symbol)
             inferred_support.add(item)
             identities[item] = digest(text)
+        if violations:
+            raise ProofRefusal.from_violations(violations)
         missing = required - bound
         if missing:
             raise ProofRefusal('proof.observer.unresolved_symbol', module=name, symbol=sorted(missing)[0])
