@@ -10,6 +10,11 @@
     "owner": "unassigned"
   },
   {
+    "path": "crates/controller/src/dispatch_recovery_tests.rs",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
     "path": "crates/controller/src/executor.rs",
     "detector": "source-include",
     "owner": "unassigned"
@@ -177,6 +182,11 @@
   {
     "path": "crates/controller/tests/fixture_contracts.rs",
     "detector": "source-include",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
+    "path": "crates/controller/tests/fixtures/dispatch_recovery_original.rs",
+    "detector": "frozen-copy",
     "owner": "#878/controller-core/reference-copy-cleanup"
   },
   {
