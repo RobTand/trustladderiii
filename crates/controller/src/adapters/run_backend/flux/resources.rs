@@ -47,11 +47,11 @@ fn counts(resource: &ResourceSet) -> Result<Vec<(u32, u64, u64)>> {
 }
 
 impl Flux {
-    pub(super) fn probe_resources(&self, reservation: &Reservation) -> Result<Probe> {
+    pub(super) fn probe_resources(&self, reservation: &Reservation, placement: &Placement) -> Result<Probe> {
         validate::reservation(reservation)?;
         let mut probe = Probe { availability: Availability::Unknown, reason: "native resource query unavailable".into(),
             total_cpus: 0, free_cpus: 0, total_gpus: 0, free_gpus: 0, memory_guarantee: MemoryGuarantee::DeclaredOnly };
-        if reservation.memory_guarantee == MemoryGuarantee::RequireAdmission || reservation.gpus > 0 {
+        if validate::placement(placement).is_err() || reservation.memory_guarantee == MemoryGuarantee::RequireAdmission || reservation.gpus > 0 {
             probe.availability = Availability::Incompatible;
             probe.reason = "required memory admission or GPU P-core/CDI capability is unqualified".into();
             return Ok(probe);
@@ -60,8 +60,9 @@ impl Flux {
             let all = self.capture(&["resource", "R", "--states=all"])?;
             let free = self.capture(&["resource", "R", "--states=free"])?;
             if !all.success || !free.success { return Err(BackendError::unknown("resource CLI failed")); }
-            let all = counts(&serde_json::from_slice(&all.stdout)?)?;
-            let free = counts(&serde_json::from_slice(&free.stdout)?)?;
+            // The current qualified image dependency is rank zero/dl380g10 only.
+            let all = counts(&serde_json::from_slice(&all.stdout)?)?.into_iter().filter(|(rank, _, _)| *rank == 0).collect::<Vec<_>>();
+            let free = counts(&serde_json::from_slice(&free.stdout)?)?.into_iter().filter(|(rank, _, _)| *rank == 0).collect::<Vec<_>>();
             for (rank, cpus, gpus) in &free {
                 if !all.iter().any(|(r, c, g)| r == rank && c >= cpus && g >= gpus) {
                     return Err(BackendError::unknown("free resource view contradicts total view"));

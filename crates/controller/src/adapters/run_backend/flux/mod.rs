@@ -79,7 +79,9 @@ impl Flux {
             let mut record = record.ok_or_else(|| BackendError::unknown("intent disappeared"))?;
             if let Some(terminal) = record.terminal { return Ok(terminal); }
             let receipt = Receipt {
-                schema: "tl3.run_receipt.v1".into(), intent: record.intent.clone(), binding: record.binding.clone(),
+                schema: "tl3.run_receipt.v1".into(), issuer: ReceiptIssuer::Tl3,
+                request: blob(&record.intent.output_dir.join("request.json"), &serde_json::to_vec(&record.request)?)?,
+                intent: record.intent.clone(), binding: record.binding.clone(),
                 tree: record.request.tree.clone(), runner: record.request.runner.clone(), runtime: record.request.runtime.clone(),
                 reservation: record.request.reservation.clone(), ending, reason: safe(reason)?, native_events: record.events.clone(), evidence,
             };
@@ -109,8 +111,8 @@ impl RunBackend for Flux {
             Ok((record, true))
         })?;
         self.instance(&record)?;
-        if let Some(terminal) = record.terminal { return Ok(Submission::Refused { terminal }); }
         if let Some(binding) = record.binding { return Ok(Submission::Accepted { binding }); }
+        if let Some(terminal) = record.terminal { return Ok(Submission::Refused { terminal }); }
         if !fresh { return Ok(Submission::Unknown { reason: "intent already retained; attach for reconciliation, never resubmit".into() }); }
         // Reserve output before writing any evidence, including a preflight refusal.
         if std::fs::create_dir(&record.intent.output_dir).is_err() {
@@ -170,13 +172,12 @@ impl RunBackend for Flux {
         if !original.success || !self.matches(&self.journal.load(owner)?, &serde_json::from_slice(&original.stdout)?)? {
             return Ok(Observation::Unknown { binding: Some(binding), reason: "saved ID original jobspec unavailable or mismatched".into() });
         }
-        let mut child = self.command().args(["job", "eventlog", "--follow", "--format=json", &binding.id.job]).process_group(0)
+        let child = self.command().args(["job", "eventlog", "--follow", "--format=json", &binding.id.job]).process_group(0)
             .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
-        let group = child.id();
-        stop.register(group);
-        let stderr = child.stderr.take().ok_or_else(|| BackendError::unknown("watch stderr unavailable"))?;
+        let mut observer = process::Observer::new(child, stop.clone());
+        let stderr = observer.child.stderr.take().ok_or_else(|| BackendError::unknown("watch stderr unavailable"))?;
         let stderr = std::thread::spawn(move || process::bounded(stderr));
-        let stdout = child.stdout.take().ok_or_else(|| BackendError::unknown("watch stdout unavailable"))?;
+        let stdout = observer.child.stdout.take().ok_or_else(|| BackendError::unknown("watch stdout unavailable"))?;
         let mut reader = BufReader::new(stdout);
         let mut position = 0_usize;
         let mut clean = false;
@@ -206,9 +207,7 @@ impl RunBackend for Flux {
             }
             Ok(())
         })();
-        kill_group(group);
-        let _ = child.wait();
-        stop.unregister(group);
+        drop(observer);
         let stderr = stderr.join().ok().and_then(std::result::Result::ok).unwrap_or_default();
         let out = &binding.intent.output_dir;
         blob(&out.join("watch.stderr"), safe(&String::from_utf8_lossy(&stderr))?.as_bytes())?;
@@ -234,7 +233,7 @@ impl RunBackend for Flux {
         Ok(CancelAck { binding, acknowledged, terminal: None })
     }
 
-    fn probe(&self, reservation: &Reservation) -> Result<Probe> { self.probe_resources(reservation) }
+    fn probe(&self, reservation: &Reservation, placement: &Placement) -> Result<Probe> { self.probe_resources(reservation, placement) }
 
     fn launch_context(&self, owner: &Owner, job: &str) -> Result<LaunchContext> {
         let record = self.journal.load(owner)?;

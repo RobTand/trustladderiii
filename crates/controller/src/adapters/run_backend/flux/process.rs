@@ -2,6 +2,26 @@ use super::*;
 use serde::{Deserialize, Serialize};
 use std::process::{Command, ExitStatus};
 
+pub(super) struct Observer {
+    pub child: std::process::Child,
+    stop: WatchStop,
+    group: u32,
+}
+impl Observer {
+    pub fn new(child: std::process::Child, stop: WatchStop) -> Self {
+        let group = child.id();
+        stop.register(group);
+        Self { child, stop, group }
+    }
+}
+impl Drop for Observer {
+    fn drop(&mut self) {
+        kill_group(self.group);
+        let _ = self.child.wait();
+        self.stop.unregister(self.group);
+    }
+}
+
 #[derive(Serialize)]
 pub(super) struct ProcessStatus {
     pub code: Option<i32>,
