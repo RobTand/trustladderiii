@@ -25,6 +25,10 @@ from .proof import assemble_proof, conftest_subjects
 
 MAX_SELECTED_TESTS = 1000
 
+# Wire values are checked against the Rust-generated RedClass schema (#926).
+RED_CLASSES = {Outcome.ASSERTION: 'assertion', Outcome.ADDED_NAME: 'added-name',
+               Outcome.ERROR: 'symptom'}
+
 
 _BASE_RESULTS: dict[tuple, tuple[dict[str, Outcome], dict[str, str]]] = {}
 # Complete execution units, never individual members, apart from the plan's base cache.
@@ -684,6 +688,10 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                     receipt['red_message_matches'] = {
                         test: failure.red_message_match for test, failure in notes.details.items()
                         if test in check.tests and failure.red_message_match is not None}
+                receipt['red_classes'] = {
+                    test.test: RED_CLASSES[test.base] for test in result.tests
+                    if test.passed and test.base in RED_CLASSES
+                    and (test.base != Outcome.ERROR or check.declared_symptom is not None)}
                 results.append(replace(result, proof=receipt))
                 continue
             result = judge(check, before, after, messages=messages, base_notes=before_messages)

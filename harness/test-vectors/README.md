@@ -1,7 +1,7 @@
 # Harness parity vectors
 
 `contracts/` pins the check-report shape from #734. `pytest-node-ids.json`
-is the original grammar and selection corpus. Both remain unchanged.
+is the original grammar and selection corpus. The original released vectors remain unchanged.
 
 `core/<kind>.json` pins Python behavior before wave B. Each file contains a
 `kind` and `cases`, each with a stable `id`, `input`, and `expected` value.
@@ -100,3 +100,12 @@ the named property instead of comparing its output with Python's `expected`:
 `len(json.dumps(result).encode())`. This is default ASCII-escaped JSON with
 spaces, not compact JSON or `ensure_ascii=False`. Divergence fixtures use
 the real 16,384-byte envelope.
+
+Report contracts come from `crates/contracts/src/report.rs`. A shape the previous
+controller refuses gets a new `tl3.checks.vN` version. The controller accepts the
+current and previous versions; new receipt fields stay optional for older reports.
+#926 emits v2 with `proof.red_classes`, retaining v1 parsing. Regenerate current
+vectors with `TL3_WRITE_CONTRACT_VECTORS=1` and `test_contract_vectors.py` on
+BuildBuddy. Copy the produced vectors into a new `contracts/released/<set>/`
+directory, then append their producing commit, harness source tree, report version
+and generated schema SHA-256 to `released-contracts.json`. Never edit old sets.

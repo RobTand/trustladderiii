@@ -1,4 +1,4 @@
-// The trusted harness's check report: the `TL3_CHECKS` line `tl3.checks.v1` that the
+// The trusted harness's check report: the `TL3_CHECKS` line `tl3.checks.v2` that the
 // controller parses, stores, and later sends to review as `checks` (#741). The shapes
 // follow what the harness emits (`harness/src/tl3_harness/execution.py::result_json`),
 // pinned by the shared vectors in `harness/test-vectors/contracts`.
@@ -29,6 +29,8 @@ pub const MESSAGE_CHARS: usize = 1000;
 pub enum ReportSchema {
     #[serde(rename = "tl3.checks.v1")]
     V1,
+    #[serde(rename = "tl3.checks.v2")]
+    V2,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -291,6 +293,15 @@ pub enum RedMessageMatch {
     Mismatch,
 }
 
+/// The RED class accepted for an observer (#926, tessera #1455).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum RedClass {
+    Assertion,
+    AddedName,
+    Symptom,
+}
+
 // The subject/observer proof receipt of a demonstrating or reproducing check.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -314,6 +325,13 @@ pub struct ProofReceipt {
     )]
     #[schemars(with = "BTreeMap<String, RedMessageMatch>")]
     pub red_message_matches: Option<BTreeMap<String, RedMessageMatch>>,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "BTreeMap<String, RedClass>")]
+    pub red_classes: Option<BTreeMap<String, RedClass>>,
     // Per side, per test: the delay a delay patch actually applied (6c681fb319).
     #[serde(
         default,

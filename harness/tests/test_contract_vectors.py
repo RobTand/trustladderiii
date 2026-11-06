@@ -56,6 +56,15 @@ def plan_check(name, kind, tests, **extra):
 
 
 SCENARIOS = {
+    # #926 / tessera #1455: call-phase imports of names added by head supply RED.
+    'red-class-added-name': dict(
+        base={'product.py': 'def value():\n    return 0\n',
+              'tests/test_value.py': ('def test_value():\n    from product import read_accepted_unit\n'
+                                     '    assert read_accepted_unit() == 1\n')},
+        head={'product.py': 'def value():\n    return 0\n\ndef read_accepted_unit():\n    return 1\n'},
+        plan=[plan_check('accepted unit', 'demonstrating', ['tests/test_value.py::test_value'],
+                         proof={'subjects': ['product.py::read_accepted_unit'], 'observer_support': [],
+                                'red_message': 'expected accepted unit'})]),
     # A subject/observer receipt whose RED came from the explicit assertion message.
     'proof': dict(
         base={'product.py': PRODUCT.format(value=0), 'tests/test_value.py': MESSAGE,

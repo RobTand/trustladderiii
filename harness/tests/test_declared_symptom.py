@@ -103,6 +103,7 @@ def test_original(archive):
 def test_pb2643_future_timeout_is_red_and_receipts_bind_both_trees(repo):
     result, base, head = run(repo, TIMEOUT, PASS, check())
     assert result.verdict == Verdict.PASS, result.tests
+    assert result.proof['red_classes'] == {NODE: 'symptom'}
     evidence = json.loads(execution.result_json((result,)))[0]['symptom_evidence']
     assert (evidence['base'], evidence['head'], evidence['forcing']) == (base, head, FORCING.as_json())
     assert evidence['declaration'] == declaration()
@@ -133,6 +134,7 @@ def test_zero_occurrences_at_base_is_reported_without_retrying(repo):
     result, _, _ = run(repo, PASS, PASS + '\n# head\n', check(declaration(repeat=3)))
     assert result.verdict == Verdict.FAIL
     assert '0 of 3' in result.tests[0].message
+    assert result.proof['red_classes'] == {}
     evidence = json.loads(execution.result_json((result,)))[0]['symptom_evidence']
     assert len([r for r in evidence['runs'] if r['side'] == 'base']) == 3
 

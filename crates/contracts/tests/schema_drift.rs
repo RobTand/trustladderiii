@@ -128,3 +128,27 @@ input_drift!(planner_input_is_generated_byte_identically, "planner");
 input_drift!(maker_input_is_generated_byte_identically, "maker");
 input_drift!(writer_input_is_generated_byte_identically, "writer");
 input_drift!(classifier_input_is_generated_byte_identically, "classifier");
+
+/// #926, tessera #1455: accepted RED classes survive the receipt boundary.
+#[test]
+fn red_classes_round_trip_and_reject_unknown_values() {
+    use contracts::ProofReceipt;
+    use serde_json::{Value, json};
+    let mut receipt = json!({
+        "rule": "subject-observer-v1", "declaration": null, "mode": "head-observer",
+        "subjects": {}, "observer_sha256": {}, "support_sha256": {},
+        "source_base_tree_sha256": "a".repeat(64), "base_tree_sha256": "b".repeat(64),
+        "head_tree_sha256": "c".repeat(64)
+    });
+    let parsed: ProofReceipt = serde_json::from_value(receipt.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), receipt);
+    for class in ["assertion", "added-name", "symptom"] {
+        receipt["red_classes"] = json!({"test.py::test_x": class});
+        let parsed: ProofReceipt = serde_json::from_value(receipt.clone()).unwrap();
+        assert_eq!(serde_json::to_value(parsed).unwrap(), receipt);
+    }
+    receipt["red_classes"] = json!({"test.py::test_x": "error"});
+    assert!(serde_json::from_value::<ProofReceipt>(receipt.clone()).is_err());
+    receipt["red_classes"] = Value::Null;
+    assert!(serde_json::from_value::<ProofReceipt>(receipt).is_err());
+}

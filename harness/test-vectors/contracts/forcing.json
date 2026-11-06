@@ -56,6 +56,9 @@
     "observer_sha256": {
      "tests/test_value.py::test_value": "8c2389248ab5a41cab61f4b032a63d681419a9eee2800e4466811f31d562350c"
     },
+    "red_classes": {
+     "tests/test_value.py::test_value": "assertion"
+    },
     "red_message_matches": {
      "tests/test_value.py::test_value": "message"
     },
