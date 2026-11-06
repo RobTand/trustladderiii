@@ -1233,3 +1233,46 @@ def test_t842_r2_partial_factory_cannot_omit_function_object_mutation(repository
     assert results[0].verdict == Verdict.FAIL, results
     assert results[0].tests[0].base == Outcome.UNCOLLECTED
     assert 'Proof assembly refused' in results[0].tests[0].message
+
+
+# #867 (found by: live probe, tessera #1455): a refusal must tell the maker what
+# is allowed and how to repair, or the one repair turn repeats the same code.
+T867_CASES = [
+    ('hasattr', 'def helper(value):\n    return hasattr(value, "decoded")\n', ['hasattr', 'allowed builtins']),
+    ('isinstance', 'def helper(value):\n    return isinstance(value, int)\n', ['isinstance', 'allowed builtins']),
+    ('non-literal pure builtin', 'def helper(value):\n    return sorted(value)\n', ['sorted', 'literal arguments']),
+    ('method call', 'def helper(value):\n    return value.decode()\n', ['value.decode', 'allowed builtins']),
+    ('decorator', 'import pytest\n\n@pytest.fixture\ndef data():\n    return 1\n', ['pytest.fixture', 'decorator']),
+    ('class bases', 'class Box(dict):\n    pass\n', ['Box', 'base class']),
+    ('context manager', 'def helper():\n    with open("x") as handle:\n        return handle\n', ['with', 'sys.argv']),
+    ('percent template', 'def helper(value):\n    return "%s" % value\n', ['%', 'f-string']),
+    ('reflective attribute', 'TEMPLATE = "{0}"\ndef helper():\n    return TEMPLATE.format(1)\n', ['format', 'f-string']),
+    ('member store', 'def helper(box):\n    box["k"] = 1\n', ['box', 'new name']),
+    ('namespace api', 'def helper(value):\n    return getattr(value, "x")\n', ['getattr', 'observer test body']),
+]
+
+
+@pytest.mark.parametrize('name,source,expected', T867_CASES, ids=[case[0] for case in T867_CASES])
+def test_t867_support_refusals_say_what_is_allowed_and_how_to_repair(name, source, expected):
+    from tl3_harness import proof
+    with pytest.raises(model.ProofRefusal) as refused:
+        proof.validate_support(source, 'tests/test_cached_producer.py')
+    message = str(refused.value)
+    for text in expected:
+        assert text in message, (name, message)
+    assert 'observer test body' in message, (name, message)
+
+
+def test_t867_call_refusal_lists_the_allowlist_generated_from_the_rule():
+    """The listed builtins come from the same constant the rule uses, so they cannot drift."""
+    from tl3_harness import proof
+    allowed = getattr(proof, 'PURE_SUPPORT_BUILTINS', None)
+    assert allowed, 'proof.PURE_SUPPORT_BUILTINS must be the allowlist the call rule uses'
+    with pytest.raises(model.ProofRefusal) as refused:
+        proof.validate_support('def helper(value):\n    return hasattr(value, "decoded")\n',
+                               'tests/test_cached_producer.py')
+    message = str(refused.value)
+    assert message.startswith('Proof assembly refused tests/test_cached_producer.py::hasattr: '), message
+    for builtin in sorted(allowed):
+        assert builtin in message, (builtin, message)
+    assert 'hasattr' not in allowed
