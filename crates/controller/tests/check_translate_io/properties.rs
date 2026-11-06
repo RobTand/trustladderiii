@@ -514,7 +514,7 @@ fn mandatory_checks_bounds_unicode_duplicates_and_evidence() {
     let failed = (0..22)
         .map(|_| findings::FailedTest {
             test: "é".repeat(4100),
-            message: "文".repeat(findings::MAX_MESSAGE_CHARS + 3),
+            message: "文".repeat(findings::MAX_MESSAGE_CHARS),
         })
         .collect();
     let mut step = checks_step();
@@ -554,6 +554,37 @@ fn mandatory_checks_bounds_unicode_duplicates_and_evidence() {
         1
     );
 }
+#[test]
+fn complete_proof_feedback_has_a_larger_current_bound() {
+    let mut step = checks_step();
+    step.failed = vec![findings::FailedTest {
+        test: "tests/a.py".into(),
+        message: "文".repeat(tl3_contracts::report::PROOF_MESSAGE_CHARS + 3),
+    }];
+    let schedule = schedule(step, vec![]);
+    let old = io::run(&schedule, false, None);
+    let current = io::run(&schedule, true, None);
+    assert_eq!(old.calls, current.calls);
+    assert_eq!(old.staged_rows, current.staged_rows);
+    assert_eq!(old.persisted_rows, current.persisted_rows);
+    assert_eq!(old.persisted_intern, current.persisted_intern);
+    let message = |run: &Run| {
+        run.results[0]["feedback"]["failed"][0]["message"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .count()
+    };
+    assert_eq!(message(&old), findings::MAX_MESSAGE_CHARS);
+    assert_eq!(message(&current), tl3_contracts::report::PROOF_MESSAGE_CHARS);
+    for write in 0..current.writes {
+        for after in [false, true] {
+            let cut = Some(io::Cut { write, after });
+            assert_eq!(io::run(&schedule, false, cut), io::run(&schedule, true, cut));
+        }
+    }
+}
+
 #[test]
 fn mandatory_checks_errors_before_after_intern_and_staged_rows() {
     for request in [
