@@ -449,6 +449,14 @@ def refuse_stdlib_shadow(tree: Path, observer):
         raise ProofRefusal('proof.loader.stdlib_shadow', module=observer, path=relative, stdlib=module)
 
 
+def staging_directory(path: Path):
+    """Create only missing graft directories, with a mode independent of umask."""
+    if not path.exists():
+        staging_directory(path.parent)
+        path.mkdir()
+        path.chmod(0o755)
+
+
 def assemble_proof(base: Path, head: Path, destination: Path, check, config, *, role='maker', check_index=0, footprint=(), protected=(), generated=()):
     try:
         return _assemble_proof(base, head, destination, check, config)
@@ -638,8 +646,9 @@ def _assemble_proof(base: Path, head: Path, destination: Path, check, config):
             # the observer context, including its imports and pytest fixtures.
             for item in requested:
                 identities[item] = digest(source_unit(new, item)[0])
-            target.parent.mkdir(parents=True, exist_ok=True)
+            staging_directory(target.parent)
             target.write_bytes(new.encode())
+            target.chmod(0o644)
             continue
         replacements, grafts, required_texts = [], [], []
         protected = written_bindings(old, filename=name)

@@ -586,6 +586,16 @@ existing subject by observer support are refused.
 
 Planner rehearsal, maker base runs and independent Checking use one assembler.
 Receipts bind the source trees, staged tree, subjects, observers and declaration.
+
+Staging preserves the base copy's file and directory permissions, including
+executable files. Grafting observer definitions into an existing base module
+keeps that module's base mode, even when the head mode differs. A new observer
+or support module gets mode 0644, and each missing parent directory gets 0755,
+independent of the process umask. Existing parent directories keep their modes.
+The head tree used for GREEN keeps the file modes exported from Git; staging
+does not change it. `tree_sha256` hashes file paths, file modes and contents,
+but does not hash directories. These are staging rules only; proof selection
+and acceptance are unchanged.
 An explicit assertion proof declares the exact call-phase assertion message;
 a different failure cannot supply RED. Forcing and declared-symptom checks
 without a source partition retain the original base test as their subject and

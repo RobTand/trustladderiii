@@ -1,0 +1,193 @@
+[
+  {
+    "corpus_id": 0,
+    "input": {
+      "base": {
+        "product.py": {
+          "b64": "UFJPRklMRVMgPSB7Impzb24iOiAxfQoKCmRlZiBwcm9maWxlKG5hbWUpOgogICAgcmV0dXJuIFBST0ZJTEVTW25hbWVdCg==",
+          "mode": 420
+        },
+        "pyproject.toml": {
+          "b64": "W3Rvb2wudGwzLmhhcm5lc3NdCmNvbW1hbmQ9WyJweXRob24iLCAiLW0iLCAicHl0ZXN0Il0KdGVzdC1maWxlcz1bInRlc3RzLyoucHkiXQo=",
+          "mode": 420
+        }
+      },
+      "check": {
+        "declared_symptom": null,
+        "forcing": null,
+        "kind": "demonstrating",
+        "name": "check",
+        "proof": null,
+        "tests": [
+          "tests/test_digest.py::test_key_error"
+        ]
+      },
+      "config": {
+        "command": [
+          "python",
+          "-m",
+          "pytest"
+        ],
+        "test-files": [
+          "tests/*.py"
+        ]
+      },
+      "destination_exists": false,
+      "head": {
+        "product.py": {
+          "b64": "UFJPRklMRVMgPSB7Impzb24iOiAxLCAiZGVmYXVsdF9yZXByIjogMn0KCgpkZWYgcHJvZmlsZShuYW1lKToKICAgIHJldHVybiBQUk9GSUxFU1tuYW1lXQo=",
+          "mode": 420
+        },
+        "pyproject.toml": {
+          "b64": "W3Rvb2wudGwzLmhhcm5lc3NdCmNvbW1hbmQ9WyJweXRob24iLCAiLW0iLCAicHl0ZXN0Il0KdGVzdC1maWxlcz1bInRlc3RzLyoucHkiXQo=",
+          "mode": 420
+        },
+        "tests/test_digest.py": {
+          "b64": "aW1wb3J0IHB5dGVzdApmcm9tIHByb2R1Y3QgaW1wb3J0IHByb2ZpbGUKCgpAcHl0ZXN0LmZpeHR1cmUKZGVmIGtub3duKCk6CiAgICByZXR1cm4gcHJvZmlsZSgiZGVmYXVsdF9yZXByIikKCgpkZWYgdGVzdF9rZXlfZXJyb3IoKToKICAgIGFzc2VydCBwcm9maWxlKCJkZWZhdWx0X3JlcHIiKSA9PSAyCgoKZGVmIHRlc3Rfc2V0dXBfZXJyb3Ioa25vd24pOgogICAgYXNzZXJ0IGtub3duID09IDIKCgpkZWYgdGVzdF9iYXNlX3Bhc3MoKToKICAgIGFzc2VydCBwcm9maWxlKCJqc29uIikgPT0gMQoKCmRlZiB0ZXN0X2xvbmdfbWVzc2FnZSgpOgogICAgaWYgImRlZmF1bHRfcmVwciIgbm90IGluIF9faW1wb3J0X18oInByb2R1Y3QiKS5QUk9GSUxFUzoKICAgICAgICByYWlzZSBWYWx1ZUVycm9yKCJsb25nICIgKiA4MDApCgoKZGVmIHRlc3RfYXNzZXJ0aW9uKCk6CiAgICBhc3NlcnQgImRlZmF1bHRfcmVwciIgaW4gX19pbXBvcnRfXygicHJvZHVjdCIpLlBST0ZJTEVTLCAib2xkIGFzc2VydGlvbiIK",
+          "mode": 420
+        },
+        "tests/test_unrelated.py": {
+          "b64": "aW1wb3J0IHByb2R1Y3QKCmlmICJkZWZhdWx0X3JlcHIiIG5vdCBpbiBwcm9kdWN0LlBST0ZJTEVTOgogICAgcmFpc2UgUnVudGltZUVycm9yKCJwcm9maWxlcyBhcmUgbm90IGxvYWRlZCIpCgoKZGVmIHRlc3RfY29sbGVjdGVkKCk6CiAgICBhc3NlcnQgcHJvZHVjdC5wcm9maWxlKCJkZWZhdWx0X3JlcHIiKSA9PSAyCg==",
+          "mode": 420
+        }
+      },
+      "kwargs": {
+        "check_index": 0,
+        "footprint": [],
+        "role": "maker"
+      }
+    },
+    "node": "tests/test_check_feedback.py::test_base_exception_in_the_call_names_the_error_and_the_rule[demonstrating-demonstrate]",
+    "staged_tree_sha256": "7084866cc08826c2edbc603d39828afdaf0d744e5f604d3fbea8cc7dbe8f98a1"
+  },
+  {
+    "corpus_id": 6,
+    "input": {
+      "base": {
+        "product.py": {
+          "b64": "UFJPRklMRVMgPSB7Impzb24iOiAxfQoKCmRlZiBwcm9maWxlKG5hbWUpOgogICAgcmV0dXJuIFBST0ZJTEVTW25hbWVdCg==",
+          "mode": 420
+        },
+        "pyproject.toml": {
+          "b64": "W3Rvb2wudGwzLmhhcm5lc3NdCmNvbW1hbmQ9WyJweXRob24iLCAiLW0iLCAicHl0ZXN0Il0KdGVzdC1maWxlcz1bInRlc3RzLyoucHkiXQo=",
+          "mode": 420
+        }
+      },
+      "check": {
+        "declared_symptom": null,
+        "forcing": null,
+        "kind": "demonstrating",
+        "name": "check",
+        "proof": {
+          "observer_support": [],
+          "red_message": "old assertion",
+          "subjects": []
+        },
+        "tests": [
+          "tests/test_digest.py::test_assertion"
+        ]
+      },
+      "config": {
+        "command": [
+          "python",
+          "-m",
+          "pytest"
+        ],
+        "test-files": [
+          "tests/*.py"
+        ]
+      },
+      "destination_exists": false,
+      "head": {
+        "product.py": {
+          "b64": "UFJPRklMRVMgPSB7Impzb24iOiAxLCAiZGVmYXVsdF9yZXByIjogMn0KCgpkZWYgcHJvZmlsZShuYW1lKToKICAgIHJldHVybiBQUk9GSUxFU1tuYW1lXQo=",
+          "mode": 420
+        },
+        "pyproject.toml": {
+          "b64": "W3Rvb2wudGwzLmhhcm5lc3NdCmNvbW1hbmQ9WyJweXRob24iLCAiLW0iLCAicHl0ZXN0Il0KdGVzdC1maWxlcz1bInRlc3RzLyoucHkiXQo=",
+          "mode": 420
+        },
+        "tests/test_digest.py": {
+          "b64": "aW1wb3J0IHB5dGVzdApmcm9tIHByb2R1Y3QgaW1wb3J0IHByb2ZpbGUKCgpAcHl0ZXN0LmZpeHR1cmUKZGVmIGtub3duKCk6CiAgICByZXR1cm4gcHJvZmlsZSgiZGVmYXVsdF9yZXByIikKCgpkZWYgdGVzdF9rZXlfZXJyb3IoKToKICAgIGFzc2VydCBwcm9maWxlKCJkZWZhdWx0X3JlcHIiKSA9PSAyCgoKZGVmIHRlc3Rfc2V0dXBfZXJyb3Ioa25vd24pOgogICAgYXNzZXJ0IGtub3duID09IDIKCgpkZWYgdGVzdF9iYXNlX3Bhc3MoKToKICAgIGFzc2VydCBwcm9maWxlKCJqc29uIikgPT0gMQoKCmRlZiB0ZXN0X2xvbmdfbWVzc2FnZSgpOgogICAgaWYgImRlZmF1bHRfcmVwciIgbm90IGluIF9faW1wb3J0X18oInByb2R1Y3QiKS5QUk9GSUxFUzoKICAgICAgICByYWlzZSBWYWx1ZUVycm9yKCJsb25nICIgKiA4MDApCgoKZGVmIHRlc3RfYXNzZXJ0aW9uKCk6CiAgICBhc3NlcnQgImRlZmF1bHRfcmVwciIgaW4gX19pbXBvcnRfXygicHJvZHVjdCIpLlBST0ZJTEVTLCAib2xkIGFzc2VydGlvbiIK",
+          "mode": 420
+        },
+        "tests/test_unrelated.py": {
+          "b64": "aW1wb3J0IHByb2R1Y3QKCmlmICJkZWZhdWx0X3JlcHIiIG5vdCBpbiBwcm9kdWN0LlBST0ZJTEVTOgogICAgcmFpc2UgUnVudGltZUVycm9yKCJwcm9maWxlcyBhcmUgbm90IGxvYWRlZCIpCgoKZGVmIHRlc3RfY29sbGVjdGVkKCk6CiAgICBhc3NlcnQgcHJvZHVjdC5wcm9maWxlKCJkZWZhdWx0X3JlcHIiKSA9PSAyCg==",
+          "mode": 420
+        }
+      },
+      "kwargs": {
+        "check_index": 0,
+        "footprint": [],
+        "role": "maker"
+      }
+    },
+    "node": "tests/test_check_feedback.py::test_a_real_assertion_on_the_base_still_demonstrates",
+    "staged_tree_sha256": "7084866cc08826c2edbc603d39828afdaf0d744e5f604d3fbea8cc7dbe8f98a1"
+  },
+  {
+    "corpus_id": 996,
+    "input": {
+      "base": {
+        "app.py": {
+          "b64": "dmFsdWUgPSAwCg==",
+          "mode": 420
+        },
+        "pyproject.toml": {
+          "b64": "W3Rvb2wudGwzLmhhcm5lc3NdCmNvbW1hbmQ9WyJweXRob24iLCAiLW0iLCAicHl0ZXN0Il0KdGVzdC1maWxlcz1bInRlc3RzLyoucHkiXQo=",
+          "mode": 420
+        }
+      },
+      "check": {
+        "declared_symptom": null,
+        "forcing": null,
+        "kind": "demonstrating",
+        "name": "safe CLI loader",
+        "proof": {
+          "observer_support": [
+            "tests/test_observer.py"
+          ],
+          "red_message": "bug",
+          "subjects": [
+            "app.py::value"
+          ]
+        },
+        "tests": [
+          "tests/test_observer.py::test_observer"
+        ]
+      },
+      "config": {
+        "command": [
+          "python",
+          "-m",
+          "pytest"
+        ],
+        "test-files": [
+          "tests/*.py"
+        ]
+      },
+      "destination_exists": false,
+      "head": {
+        "app.py": {
+          "b64": "dmFsdWUgPSAxCg==",
+          "mode": 420
+        },
+        "pyproject.toml": {
+          "b64": "W3Rvb2wudGwzLmhhcm5lc3NdCmNvbW1hbmQ9WyJweXRob24iLCAiLW0iLCAicHl0ZXN0Il0KdGVzdC1maWxlcz1bInRlc3RzLyoucHkiXQo=",
+          "mode": 420
+        },
+        "tests/test_observer.py": {
+          "b64": "ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCmltcG9ydCBzeXMKZnJvbSB1bml0dGVzdCBpbXBvcnQgbW9jawoKZGVmIGxvYWRfc3ViamVjdCgpOgogICAgaW1wb3J0IGltcG9ydGxpYi51dGlsCiAgICBwYXRoID0gUGF0aChfX2ZpbGVfXykucmVzb2x2ZSgpLnBhcmVudHNbMV0gLyAiYXBwLnB5IgogICAgc3BlYyA9IGltcG9ydGxpYi51dGlsLnNwZWNfZnJvbV9maWxlX2xvY2F0aW9uKCJzdWJqZWN0IiwgcGF0aCkKICAgIG1vZHVsZSA9IGltcG9ydGxpYi51dGlsLm1vZHVsZV9mcm9tX3NwZWMoc3BlYykKICAgIHNwZWMubG9hZGVyLmV4ZWNfbW9kdWxlKG1vZHVsZSkKICAgIHJldHVybiBtb2R1bGUKCmRlZiB0ZXN0X29ic2VydmVyKCk6CiAgICB3aXRoIG1vY2sucGF0Y2gub2JqZWN0KHN5cywgImFyZ3YiLCBbXSk6CiAgICAgICAgYXNzZXJ0IGxvYWRfc3ViamVjdCgpLnZhbHVlID09IDEsICJidWciCg==",
+          "mode": 420
+        }
+      },
+      "kwargs": {
+        "check_index": 0,
+        "footprint": [],
+        "role": "maker"
+      }
+    },
+    "node": "tests/test_subject_observer.py::test_t842_r2_safe_loader_and_cli_setup_still_demonstrate",
+    "staged_tree_sha256": "64a50dcb6df588d2bec8907c2c9a71294a932605ca5a0224bc38e0d2ae43bf00"
+  }
+]
