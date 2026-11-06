@@ -2,7 +2,7 @@ use super::*;
 
 fn publishing(settings: &tl3_config::Store, api: &Server, root: &Path) -> Controller {
     let mut registry = adapters::simulation(root).unwrap();
-    registry.register(Upstream::Mergify, api.adapter(&root.join("mergify"), 0));
+    registry.register(Upstream::Delivery, api.adapter(&root.join("mergify"), 0));
     let mut controller =
         Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
     controller.register_github_translator("mergify", Translator::new(api.clients()).unwrap());

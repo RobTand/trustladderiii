@@ -9,23 +9,24 @@ def _verus_test_impl(ctx):
     if not ctx.files.srcs:
         fail("verus_test must name the executable module under proof in srcs")
     toolchain = ctx.attr.toolchain[VerusToolchainInfo]
+    runner = ctx.executable._runner
     launcher = ctx.actions.declare_file(ctx.label.name + ".sh")
+    arguments = [runner.short_path, toolchain.verifier.short_path, toolchain.z3.short_path,
+                 toolchain.sysroot.short_path, ctx.file.src.short_path,
+                 str(ctx.attr.expected_obligations), str(ctx.label), ctx.attr.module]
+    if ctx.attr.measure:
+        arguments.append("--measure")
+    if ctx.file.mutant_source:
+        if not ctx.attr.measure or not ctx.attr.mutant_function or not ctx.attr.mutant_before:
+            fail("mutation requires measurement, a named function, and a nonempty seed")
+        arguments += ["--mutant", ctx.file.mutant_source.short_path, ctx.attr.mutant_function,
+                      ctx.attr.mutant_before, ctx.attr.mutant_after]
     ctx.actions.write(launcher, """#!/bin/bash
 set -euo pipefail
 cd "${RUNFILES_DIR:-$0.runfiles}/%s"
-exec "%s" "%s" "%s" "%s" "%s" "%s" "%s" "%s"
-""" % (
-        ctx.workspace_name,
-        ctx.executable._runner.short_path,
-        toolchain.verifier.short_path,
-        toolchain.z3.short_path,
-        toolchain.sysroot.short_path,
-        ctx.file.src.short_path,
-        ctx.attr.expected_obligations,
-        ctx.label,
-        ctx.attr.module,
-    ), is_executable = True)
-    runfiles = ctx.runfiles(files = [ctx.file.src, ctx.executable._runner] + ctx.files.srcs + ctx.files.specs,
+exec %s
+""" % (ctx.workspace_name, " ".join(["'" + arg.replace("'", "'\"'\"'") + "'" for arg in arguments])), is_executable = True)
+    runfiles = ctx.runfiles(files = [ctx.file.src, runner] + ctx.files.srcs + ctx.files.specs + ctx.files.mutant_source,
                            transitive_files = toolchain.files)
     runfiles = runfiles.merge(ctx.attr._runner[DefaultInfo].default_runfiles)
     return [DefaultInfo(executable = launcher, runfiles = runfiles)]
@@ -40,6 +41,11 @@ verus_test = rule(
         "expected_obligations": attr.int(mandatory = True),
         "module": attr.string(),
         "toolchain": attr.label(default = "@verus_linux_amd64//:toolchain", providers = [VerusToolchainInfo]),
+        "measure": attr.bool(),
+        "mutant_source": attr.label(allow_single_file = [".rs"]),
+        "mutant_function": attr.string(),
+        "mutant_before": attr.string(),
+        "mutant_after": attr.string(),
         "_runner": attr.label(default = "//crates/verus-runner:verus-runner", executable = True, cfg = "exec"),
     },
 )
@@ -303,25 +309,44 @@ def verus_proofs():
 
     # CC-E: dependency-free delivery steps and the faithful dispatch composition.
     if native.package_name() == "crates/delivery":
-        verus_test(
-            name = "verus_core",
-            src = "proofs/core.rs",
-            srcs = ["src/step.rs"],
-            expected_obligations = 18,
-            tags = ["rust", "verus"],
-            size = "small",
-            timeout = "short",
-            target_compatible_with = ["@platforms//cpu:x86_64"],
-            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
-            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
-        )
-        for name, count in {"once": 39, "converges": 73, "dedup": 42, "approval": 79, "fence": 50}.items():
+        for name, count in {"dispatch": 42, "core": 44, "once": 61, "converges": 65, "dedup": 64, "approval": 68, "fence": 39}.items():
             verus_test(
                 name = "verus_" + name,
                 src = "proofs/" + name + ".rs",
-                srcs = ["src/step.rs", "src/mirror.rs", "src/upstream.rs"],
+                srcs = ["src/step.rs"] + (["src/upstream.rs"] if name in ["once", "converges", "dedup", "approval"] else []),
                 expected_obligations = count,
+                measure = True,
                 tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+        for mutant, group, count, function, before, after in [
+            ("fresh_sent", "dispatch", 42, "start", "State::Sent => Action::Transition(State::Uncertain),", "State::Sent => intended(view),"),
+            ("pending_absent", "converges", 65, "reconciled", "match evidence {", "match if evidence == Evidence::Pending { Evidence::Absent } else { evidence } {"),
+            ("predecessor_bypass", "approval", 68, "history", "if predecessor {\n                Stage::SentAmbiguous", "if false {\n                Stage::SentAmbiguous"),
+            ("retain_grant", "approval", 68, "commit_sent", "spend_grant: view.approval != ApprovalGate::Ordinary,", "spend_grant: false,"),
+            ("changed_revision", "dispatch", 42, "observed", "if revision_changed {", "if false {"),
+            ("omit_bridge", "core", 44, "completion", "let bridge = state == State::Uncertain && ack != Ack::Confirmed;", "let bridge = false;"),
+            ("omit_retirement", "converges", 65, "consume", "let retire_retry = view.kind == DeliveryKind::KernelEffect\n        && ack == Ack::Retryable\n        && plan.to == State::Intended;", "let retire_retry = false;"),
+            ("reject_equal", "fence", 39, "accepts_fence", "!matches!(order, EpochOrder::Older)\n}", "matches!(order, EpochOrder::Newer)\n}"),
+            ("admit_older", "fence", 39, "accepts_fence", "!matches!(order, EpochOrder::Older)\n}", "true\n}"),
+            ("executed_revision", "dispatch", 42, "executed", "if !key_matches(view.key, pending.key)", "if !bound(view, &pending)"),
+        ]:
+            verus_test(
+                name = "verus_mutant_" + mutant,
+                src = "proofs/" + group + ".rs",
+                srcs = ["src/step.rs", "src/upstream.rs"],
+                specs = ["proofs/dispatch.rs", "proofs/core.rs", "proofs/approval.rs", "proofs/converges.rs", "proofs/fence.rs"],
+                expected_obligations = count,
+                mutant_source = "src/step.rs",
+                mutant_function = "delivery#" + function,
+                mutant_before = before,
+                mutant_after = after,
+                measure = True,
+                tags = ["rust", "verus", "qualification"],
                 size = "small",
                 timeout = "short",
                 target_compatible_with = ["@platforms//cpu:x86_64"],
