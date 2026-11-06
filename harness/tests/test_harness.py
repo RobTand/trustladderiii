@@ -326,10 +326,13 @@ def test_runner_siblings_load_without_the_tl3_harness_package(tmp_path):
     mounted = tmp_path / "harness"
     shutil.copytree(harness, mounted, ignore=shutil.ignore_patterns("__pycache__"))
     for sibling in siblings:
+        # -S as well as -I: a test interpreter's site hooks can expose tl3_harness,
+        # which is how #858 passed every harness test. Prove the package is absent.
         code = ("import importlib.util\n"
+                "assert importlib.util.find_spec('tl3_harness') is None, 'tl3_harness importable: test not isolated'\n"
                 f"spec = importlib.util.spec_from_file_location('tl3_probe', {str(mounted / sibling)!r})\n"
                 "module = importlib.util.module_from_spec(spec)\n"
                 "spec.loader.exec_module(module)\n")
-        result = subprocess.run([sys.executable, "-I", "-B", "-c", code], cwd=tmp_path,
+        result = subprocess.run([sys.executable, "-I", "-S", "-B", "-c", code], cwd=tmp_path,
                                 capture_output=True, text=True)
         assert result.returncode == 0, (sibling, result.stderr[-2000:])
