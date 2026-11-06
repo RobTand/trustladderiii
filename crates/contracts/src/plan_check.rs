@@ -26,6 +26,10 @@ pub struct PlanObjection {
 pub enum ObjectionClass {
     SizeExecutionFit,
     Other,
+    OwnerDecision,
+    Infrastructure,
+    Credit,
+    Quota,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -43,4 +47,21 @@ pub enum RepairUnavailable {
     InputAllowance,
     MessageLimit,
     FormatAllowanceConsumed,
+}
+
+impl PlanCheckProvenance {
+    /// Q27 (2026-11-06): only a completed bounded correction with no possible
+    /// declaration edit qualifies. Owner and resource decisions keep their route.
+    pub fn empty_allowed_replan(&self) -> bool {
+        self.repair == PlanRepair::Attempted
+            && !self.objections.is_empty()
+            && self.objections.iter().all(|objection| {
+                objection.allowed_empty
+                    && matches!(
+                        objection.class,
+                        ObjectionClass::SizeExecutionFit | ObjectionClass::Other
+                    )
+                    && objection.rule != "path.protected"
+            })
+    }
 }

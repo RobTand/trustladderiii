@@ -16,6 +16,17 @@ import remote_gate  # noqa: E402
 
 
 CASES = {
+    'empty_allowed_second_replan': (
+        'crates/kernel/src/empty_replan.rs',
+        'if !m.empty_allowed_replanned {',
+        'if true {',
+        '//crates/kernel:verus_empty_replan'),
+    'empty_allowed_asks': (
+        'crates/kernel/src/empty_replan.rs',
+        '        set_phase(m, phase);',
+        '        ask_rob(w, i, QKind::CantMeet, Cont::Planning { must_split: false }, 0, _out);',
+        '//crates/kernel:verus_empty_replan'),
+
     'audit_disagreement_asks': (
         'crates/kernel/src/ingest.rs',
         'stop_for_review(m, ReviewStop::AuditDisagreement);',

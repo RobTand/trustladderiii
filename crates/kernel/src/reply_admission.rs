@@ -12,7 +12,7 @@ pub(super) fn accepts(w: &World, n: &Node, reply: &Reply) -> (result: bool) [
         (Phase::Planning { .. }, Reply::PlanLeaf { footprint, .. }) =>
             footprint::valid_footprint(*w, footprint),
         (Phase::Planning { .. }, Reply::PlanSplit | Reply::PlanCantMeet
-            | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit) => true,
+            | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit | Reply::PlanCheckReplan) => true,
         (Phase::Making, Reply::MakerDone { .. }) => true,
         (Phase::Making, Reply::MakerNeedsFiles { files, .. }) =>
             footprint::valid_footprint(*w, files),
@@ -33,7 +33,7 @@ pub(super) fn accepts(w: &World, n: &Node, reply: &Reply) -> (result: bool) [
         (Phase::Auditing, Reply::AuditAgrees | Reply::AuditDisagrees) => true,
         (Phase::Planning { .. }, Reply::PlanLeaf { footprint, .. }) => w.has_footprint(*footprint),
         (Phase::Planning { .. }, Reply::PlanSplit | Reply::PlanCantMeet
-            | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit) => true,
+            | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit | Reply::PlanCheckReplan) => true,
         (Phase::Making, Reply::MakerDone { .. }) => true,
         (Phase::Making, Reply::MakerNeedsFiles { files, .. }) => w.has_footprint(*files),
         (Phase::Making, Reply::MakerCantMeet | Reply::MakerOutOfRoom) => true,
@@ -154,6 +154,9 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         if reply == Reply::AuditDisagrees {
             assert(w.nodes@[i as int].phase == Phase::Auditing);
         }
+        if reply == Reply::PlanCheckReplan {
+            assert(w.nodes@[i as int].phase is Planning);
+        }
     }
     on_admitted_reply(w, i, generation, reply, out);
 }
@@ -174,6 +177,7 @@ pub(super) fn on_admitted_reply(w: &mut World, i: usize, _generation: u64, reply
         current_item(old(w).nodes@[i as int]) == Some(Item::Await),
         old(w).nodes@[i as int].run == Some(_generation) || old(w).nodes@[i as int].job == Some(_generation),
         (reply == Reply::AuditDisagrees ==> old(w).nodes@[i as int].phase == Phase::Auditing),
+        (reply == Reply::PlanCheckReplan ==> old(w).nodes@[i as int].phase is Planning),
         (match reply {
             Reply::PlanLeaf { footprint, .. } | Reply::MakerNeedsFiles { files: footprint, .. } =>
                 footprint::valid_footprint(*old(w), footprint),
@@ -395,6 +399,7 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
             | Reply::AuditDisagrees | Reply::ProtectedPaths => reply_ingest(w, i, reply, out),
         Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet => reply_plan(w, i, reply, out),
         Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit => reply_plan_check(w, i, reply, out),
+        Reply::PlanCheckReplan => reply_empty_replan(w, i, out),
         _ => reply_work(w, i, reply, out),
     }
 }

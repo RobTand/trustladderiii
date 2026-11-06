@@ -174,7 +174,9 @@ fn caused(report: &str) -> Option<Value> {
 fn plan_check_stop(plan: &Value) -> Option<Value> {
     use crate::contracts::plan_check::{ObjectionClass, PlanCheckProvenance};
     let Some(provenance) = plan.get("plan_check") else {
-        return planner(plan);
+        return plan.get("empty_allowed_replan_stop").and_then(Value::as_str)
+            .map(|reason| json!({"source": "planner", "report": clip(&format!("{reason}\n{}", plan["report"].as_str().unwrap_or_default()), REPORT_CHARS)}))
+            .or_else(|| planner(plan));
     };
     let provenance: PlanCheckProvenance = serde_json::from_value(provenance.clone()).ok()?;
     let needs_split = provenance
@@ -187,6 +189,12 @@ fn plan_check_stop(plan: &Value) -> Option<Value> {
     } else {
         "The plan-check objections remain after the available correction.".to_owned()
     };
+    if let Some(reason) = plan
+        .get("empty_allowed_replan_stop")
+        .and_then(Value::as_str)
+    {
+        report.insert_str(0, &format!("{reason}\n"));
+    }
     for objection in &provenance.objections {
         report.push_str(&format!(
             "\n{} [{}]: {}",

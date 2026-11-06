@@ -65,17 +65,17 @@ pub(crate) fn map_reply_with_plan_check(
             return Err(Error::Invalid("invalid plan-check provenance"));
         }
         forecast(reply)?;
-        return Ok(MappedReply::Kernel(
-            if provenance
-                .objections
-                .iter()
-                .any(|objection| objection.class == ObjectionClass::Other)
-            {
-                Reply::PlanCheckRejected
-            } else {
-                Reply::PlanCheckNeedsSplit
-            },
-        ));
+        return Ok(MappedReply::Kernel(if provenance.empty_allowed_replan() {
+            Reply::PlanCheckReplan
+        } else if provenance
+            .objections
+            .iter()
+            .any(|objection| objection.class != ObjectionClass::SizeExecutionFit)
+        {
+            Reply::PlanCheckRejected
+        } else {
+            Reply::PlanCheckNeedsSplit
+        }));
     }
     if role == "maker" {
         return Ok(match reply["kind"].as_str().unwrap() {
@@ -775,5 +775,23 @@ mod reply_contract_tests {
             counts.iter().all(|n| *n > 0),
             "missing corpus role: {counts:?}"
         );
+    }
+}
+
+/// Q27: only a consumed empty-allowed re-plan changes legacy planner endings.
+/// Transport, infrastructure, owner, credit and quota handling never enters here.
+pub(crate) fn after_empty_allowed_replan(ending: Reply, consumed: bool) -> Reply {
+    if consumed
+        && matches!(
+            ending,
+            Reply::PlanCantMeet
+                | Reply::PlanSplit
+                | Reply::PlanLeaf { fits: false, .. }
+                | Reply::PlanCheckReplan
+        )
+    {
+        Reply::PlanCheckRejected
+    } else {
+        ending
     }
 }

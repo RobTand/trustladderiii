@@ -3991,6 +3991,26 @@ impl Controller {
                             });
                     }
                 }
+                // Q27: a later semantic planner failure consumes no second
+                // re-plan and asks no question. Q50/owner/resource paths stay
+                // outside this semantic mapping, as does Q54's maker ladder.
+                if role == "planner"
+                    && n.empty_allowed_replanned
+                    && let adapters::workers::protocol::MappedReply::Kernel(ending) = &mut mapped
+                {
+                    *ending = adapters::workers::protocol::after_empty_allowed_replan(
+                        *ending,
+                        n.empty_allowed_replanned,
+                    );
+                    if matches!(
+                        ending,
+                        Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit
+                    ) {
+                        reply["empty_allowed_replan_stop"] = json!(
+                            "Planning failed after the one empty-allowed re-plan for this request version; stop for TL3 review."
+                        );
+                    }
+                }
                 let checkpoint = commit.rows.len();
                 if let Some(document) = document {
                     let mut stored = reply.clone();

@@ -1077,6 +1077,8 @@ def verus_proofs():
             "facts_merge_late_result": ("kernel::facts_merge_lemmas#late_result", 1),
             "facts_merge_ignored_result": ("kernel::facts_merge_lemmas#ignored_result", 1),
             "facts_merge_open_result": ("kernel::facts_merge_lemmas#open_result", 1),
+            "empty_replan": ("kernel::empty_replan", 1),
+            "empty_replan_witness": ("kernel::empty_replan_witness", 2),
             "plan_check": ("kernel::plan_check", 1),
             "plan_check_witness": ("kernel::plan_check_witness", 5),
             "t860_retries_stop_for_review": ("kernel::retries#stop_for_review", 1),

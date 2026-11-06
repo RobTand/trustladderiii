@@ -115,10 +115,11 @@ class Allowed(WorkerAllowed):
         return StrictValidator(constraint).is_valid(value)
 
 
-def wire(diagnostic):
+def wire(diagnostic, row=None):
     if not isinstance(diagnostic, Diagnostic):
         raise TypeError('Unnamed plan-check diagnostic')
-    return {'class': inventory()[diagnostic.rule]['class'], 'rule': diagnostic.rule,
+    return {'allowed_empty': row is not None and row.allowed == MembershipAllowed('enum', []),
+            'class': inventory()[diagnostic.rule]['class'], 'rule': diagnostic.rule,
             'items': identities(diagnostic.items), 'diagnostic': str(diagnostic)}
 
 
@@ -181,8 +182,21 @@ def terminal(origin, latest, completed, candidate, *, attempted, unavailable, ma
                 'binding': {'base_sha': origin.contract.inputs.get('base_sha')}}
     reply['violations'].append('Plan-check evidence: ' + json.dumps(evidence, ensure_ascii=False, sort_keys=True))
     repair = {'status': 'attempted'} if attempted else {'status': 'unavailable', 'reason': unavailable}
-    provenance = {'objections': list({json.dumps(wire(item), sort_keys=True): wire(item)
-                                     for item in remaining}.values()), 'repair': repair}
+    objections = []
+    for item in remaining:
+        # Serialize the already-resolved A1 rows, including every row when one
+        # diagnostic has several named subjects. Eligibility belongs to Rust.
+        resolved = []
+        for refusal in (latest, origin):
+            if refusal is not None:
+                resolved = [row for row in refusal.contract.rule_violations
+                            if row.rule.id == item.rule and row.facts['items'] ==
+                            {key: value for key, value in item.items.items() if key != 'obligation_manifest'}]
+                if resolved:
+                    break
+        objections.extend(wire(item, row) for row in resolved or [None])
+    provenance = {'objections': list({json.dumps(item, sort_keys=True): item for item in objections}.values()),
+                  'repair': repair}
     return reply, provenance
 
 
