@@ -21,6 +21,14 @@ class DiscoveryTests(unittest.TestCase):
         with patch.object(check, 'run') as run:
             check.python_lint([])
         run.assert_any_call(sys.executable, 'crates/controller/tools/check_command_ids.py')
+        run.assert_any_call(sys.executable, 'tools/ci/mirror_lint.py')
+
+    def test_standalone_mirror_lint_check(self):
+        with patch.object(check, 'run') as run, \
+             patch.object(check, 'tracked_files', return_value=[]), \
+             patch.object(sys, 'argv', ['check.py', 'mirror-lint']):
+            check.main()
+        run.assert_called_once_with(sys.executable, 'tools/ci/mirror_lint.py')
 
     def test_shared_checker_matches_the_coordinator_pin(self):
         expected = 'decd9ce671299ece1b245811af459349ed9932ee9b81b2c4c7a13cf96b94f609'
