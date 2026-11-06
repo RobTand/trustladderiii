@@ -228,7 +228,7 @@ fn check_apply(event: Event) -> World {
     let before = any_settled_world(None);
     let mut after = before.clone();
     let mut out = Outbox::new();
-    apply(&mut after, event.clone(), &mut out);
+    apply(&mut after, event.clone(), &mut out, &mut Report::new());
     // Not vacuous: some world in the bounds is one this event changes.
     kani::cover!(after != before, "the event changes the world");
     if let Event::Reply {
@@ -511,9 +511,9 @@ fn check_fail_fast_diverts(phase: Phase, event: Event) {
     on.fail_fast = true;
     let b = off.nodes[0];
     let mut out_off = Outbox::new();
-    apply(&mut off, event, &mut out_off);
+    apply(&mut off, event, &mut out_off, &mut Report::new());
     let mut out_on = Outbox::new();
-    apply(&mut on, event, &mut out_on);
+    apply(&mut on, event, &mut out_on, &mut Report::new());
     on.fail_fast = false;
     let diverted = on != off;
     kani::cover!(diverted, "fail_fast stops a retry for TL3 review");
@@ -621,6 +621,7 @@ fn check_dependency_delivery() {
             status: DependencyStatus::Delivered,
         }),
         &mut out,
+        &mut Report::new(),
     );
     assert!(world.measure() < before);
     assert!(advance(&mut world, 0, &mut out));
@@ -687,6 +688,7 @@ fn check_dependency_cycles() {
             },
         },
         &mut out,
+        &mut Report::new(),
     );
     assert!(world.dependency_graph_acyclic());
     kani::cover!(
@@ -716,6 +718,7 @@ fn check_dependency_registration() {
             status: kani::any(),
         }),
         &mut Outbox::new(),
+        &mut Report::new(),
     );
     if started || !matches!(phase, Phase::Ingesting | Phase::Auditing | Phase::Unplanned) {
         assert!(
@@ -759,6 +762,7 @@ fn check_dependency_remove() {
             number: target.number,
         }),
         &mut Outbox::new(),
+        &mut Report::new(),
     );
     assert_eq!(
         world.dependencies.len(),
@@ -1011,7 +1015,7 @@ proof!(apply_ack_body_policy_refused, {
     );
     let mut refused = before.clone();
     let mut refused_out = Outbox::new();
-    apply(&mut refused, event, &mut refused_out);
+    apply(&mut refused, event, &mut refused_out, &mut Report::new());
     if open_pr {
         assert!(
             refused_out.is_empty(),
@@ -1028,6 +1032,7 @@ proof!(apply_ack_body_policy_refused, {
                 ack: Ack::Permanent,
             },
             &mut permanent_out,
+            &mut Report::new(),
         );
         assert_eq!(refused, permanent);
         assert_eq!(refused_out, permanent_out);
@@ -1385,7 +1390,12 @@ fn publishing_ci_transition(infra: bool) -> (World, World) {
     kani::assume(!b.waiting_incident);
     let mut after = before.clone();
     let mut out = Outbox::new();
-    apply(&mut after, fact(Fact::CiFailed { infra }), &mut out);
+    apply(
+        &mut after,
+        fact(Fact::CiFailed { infra }),
+        &mut out,
+        &mut Report::new(),
+    );
     let n = &after.nodes[0];
     require_consistent(&after);
     check_nodes(&before, &after);
@@ -1414,6 +1424,7 @@ fn check_publishing_ci_tests() {
         &mut queued,
         fact(Fact::CiFailed { infra: false }),
         &mut Outbox::new(),
+        &mut Report::new(),
     );
     assert_eq!(n.credit, queued.nodes[0].credit);
     assert_eq!(n.round, queued.nodes[0].round);
@@ -1511,6 +1522,7 @@ fn check_publishing_ci_earlier_step() {
         &mut after,
         fact(Fact::CiFailed { infra: kani::any() }),
         &mut Outbox::new(),
+        &mut Report::new(),
     );
     assert_eq!(after, before);
     kani::cover!(before.nodes[0].pos == 0, "a failure before push is ignored");

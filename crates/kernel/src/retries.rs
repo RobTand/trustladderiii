@@ -116,13 +116,10 @@ pub(super) fn failed_round(w: &mut World, i: usize, step: ReviewStop,
         kernel_snapshot! { before_rung_report = report.entries@ }
         next_rung(w, i, step, out, report);
         kernel_proof! {
-            report::lemmas::round_shape(NodeId(i as u64),
+            report::lemmas::round_delta(before_rung_report@, report.entries@,
+                NodeId(i as u64),
                 if step == ReviewStop::MakerCantMeet { Some(FailedRoundCause::MakerCantMeet) }
                 else { None });
-            report::lemmas::read_forwards(before_rung_report@, report.entries@,
-                report::round_entries(NodeId(i as u64),
-                    if step == ReviewStop::MakerCantMeet { Some(FailedRoundCause::MakerCantMeet) }
-                    else { None }));
         }
     }
     kernel_proof! {
