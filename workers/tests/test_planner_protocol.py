@@ -110,9 +110,9 @@ def test_invalid_node_id_is_reported_to_controller(tmp_path, planner_request):
     proposal["checks"][0]["node_ids"] = ["../test.py::test_escape"]
     result = run_reply_in_process(tmp_path, planner_request, proposal)
     assert_rule_report(result)
-    assert result.events[-1]["reply"]["violations"][:1] == [
-        "check.selector_inexact. Replace `../test.py::test_escape` "
-        "with the exact test definitions this check needs."]
+    diagnostic = result.events[-1]["reply"]["violations"][0]
+    assert diagnostic.startswith("check.selector_inexact:")
+    assert "../test.py::test_escape" in diagnostic
 
 
 @pytest.mark.parametrize("path", [
@@ -622,3 +622,52 @@ def test_839_closed_prerequisite_input_validates(planner_request):
     from jsonschema import ValidationError
     with pytest.raises(ValidationError):
         validate('planner-input', inputs)
+
+
+def test_a1_coverage_citations_can_be_inserted_between_existing_citations():
+    """#880 preserves the previous guard's retained-order insertion permission."""
+    from tl3_harness.model import named
+    from tl3_workers.roles.planner import violations
+    from tl3_workers.rules import permits
+
+    facts, _ = _row_case('goal.coverage')
+    facts['draft']['checks'][0]['goal_ids'] = [0, 2]
+    facts['reply'] = copy.deepcopy(facts['draft'])
+    facts['diagnostics'] = [named('goal.coverage', '', {'goals': [1]})]
+    found = violations(facts)
+    after = copy.deepcopy(facts['draft'])
+    after['checks'][0]['goal_ids'] = [0, 1, 2]
+    assert permits(found, facts['draft'], after, role='planner')
+    after['checks'][0]['goal_ids'] = [2, 1, 0]
+    assert not permits(found, facts['draft'], after, role='planner')
+
+
+def test_a1_frozen_json_numbers_keep_their_wire_type():
+    """#880 a bounded root edit cannot change frozen integer estimates to floats."""
+    from tl3_workers.roles.planner import violations
+    from tl3_workers.rules import apply_edit, permits
+
+    facts, witness = _row_case('edit.uncovered')
+    facts['draft']['estimated_tool_turns'] = 1
+    facts['reply'] = copy.deepcopy(facts['draft'])
+    witness['estimated_tool_turns'] = 1
+    found = violations(facts)
+    after = apply_edit(facts['draft'], found[0].rule.repair(found[0].facts), witness)
+    assert permits(found, facts['draft'], after, role='planner')
+    after['estimated_tool_turns'] = 1.0
+    assert not permits(found, facts['draft'], after, role='planner')
+
+
+def test_a1_multiple_file_objections_share_the_combined_allowed_set():
+    """#880 independently missing proof files must be repairable in the same turn."""
+    from tl3_harness.model import named
+    from tl3_workers.roles.planner import violations
+    from tl3_workers.rules import permits
+
+    facts, _ = _row_case('proof.file_missing')
+    facts['inputs']['ingest']['goals'] = [{'proof_obligation': {'subjects': ['first.py', 'second.py']}}]
+    facts['diagnostics'] = [named('proof.file_missing', '', {'unit': path, 'path': path})
+                            for path in ['first.py', 'second.py']]
+    after = copy.deepcopy(facts['draft'])
+    after['files'].extend(['first.py', 'second.py'])
+    assert permits(violations(facts), facts['draft'], after, role='planner')

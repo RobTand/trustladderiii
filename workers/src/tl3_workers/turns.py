@@ -142,8 +142,9 @@ def repaired(control, history, ask, check, *, guard_after_check=False):
             control.repair_unavailable = 'input_allowance'
             raise first from None
         try:
-            result = check(text) if guard_after_check else None
-            violations = () if guard_after_check else getattr(first, 'rule_violations', ())
+            deferred = guard_after_check and getattr(first, 'rule_role', None) == 'planner'
+            result = check(text) if deferred else None
+            violations = () if deferred else getattr(first, 'rule_violations', ())
             if violations:
                 from tl3_workers.contracts import read_reply
                 from tl3_workers.rules import permits
@@ -151,6 +152,6 @@ def repaired(control, history, ask, check, *, guard_after_check=False):
                 after = read_reply(text) if isinstance(text, str) else text
                 if not permits(violations, before, after, role=getattr(first, 'rule_role', 'schema')):
                     raise RepairScopeError()
-            return result if guard_after_check else check(text)
+            return result if deferred else check(text)
         except (ValueError, ValidationError) as second:
             raise InvalidReply(first, second) from second

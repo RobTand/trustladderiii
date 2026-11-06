@@ -26,7 +26,7 @@ from tl3_workers.tools import Worktree
 from tl3_workers.generated_scope import configured_outputs
 from tl3_workers.recall import check_citations
 from tl3_workers.turns import InvalidReply, Unrepairable, repaired
-from tl3_workers.rules import Allowed, CantMeet, Edit, Name, Rule, at, evaluate, register
+from tl3_workers.rules import Allowed as WorkerAllowed, CantMeet, Edit, Name, Rule, at, evaluate, register
 
 
 # Frozen JSON values retain their wire types, including integers versus floats.
@@ -43,13 +43,10 @@ def strict_enum(validator, expected, value, schema):
 StrictValidator = extend(Draft202012Validator, {'const': strict_constant, 'enum': strict_enum})
 
 
-class PlannerAllowed(Allowed):
+class Allowed(WorkerAllowed):
     def accepts(self, value):
         constraint = self.value if self.keyword == 'schema' else {self.keyword: self.value}
         return StrictValidator(constraint).is_valid(value)
-
-
-Allowed = PlannerAllowed
 
 
 def wire(diagnostic):
@@ -219,11 +216,13 @@ def proof_fill(f):
     if 'red_message' in missing and not quotes:
         return [CantMeet('No ingest proof_obligation quote permits red_message; return cant_meet without inventing an assertion.')]
     changes = {key: {'enum': quotes} if key == 'red_message' else {'const': []} for key in missing}
-    required = [unit for item in f['diagnostics'] if item.items.get('check') == index
-                and inventory()[item.rule]['footprint'] == 'SUBJECT_ADD' for unit in item.items.get('subjects', [])
-                if unit.split('::')[0] in f['draft'].get('files', [])]
-    if required:
-        changes['subjects'] = append_constraint(proof.get('subjects', []), required)
+    subject_rows = [item for item in f['diagnostics'] if item.items.get('check') == index
+                    and inventory()[item.rule]['footprint'] == 'SUBJECT_ADD']
+    if subject_rows:
+        subject_repair = subjects(f)[0]
+        if isinstance(subject_repair, CantMeet):
+            return [subject_repair]
+        changes['subjects'] = subject_repair.allowed.value
     if not changes:
         return cannot_repair(f)
     return [edit(f, f'/checks/{index}/proof', Allowed('schema', object_constraint(proof, changes)))]
@@ -254,7 +253,9 @@ def subjects(f):
                 additions.extend(path + '::' + '.'.join(symbol.split('.')[:n]) for n in range(1, len(symbol.split('.'))))
     if not additions:
         return cannot_repair(f)
-    return [edit(f, f'/checks/{index}/proof/subjects', Allowed('schema', append_constraint(before, additions)))]
+    constraint = {'type': 'array', 'prefixItems': [{'const': value} for value in before],
+                  'minItems': len(before), 'items': {'enum': unique(additions)}, 'uniqueItems': True}
+    return [edit(f, f'/checks/{index}/proof/subjects', Allowed('schema', constraint))]
 
 
 def selectors(f):
@@ -291,25 +292,28 @@ def files(f):
     before = f['draft'].get('files')
     if before is None:
         return cannot_repair(f)
-    operation = f['footprint']
     source_units = [unit for goal in f['inputs']['ingest']['goals']
                     for unit in goal.get('proof_obligation', {}).get('subjects', [])]
     additions = []
-    if operation == 'FILES_FILL' and not before:
-        additions = [unit.split('::')[0] for unit in source_units]
-    elif operation == 'PROOF_FILE' and any(subject_covers(f['items']['unit'], unit) or subject_covers(unit, f['items']['unit'])
-                                           for unit in source_units):
-        additions = [f['items']['path']]
-    elif operation == 'EDIT_FILE' and f['items']['node'] in f.get('base_nodes', ()):
-        additions = [f['items']['path']]
-    elif operation == 'FILE_PATH':
-        path = f['items'].get('path', '')
-        canonical = str(PurePosixPath(path))
-        if path and not path.startswith(('/', '-')) and '..' not in PurePosixPath(path).parts and '\\' not in path and canonical != path:
-            return [edit(f, '/files', fixed([canonical if value == path else value for value in before]))]
-    if not additions:
+    replacements = {}
+    for diagnostic in f['diagnostics']:
+        operation, item = inventory()[diagnostic.rule]['footprint'], diagnostic.items
+        if operation == 'FILES_FILL' and not before:
+            additions.extend(unit.split('::')[0] for unit in source_units)
+        elif operation == 'PROOF_FILE' and any(subject_covers(item['unit'], unit) or subject_covers(unit, item['unit'])
+                                               for unit in source_units):
+            additions.append(item['path'])
+        elif operation == 'EDIT_FILE' and item['node'] in f.get('base_nodes', ()):
+            additions.append(item['path'])
+        elif operation == 'FILE_PATH':
+            path = item.get('path', '')
+            canonical = str(PurePosixPath(path))
+            if path and not path.startswith(('/', '-')) and '..' not in PurePosixPath(path).parts and '\\' not in path and canonical != path:
+                replacements[path] = canonical
+    canonical = [replacements.get(value, value) for value in before]
+    if not additions and canonical == before:
         return cannot_repair(f)
-    return [edit(f, '/files', Allowed('schema', append_constraint(before, additions)))]
+    return [edit(f, '/files', Allowed('schema', append_constraint(canonical, additions)))]
 
 
 def citations(f):
@@ -532,9 +536,11 @@ def methods(f):
     for index, requirement in enumerate(before):
         if requirement != f['items'].get('requirement') or requirement.get('provenance', {}).get('kind') != 'method':
             continue
-        alternatives = [{**requirement, **{key: cap[key] for key in mutable}} for cap in f['inputs'].get('tool_capabilities', [])]
+        alternatives = [object_constraint(requirement, {
+            key: {'const': cap[key]} if key in {'tool', 'executor'} else {'type': 'array', 'items': {'enum': cap[key]}}
+            for key in mutable}) for cap in f['inputs'].get('tool_capabilities', [])]
         if alternatives:
-            repairs.append(edit(f, f'/evidence_contract/{index}', Allowed('enum', alternatives)))
+            repairs.append(edit(f, f'/evidence_contract/{index}', Allowed('schema', {'anyOf': alternatives})))
     return repairs or cannot_repair(f)
 
 
