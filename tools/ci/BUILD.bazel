@@ -359,3 +359,10 @@ tl3_py_test(
     srcs = ["test_mirror_lint.py"],
     deps = [":mirror_lint"],
 )
+
+# The operator client is also installed as a standalone file outside the repo.
+tl3_py_test(
+    name = "test_bbrun_cancel",
+    srcs = ["test_bbrun_cancel.py"],
+    data = ["bbrun.py"],
+)
