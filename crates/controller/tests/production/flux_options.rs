@@ -9,7 +9,7 @@ fn flux(root: &Path) -> tl3_config::Flux {
         backend_cli: "/opt/tl3/bin/tl3-run-backend".into(),
         container_mode: tl3_config::ContainerMode::OwnScope,
         uri: "local:///run/flux/local-0".into(),
-        environment: BTreeMap::from([("PATH".into(), "/opt/flux/bin:/usr/bin:/bin".into())]),
+        environment: BTreeMap::from([("PATH".into(), "/opt/flux/bin:/usr/bin:/bin".into()), ("HOME".into(), "/home/rob".into()), ("XDG_RUNTIME_DIR".into(), "/run/user/1000".into())]),
         staging_root: root.join("inputs"),
         output_root: root.join("outputs"),
         container_image: format!("dl380g10:5000/tl3/harness@sha256:{}", "a".repeat(64)),

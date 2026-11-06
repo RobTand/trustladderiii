@@ -26,7 +26,7 @@ fn flux_document() -> Value {
         backend_cli = "/opt/tl3/bin/tl3-run-backend"
         container_mode = "own_scope"
         uri = "local:///run/flux/local-0"
-        environment = { PATH = "/opt/flux/bin:/usr/bin:/bin", LD_LIBRARY_PATH = "/opt/flux/lib" }
+        environment = { PATH = "/opt/flux/bin:/usr/bin:/bin", LD_LIBRARY_PATH = "/opt/flux/lib", HOME = "/home/rob", XDG_RUNTIME_DIR = "/run/user/1000" }
         staging_root = "/mnt/shared/tl3-inputs"
         output_root = "/mnt/shared/flux-out/tl3"
         container_image = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
@@ -149,6 +149,11 @@ fn flux_access_environment_accepts_only_provisioned_home_and_runtime_dir() {
     environment.insert("HOME".into(), "/home/rob".into());
     environment.insert("XDG_RUNTIME_DIR".into(), "/run/user/1000".into());
     Config::parse(&toml::to_string(&document).unwrap()).unwrap();
+    for missing in ["HOME", "XDG_RUNTIME_DIR"] {
+        let mut wrong = document.clone();
+        wrong["flux"]["environment"].as_table_mut().unwrap().remove(missing);
+        assert!(Config::parse(&toml::to_string(&wrong).unwrap()).is_err(), "accepted missing {missing}");
+    }
     for (name, value) in [("HOME", "/unprovisioned-home"), ("XDG_RUNTIME_DIR", "/run/user/another-user"), ("DBUS_SESSION_BUS_ADDRESS", "unprovisioned-bus")] {
         let mut wrong = document.clone();
         wrong["flux"]["environment"].as_table_mut().unwrap().insert(name.into(), value.into());
