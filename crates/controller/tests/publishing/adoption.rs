@@ -183,7 +183,7 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
         fs::write(root.path().join("queue/mode"), "check_fail").unwrap();
     }
     registry.register(
-        Upstream::Mergify,
+        Upstream::Delivery,
         adapters::mergify::Adapter::new(server.clients(), 0, &root.path().join("mergify")).unwrap(),
     );
     let mut c = Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();

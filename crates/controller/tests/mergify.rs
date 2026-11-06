@@ -671,7 +671,7 @@ fn queued_for_clock(
     if let Some(clock) = &clock {
         adapter = adapter.with_clock(clock.clone());
     }
-    registry.register(Upstream::Mergify, adapter);
+    registry.register(Upstream::Delivery, adapter);
     let store = Store::open(settings).unwrap();
     let mut controller = match clock {
         Some(clock) => Controller::open_with_clock(store, registry, config, clock),
@@ -1192,7 +1192,7 @@ fn merged(
     drop(controller);
     let mut registry = adapters::simulation(root.path()).unwrap();
     registry.register(
-        Upstream::Mergify,
+        Upstream::Delivery,
         api.adapter(&root.path().join("mergify"), 0),
     );
     let mut restarted =
@@ -1943,7 +1943,7 @@ fn stalled_merge_progress(settings: &tl3_config::Store) {
     drop(controller);
     let mut registry = adapters::simulation(root.path()).unwrap();
     registry.register(
-        Upstream::Mergify,
+        Upstream::Delivery,
         api.adapter(&root.path().join("mergify"), 0),
     );
     let mut controller =
@@ -2098,7 +2098,7 @@ fn retirement_does_not_block(settings: &tl3_config::Store, missing_upstream: boo
     };
     if !missing_upstream {
         registry.register(
-            Upstream::Mergify,
+            Upstream::Delivery,
             RetireError(api.adapter(&root.path().join("mergify"), 0)),
         );
     }
@@ -2214,7 +2214,7 @@ fn marker_retirement(settings: &tl3_config::Store, confirmed: bool) {
     std::fs::write(intent.with_extension("tmp"), b"interrupted write").unwrap();
     std::fs::remove_file(intent).unwrap();
     let mut registry = adapters::simulation(root.path()).unwrap();
-    registry.register(Upstream::Mergify, api.adapter(&records, 0));
+    registry.register(Upstream::Delivery, api.adapter(&records, 0));
     let mut controller =
         Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
     let reads = api.state.lock().unwrap().reads;
@@ -2315,7 +2315,7 @@ fn rate_limited_read_defers_quota(settings: &tl3_config::Store, status: u16) {
     let root = tempfile::tempdir().unwrap();
     let mut registry = adapters::simulation(root.path()).unwrap();
     registry.register(
-        Upstream::Mergify,
+        Upstream::Delivery,
         api.adapter(&root.path().join("mergify"), 0),
     );
     let mut controller =
@@ -2402,7 +2402,7 @@ fn permanent_github_read(settings: &tl3_config::Store, status: u16, class: &str,
     let root = tempfile::tempdir().unwrap();
     let mut registry = adapters::simulation(root.path()).unwrap();
     registry.register(
-        Upstream::Mergify,
+        Upstream::Delivery,
         api.adapter(&root.path().join("mergify"), 0),
     );
     let mut controller =
@@ -2517,7 +2517,7 @@ fn failed_catch_up_retries_held_enqueue(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
     let mut registry = adapters::simulation(root.path()).unwrap();
     registry.register(
-        Upstream::Mergify,
+        Upstream::Delivery,
         api.adapter(&root.path().join("mergify"), 0),
     );
     let mut controller =
@@ -2678,7 +2678,7 @@ fn review_controller(
     retry: Option<(bool, mpsc::Sender<()>)>,
 ) -> Controller {
     let mut registry = adapters::simulation(root).unwrap();
-    registry.register(Upstream::Mergify, api.adapter(&root.join("mergify"), 0));
+    registry.register(Upstream::Delivery, api.adapter(&root.join("mergify"), 0));
     let mut c = Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
     c.register_github_translator(
         "mergify",

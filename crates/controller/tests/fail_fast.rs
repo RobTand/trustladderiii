@@ -805,7 +805,7 @@ fn stop_with(source: Source, operations: bool) -> Stopped {
         .transform_reconciled(),
     );
     registry.register(
-        Upstream::Mergify,
+        Upstream::Delivery,
         support::workers::Workers::new(
             None,
             adapters::mergify::Fake::new(&fakes),

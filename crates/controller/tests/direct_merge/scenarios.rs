@@ -86,14 +86,18 @@ impl DirectFixture {
         self.open_adapter(settings, self.adapter(settings))
     }
     fn open_adapter(&self, settings: &tl3_config::Store, adapter: direct_merge::Adapter) -> Controller {
+        self.open_adapters(settings, adapter, None)
+    }
+    fn open_adapters(&self, settings: &tl3_config::Store, adapter: direct_merge::Adapter, worktrees: Option<SameHeadRebase>) -> Controller {
         let mut registry = adapters::simulation(self.root.path()).unwrap();
-        registry.register(Upstream::Mergify, Router::new(self.api.adapter(&self.root.path().join("mergify"), 0).with_store(settings.clone()), adapter, &[direct_repo()]));
+        registry.register(Upstream::Delivery, Router::new(self.api.adapter(&self.root.path().join("mergify"), 0).with_store(settings.clone()), adapter, &[direct_repo()]));
+        if let Some(worktrees) = worktrees { registry.register(Upstream::Worktrees, worktrees); }
         let mut controller = Controller::open_with_clock(Store::open(settings).unwrap(), registry, bootstrap(), self.clock.clone()).unwrap();
         let mut allowances = tl3_config::Allowances::default();
         allowances.github_mergify.silence_secs = 1;
         controller.set_allowances(allowances);
         controller.reconcile_repository_delivery(&[direct_repo()]).unwrap();
-        controller.register_github_translator("mergify", direct_merge::Translator::new(self.api.clients()).unwrap().with_wakes(self.wakes.clone()));
+        controller.register_github_translator("mergify", tl3_controller::adapters::delivery_events::Translator::new(self.api.clients()).unwrap().with_wakes(self.wakes.clone()));
         controller
     }
     fn start(&self, settings: &tl3_config::Store) -> (Controller, Delivery) {
@@ -259,7 +263,7 @@ fn queue_repository_keeps_mergify() {
     let mut repo = direct_repo();
     repo.delivery = tl3_config::Delivery::Queue;
     let mut registry = adapters::simulation(fixture.root.path()).unwrap();
-    registry.register(Upstream::Mergify, Router::new(fixture.api.adapter(&fixture.root.path().join("mergify"), 0).with_store(settings.clone()), fixture.adapter(&settings), &[repo]));
+    registry.register(Upstream::Delivery, Router::new(fixture.api.adapter(&fixture.root.path().join("mergify"), 0).with_store(settings.clone()), fixture.adapter(&settings), &[repo]));
     let mut controller = Controller::open(Store::open(&settings).unwrap(), registry, bootstrap()).unwrap();
     controller.intake(LabelledIssue { delivery:"queue-control".into(), owner:"owner".into(), repo:"sandbox".into(), installation:3, number:12, title:"change".into(), actor:42, label:"tl3".into(), labels:vec![] }).unwrap();
     for _ in 0..100 {
@@ -506,12 +510,12 @@ fn r1_actions_infrastructure_and_pending_are_classified_by_q47() {
         drain(&mut controller);
         assert!(fixture.direct.lock().unwrap().puts.is_empty());
         let snapshot = controller.snapshot().unwrap();
-        let failures: Vec<_> = snapshot.rows.iter().filter(|r|r.table == "queue_facts" && r.value["evidence"]["CiFailed"].is_object()).collect();
+        let failures: Vec<_> = snapshot.rows.iter().filter(|r|r.table == "delivery_outcomes" && r.value["outcome"]["CiFailed"].is_object()).collect();
         if matches!(conclusion, "action_required" | "stale") {
             assert!(failures.is_empty(), "{conclusion} must wait rather than fail");
             assert_eq!(controller.world().unwrap().nodes[0].round, 0);
         } else {
-            assert!(failures.iter().any(|r|r.value["evidence"]["CiFailed"]["infra"] == true), "{conclusion} must retain infrastructure classification");
+            assert!(failures.iter().any(|r|r.value["outcome"]["CiFailed"]["infra"] == true), "{conclusion} must retain infrastructure classification");
         }
     }
 }
@@ -710,7 +714,7 @@ fn r1_actions_runner_annotations_keep_infrastructure_evidence() {
     }
     let (mut controller, _) = fixture.start(&settings);
     drain(&mut controller);
-    assert!(controller.snapshot().unwrap().rows.iter().any(|r|r.table == "queue_facts" && r.value["evidence"]["CiFailed"]["infra"] == true));
+    assert!(controller.snapshot().unwrap().rows.iter().any(|r|r.table == "delivery_outcomes" && r.value["outcome"]["CiFailed"]["infra"] == true));
     assert!(fixture.direct.lock().unwrap().puts.is_empty());
 }
 
@@ -880,4 +884,313 @@ fn r3_b_unmasked_controller_recovery_keeps_history_before_merged_fact() {
     let rows = tl3_controller::board::Rows::read(&mut tx).unwrap();
     assert!(rows.requests[0].direct_delivery, "unmasked recovery must keep the board's direct delivery marker");
     assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
+}
+
+/// PRD #878 story 16: repeated delivery of the same outcome has one kernel path.
+#[test]
+fn fake_and_production_merge_outcomes_have_identical_receipts() {
+    use tl3_controller::executor::Observation;
+    let mut database = support::Database::start();
+    let mut results = Vec::new();
+    for fake in [true, false] {
+        let settings = database.create(if fake { "outcome_fake" } else { "outcome_production" });
+        let api = Server::new();
+        let root = tempfile::tempdir().unwrap();
+        let mut controller = queued(&settings, &api, root.path(), true);
+        if fake {
+            let snapshot = controller.snapshot().unwrap();
+            let row = snapshot.rows.iter().find(|row| row.table == "watches").unwrap();
+            let mut delivery: Delivery = serde_json::from_value(row.value.clone()).unwrap();
+            delivery.pull_request = Some(100);
+            delivery.head_sha = Some(api.state.lock().unwrap().pull["head"]["sha"].as_str().unwrap().into());
+            let mut adapter = adapters::mergify::Fake::new(root.path());
+            for key in ["first", "repeat"] {
+                let completion = adapter.execute(&delivery).unwrap();
+                for observation in completion.observations {
+                    controller.observe(key, observation).unwrap();
+                }
+                drain(&mut controller);
+            }
+            controller.observe("late-ci", Observation::CiFailed {
+                node: NodeId(0), infra: false, checks: vec![],
+            }).unwrap();
+            drain(&mut controller);
+        } else {
+            api.state.lock().unwrap().merged(false);
+            api.state.lock().unwrap().checks = fixture("merged", "checks");
+            catch_up(&settings, &api, &mut controller);
+            drain(&mut controller);
+            catch_up(&settings, &api, &mut controller);
+            drain(&mut controller);
+            // A late check still comes through the production queue adapter vocabulary.
+            controller.observe("late-ci", Observation::Queue(adapters::mergify::QueueFact {
+                repository: bootstrap().repos[0].clone(), number: 100,
+                evidence: adapters::mergify::Evidence::CiFailed {
+                    check: 1001, completed_at: None,
+                    head: api.state.lock().unwrap().pull["head"]["sha"].as_str().unwrap().into(),
+                    infra: false, head_check: true, details: Default::default(),
+                },
+            })).unwrap();
+            drain(&mut controller);
+        }
+        let facts: Vec<_> = Store::open(&settings).unwrap()
+            .events_after(tl3_store::Revision::ZERO, 2000).unwrap().into_iter()
+            .filter_map(|event| event.receipt.result["kernel_event"]["Fact"]["fact"].as_object().cloned())
+            .map(Value::Object).collect();
+        let rows = r1_delivery_rows(&mut controller);
+        // Closed nodes retire delivery receipts; both paths must also drain their inbox.
+        assert!(rows.is_empty(), "closed outcome paths retain no delivery or inbox rows: {rows:?}");
+        results.push((facts, serde_json::to_value(controller.world().unwrap()).unwrap(), rows));
+    }
+    assert_eq!(results[0], results[1], "fake and production must apply identical facts and world rows");
+}
+
+/// Existing upstream names and ingress cursor keys remain usable after S2.
+#[test]
+fn legacy_delivery_upstream_snapshot_still_routes() {
+    let mut database = support::Database::start();
+    let settings = database.create("legacy_delivery_upstream");
+    let fixture = DirectFixture::new();
+    fixture.check(None);
+    let (mut controller, delivery) = fixture.start(&settings);
+    drain(&mut controller);
+    let snapshot = controller.snapshot().unwrap();
+    let mut commit = tl3_store::Commit::new("legacy-upstream-snapshot", json!({}), &snapshot);
+    // This is the deployed structured incident signature shape.
+    let signature = json!({"upstream": "Mergify", "class": "upstream_read"});
+    let upstream: Upstream = serde_json::from_value(signature["upstream"].clone()).unwrap();
+    assert_eq!(upstream, Upstream::Delivery);
+    assert_eq!(serde_json::to_value(upstream).unwrap(), "Mergify");
+    assert_eq!(upstream.kind(), "Mergify");
+    assert_eq!(tl3_controller::executor::upstream(delivery.output), upstream);
+    let allowance = snapshot.rows.iter().find(|r| r.table == "allowances" && r.id == delivery.key).unwrap();
+    let mut allowance_value = allowance.value.clone();
+    allowance_value["incident"] = json!("legacy-delivery-incident");
+    commit.rows.push(tl3_store::RowChange::Put {
+        table: "allowances".into(), id: delivery.key.clone(), value: allowance_value,
+    });
+    commit.rows.push(tl3_store::RowChange::Put {
+        table: "incidents".into(), id: "legacy-delivery-incident".into(), value: json!({
+            "id": "legacy-delivery-incident", "node": 0, "open": true, "needs_rob": false,
+            "blocking": false, "summary": "legacy delivery read", "signature": signature,
+            "effect": delivery.key, "cause": "upstream",
+        }),
+    });
+    Store::open(&settings).unwrap().commit(&commit).unwrap();
+    drop(controller);
+    let mut controller = fixture.open(&settings);
+    let restored = controller.snapshot().unwrap().rows.into_iter().find(|r| r.table == "incidents" && r.id == "legacy-delivery-incident").unwrap();
+    let restored: Upstream = serde_json::from_value(restored.value["signature"]["upstream"].clone()).unwrap();
+    assert_eq!(restored, Upstream::Delivery);
+    fixture.check(Some("success"));
+    controller.look_key(&delivery.key).unwrap();
+    fixture.check_event(&settings);
+    drain(&mut controller);
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged));
+    assert_eq!(fixture.direct.lock().unwrap().successes, 1);
+    assert!(controller.snapshot().unwrap().rows.iter().any(|r| r.table == "incidents" && r.id == "legacy-delivery-incident" && r.value["open"] == false));
+}
+
+/// PRD #878 story 16: live CI failures retain the same failed round and feedback.
+#[test]
+fn fake_and_production_ci_outcomes_have_identical_findings() {
+    use tl3_controller::{executor::Observation, findings::CiFailure};
+    let mut database = support::Database::start();
+    for infra in [false, true] {
+        let mut results = Vec::new();
+        for fake in [true, false] {
+            let settings = database.create(&format!("ci_parity_{infra}_{fake}"));
+            let api = Server::new();
+            let root = tempfile::tempdir().unwrap();
+            let mut controller = queued(&settings, &api, root.path(), true);
+            let checks = vec![CiFailure { name: "unit tests".into(), summary: "assertion failed".into(), url: None }];
+            let observation = if fake {
+                Observation::CiFailed { node: NodeId(0), infra, checks }
+            } else {
+                Observation::Queue(adapters::mergify::QueueFact {
+                    repository: bootstrap().repos[0].clone(), number: 100,
+                    evidence: adapters::mergify::Evidence::CiFailed {
+                        check: 1001, completed_at: None,
+                        head: api.state.lock().unwrap().pull["head"]["sha"].as_str().unwrap().into(),
+                        infra, head_check: true,
+                        details: tl3_controller::findings::QueueCiEvidence { checks, ..Default::default() },
+                    },
+                })
+            };
+            let expected_receipts = if let Observation::Queue(fact) = &observation {
+                let mut value = json!(fact);
+                let head = value["evidence"]["CiFailed"]["head"].as_str().unwrap().to_owned();
+                value["evidence"]["CiFailed"]["details"]["cause"] = json!({"Change":{"fingerprint":format!("queue:{head}:unknown")}});
+                vec![("queue_facts".into(), "owner/sandbox/3/100/head-ci:1001".into(), value)]
+            } else { vec![] };
+            controller.observe("same-ci-outcome", observation).unwrap();
+            assert!(controller.drive_once().unwrap());
+            let facts: Vec<_> = Store::open(&settings).unwrap()
+                .events_after(tl3_store::Revision::ZERO, 2000).unwrap().into_iter()
+                .filter_map(|event| event.receipt.result["kernel_event"]["Fact"]["fact"].get("CiFailed").cloned()).collect();
+            let findings: Vec<_> = controller.snapshot().unwrap().rows.into_iter()
+                .filter(|row| matches!(row.table.as_str(), "maker_findings" | "findings"))
+                .map(|row| (row.table, row.id, row.value)).collect();
+            // Production has an external check identity and retains precisely its queue receipt.
+            // The legacy fake has no such identity, so it has no receipt. Neither retains inbox rows.
+            assert_eq!(r1_delivery_rows(&mut controller), expected_receipts);
+            assert_eq!(facts, vec![json!({"infra":infra})]);
+            results.push((facts, serde_json::to_value(controller.world().unwrap()).unwrap(), findings));
+        }
+        assert_eq!(results[0], results[1], "CI classification {infra} must share facts, world rows and findings");
+    }
+}
+
+fn r1_delivery_rows(controller: &mut Controller) -> Vec<(String, String, Value)> {
+    let mut rows: Vec<_> = controller.snapshot().unwrap().rows.into_iter()
+        .filter(|row|matches!(row.table.as_str(), "queue_facts" | "delivery_outcomes" | "inbox"))
+        .map(|row|(row.table,row.id,row.value)).collect();
+    rows.sort_by(|a,b|(&a.0,&a.1).cmp(&(&b.0,&b.1)));
+    rows
+}
+
+fn r1_adapter(fixture: &DirectFixture, settings: &tl3_config::Store) -> direct_merge::Adapter {
+    direct_merge::Adapter::new(fixture.api.clients(), 0, &fixture.root.path().join("direct"), settings.clone()).unwrap()
+}
+
+fn r1_kernel_facts(settings: &tl3_config::Store) -> Vec<Value> {
+    Store::open(settings).unwrap().events_after(tl3_store::Revision::ZERO, 4000).unwrap().into_iter()
+        .filter_map(|event| event.receipt.result["kernel_event"]["Fact"]["fact"].as_object().cloned())
+        .map(Value::Object).collect()
+}
+
+struct SameHeadRebase(adapters::worktrees::Fake);
+impl Executor for SameHeadRebase {
+    fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<tl3_controller::executor::Completion> {
+        if matches!(delivery.output, Out::Effect { kind: EffectKind::StartRebase, .. }) {
+            return Ok(tl3_controller::executor::Completion::confirmed(vec![tl3_controller::executor::Observation::Rebased {
+                node: delivery.node(), generation: delivery.generation, sha: delivery.head_sha.clone().unwrap(),
+            }]));
+        }
+        self.0.execute(delivery)
+    }
+    fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> { self.0.reconcile(delivery) }
+}
+
+/// #901 r1/S1: a no-op rebase must not suppress the next conflict on the same head.
+#[test]
+fn r1_direct_conflict_repeats_after_same_head_rebase() {
+    let mut database = support::Database::start();
+    let settings = database.create("r1_repeat_conflict");
+    let fixture = DirectFixture::new();
+    fixture.check(None);
+    let controller = fixture.open_adapters(&settings, fixture.adapter(&settings), Some(SameHeadRebase(adapters::worktrees::Fake::new(fixture.root.path()))));
+    let (mut controller, delivery) = fixture.start_controller(&settings, controller);
+    drain(&mut controller);
+    fixture.api.state.lock().unwrap().pull["mergeable"] = json!(false);
+    fixture.check(Some("success"));
+    fixture.check_event(&settings);
+    ingress::drain(&mut controller).unwrap();
+    let mut rebased = false;
+    let mut republished = false;
+    for _ in 0..150 {
+        let node = controller.world().unwrap().nodes[0];
+        rebased |= node.phase == Phase::Rebasing;
+        republished |= rebased && node.phase == Phase::Publishing;
+        let conflicts = Store::open(&settings).unwrap().events_after(tl3_store::Revision::ZERO,4000).unwrap().iter()
+            .filter(|event| event.receipt.result["kernel_event"]["Fact"]["fact"] == "Conflict").count();
+        if conflicts == 2 {
+            assert!(rebased && republished, "the second conflict must follow a same-head rebase and return to Publishing");
+            assert_eq!(node.phase, Phase::Rebasing);
+            assert_eq!(delivery.head_sha.as_deref(), fixture.api.state.lock().unwrap().pull["head"]["sha"].as_str());
+            assert!(!controller.snapshot().unwrap().rows.iter().any(|row|row.table=="delivery_outcomes" && row.id.contains("/conflict:")));
+            return;
+        }
+        if !controller.drive_once().unwrap() { break; }
+    }
+    panic!("same-head second conflict never reached the kernel: world {:?}, events {:?}", controller.world().unwrap(), Store::open(&settings).unwrap().events_after(tl3_store::Revision::ZERO,4000).unwrap().iter().map(|event|event.receipt.result["kernel_event"].clone()).collect::<Vec<_>>());
+}
+
+/// #901 r1/N2: legacy inbox corruption must be rejected through the input-error path.
+#[test]
+fn r1_out_of_range_legacy_inbox_returns_error_without_panicking() {
+    use tl3_controller::executor::Observation;
+    for merged in [false, true] {
+        let mut database = support::Database::start();
+        let settings = database.create(if merged {"r1_invalid_merged"} else {"r1_invalid_ci"});
+        let fixture = DirectFixture::new();
+        let mut controller = fixture.open(&settings);
+        controller.observe("legacy-invalid", if merged { Observation::Merged {node:NodeId(99),sha:"a".repeat(40),checks_passed:true} }
+            else {Observation::CiFailed {node:NodeId(99),infra:false,checks:vec![]}}).unwrap();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||controller.drive_once()));
+        assert!(result.is_ok(), "legacy input must not panic");
+        let result = result.unwrap();
+        assert!(result.is_err() || controller.snapshot().unwrap().rows.iter().any(|row|row.table=="incidents" && row.value["input_failure"].is_object()), "legacy input must report an error");
+    }
+}
+
+/// #901 r1/N4: stale Direct head CI is journaled once without a kernel event.
+#[test]
+fn r1_stale_direct_ci_records_receipt_without_reapplying() {
+    let mut database = support::Database::start();
+    let settings = database.create("r1_stale_ci");
+    let fixture = DirectFixture::new();
+    fixture.check(None);
+    let (mut controller, mut delivery) = fixture.start(&settings);
+    let stale = "b".repeat(40);
+    delivery.head_sha = Some(stale.clone());
+    fixture.api.state.lock().unwrap().pull["head"]["sha"] = json!(stale);
+    fixture.check(Some("failure"));
+    let mut adapter = r1_adapter(&fixture,&settings);
+    let observations = adapter.observations(&delivery).unwrap();
+    assert_eq!(observations.len(),1);
+    let before = r1_kernel_facts(&settings);
+    controller.observe("stale-direct-ci",observations.into_iter().next().unwrap()).unwrap();
+    controller.drive_once().unwrap();
+    assert_eq!(r1_kernel_facts(&settings),before);
+    let snapshot = controller.snapshot().unwrap();
+    let row = snapshot.rows.iter().find(|row|row.table=="delivery_outcomes" && row.id.ends_with("/head-ci:1100")).expect("stale CI needs a receipt");
+    assert_eq!(row.value["outcome"]["CiFailed"]["head"],stale);
+    assert!(row.value["outcome"]["CiFailed"]["evidence"].get("cause").is_none(), "base did not attribute stale heads");
+    assert!(adapter.observations(&delivery).unwrap().is_empty(), "a repeated look must not enqueue the stale CI again");
+}
+
+/// #901 r1/N4: Direct head CI retains the base Change attribution fingerprint.
+#[test]
+fn r1_current_direct_ci_retains_change_cause() {
+    let mut database = support::Database::start();
+    let settings = database.create("r1_ci_cause");
+    let fixture = DirectFixture::new(); fixture.check(None);
+    let (mut controller,delivery) = fixture.start(&settings);
+    fixture.check(Some("failure"));
+    let observations = r1_adapter(&fixture,&settings).observations(&delivery).unwrap();
+    assert_eq!(observations.len(),1);
+    controller.observe("current-direct-ci",observations.into_iter().next().unwrap()).unwrap();
+    controller.drive_once().unwrap();
+    let snapshot=controller.snapshot().unwrap();
+    let row=snapshot.rows.iter().find(|row|row.table=="delivery_outcomes" && row.id.ends_with("/head-ci:1100")).unwrap();
+    assert_eq!(row.value["outcome"]["CiFailed"]["evidence"]["cause"],json!({"Change":{"fingerprint":format!("queue:{}:unknown",delivery.head_sha.unwrap())}}));
+}
+
+/// #901 r1/S3: pre-S2 push and head-CI receipts survive an upgrade and restart.
+#[test]
+fn r1_legacy_direct_receipts_deduplicate_after_restart() {
+    for ci in [false,true] {
+        let mut database=support::Database::start();
+        let settings=database.create(if ci {"r1_upgrade_ci"} else {"r1_upgrade_push"});
+        let fixture=DirectFixture::new(); fixture.check(None);
+        let (mut controller,delivery)=fixture.start(&settings);
+        let head=if ci {delivery.head_sha.clone().unwrap()} else {"b".repeat(40)};
+        let suffix=if ci {"head-ci:1100".to_owned()} else {format!("push:{head}")};
+        let identity=format!("owner/sandbox/3/100/{suffix}");
+        let evidence=if ci {json!({"CiFailed":{"check":1100,"completed_at":null,"head":head,"infra":false,"head_check":true,"details":{}}})}
+            else {json!({"PushByOther":{"head":head}})};
+        let snapshot=controller.snapshot().unwrap();
+        let mut commit=tl3_store::Commit::new("pre-s2-direct-receipt",json!({}),&snapshot);
+        commit.rows.push(tl3_store::RowChange::Put {table:"queue_facts".into(),id:identity,value:json!({"repository":bootstrap().repos[0],"number":100,"evidence":evidence})});
+        Store::open(&settings).unwrap().commit(&commit).unwrap(); drop(controller);
+        let mut controller=fixture.open(&settings);
+        if ci {fixture.check(Some("failure"));} else {fixture.direct.lock().unwrap().moved=true;}
+        let before=r1_kernel_facts(&settings);
+        let mut adapter=r1_adapter(&fixture,&settings);
+        assert!(adapter.observations(&delivery).unwrap().is_empty());
+        controller.look_key(&delivery.key).unwrap();
+        assert_eq!(r1_kernel_facts(&settings),before);
+        assert!(!controller.snapshot().unwrap().rows.iter().any(|row|row.table=="delivery_outcomes" || row.table=="inbox"));
+    }
 }

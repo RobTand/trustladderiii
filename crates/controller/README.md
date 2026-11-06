@@ -461,7 +461,7 @@ each terminal record, log, and CAS receipt before reporting a pass.
 The real Mergify adapter replaces its registry entry with one call:
 
 ```rust,ignore
-registry.register(Upstream::Mergify, mergify::Adapter::new(clients, epoch, records)?);
+registry.register(Upstream::Delivery, mergify::Adapter::new(clients, epoch, records)?);
 ```
 
 Keep `records` in a persistent directory. It holds the accepted epoch, queue
@@ -1752,3 +1752,12 @@ the same queue. Filesystem wait-subscription removal follows committed
 `retiring_waits` intents, so translation cannot delete a subscription on refusal.
 
 Serialization failures (`40001`) and deadlocks (`40P01`) retain the head input, so later edits and direct inputs wait their turn. Replay uses fresh evidence without timers; continued contention may starve the head (Q39). The diagnostic is logged at most once per input; persisted inputs are treated as already reported at startup. A head queue fact still reconciles its own missing enqueue acknowledgment first, as required by the existing queue ordering.
+
+### Delivery outcome rollback floor
+
+S2 stores neutral `Outcome` inbox rows and Direct receipts in `delivery_outcomes`.
+A pre-S2 binary cannot decode those inbox rows or read those receipts. Do not
+roll back below S2 while either remains. A rollback requires stopping the
+controller, draining `Outcome` inbox rows, and migrating Direct receipts to
+`queue_facts` in the old `QueueFact` shape. Otherwise open Direct nodes can
+reapply pushes or CI failures. The stored upstream name remains `Mergify`.
