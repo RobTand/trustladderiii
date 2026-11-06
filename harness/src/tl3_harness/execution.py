@@ -35,6 +35,14 @@ _BASE_RESULTS: dict[tuple, tuple[dict[str, Outcome], dict[str, str]]] = {}
 _SELECTED_BASE: dict[tuple, "SelectedObservation"] = {}
 
 
+class ProofNotes(FailureNotes):
+    """Runner-only proof context, carried beside the existing assertion reason."""
+
+    def __init__(self, red_message=None, proof_subjects=None):
+        super().__init__(red_message)
+        self.proof_subjects = proof_subjects or {}
+
+
 @dataclass
 class SelectedRun:
     groups: tuple[tuple[str, ...], ...]
@@ -152,6 +160,9 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
         red_message = getattr(messages, 'red_message', None)
         if red_message is not None:
             request = {**(request if isinstance(request, dict) else {'tests': tests}), 'red_message': red_message}
+        proof_subjects = getattr(messages, 'proof_subjects', None)
+        if proof_subjects:
+            request = {**(request if isinstance(request, dict) else {'tests': tests}), 'proof_subjects': proof_subjects}
         selection.write(json.dumps(request).encode())
         selection.seek(0)
         try:
@@ -643,6 +654,7 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         kept = tuple(group for group in selected_before
                      if all(outcome == Outcome.PASSED for outcome in selected_before[group].outcomes.values()))
         proofs = {}
+        head_subjects = {}
         reviewed_tree = None
         if reproducing:
             reviewed_tree = root / "reviewed"
@@ -666,14 +678,21 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                 return refused(plan, error)
             except OSError as error:
                 return refused(plan, str(error))
-            notes = FailureNotes(check.proof.red_message if check.proof else None)
-            forced_notes = FailureNotes()
+            subject_files = sorted({name.split('::', 1)[0] for name in receipt['subjects']})
+            proof_subjects = dict.fromkeys(check.tests, subject_files)
+            for test, files in proof_subjects.items():
+                head_subjects[test] = sorted(set(head_subjects.get(test, ())) | set(files))
+            notes = ProofNotes(check.proof.red_message if check.proof else None, proof_subjects)
+            forced_notes = ProofNotes(proof_subjects=proof_subjects)
             if check.declared_symptom is not None:
                 from .test_tool import run_symptom
                 from .symptoms import judge_symptom
-                observed = run_symptom(staged, container, check.tests, check.declared_symptom, forcing=check.forcing)
-                fixed = run_symptom(new, container, check.tests, check.declared_symptom, forcing=check.forcing)
-                ordinary_head = (run_symptom(new, container, check.tests, check.declared_symptom)
+                observed = run_symptom(staged, container, check.tests, check.declared_symptom, forcing=check.forcing,
+                                       proof_subjects=proof_subjects)
+                fixed = run_symptom(new, container, check.tests, check.declared_symptom, forcing=check.forcing,
+                                    proof_subjects=proof_subjects)
+                ordinary_head = (run_symptom(new, container, check.tests, check.declared_symptom,
+                                             proof_subjects=proof_subjects)
                                  if check.forcing else fixed)
                 result = judge_symptom(check, observed, fixed, ordinary_head, base, head)
                 proofs[check.name] = (None, None, None, None, receipt, result)
@@ -683,7 +702,7 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             forced_head = (tool.run(new, container, check.tests, root / f"proof-forced-head-{index}.jsonl", progress,
                                     messages=forced_notes, forcing=check.forcing) if check.forcing else None)
             proofs[check.name] = (observed, notes, forced_head, forced_notes, receipt, None)
-        messages = FailureNotes()
+        messages = ProofNotes(proof_subjects=head_subjects)
         ordinary_tests = tuple(test for test in tests if any(
             test in check.tests and check.declared_symptom is None for check in plan))
         after = (tool.run(new, container, ordinary_tests, root / "head.jsonl", progress, messages=messages)

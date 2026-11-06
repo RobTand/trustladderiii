@@ -37,6 +37,7 @@ py_library(
         "scratch.py",
         "selection.py",
         "selector_identity.py",
+        "source_reads.py",
         "supervision.py",
         "symptoms.py",
         "terminal_forms.py",
