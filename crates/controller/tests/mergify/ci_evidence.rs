@@ -25,6 +25,12 @@ pub(super) const MODES: &[&str] = &[
     "compile",
     "lint",
     "redelivery",
+    "diagnostics-golden",
+    "diagnostics-feedback",
+    "diagnostics-categories",
+    "diagnostics-rust",
+    "diagnostics-limits",
+    "diagnostics-hostile",
 ];
 const TEST: &str = "//tests:test_a_ready_gpu_action_is_not_starved_by_cpu_shards";
 const URL: &str =
@@ -35,6 +41,7 @@ pub(super) struct Fixture {
     checks: Value,
     files: Value,
     log: String,
+    gate_log: Option<String>,
 }
 impl Fixture {
     pub(super) fn respond(&self, path: &str) -> Option<ResponseTemplate> {
@@ -45,7 +52,7 @@ impl Fixture {
                 &self.checks
             }
             "/repos/owner/sandbox/actions/jobs/125552384811/logs" => {
-                return Some(ResponseTemplate::new(200).set_body_string("Gate verdict: failed"));
+                return Some(ResponseTemplate::new(200).set_body_string(self.gate_log.as_deref().unwrap_or("Gate verdict: failed")));
             }
             "/repos/owner/sandbox/actions/jobs/125550020549/logs" => {
                 if self.log == "range-truncated" {
@@ -73,6 +80,30 @@ impl Fixture {
         Some(ResponseTemplate::new(200).set_body_json(body))
     }
 }
+
+// #1574/431: only these public diagnostic lines are retained. Neutral padding
+// preserves their byte offsets, line numbers, ordering and distance from EOF.
+const REPAIR: &str = "Stale generated inputs, parity drift or growing budgets; fix with tools/bazel/generate.sh: python3.14 tools/ci/full_shards.py --check";
+const GATE: &str = "The Bazel gate did not finish detection and scope upload: {'result': 'failure', 'outputs': {'scopes_uploaded': 'true', 'tests': 'failure'}}";
+fn retained_pattern(line: &str, offset: usize, number: usize, size: usize) -> String {
+    let mut log = "neutral log line\n".repeat(number - 2);
+    log.push_str(&" ".repeat(offset - log.len() - 1));
+    log.push('\n');
+    log.push_str("2026-11-06T22:40:52.7191760Z ");
+    log.push_str(line);
+    log.push_str("\n2026-11-06T22:40:52.7325037Z ##[error]Process completed with exit code 1.\n");
+    let padding = size - log.len();
+    log.push_str(&"neutral cleanup\n".repeat(padding / 16));
+    log.push_str(&" ".repeat(size - log.len()));
+    assert_eq!(log.len(), size);
+    log
+}
+fn assert_golden(text: &str) {
+    let missing: Vec<_> = [REPAIR, GATE].into_iter().filter(|line| !text.contains(line)).collect();
+    assert!(missing.is_empty(), "missing diagnostics {missing:?}: {text}");
+    assert!(!text.contains("full target lists differ from live query"));
+}
+
 fn failure(api: &Server, mode: &str, repeat: bool) {
     let gate: Value =
         serde_json::from_str(include_str!("../fixtures/mergify/pb2625/gate-result.json")).unwrap();
@@ -101,6 +132,29 @@ fn failure(api: &Server, mode: &str, repeat: bool) {
     let mut log = include_str!("../fixtures/mergify/pb2625/gate.log").to_owned();
     let mut files = json!([{"filename":gate["changed"][0]}]);
     match mode {
+        "diagnostics-golden" | "diagnostics-feedback" => {
+            log = retained_pattern(REPAIR, 47048, 490, 68911);
+        }
+        "diagnostics-categories" => {
+            log = "::error::annotation diagnostic\nTraceback (most recent call last):\n  File \"runner.py\", line 7, in <module>\n    run()\nValueError: invalid fixture inventory\nERROR: /workspace/BUILD:7: missing input\ngate failed; fix with tools/regenerate.sh\n::error::annotation diagnostic\nFAILED: //tests:test_action_resource_profile\n".into();
+            log.push_str(&"neutral cleanup\n".repeat(200));
+        }
+        "diagnostics-rust" => {
+            log = "---- resources::budget stdout ----\nthread 'resources::budget' panicked at src/resources.rs:42:9:\nassertion `left == right` failed: CPU reservation exceeded\n  left: 8\n right: 4\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\nFAILED (rust): //tests:test_action_resource_profile\n".into();
+            log.push_str(&"neutral cleanup\n".repeat(200));
+        }
+        "diagnostics-limits" => {
+            log = format!("::error::{}\n", "雪".repeat(1000));
+            for index in 0..30 {
+                log.push_str(&format!("ERROR: diagnostic {index}\n"));
+            }
+            log.push_str("FAILED: //tests:test_action_resource_profile\n");
+            log.push_str(&"neutral cleanup\n".repeat(200));
+        }
+        "diagnostics-hostile" => {
+            log = "\x1b]8;;https://example.invalid\x07\x1b[31m::error::pass\x1b[0mword=planted-password Bearer planted-bearer\x1b]8;;\x1b\\\nERROR: ghp_planted123456789\0\x08\x7f\nFAILED: //tests:test_action_resource_profile\n".into();
+            log.push_str(&"neutral cleanup\n".repeat(200));
+        }
         "changed" => {
             files = json!([{"filename":"tests/test_a_ready_gpu_action_is_not_starved_by_cpu_shards.py"}])
         }
@@ -162,8 +216,10 @@ fn failure(api: &Server, mode: &str, repeat: bool) {
             "output":{"title":"Gate failed","summary":summary}}]}),
         files,
         log,
+        gate_log: matches!(mode, "diagnostics-golden" | "diagnostics-feedback")
+            .then(|| retained_pattern(GATE, 11199, 164, 13457)),
     });
-    if matches!(mode, "aggregate" | "compile" | "lint") {
+    if matches!(mode, "aggregate" | "compile" | "lint" | "diagnostics-golden" | "diagnostics-feedback") {
         state.ci_fixture.as_mut().unwrap().checks["check_runs"].as_array_mut().unwrap().push(json!({
             "id":125552384811_u64,"name":"gate","head_sha":gate["head"],"status":"completed","conclusion":"failure",
             "app":{"id":15368,"slug":"github-actions"},"output":{"title":"Gate verdict failed","summary":"Bazel failed"}
@@ -182,7 +238,7 @@ fn failure(api: &Server, mode: &str, repeat: bool) {
         check["output"]["summary"] = json!("pass\x1b[0mword=planted-password\0\x08\x7f");
     }
 }
-fn observe(controller: &mut Controller, api: &Server, config: &Bootstrap) {
+fn observe(controller: &mut Controller, api: &Server, config: &Bootstrap, head_check: bool) {
     let mut body = webhook_fixture();
     body["action"] = json!("completed");
     body["check_run"] = api.state.lock().unwrap().queue_check();
@@ -194,7 +250,15 @@ fn observe(controller: &mut Controller, api: &Server, config: &Bootstrap) {
             &config.repos,
         )
         .unwrap();
-    for input in inputs {
+    for mut input in inputs {
+        if head_check
+            && let tl3_controller::cli::Input::Observation {
+                observation: tl3_controller::executor::Observation::Queue(fact), ..
+            } = &mut input
+            && let adapters::mergify::Evidence::CiFailed { head_check, .. } = &mut fact.evidence
+        {
+            *head_check = true;
+        }
         ingress::apply(controller, input).unwrap();
     }
     for _ in 0..20 {
@@ -244,8 +308,8 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     }
     let before = controller.world().unwrap().nodes[0];
     failure(&api, mode, false);
-    observe(&mut controller, &api, &config);
-    if matches!(mode, "unparsed" | "logs-unavailable") {
+    observe(&mut controller, &api, &config, mode == "diagnostics-feedback");
+    if matches!(mode, "unparsed" | "logs-unavailable" | "diagnostics-golden") {
         // #854b: the first opaque refusal is a Q50 hold, even if fail_fast
         // would otherwise close the fixture. It never spends a failed round.
         let after = controller.world().unwrap().nodes[0];
@@ -258,6 +322,13 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         let facts = queue_facts(&mut controller);
         let details = &facts.last().unwrap()["evidence"]["CiFailed"]["details"];
         assert_eq!(details["cause"], "Unattributed");
+        if mode == "diagnostics-golden" {
+            assert_eq!(details["complete"], false);
+            assert!(details["failed_tests"].as_array().unwrap().is_empty());
+            let summaries = details["checks"].as_array().unwrap().iter()
+                .map(|check| check["summary"].as_str().unwrap()).collect::<Vec<_>>().join("\n");
+            assert_golden(&summaries);
+        }
         assert_eq!(details["checks"][0]["name"], "Bazel");
         assert!(
             controller
@@ -323,7 +394,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         if mode == "redelivery" {
             failure(&api, mode, false);
             let before = api.state.lock().unwrap().get_paths.clone();
-            observe(&mut controller, &api, &config);
+            observe(&mut controller, &api, &config, mode == "diagnostics-feedback");
             let snapshot = controller.snapshot().unwrap();
             let changes = serde_json::from_value(json!({"repository":"RobTand/prismabuild", "issues":[],
                 "comments":[], "labels":[], "pull_requests":[], "check_runs":[], "check_suites":[]})).unwrap();
@@ -362,7 +433,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             return;
         }
         failure(&api, mode, true);
-        observe(&mut controller, &api, &config);
+        observe(&mut controller, &api, &config, mode == "diagnostics-feedback");
     }
     assert_eq!(
         controller.world().unwrap().nodes[0].phase,
@@ -380,8 +451,55 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     let report = finding["report"].as_str().unwrap();
     assert!(!report.contains("no check details"));
     assert!(report.contains("Gate failed"));
-    if !matches!(mode, "unparsed" | "logs-unavailable") {
+    if !matches!(mode, "unparsed" | "logs-unavailable" | "diagnostics-feedback") {
         assert!(!finding["failed_tests"].as_array().unwrap().is_empty());
+    }
+    if mode.starts_with("diagnostics-") {
+        let summaries = finding["ci_checks"].as_array().unwrap().iter()
+            .map(|check| check["summary"].as_str().unwrap()).collect::<Vec<_>>().join("\n");
+        assert!(report.chars().count() <= 16000);
+        for check in finding["ci_checks"].as_array().unwrap() {
+            assert!(check["summary"].as_str().unwrap().chars().count() <= 1000);
+        }
+        match mode {
+            "diagnostics-feedback" => {
+                assert_golden(report);
+                assert_golden(&summaries);
+                assert!(finding["failed_tests"].as_array().unwrap().is_empty());
+            }
+            "diagnostics-categories" => {
+                let mut last = 0;
+                for fragment in ["::error::annotation diagnostic", "Traceback (most recent call last):", "ValueError: invalid fixture inventory", "ERROR: /workspace/BUILD:7: missing input", "gate failed; fix with tools/regenerate.sh"] {
+                    let index = summaries.find(fragment).unwrap_or_else(|| panic!("missing {fragment}: {summaries}"));
+                    assert!(index >= last, "source order: {summaries}");
+                    assert_eq!(summaries.matches(fragment).count(), 1, "dedupe {fragment}");
+                    last = index;
+                }
+                assert!(summaries.contains("FAILED: //tests:test_action_resource_profile"));
+                let facts = queue_facts(&mut controller);
+                assert_eq!(facts.last().unwrap()["evidence"]["CiFailed"]["details"]["complete"], true);
+            }
+            "diagnostics-rust" => {
+                for fragment in ["panicked at src/resources.rs:42:9", "CPU reservation exceeded", "left: 8", "right: 4"] {
+                    assert!(summaries.contains(fragment), "missing {fragment}: {summaries}");
+                }
+            }
+            "diagnostics-limits" => {
+                assert!(summaries.contains("[diagnostics omitted]"), "{summaries}");
+                assert!(summaries.contains("[diagnostic clipped]"), "{summaries}");
+                assert!(summaries.len() <= 1000);
+                assert!(summaries.lines().filter(|line| line.starts_with("ERROR:")).count() <= 8);
+                assert!(summaries.contains("FAILED: //tests:test_action_resource_profile"));
+            }
+            "diagnostics-hostile" => {
+                assert!(summaries.contains("::error::"));
+                for secret in ["planted-password", "planted-bearer", "ghp_planted123456789"] {
+                    assert!(!finding.to_string().contains(secret));
+                }
+                assert!(summaries.chars().all(|ch| !ch.is_control() || matches!(ch, '\n' | '\t')));
+            }
+            _ => unreachable!(),
+        }
     }
     if mode == "repeat" {
         assert!(finding.to_string().contains(TEST));

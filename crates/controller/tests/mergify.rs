@@ -3141,9 +3141,11 @@ fn main() {
         10, 4, 13, 4, 3, 5, 8, 3, 10, 3, 13, 7, 9, 28, 69, 44, 139, 19, 18, 14, 29, 1, 20,
     ];
     let tail = seconds.len() - 11;
-    let groups: Vec<_> = seconds[..tail]
+    let groups: Vec<_> = seconds[..27]
         .iter()
         .copied()
+        .chain(std::iter::repeat_n(10, 6))
+        .chain(seconds[27..tail].iter().copied())
         .chain(std::iter::repeat_n(10, queue_entry::MODES.len()))
         .chain(std::iter::repeat_n(10, queue_cause::MODES.len()))
         .chain(std::iter::repeat_n(10, queue_cause::REVIEW_MODES.len()))
