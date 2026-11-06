@@ -45,6 +45,29 @@ pub(super) proof fn joined(before: World, fast: World, off: World, on: World, ge
     }
 }
 
+/// Q54 MakerNeedsFiles non-fitting or empty input: one world's real reply
+/// relation reduces to the exhaustion-row equation and an unchanged world frame.
+pub(super) proof fn room_side(w: World, after: World, generation: u64, files: Footprint,
+    fits: bool, initial: Outbox, out: Outbox)
+    requires retirement::domain(w), w.nodes@[0].phase == Phase::Making,
+        !(fits && !footprint::footprint_empty(files)),
+        port_review_reply::active(w.nodes@[0], generation),
+        port_review_reply::accepted_reply(w, w.nodes@[0], Reply::MakerNeedsFiles { files, fits }),
+        port_review_reply::reply_post(w, after, 0, generation,
+            Reply::MakerNeedsFiles { files, fits }, initial, out),
+    ensures port_failfast_pair_frame::frame(w, after),
+        after.nodes@[0] == port_review_retry::room(port_review_reply::ended(w.nodes@[0]),
+            w.fail_fast, w.next_question, ReviewStop::MakerNeedsFiles).0,
+        after.next_question == port_review_retry::room(port_review_reply::ended(w.nodes@[0]),
+            w.fail_fast, w.next_question, ReviewStop::MakerNeedsFiles).1,
+        w.fail_fast ==> out.len == initial.len,
+{
+    port_failfast_replies::admitted(w, after, generation, Reply::MakerNeedsFiles { files, fits }, initial, out);
+    reveal(port_review_reply::accepted_reply);
+    reveal(port_replies_maker::transition_post); reveal(port_replies_maker::files_post);
+    reveal(port_review_reply::reply_post);
+}
+
 /// Q54 MakerNeedsFiles non-fitting or empty input: the parametric room diversion.
 pub(super) proof fn exhausted(before: World, fast: World, off: World, on: World, generation: u64,
     files: Footprint, fits: bool, initial: Outbox, off_out: Outbox, on_out: Outbox)
@@ -62,15 +85,12 @@ pub(super) proof fn exhausted(before: World, fast: World, off: World, on: World,
         !(fits && !footprint::footprint_empty(files)),
     ensures port_failfast_replies::diverted(before, off, on, Reply::MakerNeedsFiles { files, fits }, on_out),
 {
-    let reply = Reply::MakerNeedsFiles { files, fits };
-    let source = port_review_reply::ended(before.nodes@[0]);
     reveal(port_review_reply::accepted_reply);
     footprint::storage_frame(before, fast, files, files);
-    port_failfast_replies::admitted(before, off, generation, reply, initial, off_out);
-    port_failfast_replies::admitted(fast, on, generation, reply, initial, on_out);
-    reveal(port_replies_maker::transition_post); reveal(port_replies_maker::files_post);
-    reveal(port_review_reply::reply_post);
-    port_failfast_pair_frame::compare(before, off, on, source, 1, ReviewStop::MakerNeedsFiles, on_out);
+    room_side(before, off, generation, files, fits, initial, off_out);
+    room_side(fast, on, generation, files, fits, initial, on_out);
+    port_failfast_pair_frame::compare(before, off, on, port_review_reply::ended(before.nodes@[0]),
+        1, ReviewStop::MakerNeedsFiles, on_out);
 }
 
 /// Q54 MakerNeedsFiles: funded unions agree, unfunded unions ask for credit,
