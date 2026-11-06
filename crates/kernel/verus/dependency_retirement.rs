@@ -234,7 +234,7 @@ pub(super) fn verify_abandoned(status: DependencyStatus) -> (result: (World, boo
     let admitted = advance(&mut world, 0, &mut out);
     assert(admitted == (status == DependencyStatus::Delivered));
     proof {
-        reveal(advance_post); reveal(initial_node); reveal(retirement::node_rules);
+        reveal(advance_post); reveal(advance_admission_post); reveal(initial_node); reveal(retirement::node_rules);
         reveal(dependencies::zero_credit);
         footprint::inline_is_valid(world, 0);
         if admitted { assert(world.nodes@[0].phase == (Phase::Planning { must_split: false })); }
