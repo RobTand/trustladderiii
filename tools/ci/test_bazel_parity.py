@@ -155,6 +155,7 @@ class StaticParityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             self.assertEqual(self.cargo(Path(root)), {
                 'tl3-controller/tl3_controller': ('crates/tl3-controller/src/lib.rs', 'libtest'),
+                'tl3-controller/tl3_controller_loom': ('crates/tl3-controller/src/lib.rs', 'libtest'),
                 'tl3-controller/github-flow': ('crates/tl3-controller/tests/github.rs', 'custom'),
                 'tl3-controller/github-notices': ('crates/tl3-controller/tests/github.rs', 'custom'),
                 'tl3-controller/nested': ('crates/tl3-controller/tests/nested/main.rs', 'libtest'),
@@ -363,7 +364,7 @@ class LibtestShardTests(unittest.TestCase):
             '[tl3-controller/mergify] scenario group Queue: 7.0s',
             f'[{binary}] scenario group "quoted": 1.0s',
         ]
-        self.assertEqual(libtest_shards.measured_groups(binary, lines), {'Planning': 41.5, 'Router': 0.004})
+        self.assertEqual(libtest_shards.measured_groups(binary, lines), {'Planning': 41.5, 'Router': 0.004, 'quoted': 1.0})
         with self.assertRaisesRegex(RuntimeError, 'No tl3-controller/workers scenario groups'):
             libtest_shards.measured_groups(binary, lines[1:2])
 

@@ -7,11 +7,11 @@ import bazel_parity
 
 def proof(**changes):
     attributes = {'tags': ['rust', 'verus'], 'expected_obligations': 1,
-                  'src': '//crates/mergify:proofs/delivery.rs',
-                  'srcs': ['//crates/mergify:src/decide/delivery_step.rs'],
+                  'src': '//crates/verus-runner:proofs/delivery.rs',
+                  'srcs': ['//crates/verus-runner:src/delivery_step.rs'],
                   'specs': [], 'timeout': 'short'} | changes
     return json.dumps({'rule': {
-        'name': '//crates/mergify:verus_delivery', 'ruleClass': 'verus_test',
+        'name': '//crates/verus-runner:verus_delivery', 'ruleClass': 'verus_test',
         'attribute': [{'name': key, 'stringListValue': value} if isinstance(value, list)
                       else {'name': key, 'intValue': value} if isinstance(value, int)
                       else {'name': key, 'stringValue': value}
@@ -22,7 +22,7 @@ class VerusGateTests(unittest.TestCase):
     def test_valid_proof_has_a_separate_inventory(self):
         checker = getattr(bazel_parity, 'verus_tests', None)
         self.assertIsNotNone(checker, 'Gate must discover and validate Verus proofs')
-        self.assertEqual(checker([proof()]), {'//crates/mergify:verus_delivery': 1})
+        self.assertEqual(checker([proof()]), {'//crates/verus-runner:verus_delivery': 1})
         self.assertEqual(bazel_parity.bazel_tests([proof()]), ({}, []))
 
     def test_vacuous_or_ungated_proofs_are_refused(self):
@@ -38,7 +38,7 @@ class RequiredRustCheckTests(unittest.TestCase):
     def test_verus_failure_reaches_the_required_rust_aggregate(self):
         import bazel_gate
         import remote_gate
-        label = '//crates/mergify:verus_delivery'
+        label = '//crates/verus-runner:verus_delivery'
         verdicts, failed = bazel_gate.classify([label], {label: 'FAILED'}, {label})
         self.assertEqual(failed['rust'], [label])
         outputs = remote_gate.outputs({'mode': 'pr', 'verdicts': verdicts})
@@ -58,7 +58,7 @@ class RequiredRustCheckTests(unittest.TestCase):
     def test_nightly_executes_every_verus_proof_and_fails_on_any_failure(self):
         from types import SimpleNamespace
         import bazel_gate
-        label = '//crates/mergify:verus_delivery'
+        label = '//crates/verus-runner:verus_delivery'
         calls = []
 
         def run(targets, config, metadata, log_name):
@@ -73,7 +73,7 @@ class RequiredRustCheckTests(unittest.TestCase):
     def test_post_merge_runs_verus_only_in_the_amd64_pass(self):
         from types import SimpleNamespace
         import bazel_gate
-        proof_label, ordinary = '//crates/mergify:verus_delivery', '//harness/tests:test_harness'
+        proof_label, ordinary = '//crates/verus-runner:verus_delivery', '//harness/tests:test_harness'
         calls = []
 
         def run(targets, config, metadata, log_name):

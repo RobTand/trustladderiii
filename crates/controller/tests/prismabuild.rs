@@ -18,6 +18,7 @@ use std::{
     thread,
     time::Duration,
 };
+use support::scenario_shard;
 use tl3_controller::{
     Bootstrap, Controller, LabelledIssue, Repository,
     adapters::{
@@ -179,41 +180,30 @@ fn completion(adapter: &mut Adapter, delivery: &Delivery) -> Completion {
         _ => panic!("expected ending"),
     }
 }
-fn recorded_endings() {
-    for (mode, expected) in [
-        ("done", (true, true)),
-        ("failed", (true, false)),
-        ("withdrawn", (false, false)),
-        ("no_report", (false, false)),
-        ("check_fail", (true, false)),
-        ("infrastructure", (false, false)),
-        ("bad_report", (false, false)),
-        ("wrong_head", (false, false)),
-    ] {
-        let root = tempfile::tempdir().unwrap();
-        let delivery = run(root.path(), false);
-        let mut adapter = fixture(root.path(), mode);
-        assert!(adapter.execute(&delivery).unwrap().observations.is_empty());
-        let ended = completion(&mut adapter, &delivery);
-        assert_eq!(
-            ended.failure_class.as_deref(),
-            if matches!(mode, "infrastructure" | "bad_report") {
-                Some("harness")
-            } else {
-                None
-            },
-            "{mode}: only a parsed harness infrastructure outcome is TL3-side"
-        );
-        let (report, pass, paths) = observed(ended);
-        assert_eq!((report, pass), expected, "{mode}");
-        assert_eq!(paths, ["value.py"]);
-        let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
-        assert!(
-            calls.contains("--seal-only")
-                && calls.contains("--max-attempts\", \"1")
-                && !calls.contains("--timeout-s")
-        );
-    }
+fn recorded_ending_case(mode: &str, expected: (bool, bool)) {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut adapter = fixture(root.path(), mode);
+    assert!(adapter.execute(&delivery).unwrap().observations.is_empty());
+    let ended = completion(&mut adapter, &delivery);
+    assert_eq!(
+        ended.failure_class.as_deref(),
+        if matches!(mode, "infrastructure" | "bad_report") {
+            Some("harness")
+        } else {
+            None
+        },
+        "{mode}: only a parsed harness infrastructure outcome is TL3-side"
+    );
+    let (report, pass, paths) = observed(ended);
+    assert_eq!((report, pass), expected, "{mode}");
+    assert_eq!(paths, ["value.py"]);
+    let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
+    assert!(
+        calls.contains("--seal-only")
+            && calls.contains("--max-attempts\", \"1")
+            && !calls.contains("--timeout-s")
+    );
 }
 fn memory_oom_is_retained_in_check_evidence() {
     let root = tempfile::tempdir().unwrap();
@@ -456,65 +446,66 @@ fn staged_request_carries_the_repository_protected_paths() {
 }
 
 fn always_tests_are_staged_required_and_reported_in_every_round() {
-    const ALWAYS: &str = "Repository always tests";
     for round in [0, 1] {
         for pre_existing in [false, true] {
             for omitted in [false, true] {
-                let root = tempfile::tempdir().unwrap();
-                let mut delivery = run(root.path(), false);
-                delivery.round = round;
-                let mut config =
-                    tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
-                config.github.repos[0].always_tests = vec!["test_rules.py".into()];
-                let mut adapter =
-                    fixture(root.path(), "done").with_repositories(&config.github.repos);
-                let planned = &delivery.checks.as_ref().unwrap().plan[0];
-                let mut results = vec![
-                    serde_json::json!({"name": planned.name, "kind": "demonstrating", "custody": "in-process",
-                    "verdict": "pass", "tests": [{"test": planned.tests[0], "base": "assertion", "head": "passed", "pre_existing": false, "passed": true}]}),
-                ];
-                if !omitted {
-                    results.push(serde_json::json!({"name": ALWAYS, "kind": "regression", "custody": "in-process",
-                        "verdict": if pre_existing { "pass" } else { "fail" }, "tests": [{"test": "test_rules.py", "base": if pre_existing { "assertion" } else { "passed" },
-                        "head": "assertion", "pre_existing": pre_existing, "passed": pre_existing, "message": "Tests must not sleep"}]}));
-                }
-                fs::write(
-                    root.path().join("queue/recorded_results.json"),
-                    serde_json::to_vec(&results).unwrap(),
-                )
-                .unwrap();
-                adapter.execute(&delivery).unwrap();
-                let staged = fs::read_dir(root.path().join("queue"))
-                    .unwrap()
-                    .map(|p| p.unwrap().path())
-                    .find(|p| p.extension().is_some_and(|e| e == "request"))
-                    .unwrap();
-                let request: serde_json::Value =
-                    serde_json::from_slice(&fs::read(staged).unwrap()).unwrap();
-                assert_eq!(
-                    request["always_tests"],
-                    serde_json::json!(["test_rules.py"])
-                );
-                match &completion(&mut adapter, &delivery).observations[..] {
-                    [
-                        Observation::Checks {
-                            report,
-                            pass,
-                            failed_tests,
-                            ..
-                        },
-                    ] => {
-                        assert_eq!(*report, !omitted);
-                        assert_eq!(*pass, pre_existing && !omitted);
-                        if !pre_existing && !omitted {
-                            assert_eq!(failed_tests[0].test, "test_rules.py");
-                            assert_eq!(failed_tests[0].message, "Tests must not sleep");
-                        }
-                    }
-                    other => panic!("expected check feedback: {other:?}"),
-                }
+                always_tests_case(round, pre_existing, omitted);
             }
         }
+    }
+}
+
+fn always_tests_case(round: u8, pre_existing: bool, omitted: bool) {
+    const ALWAYS: &str = "Repository always tests";
+    let root = tempfile::tempdir().unwrap();
+    let mut delivery = run(root.path(), false);
+    delivery.round = round;
+    let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+    config.github.repos[0].always_tests = vec!["test_rules.py".into()];
+    let mut adapter = fixture(root.path(), "done").with_repositories(&config.github.repos);
+    let planned = &delivery.checks.as_ref().unwrap().plan[0];
+    let mut results = vec![
+        serde_json::json!({"name": planned.name, "kind": "demonstrating", "custody": "in-process",
+        "verdict": "pass", "tests": [{"test": planned.tests[0], "base": "assertion", "head": "passed", "pre_existing": false, "passed": true}]}),
+    ];
+    if !omitted {
+        results.push(serde_json::json!({"name": ALWAYS, "kind": "regression", "custody": "in-process",
+            "verdict": if pre_existing { "pass" } else { "fail" }, "tests": [{"test": "test_rules.py", "base": if pre_existing { "assertion" } else { "passed" },
+            "head": "assertion", "pre_existing": pre_existing, "passed": pre_existing, "message": "Tests must not sleep"}]}));
+    }
+    fs::write(
+        root.path().join("queue/recorded_results.json"),
+        serde_json::to_vec(&results).unwrap(),
+    )
+    .unwrap();
+    adapter.execute(&delivery).unwrap();
+    let staged = fs::read_dir(root.path().join("queue"))
+        .unwrap()
+        .map(|p| p.unwrap().path())
+        .find(|p| p.extension().is_some_and(|e| e == "request"))
+        .unwrap();
+    let request: serde_json::Value = serde_json::from_slice(&fs::read(staged).unwrap()).unwrap();
+    assert_eq!(
+        request["always_tests"],
+        serde_json::json!(["test_rules.py"])
+    );
+    match &completion(&mut adapter, &delivery).observations[..] {
+        [
+            Observation::Checks {
+                report,
+                pass,
+                failed_tests,
+                ..
+            },
+        ] => {
+            assert_eq!(*report, !omitted);
+            assert_eq!(*pass, pre_existing && !omitted);
+            if !pre_existing && !omitted {
+                assert_eq!(failed_tests[0].test, "test_rules.py");
+                assert_eq!(failed_tests[0].message, "Tests must not sleep");
+            }
+        }
+        other => panic!("expected check feedback: {other:?}"),
     }
 }
 
@@ -625,15 +616,6 @@ fn selected_tests_are_staged_and_their_check_accepted() {
 }
 
 fn phase_evidence_survives_exact_head_receipts() {
-    use serde_json::json;
-    let phases = json!({"base":{"test":"test_value.py::test_value",
-        "setup":{"outcome":"passed","exception":"","assertion":false},
-        "call":{"outcome":"failed","exception":"builtins.AssertionError","assertion":true},
-        "teardown":{"outcome":"failed","exception":"builtins.RuntimeError","assertion":false}},
-        "head":{"test":"test_value.py::test_value",
-        "setup":{"outcome":"passed","exception":"","assertion":false},
-        "call":{"outcome":"passed","exception":"","assertion":false},
-        "teardown":{"outcome":"passed","exception":"","assertion":false}}});
     for damage in [
         "none",
         "wrong_head",
@@ -644,69 +626,83 @@ fn phase_evidence_survives_exact_head_receipts() {
         "order",
         "assertion",
     ] {
-        let root = tempfile::tempdir().unwrap();
-        let delivery = run(root.path(), false);
-        let mut evidence = phases.clone();
-        match damage {
-            "unknown" => evidence["base"]["call"]["locals"] = json!({"request":"untrusted"}),
-            "oversized" => evidence["base"]["teardown"]["exception"] = "x".repeat(201).into(),
-            "order" => {
-                evidence["base"].as_object_mut().unwrap().remove("setup");
-            }
-            "assertion" => evidence["base"]["teardown"]["assertion"] = true.into(),
-            _ => (),
+        phase_evidence_case(damage);
+    }
+}
+
+fn phase_evidence_case(damage: &str) {
+    use serde_json::json;
+    let phases = json!({"base":{"test":"test_value.py::test_value",
+        "setup":{"outcome":"passed","exception":"","assertion":false},
+        "call":{"outcome":"failed","exception":"builtins.AssertionError","assertion":true},
+        "teardown":{"outcome":"failed","exception":"builtins.RuntimeError","assertion":false}},
+        "head":{"test":"test_value.py::test_value",
+        "setup":{"outcome":"passed","exception":"","assertion":false},
+        "call":{"outcome":"passed","exception":"","assertion":false},
+        "teardown":{"outcome":"passed","exception":"","assertion":false}}});
+
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut evidence = phases.clone();
+    match damage {
+        "unknown" => evidence["base"]["call"]["locals"] = json!({"request":"untrusted"}),
+        "oversized" => evidence["base"]["teardown"]["exception"] = "x".repeat(201).into(),
+        "order" => {
+            evidence["base"].as_object_mut().unwrap().remove("setup");
         }
-        let mut adapter = fixture(
-            root.path(),
-            if damage == "wrong_head" {
-                "wrong_head"
-            } else {
-                "done"
-            },
-        );
-        fs::write(root.path().join("queue/recorded_results.json"), serde_json::to_vec(&json!([{
-            "name":"value", "kind":"demonstrating", "custody":"in-process", "verdict":"fail",
-            "tests":[{"test":"test_value.py::test_value", "base":"error", "head":"passed",
-                "pre_existing":false, "passed":false, "message":"Call assertion and teardown RuntimeError.", "phases":evidence}]
-        }])).unwrap()).unwrap();
-        adapter.execute(&delivery).unwrap();
-        if matches!(damage, "digest" | "receipt") {
-            let ending = fs::read_dir(root.path().join("queue"))
-                .unwrap()
-                .map(|e| e.unwrap().path())
-                .find(|p| p.extension().is_some_and(|e| e == "ending"))
-                .unwrap();
-            let mut value: serde_json::Value =
-                serde_json::from_slice(&fs::read(&ending).unwrap()).unwrap();
-            if damage == "digest" {
-                value["endings"][0]["result"]["stdout"]["sha256"] = "b".repeat(64).into();
-            } else {
-                value["endings"][0]["result"]["receipt_sha256"] = serde_json::Value::Null;
-            }
-            fs::write(ending, serde_json::to_vec(&value).unwrap()).unwrap();
+        "assertion" => evidence["base"]["teardown"]["assertion"] = true.into(),
+        _ => (),
+    }
+    let mut adapter = fixture(
+        root.path(),
+        if damage == "wrong_head" {
+            "wrong_head"
+        } else {
+            "done"
+        },
+    );
+    fs::write(root.path().join("queue/recorded_results.json"), serde_json::to_vec(&json!([{
+        "name":"value", "kind":"demonstrating", "custody":"in-process", "verdict":"fail",
+        "tests":[{"test":"test_value.py::test_value", "base":"error", "head":"passed",
+            "pre_existing":false, "passed":false, "message":"Call assertion and teardown RuntimeError.", "phases":evidence}]
+    }])).unwrap()).unwrap();
+    adapter.execute(&delivery).unwrap();
+    if matches!(damage, "digest" | "receipt") {
+        let ending = fs::read_dir(root.path().join("queue"))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.extension().is_some_and(|e| e == "ending"))
+            .unwrap();
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&ending).unwrap()).unwrap();
+        if damage == "digest" {
+            value["endings"][0]["result"]["stdout"]["sha256"] = "b".repeat(64).into();
+        } else {
+            value["endings"][0]["result"]["receipt_sha256"] = serde_json::Value::Null;
         }
-        let ended = completion(&mut adapter, &delivery);
-        match &ended.observations[0] {
-            Observation::Checks {
-                report,
-                pass,
-                results,
-                ..
-            } => {
-                assert_eq!(*report, damage == "none", "{damage}");
-                assert!(
-                    !pass,
-                    "a call assertion with teardown failure must remain invalid RED"
+        fs::write(ending, serde_json::to_vec(&value).unwrap()).unwrap();
+    }
+    let ended = completion(&mut adapter, &delivery);
+    match &ended.observations[0] {
+        Observation::Checks {
+            report,
+            pass,
+            results,
+            ..
+        } => {
+            assert_eq!(*report, damage == "none", "{damage}");
+            assert!(
+                !pass,
+                "a call assertion with teardown failure must remain invalid RED"
+            );
+            if *report {
+                assert_eq!(
+                    results[0]["tests"][0]["phases"], phases,
+                    "review must retain every phase"
                 );
-                if *report {
-                    assert_eq!(
-                        results[0]["tests"][0]["phases"], phases,
-                        "review must retain every phase"
-                    );
-                }
             }
-            other => panic!("expected check evidence, got {other:?}"),
         }
+        other => panic!("expected check evidence, got {other:?}"),
     }
 }
 
@@ -816,7 +812,7 @@ fn bounded_failure_details() {
     );
 }
 
-fn reproducing_check_plan_and_verdict() {
+fn reproducing_check_case(mode: &str, expected: bool) {
     let root = tempfile::tempdir().unwrap();
     let mut delivery = run(root.path(), false);
     let mut value = serde_json::to_value(delivery.checks.as_ref().unwrap()).unwrap();
@@ -829,28 +825,26 @@ fn reproducing_check_plan_and_verdict() {
         "the check plan must carry reproducing checks"
     );
     delivery.checks = Some(parsed.unwrap());
-    for (mode, expected) in [("done", true), ("check_fail", false)] {
-        let trial = tempfile::tempdir().unwrap();
-        let mut adapter = fixture(trial.path(), mode);
-        adapter.execute(&delivery).unwrap();
-        let requests = fs::read_dir(trial.path().join("queue")).unwrap();
-        let path = requests
-            .map(|entry| entry.unwrap().path())
-            .find(|path| {
-                path.extension()
-                    .is_some_and(|extension| extension == "request")
-            })
-            .unwrap();
-        let request: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
-        assert_eq!(
-            request["reviewed"],
-            reviewed.as_str(),
-            "freeze the exact reviewed commit"
-        );
-        let (report, pass, _) = observed(completion(&mut adapter, &delivery));
-        assert!(report);
-        assert_eq!(pass, expected, "a failed reproducer is a failed round");
-    }
+    let trial = tempfile::tempdir().unwrap();
+    let mut adapter = fixture(trial.path(), mode);
+    adapter.execute(&delivery).unwrap();
+    let requests = fs::read_dir(trial.path().join("queue")).unwrap();
+    let path = requests
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "request")
+        })
+        .unwrap();
+    let request: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    assert_eq!(
+        request["reviewed"],
+        reviewed.as_str(),
+        "freeze the exact reviewed commit"
+    );
+    let (report, pass, _) = observed(completion(&mut adapter, &delivery));
+    assert!(report);
+    assert_eq!(pass, expected, "a failed reproducer is a failed round");
 }
 
 /// #393: a forced demonstrating check stages its forcing for the harness, and its
@@ -921,96 +915,77 @@ fn forced_check_is_staged_and_reaches_review() {
     );
 }
 
-fn declared_symptom_identity_is_staged_and_reaches_review() {
-    declared_symptom_identity(false);
-}
-
-fn review662_explicit_subject_symptom_keeps_receipt_bindings() {
-    declared_symptom_identity(true);
-}
-
-fn declared_symptom_identity(explicit_subject: bool) {
+fn declared_symptom_case(explicit_subject: bool, tamper: &str) {
     use sha2::{Digest, Sha256};
-    for tamper in [
-        "none",
-        "base",
-        "head",
-        "forcing",
-        "declaration",
-        "receipt",
-        "zero",
-        "head_symptom",
-        "missing",
-    ] {
-        let root = tempfile::tempdir().unwrap();
-        let mut delivery = run(root.path(), false);
-        let mut value = serde_json::to_value(delivery.checks.as_ref().unwrap()).unwrap();
-        let declaration = serde_json::json!({"node":value["plan"][0]["tests"][0],
-            "exception":"builtins.TimeoutError", "phase":"call", "repeat":1, "parallel":0});
-        value["plan"][0]["declared_symptom"] = declaration.clone();
-        let proof = serde_json::json!({"subjects":["test_value.py::_git"],
-            "observer_support":[], "red_message":"not an assertion"});
-        if explicit_subject {
-            value["plan"][0]["proof"] = proof.clone();
-        }
-        delivery.checks = Some(serde_json::from_value::<CheckRun>(value).unwrap());
-        let planned = &delivery.checks.as_ref().unwrap().plan[0];
-        let records = serde_json::json!([{"event":"start", "schema":1}]);
-        let hash = format!(
-            "{:x}",
-            Sha256::digest(serde_json::to_vec(&records).unwrap())
-        );
-        let mut evidence = serde_json::json!({"base":delivery.checks.as_ref().unwrap().base_sha,
-            "head":delivery.head_sha,"forcing":null,"declaration":declaration,
-            "runs":[{"side":"base","run":1,"outcome":"symptom","sha256":hash,"records":records},
-                    {"side":"head","run":1,"outcome":"passed","sha256":hash,"records":records}]});
-        match tamper {
-            "base" | "head" => evidence[tamper] = "0".repeat(40).into(),
-            "forcing" => evidence["forcing"] = serde_json::json!({"environment":{"OTHER":"1"}}),
-            "declaration" => evidence["declaration"]["repeat"] = 2.into(),
-            "receipt" => evidence["runs"][0]["sha256"] = "0".repeat(64).into(),
-            "zero" => evidence["runs"][0]["outcome"] = "passed".into(),
-            "head_symptom" => evidence["runs"][1]["outcome"] = "symptom".into(),
-            _ => (),
-        }
-        let mut result = serde_json::json!({"name":planned.name,"kind":"demonstrating","custody":"in-process",
-            "verdict":"pass", "declared_symptom":declaration,"symptom_evidence":evidence,
-            "tests":[{"test":planned.tests[0],"base":"error","head":"passed","pre_existing":false,"passed":true}]});
-        if explicit_subject {
-            let mut observers = serde_json::Map::new();
-            observers.insert(planned.tests[0].clone(), "c".repeat(64).into());
-            result["proof"] = serde_json::json!({"rule":"subject-observer-v1", "declaration":proof,
-                "mode":"pytest-outcome", "subjects":{"test_value.py::_git":{"base":"a".repeat(64),"head":"b".repeat(64)}},
-                "source_base_tree_sha256":"f".repeat(64), "base_tree_sha256":"d".repeat(64), "head_tree_sha256":"e".repeat(64),
-                "observer_sha256":observers, "support_sha256":{}});
-        }
-        if tamper == "missing" {
-            result.as_object_mut().unwrap().remove("symptom_evidence");
-        }
-        let mut adapter = fixture(root.path(), "done");
-        fs::write(
-            root.path().join("queue/recorded_results.json"),
-            serde_json::to_vec(&serde_json::json!([result])).unwrap(),
-        )
-        .unwrap();
-        adapter.execute(&delivery).unwrap();
-        let ended = completion(&mut adapter, &delivery);
-        match &ended.observations[..] {
-            [
-                Observation::Checks {
-                    report,
-                    pass,
-                    results,
-                    ..
-                },
-            ] => {
-                assert_eq!(*report && *pass, tamper == "none", "{tamper}");
-                if tamper == "none" {
-                    assert_eq!(results[0]["symptom_evidence"], evidence);
-                }
+
+    let root = tempfile::tempdir().unwrap();
+    let mut delivery = run(root.path(), false);
+    let mut value = serde_json::to_value(delivery.checks.as_ref().unwrap()).unwrap();
+    let declaration = serde_json::json!({"node":value["plan"][0]["tests"][0],
+        "exception":"builtins.TimeoutError", "phase":"call", "repeat":1, "parallel":0});
+    value["plan"][0]["declared_symptom"] = declaration.clone();
+    let proof = serde_json::json!({"subjects":["test_value.py::_git"],
+        "observer_support":[], "red_message":"not an assertion"});
+    if explicit_subject {
+        value["plan"][0]["proof"] = proof.clone();
+    }
+    delivery.checks = Some(serde_json::from_value::<CheckRun>(value).unwrap());
+    let planned = &delivery.checks.as_ref().unwrap().plan[0];
+    let records = serde_json::json!([{"event":"start", "schema":1}]);
+    let hash = format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&records).unwrap())
+    );
+    let mut evidence = serde_json::json!({"base":delivery.checks.as_ref().unwrap().base_sha,
+        "head":delivery.head_sha,"forcing":null,"declaration":declaration,
+        "runs":[{"side":"base","run":1,"outcome":"symptom","sha256":hash,"records":records},
+                {"side":"head","run":1,"outcome":"passed","sha256":hash,"records":records}]});
+    match tamper {
+        "base" | "head" => evidence[tamper] = "0".repeat(40).into(),
+        "forcing" => evidence["forcing"] = serde_json::json!({"environment":{"OTHER":"1"}}),
+        "declaration" => evidence["declaration"]["repeat"] = 2.into(),
+        "receipt" => evidence["runs"][0]["sha256"] = "0".repeat(64).into(),
+        "zero" => evidence["runs"][0]["outcome"] = "passed".into(),
+        "head_symptom" => evidence["runs"][1]["outcome"] = "symptom".into(),
+        _ => (),
+    }
+    let mut result = serde_json::json!({"name":planned.name,"kind":"demonstrating","custody":"in-process",
+        "verdict":"pass", "declared_symptom":declaration,"symptom_evidence":evidence,
+        "tests":[{"test":planned.tests[0],"base":"error","head":"passed","pre_existing":false,"passed":true}]});
+    if explicit_subject {
+        let mut observers = serde_json::Map::new();
+        observers.insert(planned.tests[0].clone(), "c".repeat(64).into());
+        result["proof"] = serde_json::json!({"rule":"subject-observer-v1", "declaration":proof,
+            "mode":"pytest-outcome", "subjects":{"test_value.py::_git":{"base":"a".repeat(64),"head":"b".repeat(64)}},
+            "source_base_tree_sha256":"f".repeat(64), "base_tree_sha256":"d".repeat(64), "head_tree_sha256":"e".repeat(64),
+            "observer_sha256":observers, "support_sha256":{}});
+    }
+    if tamper == "missing" {
+        result.as_object_mut().unwrap().remove("symptom_evidence");
+    }
+    let mut adapter = fixture(root.path(), "done");
+    fs::write(
+        root.path().join("queue/recorded_results.json"),
+        serde_json::to_vec(&serde_json::json!([result])).unwrap(),
+    )
+    .unwrap();
+    adapter.execute(&delivery).unwrap();
+    let ended = completion(&mut adapter, &delivery);
+    match &ended.observations[..] {
+        [
+            Observation::Checks {
+                report,
+                pass,
+                results,
+                ..
+            },
+        ] => {
+            assert_eq!(*report && *pass, tamper == "none", "{tamper}");
+            if tamper == "none" {
+                assert_eq!(results[0]["symptom_evidence"], evidence);
             }
-            other => panic!("expected check observation, got {other:?}"),
         }
+        other => panic!("expected check observation, got {other:?}"),
     }
 }
 
@@ -1155,117 +1130,145 @@ fn unknown_outcomes() {
         1
     );
 }
-fn crash_reuses_seal() {
+/// #802: wait on socket readiness or child exit instead of polling with sleeps.
+fn fixture_connection(
+    listener: &std::os::unix::net::UnixListener,
+    mut child: Option<&mut std::process::Child>,
+) -> std::os::unix::net::UnixStream {
+    use rustix::{
+        event::{PollFd, PollFlags, Timespec, poll},
+        process::{Pid, PidfdFlags, pidfd_open},
+    };
+    let child_fd = child.as_ref().map(|child| {
+        pidfd_open(
+            Pid::from_raw(child.id().try_into().unwrap()).unwrap(),
+            PidfdFlags::empty(),
+        )
+        .unwrap()
+    });
+    let mut events = vec![PollFd::new(listener, PollFlags::IN)];
+    if let Some(fd) = &child_fd {
+        events.push(PollFd::new(fd, PollFlags::IN));
+    }
+    let ready = poll(
+        &mut events,
+        Some(&Timespec {
+            tv_sec: SIGNAL_WAIT.as_secs().try_into().unwrap(),
+            tv_nsec: 0,
+        }),
+    )
+    .unwrap();
+    assert!(
+        ready > 0,
+        "fixture never reached its publication/ending gate"
+    );
+    if let Some(child) = child.as_mut() {
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "adapter child exited before publication"
+        );
+    }
+    assert!(
+        events[0].revents().contains(PollFlags::IN),
+        "fixture socket is ready"
+    );
+    listener.accept().unwrap().0
+}
+
+fn crash_reuses_seal_case(stage: &str) {
     use rustix::{
         event::{PollFd, PollFlags, Timespec, poll},
         process::{Pid, PidfdFlags, Signal, pidfd_open, pidfd_send_signal},
     };
     use std::os::unix::net::UnixListener;
-    for stage in ["before", "after"] {
-        let root = tempfile::tempdir().unwrap();
-        let delivery = run(root.path(), false);
-        fs::write(
-            root.path().join("delivery.json"),
-            serde_json::to_vec(&delivery).unwrap(),
-        )
+
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    fs::write(
+        root.path().join("delivery.json"),
+        serde_json::to_vec(&delivery).unwrap(),
+    )
+    .unwrap();
+    fs::create_dir_all(root.path().join("queue")).unwrap();
+    let socket = root.path().join("queue/publish.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    fs::write(root.path().join("queue/publish_stage"), stage).unwrap();
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .arg("--kill-child")
+        .arg(root.path())
+        .spawn()
         .unwrap();
-        fs::create_dir_all(root.path().join("queue")).unwrap();
-        let socket = root.path().join("queue/publish.sock");
-        let listener = UnixListener::bind(&socket).unwrap();
-        listener.set_nonblocking(true).unwrap();
-        fs::write(root.path().join("queue/publish_stage"), stage).unwrap();
-        let mut child = Command::new(std::env::current_exe().unwrap())
-            .arg("--kill-child")
-            .arg(root.path())
-            .spawn()
-            .unwrap();
-        let deadline = std::time::Instant::now() + SIGNAL_WAIT;
-        let connection = loop {
-            match listener.accept() {
-                Ok((connection, _)) => break connection,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-                Err(error) => panic!("publisher gate: {error}"),
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "fixture never reached publication"
-            );
-            assert!(
-                child.try_wait().unwrap().is_none(),
-                "adapter child exited before publication"
-            );
-            thread::sleep(Duration::from_millis(10));
-        };
-        connection
-            .set_read_timeout(Some(Duration::from_secs(10)))
-            .unwrap();
-        let mut publisher = String::new();
-        let mut connection = BufReader::new(connection);
-        connection.read_line(&mut publisher).unwrap();
-        let pid = Pid::from_raw(publisher.trim().parse().unwrap()).unwrap();
-        let publisher = pidfd_open(pid, PidfdFlags::empty()).unwrap();
-        child.kill().unwrap();
-        assert!(!child.wait().unwrap().success());
-        let mut events = [PollFd::new(&publisher, PollFlags::IN)];
-        let ended = poll(
-            &mut events,
-            Some(&Timespec {
-                tv_sec: 10,
-                tv_nsec: 0,
-            }),
-        )
+    let connection = fixture_connection(&listener, Some(&mut child));
+    connection
+        .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
-        if ended == 0 {
-            pidfd_send_signal(&publisher, Signal::KILL).unwrap();
-        }
-        assert_eq!(ended, 1, "publisher must die with its controller");
-        assert!(events[0].revents().contains(PollFlags::IN));
-        fs::remove_file(root.path().join("queue/publish_stage")).unwrap();
-        let mut adapter = fixture(root.path(), "pending");
-        let key = adapter.action_key(&delivery).unwrap().unwrap();
-        assert!(
-            matches!(
-                adapter.reconcile(&delivery).unwrap(),
-                Reconciliation::Absent
-            ) == (stage == "before")
-        );
-        // Recovery cannot depend on the old checkout, and must use the saved seal.
-        fs::remove_dir_all(&delivery.checks.as_ref().unwrap().repository).unwrap();
-        adapter.execute(&delivery).unwrap();
-        assert_eq!(adapter.action_key(&delivery).unwrap(), Some(key.clone()));
-        assert_eq!(
-            fs::read_to_string(root.path().join("queue/publications"))
-                .unwrap()
-                .lines()
-                .count(),
-            1
-        );
-        let calls: Vec<Vec<String>> = fs::read_to_string(root.path().join("queue/calls.jsonl"))
+    let mut publisher = String::new();
+    let mut connection = BufReader::new(connection);
+    connection.read_line(&mut publisher).unwrap();
+    let pid = Pid::from_raw(publisher.trim().parse().unwrap()).unwrap();
+    let publisher = pidfd_open(pid, PidfdFlags::empty()).unwrap();
+    child.kill().unwrap();
+    assert!(!child.wait().unwrap().success());
+    let mut events = [PollFd::new(&publisher, PollFlags::IN)];
+    let ended = poll(
+        &mut events,
+        Some(&Timespec {
+            tv_sec: 10,
+            tv_nsec: 0,
+        }),
+    )
+    .unwrap();
+    if ended == 0 {
+        pidfd_send_signal(&publisher, Signal::KILL).unwrap();
+    }
+    assert_eq!(ended, 1, "publisher must die with its controller");
+    assert!(events[0].revents().contains(PollFlags::IN));
+    fs::remove_file(root.path().join("queue/publish_stage")).unwrap();
+    let mut adapter = fixture(root.path(), "pending");
+    let key = adapter.action_key(&delivery).unwrap().unwrap();
+    assert!(
+        matches!(
+            adapter.reconcile(&delivery).unwrap(),
+            Reconciliation::Absent
+        ) == (stage == "before")
+    );
+    // Recovery cannot depend on the old checkout, and must use the saved seal.
+    fs::remove_dir_all(&delivery.checks.as_ref().unwrap().repository).unwrap();
+    adapter.execute(&delivery).unwrap();
+    assert_eq!(adapter.action_key(&delivery).unwrap(), Some(key.clone()));
+    assert_eq!(
+        fs::read_to_string(root.path().join("queue/publications"))
             .unwrap()
             .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
-        assert_eq!(
-            calls
-                .iter()
-                .filter(|c| c.contains(&"--seal-only".to_owned()))
-                .count(),
-            1
-        );
-        assert_eq!(
-            calls
-                .iter()
-                .filter(|c| c.contains(&"--publish-sealed".to_owned()))
-                .count(),
-            if stage == "before" { 2 } else { 1 }
-        );
-        // The recovered action is watched, whether it landed before death or was republished.
-        let (sender, receiver) = mpsc::channel();
-        finish(root.path(), key.as_str(), "done");
-        let running = adapter.source().spawn(sender);
-        assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
-        drop(running);
-    }
+            .count(),
+        1
+    );
+    let calls: Vec<Vec<String>> = fs::read_to_string(root.path().join("queue/calls.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|c| c.contains(&"--seal-only".to_owned()))
+            .count(),
+        1
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|c| c.contains(&"--publish-sealed".to_owned()))
+            .count(),
+        if stage == "before" { 2 } else { 1 }
+    );
+    // The recovered action is watched, whether it landed before death or was republished.
+    let (sender, receiver) = mpsc::channel();
+    finish(root.path(), key.as_str(), "done");
+    let running = adapter.source().spawn(sender);
+    assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
+    drop(running);
 }
 
 fn source_thread_delivers_once_and_restarts_idle() {
@@ -1381,74 +1384,72 @@ fn finish(root: &Path, key: &str, mode: &str) {
         String::from_utf8_lossy(&finish.stderr)
     );
 }
-fn invalid_evidence_is_reported_once() {
-    for damage in ["digest", "receipt", "oversized"] {
-        let root = tempfile::tempdir().unwrap();
-        let first = run(root.path(), false);
-        let mut second = first.clone();
-        second.key = "effect:0:7".into();
-        let mut adapter = fixture(root.path(), "done");
-        adapter.execute(&first).unwrap();
-        adapter.execute(&second).unwrap();
-        let key = adapter.action_key(&first).unwrap().unwrap();
-        if damage == "digest" {
-            fs::write(
-                root.path().join(format!("queue/{key}.stdout")),
-                "changed after PB verified it",
-            )
-            .unwrap();
+fn invalid_evidence_case(damage: &str) {
+    let root = tempfile::tempdir().unwrap();
+    let first = run(root.path(), false);
+    let mut second = first.clone();
+    second.key = "effect:0:7".into();
+    let mut adapter = fixture(root.path(), "done");
+    adapter.execute(&first).unwrap();
+    adapter.execute(&second).unwrap();
+    let key = adapter.action_key(&first).unwrap().unwrap();
+    if damage == "digest" {
+        fs::write(
+            root.path().join(format!("queue/{key}.stdout")),
+            "changed after PB verified it",
+        )
+        .unwrap();
+    } else {
+        let path = root.path().join(format!("queue/{key}.ending"));
+        let mut ending: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let evidence = &mut ending["endings"][0]["result"];
+        if damage == "receipt" {
+            evidence["verified"] = false.into();
         } else {
-            let path = root.path().join(format!("queue/{key}.ending"));
-            let mut ending: serde_json::Value =
-                serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-            let evidence = &mut ending["endings"][0]["result"];
-            if damage == "receipt" {
-                evidence["verified"] = false.into();
-            } else {
-                evidence["stdout"]["bytes"] = (8 * 1024 * 1024 + 1).into();
-            }
-            fs::write(path, serde_json::to_vec(&ending).unwrap()).unwrap();
+            evidence["stdout"]["bytes"] = (8 * 1024 * 1024 + 1).into();
         }
-        assert!(!observed(completion(&mut adapter, &first)).0);
-        let (sender, receiver) = mpsc::channel();
-        let running = adapter.source().spawn(sender.clone());
-        let observations: Vec<_> = (0..2)
-            .map(|_| receiver.recv_timeout(SIGNAL_WAIT).unwrap())
-            .collect();
-        drop(running);
-        assert_eq!(
-            observations
-                .iter()
-                .filter(|input| matches!(
-                    input,
-                    tl3_controller::cli::Input::Observation {
-                        observation: Observation::Checks {
-                            report: false,
-                            pass: false,
-                            ..
-                        },
-                        ..
-                    }
-                ))
-                .count(),
-            1
-        );
-        assert!(!observed(completion(&mut adapter, &first)).0);
-        let running = adapter.source().spawn(sender);
-        assert!(matches!(
-            receiver.recv_timeout(Duration::from_millis(1250)),
-            Err(mpsc::RecvTimeoutError::Timeout)
-        ));
-        drop(running);
-        let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
-        assert_eq!(
-            calls
-                .lines()
-                .filter(|line| line.contains("--endings"))
-                .count(),
-            3
-        );
+        fs::write(path, serde_json::to_vec(&ending).unwrap()).unwrap();
     }
+    assert!(!observed(completion(&mut adapter, &first)).0);
+    let (sender, receiver) = mpsc::channel();
+    let running = adapter.source().spawn(sender.clone());
+    let observations: Vec<_> = (0..2)
+        .map(|_| receiver.recv_timeout(SIGNAL_WAIT).unwrap())
+        .collect();
+    drop(running);
+    assert_eq!(
+        observations
+            .iter()
+            .filter(|input| matches!(
+                input,
+                tl3_controller::cli::Input::Observation {
+                    observation: Observation::Checks {
+                        report: false,
+                        pass: false,
+                        ..
+                    },
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
+    assert!(!observed(completion(&mut adapter, &first)).0);
+    let running = adapter.source().spawn(sender);
+    assert!(matches!(
+        receiver.recv_timeout(Duration::from_millis(1250)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    drop(running);
+    let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
+    assert_eq!(
+        calls
+            .lines()
+            .filter(|line| line.contains("--endings"))
+            .count(),
+        3
+    );
 }
 fn reconcile_never_submits() {
     let root = tempfile::tempdir().unwrap();
@@ -1539,54 +1540,52 @@ fn record_path(root: &Path, key: &str, extension: &str) -> PathBuf {
         .join(format!("{encoded}.{extension}"))
 }
 
-fn tool_errors_wait_for_news() {
-    for spawn_failure in [false, true] {
-        let root = tempfile::tempdir().unwrap();
-        let delivery = run(root.path(), false);
-        let bell = Bell::new();
-        let (client, mut settings) = fixture_settings(root.path(), "done", &bell.url);
-        let program = root.path().join("result-python");
-        if spawn_failure {
-            settings.result_tool.program = program.clone();
-        } else {
-            fs::write(root.path().join("queue/garbled_ending"), "true").unwrap();
-        }
-        let mut adapter =
-            Adapter::new(client, settings, &mut crate::startup_ownership::ownership()).unwrap();
-        adapter.execute(&delivery).unwrap();
-        let key = adapter.action_key(&delivery).unwrap().unwrap();
-        let (sender, receiver) = mpsc::channel();
-        let running = adapter.source().spawn(sender.clone());
-        bell.request().reply(0, serde_json::json!([]));
-        let waiting = bell.request();
-        assert!(waiting.line.contains("/v1/wait"));
-        assert!(matches!(
-            receiver.recv_timeout(Duration::from_millis(1250)),
-            Err(mpsc::RecvTimeoutError::Timeout)
-        ));
-        assert!(!record_path(root.path(), &delivery.key, "done").exists());
-        let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
-        assert_eq!(
-            calls.lines().filter(|l| l.contains("--endings")).count(),
-            usize::from(!spawn_failure),
-            "no tool retry without news"
-        );
-        if spawn_failure {
-            drop(running);
-            drop(waiting);
-            std::os::unix::fs::symlink("/usr/bin/python3", program).unwrap();
-            let running = adapter.source().spawn(sender);
-            bell.request().reply(0, serde_json::json!([]));
-            assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
-            drop(running);
-        } else {
-            fs::remove_file(root.path().join("queue/garbled_ending")).unwrap();
-            waiting.reply(1, serde_json::json!([{"seq":1,"dir":"done","key":key}]));
-            assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
-            drop(running);
-        }
-        assert!(record_path(root.path(), &delivery.key, "done").exists());
+fn tool_errors_wait_for_news(spawn_failure: bool) {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let bell = Bell::new();
+    let (client, mut settings) = fixture_settings(root.path(), "done", &bell.url);
+    let program = root.path().join("result-python");
+    if spawn_failure {
+        settings.result_tool.program = program.clone();
+    } else {
+        fs::write(root.path().join("queue/garbled_ending"), "true").unwrap();
     }
+    let mut adapter =
+        Adapter::new(client, settings, &mut crate::startup_ownership::ownership()).unwrap();
+    adapter.execute(&delivery).unwrap();
+    let key = adapter.action_key(&delivery).unwrap().unwrap();
+    let (sender, receiver) = mpsc::channel();
+    let running = adapter.source().spawn(sender.clone());
+    bell.request().reply(0, serde_json::json!([]));
+    let waiting = bell.request();
+    assert!(waiting.line.contains("/v1/wait"));
+    assert!(matches!(
+        receiver.recv_timeout(Duration::from_millis(1250)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    assert!(!record_path(root.path(), &delivery.key, "done").exists());
+    let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
+    assert_eq!(
+        calls.lines().filter(|l| l.contains("--endings")).count(),
+        usize::from(!spawn_failure),
+        "no tool retry without news"
+    );
+    if spawn_failure {
+        drop(running);
+        drop(waiting);
+        std::os::unix::fs::symlink("/usr/bin/python3", program).unwrap();
+        let running = adapter.source().spawn(sender);
+        bell.request().reply(0, serde_json::json!([]));
+        assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
+        drop(running);
+    } else {
+        fs::remove_file(root.path().join("queue/garbled_ending")).unwrap();
+        waiting.reply(1, serde_json::json!([{"seq":1,"dir":"done","key":key}]));
+        assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
+        drop(running);
+    }
+    assert!(record_path(root.path(), &delivery.key, "done").exists());
 }
 
 fn assert_passing_input(input: tl3_controller::cli::Input) {
@@ -2091,19 +2090,7 @@ fn cancellation_keeps_an_inflight_ending_from_replacing_its_marker() {
     fs::write(root.path().join("queue/publish_stage"), "ending").unwrap();
     let (sender, receiver) = mpsc::channel();
     let running = adapter.source().spawn(sender);
-    let deadline = std::time::Instant::now() + SIGNAL_WAIT;
-    let connection = loop {
-        match listener.accept() {
-            Ok((connection, _)) => break connection,
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(error) => panic!("ending gate: {error}"),
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "source did not read ending"
-        );
-        thread::sleep(Duration::from_millis(10));
-    };
+    let connection = fixture_connection(&listener, None);
     connection
         .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
@@ -3386,15 +3373,11 @@ fn first_pb_incident_probes_after_terminal_completion(settings: &tl3_config::Sto
 }
 
 fn main() {
-    if std::env::args().len() == 1
-        || std::env::args().nth(1).as_deref() == Some("--router-regression")
-    {
+    if std::env::args().nth(1).as_deref() == Some("--router-regression") {
         let mut router = workers(support::executor_probe::Probe, "a".repeat(40));
         support::executor_probe::assert_retire_delivery(&mut router);
         println!("test router_retire_delivery ... ok");
-        if std::env::args().len() > 1 {
-            return;
-        }
+        return;
     }
 
     let args: Vec<_> = std::env::args().collect();
@@ -3571,19 +3554,45 @@ fn main() {
         println!("test retirement_continues_after_corrupt_node ... ok");
         return;
     }
-    for (name, test) in [
+    let cases = [
+        (
+            "pb_probe_uses_delivery_class_and_fails_closed",
+            pb_probe_uses_delivery_class_and_fails_closed as fn(),
+        ),
         (
             "oversized_plan_is_refused_before_submission",
             oversized_plan_is_refused_before_submission as fn(),
         ),
         (
-            "repository_test_demand_is_sealed_with_default_and_identity_fallback",
-            repository_test_demand_is_sealed_with_default_and_identity_fallback as fn(),
+            "repository_demand_configured_case_insensitive_match",
+            || {
+                repository_test_demand_case("robtand", "TL3-SANDBOX", 1, true, 4, 12);
+            },
         ),
-        (
-            "repository_image_is_sealed_and_staged_with_global_fallback",
-            repository_image_is_sealed_and_staged_with_global_fallback as fn(),
-        ),
+        ("repository_demand_unconfigured_defaults", || {
+            repository_test_demand_case("RobTand", "tl3-sandbox", 1, false, 1, 2);
+        }),
+        ("repository_demand_other_repository_defaults", || {
+            repository_test_demand_case("RobTand", "other", 1, true, 1, 2);
+        }),
+        ("repository_demand_other_owner_defaults", || {
+            repository_test_demand_case("Other", "tl3-sandbox", 1, true, 1, 2);
+        }),
+        ("repository_demand_other_installation_defaults", || {
+            repository_test_demand_case("RobTand", "tl3-sandbox", 2, true, 1, 2);
+        }),
+        ("repository_image_case_insensitive_match", || {
+            repository_image_case("robtand", "TL3-SANDBOX", 1, "b");
+        }),
+        ("repository_image_other_repository", || {
+            repository_image_case("RobTand", "other", 1, "a");
+        }),
+        ("repository_image_other_owner", || {
+            repository_image_case("Other", "tl3-sandbox", 1, "a");
+        }),
+        ("repository_image_other_installation", || {
+            repository_image_case("RobTand", "tl3-sandbox", 2, "a");
+        }),
         (
             "moving_wait_bell_is_quiet",
             moving_wait_bell_is_quiet as fn(),
@@ -3593,26 +3602,90 @@ fn main() {
             moving_job_reconcile_is_pending,
         ),
         ("job_look_states", job_look_states as fn()),
-        (
-            "reproducing_check_plan_and_verdict",
-            reproducing_check_plan_and_verdict,
-        ),
+        ("reproducing_check_pass", || {
+            reproducing_check_case("done", true)
+        }),
+        ("reproducing_check_fail", || {
+            reproducing_check_case("check_fail", false)
+        }),
         (
             "forced_check_is_staged_and_reaches_review",
             forced_check_is_staged_and_reaches_review,
         ),
-        (
-            "phase_evidence_survives_exact_head_receipts",
-            phase_evidence_survives_exact_head_receipts as fn(),
-        ),
-        (
-            "declared_symptom_identity_is_staged_and_reaches_review",
-            declared_symptom_identity_is_staged_and_reaches_review as fn(),
-        ),
-        (
-            "review662_explicit_subject_symptom_keeps_receipt_bindings",
-            review662_explicit_subject_symptom_keeps_receipt_bindings as fn(),
-        ),
+        ("phase_evidence_case_none", || phase_evidence_case("none")),
+        ("phase_evidence_case_wrong_head", || {
+            phase_evidence_case("wrong_head")
+        }),
+        ("phase_evidence_case_digest", || {
+            phase_evidence_case("digest")
+        }),
+        ("phase_evidence_case_receipt", || {
+            phase_evidence_case("receipt")
+        }),
+        ("phase_evidence_case_unknown", || {
+            phase_evidence_case("unknown")
+        }),
+        ("phase_evidence_case_oversized", || {
+            phase_evidence_case("oversized")
+        }),
+        ("phase_evidence_case_order", || phase_evidence_case("order")),
+        ("phase_evidence_case_assertion", || {
+            phase_evidence_case("assertion")
+        }),
+        ("declared_symptom_case_none", || {
+            declared_symptom_case(false, "none")
+        }),
+        ("declared_symptom_case_base", || {
+            declared_symptom_case(false, "base")
+        }),
+        ("declared_symptom_case_head", || {
+            declared_symptom_case(false, "head")
+        }),
+        ("declared_symptom_case_forcing", || {
+            declared_symptom_case(false, "forcing")
+        }),
+        ("declared_symptom_case_declaration", || {
+            declared_symptom_case(false, "declaration")
+        }),
+        ("declared_symptom_case_receipt", || {
+            declared_symptom_case(false, "receipt")
+        }),
+        ("declared_symptom_case_zero", || {
+            declared_symptom_case(false, "zero")
+        }),
+        ("declared_symptom_case_head_symptom", || {
+            declared_symptom_case(false, "head_symptom")
+        }),
+        ("declared_symptom_case_missing", || {
+            declared_symptom_case(false, "missing")
+        }),
+        ("explicit_subject_symptom_case_none", || {
+            declared_symptom_case(true, "none")
+        }),
+        ("explicit_subject_symptom_case_base", || {
+            declared_symptom_case(true, "base")
+        }),
+        ("explicit_subject_symptom_case_head", || {
+            declared_symptom_case(true, "head")
+        }),
+        ("explicit_subject_symptom_case_forcing", || {
+            declared_symptom_case(true, "forcing")
+        }),
+        ("explicit_subject_symptom_case_declaration", || {
+            declared_symptom_case(true, "declaration")
+        }),
+        ("explicit_subject_symptom_case_receipt", || {
+            declared_symptom_case(true, "receipt")
+        }),
+        ("explicit_subject_symptom_case_zero", || {
+            declared_symptom_case(true, "zero")
+        }),
+        ("explicit_subject_symptom_case_head_symptom", || {
+            declared_symptom_case(true, "head_symptom")
+        }),
+        ("explicit_subject_symptom_case_missing", || {
+            declared_symptom_case(true, "missing")
+        }),
         (
             "subject_observer_identity_is_staged_and_reaches_review",
             subject_observer_identity_is_staged_and_reaches_review as fn(),
@@ -3627,7 +3700,30 @@ fn main() {
             "memory_oom_is_retained_in_check_evidence",
             memory_oom_is_retained_in_check_evidence as fn(),
         ),
-        ("recorded_endings", recorded_endings as fn()),
+        ("recorded_ending_case_done", || {
+            recorded_ending_case("done", (true, true))
+        }),
+        ("recorded_ending_case_failed", || {
+            recorded_ending_case("failed", (true, false))
+        }),
+        ("recorded_ending_case_withdrawn", || {
+            recorded_ending_case("withdrawn", (false, false))
+        }),
+        ("recorded_ending_case_no_report", || {
+            recorded_ending_case("no_report", (false, false))
+        }),
+        ("recorded_ending_case_check_fail", || {
+            recorded_ending_case("check_fail", (true, false))
+        }),
+        ("recorded_ending_case_infrastructure", || {
+            recorded_ending_case("infrastructure", (false, false))
+        }),
+        ("recorded_ending_case_bad_report", || {
+            recorded_ending_case("bad_report", (false, false))
+        }),
+        ("recorded_ending_case_wrong_head", || {
+            recorded_ending_case("wrong_head", (false, false))
+        }),
         (
             "retirement_refuses_active_or_unreadable_jobs",
             retirement_refuses_active_or_unreadable_jobs,
@@ -3641,10 +3737,30 @@ fn main() {
             "stale_always_test_notes_survive_controller_evidence",
             stale_always_test_notes_survive_controller_evidence,
         ),
-        (
-            "always_tests_are_staged_required_and_reported_in_every_round",
-            always_tests_are_staged_required_and_reported_in_every_round,
-        ),
+        ("always_tests_round_0_new_reported", || {
+            always_tests_case(0, false, false)
+        }),
+        ("always_tests_round_0_new_omitted", || {
+            always_tests_case(0, false, true)
+        }),
+        ("always_tests_round_0_pre_existing_reported", || {
+            always_tests_case(0, true, false)
+        }),
+        ("always_tests_round_0_pre_existing_omitted", || {
+            always_tests_case(0, true, true)
+        }),
+        ("always_tests_round_1_new_reported", || {
+            always_tests_case(1, false, false)
+        }),
+        ("always_tests_round_1_new_omitted", || {
+            always_tests_case(1, false, true)
+        }),
+        ("always_tests_round_1_pre_existing_reported", || {
+            always_tests_case(1, true, false)
+        }),
+        ("always_tests_round_1_pre_existing_omitted", || {
+            always_tests_case(1, true, true)
+        }),
         (
             "selected_tests_are_staged_and_their_check_accepted",
             selected_tests_are_staged_and_their_check_accepted,
@@ -3663,13 +3779,27 @@ fn main() {
         ),
         ("pending_and_withdrawal", pending_and_withdrawal),
         ("unknown_outcomes", unknown_outcomes),
-        ("SIGKILL_reuses_seal", crash_reuses_seal),
+        ("SIGKILL_case_before", || crash_reuses_seal_case("before")),
+        ("SIGKILL_case_after", || crash_reuses_seal_case("after")),
         (
             "source_thread_and_restart",
             source_thread_delivers_once_and_restarts_idle,
         ),
-        ("invalid_evidence_once", invalid_evidence_is_reported_once),
-        ("tool_errors_wait_for_news", tool_errors_wait_for_news),
+        ("invalid_evidence_case_digest", || {
+            invalid_evidence_case("digest")
+        }),
+        ("invalid_evidence_case_receipt", || {
+            invalid_evidence_case("receipt")
+        }),
+        ("invalid_evidence_case_oversized", || {
+            invalid_evidence_case("oversized")
+        }),
+        ("tool_errors_garbled_ending_wait_for_news", || {
+            tool_errors_wait_for_news(false);
+        }),
+        ("tool_errors_spawn_failure_wait_for_news", || {
+            tool_errors_wait_for_news(true);
+        }),
         (
             "bell_outage_retries_transient_result_tool_error",
             bell_outage_retries_transient_result_tool_error,
@@ -3709,45 +3839,255 @@ fn main() {
             "footprint_paths_and_merge_base",
             footprint_paths_and_merge_base,
         ),
-    ] {
-        test();
-        println!("test {name} ... ok");
-    }
-    let mut database = support::Database::start();
-    oversized_planner_reply_reaches_plan_feedback(&database.create("pb_plan_budget"));
-    println!("test oversized_planner_reply_reaches_plan_feedback ... ok");
-    result_budget_rejects_repeated_checks();
-    println!("test result_budget_rejects_repeated_checks ... ok");
-    retirement_continues_after_corrupt_node(&database.create("pb_retirement"));
-    println!("test retirement_continues_after_corrupt_node ... ok");
-    through_controller(&database.create("pb_pass"), false, false, false);
-    println!("test recorded_records_reach_kernel ... ok");
-    through_controller(&database.create("pb_footprint"), true, false, false);
-    println!("test outside_footprint_fails_round ... ok");
-    through_controller(&database.create("pb_cancel"), false, true, false);
-    println!("test cancelling_unbound_checks_starts_no_work ... ok");
-    through_controller(&database.create("pb_recover"), false, false, true);
-    println!("test controller_recovers_failed_publication ... ok");
-    through_controller(&database.create("pb_cancel_sealed"), false, true, true);
-    println!("test cancelling_never_published_seal_starts_no_work ... ok");
-    base_moved_completion_keys_each_observation(
-        &database.create("pb_observation_keys"),
-        &database.create("pb_observation_keys_legacy"),
+        (
+            "result_budget_rejects_repeated_checks",
+            result_budget_rejects_repeated_checks,
+        ),
+    ];
+    type DatabaseScenario = fn(&mut support::Database);
+    let database_cases: &[(&str, DatabaseScenario)] = &[
+        ("retained_results_failure_cause_true_sync", |database| {
+            completion_failure_cause(
+                &database.create("pb_retained_true_sync"),
+                "sync",
+                "retained_results",
+            );
+        }),
+        ("retained_results_failure_cause_true_source", |database| {
+            completion_failure_cause(
+                &database.create("pb_retained_true_source"),
+                "source",
+                "retained_results",
+            );
+        }),
+        ("retained_results_failure_cause_true_watch", |database| {
+            completion_failure_cause(
+                &database.create("pb_retained_true_watch"),
+                "watch",
+                "retained_results",
+            );
+        }),
+        (
+            "retained_results_failure_cause_true_allowance",
+            |database| {
+                completion_failure_cause(
+                    &database.create("pb_retained_true_allowance"),
+                    "allowance",
+                    "retained_results",
+                );
+            },
+        ),
+        ("retained_results_failure_cause_false_sync", |database| {
+            completion_failure_cause(
+                &database.create("pb_retained_false_sync"),
+                "sync",
+                "failed_retained_results",
+            );
+        }),
+        ("retained_results_failure_cause_false_source", |database| {
+            completion_failure_cause(
+                &database.create("pb_retained_false_source"),
+                "source",
+                "failed_retained_results",
+            );
+        }),
+        ("retained_results_failure_cause_false_watch", |database| {
+            completion_failure_cause(
+                &database.create("pb_retained_false_watch"),
+                "watch",
+                "failed_retained_results",
+            );
+        }),
+        (
+            "retained_results_failure_cause_false_allowance",
+            |database| {
+                completion_failure_cause(
+                    &database.create("pb_retained_false_allowance"),
+                    "allowance",
+                    "failed_retained_results",
+                );
+            },
+        ),
+        ("completion_failure_cause_sync_true", |database| {
+            completion_failure_cause(
+                &database.create("pb_cause_sync_true"),
+                "sync",
+                "harness_error",
+            );
+        }),
+        ("completion_failure_cause_sync_false", |database| {
+            completion_failure_cause(&database.create("pb_cause_sync_false"), "sync", "no_report");
+        }),
+        ("completion_failure_cause_source_true", |database| {
+            completion_failure_cause(
+                &database.create("pb_cause_source_true"),
+                "source",
+                "harness_error",
+            );
+        }),
+        ("completion_failure_cause_source_false", |database| {
+            completion_failure_cause(
+                &database.create("pb_cause_source_false"),
+                "source",
+                "no_report",
+            );
+        }),
+        ("completion_failure_cause_watch_true", |database| {
+            completion_failure_cause(
+                &database.create("pb_cause_watch_true"),
+                "watch",
+                "harness_error",
+            );
+        }),
+        ("completion_failure_cause_watch_false", |database| {
+            completion_failure_cause(
+                &database.create("pb_cause_watch_false"),
+                "watch",
+                "no_report",
+            );
+        }),
+        ("completion_failure_cause_allowance_true", |database| {
+            completion_failure_cause(
+                &database.create("pb_cause_allowance_true"),
+                "allowance",
+                "harness_error",
+            );
+        }),
+        ("completion_failure_cause_allowance_false", |database| {
+            completion_failure_cause(
+                &database.create("pb_cause_allowance_false"),
+                "allowance",
+                "no_report",
+            );
+        }),
+        (
+            "first_pb_incident_probes_after_terminal_completion",
+            |database| {
+                first_pb_incident_probes_after_terminal_completion(
+                    &database.create("pb_incident_probe"),
+                );
+            },
+        ),
+        (
+            "oversized_planner_reply_reaches_plan_feedback",
+            |database| {
+                oversized_planner_reply_reaches_plan_feedback(&database.create("pb_plan_budget"));
+            },
+        ),
+        ("retirement_continues_after_corrupt_node", |database| {
+            retirement_continues_after_corrupt_node(&database.create("pb_retirement"));
+        }),
+        ("recorded_records_reach_kernel", |database| {
+            through_controller(&database.create("pb_pass"), false, false, false);
+        }),
+        ("outside_footprint_fails_round", |database| {
+            through_controller(&database.create("pb_footprint"), true, false, false);
+        }),
+        ("cancelling_unbound_checks_starts_no_work", |database| {
+            through_controller(&database.create("pb_cancel"), false, true, false);
+        }),
+        ("controller_recovers_failed_publication", |database| {
+            through_controller(&database.create("pb_recover"), false, false, true);
+        }),
+        (
+            "cancelling_never_published_seal_starts_no_work",
+            |database| {
+                through_controller(&database.create("pb_cancel_sealed"), false, true, true);
+            },
+        ),
+        ("base_moved_completion_keys_each_observation", |database| {
+            base_moved_completion_keys_each_observation(
+                &database.create("pb_observation_keys"),
+                &database.create("pb_observation_keys_legacy"),
+            );
+        }),
+        ("quiet_alive_job_is_not_a_failed_read", |database| {
+            quiet_alive_job_is_not_a_failed_read(&database.create("pb_quiet_alive"), false);
+        }),
+        ("unreadable_job_record_is_a_failed_read", |database| {
+            quiet_alive_job_is_not_a_failed_read(&database.create("pb_unreadable"), true);
+        }),
+    ];
+    let names: Vec<_> = std::iter::once("router_retire_delivery")
+        .chain(cases.iter().map(|(name, _)| *name))
+        .chain(database_cases.iter().map(|(name, _)| *name))
+        .collect();
+    let split_counts = [
+        "repository_image_",
+        "repository_demand_",
+        "tool_errors_",
+        "always_tests_",
+        "reproducing_check_",
+        "recorded_ending_case_",
+        "phase_evidence_case_",
+        "invalid_evidence_case_",
+        "declared_symptom_case_",
+        "explicit_subject_symptom_case_",
+        "SIGKILL_case_",
+    ]
+    .map(|prefix| names.iter().filter(|name| name.starts_with(prefix)).count());
+    assert_eq!(
+        split_counts,
+        [4, 5, 2, 8, 2, 8, 8, 3, 9, 9, 2],
+        "independent table rows must be shardable"
     );
-    println!("test base_moved_completion_keys_each_observation ... ok");
-    quiet_alive_job_is_not_a_failed_read(&database.create("pb_quiet_alive"), false);
-    println!("test quiet_alive_job_is_not_a_failed_read ... ok");
-    quiet_alive_job_is_not_a_failed_read(&database.create("pb_unreadable"), true);
-    println!("test unreadable_job_record_is_a_failed_read ... ok");
-    retained_results_failure_causes(&mut database, true);
-    retained_results_failure_causes(&mut database, false);
-    completion_failure_causes(&mut database);
-    first_pb_incident_probes_after_terminal_completion(&database.create("pb_incident_probe"));
-    println!("test first_pb_incident_probes_after_terminal_completion ... ok");
-    pb_probe_uses_delivery_class_and_fails_closed();
-    println!("test pb_probe_uses_delivery_class_and_fails_closed ... ok");
-    database.stop();
-    println!("74 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    assert_eq!(
+        [
+            names
+                .iter()
+                .filter(|name| name.starts_with("completion_failure_cause_"))
+                .count(),
+            usize::from(names.contains(&"first_pb_incident_probes_after_terminal_completion")),
+            usize::from(names.contains(&"pb_probe_uses_delivery_class_and_fails_closed")),
+        ],
+        [8, 1, 1],
+        "#849 completion causes and #850 probes must be registered for sharding"
+    );
+    assert_eq!(
+        names
+            .iter()
+            .filter(|name| name.starts_with("retained_results_failure_cause_"))
+            .count(),
+        8,
+        "#849 retained-envelope controls must be registered for sharding"
+    );
+    assert!(
+        names.contains(&"container_stderr_is_operator_evidence"),
+        "#826 container stderr scenarios must be registered for sharding"
+    );
+    assert_eq!(
+        names.len(),
+        123,
+        "preserve every independent row and all stateful scenarios"
+    );
+    let weights = scenario_shard::weights_ms(
+        &scenario_shard::measured("tl3-controller/prismabuild"),
+        &names,
+    );
+    let groups: Vec<_> = names
+        .iter()
+        .zip(weights)
+        .map(|(name, weight)| (*name, 1, weight))
+        .collect();
+    let mut shard = scenario_shard::Shard::from_groups(&groups);
+    shard.run("router_retire_delivery", || {
+        let mut router = workers(support::executor_probe::Probe, "a".repeat(40));
+        support::executor_probe::assert_retire_delivery(&mut router);
+        println!("test router_retire_delivery ... ok");
+    });
+    for (name, test) in cases {
+        shard.run(name, || {
+            test();
+            println!("test {name} ... ok");
+        });
+    }
+    for (name, test) in database_cases {
+        shard.run(*name, || {
+            startup_ownership::with_database(test);
+            println!("test {name} ... ok");
+        });
+    }
+    shard.finish("PrismaBuild adapter");
 }
 
 fn declared_wait_uses_bell() {
@@ -3805,10 +4145,7 @@ fn source_skips_bad_waits() {
     let mut invalid: serde_json::Value = serde_json::from_slice(&valid).unwrap();
     invalid["wait"]["key"] = serde_json::json!("invalid-key");
     fs::write(directory.join("invalid-key.wait"), invalid.to_string()).unwrap();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    let runtime = PollRuntime::new();
     let (tx, rx) = mpsc::channel();
     assert!(
         runtime
@@ -3841,6 +4178,62 @@ fn source_skips_bad_waits() {
     assert_passing_input(rx.recv_timeout(SIGNAL_WAIT).unwrap());
 }
 
+/// Keep real I/O live while advancing only the watcher's retry clock. #802.
+struct PollRuntime {
+    runtime: tokio::runtime::Runtime,
+    started: tokio::time::Instant,
+    keep_paused: Option<mpsc::Sender<()>>,
+    parked: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl PollRuntime {
+    fn new() -> Self {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (keep_paused, release) = mpsc::channel();
+        let (ready, initialized) = mpsc::channel();
+        let (started, parked) = runtime.block_on(async {
+            tokio::time::pause();
+            let parked = tokio::task::spawn_blocking(move || {
+                ready.send(()).unwrap();
+                // A pending blocking task inhibits automatic clock advancement
+                // during real HTTP/file I/O. A broken fixture still has a real deadline.
+                let _ = release.recv_timeout(SIGNAL_WAIT);
+            });
+            (tokio::time::Instant::now(), parked)
+        });
+        initialized.recv_timeout(SIGNAL_WAIT).unwrap();
+        Self {
+            runtime,
+            started,
+            keep_paused: Some(keep_paused),
+            parked: Some(parked),
+        }
+    }
+
+    fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
+        self.runtime.block_on(async {
+            // Watcher's real capped backoff is five seconds. Advance through it
+            // between observations without changing the watcher or its state.
+            tokio::time::advance(Duration::from_secs(5)).await;
+            future.await
+        })
+    }
+
+    fn elapsed(&self) -> Duration {
+        self.runtime.block_on(async { self.started.elapsed() })
+    }
+}
+
+impl Drop for PollRuntime {
+    fn drop(&mut self) {
+        self.keep_paused.take();
+        self.runtime.block_on(self.parked.take().unwrap()).unwrap();
+    }
+}
+
 fn live_waits_do_not_look_on_bell_reset() {
     let root = tempfile::tempdir().unwrap();
     let delivery = run(root.path(), false);
@@ -3857,10 +4250,7 @@ fn live_waits_do_not_look_on_bell_reset() {
         )
         .unwrap();
     let mut source = adapter.source();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    let runtime = PollRuntime::new();
     let (tx, rx) = mpsc::channel();
     let reset = serde_json::json!({"epoch":"0123456789abcdef0123456789abcdef", "seq":0, "reset":true, "events":[]});
     let mut poll = |response: serde_json::Value| {
@@ -3924,6 +4314,11 @@ fn live_waits_do_not_look_on_bell_reset() {
         tl3_controller::cli::Input::Look { .. }
     ));
     assert!(rx.try_recv().is_err());
+    assert_eq!(
+        runtime.elapsed(),
+        Duration::from_secs(45),
+        "nine polls advance virtual time while preserving every source assertion"
+    );
 }
 
 fn moving_wait_bell_is_quiet() {
@@ -3946,10 +4341,7 @@ fn moving_wait_bell_is_quiet() {
         )
         .unwrap();
     let mut source = adapter.source();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    let runtime = PollRuntime::new();
     let (tx, rx) = mpsc::channel();
     let reset = serde_json::json!({"epoch":"0123456789abcdef0123456789abcdef", "seq":0, "reset":true, "events":[]});
     for response in [
@@ -4070,50 +4462,61 @@ fn repository_test_demand_is_sealed_with_default_and_identity_fallback() {
         ("Other", "tl3-sandbox", 1, true, 1, 2),
         ("RobTand", "tl3-sandbox", 2, true, 1, 2),
     ] {
-        let root = tempfile::tempdir().unwrap();
-        let mut delivery = run(root.path(), false);
-        delivery.repository = Repository {
-            owner: owner.into(),
-            name: name.into(),
-            installation,
-        };
-        let text = include_str!("../../config/example.toml");
-        let text = if configured {
-            text.replace(
-                "installation_id = 1",
-                "installation_id = 1\ntest_demand = { cpus = 4, mem_gb = 12 }",
-            )
-        } else {
-            text.to_owned()
-        };
-        let config = tl3_config::Config::parse(&text).unwrap();
-        let mut adapter = fixture(root.path(), "pending").with_repositories(&config.github.repos);
-        adapter.execute(&delivery).unwrap();
-        let calls: Vec<Vec<String>> = fs::read_to_string(root.path().join("queue/calls.jsonl"))
-            .unwrap()
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
-        let seal = calls
-            .iter()
-            .find(|args| args.iter().any(|arg| arg == "--seal-only"))
-            .unwrap();
+        repository_test_demand_case(owner, name, installation, configured, cpus, mem_gb);
+    }
+}
+
+fn repository_test_demand_case(
+    owner: &str,
+    name: &str,
+    installation: u64,
+    configured: bool,
+    cpus: u32,
+    mem_gb: u32,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let mut delivery = run(root.path(), false);
+    delivery.repository = Repository {
+        owner: owner.into(),
+        name: name.into(),
+        installation,
+    };
+    let text = include_str!("../../config/example.toml");
+    let text = if configured {
+        text.replace(
+            "installation_id = 1",
+            "installation_id = 1\ntest_demand = { cpus = 4, mem_gb = 12 }",
+        )
+    } else {
+        text.to_owned()
+    };
+    let config = tl3_config::Config::parse(&text).unwrap();
+    let mut adapter = fixture(root.path(), "pending").with_repositories(&config.github.repos);
+    adapter.execute(&delivery).unwrap();
+    let calls: Vec<Vec<String>> = fs::read_to_string(root.path().join("queue/calls.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let seal = calls
+        .iter()
+        .find(|args| args.iter().any(|arg| arg == "--seal-only"))
+        .unwrap();
+    assert!(
+        seal.windows(2)
+            .any(|pair| pair == ["--cpus", &cpus.to_string()]),
+        "expected {cpus} CPUs in {seal:?}"
+    );
+    assert!(
+        seal.windows(2)
+            .any(|pair| pair == ["--demand", &format!("mem_gb={mem_gb},gpu=0")]),
+        "expected {mem_gb} GiB in {seal:?}"
+    );
+    for name in ["OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"] {
         assert!(
             seal.windows(2)
-                .any(|pair| pair == ["--cpus", &cpus.to_string()]),
-            "expected {cpus} CPUs in {seal:?}"
+                .any(|pair| pair == ["--env", &format!("{name}={cpus}")])
         );
-        assert!(
-            seal.windows(2)
-                .any(|pair| pair == ["--demand", &format!("mem_gb={mem_gb},gpu=0")]),
-            "expected {mem_gb} GiB in {seal:?}"
-        );
-        for name in ["OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"] {
-            assert!(
-                seal.windows(2)
-                    .any(|pair| pair == ["--env", &format!("{name}={cpus}")])
-            );
-        }
     }
 }
 
@@ -4124,51 +4527,55 @@ fn repository_image_is_sealed_and_staged_with_global_fallback() {
         ("Other", "tl3-sandbox", 1, "a"),
         ("RobTand", "tl3-sandbox", 2, "a"),
     ] {
-        let root = tempfile::tempdir().unwrap();
-        let mut delivery = run(root.path(), false);
-        delivery.repository = Repository {
-            owner: owner.into(),
-            name: name.into(),
-            installation,
-        };
-        let config: tl3_config::Repository = serde_json::from_value(serde_json::json!({
-            "owner":"RobTand", "name":"tl3-sandbox", "installation_id":1,
-            "container_image":format!("sha256:{}", "b".repeat(64))
-        }))
-        .unwrap();
-        let mut adapter = fixture(root.path(), "pending").with_repositories(&[config]);
-        adapter.execute(&delivery).unwrap();
-        let key = adapter.action_key(&delivery).unwrap().unwrap();
-        let request: serde_json::Value = serde_json::from_slice(
-            &fs::read(root.path().join(format!("queue/{key}.request"))).unwrap(),
-        )
-        .unwrap();
-        let image = format!("sha256:{}", expected.repeat(64));
-        assert_eq!(request["image"], image, "staged harness image");
-        let calls: Vec<Vec<String>> = fs::read_to_string(root.path().join("queue/calls.jsonl"))
-            .unwrap()
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
-        let seal = calls
-            .iter()
-            .find(|args| args.iter().any(|arg| arg == "--seal-only"))
-            .unwrap();
-        assert!(
-            seal.windows(2).any(|pair| pair[0] == "--env"
-                && pair[1].starts_with("PRISMABUILD_EPHEMERAL_SCRATCH_DECLARATIONS=")),
-            "Checking must seal the registered disk scratch lifetime"
-        );
-        let index = seal
-            .iter()
-            .position(|arg| arg == "--container-image")
-            .unwrap();
-        assert_eq!(
-            seal[index + 1],
-            image,
-            "PB placement must use the staged image"
-        );
+        repository_image_case(owner, name, installation, expected);
     }
+}
+
+fn repository_image_case(owner: &str, name: &str, installation: u64, expected: &str) {
+    let root = tempfile::tempdir().unwrap();
+    let mut delivery = run(root.path(), false);
+    delivery.repository = Repository {
+        owner: owner.into(),
+        name: name.into(),
+        installation,
+    };
+    let config: tl3_config::Repository = serde_json::from_value(serde_json::json!({
+        "owner":"RobTand", "name":"tl3-sandbox", "installation_id":1,
+        "container_image":format!("sha256:{}", "b".repeat(64))
+    }))
+    .unwrap();
+    let mut adapter = fixture(root.path(), "pending").with_repositories(&[config]);
+    adapter.execute(&delivery).unwrap();
+    let key = adapter.action_key(&delivery).unwrap().unwrap();
+    let request: serde_json::Value = serde_json::from_slice(
+        &fs::read(root.path().join(format!("queue/{key}.request"))).unwrap(),
+    )
+    .unwrap();
+    let image = format!("sha256:{}", expected.repeat(64));
+    assert_eq!(request["image"], image, "staged harness image");
+    let calls: Vec<Vec<String>> = fs::read_to_string(root.path().join("queue/calls.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let seal = calls
+        .iter()
+        .find(|args| args.iter().any(|arg| arg == "--seal-only"))
+        .unwrap();
+    assert!(
+        seal.windows(2).any(|pair| pair[0] == "--env"
+            && pair[1].starts_with("PRISMABUILD_EPHEMERAL_SCRATCH_DECLARATIONS=")),
+        "Checking must seal the registered disk scratch lifetime"
+    );
+    let index = seal
+        .iter()
+        .position(|arg| arg == "--container-image")
+        .unwrap();
+    assert_eq!(
+        seal[index + 1],
+        image,
+        "PB placement must use the staged image"
+    );
 }
 
 fn oversized_plan_is_refused_before_submission() {
