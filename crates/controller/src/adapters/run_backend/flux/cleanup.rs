@@ -29,7 +29,11 @@ pub(super) fn ownership(record: &Record, owned: &RuntimeOwnership) -> Result<()>
         (ExecutionRuntime::Native { .. } | ExecutionRuntime::RootlessPodman { .. }, None) => {}
         (ExecutionRuntime::RootlessPodman { mode, .. }, Some(container)) => {
             let labels = super::lifecycle::labels(owned);
-            if container.mode != *mode || !hex(&container.id, 64) || container.labels != labels || !token(&container.name) {
+            if container.mode != *mode
+                || !hex(&container.id, 64)
+                || container.labels != labels
+                || !token(&container.name)
+            {
                 return Err(BackendError::invalid(
                     "container mode/ID/ownership labels mismatch",
                 ));
@@ -93,9 +97,16 @@ pub(super) fn stopped(record: &Record, run: &BackendId, reference: &BlobRef) -> 
         _ => return Ok(false),
     }
     match (&owned.container, &evidence.container) {
-        (None, None) => Ok(matches!(record.request.runtime.runtime, ExecutionRuntime::Native { .. })),
+        (None, None) => Ok(matches!(
+            record.request.runtime.runtime,
+            ExecutionRuntime::Native { .. }
+        )),
         (Some(container), Some(observed)) => {
-            if observed.name != container.name || observed.name_exists_exit != 1 || observed.sweep_exit != 0 || !observed.remaining_ids.is_empty() || observed.id != container.id
+            if observed.name != container.name
+                || observed.name_exists_exit != 1
+                || observed.sweep_exit != 0
+                || !observed.remaining_ids.is_empty()
+                || observed.id != container.id
                 || observed.remove_exit != 0
                 || observed.exists_exit != 1
                 || observed.sweep_ids.len() > 1
@@ -141,8 +152,12 @@ pub(super) fn stopped(record: &Record, run: &BackendId, reference: &BlobRef) -> 
 }
 
 pub(super) fn all_stopped(record: &Record) -> bool {
-    record.container_launches.values().all(|intent| record.runtime_ownerships.iter().any(|owned| super::lifecycle::matches(intent, owned)))
-        && !record.runtime_ownerships.is_empty()
+    record.container_launches.values().all(|intent| {
+        record
+            .runtime_ownerships
+            .iter()
+            .any(|owned| super::lifecycle::matches(intent, owned))
+    }) && !record.runtime_ownerships.is_empty()
         && record.runtime_ownerships.iter().all(|owned| {
             record
                 .cleanup_evidence
@@ -152,9 +167,23 @@ pub(super) fn all_stopped(record: &Record) -> bool {
 }
 
 fn executions(record: &Record) -> Vec<RuntimeOwnership> {
-    record.runtime_ownerships.iter().cloned().chain(record.container_launches.values()
-        .filter(|intent| !record.runtime_ownerships.iter().any(|owned| owned.execution == intent.launcher.execution))
-        .map(|intent| intent.launcher.clone())).collect()
+    record
+        .runtime_ownerships
+        .iter()
+        .cloned()
+        .chain(
+            record
+                .container_launches
+                .values()
+                .filter(|intent| {
+                    !record
+                        .runtime_ownerships
+                        .iter()
+                        .any(|owned| owned.execution == intent.launcher.execution)
+                })
+                .map(|intent| intent.launcher.clone()),
+        )
+        .collect()
 }
 
 fn result(record: &Record, accepted_execution: Option<String>, reason: &str) -> CleanupResult {
@@ -190,22 +219,22 @@ impl Flux {
             }
             let runtime = debts.join(&record.request.runtime.manifest_digest);
             std::fs::create_dir_all(&runtime)?;
-            let executions: Vec<_> = if record.runtime_ownerships.is_empty() && record.container_launches.is_empty() {
-                vec!["unregistered".to_owned()]
-            } else {
-                executions(&record)
-                    .into_iter()
-                    .filter(|owned| {
-                        !record
-                            .cleanup_evidence
-                            .get(&owned.execution)
-                            .is_some_and(|reference| {
-                                stopped(&record, &owned.run, reference).unwrap_or(false)
-                            })
-                    })
-                    .map(|owned| owned.execution)
-                    .collect()
-            };
+            let executions: Vec<_> =
+                if record.runtime_ownerships.is_empty() && record.container_launches.is_empty() {
+                    vec!["unregistered".to_owned()]
+                } else {
+                    executions(&record)
+                        .into_iter()
+                        .filter(|owned| {
+                            !record.cleanup_evidence.get(&owned.execution).is_some_and(
+                                |reference| {
+                                    stopped(&record, &owned.run, reference).unwrap_or(false)
+                                },
+                            )
+                        })
+                        .map(|owned| owned.execution)
+                        .collect()
+                };
             for execution in executions {
                 atomic(
                     &runtime.join(format!("{}.{}", record.intent.correlation, execution)),
@@ -356,7 +385,11 @@ impl Flux {
                 }
                 let evidence: CleanupEvidence = serde_json::from_slice(&reply.stdout)?;
                 if evidence.ownership != *ownership {
-                    if ownership.container.is_some() { return Err(BackendError::invalid("cleanup helper returned another execution")); }
+                    if ownership.container.is_some() {
+                        return Err(BackendError::invalid(
+                            "cleanup helper returned another execution",
+                        ));
+                    }
                     // Exact name/label lookup may discover the ID/scope after launcher loss.
                     self.bind_launch(owner, evidence.ownership.clone())?;
                 }

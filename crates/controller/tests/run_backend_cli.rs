@@ -1108,7 +1108,8 @@ impl Fixture {
         };
         let frames = self.call(json!({"op":"begin_container_launch","owner":self.intent.owner,"correlation":self.intent.correlation,"launcher":owned}));
         assert_eq!(frames.last().unwrap()["kind"], "result", "{frames:?}");
-        let launch: ContainerLaunchIntent = serde_json::from_value(frames.last().unwrap()["result"]["launch"].clone()).unwrap();
+        let launch: ContainerLaunchIntent =
+            serde_json::from_value(frames.last().unwrap()["result"]["launch"].clone()).unwrap();
         owned.container = Some(ContainerOwnership {
             name: launch.name,
             mode,
@@ -1148,7 +1149,10 @@ fn own_scope_cleanup_requires_exact_generation_absence_and_unpopulated_scope() {
         launcher: ProcessStop::Absent,
         process_group_probe_errno: Some(3),
         container: Some(ContainerStop {
-            name: container.name.clone(), name_exists_exit: 1, sweep_exit: 0, remaining_ids: vec![],
+            name: container.name.clone(),
+            name_exists_exit: 1,
+            sweep_exit: 0,
+            remaining_ids: vec![],
             id: container.id.clone(),
             remove_exit: 0,
             exists_exit: 1,
@@ -1314,7 +1318,10 @@ fn cancellation_uses_independent_cleanup_without_runner_report_after_wrapper_los
         launcher: ProcessStop::Absent,
         process_group_probe_errno: Some(3),
         container: Some(ContainerStop {
-            name: container.name.clone(), name_exists_exit: 1, sweep_exit: 0, remaining_ids: vec![],
+            name: container.name.clone(),
+            name_exists_exit: 1,
+            sweep_exit: 0,
+            remaining_ids: vec![],
             id: container.id.clone(),
             remove_exit: 0,
             exists_exit: 1,
@@ -1441,10 +1448,12 @@ fn append_only_container_executions_require_every_independent_stop() {
     let first = f.container_ownership();
     let mut second = first.clone();
     second.execution = "second-execution".into();
-    let mut launcher = second.clone(); launcher.container = None;
+    let mut launcher = second.clone();
+    launcher.container = None;
     let frames = f.call(json!({"op":"begin_container_launch","owner":f.intent.owner,"correlation":f.intent.correlation,"launcher":launcher}));
     assert_eq!(frames.last().unwrap()["kind"], "result", "{frames:?}");
-    let launch: ContainerLaunchIntent = serde_json::from_value(frames.last().unwrap()["result"]["launch"].clone()).unwrap();
+    let launch: ContainerLaunchIntent =
+        serde_json::from_value(frames.last().unwrap()["result"]["launch"].clone()).unwrap();
     let container = second.container.as_mut().unwrap();
     container.id = "e".repeat(64);
     container.name = launch.name;
@@ -1507,7 +1516,10 @@ fn append_only_container_executions_require_every_independent_stop() {
             launcher: ProcessStop::Absent,
             process_group_probe_errno: Some(3),
             container: Some(ContainerStop {
-            name: container.name.clone(), name_exists_exit: 1, sweep_exit: 0, remaining_ids: vec![],
+                name: container.name.clone(),
+                name_exists_exit: 1,
+                sweep_exit: 0,
+                remaining_ids: vec![],
                 id: container.id.clone(),
                 remove_exit: 0,
                 exists_exit: 1,
@@ -1663,45 +1675,168 @@ fn fresh_native_liveness_is_separate_from_historical_stream_and_terminal_wins() 
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn prelaunch_crash_hang_and_cancel_recover_only_observed_named_container() {
     for bind_after_cancel in [false, true] {
-        let mut f = Fixture::new(); f.podman(ContainerMode::OwnScope, true); f.submit();
+        let mut f = Fixture::new();
+        f.podman(ContainerMode::OwnScope, true);
+        f.submit();
         let observed = f.container_ownership();
-        let mut launcher = observed.clone(); launcher.container = None;
+        let mut launcher = observed.clone();
+        launcher.container = None;
         let again = f.call(json!({"op":"begin_container_launch","owner":f.intent.owner,"correlation":f.intent.correlation,"launcher":launcher}));
         assert_eq!(again.last().unwrap()["code"], "conflict");
         let none = f.call(json!({"op":"retain_runtime","owner":f.intent.owner,"correlation":f.intent.correlation,"ownership":launcher}));
         assert_eq!(none.last().unwrap()["kind"], "error");
-        let absent = CleanupEvidence { schema:"tl3.cleanup_evidence.v1".into(), ownership:launcher.clone(), launcher:ProcessStop::Absent,
-            process_group_probe_errno:Some(3), container:None };
-        let reference = api::durable::blob(&f.intent.output_dir.join("launcher-only.json"), &serde_json::to_vec(&absent).unwrap()).unwrap();
+        let absent = CleanupEvidence {
+            schema: "tl3.cleanup_evidence.v1".into(),
+            ownership: launcher.clone(),
+            launcher: ProcessStop::Absent,
+            process_group_probe_errno: Some(3),
+            container: None,
+        };
+        let reference = api::durable::blob(
+            &f.intent.output_dir.join("launcher-only.json"),
+            &serde_json::to_vec(&absent).unwrap(),
+        )
+        .unwrap();
         let none = f.call(json!({"op":"retain_cleanup","owner":f.intent.owner,"correlation":f.intent.correlation,"evidence":reference}));
         assert_eq!(none.last().unwrap()["result"]["cleanup"]["stopped"], false);
-        assert_eq!(none.last().unwrap()["result"]["cleanup"]["pending_executions"], json!([observed.execution]));
+        assert_eq!(
+            none.last().unwrap()["result"]["cleanup"]["pending_executions"],
+            json!([observed.execution])
+        );
         f.call(json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}));
-        f.events(&[json!({"name":"exception","context":{"type":"cancel","severity":0}}),json!({"name":"clean"})]);
-        assert_eq!(f.attach().last().unwrap()["result"]["observation"]["kind"], "unknown");
+        f.events(&[
+            json!({"name":"exception","context":{"type":"cancel","severity":0}}),
+            json!({"name":"clean"}),
+        ]);
+        assert_eq!(
+            f.attach().last().unwrap()["result"]["observation"]["kind"],
+            "unknown"
+        );
         let held = f.call(json!({"op":"begin_container_launch","owner":f.intent.owner,"correlation":f.intent.correlation,"launcher":launcher}));
         assert_eq!(held.last().unwrap()["kind"], "error");
         if bind_after_cancel {
             let bound = f.call(json!({"op":"bind_container_launch","owner":f.intent.owner,"correlation":f.intent.correlation,"observed":observed}));
-            assert_eq!(bound.last().unwrap()["result"]["binding"]["payload_allowed"], false, "{bound:?}");
+            assert_eq!(
+                bound.last().unwrap()["result"]["binding"]["payload_allowed"],
+                false,
+                "{bound:?}"
+            );
         }
-        let container = observed.container.as_ref().unwrap(); let scope = container.scope.as_ref().unwrap();
-        let mut facts = CleanupEvidence { schema:"tl3.cleanup_evidence.v1".into(), ownership:observed.clone(), launcher:ProcessStop::Absent,
-            process_group_probe_errno:Some(3), container:Some(ContainerStop { name:container.name.clone(), name_exists_exit:1, sweep_exit:0,
-                remaining_ids:vec![container.id.clone()], id:container.id.clone(), remove_exit:0, exists_exit:1, sweep_ids:vec![container.id.clone()],
-                scope:Some(ScopeStop { identity:scope.clone(), observed_invocation_id:None,cgroup_events:None,cgroup_procs:String::new(),active_state:"not-found".into() }) }) };
-        let path = f.intent.output_dir.join(format!("trusted-stop-{}.json", observed.execution));
-        fs::write(&path,serde_json::to_vec(&facts).unwrap()).unwrap();
+        let container = observed.container.as_ref().unwrap();
+        let scope = container.scope.as_ref().unwrap();
+        let mut facts = CleanupEvidence {
+            schema: "tl3.cleanup_evidence.v1".into(),
+            ownership: observed.clone(),
+            launcher: ProcessStop::Absent,
+            process_group_probe_errno: Some(3),
+            container: Some(ContainerStop {
+                name: container.name.clone(),
+                name_exists_exit: 1,
+                sweep_exit: 0,
+                remaining_ids: vec![container.id.clone()],
+                id: container.id.clone(),
+                remove_exit: 0,
+                exists_exit: 1,
+                sweep_ids: vec![container.id.clone()],
+                scope: Some(ScopeStop {
+                    identity: scope.clone(),
+                    observed_invocation_id: None,
+                    cgroup_events: None,
+                    cgroup_procs: String::new(),
+                    active_state: "not-found".into(),
+                }),
+            }),
+        };
+        let path = f
+            .intent
+            .output_dir
+            .join(format!("trusted-stop-{}.json", observed.execution));
+        fs::write(&path, serde_json::to_vec(&facts).unwrap()).unwrap();
         let pending = f.call(json!({"op":"cleanup_runtime","owner":f.intent.owner,"correlation":f.intent.correlation}));
-        assert_eq!(pending.last().unwrap()["result"]["cleanup"]["stopped"], false, "{pending:?}");
+        assert_eq!(
+            pending.last().unwrap()["result"]["cleanup"]["stopped"],
+            false,
+            "{pending:?}"
+        );
         facts.container.as_mut().unwrap().remaining_ids.clear();
-        fs::write(&path,serde_json::to_vec(&facts).unwrap()).unwrap();
+        fs::write(&path, serde_json::to_vec(&facts).unwrap()).unwrap();
         let stopped = f.call(json!({"op":"cleanup_runtime","owner":f.intent.owner,"correlation":f.intent.correlation}));
-        assert_eq!(stopped.last().unwrap()["result"]["cleanup"]["stopped"], true, "{stopped:?}");
-        let terminal=f.attach();
-        assert_eq!(terminal.last().unwrap()["result"]["observation"]["terminal"]["ending"], "cancelled", "{terminal:?}");
-        let reference:BlobRef=serde_json::from_value(terminal.last().unwrap()["result"]["observation"]["terminal"]["receipt"].clone()).unwrap();
-        let receipt:Receipt=serde_json::from_slice(&fs::read(reference.path).unwrap()).unwrap();
-        assert_eq!(receipt.container_launches.len(),1); assert_eq!(receipt.runtime_ownerships,[observed]);
+        assert_eq!(
+            stopped.last().unwrap()["result"]["cleanup"]["stopped"],
+            true,
+            "{stopped:?}"
+        );
+        let terminal = f.attach();
+        assert_eq!(
+            terminal.last().unwrap()["result"]["observation"]["terminal"]["ending"],
+            "cancelled",
+            "{terminal:?}"
+        );
+        let reference: BlobRef = serde_json::from_value(
+            terminal.last().unwrap()["result"]["observation"]["terminal"]["receipt"].clone(),
+        )
+        .unwrap();
+        let receipt: Receipt = serde_json::from_slice(&fs::read(reference.path).unwrap()).unwrap();
+        assert_eq!(receipt.container_launches.len(), 1);
+        assert_eq!(receipt.runtime_ownerships, [observed]);
     }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn prelaunch_and_cancel_serialize_across_separate_cli_processes() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let launch = json!({"op":"begin_container_launch","owner":f.intent.owner,"correlation":f.intent.correlation,"launcher":f.ownership()});
+    let cancel = json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation});
+    let spawn = || {
+        Command::new(env!("CARGO_BIN_EXE_tl3-run-backend"))
+            .args(["--config", f.config.to_str().unwrap()])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap()
+    };
+    let mut first = spawn();
+    let mut second = spawn();
+    writeln!(first.stdin.take().unwrap(), "{launch}").unwrap();
+    writeln!(second.stdin.take().unwrap(), "{cancel}").unwrap();
+    assert!(first.wait_with_output().unwrap().status.success());
+    assert!(second.wait_with_output().unwrap().status.success());
+    let record: api::durable::Record = serde_json::from_slice(
+        &fs::read(
+            f.options
+                .journal_root
+                .join(&f.intent.correlation)
+                .join("state.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(record.cancel_requested);
+    assert!(record.runtime_ownerships.is_empty());
+    for intent in record.container_launches.values() {
+        assert_eq!(intent.launcher, f.ownership());
+        assert!(
+            f.options
+                .journal_root
+                .join("cleanup-debt")
+                .join(&f.request.runtime.manifest_digest)
+                .join(format!(
+                    "{}.{}",
+                    f.intent.correlation, intent.launcher.execution
+                ))
+                .exists()
+        );
+    }
+    let held = f.call(launch);
+    assert_eq!(held.last().unwrap()["kind"], "error");
+    let cleanup = f.call(
+        json!({"op":"cleanup_runtime","owner":f.intent.owner,"correlation":f.intent.correlation}),
+    );
+    assert_eq!(
+        cleanup.last().unwrap()["result"]["cleanup"]["stopped"],
+        false
+    );
 }

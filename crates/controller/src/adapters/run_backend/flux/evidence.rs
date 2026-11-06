@@ -541,7 +541,12 @@ impl Flux {
             || receipt.runtime != record.request.runtime
             || receipt.reservation != record.request.reservation
             || receipt.runtime_ownerships != record.runtime_ownerships
-            || receipt.container_launches != record.container_launches.values().cloned().collect::<Vec<_>>()
+            || receipt.container_launches
+                != record
+                    .container_launches
+                    .values()
+                    .cloned()
+                    .collect::<Vec<_>>()
             || receipt.cleanup != record.cleanup_evidence
             || receipt.ending != terminal.ending
             || receipt.reason != terminal.reason

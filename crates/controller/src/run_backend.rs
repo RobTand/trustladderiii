@@ -624,8 +624,16 @@ pub struct Probe {
 
 /// Implementations own dispatch/recovery, event interpretation and evidence retention.
 pub trait RunBackend {
-    fn begin_container_launch(&self, owner: &Owner, launcher: &RuntimeOwnership) -> Result<ContainerLaunchIntent>;
-    fn bind_container_launch(&self, owner: &Owner, observed: RuntimeOwnership) -> Result<ContainerLaunchBinding>;
+    fn begin_container_launch(
+        &self,
+        owner: &Owner,
+        launcher: &RuntimeOwnership,
+    ) -> Result<ContainerLaunchIntent>;
+    fn bind_container_launch(
+        &self,
+        owner: &Owner,
+        observed: RuntimeOwnership,
+    ) -> Result<ContainerLaunchBinding>;
     fn submit(&self, request: Request, intent: SubmissionIntent) -> Result<Submission>;
     fn attach(
         &self,
