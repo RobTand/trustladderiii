@@ -397,6 +397,15 @@ fn campaign_planned_proof_requires_positive_ordinary_head() {
     report["results"][0]["tests"][0]["head"] = json!("passed");
     assert!(parse(&raw(&report), &job).unwrap().is_some());
     assert!(evaluate(&job, &report).1);
+    report["results"][0]["proof"]["red_classes"] =
+        json!({"tests/test_original.py::test_original": "symptom"});
+    assert!(evaluate(&job, &report).1);
+    for class in ["assertion", "added-name"] {
+        report["results"][0]["proof"]["red_classes"] =
+            json!({"tests/test_original.py::test_original": class});
+        assert_eq!(evaluate(&job, &report).4, Some(HARNESS));
+    }
+    report["results"][0]["proof"].as_object_mut().unwrap().remove("red_classes");
     report["results"][0]["tests"][0]["head"] = json!("error");
     let bytes = raw(&report);
     let (old, _) = recorded_io::run(

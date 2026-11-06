@@ -479,6 +479,7 @@ fn proof_receipt() -> BoxedStrategy<Value> {
             ("head_tree_sha256", sha256()),
         ],
         vec![
+            ("red_classes", map(node(), one_of(&["assertion", "added-name", "symptom"]), 0..=3)),
             (
                 "red_message_matches",
                 map(node(), one_of(&["message", "source-assertion"]), 0..=3),
@@ -1022,6 +1023,9 @@ mod typed {
             ),
             (sha256(), sha256(), sha256()),
             proptest::option::of(btree_map(
+                node(), select(vec![RedClass::Assertion, RedClass::AddedName, RedClass::Symptom]), 0..=3,
+            )),
+            proptest::option::of(btree_map(
                 node(),
                 select(vec![
                     RedMessageMatch::Message,
@@ -1043,6 +1047,7 @@ mod typed {
                 |(
                     (rule, declaration, mode, subjects, observer_sha256, support_sha256),
                     (source_base_tree_sha256, base_tree_sha256, head_tree_sha256),
+                    red_classes,
                     red_message_matches,
                     delay_budget,
                 )| ProofReceipt {
@@ -1056,6 +1061,7 @@ mod typed {
                     base_tree_sha256,
                     head_tree_sha256,
                     red_message_matches,
+                    red_classes,
                     delay_budget,
                 },
             )
@@ -1667,12 +1673,12 @@ fn every_released_report_version_still_parses() {
 fn report_versions_are_written_by_the_action_and_checked_by_the_controller() {
     let action = include_str!("../src/adapters/prismabuild/action.py");
     assert!(
-        action.contains(r#""schema": "tl3.checks.v1""#),
+        action.contains(r#""schema": "tl3.checks.v2""#),
         "action.py writes the report version"
     );
     let vector = vectors().remove(0).1;
     let request = &vector["request"];
-    let future = json!({"schema": "tl3.checks.v2", "effect_key": request["effect_key"],
+    let future = json!({"schema": "tl3.checks.v3", "effect_key": request["effect_key"],
         "base": request["base"], "head": request["head"], "reviewed": request["reviewed"],
         "results": vector["results"]});
     assert!(serde_json::from_value::<CheckReport>(future).is_err());
