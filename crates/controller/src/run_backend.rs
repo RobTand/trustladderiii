@@ -1,6 +1,7 @@
 //! Shared execution transport. Daytime base/head judging remains with the harness.
 pub mod cli;
 pub mod schema;
+pub mod prepared;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -336,6 +337,7 @@ pub struct Event {
     pub sequence: u64,
     pub digest: String,
     pub fact: NativeFact,
+    pub progress: NativeProgress,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -363,8 +365,8 @@ pub struct Receipt {
     pub native_events: Vec<Event>,
     pub evidence: Vec<BlobRef>,
     pub report: Option<BlobRef>,
-    pub runtime_ownership: Option<RuntimeOwnership>,
-    pub cleanup: Option<BlobRef>,
+    pub runtime_ownerships: Vec<RuntimeOwnership>,
+    pub cleanup: std::collections::BTreeMap<String, BlobRef>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -397,6 +399,8 @@ pub struct RunnerReport {
     pub cases: Vec<CaseFact>,
     pub payload: Option<BlobRef>,
     pub runtime_binding: Option<RuntimeBindingInput>,
+    #[serde(default)]
+    pub runtime_bindings: Vec<RuntimeBindingInput>,
     pub cleanup: Option<BlobRef>,
     pub stdout: Option<BlobRef>,
     pub worker_payload: Option<WorkerPayload>,
@@ -480,6 +484,7 @@ pub trait RunBackend {
     fn attach(&self, owner: &Owner, stop: &WatchStop, emit: &mut dyn FnMut(&Event) -> Result<()>) -> Result<Observation>;
     fn cancel(&self, owner: &Owner) -> Result<CancelAck>;
     fn probe(&self, reservation: &Reservation, placement: &Placement) -> Result<Probe>;
+    fn liveness(&self, owner: &Owner) -> Result<Liveness>;
     fn launch_context(&self, owner: &Owner, job: &str) -> Result<LaunchContext>;
     fn retain_runtime(&self, owner: &Owner, ownership: RuntimeOwnership) -> Result<()>;
     fn validate_allocation(&self, owner: &Owner, facts: &AllocationInput) -> Result<CpuGrant>;
@@ -584,6 +589,7 @@ pub struct CpuGrant {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeBindingInput {
+    pub execution: String,
     pub run: BackendId,
     pub request_digest: String,
     pub allocation: BlobRef,
@@ -642,6 +648,8 @@ pub struct CollectorInput {
     pub run: BackendId,
     pub stdout: BlobRef,
     pub runtime_binding: Option<RuntimeBindingInput>,
+    #[serde(default)]
+    pub runtime_bindings: Vec<RuntimeBindingInput>,
     pub cleanup: Option<BlobRef>,
 }
 
@@ -649,6 +657,7 @@ pub struct CollectorInput {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeOwnership {
+    pub execution: String,
     pub run: BackendId,
     pub owner: Owner,
     pub request_digest: String,
@@ -731,7 +740,9 @@ pub struct ScopeStop {
 #[serde(deny_unknown_fields)]
 pub struct CleanupResult {
     pub stopped: bool,
-    pub evidence: Option<BlobRef>,
+    pub evidence: Vec<BlobRef>,
+    pub pending_executions: Vec<String>,
+    pub accepted_execution: Option<String>,
     pub reason: String,
 }
 
@@ -752,3 +763,93 @@ pub const GENERATOR_OUTPUT_BYTES: usize = 32 * 1024 * 1024;
 pub const GENERATOR_ARTIFACT_BYTES: usize = 48 * 1024 * 1024;
 pub const GENERATOR_STDOUT_BYTES: usize = GENERATOR_ARTIFACT_BYTES + 1024 * 1024;
 pub const WORKER_TEST_STDOUT_BYTES: usize = 1024 * 1024;
+
+/// Rust-owned input to immutable pre-submit bundle publication. FXR supplies raw files only.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PrepareBundleInput {
+    pub source_root: PathBuf,
+    pub code_inventory: PathBuf,
+    pub collector: PathBuf,
+    pub cleanup: PathBuf,
+    pub trusted_root: PathBuf,
+    pub producer_commit: String,
+    pub image_inventory: PathBuf,
+    pub image_inspect: PathBuf,
+    pub profile: String,
+    pub mode: ContainerMode,
+    pub prerequisites: ModePrerequisites,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModePrerequisites { pub no_cgroups_supported: bool, pub init_available: bool, pub user_scope_supported: bool }
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CodeInventory { pub interpreter: PathBuf, pub files: Vec<CodeFile> }
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CodeFile { pub path: PathBuf, pub sha256: String, pub bytes: u64 }
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct BundleFile { pub path: PathBuf, pub sha256: String, pub bytes: u64, pub mode: u32 }
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeBundleManifest {
+    pub schema: String,
+    pub owner: String,
+    pub uid: u32,
+    pub producer_commit: String,
+    pub interpreter: PathBuf,
+    pub podman: PathBuf,
+    pub collector: PathBuf,
+    pub cleanup: PathBuf,
+    pub trusted_root: PathBuf,
+    pub files: Vec<BundleFile>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PreparedRuntime { pub bundle: BlobRef, pub runner: RunnerIdentity, pub runtime: RuntimeIdentity, pub scratch_root: PathBuf }
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EventCursor { pub sequence: u64, pub digest: String }
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NativePhase { Queued, Running, Finishing, Terminal, Unknown }
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProgressAuthority { Historical, FreshNative, CommittedTerminal, Unknown }
+
+/// Persisted before the event callback. Historical progress never proves current liveness.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct NativeProgress {
+    pub owner: Owner,
+    pub run: BackendId,
+    pub cursor: EventCursor,
+    pub phase: NativePhase,
+    pub authority: ProgressAuthority,
+}
+
+/// One bounded on-demand observation at the existing scheduled Look boundary, never a poller.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Liveness {
+    pub owner: Owner,
+    pub run: Option<BackendId>,
+    pub cursor: Option<EventCursor>,
+    pub phase: NativePhase,
+    pub authority: ProgressAuthority,
+    pub observed_unix_ms: u64,
+    pub terminal: Option<Terminal>,
+    pub evidence: Option<BlobRef>,
+    pub reason: String,
+}

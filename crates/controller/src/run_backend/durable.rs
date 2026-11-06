@@ -16,9 +16,9 @@ pub struct Record {
     pub events: Vec<Event>,
     pub terminal: Option<Terminal>,
     #[serde(default)]
-    pub runtime_ownership: Option<RuntimeOwnership>,
+    pub runtime_ownerships: Vec<RuntimeOwnership>,
     #[serde(default)]
-    pub cleanup_evidence: Option<BlobRef>,
+    pub cleanup_evidence: std::collections::BTreeMap<String, BlobRef>,
     #[serde(default)]
     pub jobspec: Option<BlobRef>,
     #[serde(default)]

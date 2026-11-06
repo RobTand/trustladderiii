@@ -101,8 +101,9 @@ pub(super) fn request(request: &Request, intent: &SubmissionIntent, options: &Op
             if !token(&host.host) || host.reason.is_empty() || host.reason.len() > 4096 || safe(&host.reason)? != host.reason {
                 return Err(BackendError::invalid("invalid image/runtime host dependency"));
             }
-            if (*mode == ContainerMode::OwnScope) != memory_limit_bytes.is_some() {
-                return Err(BackendError::invalid("own_scope requires explicit per-container memory cap; in_job does not infer enforcement"));
+            if (*mode == ContainerMode::OwnScope) != memory_limit_bytes.is_some()
+                || memory_limit_bytes.is_some_and(|limit| limit != request.reservation.memory_bytes) {
+                return Err(BackendError::invalid("own_scope container cap must equal declared reservation memory; in_job does not infer enforcement"));
             }
         }
     }
@@ -117,6 +118,7 @@ pub(super) fn placement(placement: &Placement) -> Result<()> {
 }
 
 pub(super) fn preflight(request: &Request) -> Result<()> {
+    trusted_artifacts(request)?;
     placement(&request.runtime.placement())?;
     if request.reservation.memory_guarantee == MemoryGuarantee::RequireAdmission {
         return Err(BackendError::invalid("native request-derived memory admission is unqualified"));
@@ -198,5 +200,18 @@ pub(super) fn preflight(request: &Request) -> Result<()> {
     let tracked: BTreeSet<PathBuf> = tracked.split(|b| *b == 0).filter(|s| !s.is_empty())
         .map(|s| std::str::from_utf8(s).map(PathBuf::from).map_err(|_| BackendError::invalid("non-UTF8 tracked path"))).collect::<Result<_>>()?;
     if tracked != paths { return Err(BackendError::invalid("input manifest does not cover the exact tracked tree")); }
+    Ok(())
+}
+
+pub(super) fn trusted_artifacts(request: &Request) -> Result<()> {
+    if let ExecutionRuntime::RootlessPodman { trusted_root, .. } = &request.runtime.runtime {
+        let (manifest, reference) = crate::run_backend::prepared::read_bundle(&request.runner.manifest)?;
+        let root = request.runner.manifest.parent().ok_or_else(|| BackendError::invalid("bundle parent missing"))?;
+        let cleanup = request.runtime.cleanup.as_ref().ok_or_else(|| BackendError::invalid("trusted cleanup missing"))?;
+        if request.runner.manifest != request.runtime.manifest || reference.sha256 != request.runner.manifest_digest || reference.sha256 != request.runtime.manifest_digest
+            || root.join(manifest.collector) != request.runner.executable || root.join(manifest.cleanup) != cleanup.executable || root.join(manifest.trusted_root) != *trusted_root {
+            return Err(BackendError::invalid("runtime/collector/cleanup imports differ from sealed bundle"));
+        }
+    }
     Ok(())
 }

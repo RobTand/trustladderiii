@@ -164,7 +164,7 @@ text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
         frames.last().unwrap()["result"]["submission"].clone()
     }
     fn ownership(&self) -> RuntimeOwnership {
-        RuntimeOwnership { run: BackendId { backend: BackendTag::Flux, instance: self.intent.instance.clone(), uri: self.intent.uri.clone(), job: "fABC".into() },
+        RuntimeOwnership { execution: "fixture-execution".into(), run: BackendId { backend: BackendTag::Flux, instance: self.intent.instance.clone(), uri: self.intent.uri.clone(), job: "fABC".into() },
             owner: Owner { owner: self.intent.owner.clone(), correlation: self.intent.correlation.clone() }, request_digest: self.intent.request_digest.clone(),
             host: "dl380g10".into(), rank: 0, launcher: ProcessIdentity { pid: 1234, start_ticks: 5678 }, process_group: 1234, container: None }
     }
@@ -187,7 +187,7 @@ text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
             request_digest: self.intent.request_digest.clone(), tree: self.request.tree.clone(), runner_digest: self.request.runner.executable_digest.clone(), runtime_digest: self.request.runtime.manifest_digest.clone(),
             suite: self.request.suite.clone(), complete: true, cleanup_complete, tests_started: 1, outcome,
             cases: vec![CaseFact { target: "unit".into(), name: "case".into(), outcome: if outcome == ReportOutcome::TestsFailed { CaseOutcome::Failed } else { CaseOutcome::Passed }, duration_ms: 1, disposition: None }],
-            payload: None, runtime_binding: None, cleanup: Some(BlobRef { sha256: digest(&cleanup_bytes), bytes: cleanup_bytes.len() as u64, path: out.join("cleanup.txt") }), stdout: None, worker_payload: None,
+            payload: None, runtime_binding: None, runtime_bindings: vec![], cleanup: Some(BlobRef { sha256: digest(&cleanup_bytes), bytes: cleanup_bytes.len() as u64, path: out.join("cleanup.txt") }), stdout: None, worker_payload: None,
         };
         fs::write(out.join("report.json"), serde_json::to_vec(&report).unwrap()).unwrap();
     }
@@ -524,7 +524,7 @@ impl Fixture {
         let mode = match self.request.runtime.runtime { ExecutionRuntime::RootlessPodman { mode, .. } => mode, _ => unreachable!() };
         let unit = format!("tl3-{}-fABC-owned.scope", self.intent.correlation);
         let scope = ScopeIdentity { cgroup: format!("/user.slice/user-1000.slice/user@1000.service/app.slice/{unit}"), unit, invocation_id: "c".repeat(32) };
-        let labels = [("tl3.backend", "flux"), ("tl3.uri", self.intent.uri.as_str()), ("tl3.instance", self.intent.instance.as_str()),
+        let labels = [("tl3.backend", "flux"), ("flux.jobid", "fABC"), ("tl3.execution", owned.execution.as_str()), ("tl3.uri", self.intent.uri.as_str()), ("tl3.instance", self.intent.instance.as_str()),
             ("tl3.job", "fABC"), ("tl3.owner", self.intent.owner.as_str()), ("tl3.correlation", self.intent.correlation.as_str()), ("tl3.request_digest", self.intent.request_digest.as_str())]
             .into_iter().map(|(key, value)| (key.to_owned(), value.to_owned())).collect();
         owned.container = Some(ContainerOwnership { mode, id: "d".repeat(64), labels, scope: (mode == ContainerMode::OwnScope).then_some(scope) });
@@ -579,7 +579,7 @@ fn own_scope_runtime_mapping_compares_golden_dl380_sets_and_effective_cap() {
     let allocation = api::durable::blob(&f.intent.output_dir.join("R.json"), &serde_json::to_vec(&json!({"version":1,"execution":{"R_lite":[{"rank":"0","children":{"core":"21-23,30"}}],"nodelist":["dl380g10"]}})).unwrap()).unwrap();
     let topology = api::durable::blob(&f.intent.output_dir.join("topology.json"), &serde_json::to_vec(&TopologyMapping { run: owned.run.clone(), request_digest: f.intent.request_digest.clone(), ranks: vec![RankMapping { rank: 0, host: "dl380g10".into(), cores: [21,22,23,30].into_iter().map(|i| CoreMapping { flux_core: i, os_pus: format!("{i},{}", i+40) }).collect() }] }).unwrap()).unwrap();
     let scope = owned.container.as_ref().unwrap().scope.as_ref().unwrap();
-    let mut facts = RuntimeBindingInput { run: owned.run.clone(), request_digest: f.intent.request_digest.clone(), allocation, topology,
+    let mut facts = RuntimeBindingInput { execution: owned.execution.clone(), run: owned.run.clone(), request_digest: f.intent.request_digest.clone(), allocation, topology,
         host: ProcessPlacement { rank: 0, host: "dl380g10".into(), allowed_cpus: "21-23,30,61-63,70".into(), cgroup: "0::/user.slice/native-broker".into() },
         container: Some(ProcessPlacement { rank: 0, host: "dl380g10".into(), allowed_cpus: "21-23,30,61-63,70".into(), cgroup: format!("0::{}", scope.cgroup) }),
         container_scope: Some(ContainerScopeFacts { unit: scope.unit.clone(), invocation_id: scope.invocation_id.clone(), cgroup: format!("0::{}", scope.cgroup), cpuset_effective: "21-23,30,61-63,70".into(), memory_max: Some(1_073_741_824), memory_swap_max: Some(0), container_id: owned.container.as_ref().unwrap().id.clone() }) };

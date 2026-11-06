@@ -47,7 +47,7 @@ pub(super) fn bounded(reader: impl Read) -> std::io::Result<Vec<u8>> {
 }
 
 impl Flux {
-    fn ensure_generation(&self) -> Result<()> {
+    pub(super) fn ensure_generation(&self) -> Result<()> {
         let Some((run, expected)) = self.options.instance_generation.split_once('/') else { return Ok(()); };
         let mut command = Command::new("/usr/bin/systemctl");
         command.env_clear().envs(&self.options.environment)
@@ -167,7 +167,7 @@ impl Flux {
 #[derive(Deserialize)]
 pub(super) struct Jobs { pub jobs: Vec<Job> }
 #[derive(Deserialize)]
-pub(super) struct Job { pub jobid: String, pub name: String }
+pub(super) struct Job { pub jobid: String, pub name: String, #[serde(default)] pub state: Option<String> }
 /// Exact native original, including resources, placement constraints, duration and task shape.
 #[derive(Deserialize, Serialize, PartialEq, Eq)]
 #[serde(transparent)]
