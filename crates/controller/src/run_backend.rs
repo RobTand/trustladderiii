@@ -74,6 +74,7 @@ impl BackendId {
 pub struct BackendId {
     pub backend: BackendTag,
     pub instance: String,
+    pub uri: String,
     pub job: String,
 }
 
@@ -95,6 +96,14 @@ pub struct LaunchContext {
     pub progress: ProgressPolicy,
     pub native_threads: NonZeroU32,
     pub runtime: ExecutionRuntime,
+    pub placement: LaunchPlacement,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum LaunchPlacement {
+    Observed { allocation: BlobRef, topology: BlobRef, host: String, rank: u32 },
+    Unqualified { reason: String },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -155,6 +164,9 @@ pub struct RuntimeIdentity {
     pub manifest: PathBuf,
     pub manifest_digest: String,
     pub runtime: ExecutionRuntime,
+    pub architecture: String,
+    pub expected_image: Option<String>,
+    pub preflight: BlobRef,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -192,6 +204,7 @@ pub struct Request {
     pub runtime: RuntimeIdentity,
     pub scratch_root: PathBuf,
     pub no_progress_seconds: Option<NonZeroU32>,
+    pub walltime_seconds: NonZeroU32,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -199,6 +212,7 @@ pub struct Request {
 pub struct SubmissionIntent {
     pub backend: BackendTag,
     pub instance: String,
+    pub uri: String,
     pub owner: String,
     pub correlation: String,
     pub request_digest: String,
@@ -308,6 +322,7 @@ pub struct RunnerReport {
     pub outcome: ReportOutcome,
     pub cases: Vec<CaseFact>,
     pub payload: Option<BlobRef>,
+    pub runtime_binding: Option<RuntimeBindingInput>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -373,7 +388,7 @@ pub struct Probe {
 /// Implementations own dispatch/recovery, event interpretation and evidence retention.
 pub trait RunBackend {
     fn submit(&self, request: Request, intent: SubmissionIntent) -> Result<Submission>;
-    fn attach(&self, owner: &Owner, emit: &mut dyn FnMut(&Event) -> Result<()>) -> Result<Observation>;
+    fn attach(&self, owner: &Owner, stop: &WatchStop, emit: &mut dyn FnMut(&Event) -> Result<()>) -> Result<Observation>;
     fn cancel(&self, owner: &Owner) -> Result<CancelAck>;
     fn probe(&self, reservation: &Reservation) -> Result<Probe>;
     fn launch_context(&self, owner: &Owner, job: &str) -> Result<LaunchContext>;
@@ -395,7 +410,48 @@ pub struct Options {
     pub arguments: Vec<String>,
     pub environment: std::collections::BTreeMap<String, String>,
     pub instance_generation: String,
+    pub uri: String,
     pub journal_root: PathBuf,
+    pub bootstrap: HostBootstrap,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HostBootstrap {
+    pub cli: PathBuf,
+    pub config: PathBuf,
+}
+
+/// Stops and reaps local observers through the caller's attach thread; never cancels native execution.
+#[derive(Clone, Default)]
+pub struct WatchStop {
+    inner: std::sync::Arc<std::sync::Mutex<WatchState>>,
+}
+
+#[derive(Default)]
+struct WatchState { stopped: bool, groups: std::collections::BTreeSet<u32> }
+
+impl WatchStop {
+    pub fn stop(&self) {
+        let mut state = self.inner.lock().expect("watch stop mutex");
+        state.stopped = true;
+        for group in &state.groups { kill_group(*group); }
+    }
+    pub fn is_stopped(&self) -> bool { self.inner.lock().expect("watch stop mutex").stopped }
+    pub(crate) fn register(&self, group: u32) {
+        let mut state = self.inner.lock().expect("watch stop mutex");
+        state.groups.insert(group);
+        if state.stopped { kill_group(group); }
+    }
+    pub(crate) fn unregister(&self, group: u32) {
+        self.inner.lock().expect("watch stop mutex").groups.remove(&group);
+    }
+}
+
+pub(crate) fn kill_group(group: u32) {
+    if let Ok(group) = i32::try_from(group) && let Some(group) = rustix::process::Pid::from_raw(group) {
+        let _ = rustix::process::kill_process_group(group, rustix::process::Signal::Kill);
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
