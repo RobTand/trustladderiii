@@ -326,6 +326,11 @@ impl Controller {
         };
         let mut hold = match prior {
             Some(mut hold) => {
+                if !context.branch.is_empty() && hold.context.branch != context.branch {
+                    hold.context = context;
+                    hold.witness = None;
+                    hold.witnessed_ms = None;
+                }
                 // #854b r2.A: later reports can only widen the failed set.
                 hold.reporters_complete &= details.reporters_complete;
                 for reporter in &details.reporters {

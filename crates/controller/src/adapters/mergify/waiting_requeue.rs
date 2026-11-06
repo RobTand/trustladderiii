@@ -95,6 +95,44 @@ impl Adapter {
         Ok(())
     }
 
+    /// #854b r2.B: an existing PR read rebinds a same-head hold after retargeting.
+    /// The original deadline, failed identities and shared command budget remain.
+    fn reconcile_queue_destination(
+        &self,
+        delivery: &Delivery,
+        fresh: &tl3_mergify::Observation,
+        snapshot: Option<&Snapshot>,
+    ) -> Result<()> {
+        let (Some(snapshot), Some(settings)) = (snapshot, &self.store) else {
+            return Ok(());
+        };
+        let (number, head) = enqueue(delivery)?;
+        let Some(mut hold) = crate::queue_cause::held(snapshot, delivery.node(), head)? else {
+            return Ok(());
+        };
+        if hold.repository != delivery.repository || hold.number != number
+            || fresh.pull_request.head.sha != head
+            || hold.context.branch == fresh.pull_request.base.branch
+        {
+            return Ok(());
+        }
+        hold.context = crate::queue_cause::QueueContext {
+            base: fresh.pull_request.base.sha.clone(),
+            branch: fresh.pull_request.base.branch.clone(),
+            batch: None,
+            members: vec![number],
+        };
+        hold.witness = None;
+        hold.witnessed_ms = None;
+        let mut commit = tl3_store::Commit::new(
+            format!("queue-destination:{}:{}:{}", delivery.node().0, head, hold.context.branch),
+            json!({"queue_destination":hold.context.branch}), snapshot,
+        );
+        commit.rows.push(crate::put("queue_holds", crate::queue_cause::key(delivery.node(), head), json!(hold)));
+        tl3_store::Store::open(settings)?.commit(&commit)?;
+        Ok(())
+    }
+
     fn queue_retry_binding(
         &self,
         delivery: &Delivery,
@@ -108,7 +146,11 @@ impl Adapter {
         let Some(hold) = crate::queue_cause::held(&snapshot, delivery.node(), head)? else {
             return Ok(None);
         };
-        if hold.witness.is_none() {
+        if hold.context.branch != fresh.pull_request.base.branch
+            || hold.witness.as_ref().is_none_or(|gate| {
+                gate.context.branch != fresh.pull_request.base.branch
+                    || !gate.healthy_for(&hold.reporters, hold.reporters_complete)
+            }) {
             return Ok(None);
         }
         let mut before = vec![hold.identity];
@@ -627,6 +669,16 @@ impl Adapter {
         }
         let snapshot = self.snapshot()?;
         let (fresh, _) = self.read(delivery, snapshot.as_ref())?;
+        if let Some(snapshot) = &snapshot
+            && let Some(hold) = crate::queue_cause::held(snapshot, delivery.node(), enqueue(delivery)?.1)?
+            && (hold.context.branch != fresh.pull_request.base.branch
+                || hold.witness.as_ref().is_none_or(|gate| {
+                    gate.context.branch != fresh.pull_request.base.branch
+                        || !gate.healthy_for(&hold.reporters, hold.reporters_complete)
+                }))
+        {
+            return Ok(Reconciliation::Pending);
+        }
         let gate = match schedule::dispatch_gate(waiting, None) {
             schedule::DispatchGate::Eligibility => schedule::dispatch_gate(
                 waiting,

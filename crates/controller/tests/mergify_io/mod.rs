@@ -699,6 +699,7 @@ mod properties {
                     "recovery",
                     "has_recovery",
                     "save_recovery",
+                    "reconcile_queue_destination",
                     "queue_retry_binding",
                     "publish_queue_retry",
                     "recovery_eligible",

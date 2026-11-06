@@ -55,6 +55,7 @@ impl Adapter {
             state.pull_request.draft,
             state.pull_request.body.as_deref().unwrap_or_default(),
         )?;
+        self.reconcile_queue_destination(delivery, &state, snapshot)?;
         let proof =
             crate::evidence::publication(delivery, delivery.request_text.as_deref().unwrap_or(""))?;
         let proof = if proof.is_empty() {
