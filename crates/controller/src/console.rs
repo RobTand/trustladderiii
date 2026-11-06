@@ -511,7 +511,7 @@ fn translate(
             let before = commit.rows.len();
             match controller.steer(snapshot, &world, node, &reply, &origin, commit)? {
                 Some(event) => {
-                    controller.apply(snapshot, world.clone(), event, commit)?;
+                    controller.apply(snapshot, world.clone(), event, commit, None)?;
                     let id = node.0.to_string();
                     let changed = commit.rows.iter().any(|row| {
                         matches!(row, tl3_store::RowChange::Put { table, id: row_id, .. }

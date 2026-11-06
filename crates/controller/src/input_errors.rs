@@ -357,8 +357,9 @@ impl Controller {
         let mut commit = Commit::new(format!("consume:{}", row.id), row.value.clone(), snapshot);
         if row.table == "inbox" {
             let observation: Observation = crate::decode_stored(row.value.clone())?;
-            match self.translate(snapshot, &mut world, observation.clone(), &mut commit) {
-                Ok(Some(event)) => self.apply(snapshot, world, event, &mut commit)?,
+            let mut feedback = crate::feedback::Evidence::default();
+            match self.translate(snapshot, &mut world, observation.clone(), &mut commit, &mut feedback) {
+                Ok(Some(event)) => self.apply(snapshot, world, event, &mut commit, Some(&feedback))?,
                 Ok(None) => {}
                 Err(error) => {
                     // This entire transaction is discarded on an error too;
@@ -414,7 +415,7 @@ impl Controller {
                 }
             };
             if let Some(event) = event {
-                self.apply(snapshot, world, event, &mut commit)?;
+                self.apply(snapshot, world, event, &mut commit, None)?;
             }
         }
         Ok(commit)
