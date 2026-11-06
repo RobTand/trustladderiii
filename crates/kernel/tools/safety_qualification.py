@@ -16,7 +16,7 @@ import remote_gate  # noqa: E402
 
 
 CASES = {
-    'retire_upstream_stalled': ('crates/kernel/src/facts.rs', 'm.run_incidents = (m.run_incidents + 1).min(2);', 'm.run_incidents = m.run_incidents.min(2);', '//crates/kernel:verus_facts_transition'),
+    'retire_upstream_stalled': ('crates/kernel/src/facts.rs', '            m.run_incidents = (m.run_incidents + 1).min(2);', '            m.run_incidents = m.run_incidents.min(2);', '//crates/kernel:verus_facts_transition'),
     'retire_outside_push': ('crates/kernel/src/facts.rs', 'update_recheck_head(&mut w.nodes[i], head);', 'let _ = head;', '//crates/kernel:verus_facts_transition'),
     'retire_ci_failed': ('crates/kernel/src/facts.rs', '        failed_round(w, i, ReviewStop::CiFailed, out);', '        failed_round(w, i, ReviewStop::ChecksFailed, out);', '//crates/kernel:verus_facts_ci_failed'),
     'retire_publishing_ci_tests': ('crates/kernel/src/facts.rs', '    let before_enqueue =\n        m.phase == Phase::Publishing && m.current() == Some(Item::Do(EffectKind::Enqueue));', '    let before_enqueue = false;', '//crates/kernel:verus_facts_ci_failed'),
