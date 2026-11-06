@@ -1,6 +1,19 @@
 //! Executable command safety contracts, split to bound each required query.
 use super::*;
 
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #806: neutral public contract for the real answer handler, including stale IDs.
+#[verifier::opaque]
+pub(super) open spec fn answer_post(before: Node, after: Node,
+    question: u64, answer: Answer, next_before: u64, next_after: u64) -> bool {
+    after == port_answers_model::answered(before, question, answer, next_before)
+        && next_after == if port_answers_model::clarifies(before, question, answer) {
+            (next_before + 1) as u64
+        } else { next_before }
+}
+}
+
 kernel_fn! {
 /// Question answer rows / #771: one clarification or one paid continuation.
 pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,

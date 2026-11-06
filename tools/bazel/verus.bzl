@@ -618,6 +618,7 @@ def verus_proofs():
             "kernel::ranks::advance_enabled": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::ranks::advance_pre": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::ranks::advance_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::answers::answer_post": "Logical definition; neutral public answer contract for #806 dispatcher composition.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
