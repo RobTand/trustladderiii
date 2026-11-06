@@ -72,13 +72,26 @@ fn pinned_nine_real_old_current_pass_through_arms_and_helpers() {
             }
         };
         assert_eq!(extract(old), base);
-        assert_eq!(extract(new), extract(production));
+        let mut current = extract(production).to_owned();
+        if name == "Plan" {
+            // #845 persists declared scope in addition to the existing authored locks.
+            let delta: Value = serde_json::from_str(include_str!("declared-scope-delta.json")).unwrap();
+            assert_eq!(current, delta["after"].as_str().unwrap());
+            current = delta["before"].as_str().unwrap().to_owned();
+        }
+        assert_eq!(extract(new), current);
         assert_eq!(extract(old), extract(new));
         assert_eq!(format!("{:x}", Sha256::digest(base)), pins["arms"][name]);
     }
     for name in ["head", "footprint"] {
-        assert_eq!(method(old, name), method(production, name));
-        assert_eq!(method(new, name), method(production, name));
+        let mut current = method(production, name);
+        let delta: Value = serde_json::from_str(include_str!("declared-footprint-delta.json")).unwrap();
+        if name == "footprint" {
+            assert_eq!(current, delta["after"].as_str().unwrap());
+            current = delta["before"].as_str().unwrap();
+        }
+        assert_eq!(method(old, name), current);
+        assert_eq!(method(new, name), current);
         assert_eq!(
             format!("{:x}", Sha256::digest(method(old, name))),
             pins["helpers"][name]

@@ -1,0 +1,10 @@
+[
+  {
+    "before": "                if decision.record {\n",
+    "after": "                let mut pass = decision.pass;\n                let mut report = report;\n                let mut tests = tests;\n                if decision.record {\n                    let delivery =\n                        self.generation_delivery(snapshot, world, node, generation, &sha)?;\n                    if let Some(generated) = self\n                        .adapters\n                        .get(executor::Upstream::Worktrees)?\n                        .check_generation(&delivery)?\n                    {\n                        pass = pass && generated.fresh();\n                        if !generated.fresh() {\n                            report = true;\n                            tests.push(findings::FailedTest {\n                                test: \"configured generator freshness\".into(),\n                                message: findings::clipped(\n                                    &generated.message,\n                                    findings::MAX_MESSAGE_CHARS,\n                                ),\n                            });\n                        }\n                        commit.rows.push(put(\n                            \"generation_evidence\",\n                            format!(\"{}:{sha}\", node.0),\n                            json!(generated),\n                        ));\n                    }\n\n"
+  },
+  {
+    "before": "                        pass: decision.pass,\n                        in_footprint,",
+    "after": "                        pass,\n                        in_footprint,"
+  }
+]
