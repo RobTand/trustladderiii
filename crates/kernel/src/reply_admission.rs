@@ -261,12 +261,12 @@ fn admitted_reply(w: &mut World, i: usize, _generation: u64, reply: Reply,
         }
     }    kernel_proof! {
         if let Reply::MakerNeedsFiles { .. } = reply {
-            assert(port_review_reply::transition_post(after_operation@, *w, i as int,
+            assert(port_replies_maker::transition_post(after_operation@, *w, i as int,
                 after_operation@.nodes@[i as int], reply, before_outputs@, *out)) by {
-                reveal(port_review_reply::transition_post);
-                reveal(port_replies_contracts::transition_post);
                 reveal(port_replies_maker::transition_post);
             }
+            port_replies_maker::unselected_maker(after_operation@, *w, i as int,
+                after_operation@.nodes@[i as int], reply, before_outputs@, *out);
         }
         port_review_admission::accepted(before_reply@, after_operation@, *w, i as int,
             _generation, reply, before_outputs@, *out);

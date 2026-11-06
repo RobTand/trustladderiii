@@ -84,6 +84,18 @@ pub(super) open spec fn transition_post(before: World, after: World, i: int, sou
         }
     }
 }
+/// #806 maker admission: combine the real worker result with W2's review-only frame.
+pub(super) proof fn unselected_maker(before: World, after: World, i: int, source: Node,
+    reply: Reply, out_before: Outbox, out_after: Outbox)
+    requires selected(reply),
+        transition_post(before, after, i, source, reply, out_before, out_after),
+    ensures port_review_reply::transition_post(before, after, i, source, reply, out_before, out_after),
+{
+    port_review_admission::unselected(before, after, i, source, reply, out_before, out_after);
+    reveal(port_review_reply::transition_post);
+    reveal(port_replies_contracts::transition_post);
+}
+
 /// File extension / #806: compose the funded branch without exposing other cases.
 pub(super) proof fn files_paid(before: World, after: World, i: int, files: Footprint,
     fits: bool, out_before: Outbox, out_after: Outbox)

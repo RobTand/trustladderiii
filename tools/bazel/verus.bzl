@@ -1080,6 +1080,7 @@ def verus_proofs():
             "review_failure_incident": ("kernel::port_review_failure#incident", 1),
             "review_progress_admitted": ("kernel::port_review_dispatch#progress_admitted", 1),
             "review_stopping_release": ("kernel::reply_admission#release_stopping_reply", 1),
+            "port_replies_maker_unselected": ("kernel::port_replies_maker#unselected_maker", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
