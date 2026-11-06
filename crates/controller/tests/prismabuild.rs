@@ -2819,8 +2819,8 @@ fn completion_failure_cause(settings: &tl3_config::Store, path: &str, mode: &str
     );
 }
 
-/// #849 extension / Q7 / Q51 / #817: parsed no-report outcomes belong to TL3,
-/// retain their feedback, and wait on a deploy-clearable incident without silence.
+/// #849 extension / Q7 / Q51 / #817: successful PB no-report outcomes are TL3-side;
+/// failed PB endings retain Outside even with the live envelope (found by: review).
 fn retained_results_failure_causes(database: &mut support::Database, successful: bool) {
     let mode = if successful {
         "retained_results"

@@ -94,9 +94,9 @@ fn evidence_with_read(
                 .results
                 .iter()
                 .all(|r| !matches!(r.verdict, Verdict::InfrastructureFailure));
-            // Q51 / #849: the parsed harness's no-report outcome is TL3-side.
-            // Missing PB evidence still follows the unclassified Q7 path below.
-            failure = (!report).then_some(HARNESS);
+            // Q51 / #849: a successful PB action's no-report outcome is TL3-side.
+            // Known PB failures retain the unclassified Q7 path, even with results.
+            failure = (successful && !report).then_some(HARNESS);
             pass = report
                 && successful
                 && parsed

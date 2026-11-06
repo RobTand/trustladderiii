@@ -286,7 +286,7 @@ proptest! {
     fn evidence_io_schedule_matches_before_extraction(
         shape in 0u8..6, opens in prop::collection::vec(any::<bool>(), 0..5),
         reads in prop::collection::vec((0u8..5, prop::collection::vec(any::<u8>(), 0..96)), 0..8),
-        transport_valid in any::<bool>(),
+        transport_valid in any::<bool>(), successful in any::<bool>(),
     ) {
         let (job, mut report) = match shape {
             0 => fixture("error", "assertion", true, true),
@@ -309,6 +309,12 @@ proptest! {
         let make_ending = || {
             let mut ending = ending(&original);
             if !transport_valid { ending.result.as_mut().unwrap().verified = false; }
+            if !successful {
+                ending.status = "failed".into();
+                ending.succeeded = false;
+                ending.exit_code = Some(1);
+                ending.result.as_mut().unwrap().receipt_sha256 = None;
+            }
             ending
         };
         let (mut old, old_calls) = recorded_io::run(opens.clone(), schedule.clone(),
@@ -320,9 +326,9 @@ proptest! {
         prop_assert_eq!(&pinned_calls, &new_calls);
         prop_assert_eq!(&pinned, &new);
         prop_assert_eq!(old_calls, new_calls);
-        // Q51/#849 changes the class only when the typed no-report case parsed.
+        // Q51/#849 changes the class only for successful PB with parsed no-report.
         // All reads, findings, results and other outcomes still match the frozen shell.
-        if shape == 2 && old["results"].as_array().is_some_and(|r| !r.is_empty()) {
+        if successful && shape == 2 && old["results"].as_array().is_some_and(|r| !r.is_empty()) {
             prop_assert_eq!(&old["class"], &Value::Null);
             old["class"] = json!(HARNESS);
         }
