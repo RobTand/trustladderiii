@@ -178,31 +178,20 @@ fn completion(adapter: &mut Adapter, delivery: &Delivery) -> Completion {
         _ => panic!("expected ending"),
     }
 }
-fn recorded_endings() {
-    for (mode, expected) in [
-        ("done", (true, true)),
-        ("failed", (true, false)),
-        ("withdrawn", (false, false)),
-        ("no_report", (false, false)),
-        ("check_fail", (true, false)),
-        ("infrastructure", (false, false)),
-        ("bad_report", (false, false)),
-        ("wrong_head", (false, false)),
-    ] {
-        let root = tempfile::tempdir().unwrap();
-        let delivery = run(root.path(), false);
-        let mut adapter = fixture(root.path(), mode);
-        assert!(adapter.execute(&delivery).unwrap().observations.is_empty());
-        let (report, pass, paths) = observed(completion(&mut adapter, &delivery));
-        assert_eq!((report, pass), expected, "{mode}");
-        assert_eq!(paths, ["value.py"]);
-        let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
-        assert!(
-            calls.contains("--seal-only")
-                && calls.contains("--max-attempts\", \"1")
-                && !calls.contains("--timeout-s")
-        );
-    }
+fn recorded_ending_case(mode: &str, expected: (bool, bool)) {
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut adapter = fixture(root.path(), mode);
+    assert!(adapter.execute(&delivery).unwrap().observations.is_empty());
+    let (report, pass, paths) = observed(completion(&mut adapter, &delivery));
+    assert_eq!((report, pass), expected, "{mode}");
+    assert_eq!(paths, ["value.py"]);
+    let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
+    assert!(
+        calls.contains("--seal-only")
+            && calls.contains("--max-attempts\", \"1")
+            && !calls.contains("--timeout-s")
+    );
 }
 fn memory_oom_is_retained_in_check_evidence() {
     let root = tempfile::tempdir().unwrap();
@@ -615,15 +604,6 @@ fn selected_tests_are_staged_and_their_check_accepted() {
 }
 
 fn phase_evidence_survives_exact_head_receipts() {
-    use serde_json::json;
-    let phases = json!({"base":{"test":"test_value.py::test_value",
-        "setup":{"outcome":"passed","exception":"","assertion":false},
-        "call":{"outcome":"failed","exception":"builtins.AssertionError","assertion":true},
-        "teardown":{"outcome":"failed","exception":"builtins.RuntimeError","assertion":false}},
-        "head":{"test":"test_value.py::test_value",
-        "setup":{"outcome":"passed","exception":"","assertion":false},
-        "call":{"outcome":"passed","exception":"","assertion":false},
-        "teardown":{"outcome":"passed","exception":"","assertion":false}}});
     for damage in [
         "none",
         "wrong_head",
@@ -634,69 +614,83 @@ fn phase_evidence_survives_exact_head_receipts() {
         "order",
         "assertion",
     ] {
-        let root = tempfile::tempdir().unwrap();
-        let delivery = run(root.path(), false);
-        let mut evidence = phases.clone();
-        match damage {
-            "unknown" => evidence["base"]["call"]["locals"] = json!({"request":"untrusted"}),
-            "oversized" => evidence["base"]["teardown"]["exception"] = "x".repeat(201).into(),
-            "order" => {
-                evidence["base"].as_object_mut().unwrap().remove("setup");
-            }
-            "assertion" => evidence["base"]["teardown"]["assertion"] = true.into(),
-            _ => (),
+        phase_evidence_case(damage);
+    }
+}
+
+fn phase_evidence_case(damage: &str) {
+    use serde_json::json;
+    let phases = json!({"base":{"test":"test_value.py::test_value",
+        "setup":{"outcome":"passed","exception":"","assertion":false},
+        "call":{"outcome":"failed","exception":"builtins.AssertionError","assertion":true},
+        "teardown":{"outcome":"failed","exception":"builtins.RuntimeError","assertion":false}},
+        "head":{"test":"test_value.py::test_value",
+        "setup":{"outcome":"passed","exception":"","assertion":false},
+        "call":{"outcome":"passed","exception":"","assertion":false},
+        "teardown":{"outcome":"passed","exception":"","assertion":false}}});
+
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mut evidence = phases.clone();
+    match damage {
+        "unknown" => evidence["base"]["call"]["locals"] = json!({"request":"untrusted"}),
+        "oversized" => evidence["base"]["teardown"]["exception"] = "x".repeat(201).into(),
+        "order" => {
+            evidence["base"].as_object_mut().unwrap().remove("setup");
         }
-        let mut adapter = fixture(
-            root.path(),
-            if damage == "wrong_head" {
-                "wrong_head"
-            } else {
-                "done"
-            },
-        );
-        fs::write(root.path().join("queue/recorded_results.json"), serde_json::to_vec(&json!([{
-            "name":"value", "kind":"demonstrating", "custody":"in-process", "verdict":"fail",
-            "tests":[{"test":"test_value.py::test_value", "base":"error", "head":"passed",
-                "pre_existing":false, "passed":false, "message":"Call assertion and teardown RuntimeError.", "phases":evidence}]
-        }])).unwrap()).unwrap();
-        adapter.execute(&delivery).unwrap();
-        if matches!(damage, "digest" | "receipt") {
-            let ending = fs::read_dir(root.path().join("queue"))
-                .unwrap()
-                .map(|e| e.unwrap().path())
-                .find(|p| p.extension().is_some_and(|e| e == "ending"))
-                .unwrap();
-            let mut value: serde_json::Value =
-                serde_json::from_slice(&fs::read(&ending).unwrap()).unwrap();
-            if damage == "digest" {
-                value["endings"][0]["result"]["stdout"]["sha256"] = "b".repeat(64).into();
-            } else {
-                value["endings"][0]["result"]["receipt_sha256"] = serde_json::Value::Null;
-            }
-            fs::write(ending, serde_json::to_vec(&value).unwrap()).unwrap();
+        "assertion" => evidence["base"]["teardown"]["assertion"] = true.into(),
+        _ => (),
+    }
+    let mut adapter = fixture(
+        root.path(),
+        if damage == "wrong_head" {
+            "wrong_head"
+        } else {
+            "done"
+        },
+    );
+    fs::write(root.path().join("queue/recorded_results.json"), serde_json::to_vec(&json!([{
+        "name":"value", "kind":"demonstrating", "custody":"in-process", "verdict":"fail",
+        "tests":[{"test":"test_value.py::test_value", "base":"error", "head":"passed",
+            "pre_existing":false, "passed":false, "message":"Call assertion and teardown RuntimeError.", "phases":evidence}]
+    }])).unwrap()).unwrap();
+    adapter.execute(&delivery).unwrap();
+    if matches!(damage, "digest" | "receipt") {
+        let ending = fs::read_dir(root.path().join("queue"))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.extension().is_some_and(|e| e == "ending"))
+            .unwrap();
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&ending).unwrap()).unwrap();
+        if damage == "digest" {
+            value["endings"][0]["result"]["stdout"]["sha256"] = "b".repeat(64).into();
+        } else {
+            value["endings"][0]["result"]["receipt_sha256"] = serde_json::Value::Null;
         }
-        let ended = completion(&mut adapter, &delivery);
-        match &ended.observations[0] {
-            Observation::Checks {
-                report,
-                pass,
-                results,
-                ..
-            } => {
-                assert_eq!(*report, damage == "none", "{damage}");
-                assert!(
-                    !pass,
-                    "a call assertion with teardown failure must remain invalid RED"
+        fs::write(ending, serde_json::to_vec(&value).unwrap()).unwrap();
+    }
+    let ended = completion(&mut adapter, &delivery);
+    match &ended.observations[0] {
+        Observation::Checks {
+            report,
+            pass,
+            results,
+            ..
+        } => {
+            assert_eq!(*report, damage == "none", "{damage}");
+            assert!(
+                !pass,
+                "a call assertion with teardown failure must remain invalid RED"
+            );
+            if *report {
+                assert_eq!(
+                    results[0]["tests"][0]["phases"], phases,
+                    "review must retain every phase"
                 );
-                if *report {
-                    assert_eq!(
-                        results[0]["tests"][0]["phases"], phases,
-                        "review must retain every phase"
-                    );
-                }
             }
-            other => panic!("expected check evidence, got {other:?}"),
         }
+        other => panic!("expected check evidence, got {other:?}"),
     }
 }
 
@@ -849,96 +843,77 @@ fn forced_check_is_staged_and_reaches_review() {
     );
 }
 
-fn declared_symptom_identity_is_staged_and_reaches_review() {
-    declared_symptom_identity(false);
-}
-
-fn review662_explicit_subject_symptom_keeps_receipt_bindings() {
-    declared_symptom_identity(true);
-}
-
-fn declared_symptom_identity(explicit_subject: bool) {
+fn declared_symptom_case(explicit_subject: bool, tamper: &str) {
     use sha2::{Digest, Sha256};
-    for tamper in [
-        "none",
-        "base",
-        "head",
-        "forcing",
-        "declaration",
-        "receipt",
-        "zero",
-        "head_symptom",
-        "missing",
-    ] {
-        let root = tempfile::tempdir().unwrap();
-        let mut delivery = run(root.path(), false);
-        let mut value = serde_json::to_value(delivery.checks.as_ref().unwrap()).unwrap();
-        let declaration = serde_json::json!({"node":value["plan"][0]["tests"][0],
-            "exception":"builtins.TimeoutError", "phase":"call", "repeat":1, "parallel":0});
-        value["plan"][0]["declared_symptom"] = declaration.clone();
-        let proof = serde_json::json!({"subjects":["test_value.py::_git"],
-            "observer_support":[], "red_message":"not an assertion"});
-        if explicit_subject {
-            value["plan"][0]["proof"] = proof.clone();
-        }
-        delivery.checks = Some(serde_json::from_value::<CheckRun>(value).unwrap());
-        let planned = &delivery.checks.as_ref().unwrap().plan[0];
-        let records = serde_json::json!([{"event":"start", "schema":1}]);
-        let hash = format!(
-            "{:x}",
-            Sha256::digest(serde_json::to_vec(&records).unwrap())
-        );
-        let mut evidence = serde_json::json!({"base":delivery.checks.as_ref().unwrap().base_sha,
-            "head":delivery.head_sha,"forcing":null,"declaration":declaration,
-            "runs":[{"side":"base","run":1,"outcome":"symptom","sha256":hash,"records":records},
-                    {"side":"head","run":1,"outcome":"passed","sha256":hash,"records":records}]});
-        match tamper {
-            "base" | "head" => evidence[tamper] = "0".repeat(40).into(),
-            "forcing" => evidence["forcing"] = serde_json::json!({"environment":{"OTHER":"1"}}),
-            "declaration" => evidence["declaration"]["repeat"] = 2.into(),
-            "receipt" => evidence["runs"][0]["sha256"] = "0".repeat(64).into(),
-            "zero" => evidence["runs"][0]["outcome"] = "passed".into(),
-            "head_symptom" => evidence["runs"][1]["outcome"] = "symptom".into(),
-            _ => (),
-        }
-        let mut result = serde_json::json!({"name":planned.name,"kind":"demonstrating","custody":"in-process",
-            "verdict":"pass", "declared_symptom":declaration,"symptom_evidence":evidence,
-            "tests":[{"test":planned.tests[0],"base":"error","head":"passed","pre_existing":false,"passed":true}]});
-        if explicit_subject {
-            let mut observers = serde_json::Map::new();
-            observers.insert(planned.tests[0].clone(), "c".repeat(64).into());
-            result["proof"] = serde_json::json!({"rule":"subject-observer-v1", "declaration":proof,
-                "mode":"pytest-outcome", "subjects":{"test_value.py::_git":{"base":"a".repeat(64),"head":"b".repeat(64)}},
-                "source_base_tree_sha256":"f".repeat(64), "base_tree_sha256":"d".repeat(64), "head_tree_sha256":"e".repeat(64),
-                "observer_sha256":observers, "support_sha256":{}});
-        }
-        if tamper == "missing" {
-            result.as_object_mut().unwrap().remove("symptom_evidence");
-        }
-        let mut adapter = fixture(root.path(), "done");
-        fs::write(
-            root.path().join("queue/recorded_results.json"),
-            serde_json::to_vec(&serde_json::json!([result])).unwrap(),
-        )
-        .unwrap();
-        adapter.execute(&delivery).unwrap();
-        let ended = completion(&mut adapter, &delivery);
-        match &ended.observations[..] {
-            [
-                Observation::Checks {
-                    report,
-                    pass,
-                    results,
-                    ..
-                },
-            ] => {
-                assert_eq!(*report && *pass, tamper == "none", "{tamper}");
-                if tamper == "none" {
-                    assert_eq!(results[0]["symptom_evidence"], evidence);
-                }
+
+    let root = tempfile::tempdir().unwrap();
+    let mut delivery = run(root.path(), false);
+    let mut value = serde_json::to_value(delivery.checks.as_ref().unwrap()).unwrap();
+    let declaration = serde_json::json!({"node":value["plan"][0]["tests"][0],
+        "exception":"builtins.TimeoutError", "phase":"call", "repeat":1, "parallel":0});
+    value["plan"][0]["declared_symptom"] = declaration.clone();
+    let proof = serde_json::json!({"subjects":["test_value.py::_git"],
+        "observer_support":[], "red_message":"not an assertion"});
+    if explicit_subject {
+        value["plan"][0]["proof"] = proof.clone();
+    }
+    delivery.checks = Some(serde_json::from_value::<CheckRun>(value).unwrap());
+    let planned = &delivery.checks.as_ref().unwrap().plan[0];
+    let records = serde_json::json!([{"event":"start", "schema":1}]);
+    let hash = format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&records).unwrap())
+    );
+    let mut evidence = serde_json::json!({"base":delivery.checks.as_ref().unwrap().base_sha,
+        "head":delivery.head_sha,"forcing":null,"declaration":declaration,
+        "runs":[{"side":"base","run":1,"outcome":"symptom","sha256":hash,"records":records},
+                {"side":"head","run":1,"outcome":"passed","sha256":hash,"records":records}]});
+    match tamper {
+        "base" | "head" => evidence[tamper] = "0".repeat(40).into(),
+        "forcing" => evidence["forcing"] = serde_json::json!({"environment":{"OTHER":"1"}}),
+        "declaration" => evidence["declaration"]["repeat"] = 2.into(),
+        "receipt" => evidence["runs"][0]["sha256"] = "0".repeat(64).into(),
+        "zero" => evidence["runs"][0]["outcome"] = "passed".into(),
+        "head_symptom" => evidence["runs"][1]["outcome"] = "symptom".into(),
+        _ => (),
+    }
+    let mut result = serde_json::json!({"name":planned.name,"kind":"demonstrating","custody":"in-process",
+        "verdict":"pass", "declared_symptom":declaration,"symptom_evidence":evidence,
+        "tests":[{"test":planned.tests[0],"base":"error","head":"passed","pre_existing":false,"passed":true}]});
+    if explicit_subject {
+        let mut observers = serde_json::Map::new();
+        observers.insert(planned.tests[0].clone(), "c".repeat(64).into());
+        result["proof"] = serde_json::json!({"rule":"subject-observer-v1", "declaration":proof,
+            "mode":"pytest-outcome", "subjects":{"test_value.py::_git":{"base":"a".repeat(64),"head":"b".repeat(64)}},
+            "source_base_tree_sha256":"f".repeat(64), "base_tree_sha256":"d".repeat(64), "head_tree_sha256":"e".repeat(64),
+            "observer_sha256":observers, "support_sha256":{}});
+    }
+    if tamper == "missing" {
+        result.as_object_mut().unwrap().remove("symptom_evidence");
+    }
+    let mut adapter = fixture(root.path(), "done");
+    fs::write(
+        root.path().join("queue/recorded_results.json"),
+        serde_json::to_vec(&serde_json::json!([result])).unwrap(),
+    )
+    .unwrap();
+    adapter.execute(&delivery).unwrap();
+    let ended = completion(&mut adapter, &delivery);
+    match &ended.observations[..] {
+        [
+            Observation::Checks {
+                report,
+                pass,
+                results,
+                ..
+            },
+        ] => {
+            assert_eq!(*report && *pass, tamper == "none", "{tamper}");
+            if tamper == "none" {
+                assert_eq!(results[0]["symptom_evidence"], evidence);
             }
-            other => panic!("expected check observation, got {other:?}"),
         }
+        other => panic!("expected check observation, got {other:?}"),
     }
 }
 
@@ -1083,117 +1058,145 @@ fn unknown_outcomes() {
         1
     );
 }
-fn crash_reuses_seal() {
+/// #802: wait on socket readiness or child exit instead of polling with sleeps.
+fn fixture_connection(
+    listener: &std::os::unix::net::UnixListener,
+    mut child: Option<&mut std::process::Child>,
+) -> std::os::unix::net::UnixStream {
+    use rustix::{
+        event::{PollFd, PollFlags, Timespec, poll},
+        process::{Pid, PidfdFlags, pidfd_open},
+    };
+    let child_fd = child.as_ref().map(|child| {
+        pidfd_open(
+            Pid::from_raw(child.id().try_into().unwrap()).unwrap(),
+            PidfdFlags::empty(),
+        )
+        .unwrap()
+    });
+    let mut events = vec![PollFd::new(listener, PollFlags::IN)];
+    if let Some(fd) = &child_fd {
+        events.push(PollFd::new(fd, PollFlags::IN));
+    }
+    let ready = poll(
+        &mut events,
+        Some(&Timespec {
+            tv_sec: SIGNAL_WAIT.as_secs().try_into().unwrap(),
+            tv_nsec: 0,
+        }),
+    )
+    .unwrap();
+    assert!(
+        ready > 0,
+        "fixture never reached its publication/ending gate"
+    );
+    if let Some(child) = child.as_mut() {
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "adapter child exited before publication"
+        );
+    }
+    assert!(
+        events[0].revents().contains(PollFlags::IN),
+        "fixture socket is ready"
+    );
+    listener.accept().unwrap().0
+}
+
+fn crash_reuses_seal_case(stage: &str) {
     use rustix::{
         event::{PollFd, PollFlags, Timespec, poll},
         process::{Pid, PidfdFlags, Signal, pidfd_open, pidfd_send_signal},
     };
     use std::os::unix::net::UnixListener;
-    for stage in ["before", "after"] {
-        let root = tempfile::tempdir().unwrap();
-        let delivery = run(root.path(), false);
-        fs::write(
-            root.path().join("delivery.json"),
-            serde_json::to_vec(&delivery).unwrap(),
-        )
+
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    fs::write(
+        root.path().join("delivery.json"),
+        serde_json::to_vec(&delivery).unwrap(),
+    )
+    .unwrap();
+    fs::create_dir_all(root.path().join("queue")).unwrap();
+    let socket = root.path().join("queue/publish.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    fs::write(root.path().join("queue/publish_stage"), stage).unwrap();
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .arg("--kill-child")
+        .arg(root.path())
+        .spawn()
         .unwrap();
-        fs::create_dir_all(root.path().join("queue")).unwrap();
-        let socket = root.path().join("queue/publish.sock");
-        let listener = UnixListener::bind(&socket).unwrap();
-        listener.set_nonblocking(true).unwrap();
-        fs::write(root.path().join("queue/publish_stage"), stage).unwrap();
-        let mut child = Command::new(std::env::current_exe().unwrap())
-            .arg("--kill-child")
-            .arg(root.path())
-            .spawn()
-            .unwrap();
-        let deadline = std::time::Instant::now() + SIGNAL_WAIT;
-        let connection = loop {
-            match listener.accept() {
-                Ok((connection, _)) => break connection,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-                Err(error) => panic!("publisher gate: {error}"),
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "fixture never reached publication"
-            );
-            assert!(
-                child.try_wait().unwrap().is_none(),
-                "adapter child exited before publication"
-            );
-            thread::sleep(Duration::from_millis(10));
-        };
-        connection
-            .set_read_timeout(Some(Duration::from_secs(10)))
-            .unwrap();
-        let mut publisher = String::new();
-        let mut connection = BufReader::new(connection);
-        connection.read_line(&mut publisher).unwrap();
-        let pid = Pid::from_raw(publisher.trim().parse().unwrap()).unwrap();
-        let publisher = pidfd_open(pid, PidfdFlags::empty()).unwrap();
-        child.kill().unwrap();
-        assert!(!child.wait().unwrap().success());
-        let mut events = [PollFd::new(&publisher, PollFlags::IN)];
-        let ended = poll(
-            &mut events,
-            Some(&Timespec {
-                tv_sec: 10,
-                tv_nsec: 0,
-            }),
-        )
+    let connection = fixture_connection(&listener, Some(&mut child));
+    connection
+        .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
-        if ended == 0 {
-            pidfd_send_signal(&publisher, Signal::KILL).unwrap();
-        }
-        assert_eq!(ended, 1, "publisher must die with its controller");
-        assert!(events[0].revents().contains(PollFlags::IN));
-        fs::remove_file(root.path().join("queue/publish_stage")).unwrap();
-        let mut adapter = fixture(root.path(), "pending");
-        let key = adapter.action_key(&delivery).unwrap().unwrap();
-        assert!(
-            matches!(
-                adapter.reconcile(&delivery).unwrap(),
-                Reconciliation::Absent
-            ) == (stage == "before")
-        );
-        // Recovery cannot depend on the old checkout, and must use the saved seal.
-        fs::remove_dir_all(&delivery.checks.as_ref().unwrap().repository).unwrap();
-        adapter.execute(&delivery).unwrap();
-        assert_eq!(adapter.action_key(&delivery).unwrap(), Some(key.clone()));
-        assert_eq!(
-            fs::read_to_string(root.path().join("queue/publications"))
-                .unwrap()
-                .lines()
-                .count(),
-            1
-        );
-        let calls: Vec<Vec<String>> = fs::read_to_string(root.path().join("queue/calls.jsonl"))
+    let mut publisher = String::new();
+    let mut connection = BufReader::new(connection);
+    connection.read_line(&mut publisher).unwrap();
+    let pid = Pid::from_raw(publisher.trim().parse().unwrap()).unwrap();
+    let publisher = pidfd_open(pid, PidfdFlags::empty()).unwrap();
+    child.kill().unwrap();
+    assert!(!child.wait().unwrap().success());
+    let mut events = [PollFd::new(&publisher, PollFlags::IN)];
+    let ended = poll(
+        &mut events,
+        Some(&Timespec {
+            tv_sec: 10,
+            tv_nsec: 0,
+        }),
+    )
+    .unwrap();
+    if ended == 0 {
+        pidfd_send_signal(&publisher, Signal::KILL).unwrap();
+    }
+    assert_eq!(ended, 1, "publisher must die with its controller");
+    assert!(events[0].revents().contains(PollFlags::IN));
+    fs::remove_file(root.path().join("queue/publish_stage")).unwrap();
+    let mut adapter = fixture(root.path(), "pending");
+    let key = adapter.action_key(&delivery).unwrap().unwrap();
+    assert!(
+        matches!(
+            adapter.reconcile(&delivery).unwrap(),
+            Reconciliation::Absent
+        ) == (stage == "before")
+    );
+    // Recovery cannot depend on the old checkout, and must use the saved seal.
+    fs::remove_dir_all(&delivery.checks.as_ref().unwrap().repository).unwrap();
+    adapter.execute(&delivery).unwrap();
+    assert_eq!(adapter.action_key(&delivery).unwrap(), Some(key.clone()));
+    assert_eq!(
+        fs::read_to_string(root.path().join("queue/publications"))
             .unwrap()
             .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
-        assert_eq!(
-            calls
-                .iter()
-                .filter(|c| c.contains(&"--seal-only".to_owned()))
-                .count(),
-            1
-        );
-        assert_eq!(
-            calls
-                .iter()
-                .filter(|c| c.contains(&"--publish-sealed".to_owned()))
-                .count(),
-            if stage == "before" { 2 } else { 1 }
-        );
-        // The recovered action is watched, whether it landed before death or was republished.
-        let (sender, receiver) = mpsc::channel();
-        finish(root.path(), key.as_str(), "done");
-        let running = adapter.source().spawn(sender);
-        assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
-        drop(running);
-    }
+            .count(),
+        1
+    );
+    let calls: Vec<Vec<String>> = fs::read_to_string(root.path().join("queue/calls.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|c| c.contains(&"--seal-only".to_owned()))
+            .count(),
+        1
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|c| c.contains(&"--publish-sealed".to_owned()))
+            .count(),
+        if stage == "before" { 2 } else { 1 }
+    );
+    // The recovered action is watched, whether it landed before death or was republished.
+    let (sender, receiver) = mpsc::channel();
+    finish(root.path(), key.as_str(), "done");
+    let running = adapter.source().spawn(sender);
+    assert_passing_input(receiver.recv_timeout(SIGNAL_WAIT).unwrap());
+    drop(running);
 }
 
 fn source_thread_delivers_once_and_restarts_idle() {
@@ -1309,74 +1312,72 @@ fn finish(root: &Path, key: &str, mode: &str) {
         String::from_utf8_lossy(&finish.stderr)
     );
 }
-fn invalid_evidence_is_reported_once() {
-    for damage in ["digest", "receipt", "oversized"] {
-        let root = tempfile::tempdir().unwrap();
-        let first = run(root.path(), false);
-        let mut second = first.clone();
-        second.key = "effect:0:7".into();
-        let mut adapter = fixture(root.path(), "done");
-        adapter.execute(&first).unwrap();
-        adapter.execute(&second).unwrap();
-        let key = adapter.action_key(&first).unwrap().unwrap();
-        if damage == "digest" {
-            fs::write(
-                root.path().join(format!("queue/{key}.stdout")),
-                "changed after PB verified it",
-            )
-            .unwrap();
+fn invalid_evidence_case(damage: &str) {
+    let root = tempfile::tempdir().unwrap();
+    let first = run(root.path(), false);
+    let mut second = first.clone();
+    second.key = "effect:0:7".into();
+    let mut adapter = fixture(root.path(), "done");
+    adapter.execute(&first).unwrap();
+    adapter.execute(&second).unwrap();
+    let key = adapter.action_key(&first).unwrap().unwrap();
+    if damage == "digest" {
+        fs::write(
+            root.path().join(format!("queue/{key}.stdout")),
+            "changed after PB verified it",
+        )
+        .unwrap();
+    } else {
+        let path = root.path().join(format!("queue/{key}.ending"));
+        let mut ending: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let evidence = &mut ending["endings"][0]["result"];
+        if damage == "receipt" {
+            evidence["verified"] = false.into();
         } else {
-            let path = root.path().join(format!("queue/{key}.ending"));
-            let mut ending: serde_json::Value =
-                serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-            let evidence = &mut ending["endings"][0]["result"];
-            if damage == "receipt" {
-                evidence["verified"] = false.into();
-            } else {
-                evidence["stdout"]["bytes"] = (8 * 1024 * 1024 + 1).into();
-            }
-            fs::write(path, serde_json::to_vec(&ending).unwrap()).unwrap();
+            evidence["stdout"]["bytes"] = (8 * 1024 * 1024 + 1).into();
         }
-        assert!(!observed(completion(&mut adapter, &first)).0);
-        let (sender, receiver) = mpsc::channel();
-        let running = adapter.source().spawn(sender.clone());
-        let observations: Vec<_> = (0..2)
-            .map(|_| receiver.recv_timeout(SIGNAL_WAIT).unwrap())
-            .collect();
-        drop(running);
-        assert_eq!(
-            observations
-                .iter()
-                .filter(|input| matches!(
-                    input,
-                    tl3_controller::cli::Input::Observation {
-                        observation: Observation::Checks {
-                            report: false,
-                            pass: false,
-                            ..
-                        },
-                        ..
-                    }
-                ))
-                .count(),
-            1
-        );
-        assert!(!observed(completion(&mut adapter, &first)).0);
-        let running = adapter.source().spawn(sender);
-        assert!(matches!(
-            receiver.recv_timeout(Duration::from_millis(1250)),
-            Err(mpsc::RecvTimeoutError::Timeout)
-        ));
-        drop(running);
-        let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
-        assert_eq!(
-            calls
-                .lines()
-                .filter(|line| line.contains("--endings"))
-                .count(),
-            3
-        );
+        fs::write(path, serde_json::to_vec(&ending).unwrap()).unwrap();
     }
+    assert!(!observed(completion(&mut adapter, &first)).0);
+    let (sender, receiver) = mpsc::channel();
+    let running = adapter.source().spawn(sender.clone());
+    let observations: Vec<_> = (0..2)
+        .map(|_| receiver.recv_timeout(SIGNAL_WAIT).unwrap())
+        .collect();
+    drop(running);
+    assert_eq!(
+        observations
+            .iter()
+            .filter(|input| matches!(
+                input,
+                tl3_controller::cli::Input::Observation {
+                    observation: Observation::Checks {
+                        report: false,
+                        pass: false,
+                        ..
+                    },
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
+    assert!(!observed(completion(&mut adapter, &first)).0);
+    let running = adapter.source().spawn(sender);
+    assert!(matches!(
+        receiver.recv_timeout(Duration::from_millis(1250)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    drop(running);
+    let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
+    assert_eq!(
+        calls
+            .lines()
+            .filter(|line| line.contains("--endings"))
+            .count(),
+        3
+    );
 }
 fn reconcile_never_submits() {
     let root = tempfile::tempdir().unwrap();
@@ -1601,10 +1602,7 @@ fn bell_outage_does_not_retry_result_tools() {
     fs::write(root.path().join("queue/garbled_ending"), "true").unwrap();
     let mut source = adapter.source();
     let (sender, receiver) = mpsc::channel();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    let runtime = PollRuntime::new();
     for _ in 0..3 {
         assert_eq!(
             runtime
@@ -1883,19 +1881,7 @@ fn cancellation_keeps_an_inflight_ending_from_replacing_its_marker() {
     fs::write(root.path().join("queue/publish_stage"), "ending").unwrap();
     let (sender, receiver) = mpsc::channel();
     let running = adapter.source().spawn(sender);
-    let deadline = std::time::Instant::now() + SIGNAL_WAIT;
-    let connection = loop {
-        match listener.accept() {
-            Ok((connection, _)) => break connection,
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(error) => panic!("ending gate: {error}"),
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "source did not read ending"
-        );
-        thread::sleep(Duration::from_millis(10));
-    };
+    let connection = fixture_connection(&listener, None);
     connection
         .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
@@ -2640,18 +2626,80 @@ fn main() {
             "forced_check_is_staged_and_reaches_review",
             forced_check_is_staged_and_reaches_review,
         ),
-        (
-            "phase_evidence_survives_exact_head_receipts",
-            phase_evidence_survives_exact_head_receipts as fn(),
-        ),
-        (
-            "declared_symptom_identity_is_staged_and_reaches_review",
-            declared_symptom_identity_is_staged_and_reaches_review as fn(),
-        ),
-        (
-            "review662_explicit_subject_symptom_keeps_receipt_bindings",
-            review662_explicit_subject_symptom_keeps_receipt_bindings as fn(),
-        ),
+        ("phase_evidence_case_none", || phase_evidence_case("none")),
+        ("phase_evidence_case_wrong_head", || {
+            phase_evidence_case("wrong_head")
+        }),
+        ("phase_evidence_case_digest", || {
+            phase_evidence_case("digest")
+        }),
+        ("phase_evidence_case_receipt", || {
+            phase_evidence_case("receipt")
+        }),
+        ("phase_evidence_case_unknown", || {
+            phase_evidence_case("unknown")
+        }),
+        ("phase_evidence_case_oversized", || {
+            phase_evidence_case("oversized")
+        }),
+        ("phase_evidence_case_order", || phase_evidence_case("order")),
+        ("phase_evidence_case_assertion", || {
+            phase_evidence_case("assertion")
+        }),
+        ("declared_symptom_case_none", || {
+            declared_symptom_case(false, "none")
+        }),
+        ("declared_symptom_case_base", || {
+            declared_symptom_case(false, "base")
+        }),
+        ("declared_symptom_case_head", || {
+            declared_symptom_case(false, "head")
+        }),
+        ("declared_symptom_case_forcing", || {
+            declared_symptom_case(false, "forcing")
+        }),
+        ("declared_symptom_case_declaration", || {
+            declared_symptom_case(false, "declaration")
+        }),
+        ("declared_symptom_case_receipt", || {
+            declared_symptom_case(false, "receipt")
+        }),
+        ("declared_symptom_case_zero", || {
+            declared_symptom_case(false, "zero")
+        }),
+        ("declared_symptom_case_head_symptom", || {
+            declared_symptom_case(false, "head_symptom")
+        }),
+        ("declared_symptom_case_missing", || {
+            declared_symptom_case(false, "missing")
+        }),
+        ("explicit_subject_symptom_case_none", || {
+            declared_symptom_case(true, "none")
+        }),
+        ("explicit_subject_symptom_case_base", || {
+            declared_symptom_case(true, "base")
+        }),
+        ("explicit_subject_symptom_case_head", || {
+            declared_symptom_case(true, "head")
+        }),
+        ("explicit_subject_symptom_case_forcing", || {
+            declared_symptom_case(true, "forcing")
+        }),
+        ("explicit_subject_symptom_case_declaration", || {
+            declared_symptom_case(true, "declaration")
+        }),
+        ("explicit_subject_symptom_case_receipt", || {
+            declared_symptom_case(true, "receipt")
+        }),
+        ("explicit_subject_symptom_case_zero", || {
+            declared_symptom_case(true, "zero")
+        }),
+        ("explicit_subject_symptom_case_head_symptom", || {
+            declared_symptom_case(true, "head_symptom")
+        }),
+        ("explicit_subject_symptom_case_missing", || {
+            declared_symptom_case(true, "missing")
+        }),
         (
             "subject_observer_identity_is_staged_and_reaches_review",
             subject_observer_identity_is_staged_and_reaches_review as fn(),
@@ -2666,7 +2714,30 @@ fn main() {
             "memory_oom_is_retained_in_check_evidence",
             memory_oom_is_retained_in_check_evidence as fn(),
         ),
-        ("recorded_endings", recorded_endings as fn()),
+        ("recorded_ending_case_done", || {
+            recorded_ending_case("done", (true, true))
+        }),
+        ("recorded_ending_case_failed", || {
+            recorded_ending_case("failed", (true, false))
+        }),
+        ("recorded_ending_case_withdrawn", || {
+            recorded_ending_case("withdrawn", (false, false))
+        }),
+        ("recorded_ending_case_no_report", || {
+            recorded_ending_case("no_report", (false, false))
+        }),
+        ("recorded_ending_case_check_fail", || {
+            recorded_ending_case("check_fail", (true, false))
+        }),
+        ("recorded_ending_case_infrastructure", || {
+            recorded_ending_case("infrastructure", (false, false))
+        }),
+        ("recorded_ending_case_bad_report", || {
+            recorded_ending_case("bad_report", (false, false))
+        }),
+        ("recorded_ending_case_wrong_head", || {
+            recorded_ending_case("wrong_head", (false, false))
+        }),
         (
             "retirement_refuses_active_or_unreadable_jobs",
             retirement_refuses_active_or_unreadable_jobs,
@@ -2718,12 +2789,21 @@ fn main() {
         ),
         ("pending_and_withdrawal", pending_and_withdrawal),
         ("unknown_outcomes", unknown_outcomes),
-        ("SIGKILL_reuses_seal", crash_reuses_seal),
+        ("SIGKILL_case_before", || crash_reuses_seal_case("before")),
+        ("SIGKILL_case_after", || crash_reuses_seal_case("after")),
         (
             "source_thread_and_restart",
             source_thread_delivers_once_and_restarts_idle,
         ),
-        ("invalid_evidence_once", invalid_evidence_is_reported_once),
+        ("invalid_evidence_case_digest", || {
+            invalid_evidence_case("digest")
+        }),
+        ("invalid_evidence_case_receipt", || {
+            invalid_evidence_case("receipt")
+        }),
+        ("invalid_evidence_case_oversized", || {
+            invalid_evidence_case("oversized")
+        }),
         ("tool_errors_garbled_ending_wait_for_news", || {
             tool_errors_wait_for_news(false);
         }),
@@ -2857,15 +2937,11 @@ fn main() {
             println!("test {name} ... ok");
         });
     }
-    let mut database = None;
     for (name, test) in database_cases {
         shard.run(*name, || {
-            test(database.get_or_insert_with(support::Database::start));
+            startup_ownership::with_database(test);
             println!("test {name} ... ok");
         });
-    }
-    if let Some(database) = database {
-        database.stop();
     }
     shard.finish("PrismaBuild adapter");
 }
@@ -2925,10 +3001,7 @@ fn source_skips_bad_waits() {
     let mut invalid: serde_json::Value = serde_json::from_slice(&valid).unwrap();
     invalid["wait"]["key"] = serde_json::json!("invalid-key");
     fs::write(directory.join("invalid-key.wait"), invalid.to_string()).unwrap();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    let runtime = PollRuntime::new();
     let (tx, rx) = mpsc::channel();
     assert!(
         runtime
@@ -2961,6 +3034,62 @@ fn source_skips_bad_waits() {
     assert_passing_input(rx.recv_timeout(SIGNAL_WAIT).unwrap());
 }
 
+/// Keep real I/O live while advancing only the watcher's retry clock. #802.
+struct PollRuntime {
+    runtime: tokio::runtime::Runtime,
+    started: tokio::time::Instant,
+    keep_paused: Option<mpsc::Sender<()>>,
+    parked: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl PollRuntime {
+    fn new() -> Self {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (keep_paused, release) = mpsc::channel();
+        let (ready, initialized) = mpsc::channel();
+        let (started, parked) = runtime.block_on(async {
+            tokio::time::pause();
+            let parked = tokio::task::spawn_blocking(move || {
+                ready.send(()).unwrap();
+                // A pending blocking task inhibits automatic clock advancement
+                // during real HTTP/file I/O. A broken fixture still has a real deadline.
+                let _ = release.recv_timeout(SIGNAL_WAIT);
+            });
+            (tokio::time::Instant::now(), parked)
+        });
+        initialized.recv_timeout(SIGNAL_WAIT).unwrap();
+        Self {
+            runtime,
+            started,
+            keep_paused: Some(keep_paused),
+            parked: Some(parked),
+        }
+    }
+
+    fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
+        self.runtime.block_on(async {
+            // Watcher's real capped backoff is five seconds. Advance through it
+            // between observations without changing the watcher or its state.
+            tokio::time::advance(Duration::from_secs(5)).await;
+            future.await
+        })
+    }
+
+    fn elapsed(&self) -> Duration {
+        self.runtime.block_on(async { self.started.elapsed() })
+    }
+}
+
+impl Drop for PollRuntime {
+    fn drop(&mut self) {
+        self.keep_paused.take();
+        self.runtime.block_on(self.parked.take().unwrap()).unwrap();
+    }
+}
+
 fn live_waits_do_not_look_on_bell_reset() {
     let root = tempfile::tempdir().unwrap();
     let delivery = run(root.path(), false);
@@ -2977,10 +3106,7 @@ fn live_waits_do_not_look_on_bell_reset() {
         )
         .unwrap();
     let mut source = adapter.source();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    let runtime = PollRuntime::new();
     let (tx, rx) = mpsc::channel();
     let reset = serde_json::json!({"epoch":"0123456789abcdef0123456789abcdef", "seq":0, "reset":true, "events":[]});
     let mut poll = |response: serde_json::Value| {
@@ -3044,6 +3170,11 @@ fn live_waits_do_not_look_on_bell_reset() {
         tl3_controller::cli::Input::Look { .. }
     ));
     assert!(rx.try_recv().is_err());
+    assert_eq!(
+        runtime.elapsed(),
+        Duration::from_secs(45),
+        "nine polls advance virtual time while preserving every source assertion"
+    );
 }
 
 fn moving_wait_bell_is_quiet() {
@@ -3066,10 +3197,7 @@ fn moving_wait_bell_is_quiet() {
         )
         .unwrap();
     let mut source = adapter.source();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    let runtime = PollRuntime::new();
     let (tx, rx) = mpsc::channel();
     let reset = serde_json::json!({"epoch":"0123456789abcdef0123456789abcdef", "seq":0, "reset":true, "events":[]});
     for response in [
