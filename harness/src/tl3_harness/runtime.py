@@ -229,6 +229,43 @@ def collector_main():
     raise SystemExit(code if code >= 0 else 128 - code)
 
 
+def stage_host_runtime(destination, *, interpreter):
+    """Construct immutable collector inputs; run only through authorized generation.
+
+    The returned executable/manifest paths are hashed by the Rust request builder.
+    This artifact manifest records bytes, not a second RuntimeIdentity schema.
+    """
+    import hashlib
+
+    if not Path(interpreter).is_absolute() or any(char.isspace() for char in interpreter):
+        raise ValueError('explicit absolute host interpreter required for the executable shebang')
+    root = Path(destination).resolve()
+    root.mkdir(mode=0o700)
+    package = root / 'lib' / 'tl3_harness'
+    package.mkdir(parents=True)
+    files = []
+    for source in sorted(Path(__file__).resolve().parent.glob('*.py')):
+        data = source.read_bytes()
+        target = package / source.name
+        target.write_bytes(data)
+        target.chmod(0o444)
+        files.append({'path': str(target.relative_to(root)), 'sha256': hashlib.sha256(data).hexdigest(),
+                      'bytes': len(data)})
+    executable = root / 'host-collector'
+    executable.write_text(
+        f'#!{interpreter} -I\n'
+        'from pathlib import Path\nimport sys\n'
+        'sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))\n'
+        'from tl3_harness.runtime import collector_main\ncollector_main()\n')
+    executable.chmod(0o555)
+    manifest = root / 'collector-manifest.json'
+    manifest.write_text(json.dumps({'interpreter': interpreter, 'files': files}, sort_keys=True) + '\n')
+    manifest.chmod(0o444)
+    for directory in (package, package.parent, root):
+        directory.chmod(0o555)
+    return executable, manifest, package
+
+
 def validate_runtime_binding(evidence):
     context = evidence.context
     placement = context['placement']
