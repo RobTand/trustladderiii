@@ -32,6 +32,9 @@ _ROUTE_CLAUSES = (
     r"run (?:any required development checks|development tests|validation) "
     r"(?:only )?through (?:admitted prismabuild with the published entrypoints|"
     r"prismabuild at priority -10|tl3's normal admitted prismabuild `run_tests`)",
+    r"no checks were run during this issue-only triage",
+    r"no actual tests have run for this source scope analysis",
+    r"free remote compute exceptions and ci ownership remain rob's policy",
     r"read the execution policy and operating guide first",
     r"reserve aggregate demand, bound native threads, preserve assigned affinity, "
     r"and allow portable work on any eligible worker",
@@ -93,6 +96,10 @@ def _route_context(facts):
     if context and facts['role'] == 'ingest':
         if reply.get('kind') != 'brief' or not isinstance(reply.get('brief'), str):
             return ()  # An early-end reply has no context field to preserve.
+        body = inputs.get('issue', {}).get('body')
+        if isinstance(body, str):
+            context.extend(paragraph for paragraph in re.split(r'\n[ \t]*\n', body)
+                           if _route_only(paragraph))
         brief = reply['brief']
         for text in dict.fromkeys(context):
             if text not in brief:
