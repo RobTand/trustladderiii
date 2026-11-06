@@ -106,6 +106,20 @@ def test_runner_source_guard_records_reads_and_resets_per_test(tmp_path, body, s
     assert '__pycache__/app.' in notes[nodes[0]] if '__cached__' in body else 'app.py' in notes[nodes[0]]
 
 
+def test_external_bytecode_source_read_is_recorded(tmp_path):
+    nodes, records, exit_code = source_guard_run(tmp_path,
+        '    try:\n        open(app.__cached__, "rb").read()\n    except Exception:\n        pass',
+        setup=('    import py_compile, sys, tempfile\n'
+               '    app.cache = tempfile.TemporaryDirectory()\n'
+               '    sys.pycache_prefix = app.cache.name\n'
+               '    app.__cached__ = py_compile.compile(app.__file__, doraise=True)'),
+        teardown='    app.cache.cleanup()')
+    notes = FailureNotes()
+    assert parse(records, nodes, set(), exit_code, messages=notes) == {
+        nodes[0]: Outcome.ERROR, nodes[1]: Outcome.PASSED}, records
+    assert 'subject_source_read' in notes[nodes[0]]
+
+
 @pytest.mark.parametrize('case', ['import', 'self-source', 'setup-teardown', 'non-proof', 'write-only'])
 def test_runner_source_guard_allows_subject_reads_and_other_phases(tmp_path, case):
     subject = ('from pathlib import Path\ndef value():\n'
