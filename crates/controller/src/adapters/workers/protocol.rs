@@ -372,6 +372,24 @@ pub(crate) fn reply_field<T: serde::de::DeserializeOwned>(reply: &Value, field: 
     serde_json::from_value(value.clone()).map_err(|_| Error::Invalid("invalid worker reply field"))
 }
 
+/// Q27: only a consumed empty-allowed re-plan changes legacy planner endings.
+/// Transport, infrastructure, owner, credit and quota handling never enters here.
+pub(crate) fn after_empty_allowed_replan(ending: Reply, consumed: bool) -> Reply {
+    if consumed
+        && matches!(
+            ending,
+            Reply::PlanCantMeet
+                | Reply::PlanSplit
+                | Reply::PlanLeaf { fits: false, .. }
+                | Reply::PlanCheckReplan
+        )
+    {
+        Reply::PlanCheckRejected
+    } else {
+        ending
+    }
+}
+
 #[cfg(test)]
 #[path = "protocol_tests.rs"]
 mod tests;
@@ -775,23 +793,5 @@ mod reply_contract_tests {
             counts.iter().all(|n| *n > 0),
             "missing corpus role: {counts:?}"
         );
-    }
-}
-
-/// Q27: only a consumed empty-allowed re-plan changes legacy planner endings.
-/// Transport, infrastructure, owner, credit and quota handling never enters here.
-pub(crate) fn after_empty_allowed_replan(ending: Reply, consumed: bool) -> Reply {
-    if consumed
-        && matches!(
-            ending,
-            Reply::PlanCantMeet
-                | Reply::PlanSplit
-                | Reply::PlanLeaf { fits: false, .. }
-                | Reply::PlanCheckReplan
-        )
-    {
-        Reply::PlanCheckRejected
-    } else {
-        ending
     }
 }
