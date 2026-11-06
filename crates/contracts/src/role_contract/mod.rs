@@ -304,7 +304,11 @@ fn schema(file: &str) -> Result<Value, String> {
 /// Resolve model-visible external definitions and prune unreachable definitions.
 fn bundle(mut root: Value) -> Result<Value, String> {
     use std::collections::{BTreeMap, BTreeSet};
-    let mut defs = root.as_object_mut().and_then(|object| object.remove("$defs")).and_then(|value| value.as_object().cloned()).unwrap_or_default();
+    let mut defs = root
+        .as_object_mut()
+        .and_then(|object| object.remove("$defs"))
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
     let mut names = BTreeMap::new();
     fn visit(
         value: &mut Value,

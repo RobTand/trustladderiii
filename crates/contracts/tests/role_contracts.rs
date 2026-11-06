@@ -138,7 +138,7 @@ fn input(role: Role) -> Value {
             json!({"brief":"Fix","goals":[{"id":"g0","description":"Correct behavior"}],"plan":{"files":["src/lib.rs"],"checks":[{"name":"test","kind":"regression","tests":["tests/test_api.py::test_status"],"goal_ids":["g0"]}]},"footprint":["src/lib.rs"],"attempt":1,"round":0,"tests":{"image":format!("sha256:{}","a".repeat(64)),"tools_path":"/tools"},"context_size":1000})
         }
         Role::Reviewer => {
-            json!({"goals":[{"id":"g0","description":"Correct behavior"}],"base_sha":"a".repeat(40),"head_sha":"b".repeat(40),"diff":"","checks":[],"standing_rules":[]})
+            json!({"goals":[{"id":"g0","description":"Correct behavior","verification":"test"}],"base_sha":"a".repeat(40),"head_sha":"b".repeat(40),"diff":"","checks":[],"standing_rules":[]})
         }
         Role::Classifier => {
             json!({"comment":{"author":"requester","body":"Stop"},"state":{"phase":"maker","closed":false}})

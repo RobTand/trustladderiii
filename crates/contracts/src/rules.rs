@@ -63,7 +63,9 @@ pub enum RenderContext {
 #[serde(try_from = "String", into = "String")]
 pub struct FieldPointer(String);
 impl JsonSchema for FieldPointer {
-    fn schema_name() -> std::borrow::Cow<'static, str> { "FieldPointer".into() }
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "FieldPointer".into()
+    }
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
         schemars::json_schema!({"type":"string","pattern":r"^(?:/(?:[^~]|~[01])*)?$"})
     }
@@ -362,9 +364,19 @@ impl<F> Rule<F> {
                     values.get(role).ok_or("missing declared role witness")?
                 }
             };
-            if rows.iter().any(|v| matches!(v.repair, Repair::SourceEdit { .. })) {
-                if !witness.is_null() { return Err("SourceEdit requires a null witness for its role".into()); }
-                if rows.iter().all(|v| matches!(v.repair, Repair::SourceEdit { .. })) { continue; }
+            if rows
+                .iter()
+                .any(|v| matches!(v.repair, Repair::SourceEdit { .. }))
+            {
+                if !witness.is_null() {
+                    return Err("SourceEdit requires a null witness for its role".into());
+                }
+                if rows
+                    .iter()
+                    .all(|v| matches!(v.repair, Repair::SourceEdit { .. }))
+                {
+                    continue;
+                }
             }
             if !permits(&rows, &fixture.reply, witness, *role, policy)? {
                 return Err("rendered repair rejects its witness".into());
@@ -376,9 +388,18 @@ impl<F> Rule<F> {
                 continue;
             }
             let unresolved = |reply: &Value| -> Result<bool, String> {
-                Ok(self.evaluate(&(fixture.with_reply)(&fixture.example, reply), *role, policy)?.iter().any(|row| !matches!(row.repair, Repair::SourceEdit { .. })))
+                Ok(self
+                    .evaluate(
+                        &(fixture.with_reply)(&fixture.example, reply),
+                        *role,
+                        policy,
+                    )?
+                    .iter()
+                    .any(|row| !matches!(row.repair, Repair::SourceEdit { .. })))
             };
-            if unresolved(witness)? { return Err("witness still fails a reply repair".into()); }
+            if unresolved(witness)? {
+                return Err("witness still fails a reply repair".into());
+            }
             for row in &rows {
                 if let Repair::Edit {
                     pointer,
@@ -391,8 +412,12 @@ impl<F> Rule<F> {
                     }
                     for choice in allowed.alternatives() {
                         let candidate = apply(witness, pointer, EditOp::Replace, choice)?;
-                        if !permits(&rows, &fixture.reply, &candidate, *role, policy)? || unresolved(&candidate)? {
-                            return Err("advertised alternative still fails the guard or row".into());
+                        if !permits(&rows, &fixture.reply, &candidate, *role, policy)?
+                            || unresolved(&candidate)?
+                        {
+                            return Err(
+                                "advertised alternative still fails the guard or row".into()
+                            );
                         }
                     }
                 }
@@ -462,7 +487,7 @@ impl Name {
                         chars
                             .next()
                             .is_some_and(|c| c == '_' || unicode_ident::is_xid_start(c))
-                            && chars.all(|c| unicode_ident::is_xid_continue(c))
+                            && chars.all(unicode_ident::is_xid_continue)
                     })
             }),
         };

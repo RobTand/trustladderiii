@@ -90,6 +90,7 @@ fn evidence_bounds_are_explicit_durable_and_utf8_safe() {
     row.evidence = vec![Evidence::Attribution { batch_head: sha.clone(), member: "member".into(), member_head: sha.clone(), method: AttributionMethod::OutsideSelection { failing_targets: (0..70).map(|n| format!("//test:{n}")).collect(), failing_targets_truncated: 2 } }, Evidence::Attribution { batch_head: sha.clone(), member: "member".into(), member_head: sha.clone(), method: AttributionMethod::PrefixBisection { passed_prefix_head: sha.clone(), failed_prefix_head: sha } }];
     row.evidence.extend(std::iter::repeat_n(failure, 18));
     row.evidence_truncated = 3;
+    let direct_render = render_all(std::slice::from_ref(&row), Role::Maker, RenderContext::Reply, &policy()).unwrap();
     let encoded = serde_json::to_value(&row).unwrap();
     assert_eq!(encoded["evidence"].as_array().unwrap().len(), EVIDENCE_ITEMS);
     assert_eq!(encoded["evidence_truncated"], 7);
@@ -101,6 +102,7 @@ fn evidence_bounds_are_explicit_durable_and_utf8_safe() {
     let restored: Violation = serde_json::from_value(encoded.clone()).unwrap();
     assert_eq!(serde_json::to_value(&restored).unwrap(), encoded);
     let rendered = render_all(&[restored], Role::Maker, RenderContext::Reply, &policy()).unwrap();
+    assert_eq!(rendered, direct_render);
     for expected in ["//pkg:test", "arbitrary backend id", "[truncated]", "8 failing targets omitted", "7 evidence items omitted", "prefix bisection"] { assert!(rendered.contains(expected), "{expected}"); }
     let mut invalid = encoded;
     invalid["role"] = Value::Null;
@@ -113,7 +115,7 @@ fn source_edit_subject_path_and_instruction_bounds_are_enforced() {
     let mut row = rule.evaluate(&json!({"value":"bad"}), Role::Maker, &policy()).unwrap().remove(0);
     row.names = vec![Name { kind: NameKind::Symbol, value: "src/lib.rs::module.test".into() }];
     row.repair = Repair::SourceEdit { path: "src/lib.rs".into(), instruction: "Fix\n  the\tassertion".into() };
-    let rendered = render_all(&[row.clone()], Role::Maker, RenderContext::Tool, &policy()).unwrap();
+    let rendered = render_all(std::slice::from_ref(&row), Role::Maker, RenderContext::Tool, &policy()).unwrap();
     assert!(rendered.ends_with("Change \"src/lib.rs\": Fix\n  the\tassertion"));
     for (path, instruction) in [("src/other.rs", "Fix it".to_owned()), ("../escape.rs", "Fix it".into()), ("src/lib.rs", " ".into()), ("src/lib.rs", "é".repeat(INSTRUCTION_BYTES))] {
         row.repair = Repair::SourceEdit { path: path.into(), instruction };
@@ -128,11 +130,11 @@ fn json_types_and_const_wording_survive_the_shared_form() {
     for value in [json!(true), json!(1), json!("1"), Value::Null, json!([1]), json!({"one":1})] {
         row.allowed = Allowed::Schema { keyword: SchemaKeyword::Const, value: value.clone() };
         row.repair = Repair::Edit { pointer: "/value".to_owned().try_into().unwrap(), op: EditOp::Replace, allowed: row.allowed.clone() };
-        assert!(permits(&[row.clone()], &json!({"value":"bad"}), &json!({"value":value}), Role::Maker, &policy()).unwrap());
-        let text = render_all(&[row.clone()], Role::Maker, RenderContext::Reply, &policy()).unwrap();
+        assert!(permits(std::slice::from_ref(&row), &json!({"value":"bad"}), &json!({"value":value}), Role::Maker, &policy()).unwrap());
+        let text = render_all(std::slice::from_ref(&row), Role::Maker, RenderContext::Reply, &policy()).unwrap();
         assert!(text.ends_with("with the allowed value above."));
         let different = if value == json!(true) { json!(1) } else { json!(true) };
-        assert!(!permits(&[row.clone()], &json!({"value":"bad"}), &json!({"value":different}), Role::Maker, &policy()).unwrap());
+        assert!(!permits(std::slice::from_ref(&row), &json!({"value":"bad"}), &json!({"value":different}), Role::Maker, &policy()).unwrap());
     }
 }
 
@@ -204,4 +206,17 @@ fn mixed_source_and_reply_repairs_require_null_witness_and_recheck_reply_only() 
     }
     let fixture=Registration {example:json!({"reply":{"broken":true}}),reply:json!({"broken":true}),with_reply:|facts,reply| {let mut facts=facts.clone();facts["reply"]=reply.clone();facts},witness:Witness::Shared(Value::Null)};
     mixed().register(&fixture,&policy()).unwrap();
+}
+
+#[test]
+fn empty_evidence_preserves_reply_rendering_and_adapter_errors_are_not_permissions() {
+    let rule=registered();
+    let mut rows=rule.evaluate(&json!({"value":"bad"}),Role::Maker,&policy()).unwrap();
+    assert_eq!(render_all(&rows,Role::Maker,RenderContext::Reply,&policy()).unwrap(),"reply.value: reply field \"/value\". Bad value: \"bad\". Allowed: enum [\"good\"]. Permitted edit: replace reply field \"/value\" with one of the allowed values above.");
+    rows[0].repair=Repair::Edit {pointer:"/value".to_owned().try_into().unwrap(),op:EditOp::Replace,allowed:Allowed::Schema {keyword:SchemaKeyword::Schema,value:json!({"minLength":3})}};
+    let mut adapter=policy();adapter.schema_membership=Some(|_,_,_|Err("validator unavailable".into()));
+    assert_eq!(permits(&rows,&json!({"value":"bad"}),&json!({"value":"good"}),Role::Maker,&adapter),Err("validator unavailable".into()));
+    let mut registration=row();registration.roles=vec![Role::Maker];registration.repair=Callback::Static(rows.remove(0).repair);
+    let fixture=Registration {example:json!({"value":"bad"}),reply:json!({"value":"bad"}),with_reply:|_,reply|reply.clone(),witness:Witness::ByRole([(Role::Maker,json!({"value":"good"}))].into())};
+    assert_eq!(registration.register(&fixture,&adapter).err().unwrap(),"validator unavailable");
 }
