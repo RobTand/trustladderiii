@@ -17,10 +17,10 @@
 //! floats and no target-specific code, so its proofs hold on amd64 and arm64.
 
 #[macro_use]
+#[path = "../../../github/src/checks/verification.rs"]
 mod verification;
 
-pub mod check;
-pub mod delivery_step;
+pub use tl3_github::checks::check;
 pub mod enqueue;
 pub mod facts;
 pub mod observe;
@@ -33,18 +33,13 @@ pub use check::{App, CheckView, Conclusion, Head, Name, Status, Time};
 pub use enqueue::{EnqueueState, QueueEvent, decide};
 pub use observe::QueueState;
 
-/// The check run Mergify's GitHub App posts for a queued PR.
-pub const QUEUE_CHECK: &str = "Mergify Merge Queue";
-/// The check run for TL3's queue rule.
-pub const QUEUE_RULE_CHECK: &str = "Rule: Queue TL3-approved PRs (queue)";
-pub const MERGIFY_APP_ID: u64 = 10562;
-pub const MERGIFY_APP_SLUG: &str = "mergify";
+pub use tl3_github::checks::{MERGIFY_APP_ID, MERGIFY_APP_SLUG, QUEUE_CHECK, QUEUE_RULE_CHECK};
 pub const QUEUE_LABEL: &str = "tl3-queue";
 
 pub mod completion;
 
 pub mod recovery;
-pub mod required;
+pub use tl3_github::checks::required;
 
 pub mod heal;
 pub mod plan;
