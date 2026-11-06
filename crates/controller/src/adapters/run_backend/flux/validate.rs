@@ -522,7 +522,13 @@ pub(super) fn preflight(request: &Request) -> Result<()> {
 }
 
 pub(super) fn trusted_artifacts(request: &Request) -> Result<()> {
-    if let ExecutionRuntime::RootlessPodman { trusted_root, .. } = &request.runtime.runtime {
+    if let ExecutionRuntime::RootlessPodman {
+        trusted_root,
+        interpreter,
+        executable,
+        ..
+    } = &request.runtime.runtime
+    {
         let (manifest, reference) =
             crate::run_backend::prepared::read_bundle(&request.runner.manifest)?;
         let root = request
@@ -541,6 +547,10 @@ pub(super) fn trusted_artifacts(request: &Request) -> Result<()> {
             || root.join(manifest.collector) != request.runner.executable
             || root.join(manifest.cleanup) != cleanup.executable
             || root.join(manifest.trusted_root) != *trusted_root
+            || manifest.container_interpreter != *interpreter
+            || manifest.podman != *executable
+            || manifest.cleanup_arguments != cleanup.arguments
+            || request.runtime.preflight.path != root.join("preflight.json")
         {
             return Err(BackendError::invalid(
                 "runtime/collector/cleanup imports differ from sealed bundle",

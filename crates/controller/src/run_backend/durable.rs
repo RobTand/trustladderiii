@@ -190,14 +190,23 @@ pub fn checked_blob_limit(reference: &BlobRef, root: &Path, limit: usize) -> Res
 }
 
 pub fn safe(text: &str) -> Result<String> {
+    safe_limit(text, 16_384, 16_384)
+}
+
+pub(crate) fn safe_report(text: &str) -> Result<String> {
+    let chars = crate::contracts::report::PROOF_MESSAGE_CHARS;
+    safe_limit(text, chars, chars * 4)
+}
+
+fn safe_limit(text: &str, chars: usize, bytes: usize) -> Result<String> {
     let redacted =
         crate::redaction::text(text).map_err(|_| BackendError::invalid("redaction unavailable"))?;
     let mut text: String = redacted
         .chars()
         .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
-        .take(16_384)
+        .take(chars)
         .collect();
-    while text.len() > 16_384 {
+    while text.len() > bytes {
         text.pop();
     }
     Ok(text)

@@ -40,7 +40,8 @@ impl Flux {
         if self.instance(&record).is_err() {
             return Ok(observation);
         }
-        let Ok(Some(binding)) = self.recover(owner) else {
+        // Scheduled Look observes an exact durable ID. Orphan reconciliation belongs to attach.
+        let Some(binding) = record.binding.clone() else {
             return Ok(observation);
         };
         observation.run = Some(binding.id.clone());

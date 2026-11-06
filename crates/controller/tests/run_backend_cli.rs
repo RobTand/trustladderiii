@@ -929,7 +929,11 @@ fn collector_exact_frame_and_typed_terminal_payload_verify_all_links() {
         serde_json::from_value(prepared.last().unwrap()["result"]["intent"].clone()).unwrap();
     f.submit();
     f.report(ReportOutcome::ChecksCompleted, true);
-    let report = json!({"schema":"tl3.checks.v2","effect_key":"fixture","base":"b".repeat(40),"head":"c".repeat(40),"reviewed":null,"results":[]});
+    let refusal = "proof row diagnostic ".repeat(2000);
+    let report = json!({"schema":"tl3.checks.v3","effect_key":"fixture","base":"b".repeat(40),"head":"c".repeat(40),"reviewed":null,"results":[{
+        "name":"complete refusal","kind":"demonstrating","verdict":"infrastructure-failure","custody":"in-process","tests":[{
+            "test":"tests/test_subject.py::test_value","base":"uncollected","head":"uncollected","pre_existing":false,"passed":false,
+            "message":"bounded summary","proof_refusal":refusal}]}]});
     let out = &f.intent.output_dir;
     let bytes = format!("trusted host prefix\nTL3_CHECKS {report}\n").into_bytes();
     let stdout = api::durable::blob(&out.join("raw-checks-stdout"), &bytes).unwrap();
@@ -1394,6 +1398,48 @@ fn imported_module_tamper_refuses_before_dispatch_without_manifest_or_executable
 
 #[test]
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn sealed_runtime_entrypoints_and_arguments_cannot_be_overridden() {
+    for changed in ["cleanup-argv", "container-python", "podman", "preflight"] {
+        let mut f = Fixture::new();
+        f.podman(ContainerMode::OwnScope, true);
+        match changed {
+            "cleanup-argv" => f
+                .request
+                .runtime
+                .cleanup
+                .as_mut()
+                .unwrap()
+                .arguments
+                .push("--unbound".into()),
+            "container-python" => {
+                if let ExecutionRuntime::RootlessPodman { interpreter, .. } =
+                    &mut f.request.runtime.runtime
+                {
+                    *interpreter = "/usr/bin/python3.14".into();
+                }
+            }
+            "podman" => {
+                if let ExecutionRuntime::RootlessPodman { executable, .. } =
+                    &mut f.request.runtime.runtime
+                {
+                    *executable = "/usr/local/bin/podman".into();
+                }
+            }
+            "preflight" => {
+                let copy = f.root.path().join("unbound-preflight.json");
+                fs::copy(&f.request.runtime.preflight.path, &copy).unwrap();
+                f.request.runtime.preflight.path = copy;
+            }
+            _ => unreachable!(),
+        }
+        f.intent.request_digest = digest(&serde_json::to_vec(&f.request).unwrap());
+        assert_eq!(f.submit()["terminal"]["ending"], "refused", "{changed}");
+        assert!(!f.calls().contains("job submit "), "{changed}");
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn append_only_container_executions_require_every_independent_stop() {
     let mut f = Fixture::new();
     f.podman(ContainerMode::OwnScope, true);
@@ -1577,8 +1623,16 @@ fn fresh_native_liveness_is_separate_from_historical_stream_and_terminal_wins() 
     fs::write(f.root.path().join("mode"), "held-query").unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_tl3-run-backend"))
         .args(["--config", f.config.to_str().unwrap()])
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
-    writeln!(child.stdin.take().unwrap(), "{}", json!({"op":"liveness","owner":f.intent.owner,"correlation":f.intent.correlation})).unwrap();
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writeln!(
+        child.stdin.take().unwrap(),
+        "{}",
+        json!({"op":"liveness","owner":f.intent.owner,"correlation":f.intent.correlation})
+    )
+    .unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while !f.root.path().join("query-started").exists() {
         assert!(std::time::Instant::now() < deadline);
@@ -1589,7 +1643,11 @@ fn fresh_native_liveness_is_separate_from_historical_stream_and_terminal_wins() 
     fs::write(f.root.path().join("query-release"), "release").unwrap();
     let output = child.wait_with_output().unwrap();
     assert!(output.status.success());
-    let terminal: Vec<Value> = String::from_utf8(output.stdout).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    let terminal: Vec<Value> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
     assert_eq!(
         terminal.last().unwrap()["result"]["liveness"]["phase"],
         "terminal"

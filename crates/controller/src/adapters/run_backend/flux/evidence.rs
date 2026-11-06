@@ -229,17 +229,25 @@ fn cgroup_path(raw: &str) -> Result<String> {
 }
 
 fn sanitized_json(value: &mut serde_json::Value, depth: usize) -> Result<()> {
+    sanitized_json_using(value, depth, safe)
+}
+
+fn sanitized_json_using(
+    value: &mut serde_json::Value,
+    depth: usize,
+    text: fn(&str) -> Result<String>,
+) -> Result<()> {
     if depth > 32 {
         return Err(BackendError::invalid("evidence nesting exceeds bound"));
     }
     match value {
-        serde_json::Value::String(text) => *text = safe(text)?,
+        serde_json::Value::String(value) => *value = text(value)?,
         serde_json::Value::Array(values) => {
             if values.len() > 100_000 {
                 return Err(BackendError::invalid("evidence collection exceeds bound"));
             }
             for value in values {
-                sanitized_json(value, depth + 1)?;
+                sanitized_json_using(value, depth + 1, text)?;
             }
         }
         serde_json::Value::Object(values) => {
@@ -250,12 +258,25 @@ fn sanitized_json(value: &mut serde_json::Value, depth: usize) -> Result<()> {
                 if name.len() > 256 || safe(name)? != *name {
                     return Err(BackendError::invalid("unsafe evidence field name"));
                 }
-                sanitized_json(value, depth + 1)?;
+                sanitized_json_using(value, depth + 1, text)?;
             }
         }
         _ => {}
     }
     Ok(())
+}
+
+fn daytime_payload(bytes: &[u8]) -> Result<crate::contracts::report::CheckReport> {
+    let report = serde_json::from_slice(bytes)?;
+    let value: serde_json::Value = serde_json::from_slice(bytes)?;
+    let mut sanitized = value.clone();
+    sanitized_json_using(&mut sanitized, 0, safe_report)?;
+    if sanitized != value {
+        return Err(BackendError::invalid(
+            "TL3_CHECKS frame requires producer redaction or exceeds report bounds",
+        ));
+    }
+    Ok(report)
 }
 
 pub(super) fn retain_json(out: &Path, name: &str, bytes: &[u8]) -> Result<BlobRef> {
@@ -308,15 +329,7 @@ impl Flux {
                 "stdout has duplicate or empty TL3_CHECKS frames",
             ));
         }
-        let _: crate::contracts::report::CheckReport = serde_json::from_slice(payload)?;
-        let value: serde_json::Value = serde_json::from_slice(payload)?;
-        let mut sanitized = value.clone();
-        sanitized_json(&mut sanitized, 0)?;
-        if sanitized != value {
-            return Err(BackendError::invalid(
-                "TL3_CHECKS frame requires producer redaction or exceeds text bounds",
-            ));
-        }
+        daytime_payload(payload)?;
         let out = &record.intent.output_dir;
         let payload = blob(&out.join("retained-payload.json"), payload)?;
         let log = safe(&String::from_utf8_lossy(&raw[..raw.len().min(65_536)]))?;
@@ -457,7 +470,12 @@ impl Flux {
                 evidence.push(retain_json(out, "retained-report.json", &raw)?);
                 if let Some(payload) = &report.payload {
                     let bytes = checked_blob(payload, out)?;
-                    evidence.push(retain_json(out, "retained-payload.json", &bytes)?);
+                    if matches!(report.suite, Suite::DaytimeChecks { .. }) {
+                        daytime_payload(&bytes)?;
+                        evidence.push(blob(&out.join("retained-payload.json"), &bytes)?);
+                    } else {
+                        evidence.push(retain_json(out, "retained-payload.json", &bytes)?);
+                    }
                 }
                 Some(report)
             } else {
@@ -566,10 +584,7 @@ impl Flux {
             .as_ref()
             .ok_or_else(|| BackendError::invalid("daytime payload missing"))?;
         let record = self.journal.load(owner)?;
-        Ok(serde_json::from_slice(&checked_blob(
-            payload,
-            &record.intent.output_dir,
-        )?)?)
+        daytime_payload(&checked_blob(payload, &record.intent.output_dir)?)
     }
 
     pub(super) fn report_identity(
@@ -645,7 +660,7 @@ impl Flux {
                     return Ok(false);
                 };
                 let bytes = checked_blob(payload, &record.intent.output_dir)?;
-                let _: crate::contracts::report::CheckReport = serde_json::from_slice(&bytes)?;
+                daytime_payload(&bytes)?;
                 Ok(report.outcome == ReportOutcome::ChecksCompleted)
             }
             Suite::Full { membership_digest } | Suite::SelectedCases { membership_digest } => {

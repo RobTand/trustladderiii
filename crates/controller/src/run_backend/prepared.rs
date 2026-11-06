@@ -370,6 +370,11 @@ pub fn prepare_bundle(input: &PrepareBundleInput) -> Result<BlobRef> {
     }
     let root = Path::new(ROOT);
     std::fs::create_dir_all(root)?;
+    if std::fs::canonicalize(root)? != root || std::fs::metadata(root)?.uid() != 1000 {
+        return Err(BackendError::invalid(
+            "runtime publication root must be canonical and owned by rob",
+        ));
+    }
     let destination = root.join(digest(&raw));
     if destination.exists() {
         return read_bundle(&destination.join("manifest.json")).map(|(_, reference)| reference);

@@ -3173,7 +3173,8 @@
       "type": "string",
       "enum": [
         "tl3.checks.v1",
-        "tl3.checks.v2"
+        "tl3.checks.v2",
+        "tl3.checks.v3"
       ]
     },
     "Request": {
@@ -4508,6 +4509,12 @@
         },
         "pre_existing": {
           "type": "boolean"
+        },
+        "proof_refusal": {
+          "title": "899: additive v3 diagnostic; older reports retain the ordinary message.",
+          "type": "string",
+          "maxLength": 65536,
+          "minLength": 1
         },
         "test": {
           "type": "string",
