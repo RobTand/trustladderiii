@@ -64,6 +64,7 @@ fn sources_publish_evidence_before_one_owner_consumes_it() {
                 Input::Wake
                 | Input::GitHubWake
                 | Input::Look { .. }
+                | Input::Completion { .. }
                 | Input::ProposedIssue { .. }
                 | Input::IssueChanged(_)
                 | Input::AdoptionClarification(_) => {
