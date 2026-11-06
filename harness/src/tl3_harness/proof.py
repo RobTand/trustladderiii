@@ -486,6 +486,28 @@ def planner_selections(refusal, base, head, check, config):
         if group is None or violation.rule.id in ('proof.source.unparsable', 'proof.tree.destination_fresh'):
             violations.append(violation)
             continue
+        def passes(reply):
+            declared = reply['checks'][facts['check_index']]
+            proposed = SimpleNamespace(name=check.name, kind=check.kind, tests=tuple(declared['tests']),
+                forcing=check.forcing, declared_symptom=check.declared_symptom,
+                proof=replace(check.proof, subjects=tuple(declared['proof']['subjects']),
+                              observer_support=tuple(declared['proof']['observer_support'])) if check.proof else None)
+            try:
+                with TemporaryDirectory(prefix='proof-selection-') as directory:
+                    _assemble_proof(base, head, Path(directory) / 'staged', proposed, config)
+            except (ProofRefusal, SyntaxError, OSError, ValueError):
+                return False
+            return True
+
+        # Removing an unnecessary declaration is a concrete selection too.
+        parent, key = field.rsplit('/', 1)
+        reduced = deepcopy(facts['reply'])
+        del at(reduced, parent)[int(key)]
+        if (group != '/tests' or at(reduced, parent)) and passes(reduced):
+            facts.update(field=parent, alternatives=[at(reduced, parent)], replacement_total=1,
+                         bad_value={'replacement_total': 1})
+            violations.extend(evaluate((violation.rule,), facts, role='planner'))
+            continue
         candidates = []
         for path in sorted(head.rglob('*.py')):
             module = path.relative_to(head).as_posix()
@@ -512,15 +534,7 @@ def planner_selections(refusal, base, head, check, config):
             reply = deepcopy(facts['reply'])
             parent, key = field.rsplit('/', 1)
             at(reply, parent)[int(key)] = candidate
-            declared = reply['checks'][facts['check_index']]
-            proposed = SimpleNamespace(name=check.name, kind=check.kind, tests=tuple(declared['tests']),
-                forcing=check.forcing, declared_symptom=check.declared_symptom,
-                proof=replace(check.proof, subjects=tuple(declared['proof']['subjects']),
-                              observer_support=tuple(declared['proof']['observer_support'])) if check.proof else None)
-            try:
-                with TemporaryDirectory(prefix='proof-selection-') as directory:
-                    _assemble_proof(base, head, Path(directory) / 'staged', proposed, config)
-            except (ProofRefusal, SyntaxError, OSError, ValueError):
+            if not passes(reply):
                 continue
             total += 1
             if len(passing) < 10:
@@ -528,7 +542,7 @@ def planner_selections(refusal, base, head, check, config):
         facts['selection_search'] = True
         if passing:
             facts.update(alternatives=passing, replacement_total=total,
-                         bad_value={'selection': at(facts['reply'], field), 'replacement_total': total})
+                         bad_value={'replacement_total': total})
         violations.extend(evaluate((violation.rule,), facts, role='planner'))
     return ProofRefusal.from_violations(violations, role='planner')
 

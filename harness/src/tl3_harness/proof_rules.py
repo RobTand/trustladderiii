@@ -48,7 +48,9 @@ def symbol_name(module, selector):
 
 
 def names(facts):
-    result = [Name('field', facts.get('field', declaration_pointer('/proof', facts.get('check_index', 0))))]
+    source = repair_for(facts, MAKER.role, Allowed('const', None), 'Source correction')
+    result = ([] if isinstance(source, SourceEdit) else
+              [Name('field', facts.get('field', declaration_pointer('/proof', facts.get('check_index', 0))))])
     if module := facts.get('module'):
         result.append(Name('path', module))
         if symbol := facts.get('symbol'):
@@ -99,7 +101,7 @@ def repair_for(facts, role, allowed, reason):
     if role == MAKER.role and source_rule and path in (facts.get('footprint') or ()):
         if rule == 'proof.source.unparsable':
             reason = f"fix the syntax error at line {facts.get('line', '?')}: {facts.get('bad_value', 'invalid Python')}"
-        return SourceEdit(Name('path', path), reason)
+        return SourceEdit(path, reason)
     if role == PLANNER.role and facts.get('selection_search'):
         reason += ' No concrete declaration selection passes assembly on these trees.'
     return CantMeet(reason)
@@ -116,7 +118,9 @@ def source_row(id, allowed, reason, *, gating=False):
         if facts.get('why'):
             explanation = facts['why'] + '. ' + explanation
         return repair_for({**facts, 'rule': id}, role, choices(facts, role), explanation)
-    return Rule(id, failure_facts, names, choices, repair, gating=gating)
+    def failures(facts):
+        return tuple({**item, 'rule': id} for item in failure_facts(facts))
+    return Rule(id, failures, names, choices, repair, gating=gating)
 
 
 ROWS = {}
@@ -238,7 +242,9 @@ def example(row):
 
 for _row in ROWS.values():
     _example = example(_row)
-    _witness = {'planner': 'RuntimeError', 'maker': {'kind': 'cant_meet'}} if _row is FORCING_RAISE_CLASS else {'kind': 'cant_meet'}
+    _witness = ({'planner': {'checks': [{'forcing': {'patches': [{'raises': 'RuntimeError'}]}}]},
+                 'maker': {'kind': 'cant_meet'}} if _row is FORCING_RAISE_CLASS else
+                {'planner': {'kind': 'cant_meet'}, 'maker': {'kind': 'cant_meet'}})
     ROWS[_row.id] = register(replace(_row, example=_example, witness=_witness),
                              roles=(PLANNER.role, MAKER.role))
 FORCING_RAISE_CLASS = ROWS[FORCING_RAISE_CLASS.id]
@@ -253,10 +259,10 @@ def violation_data(violation):
         repair_data = {'kind': 'Edit', 'pointer': {'kind': 'field', 'value': repair.pointer.value},
                        'op': repair.op, 'allowed': {'keyword': repair.allowed.keyword, 'value': repair.allowed.value}}
     elif isinstance(repair, SourceEdit):
-        repair_data = {'kind': 'SourceEdit', 'path': repair.path.value, 'instruction': repair.instruction}
+        repair_data = {'kind': 'SourceEdit', 'path': repair.path, 'instruction': repair.instruction}
     else:
         repair_data = {'kind': 'CantMeet', 'reason': repair.reason}
-    return {'id': row.id, 'names': names_data, 'allowed': {'keyword': allowed.keyword, 'value': allowed.value},
+    return {'id': row.id, 'role': violation.role, 'names': names_data, 'allowed': {'keyword': allowed.keyword, 'value': allowed.value},
             'repair': repair_data, 'gating': row.gating,
             **({'bad_value': facts['bad_value']} if 'bad_value' in facts else {}),
             **({'replacement_total': facts['replacement_total']} if 'replacement_total' in facts else {})}

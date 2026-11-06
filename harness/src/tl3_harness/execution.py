@@ -207,13 +207,16 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
 
 
 def refused(plan: tuple[Check, ...], message: str) -> tuple[Result, ...]:
-    """A failing round that tells the maker what to undo; nothing ran."""
+    """Keep complete trusted proof rows within the existing result byte budget."""
     from .model import ProofMessage
     message = ProofMessage(str(message)) if isinstance(message, ProofRefusal) else message
-    return tuple(Result(check.name, check.kind, Verdict.FAIL, tuple(
+    results = tuple(Result(check.name, check.kind, Verdict.FAIL, tuple(
         TestResult(test, Outcome.UNCOLLECTED, Outcome.UNCOLLECTED, False, False,
                    message if isinstance(message, ProofMessage) else message[:MAX_MESSAGE_CHARS])
         for test in check.tests), forcing=check.forcing, declared_symptom=check.declared_symptom) for check in plan)
+    if isinstance(message, ProofMessage):
+        result_json(results)
+    return results
 
 
 def listed(instruction: str, changed: list[str]) -> str:

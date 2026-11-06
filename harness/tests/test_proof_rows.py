@@ -161,7 +161,8 @@ def test_role_repairs_and_absolute_declaration_pointers(tmp_path):
     assert caught.value.rule == 'proof.support.call_allowlist'
     assert isinstance(caught.value.violations[0].repair, SourceEdit)
     assert 'cant_meet' not in str(caught.value)
-    assert '/checks/4/proof/observer_support/0' in str(caught.value)
+    assert caught.value.violations[0].facts['field'] == '/checks/4/proof/observer_support/0'
+    assert caught.value.as_json()[0]['role'] == 'maker'
 
 
 def test_forcing_pointer_uses_its_plan_index():
@@ -193,3 +194,38 @@ def test_internal_destination_and_uneditable_syntax_are_terminal(tmp_path):
     assert caught.value.violations[0].rule.gating
     assert isinstance(caught.value.violations[0].repair, CantMeet)
     assert 'TL3-side assembly fault' in str(caught.value)
+
+
+def test_complete_proof_messages_still_obey_the_result_byte_limit():
+    from tl3_harness import execution
+    from tl3_harness.limits import MAX_RESULT_BYTES
+    check = model.Check('bounded rows', model.Kind.DEMONSTRATING, ('tests/test_observer.py::test_observer',))
+    error = model.ProofRefusal('proof.support.call_allowlist', module='tests/test_observer.py', why='x' * MAX_RESULT_BYTES)
+    with pytest.raises(model.HarnessInputError, match='result byte budget'):
+        execution.refused((check,), error)
+
+
+@pytest.mark.parametrize('role,editable,repair_kind', [
+    ('planner', True, 'CantMeet'), ('maker', False, 'CantMeet'), ('maker', True, 'SourceEdit'),
+])
+def test_syntax_repairs_respect_role_and_footprint(tmp_path, role, editable, repair_kind):
+    from tl3_harness.rules import CantMeet, SourceEdit
+    case = partitions()['proof.source.unparsable']['bad']
+    for side in ('before', 'after'):
+        for name, text in case[side].items():
+            path = tmp_path / side / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+    check = model.Check('syntax repair', model.Kind.DEMONSTRATING, tuple(case['tests']), proof=model.Proof.parse(case['proof']))
+    with pytest.raises(model.ProofRefusal) as caught:
+        proof.assemble_proof(tmp_path / 'before', tmp_path / 'after', tmp_path / 'staged', check, case['config'],
+                             role=role, footprint=('tests/test_observer.py',) if editable else ())
+    assert caught.value.rule == 'proof.source.unparsable'
+    repair = caught.value.violations[0].repair
+    assert isinstance(repair, {'CantMeet': CantMeet, 'SourceEdit': SourceEdit}[repair_kind])
+    if isinstance(repair, SourceEdit):
+        assert repair.path == 'tests/test_observer.py'
+        assert 'fix the syntax error at line ' in repair.instruction
+        assert 'cant_meet' not in str(caught.value)
+    else:
+        assert 'cant_meet' in str(caught.value)
