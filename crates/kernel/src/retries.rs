@@ -287,16 +287,8 @@ pub(super) fn plan_retry(w: &mut World, i: usize, cant_meet: bool,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 
-        (old(w).nodes@[i as int].phase is Planning) ==>
-            port_replies_contracts::plan_post(old(w).nodes@[i as int], final(w).nodes@[i as int],
-                old(w).next_question, old(w).fail_fast, cant_meet),
-        final(w).next_question == (old(w).next_question
-            + if !(old(w).fail_fast && cant_meet) && old(w).nodes@[i as int].plan_retries >= 1
-                { 1u64 } else { 0u64 }) as u64,
-        port_replies_contracts::output_post(*old(out), *final(out), i as int,
-            if !(old(w).fail_fast && cant_meet) && old(w).nodes@[i as int].plan_retries >= 1
-                { Some(Notice::Ask { question: old(w).next_question }) } else { None }),
-        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+        port_replies_contracts::retry_post(*old(w), *final(w), i as int,
+            cant_meet, *old(out), *final(out)),
 ] proof [reveal(retry_bounds);] {
     kernel_snapshot! { plan_before = *w }
     kernel_snapshot! { plan_out = *out }
@@ -344,6 +336,8 @@ pub(super) fn plan_retry(w: &mut World, i: usize, cant_meet: bool,
         if retirement::notices_only(plan_out@) {
             port_replies_handlers::output_notices(plan_out@, *out, i as int, plan_emission@);
         }
+        assert(port_replies_contracts::retry_post(plan_before@, *w, i as int,
+            cant_meet, plan_out@, *out)) by { reveal(port_replies_contracts::retry_post); }
     }
 }
 }

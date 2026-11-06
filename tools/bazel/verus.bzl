@@ -692,6 +692,7 @@ def verus_proofs():
             "kernel::reply_equivalence::compare": "Test-only extraction equivalence support; absent from the Verus cfg and executed by lib_test_tl3_kernel.",
             "kernel::reply_equivalence::every_reply_and_admission_branch_matches": "Test-only extraction equivalence support; absent from the Verus cfg and executed by lib_test_tl3_kernel.",
             "kernel::reply_equivalence::arbitrary_reply_state_matches": "Test-only extraction equivalence support; absent from the Verus cfg and executed by lib_test_tl3_kernel.",
+            "kernel::port_replies_contracts::retry_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),

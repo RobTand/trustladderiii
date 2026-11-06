@@ -299,7 +299,23 @@ pub(super) open spec fn output_post(before: Outbox, after: Outbox, i: int, emitt
     }
 }
 
+/// Q54 / #806: isolate the planner's added frame from unrelated retry queries.
+#[verifier::opaque]
+pub(super) open spec fn retry_post(before: World, after: World, i: int,
+    cant_meet: bool, out_before: Outbox, out_after: Outbox) -> bool {
+    (before.nodes@[i].phase is Planning ==> plan_post(before.nodes@[i], after.nodes@[i],
+        before.next_question, before.fail_fast, cant_meet))
+        && after.next_question == (before.next_question
+            + if !(before.fail_fast && cant_meet) && before.nodes@[i].plan_retries >= 1
+                { 1u64 } else { 0u64 }) as u64
+        && output_post(out_before, out_after, i,
+            if !(before.fail_fast && cant_meet) && before.nodes@[i].plan_retries >= 1
+                { Some(Notice::Ask { question: before.next_question }) } else { None })
+        && (retirement::notices_only(out_before) ==> retirement::notices_only(out_after))
+}
+
 /// #806: exact transition, immutable world fields, and notice-only outputs.
+#[verifier::opaque]
 pub(super) open spec fn transition_post(before: World, after: World, i: int,
     source: Node, reply: Reply, out_before: Outbox, out_after: Outbox) -> bool {
     selected(reply) && before.dependencies@.len() == 0

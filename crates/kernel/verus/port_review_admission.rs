@@ -49,7 +49,7 @@ pub(super) proof fn unselected(before: World, after: World, i: int, source: Node
     reply: Reply, out_before: Outbox, out_after: Outbox)
     requires !selected(reply), !port_replies_contracts::selected(reply),
     ensures transition_post(before, after, i, source, reply, out_before, out_after),
-{ reveal(transition_post); }
+{ reveal(transition_post); reveal(port_replies_contracts::transition_post); }
 
 /// State-table accepted rows: compose end_operation before the selected handler.
 pub(super) proof fn accepted(before: World, middle: World, after: World, i: int,
@@ -62,7 +62,7 @@ pub(super) proof fn accepted(before: World, middle: World, after: World, i: int,
         transition_post(middle, after, i, middle.nodes@[i], reply, out_before, out_after),
     ensures reply_result(before, after, i, generation, reply, out_before, out_after),
 {
-    reveal(reply_result); reveal(transition_post);
+    reveal(reply_result); reveal(transition_post); reveal(port_replies_contracts::transition_post);
     reveal(accepted_reply);
     match reply {
         Reply::PlanLeaf { footprint, .. } => footprint::storage_frame(before, middle, footprint, footprint),
