@@ -2298,3 +2298,19 @@ mod reply_equivalence;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_replies_maker.rs"]
 mod port_replies_maker;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_replies_maker_frames.rs"]
+mod port_replies_maker_frames;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_replies_maker_admission.rs"]
+mod port_replies_maker_admission;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_replies_maker_exec.rs"]
+mod port_replies_maker_exec;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_replies_maker_witness.rs"]
+mod port_replies_maker_witness;

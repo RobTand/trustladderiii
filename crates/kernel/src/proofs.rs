@@ -953,25 +953,6 @@ proof!(
     })
 );
 proof!(
-    apply_maker_done,
-    check_apply(reply(Reply::MakerDone { head: kani::any() }))
-);
-proof!(
-    apply_maker_needs_files,
-    check_apply(reply(Reply::MakerNeedsFiles {
-        files: kani::any(),
-        fits: kani::any()
-    }))
-);
-proof!(
-    apply_maker_cant_meet,
-    check_apply(reply(Reply::MakerCantMeet))
-);
-proof!(
-    apply_maker_out_of_room,
-    check_apply(reply(Reply::MakerOutOfRoom))
-);
-proof!(
     apply_checks_done,
     check_apply(reply(Reply::ChecksDone {
         report: kani::any(),

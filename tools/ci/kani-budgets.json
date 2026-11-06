@@ -252,34 +252,6 @@
    "seconds": 149.1,
    "tier": "pr"
   },
-  "apply_maker_cant_meet": {
-   "cpu_seconds": 261.1,
-   "invocation": "https://app.buildbuddy.io/invocation/b2d4ee06-6c07-4945-9436-d4712828a6de",
-   "peak_gb": 4.48,
-   "seconds": 251.1,
-   "tier": "pr"
-  },
-  "apply_maker_done": {
-   "cpu_seconds": 191.2,
-   "invocation": "https://app.buildbuddy.io/invocation/8b9dbd49-fa0d-41ff-9798-db28c6000bb2",
-   "peak_gb": 3.85,
-   "seconds": 182.1,
-   "tier": "pr"
-  },
-  "apply_maker_needs_files": {
-   "cpu_seconds": 281.2,
-   "invocation": "https://app.buildbuddy.io/invocation/407c1a50-0f67-4a18-895a-8ba138cab4cb",
-   "peak_gb": 4.69,
-   "seconds": 270.1,
-   "tier": "pr"
-  },
-  "apply_maker_out_of_room": {
-   "cpu_seconds": 299.1,
-   "invocation": "https://app.buildbuddy.io/invocation/9bae8d02-4ab3-46f6-8150-97f174629c2e",
-   "peak_gb": 4.42,
-   "seconds": 287.6,
-   "tier": "pr"
-  },
   "apply_new_adoption": {
    "cpu_seconds": 1126.7,
    "invocation": "https://app.buildbuddy.io/invocation/b2d4ee06-6c07-4945-9436-d4712828a6de",

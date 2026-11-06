@@ -130,6 +130,11 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
     ("apply_plan_leaf", "port_replies_witness_cover"),
     ("apply_plan_split", "port_replies_witness_cover"),
     ("apply_plan_cant_meet", "port_replies_witness_cover"),
+    // #806 W1 slice 2: all four maker rows use real apply and returned-world covers.
+    ("apply_maker_done", "port_replies_maker_witness_cover"),
+    ("apply_maker_cant_meet", "port_replies_maker_witness_cover"),
+    ("apply_maker_out_of_room", "port_replies_maker_witness_cover"),
+    ("apply_maker_needs_files", "port_replies_maker_witness_cover"),
 ];
 
 /// Quoted names between the proof-map markers in lib.rs.

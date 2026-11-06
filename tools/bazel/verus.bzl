@@ -698,6 +698,11 @@ def verus_proofs():
             "kernel::port_replies_maker::union_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_replies_maker::files_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_replies_maker::transition_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_replies_maker_frames::context": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_replies_maker_frames::result": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_replies_maker_admission::inline_input": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_replies_maker_exec::actual": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_replies_maker_exec::funding": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
@@ -1016,6 +1021,24 @@ def verus_proofs():
             "port_replies_maker_union_intro": ("kernel::port_replies_maker#union_intro", 1),
             "port_replies_maker_files_transport": ("kernel::port_replies_maker#files_transport", 1),
             "port_replies_maker_transport": ("kernel::port_replies_maker#transport", 1),
+            "port_replies_maker_done": ("kernel::port_replies_maker_frames#done", 1),
+            "port_replies_maker_cant_meet": ("kernel::port_replies_maker_frames#cant_meet", 1),
+            "port_replies_maker_out_of_room": ("kernel::port_replies_maker_frames#out_of_room", 1),
+            "port_replies_maker_inline_files": ("kernel::port_replies_maker_frames#inline_files", 1),
+            "port_replies_maker_needs_files": ("kernel::port_replies_maker_frames#needs_files", 1),
+            "port_replies_maker_funding": ("kernel::port_replies_maker_frames#funding", 1),
+            "port_replies_maker_work_question": ("kernel::port_replies_maker_admission#work_question", 1),
+            "port_replies_maker_files_question": ("kernel::port_replies_maker_admission#files_question", 1),
+            "port_replies_maker_accepted_reply": ("kernel::port_replies_maker_admission#accepted_reply", 1),
+            "port_replies_maker_reply_safe": ("kernel::port_replies_maker_admission#reply_safe", 1),
+            "port_replies_maker_verify_apply": ("kernel::port_replies_maker_exec#verify_apply", 1),
+            "port_replies_maker_accepted_done": ("kernel::port_replies_maker_admission#accepted_done", 1),
+            "port_replies_maker_accepted_cant": ("kernel::port_replies_maker_admission#accepted_cant", 1),
+            "port_replies_maker_accepted_room": ("kernel::port_replies_maker_admission#accepted_room", 1),
+            "port_replies_maker_accepted_files": ("kernel::port_replies_maker_admission#accepted_files", 1),
+            "port_replies_maker_witness_world": ("kernel::port_replies_maker_witness#world", 1),
+            "port_replies_maker_witness_cover": ("kernel::port_replies_maker_witness#cover", 2),
+            "port_replies_maker_source_context": ("kernel::port_replies_maker_admission#source_context", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
