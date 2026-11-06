@@ -128,4 +128,28 @@ pub(super) proof fn post_handled(n: Node, id: u64, next: u64)
         id, Answer::MarkHandled, next, next),
 { reveal(answers::answer_post); reveal(answered); }
 
+/// #806: keep the whole cleanup result opaque inside the World-level branch.
+#[verifier::opaque]
+pub(super) open spec fn cleanup_post(before: Node, after: Node) -> bool {
+    after == handled(Node { question: None, ..before })
+}
+
+/// #806: seal the real MarkHandled result before returning to the branch handler.
+#[verifier::spinoff_prover]
+pub(super) proof fn seal_cleanup(before: Node, after: Node)
+    requires after == handled(Node { question: None, ..before }),
+    ensures cleanup_post(before, after),
+{ reveal(cleanup_post); }
+
+/// #806: reconstruct the Answer postcondition without exposing cleanup equality to its caller.
+#[verifier::spinoff_prover]
+pub(super) proof fn post_cleanup(before: Node, after: Node, id: u64, next: u64)
+    requires before.phase is Stopping, before.question.is_some(), before.question.unwrap().id == id,
+        cleanup_post(before, after),
+    ensures answers::answer_post(before, after, id, Answer::MarkHandled, next, next),
+{
+    reveal(cleanup_post);
+    post_handled(before, id, next);
+}
+
 }

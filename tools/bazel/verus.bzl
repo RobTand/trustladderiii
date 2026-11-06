@@ -733,6 +733,7 @@ def verus_proofs():
             "kernel::port_answers_projection::common": "Logical definition for #806 answer frames; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::answer_equivalence::cleanup_advances_once_like_reference": "Test-only original-body equivalence for the approved #806 cleanup extraction; executed by kernel Rust tests.",
             "kernel::port_answers_command::event_post": "Opaque Answer-only event forwarding envelope; opened by its selected definition lemma.",
+            "kernel::port_answers_handler::cleanup_post": "Opaque cleanup result; sealed and opened by selected node-only lemmas.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
@@ -1115,6 +1116,8 @@ def verus_proofs():
             "port_answers_seal_event": ("kernel::port_answers_command#seal_event", 1),
             "port_answers_open_event": ("kernel::port_answers_command#open_event", 1),
             "port_acks_command_compose_apply": ("kernel::port_acks_commands#compose_apply", 1),
+            "port_answers_handler_seal_cleanup": ("kernel::port_answers_handler#seal_cleanup", 1),
+            "port_answers_handler_post_cleanup": ("kernel::port_answers_handler#post_cleanup", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

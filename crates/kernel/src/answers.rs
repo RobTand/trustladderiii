@@ -130,7 +130,7 @@ fn answer_stopping(w: &mut World, i: usize, _id: u64, answer: Answer) -> (result
         if answer == Answer::Retry {
             port_answers_handler::post_retry(before_answer@, _id, before_question@);
         } else if answer == Answer::MarkHandled {
-            port_answers_handler::post_handled(before_answer@, _id, before_question@);
+            port_answers_handler::post_cleanup(before_answer@, w.nodes@[i as int], _id, before_question@);
         } else {
             port_answers_handler::post_unchanged(before_answer@, _id, answer, before_question@);
         }
@@ -146,10 +146,13 @@ fn answer_cleanup(m: &mut Node) -> (result: ()) [
     ensures final(m).pos == if matches!(current_item(Node { question: None, ..*old(m) }), Some(Item::Teardown(_))) {
             (old(m).pos + 1) as u8
         } else { old(m).pos },
-        *final(m) == port_answers_model::handled(Node { question: None, ..*old(m) }),
-        *final(m) == (Node { question: None, pos: final(m).pos, run: final(m).run,
-            pool: final(m).pool, job: final(m).job, pr_open: final(m).pr_open,
-            worktree: final(m).worktree, ..*old(m) }),
+        port_answers_handler::cleanup_post(*old(m), *final(m)),
+        final(m).repo == old(m).repo,
+        final(m).footprint == old(m).footprint,
+        final(m).generation == old(m).generation,
+        final(m).next_seq == old(m).next_seq,
+        final(m).credit == old(m).credit,
+        final(m).last_cmd == old(m).last_cmd,
         (settle_shape(*old(m)) ==> settle_shape(*final(m))),
         (old(m).effect.is_none() && !old(m).waiting_incident
             && matches!(current_item(Node { question: None, ..*old(m) }), Some(Item::Teardown(_))))
@@ -160,7 +163,10 @@ fn answer_cleanup(m: &mut Node) -> (result: ()) [
     m.question = None;
     kernel_snapshot! { before_cleanup = *m }
     mark_handled(m);
-    kernel_proof! { port_answers_handler::handled_result(before_cleanup@, *m); }
+    kernel_proof! {
+        port_answers_handler::handled_result(before_cleanup@, *m);
+        port_answers_handler::seal_cleanup(before_answer@, *m);
+    }
 }
 }
 
