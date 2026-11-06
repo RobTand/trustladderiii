@@ -35,6 +35,7 @@ py_library(
         "runner.py",
         "runtime.py",
         "runtime_evidence.py",
+        "runtime_host.py",
         "runtime_image.py",
         "scratch.py",
         "selection.py",
@@ -62,4 +63,12 @@ py_binary(
     srcs = ["runtime_evidence.py"],
     imports = [".."],
     visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "runtime_host",
+    srcs = ["runtime_host.py"],
+    imports = [".."],
+    visibility = ["//visibility:public"],
+    deps = [":tl3_harness"],
 )
