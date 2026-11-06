@@ -54,5 +54,5 @@ mod observe_witness;
 
 #[cfg(any(test, verus_keep_ghost))]
 mod decide_witness;
-pub mod route;
 pub mod queue_entry;
+pub mod route;
