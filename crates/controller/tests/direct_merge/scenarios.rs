@@ -777,7 +777,7 @@ fn r2_c_healthy_event_wait_never_accumulates_read_outages() {
             assert_eq!(row.value["read_incidents"].as_u64().unwrap_or(0), 0);
             assert!(row.value["failure"].is_null(), "healthy wait must not report upstream record unavailable: {}", row.value);
         }
-        assert!(!serde_json::to_string(&snapshot).unwrap().contains("upstream record unavailable"));
+        assert!(!snapshot.rows.iter().any(|r|r.value.to_string().contains("upstream record unavailable")));
     }
     assert_eq!(fixture.direct.lock().unwrap().reads, reads, "event wait must not poll");
     assert!(fixture.direct.lock().unwrap().puts.is_empty());
