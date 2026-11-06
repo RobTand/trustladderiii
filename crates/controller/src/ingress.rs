@@ -128,7 +128,7 @@ pub fn apply(controller: &mut Controller, input: Input) -> Result<()> {
         Input::GitHubWake => {
             controller.retry_input_incident_posts()?;
             controller.retry_held_effects(crate::executor::Upstream::GitHub);
-            controller.retry_held_effects(crate::executor::Upstream::Mergify);
+            controller.retry_held_effects(crate::executor::Upstream::Delivery);
         }
         Input::Look { key } => controller.look_key(&key)?,
         Input::LabelledIssue(issue) => {

@@ -1178,6 +1178,11 @@ impl crate::Controller {
                         .filter_map(|kind| value[kind].as_u64())
                         .sum::<u64>() as u32;
                 }
+                "delivery_outcomes" if value["node"] == json!(node) => {
+                    if value["outcome"]["Merged"]["checks_passed"] == false {
+                        history.escaped_ci = true;
+                    }
+                }
                 "queue_facts" => {
                     let Ok(fact) = serde_json::from_value::<crate::adapters::mergify::QueueFact>(
                         value.clone(),
