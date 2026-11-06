@@ -258,6 +258,13 @@ def stage_host_runtime(destination, *, interpreter):
         'sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))\n'
         'from tl3_harness.runtime import collector_main\ncollector_main()\n')
     executable.chmod(0o555)
+    cleanup = root / 'host-cleanup'
+    cleanup.write_text(
+        f'#!{interpreter} -I\n'
+        'from pathlib import Path\nimport sys\n'
+        'sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))\n'
+        'from tl3_harness.runtime import cleanup_main\ncleanup_main()\n')
+    cleanup.chmod(0o555)
     manifest = root / 'collector-manifest.json'
     manifest.write_text(json.dumps({'interpreter': interpreter, 'files': files}, sort_keys=True) + '\n')
     manifest.chmod(0o444)
@@ -420,3 +427,158 @@ def check_rootless_directory(environment):
     if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
             or info.st_mode & 0o777 != 0o700):
         raise RuntimeError('rootless runtime directory must be owned by the job UID with mode 0700')
+
+
+def _process_observation(identity):
+    # One retained PID only. Never enumerate host processes or /proc.
+    try:
+        raw = Path(f"/proc/{identity['pid']}/stat").read_text()
+    except FileNotFoundError:
+        return {'kind': 'absent'}
+    ticks = int(raw.rsplit(')', 1)[1].split()[19])
+    return {'kind': 'present' if ticks == identity['start_ticks'] else 'reused', 'observed_start_ticks': ticks}
+
+
+def _scope_observation(identity, *, systemctl, cgroup_root, timeout):
+    import re
+    import subprocess
+
+    unit = identity['unit']
+    if not re.fullmatch(r'[A-Za-z0-9_.:@-]+\.scope', unit):
+        raise RuntimeError('unsafe retained scope unit')
+    reply = subprocess.run([systemctl, '--user', 'show', '--property=LoadState', '--property=ActiveState',
+                            '--property=InvocationID', '--property=ControlGroup', '--', unit],
+                           stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                           timeout=timeout, check=True)
+    if len(reply.stdout) > 16384:
+        raise RuntimeError('scope properties exceed byte bound')
+    properties = dict(line.split('=', 1) for line in reply.stdout.decode().splitlines())
+    invocation = properties['InvocationID'] or None
+    if invocation is not None and invocation != identity['invocation_id']:
+        raise RuntimeError('owned systemd scope generation changed')
+    if properties['ControlGroup'] not in ('', identity['cgroup']):
+        raise RuntimeError('owned systemd cgroup identity changed')
+    relative = Path(identity['cgroup']).relative_to('/')
+    root = Path(cgroup_root).resolve(strict=True)
+    path = (root / relative).resolve()
+    if not relative.parts or '..' in relative.parts or not path.is_relative_to(root) or path == root:
+        raise RuntimeError('unsafe retained scope cgroup')
+    try:
+        info = path.stat()
+    except FileNotFoundError:
+        events, procs = None, ''
+    else:
+        if not stat.S_ISDIR(info.st_mode):
+            raise RuntimeError('owned cgroup is not a directory')
+        events = (path / 'cgroup.events').read_text()
+        procs = (path / 'cgroup.procs').read_text()
+        if len(events) > 4096 or len(procs) > 65536:
+            raise RuntimeError('owned cgroup observations exceed byte bound')
+    active = 'not-found' if properties['LoadState'] == 'not-found' else properties['ActiveState']
+    return {'identity': identity, 'observed_invocation_id': invocation, 'cgroup_events': events,
+            'cgroup_procs': procs, 'active_state': active}
+
+
+def cleanup_observations(ownership, *, podman, systemctl, cgroup_root='/sys/fs/cgroup', timeout=10):
+    """Execute FX1's CleanupInput, returning raw CleanupEvidence for Rust validation.
+
+    Only a Rust-retained exact identity may be supplied. This helper never clears
+    debt, judges a terminal outcome, adopts another job, or trusts native clean.
+    """
+    import signal
+    import subprocess
+    import time
+
+    group = ownership['process_group']
+    if group <= 1 or group == os.getpgrp() or ownership['launcher']['pid'] <= 1:
+        raise RuntimeError('cleanup cannot target the helper group or an unsafe identity')
+
+    def capture(arguments):
+        result = subprocess.run(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, timeout=timeout, check=True)
+        if len(result.stdout) > 65536:
+            raise RuntimeError('cleanup metadata exceeds byte bound')
+        return result.stdout
+
+    def status(arguments):
+        return subprocess.run(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, timeout=timeout, check=False).returncode
+
+    container = ownership['container']
+    observed = None
+    if container is not None:
+        identifier = container['id']
+        filters = [arg for key, value in sorted(container['labels'].items())
+                   for arg in ('--filter', f'label={key}={value}')]
+        if not filters:
+            raise RuntimeError('cleanup requires retained ownership labels')
+        sweep = capture([podman, 'ps', '--all', '--no-trunc', *filters, '--format', '{{.ID}}']).decode().split()
+        if len(sweep) > 1 or any(item != identifier for item in sweep):
+            raise RuntimeError('label-filtered sweep differs from retained container')
+        present = status([podman, 'container', 'exists', identifier])
+        if present == 0:
+            template = '{"Id":{{json .Id}},"Labels":{{json .Config.Labels}}}'
+            actual = json.loads(capture([podman, 'container', 'inspect', '--format', template, identifier]))
+            if actual['Id'] != identifier or actual['Labels'] != container['labels']:
+                raise RuntimeError('exact container ownership labels changed')
+        elif present != 1:
+            raise RuntimeError('container existence is unknown')
+        scope = container['scope']
+        if scope is not None:
+            _scope_observation(scope, systemctl=systemctl, cgroup_root=cgroup_root, timeout=timeout)
+        removed = status([podman, 'rm', '--force', '--ignore', identifier])
+        absent = status([podman, 'container', 'exists', identifier])
+        observed = {'id': identifier, 'remove_exit': removed, 'exists_exit': absent,
+                    'scope': _scope_observation(scope, systemctl=systemctl, cgroup_root=cgroup_root, timeout=timeout)
+                    if scope is not None else None, 'sweep_ids': sweep}
+
+    launcher = _process_observation(ownership['launcher'])
+    if launcher['kind'] == 'present':
+        # Bind the signalling window to the retained live leader, never a reused PID.
+        handle = os.pidfd_open(ownership['launcher']['pid'])
+        try:
+            if (_process_observation(ownership['launcher'])['kind'] != 'present'
+                    or os.getpgid(ownership['launcher']['pid']) != group):
+                raise RuntimeError('retained launcher/group identity changed')
+            os.killpg(group, signal.SIGTERM)
+            if not processes_stopped([handle], timeout):
+                os.killpg(group, signal.SIGKILL)
+                processes_stopped([handle], timeout)
+        finally:
+            os.close(handle)
+        launcher = _process_observation(ownership['launcher'])
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            os.killpg(group, 0)
+            group_errno = None
+        except OSError as error:
+            group_errno = error.errno
+        if group_errno is not None or time.monotonic() >= deadline:
+            break
+        time.sleep(min(0.05, max(0, deadline - time.monotonic())))
+    return {'schema': 'tl3.cleanup_evidence.v1', 'ownership': ownership, 'launcher': launcher,
+            'process_group_probe_errno': group_errno, 'container': observed}
+
+
+def cleanup_main():
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(description='Independent exact-ownership runtime cleanup observations')
+    parser.add_argument('--podman', required=True)
+    parser.add_argument('--systemctl', required=True)
+    parser.add_argument('--timeout', type=float, default=10)
+    args = parser.parse_args()
+    check_rootless_directory(os.environ)
+    if not 0 < args.timeout <= 60:
+        raise ValueError('cleanup timeout must be positive and at most 60 seconds')
+    raw = sys.stdin.buffer.read(1024 * 1024 + 1)
+    if len(raw) > 1024 * 1024:
+        raise ValueError('cleanup input exceeds byte bound')
+    request = json.loads(raw)
+    if request['schema'] != 'tl3.cleanup_input.v1':
+        raise ValueError('unsupported Rust cleanup input')
+    evidence = cleanup_observations(request['ownership'], podman=args.podman, systemctl=args.systemctl,
+                                    timeout=args.timeout)
+    print(json.dumps(evidence, sort_keys=True))
