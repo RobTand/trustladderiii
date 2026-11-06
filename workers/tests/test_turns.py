@@ -785,3 +785,58 @@ def test_worker_rule_adapter_reuses_the_harness_core():
     assert isinstance(adapter.Allowed('type', 'array'), core.Allowed)
     assert adapter.Allowed('type', 'array').accepts([])
     assert not adapter.Allowed('type', 'array').accepts('not an array')
+
+
+@pytest.mark.parametrize('nested', [False, True], ids=['root', 'nested'])
+def test_required_rows_add_only_the_missing_properties(nested):
+    from jsonschema import Draft202012Validator
+    from tl3_workers.contracts import schema_violations
+    from tl3_workers.rules import apply_edit, permits, register
+    required = {'type': 'object', 'required': ['a/b~c', 'count'], 'properties': {
+        'a/b~c': {'$ref': '#/$defs/name'}, 'count': {'type': 'integer'}}}
+    proposal = {'$defs': {'name': {'enum': ['ok']}}}
+    proposal.update({'properties': {'box': required}} if nested else required)
+    validator = Draft202012Validator(proposal)
+    before = {'untouched': True, **({'box': {'kept': True}} if nested else {})}
+    violations = schema_violations(validator.iter_errors(before), proposal)
+    prefix = '/box' if nested else ''
+    assert len(violations) == 2
+    assert {item.facts['pointer'] for item in violations} == {prefix + '/a~1b~0c', prefix + '/count'}
+    fixed = before
+    for item in violations:
+        edit = item.rule.repair(item.facts)
+        value = 'ok' if edit.pointer.value.endswith('/a~1b~0c') else 3
+        assert edit.op == 'add' and edit.allowed.accepts(value)
+        assert 'add reply field' in item.render()
+        register(item.rule, {**item.facts, 'reply': before}, value)
+        fixed = apply_edit(fixed, edit, value)
+    assert validator.is_valid(fixed) and permits(before, fixed, violations)
+    assert not permits(before, {**fixed, 'untouched': False}, violations)
+    if nested:
+        assert not permits(before, {**fixed, 'box': {**fixed['box'], 'kept': False}}, violations)
+
+
+def test_cant_meet_registration_requires_a_terminal_reply_form():
+    from tl3_workers.rules import Allowed, CantMeet, Name, Rule, register
+    row = Rule('proof.identity', lambda facts: ({},),
+               lambda facts: (Name('symbol', 'tests/test_x.py::test_x'),),
+               lambda facts: Allowed('enum', []), lambda facts: CantMeet('identity differs'))
+    with pytest.raises(ValueError, match='terminal reply form'):
+        register(row, {'reply': {}})
+
+
+def test_allowed_value_equality_crosses_the_adapter_boundary():
+    from tl3_harness.rules import Allowed as CoreAllowed
+    from tl3_workers.rules import Allowed
+    assert CoreAllowed('enum', ['ok']) == Allowed('enum', ['ok'])
+    assert Allowed('enum', ['ok']) == CoreAllowed('enum', ['ok'])
+    assert CoreAllowed('const', True) != Allowed('const', 1)
+
+
+def test_symbol_names_use_source_path_and_python_qualname():
+    from tl3_workers.rules import Name
+    assert Name('symbol', 'pkg/mod.py::Class.method').value == 'pkg/mod.py::Class.method'
+    for invalid in ('tl3_workers.roles.postmortem::envelope', 'pkg/mod.py::Class::method',
+                    'pkg/mod.py::Class..method'):
+        with pytest.raises(ValueError, match='path::qualname'):
+            Name('symbol', invalid)
