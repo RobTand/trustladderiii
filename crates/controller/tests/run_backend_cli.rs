@@ -1803,8 +1803,10 @@ fn prelaunch_and_cancel_serialize_across_separate_cli_processes() {
     let mut second = spawn();
     writeln!(first.stdin.take().unwrap(), "{launch}").unwrap();
     writeln!(second.stdin.take().unwrap(), "{cancel}").unwrap();
-    assert!(first.wait_with_output().unwrap().status.success());
-    assert!(second.wait_with_output().unwrap().status.success());
+    let launch_output = first.wait_with_output().unwrap();
+    let cancel_output = second.wait_with_output().unwrap();
+    assert!(cancel_output.status.success());
+    let launch_frame: Value = serde_json::from_slice(&launch_output.stdout).unwrap();
     let record: api::durable::Record = serde_json::from_slice(
         &fs::read(
             f.options
@@ -1817,6 +1819,17 @@ fn prelaunch_and_cancel_serialize_across_separate_cli_processes() {
     .unwrap();
     assert!(record.cancel_requested);
     assert!(record.runtime_ownerships.is_empty());
+    if launch_output.status.success() {
+        assert_eq!(launch_frame["kind"], "result");
+        assert_eq!(record.container_launches.len(), 1);
+    } else {
+        assert_eq!(launch_frame["code"], "acceptance_unknown", "{launch_frame}");
+        assert_eq!(
+            launch_frame["message"],
+            "container launch is held after cancellation or terminal"
+        );
+        assert!(record.container_launches.is_empty());
+    }
     for intent in record.container_launches.values() {
         assert_eq!(intent.launcher, f.ownership());
         assert!(
