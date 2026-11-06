@@ -2,6 +2,7 @@ use super::*;
 
 pub(super) const MODES: &[&str] = &[
     "repair",
+    "nested-repair",
     "queue-running",
     "suite-running",
     "suite-nonempty",
@@ -91,6 +92,18 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         state.suites = suites["check_suites"].clone();
         state.entry_fixture = Some(Fixture { mode: mode.into() });
         match mode {
+            "nested-repair" => {
+                state.queue_check_mut()["output"]["summary"] =
+                    json!(include_str!("../fixtures/mergify/tessera1639/nested-summary.txt"));
+                for check in state.checks.as_array_mut().unwrap() {
+                    if matches!(check["name"].as_str(), Some("pure" | "pr-gate")) {
+                        check["conclusion"] = json!("success");
+                    }
+                }
+                for suite in state.suites.as_array_mut().unwrap() {
+                    suite["status"] = json!("completed");
+                }
+            }
             "queue-running" => {
                 let check = state.queue_check_mut();
                 check["status"] = json!("in_progress");
@@ -158,7 +171,15 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         }
         let node = controller.world().unwrap().nodes[0];
         let snapshot = controller.snapshot().unwrap();
-        if mode == "repair" {
+        if matches!(mode, "repair" | "nested-repair") {
+            if mode == "nested-repair" && node.phase != Phase::Making {
+                assert!(snapshot.rows.iter().any(|r| r.table == "queue_facts"
+                    && r.value["evidence"].get("QueueBlocked").is_some()));
+                assert!(snapshot.rows.iter().any(|r| r.table == "incidents"
+                    && r.value["open"] == true
+                    && r.value["summary"].as_str().is_some_and(|text|
+                        text.contains("all of") && text.contains("Bazel"))));
+            }
             assert_eq!(
                 node.phase,
                 Phase::Making,
@@ -180,13 +201,12 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
                 .unwrap()
                 .unwrap()
                 .to_string();
-            for expected in [
-                "Bazel",
-                "pure",
-                "pr-gate",
-                "scopes-available",
-                "test_installed_commit_owner.py",
-            ] {
+            let expected: &[&str] = if mode == "nested-repair" {
+                &["Bazel", "test_installed_commit_owner.py"]
+            } else {
+                &["Bazel", "pure", "pr-gate", "scopes-available", "test_installed_commit_owner.py"]
+            };
+            for expected in expected {
                 assert!(
                     findings.contains(expected),
                     "missing {expected}: {findings}"
