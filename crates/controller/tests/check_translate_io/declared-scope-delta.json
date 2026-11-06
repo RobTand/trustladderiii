@@ -1,0 +1,14 @@
+[
+  {
+    "before": "                let footprint: std::collections::BTreeSet<_> = world\n                    .files(n.footprint)\n                    .ok_or(Error::Invalid(\"unknown footprint\"))?\n                    .collect();\n",
+    "after": "                let footprint: std::collections::BTreeSet<_> =\n                    declared_scope::paths(snapshot, Some(commit), world, node, &snapshot.interned)?\n                        .into_iter()\n                        .collect();\n"
+  },
+  {
+    "before": "                    let id = self.store.intern_path(repo, &path)?;",
+    "after": "                    self.store.intern_path(repo, &path)?;"
+  },
+  {
+    "before": "                    if !footprint.contains(&tl3_kernel::FileId(id.get() as u64)) {",
+    "after": "                    if !footprint.contains(&path) {"
+  }
+]

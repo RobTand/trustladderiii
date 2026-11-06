@@ -9,6 +9,31 @@ use std::{
 };
 use url::Url;
 
+mod file_partition;
+
+/// #845: stable declared-file partition; locks use a separate generated-only fallback.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FilePartition {
+    pub authored: Vec<String>,
+    pub generated: Vec<String>,
+    pub locks: Vec<String>,
+}
+
+/// Match only configured generator outputs, using the existing repository matcher.
+pub fn partition_files(declared: &[String], patterns: &[String], generator: bool) -> FilePartition {
+    let flags = declared
+        .iter()
+        .map(|path| path_is_protected(path, patterns))
+        .collect();
+    let (authored, generated, locks) = file_partition::partition_indices(flags, generator);
+    let paths = |indices: Vec<usize>| indices.into_iter().map(|i| declared[i].clone()).collect();
+    FilePartition {
+        authored: paths(authored),
+        generated: paths(generated),
+        locks: paths(locks),
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("{field}: {message}")]

@@ -82,6 +82,24 @@ CASES = {
         '        let Some(item) = item else { break };',
         '//crates/controller:test_test_postmortem_decision',
     ),
+    'file_partition_membership': (
+        'crates/config/src/file_partition.rs',
+        'if configured && flags[i] {',
+        'if configured && !flags[i] {',
+        '//crates/config:verus_file_partition',
+    ),
+    'file_partition_no_generator': (
+        'crates/config/src/file_partition.rs',
+        'if configured && flags[i] {',
+        'if flags[i] {',
+        '//crates/config:verus_file_partition',
+    ),
+    'file_partition_fallback': (
+        'crates/config/src/file_partition.rs',
+        'let locks = if authored.is_empty() {',
+        'let locks = if false {',
+        '//crates/config:verus_file_partition',
+    ),
 }
 
 

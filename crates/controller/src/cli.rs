@@ -293,6 +293,7 @@ pub fn daemon() -> Result<()> {
     )?;
     controller.set_priority_credit_reserve(&config.limits);
     controller.set_request_protection(&config);
+    controller.set_repository_generation(&config.github.repos);
     controller.set_delegated_attributions(
         config
             .operations
@@ -327,6 +328,7 @@ fn production(config: tl3_config::Config) -> Result<()> {
     )?;
     controller.set_priority_credit_reserve(&config.limits);
     controller.set_request_protection(&config);
+    controller.set_repository_generation(&config.github.repos);
     controller.set_delegated_attributions(
         config
             .operations

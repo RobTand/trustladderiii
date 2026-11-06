@@ -49,6 +49,7 @@ mod quota_wake;
 #[path = "../tests/support/ownership.rs"]
 mod startup_ownership;
 pub use postmortems::PostmortemPace;
+mod declared_scope;
 pub mod pr_body;
 pub mod priority;
 pub mod production;
@@ -356,11 +357,27 @@ pub struct Controller {
     /// Starting credit reserve by priority, P0 first (#416). Empty keeps the kernel's.
     priority_reserve: BTreeMap<u8, u8>,
     request_protection: Vec<(Repository, Vec<String>)>,
+    repository_generation: Vec<(Repository, Vec<String>, bool)>,
     delegated_attributions: Vec<String>,
 }
 impl Controller {
     /// #845: configure repository generation for exclusive file locks.
-    pub fn set_repository_generation(&mut self, _repos: &[tl3_config::Repository]) {}
+    pub fn set_repository_generation(&mut self, repos: &[tl3_config::Repository]) {
+        self.repository_generation = repos
+            .iter()
+            .map(|repo| {
+                (
+                    Repository {
+                        owner: repo.owner.clone(),
+                        name: repo.name.clone(),
+                        installation: repo.installation_id,
+                    },
+                    repo.generated_files.clone(),
+                    repo.generator.is_some(),
+                )
+            })
+            .collect();
+    }
 
     pub fn open(store: Store, adapters: Registry, bootstrap: Bootstrap) -> Result<Self> {
         Self::open_with_clock(store, adapters, bootstrap, clock::SystemClock)
@@ -455,6 +472,7 @@ impl Controller {
             postmortem_since: 0,
             priority_reserve: BTreeMap::new(),
             request_protection: Vec::new(),
+            repository_generation: Vec::new(),
             delegated_attributions: Vec::new(),
         };
         controller.reconcile_capacity()?;
@@ -2101,7 +2119,12 @@ impl Controller {
         if !self.input_checkpoint(snapshot, commit)? {
             return Ok(());
         }
+        let scope_before = match event {
+            Event::Reply { node, .. } => world.nodes.get(node.0 as usize).copied(),
+            _ => None,
+        };
         let (mut world, mut outputs) = tl3_kernel::step(world, event);
+        declared_scope::finish_reply(scope_before, event, &world, commit);
         outputs.splice(0..0, dependency_outputs);
         self.announce_dependency_endings(
             snapshot,
@@ -2144,6 +2167,20 @@ impl Controller {
     ) -> Result<()> {
         let previous = snapshot::decode(snapshot)?;
         let before = snapshot::encode(&previous)?;
+        for (index, node) in world.nodes.iter().enumerate() {
+            if matches!(node.phase, tl3_kernel::Phase::Planning { .. })
+                && previous
+                    .nodes
+                    .get(index)
+                    .is_some_and(|old| !matches!(old.phase, tl3_kernel::Phase::Planning { .. }))
+            {
+                commit.rows.push(RowChange::Delete {
+                    table: declared_scope::TABLE.into(),
+                    id: index.to_string(),
+                });
+            }
+        }
+
         for (index, node) in world.nodes.iter().enumerate() {
             if !matches!(node.phase, tl3_kernel::Phase::Planning { .. })
                 || previous
@@ -2264,17 +2301,7 @@ impl Controller {
                 .iter()
                 .find(|r| r.table == "pull_requests" && r.id == node.0.to_string())
                 .and_then(|r| r.value["number"].as_u64());
-            let paths = world
-                .files(n.footprint)
-                .ok_or(Error::Invalid("unknown footprint"))?
-                .map(|file| {
-                    dictionary
-                        .iter()
-                        .find(|i| i.kind == tl3_store::InternKind::Path && i.id == file.0 as i64)
-                        .map(|i| i.value.clone())
-                        .ok_or(Error::Invalid("path missing from intern dictionary"))
-                })
-                .collect::<Result<Vec<_>>>()?;
+            let paths = declared_scope::paths(snapshot, Some(commit), &world, node, &dictionary)?;
             let mut checks = check_run(snapshot, node, head_sha.as_deref())?;
             if checks.is_none()
                 && matches!(
@@ -2744,12 +2771,20 @@ impl Controller {
         let repo = self
             .store
             .intern_repo(&request.repo.owner, &request.repo.name)?;
-        let files = paths
+        if paths.iter().any(|path| path.is_empty()) {
+            return Err(Error::Invalid("footprint path must be nonempty"));
+        }
+        let locks = self
+            .repository_generation
+            .iter()
+            .find(|(configured, _, _)| *configured == request.repo)
+            .map(|(_, patterns, generator)| {
+                tl3_config::partition_files(paths, patterns, *generator).locks
+            })
+            .unwrap_or_else(|| paths.to_vec());
+        let files = locks
             .iter()
             .map(|p| {
-                if p.is_empty() {
-                    return Err(Error::Invalid("footprint path must be nonempty"));
-                }
                 self.store
                     .intern_path(repo, p)
                     .map_err(Error::from)
@@ -3402,10 +3437,10 @@ impl Controller {
                     .store
                     .intern_repo(&request.repo.owner, &request.repo.name)?;
                 let n = &world.nodes[node.index().ok_or(Error::Invalid("node index overflow"))?];
-                let footprint: std::collections::BTreeSet<_> = world
-                    .files(n.footprint)
-                    .ok_or(Error::Invalid("unknown footprint"))?
-                    .collect();
+                let footprint: std::collections::BTreeSet<_> =
+                    declared_scope::paths(snapshot, Some(commit), world, node, &snapshot.interned)?
+                        .into_iter()
+                        .collect();
                 let exact_head = n.head == Some(self.head(node, &sha)?);
                 let decision = tl3_controller_core::translate_checks::checks_reply(
                     n.job,
@@ -3453,8 +3488,8 @@ impl Controller {
                 }
                 let mut in_footprint = true;
                 for path in changed_paths {
-                    let id = self.store.intern_path(repo, &path)?;
-                    if !footprint.contains(&tl3_kernel::FileId(id.get() as u64)) {
+                    self.store.intern_path(repo, &path)?;
+                    if !footprint.contains(&path) {
                         outside_paths_total += 1;
                         if outside_paths.len() < findings::MAX_OUTSIDE_PATHS {
                             outside_paths.push(findings::clipped(&path, findings::MAX_PATH_CHARS));
@@ -3763,7 +3798,16 @@ impl Controller {
                         )?;
                         mapped =
                             adapters::workers::protocol::MappedReply::Kernel(Reply::PlanLeaf {
-                                footprint: self.footprint(snapshot, world, node, &paths)?,
+                                footprint: {
+                                    let footprint =
+                                        self.footprint(snapshot, world, node, &paths)?;
+                                    commit.rows.push(put(
+                                        declared_scope::TABLE,
+                                        node.0.to_string(),
+                                        json!(&paths),
+                                    ));
+                                    footprint
+                                },
                                 fits,
                             });
                     }
@@ -3896,19 +3940,37 @@ impl Controller {
                         let repo = self
                             .store
                             .intern_repo(&request.repo.owner, &request.repo.name)?;
-                        let mut files = world
-                            .files(n.footprint)
-                            .ok_or(Error::Invalid("unknown footprint"))?
-                            .collect::<Vec<_>>();
-                        for path in paths {
-                            files.push(tl3_kernel::FileId(
-                                self.store.intern_path(repo, &path)?.get() as u64,
+                        let persisted = declared_scope::stored(snapshot, node)?;
+                        let mut declared = declared_scope::paths(
+                            snapshot,
+                            Some(commit),
+                            world,
+                            node,
+                            &snapshot.interned,
+                        )?;
+                        declared.extend(paths);
+                        let files = if persisted.is_some() {
+                            let files = self.footprint(snapshot, world, node, &declared)?;
+                            commit.rows.push(put(
+                                declared_scope::TABLE,
+                                node.0.to_string(),
+                                json!(&declared),
                             ));
-                        }
-                        Reply::MakerNeedsFiles {
-                            files: world.intern_footprint(files),
-                            fits,
-                        }
+                            files
+                        } else {
+                            // Existing leaves keep scope and locks identical until their next plan.
+                            let files = declared
+                                .iter()
+                                .map(|path| {
+                                    self.store
+                                        .intern_path(repo, path)
+                                        .map(|id| tl3_kernel::FileId(id.get() as u64))
+                                        .map_err(Error::from)
+                                })
+                                .collect::<Result<Vec<_>>>()?;
+                            world.intern_footprint(files)
+                        };
+                        Reply::MakerNeedsFiles { files, fits }
                     }
                 };
                 if mapped != Reply::RunFailed {
@@ -3956,7 +4018,15 @@ impl Controller {
                 node,
                 generation,
                 reply: Reply::PlanLeaf {
-                    footprint: self.footprint(snapshot, world, node, &paths)?,
+                    footprint: {
+                        let footprint = self.footprint(snapshot, world, node, &paths)?;
+                        commit.rows.push(put(
+                            declared_scope::TABLE,
+                            node.0.to_string(),
+                            json!(&paths),
+                        ));
+                        footprint
+                    },
                     fits,
                 },
             },

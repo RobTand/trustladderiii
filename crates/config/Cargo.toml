@@ -17,3 +17,6 @@ tempfile = "3"
 tiktoken-rs = "=0.12.0"
 base64 = "0.22"
 sha2 = "0.10"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(verus_keep_ghost)"] }
