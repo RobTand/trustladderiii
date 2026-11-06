@@ -443,3 +443,201 @@ def test_malformed_proof_omission_keeps_the_single_format_repair(planner_request
     assert not model.calls[-1][1]
     assert event['reply']['violations'] == []
     assert 'plan_check' not in event
+
+
+def _fixture_1574():
+    import json
+    return json.loads(Path(__file__).with_name('fixtures').joinpath('planner-1574.json').read_text())
+
+
+def test_1574_repair_line_asks_only_for_the_empty_contract_the_guard_accepts():
+    """tessera #1574: the one EVIDENCE_EMPTY repair line also told the model to write requirements."""
+    from tl3_workers.evidence import preflight
+    from tl3_workers.roles import planner
+
+    fixture = _fixture_1574()
+    draft = copy.deepcopy(fixture['draft'])
+    objections = []
+    preflight(fixture['inputs'], draft, planning=True, objections=objections)
+    assert [(item.rule, item.items) for item in objections] == [
+        (item['rule'], item['items']) for item in fixture['objections']]
+    line = planner.message(objections)
+    assert line.split('\n')[1].startswith('evidence.contract_missing field="evidence_contract": ')
+    assert 'evidence_contract: []' in line
+    assert 'Return evidence_contract with source requirements' not in line, line
+    assert 'Code supplies the inherited source requirements' in line, line
+    # Production assembly: the same line reaches the model as the semantic repair text.
+    error = planner.PlanConsistencyError.semantic(fixture['draft'], draft, objections, fixture['inputs'],
+                                                  planner.PlanConsistencyError([], draft=fixture['draft']))
+    assert error.repair_text == line
+    # The guard is unchanged: the answer the line asks for passes; the live correction does not.
+    contract = error.contract
+    assert contract.check({**fixture['draft'], 'evidence_contract': []}) == []
+    rejected = contract.check({**fixture['draft'], 'evidence_contract': fixture['correction_evidence_contract']})
+    assert [(item.rule, item.items) for item in rejected] == [('guard.fields_changed', {'paths': ['/evidence_contract']})]
+
+
+# Per footprint: words naming the one edit its Correction guard accepts. A repair
+# line must carry them. Footprints with no CONSTRAINTS entry have no guard
+# permission, so their only accepted reply is cant_meet.
+REPAIR_INTENT = {
+    'NONE': 'return cant_meet', 'EDIT_SELECT': 'return cant_meet', 'FILE_DROP': 'return cant_meet',
+    'FORCING_RESERVED': 'return cant_meet', 'FORCING_RULE': 'return cant_meet', 'FORCING_TEXT': 'return cant_meet',
+    'OBSERVER_SELECT': 'return cant_meet', 'PROTECTED': 'return cant_meet', 'RECEIPT_SELECT': 'return cant_meet',
+    'TESTS_FILL': 'return cant_meet',
+    'CODE': 'Delete only named code-owned keys', 'COVERAGE': 'Only add this citation to existing checks',
+    'RED_FILL': 'Fill only blank proof.red_message', 'PROOF_FILL': 'Fill only absent proof keys',
+    'SUBJECT_ADD': 'Append only named missing subjects', 'EXACT_SELECT': 'Replace only named inexact selectors',
+    'BASE_SELECT': 'Replace only named absent selectors with exact base controls',
+    'FORCED_SELECT': 'Replace only named absent forced selectors', 'EDIT_COVER': 'Cover only those edits',
+    'SPLIT': 'Preserve every original obligation', 'FILES_FILL': 'Fill empty files only',
+    'GOAL_ADD': 'Fill empty citations only', 'GOAL_DROP': 'Remove only named unknown goal ids',
+    'GOAL_SANITIZE': 'Remove only invalid or duplicate citations', 'PIECE_GOALS': 'Fill only empty citations',
+    'PIECE_DROP': 'Remove only unknown piece goal ids', 'PIECE_COVER': 'Add only missing goal ids',
+    'PROOF_FILE': 'Add only the named source-required path', 'EDIT_FILE': 'Add only the named file',
+    'EDIT_DROP': 'Drop only the named absent-base edit', 'FROZEN': 'Remove only named edited nodes from frozen checks',
+    'EVIDENCE_EMPTY': 'evidence_contract: []', 'METHOD_REPLACE': 'Replace only named method choices',
+    'MEMORY_DROP': 'Remove only named unsupplied memory ids', 'FLAG_DROP': 'Remove only named uncited flags',
+    'FLAG_CLAIM': 'Drop the named flag or replace only its claim', 'SYMPTOM_FIELDS': 'Remove extra symptom keys',
+    'PATCH_MODE': 'Remove extra patch keys', 'FORCING_KEYS': 'Remove only extra top-level forcing keys',
+    'PROOF_DEDUP': 'Remove only identical repeated proof units', 'NODE_DEDUP': 'Remove only duplicate selectors',
+    'FILE_PATH': 'unique confined relative path', 'SPLIT_REASON': 'Replace only the invalid split reason',
+}
+ANY = None
+# Every edit a diagnostic asks for, and the footprints whose guard accepts it.
+# A new asking diagnostic fails the table test until it is classified here.
+DIAGNOSTIC_ASKS = {
+    'Return evidence_contract with source requirements': set(),  # code owns inherited requirements
+    'Leave it out': set(),  # no leaf guard removes a declared file
+    'reduce the selected tests': set(),  # SPLIT keeps every check; only FROZEN drops named edited nodes
+    'Use a relative worktree path': {'FILE_PATH'},
+    'Replace `': {'EXACT_SELECT'},
+    'Name it in a demonstrating check': {'EDIT_COVER'},
+    'Name it only in a demonstrating check': {'FROZEN'},
+    'Preserve every obligation in bounded pieces': {'SPLIT'},
+    'Propose smaller pieces': {'SPLIT'},
+    'omit execution from the model reply': {'CODE'},
+    'State the expected assertion message': {'PROOF_FILL'},
+    'Only add the named subjects': {'SUBJECT_ADD'},
+    'Preserve': ANY,  # freezing is accepted under every footprint
+    # Not a plan edit: only the operator can change request scope, so cant_meet
+    # (the NONE line) is the planner's one honest reply.
+    'Change the request scope or repository convention': {'NONE'},
+}
+ASKING = r'(?:[Oo]nly )?(?:Return|Add|Leave|Replace|Remove|Drop|Name|State|Propose|Preserve|Change|Fill|Delete|Use|[Rr]educe|[Oo]mit|Keep|List|Append|Cover|Resume)\b'
+
+
+def _unpack_corpus(value):
+    from tl3_harness.model import named
+    if isinstance(value, list):
+        return [_unpack_corpus(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    if '$diagnostic' in value:
+        text, rule, items = value['$diagnostic']
+        return named(rule, text, _unpack_corpus(items))
+    if '$dict' in value:
+        return {_unpack_corpus(key): _unpack_corpus(item) for key, item in value['$dict']}
+    if '$set' in value or '$tuple' in value:
+        return [_unpack_corpus(item) for item in value.get('$set', value.get('$tuple'))]
+    if '$bytes_utf8' in value:
+        return value['$bytes_utf8']
+    return {key: _unpack_corpus(item) for key, item in value.items()}
+
+
+def _emitted_diagnostics(planner_request, monkeypatch):
+    """Real diagnostics: the P2a corpus records, plus emitters it lacks."""
+    import gzip
+    import json
+    from tl3_harness import Check, Kind
+    from tl3_harness.limits import validate_check_plan, validate_plan_size
+    from tl3_harness.model import Diagnostic, named
+    from tl3_workers import forecast
+    from tl3_workers.evidence import EvidenceContractError
+    from tl3_workers.roles import planner
+
+    found = []
+
+    def walk(value):
+        if isinstance(value, dict):
+            if '$diagnostic' in value:
+                found.append(_unpack_corpus(value))
+            for item in value.values():
+                walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+    walk(json.loads(gzip.decompress(Path(__file__).with_name('planner-vectors.json.gz').read_bytes())))
+    found.append(EvidenceContractError().args[0])
+    for limit in (lambda: validate_plan_size(('tests/test_a.py::' + 'a' * 4_200_000,)),
+                  lambda: validate_check_plan((Check('check-1', Kind.REGRESSION,
+                                                     tuple(f'tests/test_a.py::test_{i}' for i in range(700))),))):
+        with pytest.raises(ValueError) as error:
+            limit()
+        found.append(planner.contextual(error.value, checks=[]))
+    # Every forecaster problem reaches the plan through check_reply's own wrapper.
+    problems = [forecast.DeclaredFileError('greeting.py', 'unusable')] + [
+        forecast.DeclaredFileError('greeting.py', named(rule, rule, {'path': 'greeting.py'}), 7)
+        for rule in ('path.not_regular', 'path.binary', 'path.encoding', 'path.hard_cap', 'path.noncanonical')]
+
+    # Budget arithmetic is Rust-owned and out of scope here; fixed facts keep the
+    # wrapper reachable without a checker call, as the P2a recorder does.
+    class Problems:
+        def __init__(self, config):
+            self.problems = list(problems)
+
+        def measure(self, *args):
+            return {'fits': True, 'tokens': 1}
+    monkeypatch.setattr(planner, 'Forecaster', Problems)
+    monkeypatch.setattr(planner, 'execution_forecast',
+                        lambda *args, **kwargs: {'exploration_declared': False, 'fits': True, 'estimated_tool_turns': 1})
+    monkeypatch.chdir(planner_request['worktree'])
+    reply = copy.deepcopy(LEAF)
+    planner.check_reply(planner_request['inputs'], reply)
+    found.extend(item for item in reply['violations'] if isinstance(item, Diagnostic) and item.rule.startswith('path.'))
+    by_rule = {}
+    for item in found:
+        if isinstance(item, Diagnostic) and item.rule in planner.rules():
+            by_rule.setdefault(item.rule, {})[json.dumps([str(item), planner.identities(item.items)])] = item
+    return {rule: list(items.values()) for rule, items in by_rule.items()}
+
+
+def test_every_footprint_repair_line_asks_only_for_what_its_guard_accepts(planner_request, monkeypatch):
+    """#1574 unactionable-feedback guard: one table over every footprint in plan_rules.json."""
+    import re
+    from tl3_harness.model import named
+    from tl3_workers.roles import planner
+
+    footprints = {}
+    for rule, entry in planner.rules().items():
+        footprints.setdefault(entry['footprint'], []).append(rule)
+    assert set(REPAIR_INTENT) == set(footprints)
+    samples = _emitted_diagnostics(planner_request, monkeypatch)
+    for rule in ('evidence.contract_missing', 'size.report', 'size.result', 'path.binary', 'path.hard_cap',
+                 'path.noncanonical', 'path.unusable', 'check.selector_inexact', 'edit.uncovered'):
+        assert samples.get(rule), rule
+    failures = []
+    for footprint, members in sorted(footprints.items()):
+        intent = REPAIR_INTENT[footprint]
+        for rule in members:
+            for diagnostic in samples.get(rule, [named(rule, '', {})]):
+                line = planner.message([diagnostic])
+                if line is None:
+                    continue
+                body = line.split('\n', 1)[1]
+                if intent not in body:
+                    failures.append(f'{footprint} {rule}: line lacks the accepted edit {intent!r}: {body}')
+                if 'description' in diagnostic.items or 'descriptions' in diagnostic.items:
+                    continue  # the line quotes a source goal, not a diagnostic
+                constraint = planner.CONSTRAINTS.get(footprint, planner.CONSTRAINTS['NONE'])
+                asked = body.split(constraint, 1)[-1] if rule != 'goal.coverage' else ''
+                for clause in re.split(r'(?<=[.;:])\s+', asked):
+                    if not re.match(ASKING, clause.strip()):
+                        continue
+                    kind = next((ask for ask in DIAGNOSTIC_ASKS if clause.strip().startswith(ask)), None)
+                    if kind is None:
+                        failures.append(f'{footprint} {rule}: unclassified ask {clause!r}')
+                    elif DIAGNOSTIC_ASKS[kind] is not ANY and footprint not in DIAGNOSTIC_ASKS[kind]:
+                        failures.append(f'{footprint} {rule}: line also asks {clause.strip()!r}, '
+                                        f'which the {footprint} guard rejects; it accepts only {intent!r}')
+    assert not failures, '\n'.join(failures)
