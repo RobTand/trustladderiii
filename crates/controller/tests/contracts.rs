@@ -1687,12 +1687,12 @@ fn every_released_report_version_still_parses() {
 fn report_versions_are_written_by_the_action_and_checked_by_the_controller() {
     let action = include_str!("../src/adapters/prismabuild/action.py");
     assert!(
-        action.contains(r#""schema": "tl3.checks.v2""#),
+        action.contains(r#""schema": "tl3.checks.v3""#),
         "action.py writes the report version"
     );
     let vector = vectors().remove(0).1;
     let request = &vector["request"];
-    let future = json!({"schema": "tl3.checks.v3", "effect_key": request["effect_key"],
+    let future = json!({"schema": "tl3.checks.v4", "effect_key": request["effect_key"],
         "base": request["base"], "head": request["head"], "reviewed": request["reviewed"],
         "results": vector["results"]});
     assert!(serde_json::from_value::<CheckReport>(future).is_err());
