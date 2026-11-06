@@ -166,6 +166,26 @@ def test_proof_guard_does_not_apply_to_companion_regression(repository):
     assert all(result.verdict == Verdict.PASS for result in results), results
 
 
+def test_subject_source_guard_error_cannot_become_added_name_red(repository):
+    # #933/Q27 option E, found by: review. Guard errors override exception context.
+    source = 'def value():\n    return 1\n'
+    observer = '''def test_observer():
+    import app
+    from pathlib import Path
+    if not hasattr(app, 'added'):
+        Path(app.__file__).read_text()
+    assert app.added() == 2, 'bug'
+'''
+    results, _, _ = round_result(repository, {'app.py': source},
+        {'app.py': source + 'def added():\n    return 2\n', 'tests/test_observer.py': observer},
+        Check('guard precedence', Kind.DEMONSTRATING, ('tests/test_observer.py::test_observer',),
+              proof=model.Proof(('app.py',), (), 'bug')))
+    result, = results
+    assert result.verdict == Verdict.FAIL, result
+    assert result.tests[0].base == Outcome.ERROR, result
+    assert 'subject_source_read' in result.tests[0].message
+
+
 def test_honest_subject_import_data_read_and_traceback_stay_accepted(repository):
     source = '''from pathlib import Path
 def value():
