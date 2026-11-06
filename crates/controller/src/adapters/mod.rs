@@ -1,3 +1,4 @@
+pub mod delivery_events;
 pub mod delivery_router;
 pub mod direct_merge;
 pub mod github;

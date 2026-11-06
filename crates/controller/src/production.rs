@@ -7,7 +7,7 @@ pub struct Registration {
     pub webhooks: Webhooks,
     pub workers: adapters::workers::WorkerOutputSource,
     pub bell: adapters::prismabuild::Source,
-    pub mergify: adapters::delivery_router::Translator,
+    pub mergify: adapters::delivery_events::Translator,
     pub adoption: crate::adoption::Translator,
 }
 
@@ -191,7 +191,7 @@ fn register_owned(
         ),
     );
     let mergify =
-        adapters::delivery_router::Translator::new(clients.clone())?.with_wakes(direct_wakes);
+        adapters::delivery_events::Translator::new(clients.clone())?.with_wakes(direct_wakes);
     let adoption = crate::adoption::Translator::new(clients.clone(), bootstrap.clone())?;
     let webhooks = Webhooks::bind(
         listen,
