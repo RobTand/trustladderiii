@@ -1223,13 +1223,9 @@ fn r1_undeclared_output_is_durable_failure_and_queue_repair_keeps_running() {
         ));
         let snapshot = f.c.snapshot().unwrap();
         assert!(
-            snapshot
-                .rows
-                .iter()
-                .any(|row| ["generation_repair_evidence", "maker_findings"]
-                    .contains(&row.table.as_str())
-                    && row.value.to_string().contains("gen/new.json")),
-            "repair must name the undeclared output"
+            snapshot.rows.iter().any(|row| row.table == "maker_findings"
+                && row.value.to_string().contains("gen/new.json")),
+            "maker feedback must name the undeclared output for scope growth"
         );
         assert!(
             !f.g.checkout.join("gen/new.json").exists(),
