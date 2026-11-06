@@ -338,6 +338,7 @@ pub(super) fn delivery_failed(w: &mut World, i: usize, kind: EffectKind,
 kernel_fn! {
 /// Failed-delivery rows / #771: reset the retry ladder before emitting or
 /// raising its incident. This node-local part allocates at most one generation.
+#[allow(clippy::needless_else)] // The else carries a Verus proof and erases from ordinary Rust.
 fn failed_delivery_node(m: &mut Node, kind: EffectKind) -> (result: Option<bool>) [
     requires old(m).generation < u64::MAX,
         old(m).fx_failures <= 1, old(m).fx_incidents <= 2,

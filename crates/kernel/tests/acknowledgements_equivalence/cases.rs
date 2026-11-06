@@ -184,14 +184,14 @@ fn arbitrary_node() -> impl Strategy<Value = Node> {
 fn initial_out(node: Node, key: u64) -> Outbox {
     let mut out = Outbox::new();
     out.len = key as usize % (OUTBOX + 1);
-    for slot in 0..OUTBOX {
+    for (slot, &kind) in EFFECTS.iter().take(OUTBOX).enumerate() {
         out.items[slot] = if key & (1 << slot) == 0 {
             None
         } else if node.pool {
             Some(Out::Effect {
                 node: NodeId(key),
                 seq: node.next_seq,
-                kind: EFFECTS[slot],
+                kind,
                 head: node.head,
             })
         } else {
@@ -215,7 +215,7 @@ fn compare_ack(node: Node, seq: u64, ack: Ack) {
         pool_capacity: 1,
         next_ticket: seq,
         next_question: seq,
-        fail_fast: seq % 2 == 0,
+        fail_fast: seq.is_multiple_of(2),
     };
     let mut actual = make();
     let mut expected = make();
@@ -243,7 +243,7 @@ fn compare_dispatch(node: Node, seq: u64, ack: Ack, target: NodeId) {
         pool_capacity: 1,
         next_ticket: seq,
         next_question: seq,
-        fail_fast: seq % 2 == 0,
+        fail_fast: seq.is_multiple_of(2),
     };
     let mut actual = make();
     let mut expected = make();
