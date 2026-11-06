@@ -137,4 +137,37 @@ pub(super) proof fn incident_views(b: Node, a: Node, needs_rob: bool)
     reveal(retirement::incident);
 }
 
+
+pub(super) open spec fn abandoned_fields(b: Node, a: Node) -> bool {
+    operation(a) == (None, None, false, match b.effect {
+        Some(e) => Some(InFlight { cancelling: e.cancelling
+            || matches!(e.kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase), ..e }),
+        None => None,
+    })
+    && workflow(a) == workflow(b) && failure_ladder(a) == failure_ladder(b)
+    && incident(a) == incident(b)
+    && pr_facts(a) == pr_facts(b) && attempt_ladder(a) == attempt_ladder(b)
+    && ledger(a) == ledger(b) && identity(a) == identity(b)
+}
+
+#[verifier::opaque]
+pub(super) open spec fn abandoned_operation(b: Node, a: Node) -> bool {
+    abandoned_fields(b, a)
+}
+
+pub(super) proof fn abandon_result(b: Node, a: Node)
+    requires abandoned_fields(b, a),
+    ensures abandoned_operation(b, a),
+{ reveal(abandoned_operation); }
+
+pub(super) proof fn abandon_legacy(b: Node, a: Node)
+    requires abandoned_operation(b, a),
+    ensures a == (Node { run: None, job: None, pool: false,
+        effect: match b.effect {
+            Some(e) => Some(InFlight { cancelling: e.cancelling
+                || matches!(e.kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase), ..e }),
+            None => None,
+        }, ..b }),
+{ reveal(abandoned_operation); }
+
 }

@@ -42,17 +42,10 @@ kernel_fn! {
 // The pinned Verus frontend requires nested if-let instead of let chains.
 #[allow(clippy::collapsible_if)]
 pub(super) fn abandon_operation(m: &mut Node) -> (result: ()) [
-    ensures *final(m) == (Node {
-        run: None, job: None, pool: false,
-        effect: match old(m).effect {
-            Some(e) => Some(InFlight { cancelling: e.cancelling
-                || matches!(e.kind, EffectKind::StartRun(_)
-                    | EffectKind::SubmitChecks | EffectKind::StartRebase), ..e }),
-            None => None,
-        },
-        ..*old(m)
-    }),
+    ensures node_updates::abandoned_operation(*old(m), *final(m)),
+        node_updates::abandoned_fields(*old(m), *final(m)),
 ] {
+    kernel_snapshot! { before_abandon = *m }
     m.run = None;
     m.job = None;
     m.pool = false;
@@ -61,6 +54,7 @@ pub(super) fn abandon_operation(m: &mut Node) -> (result: ()) [
             e.cancelling = true;
         }
     }
+    kernel_proof! { node_updates::abandon_result(before_abandon@, *m); }
 }
 }
 
@@ -90,7 +84,9 @@ pub(super) fn end_operation(m: &mut Node) -> (result: ()) [
         final(m).fx_incidents == old(m).fx_incidents,
 
 ] proof [reveal(port_t860_contracts::ended_post); reveal(port_t860_contracts::ended);] {
+    kernel_snapshot! { before_end_abandon = *m }
     abandon_operation(m);
+    kernel_proof! { node_updates::abandon_legacy(before_end_abandon@, *m); }
     m.run_failures = 0;
     m.run_incidents = 0;
 }
