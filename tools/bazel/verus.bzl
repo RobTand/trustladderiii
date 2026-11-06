@@ -903,6 +903,7 @@ def verus_proofs():
             "retirement_node_lemmas_frame": ("kernel::retirement_node_lemmas#frame", 1),
             "retirement_runtime_upstream_noop": ("kernel::retirement_runtime#upstream_noop", 1),
             "retirement_runtime_upstream_result": ("kernel::retirement_runtime#upstream_result", 1),
+            "retirement_gate_bridge_ready": ("kernel::retirement_gate_bridge#ready", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

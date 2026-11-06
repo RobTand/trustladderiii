@@ -2274,3 +2274,7 @@ mod retirement_runtime;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_advance_contracts.rs"]
 mod port_advance_contracts;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement_gate_bridge.rs"]
+mod retirement_gate_bridge;
