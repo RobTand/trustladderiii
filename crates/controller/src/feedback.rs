@@ -84,11 +84,11 @@ fn load_value(source: &dyn Fn(&str) -> Option<Value>, clearing_conflict: bool) -
 }
 
 pub(crate) fn maker_from(source: &dyn Fn(&str) -> Option<Value>) -> Value {
-    load_value(source, false)["maker"].take()
+    load_value(source, false)["maker"].clone()
 }
 
 pub(crate) fn planner_from(source: &dyn Fn(&str) -> Option<Value>) -> Value {
-    load_value(source, false)["planner"].take()
+    load_value(source, false)["planner"].clone()
 }
 
 fn load(
@@ -271,6 +271,7 @@ pub(crate) fn record(
     }
     if let Event::Reply { node, reply, .. } = event
         && !stale(node)
+        && (evidence.planner.is_some() || evidence.rebase.is_some())
     {
         let clearing_conflict = matches!(
             (&evidence.rebase, reply),
