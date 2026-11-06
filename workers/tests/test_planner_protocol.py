@@ -466,9 +466,12 @@ def test_1574_repair_line_asks_only_for_the_empty_contract_the_guard_accepts():
     assert 'evidence_contract: []' in line
     assert 'Return evidence_contract with source requirements' not in line, line
     assert 'Code supplies the inherited source requirements' in line, line
+    # Production assembly: the same line reaches the model as the semantic repair text.
+    error = planner.PlanConsistencyError.semantic(fixture['draft'], draft, objections, fixture['inputs'],
+                                                  planner.PlanConsistencyError([], draft=fixture['draft']))
+    assert error.repair_text == line
     # The guard is unchanged: the answer the line asks for passes; the live correction does not.
-    contract = planner.Correction(fixture['draft'], objections, fixture['inputs'],
-                                  planner.PlanConsistencyError([], draft=fixture['draft']))
+    contract = error.contract
     assert contract.check({**fixture['draft'], 'evidence_contract': []}) == []
     rejected = contract.check({**fixture['draft'], 'evidence_contract': fixture['correction_evidence_contract']})
     assert [(item.rule, item.items) for item in rejected] == [('guard.fields_changed', {'paths': ['/evidence_contract']})]
