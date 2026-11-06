@@ -576,7 +576,7 @@ impl Controller {
     pub(crate) fn prepare_merge_dependencies(
         &mut self,
         snapshot: &Snapshot,
-        world: &World,
+        _world: &World,
         node: NodeId,
         reply: &Value,
         commit: &mut Commit,
