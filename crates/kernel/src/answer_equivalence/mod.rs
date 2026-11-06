@@ -349,3 +349,71 @@ fn cleanup_advances_once_like_reference() {
     world.next_question = 1;
     compare(world, 0, Answer::MarkHandled, Outbox::new());
 }
+
+mod go_on_reference;
+
+fn compare_continuation(world: World, q: Question, deposit: u8, out: Outbox) {
+    let mut actual = world.clone();
+    let mut expected = world;
+    let mut actual_out = out;
+    let mut expected_out = out;
+    let expected_panicked = catch_unwind(AssertUnwindSafe(|| {
+        go_on_reference::go_on(&mut expected, 0, q, deposit, &mut expected_out);
+    }))
+    .is_err();
+    let actual_panicked = catch_unwind(AssertUnwindSafe(|| {
+        crate::continuations::go_on(&mut actual, 0, q, deposit, &mut actual_out);
+    }))
+    .is_err();
+    assert_eq!(
+        actual_panicked, expected_panicked,
+        "continuation panic differs"
+    );
+    assert_eq!(
+        actual, expected,
+        "continuation world differs for {q:?}, deposit {deposit}"
+    );
+    assert_eq!(actual_out, expected_out, "continuation outbox differs");
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 128, failure_persistence: None, ..ProptestConfig::default() })]
+
+    #[test]
+    fn continuation_extraction_matches_original(n in node(), other in node(), q in question(),
+        out in outbox(), deposit in any::<u8>(), next in any::<u64>(), ticket in any::<u64>(),
+        fail_fast in any::<bool>()) {
+        for cont in [Cont::Ingesting, Cont::Auditing, Cont::Unplanned,
+            Cont::Planning { must_split: false }, Cont::Planning { must_split: true },
+            Cont::Ready(Resume::Making), Cont::Ready(Resume::Checking),
+            Cont::Ready(Resume::Reviewing), Cont::Ready(Resume::Publishing),
+            Cont::Ready(Resume::Rebasing), Cont::Stop(Outcome::Stopped),
+            Cont::Stop(Outcome::Merged), Cont::Nowhere, q.cont] {
+            for deposit in [0, 1, u8::MAX, deposit] {
+                let mut world = World::new(&[1], 1);
+                world.nodes = vec![n, other];
+                world.next_question = next;
+                world.next_ticket = ticket;
+                world.fail_fast = fail_fast;
+                compare_continuation(world, Question { cont, ..q }, deposit, out);
+            }
+        }
+    }
+}
+
+#[test]
+fn continuation_funds_before_changing_phase() {
+    let mut world = World::new(&[1], 1);
+    let mut n = Node::new(RepoId(0));
+    n.phase = Phase::AwaitingRob;
+    n.credit.added = u64::MAX;
+    world.nodes.push(n);
+    let q = Question {
+        id: 0,
+        kind: QKind::OutOfCredit,
+        cont: Cont::Unplanned,
+        cost: 0,
+        clarified: false,
+    };
+    compare_continuation(world, q, 1, Outbox::new());
+}

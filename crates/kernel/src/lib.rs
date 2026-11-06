@@ -2312,3 +2312,7 @@ mod port_answers_command;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_answers_handler.rs"]
 mod port_answers_handler;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_answers_continuation.rs"]
+mod port_answers_continuation;
