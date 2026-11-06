@@ -58,6 +58,7 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack, out: &mut Outb
 }
 
 #[rustfmt::skip]
+#[allow(clippy::collapsible_if)] // Keep the pre-extraction reference body verbatim.
 pub(super) fn confirmed_agenda(m: &mut Node, kind: EffectKind) {
     kernel_snapshot! { before_agenda = *m }
     kernel_proof! { port_acks_frames::agenda_input(*m); }
