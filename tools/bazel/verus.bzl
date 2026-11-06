@@ -79,6 +79,18 @@ def verus_proofs():
 
     if native.package_name() == "crates/mergify":
         verus_test(
+            name = "verus_queue_entry",
+            src = "proofs/queue_entry.rs",
+            srcs = ["src/decide/queue_entry.rs"],
+            expected_obligations = 4,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+        verus_test(
             name = "verus_delivery",
             src = "proofs/delivery.rs",
             srcs = ["src/decide/delivery_step.rs"],
@@ -312,6 +324,18 @@ def verus_proofs():
             src = "proofs/classifier.rs",
             srcs = ["src/classifier/decision.rs"],
             expected_obligations = 6,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+        verus_test(
+            name = "verus_ingest",
+            src = "proofs/ingest.rs",
+            srcs = ["//crates/contracts:src/roles/ingest_retention.rs"],
+            expected_obligations = 4,
             tags = ["rust", "verus"],
             size = "small",
             timeout = "short",
@@ -727,6 +751,19 @@ def verus_proofs():
             "kernel::port_deps_remove::table": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_deps_single_domain": "Closed logical wrapper; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_deps_single_accepted": "Closed logical wrapper; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_advance_tail_witness::selected": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_advance_tail_witness::moves": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::teardown_equivalence::outcome": "Test-only equivalence generator or verbatim reference for the #806 behaviour-identical teardown extraction.",
+            "kernel::teardown_equivalence::resume": "Test-only equivalence generator or verbatim reference for the #806 behaviour-identical teardown extraction.",
+            "kernel::teardown_equivalence::effect_kind": "Test-only equivalence generator or verbatim reference for the #806 behaviour-identical teardown extraction.",
+            "kernel::teardown_equivalence::phase": "Test-only equivalence generator or verbatim reference for the #806 behaviour-identical teardown extraction.",
+            "kernel::teardown_equivalence::question": "Test-only equivalence generator or verbatim reference for the #806 behaviour-identical teardown extraction.",
+            "kernel::teardown_equivalence::node": "Test-only equivalence generator or verbatim reference for the #806 behaviour-identical teardown extraction.",
+            "kernel::teardown_equivalence::output": "Test-only equivalence generator or verbatim reference for the #806 behaviour-identical teardown extraction.",
+            "kernel::teardown_equivalence::outbox": "Test-only equivalence generator or verbatim reference for the #806 behaviour-identical teardown extraction.",
+            "kernel::teardown_equivalence::compare": "Test-only equivalence generator or verbatim reference for the #806 behaviour-identical teardown extraction.",
+            "kernel::teardown_equivalence::branch_extraction_matches_original": "Test-only equivalence generator or verbatim reference for the #806 behaviour-identical teardown extraction.",
+            "kernel::teardown_equivalence::reference::advance_teardown": "Test-only equivalence generator or verbatim reference for the #806 behaviour-identical teardown extraction.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
@@ -960,7 +997,7 @@ def verus_proofs():
             "facts_merge_ignored_result": ("kernel::facts_merge_lemmas#ignored_result", 1),
             "facts_merge_open_result": ("kernel::facts_merge_lemmas#open_result", 1),
             "plan_check": ("kernel::plan_check", 1),
-            "plan_check_witness": ("kernel::plan_check_witness", 3),
+            "plan_check_witness": ("kernel::plan_check_witness", 5),
             "port_advance_contracts": ("kernel::port_advance_contracts", 6),
             "port_advance_outputs": ("kernel::port_advance_outputs", 2),
             "review_retry_stop": ("kernel::retries#stop_for_review", 1),
@@ -1065,6 +1102,21 @@ def verus_proofs():
             "port_deps_s2_compact_finish": ("kernel::port_deps_apply_specs#compact_finish", 1),
             "port_deps_s2_removal_result": ("kernel::port_deps_apply_specs#removal_result", 1),
             "port_deps_s2_removal_stutter": ("kernel::port_deps_apply_specs#removal_stutter", 1),
+            "port_advance_step_finished_quiet": ("kernel::port_advance_step_frames#finished_quiet", 1),
+            "port_advance_step_finished_close": ("kernel::port_advance_step_frames#finished_close", 1),
+            "port_advance_teardown_rank_question": ("kernel::port_advance_teardown_rank#question", 1),
+            "port_advance_teardown_rank_absent": ("kernel::port_advance_teardown_rank#absent", 1),
+            "port_advance_teardown_rank_emission": ("kernel::port_advance_teardown_rank#emission", 1),
+            "port_advance_tail_world": ("kernel::port_advance_tail_witness#phase_world", 1),
+            "port_advance_tail_cover": ("kernel::port_advance_tail_witness#phase_cover", 1),
+            "port_advance_rank_blocked": ("kernel::ranks::port_advance_rank#blocked", 1),
+            "port_advance_rank_start": ("kernel::ranks::port_advance_rank#start", 1),
+            "port_advance_rank_teardown_bounds": ("kernel::ranks::port_advance_rank#teardown_bounds", 1),
+            "port_advance_rank_teardown_question": ("kernel::ranks::port_advance_rank#teardown_question", 1),
+            "port_advance_rank_teardown_absent": ("kernel::ranks::port_advance_rank#teardown_absent", 1),
+            "port_advance_rank_teardown_emission": ("kernel::ranks::port_advance_rank#teardown_emission", 1),
+            "ranks_advance_teardown_missing": ("kernel::ranks#advance_teardown_missing", 1),
+            "ranks_advance_teardown_emitting": ("kernel::ranks#advance_teardown_emitting", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

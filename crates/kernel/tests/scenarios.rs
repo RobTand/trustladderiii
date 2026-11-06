@@ -235,9 +235,9 @@ fn every_slice_one_phase_is_reachable() {
 
     let mut asked = Run::new();
     asked.reply(Reply::IngestDone { size: 1 });
-    asked.reply(Reply::AuditDisagrees);
-    asked.reply(Reply::IngestDone { size: 1 });
-    asked.reply(Reply::AuditDisagrees);
+    asked.reply(Reply::AuditAgrees);
+    asked.reply(Reply::PlanCantMeet);
+    asked.reply(Reply::PlanCantMeet);
     assert_eq!(asked.phase(), Phase::AwaitingRob);
     seen.extend(asked.seen.iter().copied());
 
@@ -262,7 +262,7 @@ fn every_slice_one_phase_is_reachable() {
 }
 
 #[test]
-fn an_audit_disagreement_is_revised_once_before_rob_hears() {
+fn an_audit_disagreement_is_revised_once_before_stopping_for_review() {
     let mut run = Run::new();
     run.reply(Reply::IngestDone { size: 1 });
     run.reply(Reply::AuditDisagrees);
@@ -270,9 +270,9 @@ fn an_audit_disagreement_is_revised_once_before_rob_hears() {
     assert!(!run.asked_rob());
     run.reply(Reply::IngestDone { size: 1 });
     run.reply(Reply::AuditDisagrees);
-    assert_eq!(run.node().question.unwrap().kind, QKind::AuditDisagreement);
-    run.answer(Answer::Continue);
-    assert!(matches!(run.phase(), Phase::Planning { .. }));
+    assert_eq!(run.phase(), Phase::Closed(Outcome::Stopped));
+    assert_eq!(run.node().review_stop, Some(ReviewStop::AuditDisagreement));
+    assert!(!run.asked_rob());
 }
 
 #[test]
@@ -294,9 +294,9 @@ fn a_queued_pr_can_still_merge_while_paused() {
 fn a_late_answer_is_ignored() {
     let mut run = Run::new();
     run.reply(Reply::IngestDone { size: 1 });
-    run.reply(Reply::AuditDisagrees);
-    run.reply(Reply::IngestDone { size: 1 });
-    run.reply(Reply::AuditDisagrees);
+    run.reply(Reply::AuditAgrees);
+    run.reply(Reply::PlanCantMeet);
+    run.reply(Reply::PlanCantMeet);
     let question = run.node().question.unwrap().id;
     run.command(Command::Stop);
     assert!(run.phase().is_closed());
@@ -307,6 +307,83 @@ fn a_late_answer_is_ignored() {
     });
     assert_eq!(run.w.nodes[0].phase, before.nodes[0].phase);
     assert_eq!(run.w.nodes[0].credit, before.nodes[0].credit);
+}
+
+/// Auditing / #832-A: persisted pre-deployment questions remain answerable.
+#[test]
+fn an_already_open_audit_question_keeps_all_answers_and_early_endings() {
+    for fail_fast in [false, true] {
+        for early in [
+            None,
+            Some(EarlyEnd::Duplicate),
+            Some(EarlyEnd::AlreadyDone),
+            Some(EarlyEnd::NotActionable),
+        ] {
+            for answer in [Answer::Continue, Answer::ChangeRequest, Answer::Stop] {
+                let mut run = Run::new();
+                run.w.fail_fast = fail_fast;
+                run.reply(Reply::IngestDone { size: 1 });
+                let cont = early.map_or(Cont::Unplanned, |end| Cont::Stop(end.outcome()));
+                let n = &mut run.w.nodes[0];
+                n.phase = Phase::AwaitingRob;
+                n.early_end = early;
+                n.audit_rounds = 2;
+                n.pos = 0;
+                n.run = None;
+                n.pool = false;
+                n.question = Some(Question {
+                    id: 0,
+                    kind: QKind::AuditDisagreement,
+                    cont,
+                    cost: 0,
+                    clarified: false,
+                });
+                run.w.next_question = 1;
+                assert!(run.w.valid(), "persisted legacy question");
+                run.answer(answer);
+                let expected = match answer {
+                    Answer::Continue => early.map(|end| Phase::Closed(end.outcome())),
+                    Answer::ChangeRequest => Some(Phase::Closed(Outcome::Replaced)),
+                    Answer::Stop => Some(Phase::Closed(Outcome::Stopped)),
+                    _ => unreachable!(),
+                };
+                if let Some(expected) = expected {
+                    assert_eq!(run.phase(), expected);
+                } else {
+                    assert!(matches!(run.phase(), Phase::Planning { .. }));
+                }
+                assert!(run.node().question.is_none());
+                assert_eq!(run.w.next_question, 1);
+            }
+        }
+    }
+}
+
+/// Auditing / #832-A: agreeing with each original or repaired early end stays final.
+#[test]
+fn audit_agreement_keeps_early_outcomes_after_either_reading() {
+    for fail_fast in [false, true] {
+        for repair in [false, true] {
+            for early in [
+                EarlyEnd::Duplicate,
+                EarlyEnd::AlreadyDone,
+                EarlyEnd::NotActionable,
+            ] {
+                let mut run = Run::new();
+                run.w.fail_fast = fail_fast;
+                run.reply(Reply::IngestEarlyEnd(early));
+                if repair {
+                    run.reply(Reply::AuditDisagrees);
+                    assert_eq!(run.phase(), Phase::Ingesting);
+                    run.reply(Reply::IngestEarlyEnd(early));
+                }
+                run.reply(Reply::AuditAgrees);
+                assert_eq!(run.phase(), Phase::Closed(early.outcome()));
+                assert!(run.node().review_stop.is_none());
+                assert!(!run.asked_rob());
+            }
+        }
+    }
 }
 
 #[test]

@@ -16,6 +16,7 @@ from deepagents.profiles import (
     HarnessProfile,
     register_harness_profile,
 )
+from jsonschema import ValidationError
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGenerationChunk
@@ -30,7 +31,7 @@ from tl3_workers.tools import Worktree, build_tools
 from tl3_workers.memory import Summary, current
 from tl3_workers.recall import redacted_memories
 from tl3_workers.exploration import ExplorationMiddleware
-from tl3_workers.turns import InvalidReply, TurnControl, repaired
+from tl3_workers.turns import InvalidReply, TurnControl, Unrepairable, repaired
 from tl3_workers.session import is_unaccepted_session
 from tl3_workers.prompt_render import render as render_prompt, selection as prompt_renderer
 
@@ -343,16 +344,25 @@ def _run(request, emit):
                 planner_checks += 1
                 if ledger is not None:
                     ledger.raise_infrastructure()
-                candidate = read_reply(text)
+                    if ledger.failure:
+                        return refused_final(ledger.failure)
                 captured = []
                 try:
+                    candidate = read_reply(text)
                     result = _checked(role, request['inputs'], deepcopy(candidate), worktree=worktree,
                                       plan_errors=captured)
-                except PlanConsistencyError as error:
-                    latest_error = error
-                    latest_reply = error.completed_reply
-                    if draft_error is None:
-                        draft_error, origin_call = error, planner_checks
+                except Unrepairable:
+                    raise
+                except (ValueError, ValidationError) as error:
+                    if ledger is not None:
+                        rejected = next((item for item in reversed(ledger.candidates) if item['status'] == 'refused'), None)
+                        if rejected is not None:
+                            return refused_final(rejected)
+                    if isinstance(error, PlanConsistencyError):
+                        latest_error = error
+                        latest_reply = error.completed_reply
+                        if draft_error is None:
+                            draft_error, origin_call = error, planner_checks
                     raise
                 if captured:
                     latest_error = captured[-1]
@@ -362,6 +372,18 @@ def _run(request, emit):
                     latest_error = None
                 latest_reply = result
                 return result
+
+            def refused_final(failure):
+                nonlocal draft_error, latest_error, latest_reply, candidate, origin_call
+                candidate = {'kind': 'cant_meet', 'files': [], 'evidence_contract': [],
+                             'report': failure['message']}
+                captured = []
+                latest_reply = _checked(role, request['inputs'], deepcopy(candidate), worktree=worktree,
+                                        plan_errors=captured)
+                latest_error = captured[-1]
+                if draft_error is None:
+                    draft_error, origin_call = latest_error, planner_checks
+                return latest_reply
 
             failed = None
             try:

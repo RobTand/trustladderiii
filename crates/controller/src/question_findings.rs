@@ -77,6 +77,7 @@ pub(crate) fn findings(question: &Question, sources: &Sources) -> Option<Value> 
 /// stopped. The summary has no decision for Rob, so none is kept.
 pub(crate) fn review_stop(step: ReviewStop, sources: &Sources) -> Option<Value> {
     let found = match step {
+        ReviewStop::AuditDisagreement => return audit_stop(sources),
         ReviewStop::PlanCantMeet => plan_check_stop(&(sources.fresh)("plans")?),
         ReviewStop::MakerOutOfRoom | ReviewStop::MakerNeedsFiles => {
             let reply = (sources.fresh)("maker_replies")?;
@@ -103,6 +104,67 @@ pub(crate) fn review_stop(step: ReviewStop, sources: &Sources) -> Option<Value> 
         ));
     }
     Some(result)
+}
+
+/// #832-A: retain both ingest readings without the worker runtime envelope.
+pub(crate) fn audit_reading(reply: &Value) -> Value {
+    let mut reading = serde_json::Map::new();
+    for key in [
+        "kind",
+        "brief",
+        "reason",
+        "outcome",
+        "goals",
+        "evidence_contract",
+    ] {
+        if let Some(value) = reply.get(key) {
+            reading.insert(key.into(), value.clone());
+        }
+    }
+    Value::Object(reading)
+}
+
+/// Auditing / #832-A: an older deployment may have no repair archive. Keep
+/// its available current evidence too; never turn missing history into a question.
+fn audit_stop(sources: &Sources) -> Option<Value> {
+    let audit = (sources.fresh)("audits")?;
+    let reading = audit_reading(&sources.stored("briefs")?);
+    let repair = sources.stored("audit_repairs");
+    let mut readings = Vec::new();
+    let mut audits = Vec::new();
+    if let Some(repair) = &repair {
+        readings.push(repair["reading"].clone());
+        audits.push(repair["audit"].clone());
+    }
+    readings.push(reading);
+    audits.push(audit.clone());
+    let named = |audit: &Value| -> Vec<Value> {
+        audit["objections"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .enumerate()
+            .map(|(index, objection)| {
+                json!({"id":format!("audit_objections[{index}]"),
+                "objection":objection})
+            })
+            .collect()
+    };
+    let open = named(&audit);
+    let repair_objections = repair.as_ref().map(|repair| named(&repair["audit"]));
+    let mut report = "The independent audit still disagreed after the one ingest repair. Both available readings and audits are retained for TL3 review.".to_owned();
+    for item in &open {
+        report.push_str(&format!(
+            "\n{}: {}",
+            item["id"].as_str()?,
+            item["objection"].as_str()?
+        ));
+    }
+    Some(
+        json!({"source":"audit", "report":clip(&report, REPORT_CHARS),
+        "readings":readings, "audits":audits, "repair_objections":repair_objections,
+        "open_objections":open}),
+    )
 }
 
 fn caused(report: &str) -> Option<Value> {

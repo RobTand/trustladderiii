@@ -1,0 +1,620 @@
+{
+  "repo": "RobTand/prismabuild",
+  "issue": 2713,
+  "trace_ids": {
+    "planner": "tr-3370e0a7f2179d56337f9969d89a8860",
+    "audit": "tr-a4a72be6e5d3aa7b5e4744ab005b8f4f",
+    "ingest": "tr-8a0d7fdb589abb9747e83d05155dad00"
+  },
+  "tool_capabilities": [
+    {
+      "artifacts": [
+        "action_key",
+        "cas_receipt",
+        "sha",
+        "logs",
+        "terminal_verdict"
+      ],
+      "executor": "prismabuild_pytest",
+      "methods": [
+        "red_green",
+        "declared_symptom",
+        "head",
+        "base_head",
+        "subject_observer",
+        "forced_reproduction.environment",
+        "forced_reproduction.patches"
+      ],
+      "protected_files": [],
+      "runner_features": [
+        "base_head",
+        "repeat",
+        "parallel",
+        "always_tests",
+        "native_threads_1"
+      ],
+      "tool": "run_tests"
+    },
+    {
+      "artifacts": [
+        "action_key",
+        "cas_receipt",
+        "input_tree",
+        "output_tree",
+        "artifact_sha256",
+        "logs",
+        "terminal_verdict"
+      ],
+      "executor": "prismabuild_generator",
+      "methods": [
+        "configured_generation"
+      ],
+      "protected_files": [],
+      "runner_features": [
+        "git_index",
+        "scoped_outputs",
+        "idempotent_import"
+      ],
+      "tool": "run_generator"
+    }
+  ],
+  "ingest": {
+    "kind": "brief",
+    "brief": "PROBLEM. Issue #2713 asks for two renames so that tests/test_duplication_baseline.py passes on full source. The issue says the guard was RED on main be463865 (PB action e46a00a2...; rc1; one failed, seven passed). This fact is from the issue and is unverified here. Four helper definitions share two names across modules. They have different contracts. They are not shared code.\n\nCURRENT STATE AT THE PINNED CHECKOUT (read from source; no test was run). The renames look like they are already in place.\n- tools/bazel/build_files.py:89 defines repository_package(path). Its callers are at lines 534, 544, 555, 629, 635 and 690.\n- tools/bazel/sizing_report.py:21 defines summarize_test_sizing(executions, samples). Line 64 calls it.\n- tests/test_bazel_test_sizing.py lines 86, 93 and 95 call report.summarize_test_sizing.\n- tools/ci/graph_impact.py:307 is the only definition of package_of. It is the protected vendored file. Do not edit it.\n- tools/fleet/bench_stage_adopt.py:405 is the only definition of summarize under src/prismabuild and tools. Do not change it.\n- tests/fixtures/duplication_baseline.json has no entry for these names.\n- tools/duplication_inventory.py scans only src/prismabuild and tools. The guard also checks near-duplicate pairs. No one has checked whether the renames moved a near-duplicate pair.\n\nBecause no run has been done, the maker must not assume the guard is GREEN. The maker must first run the guard through run_tests. If the guard is GREEN and the renames exist, the maker makes no source edit. Then Checking supplies the proof. If the guard is RED, the maker finds the cause and fixes it inside the issue scope. The issue may name a base older than this checkout. The maker can use the base_head method to check the pinned base. That is a method choice, not a source requirement.\n\nCONSTRAINTS FROM THE ISSUE (original wording kept in the issue body).\n- Rename the non-vendored build generator helper to a repository-package-specific name. Rename the Bazel sizing helper to a test-sizing-specific name. Update every caller. Keep all input, output and failure behavior.\n- Keep tools/ci/graph_impact.py read-only. It is protected and pinned. The mover benchmark helper need not change.\n- Scope: tools/bazel/build_files.py, tools/bazel/sizing_report.py and existing callers such as tests/test_bazel_test_sizing.py.\n- Add or change no imports.\n- Generated BUILD files must stay byte-identical after regeneration. The generator is python3 tools/bazel/build_files.py. The generated files are BUILD.bazel, src/prismabuild/BUILD.bazel, tools/BUILD.bazel and tests/BUILD.bazel. Never hand-edit them.\n- No graph edges, fan-out or reach growth.\n- No duplication baseline entries. No guard logic change. The abandoned baseline-only commit 44a916b2 is not part of this fix.\n- No runtime, workflow, host configuration, budget or quarantine edits.\n- The issue says: do not assign to TL3, queue, label, merge or restart anything.\n\nPROOF REQUIRED BY THE ISSUE.\n- The existing exact-base full-source RED counts as test-first. It needs no new test.\n- GREEN: the complete tests/test_duplication_baseline.py guard passes on full source through PrismaBuild admission.\n- GREEN: the same guard passes in its saved Bazel source closure through PrismaBuild admission. The tool_capabilities list names no Bazel source closure feature. Mark this obligation as a capability gap. Do not drop it. Do not report it as met. The issue says #2714 tracks the fact that Bazel omits the tools/bazel files from the guard source view.\n- Focused existing sizing and generator tests pass (tests/test_bazel_test_sizing.py and tests/test_bazel_build_files.py).\n- Verify the generated definitions and the graph invariants.\n\nPUBLISHING AND REVIEW (system actions, not maker edits). An independent Sol review is required before publication. Use a branch that carries the issue number 2713. The PR body has a Refs line that matches the issue number, and exactly one 'Change type: fix' line. The reviewed head and the final body go to the migration lead for one-push GO. Order: #2703 security replacement first, then #2713, and only then may the coordinator label coverage issue #2714. The reviewer cannot give the Sol review or the GO. Report them as outside this system and do not claim them as met.\n\nMERGE PREREQUISITE. The issue says: 'Implement only AFTER the #2703 security replacement merges.' TL3 waits for #2703 after audit. Whether #2703 is an issue or a pull request is not shown. It is recorded as an issue number.\n\nPROTECTED PATHS. No required edit touches a protected path. tools/bazel/*, tests/test_bazel_*.py and the generated BUILD files are not protected.\n\nMEMORIES. The recalled memory about an untracked root file that changes generated BUILD output is in another repository (RobTand/tessera). It is not verified here. Keep untracked root files out of the tree when you regenerate.\n\nGenerated outputs: BUILD.bazel; src/prismabuild/BUILD.bazel; tests/BUILD.bazel; tools/BUILD.bazel. Never hand-edit generated outputs. When generator_available is true, change generator inputs and call run_generator before checks. Otherwise report missing generation capability. Gate still independently verifies the final head. Read only relevant regions.",
+    "goals": [
+      {
+        "description": "Confirm that the base-checkout state matches the issue and that no stale name is left. repository_package in tools/bazel/build_files.py and summarize_test_sizing in tools/bazel/sizing_report.py must be the only definitions of those helpers. Every caller, including tests/test_bazel_test_sizing.py, must use the new names. If a rename or a caller update is missing, make that edit. If it is all present, make no edit.",
+        "stage": "maker",
+        "verification": "review"
+      },
+      {
+        "description": "Keep the changes inside the issue scope. Do not edit tools/ci/graph_impact.py or tools/fleet/bench_stage_adopt.py. Do not add or change an import. Do not add a duplication baseline entry. Do not change guard logic or tools/duplication_inventory.py. Do not edit runtime, workflow, host configuration, budget or quarantine files. Keep the input, output and failure behavior of both helpers unchanged. Add no graph edges, fan-out or reach growth.",
+        "stage": "maker",
+        "verification": "review"
+      },
+      {
+        "description": "Run the complete tests/test_duplication_baseline.py guard on full source through PrismaBuild admission (run_tests). The result must be a pass. If it fails, find out whether the cause is a same-name group or a near-duplicate pair. Fix the cause only inside the issue scope, or report the failure.",
+        "stage": "maker",
+        "verification": "test"
+      },
+      {
+        "description": "Independent proof that the complete tests/test_duplication_baseline.py guard passes on full source through PrismaBuild admission, with its CAS receipt and terminal verdict.",
+        "stage": "checking",
+        "verification": "test"
+      },
+      {
+        "description": "Independent proof that the same guard passes in its saved Bazel source closure through PrismaBuild admission. This is a possible capability gap. run_tests has no Bazel source closure feature. If the capability cannot express it, report it as unsupported. Do not report it as met and do not replace it with a full-source run.",
+        "stage": "checking",
+        "verification": "test"
+      },
+      {
+        "description": "Focused existing tests pass: tests/test_bazel_test_sizing.py and tests/test_bazel_build_files.py. They must call the renamed helpers and must not contain a stale name.",
+        "stage": "checking",
+        "verification": "test"
+      },
+      {
+        "description": "Regenerate the BUILD files with python3 tools/bazel/build_files.py. BUILD.bazel, src/prismabuild/BUILD.bazel, tools/BUILD.bazel and tests/BUILD.bazel must stay byte-identical. The generator output must show no graph edge, fan-out or reach growth. No untracked root file may change the output.",
+        "stage": "checking",
+        "verification": "test"
+      },
+      {
+        "description": "Review the final diff. It must change only the renames and their callers, if any. It must add no import, no baseline entry and no guard logic change. It must leave tools/ci/graph_impact.py unchanged. It must keep the behavior of both helpers. The review does not replace the Sol review or the migration lead's GO. Those two items are outside this system.",
+        "stage": "checking",
+        "verification": "review"
+      },
+      {
+        "description": "Publish on a branch that carries issue number 2713. The PR must be non-draft. The body must have a Refs line for issue 2713 and exactly one 'Change type: fix' line. The reviewed head and the final body go to the migration lead for one-push GO. The merge waits for #2703 and comes before the label on #2714. Do not queue, label, merge or restart anything.",
+        "stage": "publishing",
+        "verification": "review",
+        "publication": {
+          "branch_prefix": "prismabuild-2713",
+          "non_draft": true,
+          "body_lines": [
+            "Refs #2713",
+            "Change type: fix"
+          ],
+          "proof": false
+        }
+      }
+    ],
+    "memory_ids": [],
+    "evidence_contract": [
+      {
+        "tool": "run_tests",
+        "executor": "prismabuild_pytest",
+        "runner_features": [],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [],
+        "protected_files": [],
+        "requirement": "Run the complete tests/test_duplication_baseline.py guard on full source through PrismaBuild admission. It must pass.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "GREEN must pass the complete tests/test_duplication_baseline.py guard on full source and in its saved Bazel source closure through PrismaBuild admission."
+        }
+      },
+      {
+        "tool": "run_tests",
+        "executor": "prismabuild_pytest",
+        "runner_features": [],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [],
+        "protected_files": [],
+        "requirement": "Run the complete tests/test_duplication_baseline.py guard in its saved Bazel source closure through PrismaBuild admission. CAPABILITY GAP: tool_capabilities names no Bazel source closure feature for run_tests. If it cannot be expressed, report it as unsupported. Do not drop it and do not report it as met.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "GREEN must pass the complete tests/test_duplication_baseline.py guard on full source and in its saved Bazel source closure through PrismaBuild admission."
+        }
+      },
+      {
+        "tool": "run_tests",
+        "executor": "prismabuild_pytest",
+        "runner_features": [],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [],
+        "protected_files": [],
+        "requirement": "Run the focused existing sizing and generator tests: tests/test_bazel_test_sizing.py and tests/test_bazel_build_files.py.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "Run focused existing sizing/generator tests and verify generated definitions and graph invariants."
+        }
+      },
+      {
+        "tool": "run_generator",
+        "executor": "prismabuild_generator",
+        "runner_features": [],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "input_tree",
+          "output_tree",
+          "artifact_sha256",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [
+          "configured_generation"
+        ],
+        "protected_files": [],
+        "requirement": "Regenerate the BUILD files with python3 tools/bazel/build_files.py. The outputs must be byte-identical to the committed files.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "Generated BUILD files must remain byte-identical after regeneration."
+        }
+      },
+      {
+        "tool": "run_tests",
+        "executor": "prismabuild_pytest",
+        "runner_features": [],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [
+          "base_head"
+        ],
+        "protected_files": [],
+        "requirement": "Optional method choice: run the guard at the pinned base and at head, to show the issue's RED at the exact base and the GREEN at head. This adds no source obligation.",
+        "provenance": {
+          "kind": "method"
+        }
+      }
+    ],
+    "evidence_errors": []
+  },
+  "audit": {
+    "verdict": "agree",
+    "objections": [],
+    "evidence_contract": [
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "GREEN must pass the complete tests/test_duplication_baseline.py guard on full source and in its saved Bazel source closure through PrismaBuild admission.",
+          "source": "issue.body"
+        },
+        "requirement": "Run the complete tests/test_duplication_baseline.py guard on full source through PrismaBuild admission. It must pass.",
+        "runner_features": [],
+        "tool": "run_tests"
+      },
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "GREEN must pass the complete tests/test_duplication_baseline.py guard on full source and in its saved Bazel source closure through PrismaBuild admission.",
+          "source": "issue.body"
+        },
+        "requirement": "Run the complete tests/test_duplication_baseline.py guard in its saved Bazel source closure through PrismaBuild admission. CAPABILITY GAP: tool_capabilities names no Bazel source closure feature for run_tests. If it cannot be expressed, report it as unsupported. Do not drop it and do not report it as met.",
+        "runner_features": [],
+        "tool": "run_tests"
+      },
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Run focused existing sizing/generator tests and verify generated definitions and graph invariants.",
+          "source": "issue.body"
+        },
+        "requirement": "Run the focused existing sizing and generator tests: tests/test_bazel_test_sizing.py and tests/test_bazel_build_files.py.",
+        "runner_features": [],
+        "tool": "run_tests"
+      },
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "input_tree",
+          "output_tree",
+          "artifact_sha256",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_generator",
+        "methods": [
+          "configured_generation"
+        ],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Generated BUILD files must remain byte-identical after regeneration.",
+          "source": "issue.body"
+        },
+        "requirement": "Regenerate the BUILD files with python3 tools/bazel/build_files.py. The outputs must be byte-identical to the committed files.",
+        "runner_features": [],
+        "tool": "run_generator"
+      },
+      {
+        "tool": "run_tests",
+        "executor": "prismabuild_pytest",
+        "runner_features": [],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [],
+        "protected_files": [],
+        "requirement": "Run the complete tests/test_duplication_baseline.py guard in its saved Bazel source closure through PrismaBuild admission. CAPABILITY GAP: tool_capabilities names no Bazel source closure feature for run_tests. If the run cannot be expressed, report it as unsupported. Do not drop it. Do not report it as met. Do not replace it with a full-source run.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "GREEN must pass the complete tests/test_duplication_baseline.py guard on full source and in its saved Bazel source closure through PrismaBuild admission."
+        }
+      },
+      {
+        "tool": "run_tests",
+        "executor": "prismabuild_pytest",
+        "runner_features": [],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [],
+        "protected_files": [],
+        "requirement": "Run the focused existing tests tests/test_bazel_test_sizing.py and tests/test_bazel_build_files.py. They must pass.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "Run focused existing sizing/generator tests and verify generated definitions and graph invariants."
+        }
+      },
+      {
+        "tool": "run_tests",
+        "executor": "prismabuild_pytest",
+        "runner_features": [],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [
+          "base_head"
+        ],
+        "protected_files": [],
+        "requirement": "Optional method choice: run the guard at the pinned base and at head. This shows the issue's RED at the base and the GREEN at head. It adds no source obligation.",
+        "provenance": {
+          "kind": "method"
+        }
+      }
+    ],
+    "evidence_errors": []
+  },
+  "planner": {
+    "kind": "cant_meet",
+    "report": "Unsupported evidence requirement: Run the complete tests/test_duplication_baseline.py guard in its saved Bazel source closure through PrismaBuild admission. UNSUPPORTED: tool_capabilities lists no Bazel source closure runner feature for run_tests. This requirement is not met. It is not dropped. A full-source run does not replace it. (runner_features=bazel_source_closure).",
+    "violations": [],
+    "evidence_contract": [
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "GREEN must pass the complete tests/test_duplication_baseline.py guard on full source and in its saved Bazel source closure through PrismaBuild admission.",
+          "source": "issue.body"
+        },
+        "requirement": "Run the complete tests/test_duplication_baseline.py guard on full source through PrismaBuild admission. It must pass.",
+        "runner_features": [],
+        "tool": "run_tests"
+      },
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "GREEN must pass the complete tests/test_duplication_baseline.py guard on full source and in its saved Bazel source closure through PrismaBuild admission.",
+          "source": "issue.body"
+        },
+        "requirement": "Run the complete tests/test_duplication_baseline.py guard in its saved Bazel source closure through PrismaBuild admission. CAPABILITY GAP: tool_capabilities names no Bazel source closure feature for run_tests. If it cannot be expressed, report it as unsupported. Do not drop it and do not report it as met.",
+        "runner_features": [],
+        "tool": "run_tests"
+      },
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Run focused existing sizing/generator tests and verify generated definitions and graph invariants.",
+          "source": "issue.body"
+        },
+        "requirement": "Run the focused existing sizing and generator tests: tests/test_bazel_test_sizing.py and tests/test_bazel_build_files.py.",
+        "runner_features": [],
+        "tool": "run_tests"
+      },
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "input_tree",
+          "output_tree",
+          "artifact_sha256",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_generator",
+        "methods": [
+          "configured_generation"
+        ],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Generated BUILD files must remain byte-identical after regeneration.",
+          "source": "issue.body"
+        },
+        "requirement": "Regenerate the BUILD files with python3 tools/bazel/build_files.py. The outputs must be byte-identical to the committed files.",
+        "runner_features": [],
+        "tool": "run_generator"
+      },
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "GREEN must pass the complete tests/test_duplication_baseline.py guard on full source and in its saved Bazel source closure through PrismaBuild admission.",
+          "source": "issue.body"
+        },
+        "requirement": "Run the complete tests/test_duplication_baseline.py guard in its saved Bazel source closure through PrismaBuild admission. CAPABILITY GAP: tool_capabilities names no Bazel source closure feature for run_tests. If the run cannot be expressed, report it as unsupported. Do not drop it. Do not report it as met. Do not replace it with a full-source run.",
+        "runner_features": [],
+        "tool": "run_tests"
+      },
+      {
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "logs",
+          "terminal_verdict"
+        ],
+        "executor": "prismabuild_pytest",
+        "methods": [],
+        "protected_files": [],
+        "provenance": {
+          "kind": "source",
+          "quote": "Run focused existing sizing/generator tests and verify generated definitions and graph invariants.",
+          "source": "issue.body"
+        },
+        "requirement": "Run the focused existing tests tests/test_bazel_test_sizing.py and tests/test_bazel_build_files.py. They must pass.",
+        "runner_features": [],
+        "tool": "run_tests"
+      },
+      {
+        "tool": "run_tests",
+        "executor": "prismabuild_pytest",
+        "runner_features": [],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [
+          "head"
+        ],
+        "protected_files": [],
+        "requirement": "Run the complete tests/test_duplication_baseline.py guard on full source through PrismaBuild admission. It must pass.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "GREEN must pass the complete tests/test_duplication_baseline.py guard on full source and in its saved Bazel source closure through PrismaBuild admission."
+        }
+      },
+      {
+        "tool": "run_tests",
+        "executor": "prismabuild_pytest",
+        "runner_features": [
+          "bazel_source_closure"
+        ],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [],
+        "protected_files": [],
+        "requirement": "Run the complete tests/test_duplication_baseline.py guard in its saved Bazel source closure through PrismaBuild admission. UNSUPPORTED: tool_capabilities lists no Bazel source closure runner feature for run_tests. This requirement is not met. It is not dropped. A full-source run does not replace it.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "GREEN must pass the complete tests/test_duplication_baseline.py guard on full source and in its saved Bazel source closure through PrismaBuild admission."
+        }
+      },
+      {
+        "tool": "run_tests",
+        "executor": "prismabuild_pytest",
+        "runner_features": [],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [
+          "head"
+        ],
+        "protected_files": [],
+        "requirement": "Run the focused existing tests tests/test_bazel_test_sizing.py and tests/test_bazel_build_files.py. They must pass.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "Run focused existing sizing/generator tests and verify generated definitions and graph invariants."
+        }
+      },
+      {
+        "tool": "run_generator",
+        "executor": "prismabuild_generator",
+        "runner_features": [],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "input_tree",
+          "output_tree",
+          "artifact_sha256",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [
+          "configured_generation"
+        ],
+        "protected_files": [],
+        "requirement": "Regenerate the BUILD files with python3 tools/bazel/build_files.py. BUILD.bazel, src/prismabuild/BUILD.bazel, tools/BUILD.bazel and tests/BUILD.bazel must be byte-identical to the committed files.",
+        "provenance": {
+          "kind": "source",
+          "source": "issue.body",
+          "quote": "Generated BUILD files must remain byte-identical after regeneration."
+        }
+      },
+      {
+        "tool": "run_tests",
+        "executor": "prismabuild_pytest",
+        "runner_features": [
+          "base_head"
+        ],
+        "artifacts": [
+          "action_key",
+          "cas_receipt",
+          "sha",
+          "logs",
+          "terminal_verdict"
+        ],
+        "methods": [
+          "base_head"
+        ],
+        "protected_files": [],
+        "requirement": "Optional method choice: run the guard at the pinned base and at head. This shows the issue's RED at the base and the GREEN at head. It adds no source obligation.",
+        "provenance": {
+          "kind": "method"
+        }
+      }
+    ],
+    "evidence_errors": [
+      "Unsupported evidence requirement: Run the complete tests/test_duplication_baseline.py guard in its saved Bazel source closure through PrismaBuild admission. UNSUPPORTED: tool_capabilities lists no Bazel source closure runner feature for run_tests. This requirement is not met. It is not dropped. A full-source run does not replace it. (runner_features=bazel_source_closure)."
+    ]
+  }
+}

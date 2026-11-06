@@ -1,7 +1,33 @@
-"""Report budgets shared by planning, collection and the trusted reader."""
+"""Report budgets shared by planning, collection and the trusted reader.
 
-from tl3_harness.model import named
+The in-container runner loads this file by path without the tl3_harness
+package (#858): keep it standard-library only.
+"""
+
+from copy import deepcopy
 import json
+
+
+class Diagnostic(str):
+    def __new__(cls, text, rule, items):
+        value = super().__new__(cls, text)
+        value.rule = rule
+        value.items = deepcopy(items)
+        return value
+
+    def __reduce__(self):
+        return Diagnostic, (str(self), self.rule, self.items)
+
+
+def named(rule, text, items):
+    return Diagnostic(str(text), rule, items)
+
+
+def contextual(error, **items):
+    text = error.args[0] if isinstance(error, Exception) else error
+    if not isinstance(text, Diagnostic):
+        raise TypeError('A plan diagnostic must name its rule at the emission site.')
+    return named(text.rule, str(error), {**text.items, **items})
 
 
 MAX_REPORT_LINE_BYTES = 4 * 1024 * 1024

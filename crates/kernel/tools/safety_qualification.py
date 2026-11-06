@@ -16,6 +16,11 @@ import remote_gate  # noqa: E402
 
 
 CASES = {
+    'audit_disagreement_asks': (
+        'crates/kernel/src/ingest.rs',
+        'stop_for_review(m, ReviewStop::AuditDisagreement);',
+        'ask_rob(w, i, QKind::AuditDisagreement, Cont::Unplanned, 0, out);',
+        '//crates/kernel:verus_ingest_reply_ingest'),
     'plan_check_rejected_asks': (
         'crates/kernel/src/plan_check.rs',
         'Reply::PlanCheckRejected => {\n            stop_for_review(&mut w.nodes[i], ReviewStop::PlanCantMeet);',
@@ -327,6 +332,27 @@ CASES = {
                            'if theirs >= first_runnable || !slot_free(w, index)',
                            'if theirs <= first_runnable || !slot_free(w, index)',
                            '//crates/kernel:verus_scheduler_first_in_line'),
+    'advance_release_rank': ('crates/kernel/src/ranks.rs',
+                             'm.holds = false;\n        m.pos += 1;',
+                             'm.holds = false;\n        m.pos += 0;',
+                             '//crates/kernel:verus_ranks'),
+    'advance_idle_moves': ('crates/kernel/src/ranks.rs',
+                           'reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {\n        false',
+                           'reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {\n        true',
+                           '//crates/kernel:verus_ranks_advance_idle'),
+    'advance_terminal_outcome': ('crates/kernel/src/ranks.rs',
+                                 'close_node(node, context.node, outcome, out);',
+                                 'close_node(node, context.node, Outcome::Stopped, out);',
+                                 '//crates/kernel:verus_ranks_advance_finished'),
+
+    'advance_teardown_missing_position': ('crates/kernel/src/ranks.rs',
+                                         'm.pos += 1;\n        kernel_proof! { port_advance_rank::teardown_absent',
+                                         'm.pos += 0;\n        kernel_proof! { port_advance_rank::teardown_absent',
+                                         '//crates/kernel:verus_ranks_advance_teardown_missing'),
+    'advance_teardown_duplicate_emission': ('crates/kernel/src/ranks.rs',
+                                           'emit_node(node, context.node, kind, out);\n        kernel_proof! { port_advance_rank::teardown_emission',
+                                           'emit_node(node, context.node, kind, out);\n        emit_node(node, context.node, kind, out);\n        kernel_proof! { port_advance_rank::teardown_emission',
+                                           '//crates/kernel:lib_test_tl3_kernel'),
 
     'w7_deps_reachability': ('crates/kernel/src/dependencies.rs',
                              '                            seen |= mask;',

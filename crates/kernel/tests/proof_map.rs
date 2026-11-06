@@ -136,6 +136,22 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
         "port_deps_s2_verify_registration",
     ),
     ("apply_dependency_remove", "port_deps_s2_removal"),
+    // #806: W6 slice one uses the universal real-advance theorem and executable covers.
+    ("advance_ingesting", "port_advance_phase"),
+    ("advance_auditing", "port_advance_phase"),
+    ("advance_unplanned", "port_advance_phase"),
+    ("advance_planning", "port_advance_phase"),
+    ("advance_ready", "port_advance_phase"),
+    ("advance_making", "port_advance_phase"),
+    ("advance_checking", "port_advance_phase"),
+    // #806: W6 slice two retains every terminal outcome and non-moving phase.
+    ("advance_reviewing", "port_advance_phase"),
+    ("advance_publishing", "port_advance_phase"),
+    ("advance_queued", "port_advance_phase"),
+    ("advance_rebasing", "port_advance_phase"),
+    ("advance_awaiting_rob", "port_advance_phase"),
+    ("advance_stopping", "port_advance_phase"),
+    ("advance_closed", "port_advance_phase"),
 ];
 
 /// Quoted names between the proof-map markers in lib.rs.

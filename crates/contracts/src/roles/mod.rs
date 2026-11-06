@@ -42,3 +42,5 @@ pub mod ingest_input;
 pub mod maker_input;
 pub mod planner_input;
 pub mod writer_input;
+
+pub mod ingest_retention;

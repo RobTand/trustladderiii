@@ -659,6 +659,7 @@ incident also needed Rob's `clear incident`, even after the fix was deployed.
   incident cites the worker-recorded facts only, never the maker's report.
   Unsupported evidence makes the reply `cant_meet`. Only the maker has
   `run_tests`, so only the maker has `blocked`.
+- Queue or required-check failures established as repo-wide or infrastructure failures are Q50 environment blockers: keep the PR open, never fail_fast or Rob-only, and requeue once main is healthy. #854 (2026-11-06, program lead, under Rob's Q50/Q51 rules).
 - **Q51 Releases clear TL3-side incidents:** each incident records whether an
   upstream or TL3 caused it. tl3d records the release it last started with.
   The first start under a new release clears each open TL3-side incident that

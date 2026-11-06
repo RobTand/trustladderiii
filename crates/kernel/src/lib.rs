@@ -454,6 +454,8 @@ pub enum ReviewStop {
     ReviewerOutOfRoom,
     PlanCantMeet,
     PublicationBody,
+    /// Auditing / #832-A: the one ingest repair did not resolve the audit.
+    AuditDisagreement,
 }
 
 /// Where a node goes when Rob says carry on.
@@ -2378,3 +2380,11 @@ mod port_deps_remove;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_deps_single.rs"]
 mod port_deps_single;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_advance_teardown_rank.rs"]
+mod port_advance_teardown_rank;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_advance_tail_witness.rs"]
+mod port_advance_tail_witness;

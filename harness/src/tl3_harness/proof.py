@@ -81,15 +81,197 @@ def written_bindings(source, namespace=()):
     return writes
 
 
-def validate_support(source, module):
-    """Support adds plain bindings, never writes to existing objects or namespaces."""
+def binding_names(source):
+    """All lexical bindings, including captures, deletions and nested shadows.
+
+    #842/#645: loader trust cannot depend on an incomplete AST target list.
+    This intentionally treats local shadows and scope declarations as conflicts.
+    """
+    names = set()
+    def visit(table):
+        names.update(symbol.get_name() for symbol in table.get_symbols()
+                     if symbol.is_assigned() or symbol.is_imported() or symbol.is_parameter()
+                     or symbol.is_declared_global() or symbol.is_nonlocal() or symbol.is_type_parameter())
+        for child in table.get_children():
+            visit(child)
+    visit(symtable.symtable(textwrap.dedent(source), '<proof>', 'exec'))
+    return names
+
+
+def binding_statements(tree, name):
+    return [statement for statement in tree.body if name in binding_names(ast.unparse(statement))]
+
+
+def sole_import(tree, name, source):
+    statements = binding_statements(tree, name)
+    return (len(statements) == 1
+            and ast.dump(statements[0]) == ast.dump(ast.parse(source).body[0]))
+
+
+def validate_partial_definition_uses(tree, module, name):
+    """Every remaining reference to a partially copied definition is a direct call."""
+    parents = {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            root = node
+            while isinstance(root, (ast.Attribute, ast.Subscript)):
+                root = root.value
+            if isinstance(root, ast.Name) and root.id == name:
+                raise ProofRefusal('partial support definition is changed elsewhere in its module; '
+                                   'move that setup into the observer or a new support factory', module, name)
+        if isinstance(node, ast.Name) and node.id == name:
+            parent = parents.get(id(node))
+            if not (isinstance(parent, ast.Call) and parent.func is node):
+                raise ProofRefusal('partial support definition may only be called directly elsewhere in its module; '
+                                   'move other uses into the observer', module, name)
+
+
+def validate_partial_literal(source, module_source, module, symbol):
+    """Only immutable, singly bound data can be copied without its context."""
+    statements = ast.parse(textwrap.dedent(source)).body
+    for statement in statements:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            class RemoveDefinition(ast.NodeTransformer):
+                removed = False
+                def visit(self, node):
+                    if not self.removed and ast.dump(node) == ast.dump(statement):
+                        self.removed = True
+                        return ast.copy_location(ast.Pass(), node)
+                    return super().visit(node)
+            remover = RemoveDefinition()
+            stripped = remover.visit(ast.parse(module_source))
+            if not remover.removed or statement.name in binding_names(ast.unparse(stripped)):
+                raise ProofRefusal('partial support definition must be bound exactly once; '
+                                   'remove later rebinding or move setup into the observer', module, statement.name)
+            # #842 r3: only the definition is copied, so the rest of the module may
+            # only call it. Aliases, attribute access and arguments could mutate the
+            # object (for example __defaults__) in GREEN but not in RED.
+            validate_partial_definition_uses(stripped, module, statement.name)
+            validate_namespace_apis(ast.parse(module_source), module)
+        if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            continue
+        try:
+            value = ast.literal_eval(statement.value)
+        except (ValueError, TypeError, SyntaxError):
+            raise ProofRefusal('partial support binding initializer must use immutable literal syntax, never calls; '
+                               'put initialization inside the observer or a new support factory', module, symbol) from None
+        if not (len(statements) == 1 and isinstance(statement, ast.Assign)
+                and len(statement.targets) == 1 and isinstance(statement.targets[0], ast.Name)):
+            raise ProofRefusal('partial literal support must bind one plain name in a single assignment; '
+                               'put test data inside the observer or a new support factory', module, symbol)
+        binding = statement.targets[0].id
+        class RemoveLiteral(ast.NodeTransformer):
+            removed = False
+            def visit_Assign(self, node):
+                if not self.removed and ast.dump(node) == ast.dump(statement):
+                    self.removed = True
+                    return ast.copy_location(ast.Pass(), node)
+                return self.generic_visit(node)
+        remover = RemoveLiteral()
+        stripped = remover.visit(ast.parse(module_source))
+        try:
+            # literal_eval yields only builtin values: hashability excludes every
+            # mutable container, including one nested in an immutable tuple.
+            hash(value)
+            # Erasing only the initializer lets the compiler find every other
+            # binding, even inside the same class or compound statement.
+            safe = remover.removed and binding not in binding_names(ast.unparse(stripped))
+        except (TypeError, SyntaxError):
+            safe = False
+        if not safe:
+            raise ProofRefusal('partial literal support must be immutable and bound exactly once; '
+                               'put test data inside the observer or a new support factory', module, binding)
+        # A dynamic namespace write elsewhere could change even an immutable
+        # binding, without appearing as a second write in the symbol table.
+        validate_namespace_apis(ast.parse(module_source), module)
+
+
+def observer_context_imports(tree, module, subjects):
+    """Recognize the isolated script loader and CLI setup from tessera #1638."""
+    allowed = set()
+    plain_path = (sole_import(tree, 'Path', 'from pathlib import Path')
+                  and not binding_statements(tree, '__file__'))
+    for function in (node for node in tree.body if isinstance(node, ast.FunctionDef)):
+        for subject in {item.split('::')[0] for item in subjects} if plain_path else ():
+            template = ast.parse(f'''def {function.name}():
+    import importlib.util
+    path = Path(__file__).resolve().parents[{len(Path(module).parts) - 1}] / {subject!r}
+    spec = importlib.util.spec_from_file_location("proof_subject", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+''').body[0]
+            # The name given to a fresh, unregistered module has no proof meaning.
+            if len(function.body) == 6 and isinstance(function.body[2], ast.Assign):
+                call = function.body[2].value
+                if isinstance(call, ast.Call) and call.args and isinstance(call.args[0], ast.Constant):
+                    template.body[2].value.args[0] = call.args[0]
+            if (ast.dump(function) == ast.dump(template)
+                    and binding_statements(tree, function.name) == [function]):
+                allowed.update(id(node) for node in ast.walk(function))
+    parents = {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    plain_sys = sole_import(tree, 'sys', 'import sys')
+    mock_roots = set()
+    if sole_import(tree, 'mock', 'from unittest import mock'):
+        mock_roots.add('mock')
+    if sole_import(tree, 'unittest', 'import unittest.mock'):
+        mock_roots.add('unittest.mock')
+    canonical_imports = {ast.dump(ast.parse(source).body[0]) for source in (
+        'import unittest', 'import unittest.mock', 'from unittest import mock')}
+    if any(isinstance(node, (ast.Import, ast.ImportFrom))
+           and any(name.split('.')[0] == 'unittest' for name in (
+               [node.module or ''] if isinstance(node, ast.ImportFrom) else [alias.name for alias in node.names]))
+           and ast.dump(node) not in canonical_imports for node in ast.walk(tree)):
+        mock_roots.clear()
+    # A real import is insufficient if its patch implementation can be replaced
+    # or aliased through another use of the imported object.
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Name) or node.id not in {'mock', 'unittest'}:
+            continue
+        root = node
+        while isinstance(parents.get(id(root)), ast.Attribute):
+            root = parents[id(root)]
+        expression = ast.unparse(root)
+        call = parents.get(id(root))
+        if (expression in {name + '.patch.object' for name in mock_roots}
+                and isinstance(call, ast.Call) and call.func is root
+                and len(call.args) == 3 and not call.keywords
+                and isinstance(call.args[1], ast.Constant)
+                and isinstance(call.args[0], ast.Name)
+                and plain_sys and call.args[0].id == 'sys' and call.args[1].value == 'argv'
+                and isinstance(parents.get(id(call)), ast.withitem)):
+            continue
+        mock_roots.clear()
+        break
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Name) or node.id != 'sys':
+            continue
+        parent = parents[id(node)]
+        if isinstance(parent, ast.Attribute) and parent.attr == 'executable' and isinstance(parent.ctx, ast.Load):
+            continue
+        # Only a scoped argv patch is CLI setup. sys cannot escape as an object.
+        if (isinstance(parent, ast.Call) and ast.unparse(parent.func) in {name + '.patch.object' for name in mock_roots}
+                and len(parent.args) == 3 and parent.args[0] is node
+                and isinstance(parent.args[1], ast.Constant) and parent.args[1].value == 'argv'
+                and plain_sys and not parent.keywords and isinstance(parents.get(id(parent)), ast.withitem)):
+            allowed.add(id(parent))
+            continue
+        break
+    else:
+        allowed.update(id(node) for node in ast.walk(tree) if plain_sys and isinstance(node, ast.Import)
+                       and len(node.names) == 1 and node.names[0].name == 'sys' and not node.names[0].asname)
+    return allowed
+
+
+def validate_namespace_apis(tree, module, allowed=()):
+    """Reject indirect writes as well as syntactic binding targets."""
     names = {'globals', 'locals', 'vars', 'eval', 'exec', 'compile', '__import__',
-             'getattr', 'setattr', 'delattr', '__builtins__'}
+             'getattr', 'setattr', 'delattr', '__builtins__', 'attrgetter', 'methodcaller'}
     attributes = {'__dict__', '__globals__', '__builtins__', '__getattribute__',
                   '__setattr__', '__delattr__', 'f_globals', 'f_locals', 'gi_frame',
-                  'cr_frame', 'tb_frame', '_getframe', 'currentframe', 'modules'}
+                  'cr_frame', 'tb_frame', '_getframe', 'currentframe', 'modules', 'attrgetter', 'methodcaller'}
     modules = {'builtins', 'sys', 'inspect', 'importlib', '__main__'}
-    nodes = list(ast.walk(ast.parse(textwrap.dedent(source))))
+    nodes = list(ast.walk(tree))
     for node in nodes:
         if isinstance(node, ast.ImportFrom) and any(alias.name == '*' for alias in node.names):
             raise ProofRefusal('wildcard import in support can rebind base bindings', module, node.module or '.')
@@ -98,11 +280,70 @@ def validate_support(source, module):
             symbol = node.id
         elif isinstance(node, ast.Attribute) and node.attr in attributes:
             symbol = node.attr
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+        elif isinstance(node, ast.ImportFrom) and node.module in {'operator', '_operator'}:
+            symbol = next((alias.name for alias in node.names if alias.name in names), None)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)) and id(node) not in allowed:
             imported = [node.module or ''] if isinstance(node, ast.ImportFrom) else [alias.name for alias in node.names]
             symbol = next((name for name in imported if name.split('.')[0] in modules), None)
         if symbol:
             raise ProofRefusal('dynamic namespace API in support can rebind base subjects', module, symbol)
+
+
+def validate_support_calls(tree, module, allowed, context):
+    """#645: support cannot invoke imported objects, aliases or field evaluators."""
+    pure = {'abs', 'all', 'any', 'bool', 'bytes', 'enumerate', 'float', 'frozenset',
+            'int', 'len', 'max', 'min', 'range', 'repr', 'reversed', 'round',
+            'sorted', 'str', 'sum', 'tuple', 'zip'} - set().union(*(binding_names(source) for source in context))
+    functions = {node.name for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                 and binding_statements(tree, node.name) == [node]
+                 and node.name not in binding_names(ast.unparse(ast.Module(body=node.body, type_ignores=[])))
+                 and node.name not in {arg.arg for arg in ast.walk(node.args) if isinstance(arg, ast.arg)}}
+    def pure_value(node):
+        # Even sorted(key=...) and int(obj) can call arbitrary methods. Keep
+        # builtin inputs to literal data and results of the same pure calls.
+        try:
+            ast.literal_eval(node)
+            return not any(isinstance(child, ast.Call) for child in ast.walk(node))
+        except (ValueError, TypeError, SyntaxError):
+            return (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id in pure and not node.keywords
+                    and all(pure_value(arg) for arg in node.args))
+    for node in ast.walk(tree):
+        if id(node) in allowed:
+            continue
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.decorator_list:
+            raise ProofRefusal('support decorators can call imported or base objects; move setup into the observer', module)
+        if isinstance(node, ast.ClassDef) and (node.bases or node.keywords):
+            raise ProofRefusal('support class construction can call imported or base objects', module, node.name)
+        if isinstance(node, (ast.With, ast.AsyncWith)) and any(id(item.context_expr) not in allowed for item in node.items):
+            raise ProofRefusal('support context managers can rebind existing objects; use authenticated scoped sys.argv setup', module)
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and (node.func.id in functions or pure_value(node)):
+                continue
+            raise ProofRefusal('support cannot rebind or mutate existing objects; calls must use an unshadowed pure builtin '
+                               'or a function defined in support; move setup into the observer or use a supported loader',
+                               module, ast.unparse(node.func))
+        # Percent templates can dispatch to arbitrary mapping/operand methods.
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+            try:
+                ast.literal_eval(node.left)
+                ast.literal_eval(node.right)
+                safe = isinstance(node.left, ast.Constant) and isinstance(node.left.value, (str, bytes))
+            except (ValueError, TypeError, SyntaxError):
+                safe = False
+            if not safe or '__' in str(node.left.value):
+                raise ProofRefusal('support format templates require literal operands without reflective fields', module)
+        if isinstance(node, ast.Attribute) and node.attr in {'format', 'format_map', 'Formatter', 'TestCase', 'main'}:
+            raise ProofRefusal('reflective or imported attribute access is unsupported in support', module, node.attr)
+
+
+def validate_support(source, module, *, observer_context=False, subjects=(), context=()):
+    """Support adds plain bindings, never writes to existing objects or namespaces."""
+    tree = ast.parse(textwrap.dedent(source))
+    allowed = observer_context_imports(tree, module, subjects) if observer_context else set()
+    validate_namespace_apis(tree, module, allowed)
+    validate_support_calls(tree, module, allowed, context or (source,))
+    nodes = list(ast.walk(tree))
     for node in nodes:
         if isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del)):
             root = node
@@ -155,7 +396,7 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
         if any(overlaps(observer, other) for other in observers[index + 1:]):
             raise ProofRefusal('overlapping observer selections', observer.split('::')[0])
     paths = {item.split('::')[0] for item in (*observers, *support)}
-    identities = {}
+    identities, inferred_support = {}, set()
     for name in sorted(paths):
         if not is_test(name, config['test-files']) and any(item.split('::')[0] == name for item in observers):
             raise ProofRefusal('observer is outside configured tests', name)
@@ -164,6 +405,16 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
             raise ProofRefusal('missing head observer module', name)
         old = old_path.read_bytes().decode() if old_path.is_file() else ''
         new = new_path.read_bytes().decode()
+        observer_context = not old_path.exists() and any(item.split('::')[0] == name for item in observers)
+        if observer_context:
+            # Canonical import spelling cannot authenticate a repository-local
+            # replacement of the stdlib inputs used by the loader exception.
+            trusted = {'pathlib', 'unittest', 'importlib'}
+            for path in head.rglob('*.py'):
+                relative = path.relative_to(head)
+                if relative.stem in trusted or trusted.intersection(relative.parts[:-1]):
+                    raise ProofRefusal('observer loader requires unshadowed standard-library modules; '
+                                       'rename repository-local support', name, relative.as_posix())
         requested = [item for item in (*observers, *support) if item.split('::')[0] == name]
         for statement in ast.parse(new).body:
             if (isinstance(statement, (ast.Import, ast.ImportFrom))
@@ -173,8 +424,11 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
         for item in requested:
             if item in support:
                 text, _ = source_unit(new, item)
-                validate_support(text, name)
-                support_required.update(global_names(text, name))
+                validate_support(text, name, observer_context=observer_context and item == name, subjects=subjects, context=(old, new))
+                if old_path.exists() and '::' in item:
+                    validate_partial_literal(text, new, name, item.split('::')[-1])
+                if item != name:
+                    support_required.update(global_names(text, name))
         for statement in ast.parse(new).body:
             if (isinstance(statement, (ast.Import, ast.ImportFrom))
                     and bound_names(ast.unparse(statement)) & support_required):
@@ -256,11 +510,37 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
                 statement.names = aliases
                 imports.append(ast.unparse(statement))
                 bound.update(bound_names(imports[-1]))
+        # #842: only immutable, singly bound literal data has no omitted context.
+        for symbol in sorted(required - bound):
+            item = name + '::' + symbol
+            text, _ = source_unit(new, item, optional=True)
+            if text is None:
+                continue
+            statements = ast.parse(textwrap.dedent(text)).body
+            if len(statements) != 1:
+                continue
+            statement = statements[0]
+            if not (isinstance(statement, ast.Assign) and len(statement.targets) == 1
+                    and isinstance(statement.targets[0], ast.Name) and statement.targets[0].id == symbol):
+                continue
+            try:
+                ast.literal_eval(statement.value)
+            except (ValueError, TypeError, SyntaxError):
+                continue
+            validate_support(text, name)
+            guard(text, item)
+            if '*' in bound_names(old):
+                raise ProofRefusal('literal support cannot shadow a base wildcard binding', name, symbol)
+            validate_partial_literal(text, new, name, symbol)
+            imports.append(text)
+            bound.add(symbol)
+            inferred_support.add(item)
+            identities[item] = digest(text)
         missing = required - bound
         if missing:
             raise ProofRefusal('unresolved observer symbol; add a new observer_support definition or local import',
                                name, sorted(missing)[0])
-        # Imports follow a possible module docstring and __future__ statements.
+        # Imports and literal support follow a module docstring and __future__ statements.
         module = ast.parse(composed)
         insertion = 0
         for statement in module.body:
@@ -292,6 +572,6 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config):
             'subjects': {name: {'base': identity(base, name), 'head': identity(head, name)}
                          for name in subjects or inferred if name.endswith('.py') or '::' in name},
             'observer_sha256': {test: identity(head, test.split('[', 1)[0]) for test in check.tests},
-            'support_sha256': {name: identities[name] for name in support},
+            'support_sha256': {name: identities[name] for name in sorted(set(support) | inferred_support)},
             'source_base_tree_sha256': tree_sha256(base),
             'base_tree_sha256': tree_sha256(destination), 'head_tree_sha256': tree_sha256(head)}

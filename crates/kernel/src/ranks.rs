@@ -6,6 +6,10 @@ use super::*;
 use vstd::prelude::*;
 
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/port_advance_rank.rs"]
+mod port_advance_rank;
+
+#[cfg(verus_keep_ghost)]
 verus! {
 pub open spec fn resumed_phase(r: Resume) -> Phase {
     match r {
@@ -636,7 +640,7 @@ kernel_fn! {
             port_advance_contracts::exact(*old(node), *final(node),
                 *old(_next_ticket), *final(_next_ticket), _context, *old(_out), *final(_out)),
     ] proof [port_advance_contracts::blocked_frame(*node, *_next_ticket, _context, *_out);
-        reveal(advance_post); reveal(distance);] {
+        port_advance_rank::blocked(*node, *_next_ticket, _context);] {
         let n = *node;
         if n.phase.is_closed() {
             return false;
@@ -667,10 +671,9 @@ kernel_fn! {
             result == advance_enabled(*old(node), context),
             port_advance_contracts::exact(*old(node), *final(node),
                 *old(_next_ticket), *final(_next_ticket), context, *old(out), *final(out)),
-    ] proof [reveal(port_advance_contracts::exact);
-        reveal(port_advance_contracts::node_after);
-        reveal(port_advance_contracts::outputs);
-        reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
+    ] proof [port_advance_step_frames::finished_quiet(*node, *_next_ticket, context, *out);
+        reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { advance_out = *out }
         let n = *node;
         match n.phase {
             Phase::Publishing => {
@@ -679,6 +682,8 @@ kernel_fn! {
             }
             Phase::Stopping(outcome) if n.question.is_none() => {
                 close_node(node, context.node, outcome, out);
+                kernel_proof! { port_advance_step_frames::finished_close(n, *_next_ticket,
+                    context, advance_out@, *out, outcome); }
                 true
             }
             _ => false,
@@ -727,19 +732,7 @@ kernel_fn! {
                 *old(next_ticket), *final(next_ticket), context, *old(out), *final(out)),
     ] proof [
         port_advance_step_frames::start_quiet(*node, *next_ticket, context, *out);
-        let n = *node;
-        let ticket = *next_ticket;
-        let c = context;
-        let after = if n.paused { port_advance_contracts::paused(n) }
-            else if n.ticket.is_none() { Node { ticket: Some(ticket), ..n } }
-            else if c.pool { port_advance_contracts::emitted(Node { ticket: None, pool: true,
-                run: Some(n.generation), pos: (n.pos + 1) as u8, ..n }, EffectKind::StartRun(role)) }
-            else { n };
-        let ticket_after = (ticket + if !n.paused && n.ticket.is_none() { 1int } else { 0int }) as u64;
-        assert(advance_post(n, after, ticket, ticket_after, advance_enabled(n, c))) by {
-            reveal(advance_post); reveal(distance);
-            if n.paused {} else if n.ticket.is_none() {} else if c.pool {} else {}
-        }
+        port_advance_rank::start(*node, *next_ticket, context, role);
     ] {
         kernel_snapshot! { advance_out = *out }
         let n = *node;
@@ -940,9 +933,60 @@ kernel_fn! {
 }
 
 kernel_fn! {
+    /// Stopping / #806: behaviour-identical branch extraction under the standing rule.
+    #[allow(clippy::needless_return)] // Retain the extracted block's original return verbatim.
+    fn advance_teardown_missing(node: &mut Node, _next_ticket: &mut u64,
+        _context: AdvanceContext, _out: &mut Outbox, kind: EffectKind) -> (result: bool) [
+        requires advance_pre(*old(node), *old(_next_ticket), old(_out).len),
+            old(node).phase is Stopping && !old(node).waiting_incident && old(node).effect.is_none()
+                && current_item(*old(node)) == Some(Item::Teardown(kind)) && old(node).question.is_none()
+                && port_advance_contracts::gone(*old(node), kind),
+        ensures (!result ==> final(_out).len == old(_out).len),
+            advance_post(*old(node), *final(node),
+            *old(_next_ticket), *final(_next_ticket), result),
+            result == advance_enabled(*old(node), _context),
+            port_advance_contracts::exact(*old(node), *final(node),
+                *old(_next_ticket), *final(_next_ticket), _context, *old(_out), *final(_out)),
+    ] proof [port_advance_rank::teardown_bounds(*node, *_next_ticket, _out.len, kind);] {
+        kernel_snapshot! { teardown_node = *node }
+        kernel_snapshot! { teardown_out = *_out }
+        let m = &mut *node;
+        if kind == EffectKind::StopRun {
+            m.pool = false;
+        }
+        m.pos += 1;
+        kernel_proof! { port_advance_rank::teardown_absent(teardown_node@, *node, *_next_ticket,
+            _context, teardown_out@, *_out, kind); }
+        return true;
+    }
+}
+
+kernel_fn! {
+    /// Stopping / #806: behaviour-identical branch extraction under the standing rule.
+    fn advance_teardown_emitting(node: &mut Node, _next_ticket: &mut u64,
+        context: AdvanceContext, out: &mut Outbox, kind: EffectKind) -> (result: bool) [
+        requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
+            old(node).phase is Stopping && !old(node).waiting_incident && old(node).effect.is_none()
+                && current_item(*old(node)) == Some(Item::Teardown(kind)) && old(node).question.is_none()
+                && !port_advance_contracts::gone(*old(node), kind),
+        ensures (!result ==> final(out).len == old(out).len),
+            advance_post(*old(node), *final(node),
+            *old(_next_ticket), *final(_next_ticket), result),
+            result == advance_enabled(*old(node), context),
+            port_advance_contracts::exact(*old(node), *final(node),
+                *old(_next_ticket), *final(_next_ticket), context, *old(out), *final(out)),
+    ] proof [port_advance_rank::teardown_bounds(*node, *_next_ticket, out.len, kind);] {
+        kernel_snapshot! { teardown_node = *node }
+        kernel_snapshot! { teardown_out = *out }
+        emit_node(node, context.node, kind, out);
+        kernel_proof! { port_advance_rank::teardown_emission(teardown_node@, *node, *_next_ticket,
+            context, teardown_out@, *out, kind); }
+        true
+    }
+}
+
+kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
-    #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
-    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
     fn advance_teardown(node: &mut Node, _next_ticket: &mut u64,
         context: AdvanceContext, out: &mut Outbox, kind: EffectKind) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
@@ -953,28 +997,12 @@ kernel_fn! {
             result == advance_enabled(*old(node), context),
             port_advance_contracts::exact(*old(node), *final(node),
                 *old(_next_ticket), *final(_next_ticket), context, *old(out), *final(out)),
-    ] proof [
-        port_advance_step_frames::teardown_quiet(*node, *_next_ticket, context, *out, kind);
-        let n = *node;
-        let ticket = *_next_ticket;
-        let after = if n.question.is_some() { n }
-            else if port_advance_contracts::gone(n, kind) {
-                Node { pool: n.pool && kind != EffectKind::StopRun, pos: (n.pos + 1) as u8, ..n }
-            } else { port_advance_contracts::emitted(n, kind) };
-        assert(advance_post(n, after, ticket, ticket, advance_enabled(n, context))) by {
-            reveal(advance_post); reveal(distance);
-            assert(n.phase is Stopping);
-            if n.question.is_some() {} else if port_advance_contracts::gone(n, kind) {
-                match kind {
-                    EffectKind::StopRun => {}, EffectKind::WithdrawJob => {},
-                    EffectKind::ClosePr => {}, EffectKind::RemoveWorktree => {}, _ => {},
-                }
-            } else {}
-        }
-    ] {
+    ] proof [port_advance_rank::teardown_bounds(*node, *_next_ticket, out.len, kind);] {
         kernel_snapshot! { advance_out = *out }
         let n = *node;
         if n.question.is_some() {
+            kernel_proof! { port_advance_rank::teardown_question(n, *node, *_next_ticket,
+                context, advance_out@, *out, kind); }
             return false; // waiting for Rob
         }
         kernel_proof! { assert(n.phase is Stopping); }
@@ -986,16 +1014,9 @@ kernel_fn! {
             _ => false,
         };
         if gone {
-            let m = &mut *node;
-            if kind == EffectKind::StopRun {
-                m.pool = false;
-            }
-            m.pos += 1;
-            return true;
+            return advance_teardown_missing(node, _next_ticket, context, out, kind);
         }
-        emit_node(node, context.node, kind, out);
-        kernel_proof! { port_advance_step_frames::teardown_emit(n, *_next_ticket, context, advance_out@, *out, kind); }
-        true
+        advance_teardown_emitting(node, _next_ticket, context, out, kind)
     }
 }
 
@@ -1057,3 +1078,7 @@ kernel_fn! {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "teardown_equivalence/mod.rs"]
+mod equivalence;
