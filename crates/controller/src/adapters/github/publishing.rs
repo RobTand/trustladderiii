@@ -167,7 +167,12 @@ impl Adapter {
                     .runtime
                     .block_on(client.check_runs(&repo, head(delivery)?.as_str()))
                     .map_err(|error| publication_failure::http(error, Endpoint::HeadChecks))?;
-                if self.converge_approvals(&client, &repo, delivery, &checks)? {
+                if matches!(
+                    publication::approval_preflight(
+                        self.converge_approvals(&client, &repo, delivery, &checks)?
+                    ),
+                    publication::ApprovalPreflight::Observed
+                ) {
                     self.records
                         .write(&attempt, &serde_json::to_vec(&ApprovalAttempt::Observed)?)?;
                     return Ok(Completion::confirmed(vec![]));
@@ -201,29 +206,45 @@ impl Adapter {
                 }
                 let check = match check {
                     Ok(check) => check,
-                    Err(failure) if !failure.sent => {
-                        self.records
-                            .write(&attempt, &serde_json::to_vec(&ApprovalAttempt::Refused)?)?;
-                        return Err(publication_failure::http(
-                            failure.error,
-                            Endpoint::CheckRuns,
-                        ));
-                    }
-                    Err(tl3_github::PostFailure { error, .. })
-                        if matches!(
-                            error.failure_class(),
-                            tl3_github::FailureClass::Permanent(_)
-                        ) =>
-                    {
-                        return Err(publication_failure::http(error, Endpoint::CheckRuns));
-                    }
-                    Err(_) => {
-                        self.records
-                            .write(&attempt, &serde_json::to_vec(&ApprovalAttempt::Uncertain)?)?;
-                        return Err(Error::ApprovalAmbiguous);
+                    Err(failure) => {
+                        let action = publication::failed_approval(publication::ApprovalFailure {
+                            sent: failure.sent,
+                            permanent: matches!(
+                                failure.error.failure_class(),
+                                tl3_github::FailureClass::Permanent(_)
+                            ),
+                        });
+                        match action {
+                            publication::ApprovalFailureAction::Refused => {
+                                self.records.write(
+                                    &attempt,
+                                    &serde_json::to_vec(&ApprovalAttempt::Refused)?,
+                                )?;
+                                return Err(publication_failure::http(
+                                    failure.error,
+                                    Endpoint::CheckRuns,
+                                ));
+                            }
+                            publication::ApprovalFailureAction::Permanent => {
+                                return Err(publication_failure::http(
+                                    failure.error,
+                                    Endpoint::CheckRuns,
+                                ));
+                            }
+                            publication::ApprovalFailureAction::Uncertain => {
+                                self.records.write(
+                                    &attempt,
+                                    &serde_json::to_vec(&ApprovalAttempt::Uncertain)?,
+                                )?;
+                                return Err(Error::ApprovalAmbiguous);
+                            }
+                        }
                     }
                 };
-                if !approved(&check, &client, delivery)? {
+                if matches!(
+                    publication::observed_approval(approved(&check, &client, delivery)?),
+                    publication::ApprovalObservation::Uncertain
+                ) {
                     self.records
                         .write(&attempt, &serde_json::to_vec(&ApprovalAttempt::Uncertain)?)?;
                     return Err(Error::ApprovalAmbiguous);
@@ -391,20 +412,31 @@ impl Adapter {
                     delivery.request_text.as_deref().unwrap_or(""),
                 )?;
                 self.branch_pr(&client, &repo, delivery)?
-                    .filter(|pr| pr.state == "open" || pr.merged_at.is_some())
                     .filter(|pr| {
+                        let open_or_merged = pr.state == "open" || pr.merged_at.is_some();
                         let body = pr.body.as_deref().unwrap_or_default();
-                        crate::evidence::validate_body(body).is_ok()
+                        let valid_body =
+                            open_or_merged && crate::evidence::validate_body(body).is_ok();
+                        let valid_obligations = valid_body
                             && crate::evidence::validate_publication(
                                 delivery,
                                 &pr.head.branch,
                                 pr.draft,
                                 body,
                             )
-                            .is_ok()
+                            .is_ok();
+                        let no_gaps = valid_obligations
                             && crate::pr_body::gaps(body, self.body_lines(&delivery.repository))
-                                .is_empty()
-                            && crate::evidence::with_publication(body, &evidence) == body
+                                .is_empty();
+                        let evidence_idempotent =
+                            no_gaps && crate::evidence::with_publication(body, &evidence) == body;
+                        publication::accept_open_pr(publication::OpenPrEvidence {
+                            open_or_merged,
+                            valid_body,
+                            valid_obligations,
+                            no_gaps,
+                            evidence_idempotent,
+                        })
                     })
                     .map(|pr| binding(delivery, &pr))
             }

@@ -1,0 +1,2 @@
+# Fixed-seed schedules use 0x0769_0730_2026. Proptest appends minimized failures here.
+cc d4648b75d5ece232fefd0328dbbf1c03d841569935a10fe827d20665b8bc20d9 # retained publication schedule seed

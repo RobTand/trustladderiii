@@ -62,6 +62,7 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
 kernel_fn! {
 /// Confirmed-effect rows / #771: at most one adoption generation is allocated.
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
     requires old(m).generation < u64::MAX,
     ensures (matches!(kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase)
@@ -85,6 +86,7 @@ pub(super) fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
             ==> *final(m) == progress_gate_leaf_steps::cleanup_confirmed(*old(m), kind),
 ] proof [reveal(distance);] {
     kernel_snapshot! { before_cleanup = *m }
+    kernel_snapshot! { before_confirmed = *m }
     m.fx_failures = 0;
     m.fx_incidents = 0;
     match kind {
@@ -97,6 +99,7 @@ pub(super) fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
         EffectKind::RemoveWorktree => m.worktree = false,
         _ => {}
     }
+    kernel_proof! { cleanup_lemmas::resource_distance(before_confirmed@, *m); }
     confirmed_agenda(m, kind);
     kernel_proof! {
         if progress_gate_leaf_steps::confirm_input(before_cleanup@, kind) {

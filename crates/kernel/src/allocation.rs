@@ -97,6 +97,7 @@ pub(super) fn end_operation(m: &mut Node) -> (result: ()) [
 
 kernel_fn! {
 /// Stop and replacement rows / #771: at most one generation is allocated.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
     requires !(old(m).phase is Closed || old(m).phase is Stopping)
         ==> old(m).generation < u64::MAX,
@@ -123,12 +124,7 @@ pub(super) fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
             final(m).pos == 0 && final(m).ticket.is_none() && final(m).question.is_none()
                 && !final(m).waiting_incident && !final(m).incident_needs_rob,
 ] proof [reveal(retirement::stopped);] {
-    kernel_proof! {
-        if !m.paused && !m.waiting_incident && m.effect.is_none()
-            && !(m.phase is Closed || m.phase is Stopping) {
-            retirement::stop_distance(*m, outcome);
-        }
-    }
+    kernel_snapshot! { before = *m }
     match m.phase {
         Phase::Closed(_) => {}
         Phase::Stopping(_) => {
@@ -142,6 +138,10 @@ pub(super) fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
             m.incident_needs_rob = false;
             set_phase(m, Phase::Stopping(outcome));
         }
+    }
+    kernel_proof! {
+        allocation_stopping_lemmas::stopping_frame(before@, *m, outcome);
+        allocation_stopping_lemmas::stopping_progress(before@, *m, outcome);
     }
 }
 }
@@ -255,6 +255,7 @@ pub(super) fn ask_rob(w: &mut World, i: usize, kind: QKind, cont: Cont, cost: u8
 
 kernel_fn! {
 /// Incident rows / #771: only a holding phase allocates a generation.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn raise_incident(w: &mut World, i: usize, needs_rob: bool,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
@@ -291,7 +292,7 @@ pub(super) fn raise_incident(w: &mut World, i: usize, needs_rob: bool,
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
-    kernel_proof! { reveal(retirement::incident); }
+    kernel_snapshot! { before_incident = w.nodes@[i as int] }
     let m = &mut w.nodes[i];
     m.waiting_incident = true;
     m.incident_needs_rob = needs_rob;
@@ -300,8 +301,19 @@ pub(super) fn raise_incident(w: &mut World, i: usize, needs_rob: bool,
     if let Some(r) = m.phase.resume() {
         m.holds = false;
         set_phase(m, Phase::Ready(r));
+        kernel_proof! {
+            allocation_incident_lemmas::resumed_result(before_incident@, *m, needs_rob, r);
+        }
+    }
+    kernel_proof! {
+        if !holding(before_incident@.phase) {
+            allocation_incident_lemmas::waiting_result(before_incident@, w.nodes@[i as int], needs_rob);
+        }
     }
     notice(out, i, Notice::Incident { needs_rob });
+    kernel_proof! {
+        allocation_incident_lemmas::incident_frame(before_incident@, w.nodes@[i as int], needs_rob);
+    }
 }
 }
 

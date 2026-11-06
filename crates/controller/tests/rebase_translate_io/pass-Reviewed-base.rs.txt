@@ -1,0 +1,11 @@
+            Observation::Reviewed {
+                node,
+                generation,
+                sha,
+            } => Event::Reply {
+                node,
+                generation,
+                reply: Reply::Approved {
+                    head: self.head(node, &sha)?,
+                },
+            },

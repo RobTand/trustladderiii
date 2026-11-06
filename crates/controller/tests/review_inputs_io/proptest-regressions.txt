@@ -1,0 +1,2 @@
+# Minimized red extraction-stub seed, replayed from writable test output.
+cc 0a51dbf0909162b38fe956c18308434f255c2c92b574c07299280cc5d816abbe

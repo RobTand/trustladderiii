@@ -633,18 +633,8 @@ fn decode_event(value: Value, role: Option<&str>, postmortem: bool, inputs: &Val
         && value["role"].as_str() == role
         && role.is_some()
     {
-        let field = match value.get("model") {
-            None => ModelField::Missing,
-            Some(name) if *name == inputs["grade_model"] && name.is_string() => {
-                model = name.as_str().map(str::to_owned);
-                ModelField::GradeModel
-            }
-            Some(_) => ModelField::Other,
-        };
-        WorkerEvent::Quota {
-            model: quota_model(postmortem, field),
-            reset_ms: value["reset_ms"].as_u64(),
-        }
+        model = value["model"].as_str().map(str::to_owned);
+        crate::quota::decode_event(&value, postmortem, inputs)
     } else if size == 3
         && value["event"] == "reply"
         && value["role"].as_str() == role
@@ -685,13 +675,11 @@ pub(super) fn parse_reply(
     let role = protocol::delivery_role(delivery)
         .ok_or(Error::Invalid("worker output without supported start"))?;
     let mut reply = None;
+    let mut line_end = 0;
     for line in bytes.split_inclusive(|b| *b == b'\n') {
+        line_end += line.len();
         let parsed = parse_event(line, Some(role), delivery.is_postmortem(), inputs)?;
-        match reply_step(
-            parsed.event,
-            reply.is_some(),
-            bytes.split_inclusive(|b| *b == b'\n').next_back() == Some(line),
-        ) {
+        match reply_step(parsed.event, reply.is_some(), line_end, bytes.len()) {
             ReplyDecision::Progress => continue,
             ReplyDecision::AfterReply => return Err(Error::Invalid("event after worker reply")),
             ReplyDecision::InvalidEvent => return Err(Error::Invalid("invalid worker event")),

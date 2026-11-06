@@ -20,6 +20,13 @@ pub closed spec fn pending_rank(n: Node) -> nat {
 /// #771: public view of the executable node distance.
 pub closed spec fn node_distance(n: Node) -> nat { distance(n) }
 
+/// #806: expose the existing public node-distance view to the world sum.
+pub(super) proof fn node_distance_definition(n: Node)
+    ensures node_distance(n) == distance(n),
+{
+    reveal(node_distance);
+}
+
 
 pub open spec fn resumed_phase(r: Resume) -> Phase {
     match r {
