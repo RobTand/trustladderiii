@@ -261,9 +261,15 @@ fn failed_run_details_reach_the_retry_maker() {
     assert!(
         snapshot.pending_effects.iter().any(|effect| {
             let delivery: Delivery = serde_json::from_value(effect.payload.clone()).unwrap();
-            protocol::delivery_role(&delivery) == Some("maker")
+            matches!(
+                delivery.output,
+                crate::executor::Output::Effect {
+                    kind: tl3_kernel::EffectKind::PrepareWorktree,
+                    ..
+                }
+            )
         }),
-        "the accepted failure must schedule a retry maker after resume"
+        "resuming the retry must prepare its worktree"
     );
     let inputs = f.maker();
     assert!(
