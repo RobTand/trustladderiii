@@ -22,7 +22,8 @@ roles compare byte-identical. Frozen reference sources are unchanged. BUILD
 regeneration and Python lint/requirements checks passed without generated BUILD edits.
 The remote driver wraps existing generators; it adds no application target or seam.
 
-PB clippy is HELD under the FV-1/Flux window. The obsolete
+Clippy is NOT APPLICABLE: EP changes no Rust source or Cargo file, per the
+program-lead lint ruling. PB remains held for actual PB work. The obsolete
 `crates/controller/tools/redaction_policy.py` is absent and was not restored.
 Its current replacement is `tl3 redaction-policy --check/--identity-check`.
 The final controller consumer tests exercise the current redaction contracts.
