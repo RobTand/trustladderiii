@@ -142,6 +142,8 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         allowances.github_mergify.silence_secs = 1;
         allowances.github_mergify.no_progress_secs = 3;
         controller.set_allowances(allowances);
+        // set_allowances does not rewrite the already stored poll deadline.
+        clock.0.set(clock.0.get() + Duration::from_secs(3600));
         for _ in 0..12 {
             clock.0.set(clock.0.get() + Duration::from_secs(10));
             controller.look_due().unwrap();

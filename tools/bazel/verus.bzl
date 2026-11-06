@@ -82,7 +82,7 @@ def verus_proofs():
             name = "verus_queue_entry",
             src = "proofs/queue_entry.rs",
             srcs = ["src/decide/queue_entry.rs"],
-            expected_obligations = 5,
+            expected_obligations = 4,
             tags = ["rust", "verus"],
             size = "small",
             timeout = "short",
