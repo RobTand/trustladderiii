@@ -159,6 +159,44 @@ pub(super) closed spec fn fact_failure(phase: Phase, current: Option<Item>, fact
     -> Option<FailedRoundCause> {
     match fact { Fact::CiFailed { infra } => ci_failure(phase, current, infra), _ => None }
 }
+#[verifier::opaque]
+pub(super) closed spec fn reply_kind(reply: Reply) -> ReplyKind {
+match reply {
+            Reply::IngestDone { .. } => ReplyKind::IngestDone,
+            Reply::IngestEarlyEnd(_) => ReplyKind::IngestEarlyEnd,
+            Reply::AuditAgrees => ReplyKind::AuditAgrees,
+            Reply::AuditDisagrees => ReplyKind::AuditDisagrees,
+            Reply::PlanLeaf { .. } => ReplyKind::PlanLeaf,
+            Reply::PlanSplit => ReplyKind::PlanSplit,
+            Reply::PlanCantMeet => ReplyKind::PlanCantMeet,
+            Reply::PlanCheckRejected => ReplyKind::PlanCheckRejected,
+            Reply::PlanCheckNeedsSplit => ReplyKind::PlanCheckNeedsSplit,
+            Reply::ProtectedPaths => ReplyKind::ProtectedPaths,
+            Reply::MakerDone { .. } => ReplyKind::MakerDone,
+            Reply::MakerNeedsFiles { .. } => ReplyKind::MakerNeedsFiles,
+            Reply::MakerCantMeet => ReplyKind::MakerCantMeet,
+            Reply::MakerOutOfRoom => ReplyKind::MakerOutOfRoom,
+            Reply::ChecksDone { .. } => ReplyKind::ChecksDone,
+            Reply::Approved { .. } => ReplyKind::Approved,
+            Reply::ChangesRequested => ReplyKind::ChangesRequested,
+            Reply::ReviewerOutOfRoom => ReplyKind::ReviewerOutOfRoom,
+            Reply::RebaseClean { .. } => ReplyKind::RebaseClean,
+            Reply::RebaseNeedsChanges => ReplyKind::RebaseNeedsChanges,
+            Reply::RunFailed => ReplyKind::RunFailed,
+        }
+}
+
+#[verifier::opaque]
+pub(super) closed spec fn reply_entries(node: NodeId, phase: Phase, current: Option<Item>,
+    run: Option<u64>, job: Option<u64>, generation: u64, reply: Reply, accepted: bool)
+    -> Seq<ReportEntry> {
+    if phase is Stopping { Seq::empty() }
+    else if current != Some(Item::Await) || (run != Some(generation) && job != Some(generation)) {
+        seq![ReportEntry::Stale { node, reply_kind: reply_kind(reply) }]
+    } else if !accepted { round_entries(node, Some(FailedRoundCause::RunFailed)) }
+    else { round_entries(node, work_failure(reply)) }
+}
+
 }
 
 kernel_fn! {
@@ -217,30 +255,9 @@ pub(super) mod lemmas;
 kernel_fn! {
 impl ReplyKind {
     pub fn of(reply: Reply) -> (result: Self) [
-        ensures result == match reply {
-            Reply::IngestDone { .. } => ReplyKind::IngestDone,
-            Reply::IngestEarlyEnd(_) => ReplyKind::IngestEarlyEnd,
-            Reply::AuditAgrees => ReplyKind::AuditAgrees,
-            Reply::AuditDisagrees => ReplyKind::AuditDisagrees,
-            Reply::PlanLeaf { .. } => ReplyKind::PlanLeaf,
-            Reply::PlanSplit => ReplyKind::PlanSplit,
-            Reply::PlanCantMeet => ReplyKind::PlanCantMeet,
-            Reply::PlanCheckRejected => ReplyKind::PlanCheckRejected,
-            Reply::PlanCheckNeedsSplit => ReplyKind::PlanCheckNeedsSplit,
-            Reply::ProtectedPaths => ReplyKind::ProtectedPaths,
-            Reply::MakerDone { .. } => ReplyKind::MakerDone,
-            Reply::MakerNeedsFiles { .. } => ReplyKind::MakerNeedsFiles,
-            Reply::MakerCantMeet => ReplyKind::MakerCantMeet,
-            Reply::MakerOutOfRoom => ReplyKind::MakerOutOfRoom,
-            Reply::ChecksDone { .. } => ReplyKind::ChecksDone,
-            Reply::Approved { .. } => ReplyKind::Approved,
-            Reply::ChangesRequested => ReplyKind::ChangesRequested,
-            Reply::ReviewerOutOfRoom => ReplyKind::ReviewerOutOfRoom,
-            Reply::RebaseClean { .. } => ReplyKind::RebaseClean,
-            Reply::RebaseNeedsChanges => ReplyKind::RebaseNeedsChanges,
-            Reply::RunFailed => ReplyKind::RunFailed,
-        },
+        ensures result == reply_kind(reply),
     ] {
+        kernel_proof! { lemmas::kind_value(reply); }
         match reply {
             Reply::IngestDone { .. } => ReplyKind::IngestDone,
             Reply::IngestEarlyEnd(_) => ReplyKind::IngestEarlyEnd,

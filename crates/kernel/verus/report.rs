@@ -148,4 +148,57 @@ pub(in super::super) proof fn append_stale(r0: Seq<ReportEntry>, r1: Seq<ReportE
 {
     reveal(stale_refusal);
 }
+pub(in super::super) proof fn kind_value(reply: Reply)
+    ensures reply_kind(reply) ==
+match reply {
+            Reply::IngestDone { .. } => ReplyKind::IngestDone,
+            Reply::IngestEarlyEnd(_) => ReplyKind::IngestEarlyEnd,
+            Reply::AuditAgrees => ReplyKind::AuditAgrees,
+            Reply::AuditDisagrees => ReplyKind::AuditDisagrees,
+            Reply::PlanLeaf { .. } => ReplyKind::PlanLeaf,
+            Reply::PlanSplit => ReplyKind::PlanSplit,
+            Reply::PlanCantMeet => ReplyKind::PlanCantMeet,
+            Reply::PlanCheckRejected => ReplyKind::PlanCheckRejected,
+            Reply::PlanCheckNeedsSplit => ReplyKind::PlanCheckNeedsSplit,
+            Reply::ProtectedPaths => ReplyKind::ProtectedPaths,
+            Reply::MakerDone { .. } => ReplyKind::MakerDone,
+            Reply::MakerNeedsFiles { .. } => ReplyKind::MakerNeedsFiles,
+            Reply::MakerCantMeet => ReplyKind::MakerCantMeet,
+            Reply::MakerOutOfRoom => ReplyKind::MakerOutOfRoom,
+            Reply::ChecksDone { .. } => ReplyKind::ChecksDone,
+            Reply::Approved { .. } => ReplyKind::Approved,
+            Reply::ChangesRequested => ReplyKind::ChangesRequested,
+            Reply::ReviewerOutOfRoom => ReplyKind::ReviewerOutOfRoom,
+            Reply::RebaseClean { .. } => ReplyKind::RebaseClean,
+            Reply::RebaseNeedsChanges => ReplyKind::RebaseNeedsChanges,
+            Reply::RunFailed => ReplyKind::RunFailed,
+        },
+{ reveal(reply_kind); }
+
+pub(in super::super) proof fn read_stale(r0: Seq<ReportEntry>, r1: Seq<ReportEntry>,
+    node: NodeId, kind: ReplyKind)
+    requires stale_refusal(r0, r1, node, kind),
+    ensures r1 == r0.push(ReportEntry::Stale { node, reply_kind: kind }),
+{ reveal(stale_refusal); }
+
+pub(in super::super) proof fn reply_result(r0: Seq<ReportEntry>, r1: Seq<ReportEntry>,
+    node: NodeId, phase: Phase, current: Option<Item>, run: Option<u64>, job: Option<u64>,
+    generation: u64, reply: Reply, accepted: bool)
+    requires r1 == if phase is Stopping { r0 }
+        else if current != Some(Item::Await) || (run != Some(generation) && job != Some(generation)) {
+            r0.push(ReportEntry::Stale { node, reply_kind: reply_kind(reply) })
+        } else if !accepted { r0.push(ReportEntry::FailedRound { node, cause: FailedRoundCause::RunFailed }) }
+        else { r0 + round_entries(node, work_failure(reply)) },
+    ensures forwards(r0, r1, reply_entries(node, phase, current, run, job, generation, reply, accepted)),
+{
+    reveal(reply_entries);
+    reveal(forwards);
+    round_shape(node, Some(FailedRoundCause::RunFailed));
+    assert(r0 + Seq::empty() =~= r0);
+    assert(r0 + seq![ReportEntry::Stale { node, reply_kind: reply_kind(reply) }]
+        =~= r0.push(ReportEntry::Stale { node, reply_kind: reply_kind(reply) }));
+    assert(r0 + seq![ReportEntry::FailedRound { node, cause: FailedRoundCause::RunFailed }]
+        =~= r0.push(ReportEntry::FailedRound { node, cause: FailedRoundCause::RunFailed }));
+}
+
 }
