@@ -651,6 +651,7 @@ tl3_py_test(
     deps = [
         ":conftest",
         ":planner_fixtures",
+        "//harness/src/tl3_harness",
         "//workers/src",
         "@tl3_pip//pytest",
     ],
@@ -1213,6 +1214,7 @@ py_library(
     srcs = ["planner_vectors.py"],
     visibility = ["//visibility:public"],
     deps = [
+        "//harness/src/tl3_harness",
         "//workers/src",
         "@tl3_pip//jsonschema",
     ],
@@ -1246,6 +1248,7 @@ py_binary(
         ":planner_fixtures",
         ":planner_vectors",
         ":worker_process",
+        "//harness/src/tl3_harness",
         "//workers/src",
         "@tl3_pip//langchain_core",
         "@tl3_pip//pytest",

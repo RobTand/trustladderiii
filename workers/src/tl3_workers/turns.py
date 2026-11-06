@@ -24,7 +24,7 @@ def validation_message(error):
 
 def repair_message(error):
     from tl3_workers.roles.planner import PlanConsistencyError
-    if isinstance(error, PlanConsistencyError) and error.missing_goals:
+    if isinstance(error, PlanConsistencyError) and hasattr(error, 'repair_text'):
         return error.repair_text
     # A schema message echoes the whole invalid reply. Keep where and why it failed.
     message = validation_message(error)
@@ -65,6 +65,8 @@ class TurnControl(AgentMiddleware):
     def __init__(self):
         self.allowance = None
         self.repairing = False
+        self.repair_attempts = 0
+        self.repair_unavailable = None
         # The last model call as sent, its result and its tools: a later turn reuses its cached prefix.
         self.last_exchange = None
         # Tools the harness profile removes after this middleware, before the model sees them.
@@ -123,8 +125,11 @@ def repaired(control, history, ask, check):
     except (ValueError, ValidationError) as first:
         try:
             with control.repair(history, first):
+                control.repair_attempts = 1
                 text = ask()
         except RepairUnavailable:
+            control.repair_attempts = 0
+            control.repair_unavailable = 'input_allowance'
             raise first from None
         try:
             return check(text)
