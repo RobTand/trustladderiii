@@ -1,0 +1,429 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LaunchContext",
+  "description": "Host-runner plumbing, not scheduler attestation or own-cgroup qualification.",
+  "type": "object",
+  "properties": {
+    "correlation": {
+      "type": "string"
+    },
+    "native_threads": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 1
+    },
+    "output_dir": {
+      "type": "string"
+    },
+    "owner": {
+      "type": "string"
+    },
+    "placement": {
+      "$ref": "#/$defs/LaunchPlacement"
+    },
+    "progress": {
+      "$ref": "#/$defs/ProgressPolicy"
+    },
+    "request_digest": {
+      "type": "string"
+    },
+    "run": {
+      "$ref": "#/$defs/BackendId"
+    },
+    "runtime": {
+      "$ref": "#/$defs/ExecutionRuntime"
+    },
+    "runtime_identity": {
+      "$ref": "#/$defs/RuntimeIdentity"
+    },
+    "schema": {
+      "$ref": "#/$defs/LaunchSchema"
+    },
+    "scratch": {
+      "$ref": "#/$defs/OwnedScratch"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "run",
+    "owner",
+    "correlation",
+    "request_digest",
+    "scratch",
+    "output_dir",
+    "progress",
+    "native_threads",
+    "runtime",
+    "runtime_identity",
+    "placement"
+  ],
+  "$defs": {
+    "BackendId": {
+      "type": "object",
+      "properties": {
+        "backend": {
+          "$ref": "#/$defs/BackendTag"
+        },
+        "instance": {
+          "type": "string"
+        },
+        "job": {
+          "type": "string"
+        },
+        "uri": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "backend",
+        "instance",
+        "uri",
+        "job"
+      ]
+    },
+    "BackendTag": {
+      "type": "string",
+      "enum": [
+        "flux"
+      ]
+    },
+    "BlobRef": {
+      "type": "object",
+      "properties": {
+        "bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "path": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "sha256",
+        "bytes",
+        "path"
+      ]
+    },
+    "CleanupProgram": {
+      "type": "object",
+      "properties": {
+        "arguments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "executable": {
+          "type": "string"
+        },
+        "executable_digest": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "executable",
+        "executable_digest",
+        "arguments"
+      ]
+    },
+    "ContainerMode": {
+      "type": "string",
+      "enum": [
+        "in_job",
+        "own_scope"
+      ]
+    },
+    "ExecutionRuntime": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "interpreter": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "native"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "interpreter"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "executable": {
+              "type": "string"
+            },
+            "image": {
+              "type": "string"
+            },
+            "interpreter": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "rootless_podman"
+            },
+            "memory_limit_bytes": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 1
+            },
+            "mode": {
+              "$ref": "#/$defs/ContainerMode"
+            },
+            "trusted_root": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "mode",
+            "executable",
+            "image",
+            "trusted_root",
+            "interpreter"
+          ]
+        }
+      ]
+    },
+    "HostDependency": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "host",
+        "reason"
+      ]
+    },
+    "ImageIdentity": {
+      "description": "Prepared by the runtime builder from the ops inventory, never a compiled digest catalog.",
+      "type": "object",
+      "properties": {
+        "config_digest": {
+          "type": "string"
+        },
+        "index_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "inventory": {
+          "$ref": "#/$defs/BlobRef"
+        },
+        "manifest_digest": {
+          "type": "string"
+        },
+        "platform": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "reference": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "inventory",
+        "profile",
+        "reference",
+        "manifest_digest",
+        "config_digest",
+        "platform"
+      ]
+    },
+    "LaunchPlacement": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "allocation": {
+              "$ref": "#/$defs/BlobRef"
+            },
+            "host": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "observed"
+            },
+            "os_pus": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0
+              }
+            },
+            "rank": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "topology": {
+              "$ref": "#/$defs/BlobRef"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "allocation",
+            "topology",
+            "host",
+            "rank",
+            "os_pus"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "unqualified"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "reason"
+          ]
+        }
+      ]
+    },
+    "LaunchSchema": {
+      "type": "string",
+      "enum": [
+        "tl3.launch_context.v1"
+      ]
+    },
+    "OwnedScratch": {
+      "type": "object",
+      "properties": {
+        "approved_root": {
+          "type": "string"
+        },
+        "leaf": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "approved_root",
+        "leaf"
+      ]
+    },
+    "ProgressPolicy": {
+      "type": "object",
+      "properties": {
+        "journal": {
+          "type": "string"
+        },
+        "no_progress_seconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "journal"
+      ]
+    },
+    "RuntimeIdentity": {
+      "type": "object",
+      "properties": {
+        "architecture": {
+          "type": "string"
+        },
+        "cleanup": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CleanupProgram"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expected_image": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "host_dependency": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HostDependency"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "image": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "manifest": {
+          "type": "string"
+        },
+        "manifest_digest": {
+          "type": "string"
+        },
+        "preflight": {
+          "$ref": "#/$defs/BlobRef"
+        },
+        "runtime": {
+          "$ref": "#/$defs/ExecutionRuntime"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "manifest",
+        "manifest_digest",
+        "runtime",
+        "architecture",
+        "preflight"
+      ]
+    }
+  }
+}

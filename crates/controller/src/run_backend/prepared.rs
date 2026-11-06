@@ -44,7 +44,7 @@ pub fn read_bundle(path: &Path) -> Result<(RuntimeBundleManifest, BlobRef)> {
     }
     let manifest: RuntimeBundleManifest = serde_json::from_slice(&read(path)?)?;
     if manifest.schema != "tl3.runtime_bundle.v1" || manifest.owner != "rob" || manifest.uid != 1000 || !hex(&manifest.producer_commit, 40)
-        || manifest.interpreter != Path::new("/usr/bin/python3.14") || manifest.podman != Path::new("/usr/bin/podman") || manifest.files.len() > 4096 {
+        || manifest.interpreter != Path::new("/usr/bin/python3.14") || manifest.podman != Path::new("/usr/bin/podman") || !absolute(&manifest.container_interpreter) || manifest.files.len() > 4096 {
         return Err(BackendError::invalid("runtime bundle producer/owner/interpreter mismatch"));
     }
     let actual = files(root, true)?;
@@ -69,7 +69,7 @@ pub fn read_bundle(path: &Path) -> Result<(RuntimeBundleManifest, BlobRef)> {
 /// FXR stages raw code/inspection bytes; Rust validates, copies and seals their identity once.
 pub fn prepare_bundle(input: &PrepareBundleInput) -> Result<BlobRef> {
     if !hex(&input.producer_commit, 40) || !absolute(&input.source_root) || !input.source_root.starts_with("/mnt/shared")
-        || [&input.collector, &input.cleanup, &input.trusted_root, &input.code_inventory].iter().any(|path| !relative(path)) || !token(&input.profile) {
+        || [&input.collector, &input.cleanup, &input.trusted_root, &input.code_inventory].iter().any(|path| !relative(path)) || !token(&input.profile) || !absolute(&input.container_interpreter) {
         return Err(BackendError::invalid("invalid prepared runtime source paths/producer"));
     }
     if std::fs::canonicalize(&input.source_root)? != input.source_root { return Err(BackendError::invalid("runtime staging root cannot traverse symlinks")); }
@@ -106,7 +106,7 @@ pub fn prepare_bundle(input: &PrepareBundleInput) -> Result<BlobRef> {
     for (name, bytes) in [("image-map.json", read(&input.image_inventory)?), ("image-inspect.json", read(&input.image_inspect)?), ("preflight.json", serde_json::to_vec(&preflight)?)] {
         if contents.insert(name.into(), bytes).is_some() { return Err(BackendError::invalid("reserved runtime bundle file")); }
     }
-    let manifest = RuntimeBundleManifest { schema: "tl3.runtime_bundle.v1".into(), owner: "rob".into(), uid: 1000, producer_commit: input.producer_commit.clone(), interpreter: code.interpreter, podman: "/usr/bin/podman".into(), collector: input.collector.clone(), cleanup: input.cleanup.clone(), trusted_root: input.trusted_root.clone(), files: contents.iter().map(|(path, bytes)| BundleFile { path: path.clone(), sha256: digest(bytes), bytes: bytes.len() as u64, mode: if *path == input.collector || *path == input.cleanup { 0o500 } else { 0o400 } }).collect() };
+    let manifest = RuntimeBundleManifest { schema: "tl3.runtime_bundle.v1".into(), owner: "rob".into(), uid: 1000, producer_commit: input.producer_commit.clone(), interpreter: code.interpreter, podman: "/usr/bin/podman".into(), container_interpreter: input.container_interpreter.clone(), collector: input.collector.clone(), cleanup: input.cleanup.clone(), trusted_root: input.trusted_root.clone(), files: contents.iter().map(|(path, bytes)| BundleFile { path: path.clone(), sha256: digest(bytes), bytes: bytes.len() as u64, mode: if *path == input.collector || *path == input.cleanup { 0o500 } else { 0o400 } }).collect() };
     let raw = serde_json::to_vec(&manifest)?;
     let root = Path::new(ROOT); std::fs::create_dir_all(root)?;
     let destination = root.join(digest(&raw));
@@ -140,7 +140,7 @@ pub fn prepare_runtime(bundle: &Path, reservation: &Reservation, arguments: Vec<
     let runner_path = root.join(&manifest.collector);
     let cleanup_path = root.join(&manifest.cleanup);
     let runner = RunnerIdentity { executable: runner_path.clone(), executable_digest: self::reference(&runner_path)?.sha256, arguments, manifest: bundle.to_owned(), manifest_digest: reference.sha256.clone() };
-    let runtime = RuntimeIdentity { manifest: bundle.to_owned(), manifest_digest: reference.sha256.clone(), runtime: ExecutionRuntime::RootlessPodman { mode, executable: manifest.podman, image: image.reference.clone(), trusted_root: root.join(manifest.trusted_root), interpreter: manifest.interpreter,
+    let runtime = RuntimeIdentity { manifest: bundle.to_owned(), manifest_digest: reference.sha256.clone(), runtime: ExecutionRuntime::RootlessPodman { mode, executable: manifest.podman, image: image.reference.clone(), trusted_root: root.join(manifest.trusted_root), interpreter: manifest.container_interpreter,
         memory_limit_bytes: (mode == ContainerMode::OwnScope).then_some(reservation.memory_bytes) }, architecture: preflight.architecture, expected_image: Some(image.reference.clone()), preflight: preflight_ref,
         host_dependency: Some(HostDependency { host: "dl380g10".into(), reason: format!("ops inventory profile {} is provisioned linux/amd64 on dl380g10", image.profile) }), image: Some(image),
         cleanup: Some(CleanupProgram { executable: cleanup_path.clone(), executable_digest: self::reference(&cleanup_path)?.sha256, arguments: vec![] }) };

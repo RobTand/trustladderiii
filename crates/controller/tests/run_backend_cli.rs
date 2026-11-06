@@ -517,7 +517,7 @@ impl Fixture {
         fs::write(source.join("cleanup-helper"), b"#!/usr/bin/python3\nimport json,sys,pathlib\nfacts=json.load(sys.stdin)\nowned=facts['ownership']\npath=pathlib.Path('/mnt/shared/flux-out/tl3')/owned['owner']['correlation']/('trusted-stop-'+owned['execution']+'.json')\nprint(path.read_text())\n").unwrap();
         let files = ["lib/tl3_harness/runner.py", "lib/tl3_harness/runtime.py"].into_iter().map(|path| { let raw = fs::read(source.join(path)).unwrap(); CodeFile { path: path.into(), sha256: digest(&raw), bytes: raw.len() as u64 } }).collect();
         fs::write(source.join("code.json"), serde_json::to_vec(&CodeInventory { interpreter: "/usr/bin/python3.14".into(), files }).unwrap()).unwrap();
-        let input = PrepareBundleInput { source_root: source, code_inventory: "code.json".into(), collector: "host-collector".into(), cleanup: "cleanup-helper".into(), trusted_root: "lib/tl3_harness".into(), producer_commit: "a".repeat(40), image_inventory: image_map, image_inspect, profile: "fixture".into(), mode,
+        let input = PrepareBundleInput { source_root: source, code_inventory: "code.json".into(), collector: "host-collector".into(), cleanup: "cleanup-helper".into(), trusted_root: "lib/tl3_harness".into(), producer_commit: "a".repeat(40), container_interpreter: "/usr/bin/python3.12".into(), image_inventory: image_map, image_inspect, profile: "fixture".into(), mode,
             prerequisites: ModePrerequisites { no_cgroups_supported: prerequisites, init_available: prerequisites, user_scope_supported: prerequisites } };
         let frames = self.call(json!({"op":"prepare_runtime_bundle","input":input}));
         assert_eq!(frames.last().unwrap()["kind"], "result", "{frames:?}");
