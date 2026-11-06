@@ -433,6 +433,26 @@ impl crate::Controller {
             id,
         });
         if let Some(report) = result {
+            if !report.completed {
+                // Use the same maker feedback shape as RebaseGenerationFailed.
+                let mut prior = self
+                    .store
+                    .worker_document(&delivery.node().0.to_string(), "maker_findings")?
+                    .unwrap_or(serde_json::json!([]));
+                prior
+                    .as_array_mut()
+                    .ok_or(Error::Invalid("invalid maker findings"))?
+                    .push(serde_json::json!({
+                        "kind":"failed_check", "report":report.message, "goal_ids":[],
+                        "failed_tests":[{"test":"configured generator", "message":report.message}],
+                        "outside_paths":[], "outside_paths_total":0, "ci_checks":[]
+                    }));
+                commit.rows.push(crate::put(
+                    "maker_findings",
+                    delivery.node().0.to_string(),
+                    prior,
+                ));
+            }
             if let (Some(run), Some(head)) = (&report.check_run, &delivery.head_sha) {
                 commit.rows.push(crate::put(
                     "check_plans",
