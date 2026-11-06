@@ -17,6 +17,89 @@ fn execution_backend_never_falls_back_from_missing_flux_settings() {
     }
 }
 
+fn flux_document() -> Value {
+    let mut document: Value = EXAMPLE.parse().unwrap();
+    document["execution_backend"] = "flux".into();
+    document["flux"] = toml::toml! {
+        instance_generation = "disposable-test-generation"
+        executable = "/opt/flux/bin/flux"
+        uri = "local:///run/flux/local-0"
+        environment = { PATH = "/opt/flux/bin:/usr/bin:/bin", LD_LIBRARY_PATH = "/opt/flux/lib" }
+        staging_root = "/mnt/shared/tl3-inputs"
+        output_root = "/mnt/shared/flux-out/tl3"
+        container_image = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    }.into();
+    document
+}
+
+#[test]
+fn execution_selection_validates_only_the_selected_backend() {
+    use tl3_config::{ExecutionBackend, SelectedExecution};
+    let legacy = Config::parse(EXAMPLE).unwrap();
+    assert_eq!(legacy.execution_backend, ExecutionBackend::PrismaBuild);
+    assert!(matches!(legacy.selected_execution().unwrap(), SelectedExecution::PrismaBuild(_)));
+    assert_eq!(serde_json::to_value(legacy.execution_backend).unwrap(), "prismabuild");
+    let mut document = flux_document();
+    document.as_table_mut().unwrap().remove("prismabuild");
+    let config = Config::parse(&toml::to_string(&document).unwrap()).unwrap();
+    assert_eq!(config.execution_backend, ExecutionBackend::Flux);
+    let SelectedExecution::Flux(flux) = config.selected_execution().unwrap() else { panic!("selected PB") };
+    assert_eq!(flux.instance_generation, "disposable-test-generation");
+    assert_eq!(serde_json::to_value(config.execution_backend).unwrap(), "flux");
+    document["execution_backend"] = "prismabuild".into();
+    assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
+    document["prismabuild"] = EXAMPLE.parse::<Value>().unwrap()["prismabuild"].clone();
+    document["flux"]["executable"] = "unavailable-relative-tool".into();
+    assert!(Config::parse(&toml::to_string(&document).unwrap()).is_ok());
+    document["execution_backend"] = "flux".into();
+    assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
+}
+
+#[test]
+fn flux_access_requires_explicit_generation_shared_roots_and_immutable_image() {
+    for (field, value) in [
+        ("instance_generation", ""),
+        ("instance_generation", "stable URI is not a generation"),
+        ("executable", "flux"),
+        ("uri", "local:///"),
+        ("uri", "ssh://remote/instance"),
+        ("uri", "local:///run/flux?secret=fixture"),
+        ("staging_root", "/mnt/shared"),
+        ("staging_root", "/mnt/shared/../private"),
+        ("staging_root", "/mnt/shared/flux-out"),
+        ("output_root", "/mnt/shared/other-output"),
+        ("output_root", "/mnt/shared/flux-out/tl3/../other"),
+        ("container_image", "registry.example/harness:latest"),
+    ] {
+        let mut document = flux_document();
+        document["flux"][field] = value.into();
+        assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err(), "accepted invalid {field}");
+    }
+    let mut document = flux_document();
+    document["flux"]["staging_root"] = "/mnt/shared/tl3-inputs".into();
+    document["flux"]["output_root"] = "/mnt/shared/flux-out/tl3/nested".into();
+    Config::parse(&toml::to_string(&document).unwrap()).unwrap();
+}
+
+#[test]
+fn flux_environment_rejects_reserved_variables_and_never_displays_values() {
+    for name in ["FLUX_URI", "FLUX_JOB_ID", "FLUX_SCRATCH", "OUT", "TL3_EXECUTION_BACKEND", "UNREVIEWED_SECRET"] {
+        let mut document = flux_document();
+        document["flux"]["environment"][name] = "private-fixture-value".into();
+        let error = Config::parse(&toml::to_string(&document).unwrap()).unwrap_err().to_string();
+        assert!(error.contains("flux.environment"));
+        assert!(!error.contains("private-fixture-value"));
+    }
+    for value in ["", "relative", "/bin:", ":/bin", "/bin:.:/usr/bin", "/bin/../private", "/bin\nprivate"] {
+        let mut document = flux_document();
+        document["flux"]["environment"]["PATH"] = value.into();
+        assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
+    }
+    let mut document = flux_document();
+    document["flux"]["environment"].as_table_mut().unwrap().remove("PATH");
+    assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
+}
+
 #[test]
 fn repository_test_demand_is_optional_and_bounded() {
     assert!(

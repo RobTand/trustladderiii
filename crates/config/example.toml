@@ -2,6 +2,8 @@
 # Deployment placeholders parse offline. Replace them before Config::load.
 # docs/state-table.md, "Stopping": worktree lifecycle. Deployment starting path.
 worktrees_root = "/srv/tl3/worktrees"
+# Omit to keep PrismaBuild. Selecting Flux requires its provisioned settings below.
+# execution_backend = "flux"
 
 # Q17: set after deployment creates or reconciles the operations issue.
 # [operations]
@@ -122,6 +124,19 @@ tools_dir = "/mnt/shared/prismabuild-fleet/repo/tools"
 # harness.Container accepts an image ID or repository@sha256 digest, not a tag
 # or PB's content: reference. Placeholder: replace with a prepared harness image.
 container_image = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+# Flux is opt-in. These are offline placeholders, not qualified runtime settings.
+# [flux]
+# instance_generation = "operator-assigned-generation"
+# executable = "/opt/flux/bin/flux"
+# uri = "local:///run/flux/local-0"
+# environment = { PATH = "/opt/flux/bin:/usr/bin:/bin", LD_LIBRARY_PATH = "/opt/flux/lib" }
+# staging_root = "/mnt/shared/tl3-inputs"
+# output_root = "/mnt/shared/flux-out/tl3"
+# container_image = "registry.example/tl3-harness@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+# A generation must change after instance history is lost, even if the URI stays fixed.
+# Inputs are immutable. Mutable work belongs in job-owned local scratch, never /mnt/shared.
+# Only the selected backend's settings are validated; Flux never falls back to PB.
 
 [hindsight]
 # Set a private, owner-only file containing the raw API key when authentication is enabled.

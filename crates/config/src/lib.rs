@@ -46,7 +46,12 @@ pub struct Config {
     pub workers: Workers,
     #[serde(default)]
     pub planning: Planning,
+    #[serde(default)]
+    pub execution_backend: ExecutionBackend,
+    #[serde(default)]
     pub prismabuild: PrismaBuild,
+    #[serde(default)]
+    pub flux: Option<Flux>,
     pub hindsight: Hindsight,
     pub status: Status,
     #[serde(default)]
@@ -550,7 +555,96 @@ impl Models {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionBackend {
+    #[default]
+    #[serde(rename = "prismabuild")]
+    PrismaBuild,
+    Flux,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum SelectedExecution<'a> {
+    PrismaBuild(&'a PrismaBuild),
+    Flux(&'a Flux),
+}
+
+/// Provisioned access to one Flux instance. A URI is not an instance generation.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Flux {
+    pub instance_generation: String,
+    pub executable: PathBuf,
+    pub uri: String,
+    #[serde(default)]
+    pub environment: BTreeMap<String, String>,
+    pub staging_root: PathBuf,
+    pub output_root: PathBuf,
+    pub container_image: String,
+}
+
+impl std::fmt::Debug for Flux {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("Flux")
+            .field("instance_generation", &self.instance_generation)
+            .field("executable", &self.executable)
+            .field("environment", &"[redacted]")
+            .field("staging_root", &self.staging_root)
+            .field("output_root", &self.output_root)
+            .field("container_image", &self.container_image)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Flux {
+    fn validate(&self) -> Result<(), Error> {
+        if self.instance_generation.is_empty() || self.instance_generation.len() > 128
+            || !self.instance_generation.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        {
+            return Err(invalid("flux.instance_generation", "use a distinct operator-assigned generation of 1..128 ASCII letters, digits, dots, hyphens or underscores"));
+        }
+        absolute("flux.executable", &self.executable)?;
+        nonempty("flux.uri", &self.uri)?;
+        let uri = Url::parse(&self.uri).map_err(|_| invalid("flux.uri", "use an explicit local:/// absolute Flux socket path"))?;
+        if uri.scheme() != "local" || uri.host_str().is_some() || !uri.path().starts_with('/')
+            || uri.path() == "/" || uri.query().is_some() || uri.fragment().is_some()
+        {
+            return Err(invalid("flux.uri", "use an explicit local:/// absolute Flux socket path"));
+        }
+        shared_directory("flux.staging_root", &self.staging_root, Path::new("/mnt/shared"))?;
+        shared_directory("flux.output_root", &self.output_root, Path::new("/mnt/shared/flux-out/tl3"))?;
+        if self.staging_root.starts_with(&self.output_root) || self.output_root.starts_with(&self.staging_root) {
+            return Err(invalid("flux.staging_root", "staging and output directories must be disjoint"));
+        }
+        if !self.environment.contains_key("PATH") {
+            return Err(invalid("flux.environment", "set PATH explicitly; the controller does not merge ambient environment variables"));
+        }
+        for (name, value) in &self.environment {
+            if !matches!(name.as_str(), "PATH" | "LD_LIBRARY_PATH") {
+                return Err(invalid("flux.environment", "only explicit PATH and LD_LIBRARY_PATH are accepted; backend, job and output variables are controller-owned"));
+            }
+            if value.is_empty() || value.len() > 8192 || value.chars().any(char::is_control)
+                || value.split(':').any(|entry| !Path::new(entry).is_absolute() || Path::new(entry).components().any(|part| matches!(part, std::path::Component::ParentDir)))
+            {
+                return Err(invalid("flux.environment", "use a bounded list of absolute search directories without empty entries or parent traversal"));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn shared_directory(field: &str, path: &Path, parent: &Path) -> Result<(), Error> {
+    absolute(field, path)?;
+    if !path.starts_with(parent) || path == parent && parent == Path::new("/mnt/shared")
+        || path.components().any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return Err(invalid(field, "use the approved shared directory without parent traversal"));
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrismaBuild {
     pub tools_dir: PathBuf,
@@ -674,6 +768,33 @@ impl Default for Allowances {
 }
 
 impl Config {
+    /// Select once at the controller/worker boundary. Missing Flux settings never select PB.
+    pub fn selected_execution(&self) -> Result<SelectedExecution<'_>, Error> {
+        match self.execution_backend {
+            ExecutionBackend::PrismaBuild => Ok(SelectedExecution::PrismaBuild(&self.prismabuild)),
+            ExecutionBackend::Flux => self.flux.as_ref().map(SelectedExecution::Flux)
+                .ok_or_else(|| invalid("flux", "execution_backend = 'flux' requires [flux]")),
+        }
+    }
+
+    fn validate_execution_backend(&self) -> Result<(), Error> {
+        let image = match self.selected_execution()? {
+            SelectedExecution::PrismaBuild(pb) => {
+                absolute("prismabuild.tools_dir", &pb.tools_dir)?;
+                ("prismabuild.container_image", &pb.container_image)
+            }
+            SelectedExecution::Flux(flux) => {
+                flux.validate()?;
+                ("flux.container_image", &flux.container_image)
+            }
+        };
+        if !immutable_image(image.1) {
+            return Err(invalid(image.0,
+                "use sha256:<64 lowercase hex digits> or repository@sha256:<64 lowercase hex digits>, as harness.Container requires"));
+        }
+        Ok(())
+    }
+
     /// Parse and validate without accessing secrets, executables, or endpoints.
     pub fn parse(source: &str) -> Result<Self, Error> {
         let mut config: Self = toml::from_str(source).map_err(|error: toml::de::Error| {
@@ -846,7 +967,7 @@ impl Config {
             &self.github.app_credentials_file,
         )?;
         absolute("models.key_file", &self.models.key_file)?;
-        absolute("prismabuild.tools_dir", &self.prismabuild.tools_dir)?;
+        self.validate_execution_backend()?;
         if let Some(address) = self.github.webhook_listen
             && (!address.ip().is_loopback() || address.port() == 0)
         {
@@ -1085,12 +1206,6 @@ impl Config {
                     ),
                 ));
             }
-        }
-        if !immutable_image(&self.prismabuild.container_image) {
-            return Err(invalid(
-                "prismabuild.container_image",
-                "use sha256:<64 lowercase hex digits> or repository@sha256:<64 lowercase hex digits>, as harness.Container requires",
-            ));
         }
         if self.status.listen.port() == 0
             || self.status.listen.ip().is_multicast()
