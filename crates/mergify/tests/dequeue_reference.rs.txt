@@ -1,0 +1,30 @@
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(kani, derive(kani::Arbitrary))]
+pub struct LabelEvent {
+    pub id: u64,
+    pub labeled: bool,
+    pub at: Time,
+}
+
+pub fn dequeue_pending(
+    retry: bool,
+    rule_concluded: bool,
+    dequeued_label: bool,
+    dequeued: Option<LabelEvent>,
+    queued: Option<u64>,
+    finished: Option<Time>,
+) -> bool {
+    if !retry || rule_concluded {
+        return false;
+    }
+    if !dequeued_label {
+        return true;
+    }
+    !dequeued.is_some_and(|event| {
+        event.labeled
+            && queued.map_or_else(
+                || finished.is_some_and(|finished| event.at >= finished),
+                |queued| event.id > queued,
+            )
+    })
+}

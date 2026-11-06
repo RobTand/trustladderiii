@@ -3046,6 +3046,7 @@ dependencies = [
  "tl3-config",
  "tl3-contracts",
  "tl3-controller-core",
+ "tl3-delivery",
  "tl3-github",
  "tl3-harness-core",
  "tl3-kernel",
@@ -3064,6 +3065,10 @@ version = "0.1.0"
 dependencies = [
  "proptest",
 ]
+
+[[package]]
+name = "tl3-delivery"
+version = "0.1.0"
 
 [[package]]
 name = "tl3-github"
@@ -3102,6 +3107,7 @@ dependencies = [
 name = "tl3-kernel"
 version = "0.1.0"
 dependencies = [
+ "proptest",
  "serde",
 ]
 

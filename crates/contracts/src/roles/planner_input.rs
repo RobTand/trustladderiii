@@ -69,6 +69,8 @@ pub struct PlannerInput {
     pub must_split: bool,
     /// Everything learned before a re-plan, including failed checks and review findings. Empty for initial planning.
     pub findings: List<Text<1, UNBOUNDED>, 0, UNBOUNDED, false>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prerequisite_closures: Vec<crate::prerequisites::Closure>,
     /// Controller-supplied repo-relative glob patterns. A leaf or split cannot declare matching files. ** matches zero or more path segments.
     pub protected_paths: List<Text<1, UNBOUNDED>, 0, UNBOUNDED, false>,
 
@@ -173,6 +175,7 @@ impl SchemaOrder for PlannerInput {
                     "always_tests",
                     "must_split",
                     "findings",
+                    "prerequisite_closures",
                     "protected_paths",
                     "ingest",
                     "forecast",
@@ -195,6 +198,7 @@ impl SchemaOrder for PlannerInput {
             ),
             ("/properties/must_split", &["type", "description"]),
             ("/properties/findings", &["type", "items", "description"]),
+            ("/properties/prerequisite_closures", &["type", "items"]),
             (
                 "/properties/protected_paths",
                 &["type", "items", "description"],
@@ -250,6 +254,7 @@ impl SchemaOrder for Forecast {
     }
 }
 pub fn generated() -> Result<crate::Generated, render::RenderError> {
+    let closure = crate::prerequisites::Closure::order();
     let order0 = <PlannerInput>::order();
     let order1 = <Text<1, UNBOUNDED>>::order();
     let order2 = <Forecast>::order();
@@ -265,6 +270,10 @@ pub fn generated() -> Result<crate::Generated, render::RenderError> {
         &Layout {
             inline: &[],
             shared: &[
+                TypeUse {
+                    pointer: "/properties/prerequisite_closures/items",
+                    order: &closure,
+                },
                 TypeUse {
                     pointer: "",
                     order: &order0,

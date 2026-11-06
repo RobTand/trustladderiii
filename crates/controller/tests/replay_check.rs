@@ -118,3 +118,7 @@ fn measure_invariant_cost_per_step() {
         );
     }
 }
+
+#[path = "delivery_machine/mod.rs"]
+mod delivery_machine;
+pub(crate) use delivery_machine::{Error, decode_stored, executor};

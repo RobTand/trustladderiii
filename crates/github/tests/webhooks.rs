@@ -114,6 +114,7 @@ fn recorded_payloads_parse_into_the_expected_variants() {
                 assert_eq!(actor.id, 42);
                 1
             }
+            Event::PullRequestReopened { .. } => panic!("unexpected reopened fixture"),
             Event::PullRequestClosed { pull_request, .. } => {
                 assert!(pull_request.merged_at.is_none());
                 2

@@ -38,6 +38,7 @@ def test_discovered_roles_have_prompts_and_schemas_without_orphans():
     Draft202012Validator.check_schema(schema("quota-event"))
     Draft202012Validator.check_schema(schema("harness-wire"))
     Draft202012Validator.check_schema(schema("execution-failure"))
+    Draft202012Validator.check_schema(schema("plan-check-provenance"))
     role_pattern = schema("request")["properties"]["role"]
     assert "enum" not in role_pattern
     for name, role in ROLES.items():

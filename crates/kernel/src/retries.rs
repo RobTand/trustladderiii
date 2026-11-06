@@ -8,7 +8,8 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         old(w).nodes@[i as int].generation as int + 2 <= u64::MAX as int,
         old(w).nodes@[i as int].run_failures <= 1,
         old(w).nodes@[i as int].run_incidents <= 2,
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures port_t860_contracts::failed_post(old(w).nodes@[i as int], final(w).nodes@[i as int], *old(out), *final(out)),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
@@ -30,6 +31,8 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         final(out).len <= old(out).len + 1,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
+    kernel_snapshot! { before_failed = w.nodes@[i as int] }
+    kernel_snapshot! { before_failed_out = *out }
     let m = &mut w.nodes[i];
     abandon_operation(m);
     m.pos = operation_start(m.phase);
@@ -42,6 +45,12 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         let needs_rob = m.run_incidents >= 2;
         raise_incident(w, i, needs_rob, out);
     }
+    kernel_proof! {
+        assert(port_t860_contracts::failed_post(before_failed@, w.nodes@[i as int], before_failed_out@, *out)) by {
+            reveal(port_t860_contracts::failed_post);
+            reveal(port_t860_contracts::failed_node);
+        }
+    }
 }
 }
 
@@ -51,7 +60,8 @@ kernel_fn! {
 /// It asks Rob nothing; the summary offers `restart`, as for any stop (Q49).
 pub(super) fn stop_for_review(m: &mut Node, step: ReviewStop) -> (result: ()) [
     requires old(m).generation < u64::MAX,
-    ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+    ensures *final(m) == retirement::stopped(Node { review_stop: Some(step), ..*old(m) }, Outcome::Stopped),
+        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
         (settle_shape(*old(m)) ==> settle_shape(*final(m))),
         final(m).generation as int <= old(m).generation as int + 1,
         final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
