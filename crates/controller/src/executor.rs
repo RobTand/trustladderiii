@@ -599,7 +599,7 @@ pub enum Upstream {
 }
 
 impl Upstream {
-    /// Source compatibility for retained pre-rename reference suites.
+    /// Source compatibility for retained pre-rename reference suites; removed in S7a (#915).
     #[allow(non_upper_case_globals)]
     pub const Mergify: Self = Self::Delivery;
 

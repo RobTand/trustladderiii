@@ -25,6 +25,38 @@ use tl3_kernel::{EffectKind, Phase};
 use tl3_mergify::decide::enqueue as lifecycle;
 use tl3_store::{Snapshot, Store};
 
+fn head_failure(
+    head: &str,
+    infra: bool,
+    check: u64,
+    completed_at: Option<String>,
+) -> (DeliveryOutcome, String) {
+    let cause = crate::queue_cause::CauseEvidence::Change {
+        fingerprint: format!(
+            "queue:{head}:{}",
+            completed_at.as_deref().unwrap_or("unknown")
+        ),
+    };
+    let suffix = format!(
+        "head-ci:{check}{}",
+        completed_at
+            .map(|time| format!(":{time}"))
+            .unwrap_or_default()
+    );
+    (
+        DeliveryOutcome::CiFailed {
+            head: head.to_owned(),
+            infra,
+            failed_tests: vec![],
+            evidence: crate::findings::QueueCiEvidence {
+                cause: Some(Box::new(cause)),
+                ..Default::default()
+            },
+        },
+        suffix,
+    )
+}
+
 pub const VISIBILITY: &str = "delivered directly (CI bypassed by repo config)";
 
 #[derive(Serialize, Deserialize)]
@@ -469,21 +501,11 @@ impl Adapter {
                         required::Contribution::Tests | required::Contribution::Infrastructure
                     ) && (failure.is_none() || item == required::Contribution::Tests)
                     {
-                        failure = Some((
-                            DeliveryOutcome::CiFailed {
-                                head: pull.head.sha.clone(),
-                                infra: item == required::Contribution::Infrastructure,
-                                failed_tests: vec![],
-                                evidence: Default::default(),
-                            },
-                            format!(
-                                "head-ci:{}{}",
-                                check.id,
-                                check
-                                    .completed_at
-                                    .map(|time| format!(":{}", time.to_rfc3339()))
-                                    .unwrap_or_default()
-                            ),
+                        failure = Some(head_failure(
+                            &pull.head.sha,
+                            item == required::Contribution::Infrastructure,
+                            check.id,
+                            check.completed_at.map(|time| time.to_rfc3339()),
                         ));
                     }
                 }
@@ -496,21 +518,11 @@ impl Adapter {
                     });
                     summary = required::record(summary, item);
                     if item == required::Contribution::Tests {
-                        failure = Some((
-                            DeliveryOutcome::CiFailed {
-                                head: pull.head.sha.clone(),
-                                infra: false,
-                                failed_tests: vec![],
-                                evidence: Default::default(),
-                            },
-                            format!(
-                                "head-ci:{}{}",
-                                status.id,
-                                status
-                                    .updated_at
-                                    .map(|time| format!(":{}", time.to_rfc3339()))
-                                    .unwrap_or_default()
-                            ),
+                        failure = Some(head_failure(
+                            &pull.head.sha,
+                            false,
+                            status.id,
+                            status.updated_at.map(|time| time.to_rfc3339()),
                         ));
                     }
                 }
@@ -582,7 +594,13 @@ impl Adapter {
         let suffix = match &outcome {
             DeliveryOutcome::Merged { head, .. } => format!("merged:{head}"),
             DeliveryOutcome::PushByOther { head } => format!("push:{head}"),
-            DeliveryOutcome::Conflict { head } => format!("conflict:{head}"),
+            DeliveryOutcome::Conflict { .. } => {
+                return Ok(Completion::confirmed(vec![Observation::Outcome {
+                    node: d.node(),
+                    outcome,
+                    receipt: None,
+                }]));
+            }
             DeliveryOutcome::ClosedByPerson => "closed".into(),
             DeliveryOutcome::CiFailed { .. } => {
                 return Err(Error::Invalid("CI outcome needs a check receipt"));

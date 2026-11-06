@@ -3009,9 +3009,16 @@ impl Controller {
             } => Observation::Outcome {
                 node,
                 outcome: outcome::Outcome::CiFailed {
-                    head: commit_sha(snapshot, world.nodes[node.0 as usize].head)
-                        .unwrap_or_default()
-                        .to_owned(),
+                    head: commit_sha(
+                        snapshot,
+                        world
+                            .nodes
+                            .get(node.0 as usize)
+                            .ok_or(Error::Invalid("delivery outcome node missing"))?
+                            .head,
+                    )
+                    .unwrap_or_default()
+                    .to_owned(),
                     infra,
                     failed_tests: vec![],
                     evidence: findings::QueueCiEvidence {
@@ -3397,11 +3404,11 @@ impl Controller {
                 kernel_boundary::validate_raw_event(event).map_err(Error::Invalid)?
             }
             Observation::Merged { .. } | Observation::CiFailed { .. } => {
-                unreachable!("normalized delivery outcome")
+                return Err(Error::Invalid("untranslated legacy delivery outcome"));
             }
             Observation::Outcome {
                 node,
-                outcome,
+                mut outcome,
                 receipt,
             } => {
                 if receipt.as_ref().is_some_and(|id| {
@@ -3412,15 +3419,45 @@ impl Controller {
                 }) {
                     return Ok(None);
                 }
-                let recorded = json!({"node": node, "outcome": &outcome});
                 use outcome::Outcome;
-                let current = &world.nodes[node.0 as usize];
+                let current = world
+                    .nodes
+                    .get(node.0 as usize)
+                    .ok_or(Error::Invalid("delivery outcome node missing"))?;
                 // A closed request accepts only its first observed merge.
                 if matches!(current.phase, tl3_kernel::Phase::Closed(_))
+                    && !matches!(outcome, Outcome::Conflict { .. })
                     && (!matches!(outcome, Outcome::Merged { .. }) || current.merged.is_some())
                 {
                     return Ok(None);
                 }
+                // Direct head checks retain the pre-S2 queued/enqueuing admission rule.
+                if receipt.is_some()
+                    && matches!(outcome, Outcome::CiFailed { .. })
+                    && !(current.phase == tl3_kernel::Phase::Queued
+                        || current.phase == tl3_kernel::Phase::Publishing
+                            && current.effect.is_some_and(|effect| {
+                                effect.kind == tl3_kernel::EffectKind::Enqueue && !effect.cancelling
+                            }))
+                {
+                    return Ok(None);
+                }
+                if let Outcome::CiFailed { head, evidence, .. } = &mut outcome
+                    && queue_receipt.is_none()
+                    && Some(self.head(node, head)?) != current.head
+                {
+                    // Base records stale head evidence without attributing it or applying a fact.
+                    evidence.cause = None;
+                    if let Some(receipt) = receipt {
+                        commit.rows.push(put(
+                            "delivery_outcomes",
+                            receipt,
+                            json!({"node":node,"outcome":outcome}),
+                        ));
+                    }
+                    return Ok(None);
+                }
+                let recorded = json!({"node": node, "outcome": &outcome});
                 let fact = match outcome {
                     Outcome::Merged {
                         head,
@@ -3429,20 +3466,8 @@ impl Controller {
                         head: self.head(node, &head)?,
                         checks_passed,
                     },
-                    Outcome::CiFailed { head, infra, .. } => {
-                        if queue_receipt.is_none() && Some(self.head(node, &head)?) != current.head
-                        {
-                            return Ok(None);
-                        }
-                        Fact::CiFailed { infra }
-                    }
-                    Outcome::Conflict { head } => {
-                        if queue_receipt.is_none() && Some(self.head(node, &head)?) != current.head
-                        {
-                            return Ok(None);
-                        }
-                        Fact::Conflict
-                    }
+                    Outcome::CiFailed { infra, .. } => Fact::CiFailed { infra },
+                    Outcome::Conflict { .. } => Fact::Conflict,
                     Outcome::ClosedByPerson => Fact::PrClosedByPerson,
                     Outcome::PushByOther { head } => {
                         let commits: Vec<_> = snapshot
