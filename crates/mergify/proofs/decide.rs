@@ -1,8 +1,8 @@
 //! #743 M1b: import the real decision functions and executable covers.
 #[macro_use]
-#[path = "../src/decide/verification.rs"]
+#[path = "../../github/src/checks/verification.rs"]
 mod verification;
-#[path = "../src/decide/check.rs"]
+#[path = "../../github/src/checks/check.rs"]
 mod check;
 #[path = "../src/decide/observe.rs"]
 mod observe;
