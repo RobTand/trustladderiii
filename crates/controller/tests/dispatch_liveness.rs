@@ -1,5 +1,7 @@
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
+#[path = "dispatch_liveness/lost_maker.rs"]
+mod lost_maker;
 
 use std::{cell::RefCell, path::Path, rc::Rc};
 use tl3_controller::{
