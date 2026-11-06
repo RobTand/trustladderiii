@@ -343,6 +343,10 @@ CASES = {
         '        m.plan_retries = 0;\n        set_phase(m, Phase::Planning { must_split: true });',
         '        m.plan_retries = 1;\n        set_phase(m, Phase::Planning { must_split: true });',
         '//crates/kernel:verus_review_retry_room'),
+    'review_recheck_count': ('crates/kernel/src/retries.rs',
+        '    m.rechecks = m.rechecks.saturating_add(1);',
+        '    m.rechecks = 0;',
+        '//crates/kernel:verus_review_retry_recheck'),
 
 }
 

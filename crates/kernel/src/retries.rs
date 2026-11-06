@@ -351,6 +351,19 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
     kernel_snapshot! { recheck_question = w.next_question }
     let m = &mut w.nodes[i];
     kernel_snapshot! { recheck_node = *m }
+    kernel_proof! {
+        assert((settle_shape(recheck_node@) ==> settle_shape(port_review_retry::rechecked(recheck_node@, target, recheck_question@).0))
+            && (ordinary_await(recheck_node@) && recheck_node@.phase == Phase::Rebasing && target == Phase::Checking
+                ==> distance(port_review_retry::rechecked(recheck_node@, target, recheck_question@).0) < distance(recheck_node@))) by {
+            reveal(port_review_retry::recheck_post);
+            port_review_retry_lemmas::recheck_shape(recheck_node@,
+                port_review_retry::rechecked(recheck_node@, target, recheck_question@).0,
+                target, recheck_question@, port_review_retry::rechecked(recheck_node@, target, recheck_question@).1);
+            port_review_retry_lemmas::recheck_progress(recheck_node@,
+                port_review_retry::rechecked(recheck_node@, target, recheck_question@).0,
+                target, recheck_question@, port_review_retry::rechecked(recheck_node@, target, recheck_question@).1);
+        }
+    }
     m.rechecks = m.rechecks.saturating_add(1);
     let free = m.rechecks <= FREE_RECHECKS;
     if free || m.credit.can_spend(1) {
@@ -389,8 +402,7 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
         }
     }
     kernel_proof! {
-        port_review_retry_lemmas::recheck_shape(recheck_node@, w.nodes@[i as int], target, recheck_question@, w.next_question);
-        port_review_retry_lemmas::recheck_progress(recheck_node@, w.nodes@[i as int], target, recheck_question@, w.next_question);
+        reveal(port_review_retry::recheck_post);
     }
 
 
