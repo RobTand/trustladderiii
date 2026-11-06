@@ -31,7 +31,7 @@ def partitions():
         ('wildcard_import', 'from other import *\ndef helper(): return 1', function),
         ('namespace_api', 'def helper(): return globals()', function),
         ('decorator', 'import pytest\n@pytest.fixture\ndef helper(): return 1', function),
-        ('class_bases', 'class helper(dict): pass', support('class helper: pass', 'helper')),
+        ('class_bases', 'class helper(dict): pass', support('class helper: pass')),
         ('context_manager', 'def helper():\n    with open("x"): pass\n    return 1', function),
         ('call_allowlist', 'def helper(value=1): return sorted(value)', function),
         ('percent_format', 'def helper(value=1): return "%s" % value', function),
@@ -39,10 +39,11 @@ def partitions():
         ('member_write', 'def helper(box=None): box["x"] = 1', function),
         ('graft_binding', 'def helper():\n    global EXISTING\n    EXISTING = 1\n    return 1', function),
     ]:
-        bad = support(source, 'TOKEN' if rule.startswith('literal_') else ('helper' if rule == 'class_bases' else 'helper()'))
+        bad = support(source, 'TOKEN' if rule.startswith('literal_') else 'helper()')
         if rule == 'wildcard_import':
-            # A selected import is checked before the missing definition.
-            bad['proof']['observer_support'] = ['tests/test_observer.py::missing']
+            bad = change()
+            bad['after']['support.py'] = 'from other import *\ndef helper(): return 1\n'
+            bad['proof']['observer_support'] = ['support.py']
         if rule == 'graft_binding':
             bad['before']['tests/test_observer.py'] += 'EXISTING = 0\n'
         add('support.' + rule, bad, witness)
@@ -80,13 +81,13 @@ def partitions():
     bad['tests'] = ['tests/test_observer.py::TestOld']
     good = deepcopy(bad); good['tests'] = ['tests/test_observer.py::TestOld::test_observer']
     add('observer.exact_method', bad, good)
-    bad = change(); bad['before']['tests/test_observer.py'] = 'test_observer = 1\n'
+    bad = change(); bad['before']['tests/test_observer.py'] = 'from other import test_observer\n'
     add('observer.binding_shadow', bad)
     bad = change(); bad['after']['tests/test_observer.py'] += 'def test_missing(): assert MISSING\n'; bad['tests'] = ['tests/test_observer.py::test_missing']
     add('observer.unresolved_symbol', bad)
-    bad = change(); bad['before']['tests/test_observer.py'] = 'from other import *\ndef test_control(): pass\n'
-    bad['after']['tests/test_observer.py'] = bad['before']['tests/test_observer.py'] + 'TOKEN = 1\ndef test_observer(): assert TOKEN\n'
-    good = deepcopy(bad); good['after']['tests/test_observer.py'] = bad['before']['tests/test_observer.py'] + 'def test_observer():\n    TOKEN = 1\n    assert TOKEN\n'
+    bad = change(); bad['before']['tests/test_observer.py'] = 'from other import *\ndef test_observer(): assert True\n'
+    bad['after']['tests/test_observer.py'] = 'from other import *\nTOKEN = 1\ndef test_observer(): assert TOKEN\n'
+    good = deepcopy(bad); good['after']['tests/test_observer.py'] = 'from other import *\ndef test_observer():\n    TOKEN = 1\n    assert TOKEN\n'
     add('support.literal_wildcard', bad, good)
     bad = change(); del bad['before']['tests/test_observer.py']; bad['after']['pathlib.py'] = ''
     good = deepcopy(bad); del good['after']['pathlib.py']

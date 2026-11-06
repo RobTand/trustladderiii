@@ -744,7 +744,7 @@ def test_proof_refusal_keeps_shared_rule_data(submission, monkeypatch, role):
     root, scripts = submission
     def refused(*args, **kwargs):
         assert kwargs['role'] == role
-        raise ProofRefusal('proof.observer.module_missing', module='tests/test_missing.py', role=role, field='/tests/0')
+        raise ProofRefusal('proof.observer.module_missing', module='tests/test_missing.py', role=role, field='/checks/0/tests/0')
     monkeypatch.setattr(pb_tests, '_stage', refused)
     with Worktree(root) as tree:
         result = make_test_tool(tree, TestSettings(IMAGE, scripts), role=role)(['tests/test_missing.py::test_value'])
@@ -753,5 +753,5 @@ def test_proof_refusal_keeps_shared_rule_data(submission, monkeypatch, role):
     assert data['rule'] == 'proof.observer.module_missing'
     assert data['violations'][0]['id'] == data['rule']
     assert data['violations'][0]['gating'] is True
-    assert {'kind': 'field', 'value': '/tests/0'} in data['violations'][0]['names']
+    assert {'kind': 'field', 'value': '/checks/0/tests/0'} in data['violations'][0]['names']
     assert data['reason'] in result['message']

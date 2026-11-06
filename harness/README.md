@@ -601,3 +601,16 @@ separately from invocation counts. Frozen regression controls, protected paths
 and configuration review guards remain. No kernel transition, fail-fast, retry,
 credit or incident rule changes. This replaces the helper target/observer,
 literal argument, setup-function and fixture-injection encodings of #549.
+
+## Proof refusal rows
+
+`proof-rules.json` is the generated planner preflight export. Regenerate it with:
+
+```sh
+PYTHONPATH=harness/src python -m tl3_harness.proof_rules --output harness/proof-rules.json
+```
+
+Run this command on BuildBuddy when working on fleet hosts. The drift test rejects
+hand edits. `tests/fixtures/subject_observer/proof_verdicts.json` records outcomes
+from the main SHA named in the file. Its replay tests import only the current
+implementation; the historical source and recording script are not committed.

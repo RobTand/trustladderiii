@@ -11,7 +11,7 @@ import textwrap
 import tomllib
 
 from .model import Kind, ProofRefusal
-from .rules import Violation
+from .rules import at, evaluate
 from .trees import bound_names, is_test, tree_sha256
 from .proof_rules import (
     LOADER_STDLIB, NAMESPACE_API_NAMES, NAMESPACE_API_ATTRIBUTES, NAMESPACE_API_MODULES,
@@ -27,7 +27,7 @@ def source_unit(source, identity, *, optional=False):
     parts = identity.split('::')[1:]
     if not parts:
         return source, None
-    body = ast.parse(source).body
+    body = ast.parse(source, filename=identity.split('::')[0]).body
     node = None
     for name in parts:
         matches = [item for item in body if name in bound_names(ast.unparse(item))
@@ -72,7 +72,7 @@ def overlaps(left, right):
     return left == right or left.startswith(right + '::') or right.startswith(left + '::')
 
 
-def written_bindings(source, namespace=()):
+def written_bindings(source, namespace=(), *, filename='<proof>'):
     """Static writes in module/class namespaces, including explicit global writes."""
     writes = set()
     def visit(table, scope, function=False):
@@ -85,11 +85,11 @@ def written_bindings(source, namespace=()):
         for child in table.get_children():
             is_class = child.get_type() == 'class' and not function
             visit(child, (*scope, child.get_name()) if is_class else scope, not is_class)
-    visit(symtable.symtable(textwrap.dedent(source), '<proof>', 'exec'), namespace)
+    visit(symtable.symtable(textwrap.dedent(source), filename, 'exec'), namespace)
     return writes
 
 
-def binding_names(source):
+def binding_names(source, filename='<proof>'):
     """All lexical bindings, including captures, deletions and nested shadows.
 
     #842/#645: loader trust cannot depend on an incomplete AST target list.
@@ -102,7 +102,7 @@ def binding_names(source):
                      or symbol.is_declared_global() or symbol.is_nonlocal() or symbol.is_type_parameter())
         for child in table.get_children():
             visit(child)
-    visit(symtable.symtable(textwrap.dedent(source), '<proof>', 'exec'))
+    visit(symtable.symtable(textwrap.dedent(source), filename, 'exec'))
     return names
 
 
@@ -134,7 +134,7 @@ def validate_partial_definition_uses(tree, module, name):
 
 def validate_partial_literal(source, module_source, module, symbol):
     """Only immutable, singly bound data can be copied without its context."""
-    statements = ast.parse(textwrap.dedent(source)).body
+    statements = ast.parse(textwrap.dedent(source), filename=module).body
     for statement in statements:
         if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             class RemoveDefinition(ast.NodeTransformer):
@@ -145,14 +145,14 @@ def validate_partial_literal(source, module_source, module, symbol):
                         return ast.copy_location(ast.Pass(), node)
                     return super().visit(node)
             remover = RemoveDefinition()
-            stripped = remover.visit(ast.parse(module_source))
-            if not remover.removed or statement.name in binding_names(ast.unparse(stripped)):
+            stripped = remover.visit(ast.parse(module_source, filename=module))
+            if not remover.removed or statement.name in binding_names(ast.unparse(stripped), module):
                 raise ProofRefusal('proof.support.definition_binding', module=module, symbol=statement.name)
             # #842 r3: only the definition is copied, so the rest of the module may
             # only call it. Aliases, attribute access and arguments could mutate the
             # object (for example __defaults__) in GREEN but not in RED.
             validate_partial_definition_uses(stripped, module, statement.name)
-            validate_namespace_apis(ast.parse(module_source), module)
+            validate_namespace_apis(ast.parse(module_source, filename=module), module)
         if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
             continue
         try:
@@ -171,21 +171,21 @@ def validate_partial_literal(source, module_source, module, symbol):
                     return ast.copy_location(ast.Pass(), node)
                 return self.generic_visit(node)
         remover = RemoveLiteral()
-        stripped = remover.visit(ast.parse(module_source))
+        stripped = remover.visit(ast.parse(module_source, filename=module))
         try:
             # literal_eval yields only builtin values: hashability excludes every
             # mutable container, including one nested in an immutable tuple.
             hash(value)
             # Erasing only the initializer lets the compiler find every other
             # binding, even inside the same class or compound statement.
-            safe = remover.removed and binding not in binding_names(ast.unparse(stripped))
+            safe = remover.removed and binding not in binding_names(ast.unparse(stripped), module)
         except (TypeError, SyntaxError):
             safe = False
         if not safe:
             raise ProofRefusal('proof.support.literal_binding', module=module, symbol=binding)
         # A dynamic namespace write elsewhere could change even an immutable
         # binding, without appearing as a second write in the symbol table.
-        validate_namespace_apis(ast.parse(module_source), module)
+        validate_namespace_apis(ast.parse(module_source, filename=module), module)
 
 
 def observer_context_imports(tree, module, subjects):
@@ -272,7 +272,7 @@ def validate_namespace_apis(tree, module, allowed=()):
     nodes = list(ast.walk(tree))
     for node in nodes:
         if isinstance(node, ast.ImportFrom) and any(alias.name == '*' for alias in node.names):
-            violations.extend(ProofRefusal('proof.support.wildcard_import', module=module, symbol=node.module or '.').violations)
+            violations.extend(ProofRefusal('proof.support.wildcard_import', module=module, bad_value=node.module or '.').violations)
         symbol = None
         if isinstance(node, ast.Name) and node.id in names:
             symbol = node.id
@@ -284,7 +284,7 @@ def validate_namespace_apis(tree, module, allowed=()):
             imported = [node.module or ''] if isinstance(node, ast.ImportFrom) else [alias.name for alias in node.names]
             symbol = next((name for name in imported if name.split('.')[0] in modules), None)
         if symbol:
-            violations.extend(ProofRefusal('proof.support.namespace_api', module=module, symbol=symbol).violations)
+            violations.extend(ProofRefusal('proof.support.namespace_api', module=module, bad_value=symbol).violations)
     if violations:
         raise ProofRefusal.from_violations(violations)
 
@@ -292,10 +292,10 @@ def validate_namespace_apis(tree, module, allowed=()):
 def validate_support_calls(tree, module, allowed, context):
     """#645: support cannot invoke imported objects, aliases or field evaluators."""
     violations = []
-    pure = set(PURE_SUPPORT_BUILTINS) - set().union(*(binding_names(source) for source in context))
+    pure = set(PURE_SUPPORT_BUILTINS) - set().union(*(binding_names(source, module) for source in context))
     functions = {node.name for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
                  and binding_statements(tree, node.name) == [node]
-                 and node.name not in binding_names(ast.unparse(ast.Module(body=node.body, type_ignores=[])))
+                 and node.name not in binding_names(ast.unparse(ast.Module(body=node.body, type_ignores=[])), module)
                  and node.name not in {arg.arg for arg in ast.walk(node.args) if isinstance(arg, ast.arg)}}
     def pure_value(node):
         # Even sorted(key=...) and int(obj) can call arbitrary methods. Keep
@@ -320,7 +320,18 @@ def validate_support_calls(tree, module, allowed, context):
             if isinstance(node.func, ast.Name) and (node.func.id in functions or pure_value(node)):
                 continue
             callee = ast.unparse(node.func)
-            violations.extend(ProofRefusal('proof.support.call_allowlist', module=module, symbol=callee, bad_value=callee).violations)
+            if isinstance(node.func, ast.Name) and node.func.id in PURE_SUPPORT_BUILTINS:
+                why = (f'{callee} is shadowed in this module' if node.func.id not in pure else
+                       f'{callee} is allowed only with literal arguments and no keywords')
+            elif isinstance(node.func, ast.Name) and hasattr(builtins, node.func.id):
+                why = f'{callee} can run code from other objects; use a plain support function or literal builtin inputs'
+            elif isinstance(node.func, ast.Name):
+                why = f'{callee} is not a top-level support function defined once in this support'
+            elif isinstance(node.func, ast.Attribute):
+                why = f'{callee} calls a method on another object'
+            else:
+                why = f'{callee} calls the result of another expression'
+            violations.extend(ProofRefusal('proof.support.call_allowlist', module=module, bad_value=callee, why=why).violations)
         # Percent templates can dispatch to arbitrary mapping/operand methods.
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
             try:
@@ -332,7 +343,7 @@ def validate_support_calls(tree, module, allowed, context):
             if not safe or '__' in str(node.left.value):
                 violations.extend(ProofRefusal('proof.support.percent_format', module=module).violations)
         if isinstance(node, ast.Attribute) and node.attr in REFLECTIVE_SUPPORT_ATTRIBUTES:
-            violations.extend(ProofRefusal('proof.support.reflective_attribute', module=module, symbol=node.attr).violations)
+            violations.extend(ProofRefusal('proof.support.reflective_attribute', module=module, bad_value=node.attr).violations)
     if violations:
         raise ProofRefusal.from_violations(violations)
 
@@ -341,7 +352,7 @@ def validate_support(source, module, *, observer_context=False, subjects=(), con
     """Report independent support failures together, without changing acceptance."""
     violations = []
     try:
-        tree = ast.parse(textwrap.dedent(source))
+        tree = ast.parse(textwrap.dedent(source), filename=module)
         allowed = observer_context_imports(tree, module, subjects) if observer_context else set()
         for validate, args in ((validate_namespace_apis, (tree, module, allowed)),
                                (validate_support_calls, (tree, module, allowed, context or (source,)))):
@@ -355,11 +366,11 @@ def validate_support(source, module, *, observer_context=False, subjects=(), con
                 while isinstance(root, (ast.Attribute, ast.Subscript)):
                     root = root.value
                 symbol = root.id if isinstance(root, ast.Name) else ast.unparse(root)
-                violations.extend(ProofRefusal('proof.support.member_write', module=module, symbol=symbol).violations)
+                violations.extend(ProofRefusal('proof.support.member_write', module=module, bad_value=symbol).violations)
     except SyntaxError as error:
         if violations:
             raise ProofRefusal.from_violations(violations) from None
-        raise ProofRefusal('proof.source.unparsable', module=module, bad_value=error.msg) from None
+        raise ProofRefusal('proof.source.unparsable', module=module, bad_value=error.msg, line=error.lineno) from None
     if violations:
         raise ProofRefusal.from_violations(violations)
 
@@ -378,7 +389,7 @@ def conftest_subjects(base, head, plan):
             lines = source.splitlines(keepends=True)
             for start, end in sorted({span for span in spans if span}, reverse=True):
                 lines[start:end] = []
-            return ast.dump(ast.parse(''.join(lines)))
+            return ast.dump(ast.parse(''.join(lines), filename=name))
         if remainder(base) == remainder(head):
             allowed.add(name)
     return allowed
@@ -438,18 +449,88 @@ def refuse_stdlib_shadow(tree: Path, observer):
     shadow = stdlib_shadow(tree)
     if shadow:
         module, relative = shadow
-        raise ProofRefusal('proof.loader.stdlib_shadow', module=observer, symbol=relative, path=relative, stdlib=module)
+        raise ProofRefusal('proof.loader.stdlib_shadow', module=observer, path=relative, stdlib=module)
 
 
-def assemble_proof(base: Path, head: Path, destination: Path, check, config, *, role='maker'):
+def assemble_proof(base: Path, head: Path, destination: Path, check, config, *, role='maker', check_index=0, footprint=()):
     try:
         return _assemble_proof(base, head, destination, check, config)
     except SyntaxError as error:
-        module = next((unit.split('::')[0] for unit in check.tests), '')
-        refusal = ProofRefusal('proof.source.unparsable', module=module, bad_value=error.msg)
-        raise refusal.for_check(check, role) from None
+        module = error.filename or next((unit.split('::')[0] for unit in check.tests), '')
+        refusal = ProofRefusal('proof.source.unparsable', module=module, bad_value=error.msg, line=error.lineno)
+        raise refusal.for_check(check, role, check_index, footprint=footprint) from None
     except ProofRefusal as error:
-        raise error.for_check(check, role) from None
+        refusal = error.for_check(check, role, check_index, footprint=footprint)
+        if role == 'planner':
+            refusal = planner_selections(refusal, base, head, check, config)
+        raise refusal from None
+
+
+def planner_selections(refusal, base, head, check, config):
+    """Advertise at most ten concrete selections that pass this same assembler.
+
+    These probes operate on temporary staging trees and never execute source.
+    An unavailable declaration repair stays a specific CantMeet.
+    """
+    from copy import deepcopy
+    from dataclasses import replace
+    from tempfile import TemporaryDirectory
+    from types import SimpleNamespace
+    violations = []
+    for violation in refusal.violations:
+        facts = dict(violation.facts)
+        field = facts['field']
+        relative = field.removeprefix(f"/checks/{facts['check_index']}")
+        group = next((prefix for prefix in ('/proof/subjects', '/proof/observer_support', '/tests')
+                      if relative.startswith(prefix + '/')), None)
+        if group is None or violation.rule.id in ('proof.source.unparsable', 'proof.tree.destination_fresh'):
+            violations.append(violation)
+            continue
+        candidates = []
+        for path in sorted(head.rglob('*.py')):
+            module = path.relative_to(head).as_posix()
+            if group == '/tests' and not is_test(module, config.get('test-files', ())):
+                continue
+            try:
+                tree = ast.parse(path.read_bytes(), filename=module)
+            except (SyntaxError, UnicodeError):
+                continue
+            if group != '/tests':
+                candidates.append(module)
+            def definitions(body, prefix=()):
+                for node in body:
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                        levels = (*prefix, node.name)
+                        candidates.append(module + '::' + '::'.join(levels))
+                        if isinstance(node, ast.ClassDef):
+                            definitions(node.body, levels)
+            definitions(tree.body)
+        passing, total = [], 0
+        for candidate in candidates:
+            if candidate == at(facts['reply'], field):
+                continue
+            reply = deepcopy(facts['reply'])
+            parent, key = field.rsplit('/', 1)
+            at(reply, parent)[int(key)] = candidate
+            declared = reply['checks'][facts['check_index']]
+            proposed = SimpleNamespace(name=check.name, kind=check.kind, tests=tuple(declared['tests']),
+                forcing=check.forcing, declared_symptom=check.declared_symptom,
+                proof=replace(check.proof, subjects=tuple(declared['proof']['subjects']),
+                              observer_support=tuple(declared['proof']['observer_support'])) if check.proof else None)
+            try:
+                with TemporaryDirectory(prefix='proof-selection-') as directory:
+                    _assemble_proof(base, head, Path(directory) / 'staged', proposed, config)
+            except (ProofRefusal, SyntaxError, OSError, ValueError):
+                continue
+            total += 1
+            if len(passing) < 10:
+                passing.append(candidate)
+        facts['selection_search'] = True
+        if passing:
+            facts.update(alternatives=passing, replacement_total=total,
+                         bad_value={'selection': at(facts['reply'], field), 'replacement_total': total})
+        violations.extend(evaluate((violation.rule,), facts, role='planner'))
+    return ProofRefusal.from_violations(violations, role='planner')
 
 
 def _assemble_proof(base: Path, head: Path, destination: Path, check, config):
@@ -478,7 +559,7 @@ def _assemble_proof(base: Path, head: Path, destination: Path, check, config):
     identities, inferred_support, loader_observers = {}, set(), []
     for name in sorted(paths):
         if not is_test(name, config['test-files']) and any(item.split('::')[0] == name for item in observers):
-            raise ProofRefusal('proof.observer.test_path', module=name)
+            raise ProofRefusal('proof.observer.test_path', module=name, test_files=config['test-files'])
         target, old_path, new_path = destination / name, base / name, head / name
         if not new_path.is_file():
             raise ProofRefusal('proof.observer.module_missing', module=name)
@@ -497,11 +578,11 @@ def _assemble_proof(base: Path, head: Path, destination: Path, check, config):
             except ProofRefusal as error:
                 if any(item.rule.gating for item in error.violations):
                     raise ProofRefusal.from_violations([*violations, *error.violations]) from None
-                violations.extend(Violation(item.rule, {**item.facts, **({'field': field} if field else {})})
-                                  for item in error.violations)
+                violations.extend(found for item in error.violations
+                                  for found in evaluate((item.rule,), {**item.facts, **({'field': field} if field else {})}, role='maker'))
 
         requested = [item for item in (*observers, *support) if item.split('::')[0] == name]
-        for statement in ast.parse(new).body:
+        for statement in ast.parse(new, filename=name).body:
             if (isinstance(statement, (ast.Import, ast.ImportFrom))
                     and bound_names(ast.unparse(statement)) & {item.split('::')[-1] for item in requested if item in support}):
                 collect(validate_support, ast.unparse(statement), name)
@@ -519,7 +600,7 @@ def _assemble_proof(base: Path, head: Path, destination: Path, check, config):
                             field=f'/proof/observer_support/{support.index(item)}')
                 if item != name:
                     support_required.update(global_names(text, name))
-        for statement in ast.parse(new).body:
+        for statement in ast.parse(new, filename=name).body:
             if (isinstance(statement, (ast.Import, ast.ImportFrom))
                     and bound_names(ast.unparse(statement)) & support_required):
                 collect(validate_support, ast.unparse(statement), name)
@@ -536,12 +617,12 @@ def _assemble_proof(base: Path, head: Path, destination: Path, check, config):
             target.write_bytes(new.encode())
             continue
         replacements, grafts, required_texts = [], [], []
-        protected = written_bindings(old)
+        protected = written_bindings(old, filename=name)
         protected.update(tuple(subject.split('::')[1:]) for subject in subjects if subject.split('::')[0] == name)
         def guard(text, item, namespace=()):
             if item in observers:
                 return
-            written = written_bindings(text, namespace)
+            written = written_bindings(text, namespace, filename=name)
             conflict = written & protected
             if conflict:
                 symbol = '::'.join(sorted(conflict)[0])
@@ -549,7 +630,7 @@ def _assemble_proof(base: Path, head: Path, destination: Path, check, config):
         for item in requested:
             text, _ = source_unit(new, item)
             required_texts.append(text)
-            if item in observers and isinstance(ast.parse(textwrap.dedent(text)).body[0], ast.ClassDef):
+            if item in observers and isinstance(ast.parse(textwrap.dedent(text), filename=name).body[0], ast.ClassDef):
                 raise ProofRefusal('proof.observer.exact_method', module=name, symbol=item.split('::')[-1])
             if '::' not in item:
                 raise ProofRefusal('proof.support.existing_module', module=name)
@@ -592,7 +673,7 @@ def _assemble_proof(base: Path, head: Path, destination: Path, check, config):
         table = symtable.symtable(composed, name, 'exec')
         bound = {symbol.get_name() for symbol in table.get_symbols() if symbol.is_assigned() or symbol.is_imported()}
         imports = []
-        for statement in ast.parse(new).body:
+        for statement in ast.parse(new, filename=name).body:
             if not isinstance(statement, (ast.Import, ast.ImportFrom)):
                 continue
             aliases = [alias for alias in statement.names
@@ -608,7 +689,7 @@ def _assemble_proof(base: Path, head: Path, destination: Path, check, config):
             text, _ = source_unit(new, item, optional=True)
             if text is None:
                 continue
-            statements = ast.parse(textwrap.dedent(text)).body
+            statements = ast.parse(textwrap.dedent(text), filename=name).body
             if len(statements) != 1:
                 continue
             statement = statements[0]
@@ -633,9 +714,9 @@ def _assemble_proof(base: Path, head: Path, destination: Path, check, config):
             raise ProofRefusal.from_violations(violations)
         missing = required - bound
         if missing:
-            raise ProofRefusal('proof.observer.unresolved_symbol', module=name, symbol=sorted(missing)[0])
+            raise ProofRefusal('proof.observer.unresolved_symbol', module=name, bad_value=sorted(missing)[0])
         # Imports and literal support follow a module docstring and __future__ statements.
-        module = ast.parse(composed)
+        module = ast.parse(composed, filename=name)
         insertion = 0
         for statement in module.body:
             if (isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant)

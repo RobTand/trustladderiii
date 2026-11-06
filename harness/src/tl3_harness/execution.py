@@ -208,8 +208,11 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
 
 def refused(plan: tuple[Check, ...], message: str) -> tuple[Result, ...]:
     """A failing round that tells the maker what to undo; nothing ran."""
+    from .model import ProofMessage
+    message = ProofMessage(str(message)) if isinstance(message, ProofRefusal) else message
     return tuple(Result(check.name, check.kind, Verdict.FAIL, tuple(
-        TestResult(test, Outcome.UNCOLLECTED, Outcome.UNCOLLECTED, False, False, message[:MAX_MESSAGE_CHARS])
+        TestResult(test, Outcome.UNCOLLECTED, Outcome.UNCOLLECTED, False, False,
+                   message if isinstance(message, ProofMessage) else message[:MAX_MESSAGE_CHARS])
         for test in check.tests), forcing=check.forcing, declared_symptom=check.declared_symptom) for check in plan)
 
 
@@ -251,13 +254,19 @@ def configuration_changes(repo: Path, root: Path, base: str, base_tree: Path, he
     try:
         permitted = conftest_subjects(base_tree, head_tree, plan)
     except SyntaxError as error:
-        syntax_refusal = str(ProofRefusal('proof.source.unparsable', module='conftest.py', bad_value=error.msg))
+        syntax_refusal = str(ProofRefusal('proof.source.unparsable', module=error.filename or '', bad_value=error.msg))
         permitted = set()
     except (ProofRefusal, OSError):
         permitted = set()
     configuration = [name for name in configuration if name not in permitted]
     paths = changed_protected(repo, fork, head, protected)
-    return (syntax_refusal or changed_files_message(configuration, paths)) if configuration or paths else None
+    if configuration or paths:
+        message = changed_files_message(configuration, paths)
+        if syntax_refusal:
+            from .model import ProofMessage
+            return ProofMessage(message + '\n' + syntax_refusal)
+        return message
+    return None
 
 
 class TestTool(Protocol):
@@ -531,7 +540,7 @@ def forcing_tamper_diff(repo, base, head):
 def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                container: Container, reviewed: str | None = None, tool: TestTool = PYTEST,
                protected: tuple[str, ...] = (), selected_tests: int | None = None,
-               always_tests: tuple[str, ...] = (), selected_failures: tuple[str, ...] = ()) -> tuple[Result, ...]:
+               always_tests: tuple[str, ...] = (), selected_failures: tuple[str, ...] = (), footprint: tuple[str, ...] = ()) -> tuple[Result, ...]:
     """Run one round inside one admitted PB action, from trusted installed code. `protected`
     holds the repository's protected path patterns; a change to any of them is refused.
     With `selected_tests`, complete execution groups whose imports reach the change
@@ -646,11 +655,13 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             staged = root / f"proof-{index}"
             subject = reviewed_tree if check.kind == Kind.REPRODUCING else old
             try:
-                receipt = assemble_proof(subject, new, staged, check, config, role='maker')
+                receipt = assemble_proof(subject, new, staged, check, config, role='maker', check_index=index, footprint=footprint)
             except SyntaxError as error:
-                refusal = ProofRefusal('proof.source.unparsable', module=check.tests[0].split('::')[0], bad_value=error.msg)
-                return refused(plan, str(refusal.for_check(check, 'maker')))
-            except (ProofRefusal, OSError) as error:
+                refusal = ProofRefusal('proof.source.unparsable', module=error.filename or '', bad_value=error.msg)
+                return refused(plan, refusal.for_check(check, 'maker', index))
+            except ProofRefusal as error:
+                return refused(plan, error)
+            except OSError as error:
                 return refused(plan, str(error))
             notes = FailureNotes(check.proof.red_message if check.proof else None)
             forced_notes = FailureNotes()
@@ -747,7 +758,9 @@ def result_json(results: tuple[Result, ...]) -> str:
             if test['head_forced'] is None:
                 del test['head_forced']
             if id(test) in retained:
-                test['message'] = test['message'][:MAX_MESSAGE_CHARS].encode(errors='backslashreplace').decode()[:MAX_MESSAGE_CHARS]
+                from .model import ProofMessage
+                if not isinstance(test['message'], ProofMessage):
+                    test['message'] = test['message'][:MAX_MESSAGE_CHARS].encode(errors='backslashreplace').decode()[:MAX_MESSAGE_CHARS]
             else:
                 test['message'] = ''
     encoded = json.dumps(reports, sort_keys=True, separators=(',', ':'))

@@ -7,7 +7,6 @@ import subprocess
 import sys
 
 import pytest
-from proof_differential import preserve_proof_verdicts as preserve_proof_verdicts
 
 from tl3_harness.execution import Container, Progress, container_command, run_checks
 from tl3_harness.model import Check, Proof, FailureNotes, Custody, Kind, Outcome, Verdict, judge

@@ -1,6 +1,7 @@
 """#899 review regression coverage at the assembly and result boundaries."""
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,7 +19,10 @@ def assemble(case, root):
     destination = root / 'staged'
     if case.get('destination_exists'):
         destination.mkdir(parents=True)
-    check = model.Check('row witness', model.Kind.DEMONSTRATING, tuple(case['tests']), proof=model.Proof.parse(case['proof']))
+    # Module selections exercise the assembler defense below model validation.
+    factory = model.Check if all('::' in node for node in case['tests']) else SimpleNamespace
+    check = factory(name='row witness', kind=model.Kind.DEMONSTRATING, tests=tuple(case['tests']),
+                    proof=model.Proof.parse(case['proof']), forcing=None, declared_symptom=None)
     return proof.assemble_proof(root / 'before', root / 'after', destination, check, case['config'])
 
 
@@ -31,7 +35,7 @@ def test_row_has_real_assembly_input_and_source_repair(tmp_path, row_id):
     assert caught.value.rule == row_id
     for v in caught.value.violations:
         message = v.render(role='maker')
-        assert row_id in message and 'Allowed:' in message
+        assert v.rule.id in message and 'Allowed:' in message
     assemble(case['good'], tmp_path / 'good')
 
 
@@ -84,3 +88,108 @@ def test_export_has_one_path_template_and_a_regeneration_command():
     paths = [name for name in loader['names'] if name['kind'] == 'path']
     assert len({name['value'] for name in paths}) == len(paths)
     assert 'python -m tl3_harness.proof_rules' in (Path(__file__).parents[1] / 'README.md').read_text()
+
+
+def recorded_table():
+    return json.loads((Path(__file__).parent / 'fixtures/subject_observer/proof_verdicts.json').read_text())
+
+
+@pytest.mark.parametrize('key,record', [(key, item) for key, item in recorded_table()['cases'].items()
+                                     if item['input']['function'] != 'staging'], ids=lambda value: value if isinstance(value, str) else '')
+def test_recorded_main_verdict(tmp_path, key, record):
+    import base64
+    import hashlib
+    data = record['input']
+    if data['function'] == 'assemble_proof':
+        for side in ('before', 'after'):
+            (tmp_path / side).mkdir()
+            for name, content in data[side].items():
+                path = tmp_path / side / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(base64.b64decode(content))
+        staged = tmp_path / 'staged'
+        if data['destination_exists']:
+            staged.mkdir()
+        declaration = data['check']
+        factory = model.Check if all('::' in node for node in declaration['tests']) else SimpleNamespace
+        check = factory(name=declaration['name'], kind=model.Kind(declaration['kind']), tests=tuple(declaration['tests']),
+                        proof=model.Proof.parse(declaration['proof']) if declaration['proof'] else None,
+                        forcing=model.Forcing.parse(declaration['forcing']) if declaration['forcing'] else None,
+                        declared_symptom=declaration['declared_symptom'])
+        def run():
+            return proof.assemble_proof(tmp_path / 'before', tmp_path / 'after', staged, check, data['config'])
+    else:
+        def run():
+            return proof.validate_support(*data['args'], **data['kwargs'])
+    if 'rule' in record['expected']:
+        with pytest.raises(model.ProofRefusal) as caught:
+            run()
+        assert caught.value.rule == record['expected']['rule'], key
+    else:
+        receipt = run()
+        actual = hashlib.sha256(json.dumps(receipt, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        assert actual == record['expected']['accepted']['receipt_sha256'], key
+        if data['function'] == 'assemble_proof':
+            assert proof.tree_sha256(staged) == record['expected']['accepted']['staged_tree_sha256'], key
+
+
+def test_role_repairs_and_absolute_declaration_pointers(tmp_path):
+    from tl3_harness.rules import Edit, SourceEdit
+    case = partitions()['proof.observer.exact_method']['bad']
+    for side in ('before', 'after'):
+        for name, text in case[side].items():
+            path = tmp_path / side / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+    check = model.Check('repair', model.Kind.DEMONSTRATING, tuple(case['tests']), proof=model.Proof.parse(case['proof']))
+    with pytest.raises(model.ProofRefusal) as caught:
+        proof.assemble_proof(tmp_path / 'before', tmp_path / 'after', tmp_path / 'planner', check, case['config'], role='planner', check_index=3)
+    assert caught.value.rule == 'proof.observer.exact_method'
+    violation = caught.value.violations[0]
+    assert isinstance(violation.repair, Edit)
+    assert violation.repair.pointer.value == '/checks/3/tests/0'
+    assert violation.allowed.value == ['tests/test_observer.py::TestOld::test_observer']
+    assert len(violation.allowed.value) <= 10
+    case = partitions()['proof.support.call_allowlist']['bad']
+    for side in ('before', 'after'):
+        for name, text in case[side].items():
+            (tmp_path / side / name).write_text(text)
+    check = model.Check('repair', model.Kind.DEMONSTRATING, tuple(case['tests']), proof=model.Proof.parse(case['proof']))
+    with pytest.raises(model.ProofRefusal) as caught:
+        proof.assemble_proof(tmp_path / 'before', tmp_path / 'after', tmp_path / 'maker', check, case['config'],
+                             footprint=('tests/test_observer.py',), check_index=4)
+    assert caught.value.rule == 'proof.support.call_allowlist'
+    assert isinstance(caught.value.violations[0].repair, SourceEdit)
+    assert 'cant_meet' not in str(caught.value)
+    assert '/checks/4/proof/observer_support/0' in str(caught.value)
+
+
+def test_forcing_pointer_uses_its_plan_index():
+    with pytest.raises(model.ProofRefusal) as caught:
+        model.Forcing.parse({'symptom': 'flake', 'patches': [{'target': 'app.value', 'raises': 'AssertionError'}]}, check_index=3)
+    assert caught.value.rule == 'forcing.raise_class'
+    assert caught.value.violations[0].repair.pointer.value == '/checks/3/forcing/patches/0/raises'
+
+
+@pytest.mark.parametrize('source,why', [
+    ('len = lambda value: 1\ndef helper(): return len(())', 'shadowed in this module'),
+    ('def helper(value): return sorted(value)', 'literal arguments and no keywords'),
+    ('def helper(): return sorted((), reverse=True)', 'literal arguments and no keywords'),
+    ('def helper(value): return hasattr(value, "x")', 'can run code from other objects'),
+    ('def helper(value): return value.method()', 'calls a method on another object'),
+    ('def helper(value): return value()()', 'calls the result of another expression'),
+])
+def test_callee_explanations_are_owned_by_the_row(source, why):
+    with pytest.raises(model.ProofRefusal) as caught:
+        proof.validate_support(source, 'tests/test_observer.py')
+    assert any(v.rule.id == 'proof.support.call_allowlist' and why in v.render(role='maker') for v in caught.value.violations)
+
+
+def test_internal_destination_and_uneditable_syntax_are_terminal(tmp_path):
+    from tl3_harness.rules import CantMeet
+    with pytest.raises(model.ProofRefusal) as caught:
+        assemble(partitions()['proof.tree.destination_fresh']['bad'], tmp_path / 'destination')
+    assert caught.value.rule == 'proof.tree.destination_fresh'
+    assert caught.value.violations[0].rule.gating
+    assert isinstance(caught.value.violations[0].repair, CantMeet)
+    assert 'TL3-side assembly fault' in str(caught.value)

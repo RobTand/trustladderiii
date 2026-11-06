@@ -1,10 +1,10 @@
 from .forcing_ownership import MAX_TOTAL_DELAY_SECONDS as MAX_TOTAL_DELAY_SECONDS
 from .red_message import RedMessageMatch
 from .proof_rules import ROWS, forced_exception as forced_exception, render as render_proof, violation_data
-from .rules import Violation, evaluate
+from .rules import evaluate
 # Diagnostics live in limits.py, which the in-container runner loads by path (#858).
 from .limits import Diagnostic as Diagnostic, contextual as contextual, named as named
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from enum import StrEnum
 import json
 import re
@@ -104,8 +104,10 @@ class Forcing:
     environment: tuple[tuple[str, str], ...] = ()
     # (target, mode, argument as canonical JSON)
     patches: tuple[tuple[str, str, str], ...] = ()
+    check_index: InitVar[int] = 0
+    role: InitVar[str] = 'planner'
 
-    def __post_init__(self):
+    def __post_init__(self, check_index, role):
         if not isinstance(self.symptom, str) or not self.symptom.strip() or len(self.symptom) > FORCING_TEXT:
             raise HarnessInputError(named('forcing.symptom_text', f"a forcing needs a symptom of 1 to {FORCING_TEXT} characters", {}))
         if not self.environment and not self.patches:
@@ -125,17 +127,24 @@ class Forcing:
                 raise HarnessInputError(named('forcing.patch_target', f"a patch target must be a dotted module attribute: {target!r}", {}))
             if mode not in PATCH_MODES:
                 raise HarnessInputError(named('forcing.patch_mode', f"a patch has exactly one of {', '.join(PATCH_MODES)}", {}))
+            if not isinstance(argument, str):
+                raise HarnessInputError(named('forcing.literal_json', 'A patch argument must be a JSON literal.', {}))
             if len(argument.encode()) > FORCING_LITERAL_BYTES:
                 raise HarnessInputError(named('forcing.literal_bytes', f"a patch literal is limited to {FORCING_LITERAL_BYTES} bytes of JSON", {}))
-            value = json.loads(argument)
+            try:
+                value = json.loads(argument)
+            except (TypeError, ValueError) as error:
+                raise HarnessInputError(named('forcing.literal_json', 'A patch argument must be a JSON literal.', {})) from error
             if mode == "raises" and not (isinstance(value, str) and forced_exception(value)):
-                facts = {'reply': {'forcing': self.as_json()}, 'field': f'/forcing/patches/{index}/raises'}
-                raise ProofRefusal('forcing.raise_class', **facts)
+                facts = {'reply': {'checks': [{} for _ in range(check_index)] + [{'forcing': {'patches': [
+                    {'target': name, patch_mode: json.loads(raw)} for name, patch_mode, raw in self.patches[:index + 1]]}}]},
+                         'field': f'/checks/{check_index}/forcing/patches/{index}/raises'}
+                raise ProofRefusal('forcing.raise_class', role=role, **facts)
             if mode == "delay_seconds" and (type(value) not in (int, float) or not 0 < value <= MAX_DELAY_SECONDS):
                 raise HarnessInputError(named('forcing.delay', f"delay_seconds must be above 0 and at most {MAX_DELAY_SECONDS}", {}))
 
     @classmethod
-    def parse(cls, data) -> "Forcing":
+    def parse(cls, data, *, check_index=0, role='planner') -> "Forcing":
         if not isinstance(data, dict) or set(data) - {"symptom", "environment", "patches"}:
             extra = sorted(set(data) - {"symptom", "environment", "patches"}) if isinstance(data, dict) else []
             raise HarnessInputError(named('forcing.extra_keys', f"a forcing has only symptom, environment and patches; not {', '.join(extra)}", {}))
@@ -154,12 +163,16 @@ class Forcing:
             except (TypeError, ValueError) as error:
                 raise HarnessInputError(named('forcing.literal_json', "a patch's argument must be a JSON literal", {})) from error
             parsed.append((patch["target"], modes[0], argument))
-        return cls(data.get("symptom"), tuple(sorted(environment.items())), tuple(parsed))
+        return cls(data.get("symptom"), tuple(sorted(environment.items())), tuple(parsed), check_index, role)
 
     def as_json(self) -> dict:
         return {"symptom": self.symptom, "environment": dict(self.environment),
                 "patches": [{"target": target, mode: json.loads(argument)}
                             for target, mode, argument in self.patches]}
+
+
+class ProofMessage(str):
+    """Trusted shared-row text, bounded by the complete result byte budget."""
 
 
 class ProofRefusal(HarnessInputError):
@@ -179,7 +192,7 @@ class ProofRefusal(HarnessInputError):
     def from_violations(cls, violations, *, role='maker'):
         return cls(violations[0].rule.id, violations=violations, role=role)
 
-    def for_check(self, check, role):
+    def for_check(self, check, role, check_index=0, *, footprint=()):
         """Bind field names to the actual editable declaration and caller."""
         violations = []
         for violation in self.violations:
@@ -204,7 +217,17 @@ class ProofRefusal(HarnessInputError):
             if matches and 'field' not in facts:
                 prefix, index = matches[0]
                 facts['field'] = f'{prefix}/{index}'
-            violations.append(Violation(violation.rule, facts))
+            from .proof_rules import declaration_pointer
+            facts['field'] = declaration_pointer(facts.get('field', '/proof'), check_index)
+            facts['check_index'] = check_index
+            facts['footprint'] = tuple(footprint or ())
+            declaration = {'tests': list(check.tests)}
+            if check.proof:
+                declaration['proof'] = check.proof.as_json()
+            if check.forcing:
+                declaration['forcing'] = check.forcing.as_json()
+            facts['reply'] = {'checks': [{} for _ in range(check_index)] + [declaration]}
+            violations.extend(evaluate((violation.rule,), facts, role=role))
         return self.from_violations(violations, role=role)
 
     def as_json(self):

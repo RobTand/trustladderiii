@@ -503,7 +503,7 @@ def lifecycle(module, directory, schedule):
                 trace.append(('base-export', name(checkout), sha, name(target)))
                 target.mkdir()
                 (target / 't.py').write_text((source / 't.py').read_text())
-            def assemble(base, head, checkout, check, configuration, *, role='maker'):
+            def assemble(base, head, checkout, check, configuration, *, role='maker', check_index=0, footprint=()):
                 trace.append(('assemble-proof', name(base), name(head), name(checkout)))
                 checkout.mkdir()
                 (checkout / 't.py').write_text((base / 't.py').read_text())

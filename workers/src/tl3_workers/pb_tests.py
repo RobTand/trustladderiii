@@ -127,7 +127,7 @@ def _priority(priority):
     return priority
 
 
-def _stage(worktree, root, base_sha=None, *, action="test_tool", checks=(), forcing=None, declared_symptom=None, selected=(), role='maker'):
+def _stage(worktree, root, base_sha=None, *, action="test_tool", checks=(), forcing=None, declared_symptom=None, selected=(), role='maker', check_index=0):
     harness = Path(execution.__file__).resolve().parent
     owner = os.fstat(worktree._root)
     if any(os.path.samestat(parent.stat(), owner) for parent in (harness, *harness.parents)):
@@ -150,16 +150,18 @@ def _stage(worktree, root, base_sha=None, *, action="test_tool", checks=(), forc
         export(worktree.test_checkout, base_sha, base)
         proving = [check for check in checks if check['kind'] in ('demonstrating', 'reproducing')]
         if len(proving) > STAGED_CHECK_COUNT:
-            raise ProofRefusal('proof.staging.single_check', role=role, field='/checks')
+            raise ProofRefusal('proof.staging.single_check', role=role, field='/checks',
+                               reply={'checks': list(checks)}, alternatives=[[item] for item in proving[:10]],
+                               replacement_total=len(proving))
         item = proving[0] if proving else {}
         proof = Proof.parse(item['proof']) if item.get('proof') else None
         tests = tuple(item.get('tests', ()))
-        projection_forcing = forcing or (Forcing.parse(item['forcing']) if item.get('forcing') else None)
+        projection_forcing = forcing or (Forcing.parse(item['forcing'], check_index=check_index, role=role) if item.get('forcing') else None)
         projection_symptom = declared_symptom or item.get('declared_symptom')
         check = Check(item.get('name', 'development proof') if proving or forcing or declared_symptom else ALWAYS_CHECK,
                       Kind(item.get('kind', 'demonstrating')) if proving or forcing or declared_symptom else Kind.REGRESSION,
                       tests or selected or ('_tl3_unselected.py::test_outcome',), projection_forcing, proof, projection_symptom)
-        receipt = assemble_proof(base, head if proving else base, checkout, check, configuration(base) if proving else {}, role=role)
+        receipt = assemble_proof(base, head if proving else base, checkout, check, configuration(base) if proving else {}, role=role, check_index=check_index, footprint=getattr(worktree, 'declared_files', ()) or ())
         (root / 'proof.json').write_text(json.dumps(receipt, sort_keys=True))
         shutil.rmtree(base)
         shutil.rmtree(head)
@@ -397,7 +399,7 @@ def _failure_receipt(ending, settings):
     return receipt
 
 
-def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None, forcing=None, timeout_seconds=None, declared_symptom=None, _checks=None, role='maker'):
+def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None, forcing=None, timeout_seconds=None, declared_symptom=None, _checks=None, role='maker', check_index=0):
     """Bind settings from role inputs, directly or via worktree.test_settings."""
     settings = settings if settings is not None else getattr(worktree, "test_settings", None)
     emit = emit if emit is not None else getattr(worktree, "progress_emit", lambda event: None)
@@ -471,7 +473,7 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                           if any(selects(selector, test) or selects(test, selector)
                                  for selector in selected for test in check['tests'])]
                 tree = _stage(worktree, root, base_sha, checks=checks, forcing=forcing,
-                              declared_symptom=declared_symptom, selected=selected, role=role)
+                              declared_symptom=declared_symptom, selected=selected, role=role, check_index=check_index)
                 proof = json.loads((root / 'proof.json').read_text()) if base else None
                 contract = {"tree": tree, "trusted": _git(root, "write-tree", "--prefix=trusted/").strip(),
                             "image": settings.image, "cpus": settings.cpus, "mem_gb": settings.mem_gb,
@@ -563,11 +565,12 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
             if checks:
                 groups = []
                 for check in checks:
+                    original_index = next(index for index, declared in enumerate(worktree.test_checks) if declared is check)
                     nodes = [test for test in check['tests'] if not selected or any(selects(selector, test) or selects(test, selector) for selector in selected)]
                     symptom = check.get('declared_symptom')
                     tool = make_test_tool(worktree, settings, emit=emit, timeout_seconds=timeout_seconds,
-                                          forcing=Forcing.parse(check['forcing']) if check.get('forcing') else None,
-                                          declared_symptom=symptom, role=role, _checks=({**check, 'tests': nodes},))
+                                          forcing=Forcing.parse(check['forcing'], check_index=original_index, role=role) if check.get('forcing') else None,
+                                          declared_symptom=symptom, role=role, check_index=original_index, _checks=({**check, 'tests': nodes},))
                     observed = tool(nodes, base=True, repeat=symptom['repeat'] if symptom else repeat,
                                     parallel=symptom['parallel'] if symptom else parallel, priority=priority)
                     groups.append({'check': check.get('name', 'planned check'), **observed})
