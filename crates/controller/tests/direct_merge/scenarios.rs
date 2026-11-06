@@ -1085,6 +1085,7 @@ fn r1_direct_conflict_repeats_after_same_head_rebase() {
     fixture.api.state.lock().unwrap().pull["mergeable"] = json!(false);
     fixture.check(Some("success"));
     fixture.check_event(&settings);
+    ingress::drain(&mut controller).unwrap();
     let mut rebased = false;
     for _ in 0..150 {
         let node = controller.world().unwrap().nodes[0];
