@@ -373,7 +373,7 @@ impl Daemon {
         Seen {
             phase: node.phase,
             failures: u32::from(node.run_failures),
-            generation: u64::from(node.generation),
+            generation: node.generation,
             incidents: visible.requests[0].details.open_incidents.len(),
         }
     }
