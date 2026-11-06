@@ -184,6 +184,8 @@ class Violation:
             raise ValueError('role-dependent violation must use its evaluation role')
 
     def render(self, *, role, context="reply"):
+        if context not in ('reply', 'tool'):
+            raise ValueError('render context must be reply or tool')
         _require_role(self.rule, role)
         self._require_resolution_role(role)
         subjects = self.rule.names(self.facts)
@@ -373,4 +375,6 @@ def register(rule, *, roles: Iterable[str]):
 
 
 def render_all(violations, *, role, context="reply"):
+    if context not in ('reply', 'tool'):
+        raise ValueError('render context must be reply or tool')
     return '\n'.join(violation.render(role=role, context=context) for violation in violations)
