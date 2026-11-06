@@ -165,7 +165,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                     old(w).fail_fast, *old(out), *final(out)),
             _ => true,
         },
-] hide [current_item, items] {
+] hide [settle_shape, current_item, items] {
     kernel_snapshot! { before_transition = *w }
     kernel_snapshot! { before_out = *out }
     match fact {
@@ -174,7 +174,10 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             if !w.nodes[i].phase.is_closed() {
                 w.nodes[i].priority = priority;
             }
-            kernel_proof! { reveal(retirement::fact_node); }
+            kernel_proof! {
+                retirement_handler_lemmas::shape_frame(before_transition@.nodes@[i as int], w.nodes@[i as int]);
+                reveal(retirement::fact_node);
+            }
         }
         Fact::PrClosedByPerson => {
             let m = &mut w.nodes[i];
@@ -183,6 +186,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 return;
             }
             m.pr_open = false;
+            kernel_proof! { retirement_handler_lemmas::shape_frame(before_transition@.nodes@[i as int], *m); }
             if !m.phase.is_stopping() && !m.phase.is_closed() {
                 notice(out, i, Notice::Note(NoteKind::PrClosed));
                 enter_stopping(m, Outcome::Stopped);
@@ -203,6 +207,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             );
             if published {
                 update_recheck_head(&mut w.nodes[i], head);
+                kernel_proof! { retirement_handler_lemmas::shape_frame(before_transition@.nodes@[i as int], w.nodes@[i as int]); }
                 recheck(w, i, Phase::Ready(Resume::Checking), out);
                 kernel_proof! {
                     retirement_runtime::outside_retry(before_transition@.nodes@[i as int], head,
@@ -227,6 +232,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             let m = &mut w.nodes[i];
             if matches!(m.phase, Phase::Publishing | Phase::Queued) {
                 set_phase(m, Phase::Rebasing);
+                kernel_proof! { retirement_handler_lemmas::shape_nonterminal(*m); }
             }
             kernel_proof! {
                 reveal(retirement::fact_node);
@@ -242,6 +248,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             }
             m.run_incidents = (m.run_incidents + 1).min(2);
             let needs_rob = m.run_incidents >= 2;
+            kernel_proof! { retirement_handler_lemmas::shape_frame(before_transition@.nodes@[i as int], *m); }
             raise_incident(w, i, needs_rob, out);
             kernel_proof! { retirement_runtime::upstream_result(before_transition@.nodes@[i as int]); }
         }

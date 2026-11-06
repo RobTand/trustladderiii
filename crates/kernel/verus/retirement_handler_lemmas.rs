@@ -67,4 +67,17 @@ pub(super) proof fn recheck_progress(n: Node, target: Phase, id: u64)
         port_review_retry::rechecked(n, target, id).0, target, id,
         port_review_retry::rechecked(n, target, id).1);
 }
+/// #771: changing fields outside the settle-shape tuple preserves it exactly.
+pub(super) proof fn shape_frame(before: Node, after: Node)
+    requires before.phase == after.phase, before.pos == after.pos,
+        before.pool == after.pool, before.holds == after.holds,
+    ensures settle_shape(before) == settle_shape(after),
+{ reveal(settle_shape); }
+
+/// #771 conflict row: a nonterminal target has no teardown shape obligation.
+pub(super) proof fn shape_nonterminal(n: Node)
+    requires !(n.phase is Closed || n.phase is Stopping),
+    ensures settle_shape(n),
+{ reveal(settle_shape); }
+
 }

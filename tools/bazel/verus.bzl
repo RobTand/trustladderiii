@@ -1127,6 +1127,8 @@ def verus_proofs():
             "retirement_handler_ci_infrastructure": ("kernel::retirement_handler_lemmas#ci_infrastructure", 1),
             "retirement_handler_recheck_shape": ("kernel::retirement_handler_lemmas#recheck_shape", 1),
             "retirement_handler_recheck_progress": ("kernel::retirement_handler_lemmas#recheck_progress", 1),
+            "retirement_handler_shape_frame": ("kernel::retirement_handler_lemmas#shape_frame", 1),
+            "retirement_handler_shape_nonterminal": ("kernel::retirement_handler_lemmas#shape_nonterminal", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
