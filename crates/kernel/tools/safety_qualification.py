@@ -399,6 +399,15 @@ CASES = {
         '            on_answer(w, i, question, answer, out);',
         '            let _ = (question, answer);',
         '//crates/kernel:verus_commands'),
+    'port_answer_mark_handled': ('crates/kernel/src/answers.rs',
+        '    mark_handled(m);',
+        '    let _ = m.pos;',
+        '//crates/kernel:verus_port_answers_cleanup_handler'),
+    'answer_cleanup_duplicate': ('crates/kernel/src/answers.rs',
+        '    mark_handled(m);',
+        '    mark_handled(m);\n    mark_handled(m);',
+        '//crates/kernel:lib_test_tl3_kernel'),
+
 
 }
 

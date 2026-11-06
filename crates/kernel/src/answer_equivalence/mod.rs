@@ -329,3 +329,23 @@ fn clarification_allocator_order_matches_reference() {
     world.next_question = 1;
     compare(world, 0, Answer::Unclear, Outbox::new());
 }
+
+#[test]
+fn cleanup_advances_once_like_reference() {
+    let mut world = World::new(&[1], 1);
+    let mut n = Node::new(RepoId(0));
+    n.phase = Phase::Stopping(Outcome::Stopped);
+    n.run = Some(0);
+    n.pool = true;
+    n.job = Some(0);
+    n.question = Some(Question {
+        id: 0,
+        kind: QKind::CleanupFailed,
+        cont: Cont::Nowhere,
+        cost: 0,
+        clarified: false,
+    });
+    world.nodes.push(n);
+    world.next_question = 1;
+    compare(world, 0, Answer::MarkHandled, Outbox::new());
+}

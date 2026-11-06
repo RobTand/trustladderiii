@@ -121,9 +121,7 @@ fn answer_stopping(w: &mut World, i: usize, _id: u64, answer: Answer) -> (result
             Answer::Retry => w.nodes[i].question = None,
             Answer::MarkHandled => {
                 let m = &mut w.nodes[i];
-                m.question = None;
-                kernel_proof! { port_answers_handler::stopping_question(before_answer@); }
-                mark_handled(m);
+                answer_cleanup(m);
             }
             _ => {}
         }
@@ -134,6 +132,29 @@ fn answer_stopping(w: &mut World, i: usize, _id: u64, answer: Answer) -> (result
             port_answers_handler::post_unchanged(before_answer@, _id, answer, before_question@);
         }
     } }
+}
+}
+
+kernel_fn! {
+/// Cleanup question row / #806: isolate the verbatim question-clear and cleanup calls.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn answer_cleanup(m: &mut Node) -> (result: ()) [
+    requires old(m).phase is Stopping, old(m).question.is_some(),
+    ensures final(m).pos == if matches!(current_item(Node { question: None, ..*old(m) }), Some(Item::Teardown(_))) {
+            (old(m).pos + 1) as u8
+        } else { old(m).pos },
+        *final(m) == (Node { question: None, pos: final(m).pos, run: final(m).run,
+            pool: final(m).pool, job: final(m).job, pr_open: final(m).pr_open,
+            worktree: final(m).worktree, ..*old(m) }),
+        (settle_shape(*old(m)) ==> settle_shape(*final(m))),
+        (old(m).effect.is_none() && !old(m).waiting_incident
+            && matches!(current_item(Node { question: None, ..*old(m) }), Some(Item::Teardown(_))))
+            ==> distance(*final(m)) < distance(*old(m)),
+] hide [current_item, items, settle_shape] {
+    kernel_snapshot! { before_answer = *m }
+    kernel_proof! { port_answers_handler::stopping_question(before_answer@); }
+    m.question = None;
+    mark_handled(m);
 }
 }
 
