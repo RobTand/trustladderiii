@@ -3,16 +3,13 @@ use super::*;
 
 kernel_fn! {
 /// Acknowledgement rows / #771: stale delivery keys stutter; retries stay bounded.
-#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-    ensures port_deps_adoption::ack_post(old(w).nodes@[i as int], final(w).nodes@[i as int], seq, ack,
-            *old(out), *final(out), old(w).next_question, final(w).next_question),
-        (node_checked(*old(w), old(w).nodes@[i as int])
+    ensures (node_checked(*old(w), old(w).nodes@[i as int])
             && (!old(w).nodes@[i as int].paused || old(w).nodes@[i as int].phase is Stopping)
             && ack == Ack::Confirmed && (match old(w).nodes@[i as int].effect {
                 Some(e) => e.seq == seq, None => false,
@@ -38,45 +35,13 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 2,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] {
-    kernel_snapshot! { before_ack = w.nodes@[i as int] }
-    kernel_snapshot! { before_ack_out = *out }
-    kernel_snapshot! { before_ack_question = w.next_question }
-    let Some(e) = w.nodes[i].effect else {
-        kernel_proof! {
-            assert(port_deps_adoption::ack_post(before_ack@, w.nodes@[i as int], seq, ack,
-                before_ack_out@, *out, before_ack_question@, w.next_question)) by {
-                reveal(port_deps_adoption::ack_post); reveal(port_deps_adoption::preparing);
-                reveal(port_deps_adoption::acknowledged);
-            }
-        }
-        return
-    };
+] proof [reveal(distance);] {
+    let Some(e) = w.nodes[i].effect else { return };
     if e.seq != seq {
-        kernel_proof! {
-            assert(port_deps_adoption::ack_post(before_ack@, w.nodes@[i as int], seq, ack,
-                before_ack_out@, *out, before_ack_question@, w.next_question)) by {
-                reveal(port_deps_adoption::ack_post); reveal(port_deps_adoption::preparing);
-                reveal(port_deps_adoption::acknowledged);
-            }
-        }
         return;
-    }
-    kernel_proof! {
-        if ack == Ack::Confirmed && !(w.nodes@[i as int].phase is Closed)
-            && (!w.nodes@[i as int].paused || w.nodes@[i as int].phase is Stopping) {
-            port_deps_adoption_proof::clear_effect(w.nodes@[i as int]);
-        }
     }
     w.nodes[i].effect = None;
     if e.cancelling {
-        kernel_proof! {
-            assert(port_deps_adoption::ack_post(before_ack@, w.nodes@[i as int], seq, ack,
-                before_ack_out@, *out, before_ack_question@, w.next_question)) by {
-                reveal(port_deps_adoption::ack_post); reveal(port_deps_adoption::preparing);
-                reveal(port_deps_adoption::acknowledged);
-            }
-        }
         return;
     }
     match ack {
@@ -88,13 +53,6 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
         }
         Ack::BodyPolicyRefused => effect_failed(w, i, e.kind, out),
     }
-    kernel_proof! {
-        assert(port_deps_adoption::ack_post(before_ack@, w.nodes@[i as int], seq, ack,
-            before_ack_out@, *out, before_ack_question@, w.next_question)) by {
-            reveal(port_deps_adoption::ack_post); reveal(port_deps_adoption::preparing);
-            reveal(port_deps_adoption::acknowledged);
-        }
-    }
 }
 }
 
@@ -104,9 +62,7 @@ kernel_fn! {
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
     requires old(m).generation < u64::MAX,
-    ensures (old(m).phase == Phase::Making && old(m).pos == 0 && kind == EffectKind::PrepareWorktree
-            ==> *final(m) == port_deps_adoption::confirmed(*old(m))),
-        (matches!(kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase)
+    ensures (matches!(kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase)
             ==> distance(*final(m)) == distance(*old(m))),
         (old(m).effect.is_none() && old(m).question.is_none() && !old(m).waiting_incident
             && (!old(m).paused || old(m).phase is Stopping)
@@ -139,12 +95,6 @@ pub(super) fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
     }
     kernel_proof! { cleanup_lemmas::resource_distance(before_confirmed@, *m); }
     confirmed_agenda(m, kind);
-    kernel_proof! {
-        assert((before_confirmed@.phase == Phase::Making && before_confirmed@.pos == 0
-            && kind == EffectKind::PrepareWorktree) ==> *m == port_deps_adoption::confirmed(before_confirmed@)) by {
-            reveal(port_deps_adoption::confirmed);
-        }
-    }
 }
 }
 
@@ -156,9 +106,7 @@ kernel_fn! {
 fn confirmed_agenda(m: &mut Node, kind: EffectKind) -> (result: ()) [
     requires old(m).generation < u64::MAX,
         kind == EffectKind::StopRun ==> !old(m).pool,
-    ensures (old(m).phase == Phase::Making && old(m).pos == 0 && kind == EffectKind::PrepareWorktree
-            ==> *final(m) == port_deps_adoption::agenda(*old(m))),
-        (matches!(kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase)
+    ensures (matches!(kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase)
             ==> distance(*final(m)) == distance(*old(m))),
         (old(m).effect.is_none() && old(m).question.is_none() && !old(m).waiting_incident
             && (!old(m).paused || old(m).phase is Stopping)
@@ -177,7 +125,6 @@ fn confirmed_agenda(m: &mut Node, kind: EffectKind) -> (result: ()) [
         final(m).fx_incidents == old(m).fx_incidents,
         final(m).last_cmd == old(m).last_cmd,
 ] proof [reveal(distance);] {
-    kernel_snapshot! { before_agenda = *m }
     if !kind.starts_operation() {
         if let Some(Item::Do(k) | Item::Teardown(k)) = m.current() {
             if k == kind {
@@ -187,23 +134,11 @@ fn confirmed_agenda(m: &mut Node, kind: EffectKind) -> (result: ()) [
                         m.head = Some(head);
                         m.checked = None;
                         set_phase(m, Phase::Checking);
-                        kernel_proof! {
-        assert((before_agenda@.phase == Phase::Making && before_agenda@.pos == 0
-            && kind == EffectKind::PrepareWorktree) ==> *m == port_deps_adoption::agenda(before_agenda@)) by {
-            reveal(port_deps_adoption::agenda); reveal(retirement::phased);
-        }
-    }
                         return;
                     }
                 }
                 m.pos += 1;
             }
-        }
-    }
-    kernel_proof! {
-        assert((before_agenda@.phase == Phase::Making && before_agenda@.pos == 0
-            && kind == EffectKind::PrepareWorktree) ==> *m == port_deps_adoption::agenda(before_agenda@)) by {
-            reveal(port_deps_adoption::agenda); reveal(retirement::phased);
         }
     }
 }

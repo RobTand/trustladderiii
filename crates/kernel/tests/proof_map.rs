@@ -136,14 +136,6 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
         "port_deps_s2_verify_registration",
     ),
     ("apply_dependency_remove", "port_deps_s2_removal"),
-    (
-        "apply_adoption_at_most_once",
-        "port_deps_s2_verify_adoption",
-    ),
-    (
-        "apply_adoption_has_no_maker_credit",
-        "port_deps_s2_verify_adoption",
-    ),
 ];
 
 /// Quoted names between the proof-map markers in lib.rs.

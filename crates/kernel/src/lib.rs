@@ -2354,12 +2354,6 @@ mod port_advance_step_frames;
 #[path = "../verus/port_deps_admission.rs"]
 mod port_deps_admission;
 #[cfg(verus_keep_ghost)]
-#[path = "../verus/port_deps_adoption.rs"]
-mod port_deps_adoption;
-#[cfg(verus_keep_ghost)]
-#[path = "../verus/port_deps_adoption_proof.rs"]
-mod port_deps_adoption_proof;
-#[cfg(verus_keep_ghost)]
 #[path = "../verus/port_deps_apply.rs"]
 mod port_deps_apply;
 #[cfg(verus_keep_ghost)]

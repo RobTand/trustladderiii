@@ -377,14 +377,6 @@ CASES = {
                                'if d.node != node || d.target.kind != kind || d.target.number != number {',
                                'if d.node != node || d.target.kind != kind {',
                                '//crates/kernel:verus_dependencies_remove_dependency'),
-    'w7_adoption_once': ('crates/kernel/src/acknowledgements.rs',
-                          'if kind == EffectKind::PrepareWorktree && !m.adopted {',
-                          'if kind == EffectKind::PrepareWorktree {',
-                          '//crates/kernel:verus_acknowledgements_confirmed_agenda'),
-    'w7_adoption_no_credit': ('crates/kernel/src/acknowledgements.rs',
-                               'm.adopted = true;',
-                               'm.adopted = true;\n                        m.credit.earned = 1;',
-                               '//crates/kernel:verus_acknowledgements_confirmed_agenda'),
 }
 
 
