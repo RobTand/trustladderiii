@@ -8,8 +8,6 @@ mod ack_wait;
 mod check_reads;
 #[path = "mergify/ci_evidence.rs"]
 mod ci_evidence;
-#[path = "mergify/queue_entry.rs"]
-mod queue_entry;
 #[path = "mergify/classic_protection.rs"]
 mod classic_protection;
 #[path = "mergify/dequeue_followups.rs"]
@@ -24,6 +22,8 @@ mod merge_closure;
 mod missing_checks;
 #[path = "mergify/ordering.rs"]
 mod ordering;
+#[path = "mergify/queue_entry.rs"]
+mod queue_entry;
 #[path = "mergify/requeue.rs"]
 mod requeue;
 mod support;
@@ -2716,7 +2716,10 @@ fn main() {
             queue_entry::scenario(&database.create(&format!("queue_entry_{mode}")), mode);
         }
         database.stop();
-        println!("{} Mergify scenarios passed; no skips", queue_entry::MODES.len());
+        println!(
+            "{} Mergify scenarios passed; no skips",
+            queue_entry::MODES.len()
+        );
         return;
     }
     match std::env::args().nth(1).as_deref() {
@@ -2983,8 +2986,8 @@ fn main() {
         3, 3, 4, 3, 3, 2, 10, 10, 2, 2, 3, 3, 16, 3, 3, 42, 3, 11, 3, 4, 53, 6, 41, 6, 4, 5, 26, 5,
         5, 28, 3, 8, 2, 6, 5, 9, 15, 47, 6, 5, 14, 4, 11, 4, 7, 6, 7, 28, 7, 35, 15, 21, 3, 18, 7,
         3, 55, 5, 23, 5, 7, 7, 2, 4, 46, 8, 85, 4, 15, 83, 21, 7, 5, 5, 4, 3, 8, 68, 1, 14, 5, 23,
-        10, 4, 13, 4, 3, 5, 8, 3, 10, 3, 13, 7, 9, 28, 69, 44, 139, 19, 18, 14, 29, 1, 20,
-        10, 10, 10, 10, 10, 10, 10,
+        10, 4, 13, 4, 3, 5, 8, 3, 10, 3, 13, 7, 9, 28, 69, 44, 139, 19, 18, 14, 29, 1, 20, 10, 10,
+        10, 10, 10, 10, 10,
     ];
     let groups: Vec<_> = seconds
         .iter()

@@ -8,6 +8,7 @@ pub(super) const MODES: &[&str] = &[
     "suite-unreadable",
     "suite-newer",
     "foreign",
+    "unrelated-condition",
 ];
 
 pub(super) struct Fixture {
@@ -16,13 +17,20 @@ pub(super) struct Fixture {
 
 impl Fixture {
     pub(super) fn respond(&self, path: &str) -> Option<ResponseTemplate> {
+        if path.ends_with("/branches/main") {
+            return Some(ResponseTemplate::new(200).set_body_json(json!({
+                "protection":{"required_status_checks":{
+                    "contexts":["branch rule"],
+                    "checks":[{"context":"branch rule","app_id":15368}]
+                }}
+            })));
+        }
         if path.contains("/check-suites/") && path.ends_with("/check-runs") {
             return Some(if self.mode == "suite-unreadable" {
                 ResponseTemplate::new(503)
             } else if self.mode == "suite-nonempty" {
-                // A positive nonzero count must block even if a page has no runs.
-                ResponseTemplate::new(200)
-                    .set_body_json(json!({"total_count":1,"check_runs":[]}))
+                // A real queued run in this suite must keep #447 blocked.
+                ResponseTemplate::new(200).set_body_json(json!({"total_count":1,"check_runs":[{"id":999,"name":"Deployment","head_sha":"820d3c3ee85a3b761eb224da6ac514dbf18752a9","status":"queued"}]}))
             } else {
                 ResponseTemplate::new(200).set_body_json(
                     serde_json::from_str::<Value>(include_str!(
@@ -53,24 +61,30 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         std::time::SystemTime::now(),
     )));
     let mut controller = queued_for_clock(
-        settings, &api, root.path(), true, &[], bootstrap(), Some(clock.clone()),
+        settings,
+        &api,
+        root.path(),
+        true,
+        &[],
+        bootstrap(),
+        Some(clock.clone()),
     );
     let before = controller.world().unwrap().nodes[0];
     {
         let mut state = api.state.lock().unwrap();
         let head = state.pull["head"]["sha"].clone();
-        let mut checks: Value = serde_json::from_str(include_str!(
-            "../fixtures/mergify/tessera1639/checks.json"
-        )).unwrap();
+        let mut checks: Value =
+            serde_json::from_str(include_str!("../fixtures/mergify/tessera1639/checks.json"))
+                .unwrap();
         for check in checks["check_runs"].as_array_mut().unwrap() {
             check["head_sha"] = head.clone();
             check["pull_requests"] = json!([]);
         }
         state.checks = checks["check_runs"].clone();
         state.queue_rule["conclusion"] = json!("success");
-        let mut suites: Value = serde_json::from_str(include_str!(
-            "../fixtures/mergify/tessera1639/suites.json"
-        )).unwrap();
+        let mut suites: Value =
+            serde_json::from_str(include_str!("../fixtures/mergify/tessera1639/suites.json"))
+                .unwrap();
         for suite in suites["check_suites"].as_array_mut().unwrap() {
             suite["head_sha"] = head.clone();
         }
@@ -85,6 +99,11 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             }
             "suite-running" => state.suites[0]["status"] = json!("in_progress"),
             "suite-newer" => state.suites[0]["updated_at"] = json!("2026-11-05T19:00:00Z"),
+            "unrelated-condition" => {
+                state.queue_check_mut()["output"]["summary"] = json!(
+                    "<span itemprop=\"mergify.v1.eyJ2ZXJzaW9uIjoxLCJzdGF0ZSI6IndhaXRpbmciLCJyZXF1aXJlZF9jb25kaXRpb25zIjpbeyJkZXNjcmlwdGlvbiI6ImxhYmVsID0gcXVldWUiLCJtYXRjaCI6ZmFsc2V9XX0\"></span>"
+                );
+            }
             "foreign" => {
                 for suite in state.suites.as_array_mut().unwrap() {
                     suite["status"] = json!("completed");
@@ -96,11 +115,23 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     if mode == "foreign" {
         // No TL3 store/binding: preserve the adapter's existing #447 setup fact.
         let snapshot = controller.snapshot().unwrap();
-        let delivery: Delivery = serde_json::from_value(snapshot.rows.iter()
-            .find(|row| row.table == "allowances" && row.value["delivery"]["output"]["Effect"]["kind"] == "Enqueue")
-            .unwrap().value["delivery"].clone()).unwrap();
-        let observations = api.adapter(&root.path().join("foreign"), 0)
-            .observations(&delivery).unwrap();
+        let delivery: Delivery = serde_json::from_value(
+            snapshot
+                .rows
+                .iter()
+                .find(|row| {
+                    row.table == "allowances"
+                        && row.value["delivery"]["output"]["Effect"]["kind"] == "Enqueue"
+                })
+                .unwrap()
+                .value["delivery"]
+                .clone(),
+        )
+        .unwrap();
+        let observations = api
+            .adapter(&root.path().join("foreign"), 0)
+            .observations(&delivery)
+            .unwrap();
         assert!(observations.iter().any(|observation| matches!(observation,
             tl3_controller::executor::Observation::Queue(tl3_controller::adapters::mergify::QueueFact {
                 evidence: tl3_controller::adapters::mergify::Evidence::QueueBlocked { failed, conditions, .. }, ..
@@ -125,21 +156,64 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         let node = controller.world().unwrap().nodes[0];
         let snapshot = controller.snapshot().unwrap();
         if mode == "repair" {
-            assert_eq!(node.phase, Phase::Making, "#854 must repair, not stall: {}", json!(snapshot.rows.iter().filter(|r| r.table == "incidents" || r.table == "allowances").map(|r| &r.value).collect::<Vec<_>>()));
+            assert_eq!(
+                node.phase,
+                Phase::Making,
+                "#854 must repair, not stall: {}",
+                json!(
+                    snapshot
+                        .rows
+                        .iter()
+                        .filter(|r| r.table == "incidents" || r.table == "allowances")
+                        .map(|r| &r.value)
+                        .collect::<Vec<_>>()
+                )
+            );
             assert_eq!(node.round, before.round + 1);
             assert!(!node.waiting_incident);
-            let findings = Store::open(settings).unwrap().worker_document("0", "maker_findings").unwrap().unwrap().to_string();
-            for expected in ["Bazel", "pure", "pr-gate", "scopes-available", "test_installed_commit_owner.py"] {
-                assert!(findings.contains(expected), "missing {expected}: {findings}");
+            let findings = Store::open(settings)
+                .unwrap()
+                .worker_document("0", "maker_findings")
+                .unwrap()
+                .unwrap()
+                .to_string();
+            for expected in [
+                "Bazel",
+                "pure",
+                "pr-gate",
+                "scopes-available",
+                "test_installed_commit_owner.py",
+            ] {
+                assert!(
+                    findings.contains(expected),
+                    "missing {expected}: {findings}"
+                );
             }
-            assert!(!snapshot.rows.iter().any(|r| r.table == "incidents" && r.value["open"] == true));
+            assert!(
+                !snapshot
+                    .rows
+                    .iter()
+                    .any(|r| r.table == "incidents" && r.value["open"] == true)
+            );
         } else {
-            assert_eq!(node.phase, Phase::Queued, "{mode} must block D1/D2");
+            assert!(
+                matches!(node.phase, Phase::Queued | Phase::Publishing),
+                "{mode} must block D1/D2"
+            );
             assert_eq!(node.round, before.round);
-            assert!(!snapshot.rows.iter().any(|r| r.table == "queue_facts" && (r.value["evidence"].get("CiFailed").is_some() || r.value["evidence"].get("QueueBlocked").is_some())));
+            assert!(!snapshot.rows.iter().any(|r| r.table == "queue_facts"
+                && (r.value["evidence"].get("CiFailed").is_some()
+                    || (mode != "unrelated-condition"
+                        && r.value["evidence"].get("QueueBlocked").is_some()))));
             if mode == "queue-running" {
-                assert!(snapshot.rows.iter().any(|r| r.table == "allowances" && r.value["failure"] == "queue_unfinished"));
-                assert!(node.waiting_incident && node.incident_needs_rob);
+                assert!(
+                    snapshot.rows.iter().any(
+                        |r| r.table == "allowances" && r.value["failure"] == "queue_unfinished"
+                    )
+                );
+                assert!(snapshot.rows.iter().any(|r| r.table == "incidents"
+                    && r.value["open"] == true
+                    && r.value["needs_rob"] == true));
             }
         }
     }

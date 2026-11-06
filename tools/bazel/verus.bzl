@@ -79,6 +79,18 @@ def verus_proofs():
 
     if native.package_name() == "crates/mergify":
         verus_test(
+            name = "verus_queue_entry",
+            src = "proofs/queue_entry.rs",
+            srcs = ["src/decide/queue_entry.rs"],
+            expected_obligations = 5,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+        verus_test(
             name = "verus_delivery",
             src = "proofs/delivery.rs",
             srcs = ["src/decide/delivery_step.rs"],
