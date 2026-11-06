@@ -114,3 +114,7 @@ pub mod looks {
     }
     include!("incident-helpers.rs");
 }
+
+mod queue_cause { include!("cause-types-current.rs"); }
+#[path = "../../src/queue_cause_decide.rs"]
+mod queue_cause_decide;
