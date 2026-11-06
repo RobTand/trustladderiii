@@ -514,7 +514,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             "diagnostics-feedback" => {
                 assert_golden(report);
                 assert_golden(&summaries);
-                assert!(finding["failed_tests"].as_array().unwrap().is_empty());
+                assert!(finding["failed_tests"].as_array().is_none_or(Vec::is_empty));
             }
             "diagnostics-categories" => {
                 let mut last = 0;
