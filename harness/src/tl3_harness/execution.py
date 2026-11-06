@@ -323,9 +323,6 @@ def selected_candidates(repo: Path, tool: TestTool, old: Path, new: Path, config
             if (set(group) <= named_files and not known_failure) or tool.changed_existing_tests(old, new, group):
                 continue
             candidates.append(group)
-        if candidates:
-            validate_check_plan(plan + (Check(SELECTED_CHECK, Kind.REGRESSION,
-                                             tuple(member for group in candidates for member in group)),))
     except (RecursionError, MemoryError):
         return ()
     except ValueError as error:
@@ -610,6 +607,13 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         selected_before, selection_receipt = selected_base(tool, old, container, candidates, base, root, progress, selected_tests, config,
                                                           tuple(group for group in candidates if any(
                                                               test.split("::", 1)[0] in group for test in selected_failures)))
+        if selected_before:
+            try:
+                # Discovery can exceed the envelope; only admitted complete units produce results.
+                validate_check_plan(plan + (Check(SELECTED_CHECK, Kind.REGRESSION,
+                                                 tuple(member for group in selected_before for member in group)),))
+            except ValueError as error:
+                raise HarnessInputError(f"Selected execution groups exceed report limits: {error}") from error
         # Filter complete units: no head run may lose a fixture companion.
         kept = tuple(group for group in selected_before
                      if all(outcome == Outcome.PASSED for outcome in selected_before[group].outcomes.values()))
