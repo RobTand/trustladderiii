@@ -338,15 +338,20 @@ def test_options_are_bounded(fixture, repeat, parallel):
         test_tool.run(fixture, CONTAINER, (), repeat=repeat, parallel=parallel)
 
 
-def test_repeat_with_many_long_failures_stays_within_the_summary_bound(fixture):
-    # #432: worker fields (receipts, tree, action key) still fit after the harness result.
+def test_repeat_with_many_long_failures_retains_facts_for_the_worker(fixture):
+    # #432/#823: retain test facts while preserving the legacy run-list caps.
     (fixture / "test_long.py").write_text("".join(
         f"def test_{'x' * 400}_{index}():\n    assert False, {'y' * 2000!r}\n" for index in range(40)))
     result = test_tool.run(fixture, CONTAINER, ("test_long.py",), repeat=3)
     assert result["status"] == "completed"
     assert result["totals"]["failed"] == 40
     assert [run["totals"]["failed"] for run in result["runs"]] == [40, 40, 40]
-    assert len(json.dumps(result).encode()) <= test_tool.SUMMARY_BYTES - 1024
+    assert len(result['tests']) == 40
+    assert [len(run['failed']) for run in result['runs']] == [18, 0, 0]
+    assert result['runs'][0]['failed'] == [entry['test'] for entry in result['tests'][:18]]
+    assert result['note'].startswith('Truncated')
+    assert test_tool.action_summary(result) == result
+    assert len(json.dumps(result).encode()) <= test_tool.ACTION_SUMMARY_BYTES
     assert result["note"].startswith("Truncated")
 
 

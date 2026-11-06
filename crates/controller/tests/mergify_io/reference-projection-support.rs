@@ -142,3 +142,10 @@ fn person_facts(
         })
         .collect()
 }
+
+pub(crate) fn heal_phase(phase: Option<tl3_kernel::Phase>) -> bool {
+    matches!(
+        phase,
+        Some(tl3_kernel::Phase::Publishing | tl3_kernel::Phase::Queued)
+    )
+}

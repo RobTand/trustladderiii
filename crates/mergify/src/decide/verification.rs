@@ -67,3 +67,26 @@ macro_rules! decide_report {
         }
     };
 }
+
+#[cfg(all(not(verus_keep_ghost), test))]
+macro_rules! decide_infra {
+    (unread $body:expr) => {
+        |_| $body
+    };
+    ($body:expr) => {
+        |_| $body
+    };
+}
+#[cfg(verus_keep_ghost)]
+macro_rules! decide_infra {
+    (unread $body:expr) => {
+        vstd::prelude::verus_exec_expr! {
+            |check: u8| -> (result: bool) requires false ensures result == ($body) { $body }
+        }
+    };
+    ($body:expr) => {
+        vstd::prelude::verus_exec_expr! {
+            |check: u8| -> (result: bool) ensures result == ($body) { $body }
+        }
+    };
+}

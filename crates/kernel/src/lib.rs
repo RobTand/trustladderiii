@@ -35,7 +35,13 @@ use ranks::advance_node;
 use ranks::*;
 
 mod checking;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/cleanup_lemmas.rs"]
+mod cleanup_lemmas;
 mod events;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/events_lemmas.rs"]
+mod events_lemmas;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement.rs"]
 mod retirement;
@@ -115,6 +121,22 @@ pub use queries::Wait;
 
 #[cfg(kani)]
 mod proofs;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_phase.rs"]
+mod progress_phase;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_phase_late_witness.rs"]
+mod progress_phase_late_witness;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_phase_measure.rs"]
+mod progress_phase_measure;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_phase_witness.rs"]
+mod progress_phase_witness;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/timing3_lemmas.rs"]
+mod timing3_lemmas;
 
 /// Starting credit is the request's size in leaves plus this reserve.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
@@ -1408,10 +1430,33 @@ kernel_fn! {
     }
 }
 
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #805 / #806: Ready continuations inherit the resumed phase rank and its bound.
+#[verifier::spinoff_prover]
+proof fn cont_rank_ready(r: Resume)
+    ensures continuation_rank(Cont::Ready(r)) == phase_rank(Phase::Ready(r)),
+        continuation_rank(Cont::Ready(r)) <= 24,
+{
+    reveal_with_fuel(phase_rank, 3);
+    match r {
+        Resume::Making => {},
+        Resume::Checking => {},
+        Resume::Reviewing => {},
+        Resume::Publishing => {},
+        Resume::Rebasing => {},
+    }
+}
+}
+
 kernel_fn! {
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
     fn cont_rank(cont: Cont) -> (result: u64) [
         ensures result as int == continuation_rank(cont), result <= 32,
     ] {
+        kernel_proof! {
+            if let Cont::Ready(r) = cont { cont_rank_ready(r); }
+        }
         match cont {
             Cont::Ingesting => 32,
             Cont::Auditing => 30,
@@ -1472,21 +1517,63 @@ impl World {
     }
     }
 
-    /// The sum of every node's distance to Closed.
-    pub fn measure(&self) -> u64 {
-        let mut total = 0;
-        for n in &self.nodes {
-            total += n.distance();
-        }
-        total += self
-            .dependencies
-            .iter()
-            .filter(|d| {
-                d.status != DependencyStatus::Delivered
-                    && !self.nodes[d.node.0 as usize].phase.is_closed()
-            })
-            .count() as u64;
+    kernel_fn! {
+    /// #806: the executable sum equals #805's natural progress measure.
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+    pub fn measure(&self) -> (result: u64) [
+        requires progress_measure(*self) <= u64::MAX,
+            dependencies::edges_indexable(*self),
+        ensures result as nat == progress_measure(*self),
+    ] proof [progress::measure_definition(*self, 0);
+        dependencies::indexable_definition(*self);] {
+        let mut total = 0u64;
+        let mut i = 0usize;
+        kernel_while! { (i < self.nodes.len()) [
+            invariant i <= self.nodes.len(),
+                total as nat == node_total(self.nodes@.take(i as int)),
+                node_total(self.nodes@) + progress::edge_total(self.nodes@,
+                    self.dependencies@, self.dependencies@.len()) <= u64::MAX,
+            decreases self.nodes.len() - i,
+        ] {
+            kernel_proof! {
+                progress_phase_measure::node_prefix_bound(self.nodes@, (i + 1) as nat);
+                ranks::node_distance_definition(self.nodes@[i as int]);
+                assert(self.nodes@.take(i as int + 1).drop_last() == self.nodes@.take(i as int));
+                assert(self.nodes@.take(i as int + 1).last() == self.nodes@[i as int]);
+            }
+            total += self.nodes[i].distance();
+            i += 1;
+        } }
+        kernel_proof! { assert(self.nodes@.take(i as int) == self.nodes@); }
+        let mut count = 0usize;
+        let mut i = 0usize;
+        kernel_while! { (i < self.dependencies.len()) [
+            invariant i <= self.dependencies.len(), count <= i,
+                self.nodes@.len() <= usize::MAX,
+                count as nat == progress::edge_total(self.nodes@, self.dependencies@, i as nat),
+                total as nat == node_total(self.nodes@),
+                node_total(self.nodes@) + progress::edge_total(self.nodes@,
+                    self.dependencies@, self.dependencies@.len()) <= u64::MAX,
+                dependencies::edges_indexable(*self),
+            decreases self.dependencies.len() - i,
+        ] {
+            let d = &self.dependencies[i];
+            kernel_proof! {
+                dependencies::indexable_definition(*self);
+                progress::measure_definition(*self, (i + 1) as nat);
+                assert((d.node.0 as int) < self.nodes@.len());
+                assert(d.node.0 as usize as int == d.node.0 as int);
+            }
+            if d.status != DependencyStatus::Delivered
+                && !self.nodes[d.node.0 as usize].phase.is_closed() {
+                count += 1;
+            }
+            i += 1;
+            kernel_proof! { progress::measure_definition(*self, i as nat); }
+        } }
+        total += count as u64;
         total
+    }
     }
 
     /// Everything the kernel promises about a world at rest: consistent and settled.
@@ -1920,6 +2007,7 @@ kernel_fn! {
         /// and files and waits in Ready, resuming at the step it reached. Q30 / #771.
         // The pinned Verus frontend requires nested if-let instead of let chains.
         #[allow(clippy::collapsible_if)]
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
     fn pause_node(m: &mut Node) -> (result: bool) [
     requires holding(old(m).phase) ==> old(m).generation < u64::MAX,
     ensures final(m).generation as int <= old(m).generation as int + 1,
@@ -1946,6 +2034,7 @@ kernel_fn! {
         final(m).last_cmd == old(m).last_cmd,
         final(m).holds == if holding(old(m).phase) { false } else { old(m).holds },
     ] {
+        kernel_proof! { timing3_lemmas::pause_resume(m.phase); }
         if m.phase.holding() {
             if let Some(r) = m.phase.resume() {
                 m.holds = false;
@@ -2023,3 +2112,119 @@ spec fn oldest_waiter(w: World, i: int) -> bool {
         } else { !pool_precedes(w.nodes@[j], w.nodes@[i]) }
 }
 }
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate.rs"]
+mod progress_gate;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_classification.rs"]
+mod progress_gate_classification;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_waiting.rs"]
+mod progress_gate_waiting;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_permutation.rs"]
+mod progress_gate_permutation;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_maker.rs"]
+mod progress_gate_maker;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_fixture.rs"]
+mod progress_gate_fixture;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_covers.rs"]
+mod progress_gate_covers;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_contracts.rs"]
+mod progress_gate_contracts;
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #806: opaque public checker clause; the four-leaf proof exposes it locally.
+pub closed spec fn progress_gate_check_result(w: World, ok: bool) -> bool {
+    progress_gate_contracts::checked(w, ok)
+}
+}
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_apply.rs"]
+mod progress_gate_apply;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_apply_merge.rs"]
+mod progress_gate_apply_merge;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_apply_resume.rs"]
+mod progress_gate_apply_resume;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_apply_witness.rs"]
+mod progress_gate_apply_witness;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_apply_merge_safe.rs"]
+mod progress_gate_apply_merge_safe;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_apply_resume_safe.rs"]
+mod progress_gate_apply_resume_safe;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_gate_apply_resume_frame.rs"]
+mod progress_gate_apply_resume_frame;
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #806: original gate checker domain, exposed by the public checker contract.
+pub closed spec fn gate_apply_checker_domain(w: World) -> bool { progress_gate_apply::domain(w) }
+/// #806: full production consistency, including gate, pool and ticket rules.
+pub closed spec fn gate_apply_checker_accepted(w: World) -> bool { progress_gate_apply::accepted(w) }
+}
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_unplanned.rs"]
+mod progress_unplanned;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_unplanned_admission.rs"]
+mod progress_unplanned_admission;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_unplanned_waiting.rs"]
+mod progress_unplanned_waiting;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/progress_unplanned_witness.rs"]
+mod progress_unplanned_witness;
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #806: the first Unplanned root wins the real selector's ordered outside branches.
+pub closed spec fn unplanned_first_selection(w: World, result: Option<Event>) -> bool {
+    (w.nodes@.len() > 0 && w.nodes@[0].phase == Phase::Unplanned
+        && progress_unplanned::obstructed(w.nodes@[0]))
+        ==> result == Some(progress_unplanned::outside_event(w.nodes@[0]))
+}
+}
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// #806: public opaque domain for the complete original-domain cover checker.
+pub closed spec fn unplanned_check_domain(w: World) -> bool {
+    progress_unplanned_witness::check_domain(w)
+}
+}
+#[cfg(verus_keep_ghost)]
+mod allocation_stopping_lemmas;
+
+#[cfg(verus_keep_ghost)]
+mod allocation_incident_lemmas;
+#[cfg(verus_keep_ghost)]
+mod facts_transition_lemmas;
+
+#[cfg(verus_keep_ghost)]
+mod facts_ci_failed_lemmas;
+
+#[cfg(verus_keep_ghost)]
+mod facts_merge_lemmas;

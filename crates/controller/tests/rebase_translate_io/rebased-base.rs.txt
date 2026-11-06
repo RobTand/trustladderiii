@@ -1,0 +1,25 @@
+            Observation::Rebased {
+                node,
+                generation,
+                sha,
+            } => {
+                let current = world
+                    .nodes
+                    .get(node.0 as usize)
+                    .ok_or(Error::Invalid("rebase observation has no request"))?;
+                if current.phase != tl3_kernel::Phase::Rebasing || current.generation != generation
+                {
+                    return Ok(None);
+                }
+                commit.rows.push(RowChange::Delete {
+                    table: "rebase_conflicts".into(),
+                    id: node.0.to_string(),
+                });
+                Event::Reply {
+                    node,
+                    generation,
+                    reply: Reply::RebaseClean {
+                        head: self.head(node, &sha)?,
+                    },
+                }
+            }

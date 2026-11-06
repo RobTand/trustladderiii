@@ -1,0 +1,14 @@
+{
+  "shape": 0,
+  "rows": 1,
+  "curations": 0,
+  "capacity": 0,
+  "reads": [],
+  "writes": [],
+  "http": [
+    14
+  ],
+  "held": false,
+  "key_error": false,
+  "repeat": false
+}

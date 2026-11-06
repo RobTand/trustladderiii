@@ -276,6 +276,10 @@ Keep every run's report and receipt bound to the exact base, head, selectors, de
 - A leaf whose operation waits on an incident gives back its slot and files. It waits in Ready, and resumes at the same step.
 - When a model reports quota, the step moves at once to the next model in its role's ladder that hasn't reported quota since its announced reset. This spends no credit and counts no failure. Each model's quota-limited state is recorded with its reset time. The step waits only when every model in its ladder is out, and then for the earliest announced reset. A wait for a model no longer configured for that step ends when tl3d opens with the new config (Q53, approved by Rob, 2026-11-01).
 
+Q53 amended under Q27, approved by [Rob on #828](https://github.com/RobTand/trustladderiii/issues/828#issuecomment-6662948499): A quota wait may end early on evidence that the same model is working again. A later successful call on the same model and family is a wake-up event, alongside the announced reset. When a reset hint is unusually far out, a bounded hourly probe replaces trusting the hint. The re-dispatch uses the attempt's idempotency key. Probes permit at most one in flight per model and family and at most one launch per hour, with the reservation surviving restart. The configured trusted horizon is `[limits] model_quota_horizon_secs`, default 21,600 seconds, so ordinary within-day resets remain trusted while multi-day hints receive an hourly check.
+
+- On the configured operations issue, only Rob can issue `clear quota <model>` after the provider resets that model. The command deletes its recorded quota hold and immediately schedules every quota-held allowance whose eligible ladder in the current worker configuration contains that model, even if another rung reported quota last. Allowances whose eligible ladders exclude the model stay asleep. Unknown or unconfigured models and models without a recorded hold receive a plain reply without changing quota waits. This is operator evidence under [Rob's #828 approval](https://github.com/RobTand/trustladderiii/issues/828#issuecomment-6662948499), and adds no timer or polling.
+
 Code computes a signature for each failure from the upstream's error class, and uses it only to group incidents.
 
 **Environment blockers,** as Rob approved on 2026-11-01 (Q50):
@@ -419,6 +423,16 @@ existing check kinds and forcings. It may only add missing demonstrating
 coverage, swap forced non-base selections for base nodes, or drop an uncovered
 unnecessary edit. An appended demonstrating check may carry no forcing or
 reuse a draft forcing unchanged. It may honestly return can't meet.
+
+Under [Rob's Q27/Q54 approval on #809, 2026-11-05](https://github.com/RobTand/trustladderiii/issues/809#issuecomment-6662949239),
+missing citations of existing required maker or checking goals may also enter
+this correction. Review-verified goals still require check coverage. For this
+defect, the correction may only add the named uncovered goal ids to existing
+checks, preserving every existing citation and every other declaration.
+It shares the single correction allowance with format repair and the existing
+defects. The full uncovered goal ids and descriptions remain in stop evidence,
+with the correction attempt count. A bounded repair message may clip only
+descriptions. If even the ids and instructions do not fit, correction is terminal.
 
 Added files, a wider footprint, unrelated checks or edits, changed forcings
 and new goals remain plan violations and therefore PlanCantMeet. Substantive
@@ -789,7 +803,7 @@ The postmortem lane falls back down its ladder like any other role (Q53), amende
 From slice two on:
 
 - Runs are granted in the gate's order, by rank with ties going to the older run, within each account's capacity (Q39). How rank combines with priority is decided when slice two starts.
-- A quota reset the provider announces is a wake-up event. When every model in a step's ladder is out, the earliest reset wakes it (Q53).
+- A quota reset the provider announces is a wake-up event. When every model in a step's ladder is out, the earliest reset wakes it. A later successful call on the same model and family also wakes the held attempt by its idempotency key; an unusually far reset uses the bounded hourly probe above (Q53, [approved Q27 amendment](https://github.com/RobTand/trustladderiii/issues/828#issuecomment-6662948499)).
 
 ## Looks and stalls
 
