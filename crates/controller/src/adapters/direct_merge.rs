@@ -594,13 +594,7 @@ impl Adapter {
         let suffix = match &outcome {
             DeliveryOutcome::Merged { head, .. } => format!("merged:{head}"),
             DeliveryOutcome::PushByOther { head } => format!("push:{head}"),
-            DeliveryOutcome::Conflict { .. } => {
-                return Ok(Completion::confirmed(vec![Observation::Outcome {
-                    node: d.node(),
-                    outcome,
-                    receipt: None,
-                }]));
-            }
+            DeliveryOutcome::Conflict { head } => format!("conflict:{head}"),
             DeliveryOutcome::ClosedByPerson => "closed".into(),
             DeliveryOutcome::CiFailed { .. } => {
                 return Err(Error::Invalid("CI outcome needs a check receipt"));

@@ -383,6 +383,15 @@ impl Shell<'_> {
                         }
                     }
                 };
+                if let Some(receipt) = receipt {
+                    commit
+                        .rows
+                        .push(put("delivery_outcomes", receipt, recorded));
+                }
+                Event::Fact { node, fact }
+            }
+
+        };
         if let Some((receipt, _)) = queue_receipt { commit.rows.push(receipt); }
         Ok(Some(event))
     }

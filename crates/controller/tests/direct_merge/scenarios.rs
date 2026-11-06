@@ -1081,6 +1081,7 @@ fn r1_direct_conflict_repeats_after_same_head_rebase() {
     fixture.check(None);
     let controller = fixture.open_adapters(&settings, fixture.adapter(&settings), Some(SameHeadRebase(adapters::worktrees::Fake::new(fixture.root.path()))));
     let (mut controller, delivery) = fixture.start_controller(&settings, controller);
+    drain(&mut controller);
     fixture.api.state.lock().unwrap().pull["mergeable"] = json!(false);
     fixture.check(Some("success"));
     fixture.check_event(&settings);
