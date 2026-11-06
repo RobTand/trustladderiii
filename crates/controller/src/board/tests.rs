@@ -22,6 +22,7 @@ fn request(id: u64, phase: Phase) -> Request {
         incidents: vec![],
         maker_model: None,
         question_context: None,
+        quota_hold: None,
     }
 }
 

@@ -29,9 +29,9 @@ def _reject_constant(_constant):
     raise ValueError("nonstandard validator constant")
 
 
-def run_check(command, document, *, name="reply"):
+def run_check(command, document, *, name="reply", binary=None):
     """One process boundary and strict JSON reader for every Rust validator."""
-    binary = os.environ.get("TL3_BINARY")
+    binary = os.environ.get("TL3_BINARY") if binary is None else binary
     if not binary:
         raise ReplyCheckInfrastructureError(f"{name} validator could not start")
     try:
@@ -63,3 +63,23 @@ def check_reply(role, inputs, reply):
         raise ReplyCheckInfrastructureError("reply validator returned invalid output")
     if violations:
         raise ReplyViolation(violations[0])
+
+
+class MakerInputViolation(ValueError):
+    """A maker invariant retains the legacy ValueError failure classification."""
+
+
+def failure_class(error):
+    """Preserve the pre-extraction class in every durable failure record."""
+    return "ValueError" if isinstance(error, MakerInputViolation) else type(error).__name__
+
+
+def check_inputs(kind, inputs):
+    result = run_check(["check-inputs", kind], inputs, name="input")
+    violations = result.get("violations") if isinstance(result, dict) else None
+    if not isinstance(violations, list) or any(not isinstance(item, str) for item in violations):
+        raise ReplyCheckInfrastructureError("input validator returned invalid output")
+    if violations:
+        if kind == "maker":
+            raise MakerInputViolation(violations[0])
+        raise ValueError(violations[0])

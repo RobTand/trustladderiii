@@ -73,24 +73,29 @@ impl Controller {
                 announced,
                 now,
             )?;
-            if resume > now {
-                // #759: every model this step may use is out. Say so once
-                // when that has lasted LADDER_OUT_MS, so an outage can't wait silently.
-                let bound = state
-                    .unserved_since_ms
-                    .filter(|_| !state.ladder_out_noticed)
-                    .map(|since| since.saturating_add(LADDER_OUT_MS));
-                if bound.is_some_and(|bound| bound <= now) {
+            match state_decisions::quota_wait(
+                resume,
+                now,
+                state.unserved_since_ms,
+                state.ladder_out_noticed,
+                LADDER_OUT_MS,
+            ) {
+                state_decisions::QuotaWait::Resume => {}
+                state_decisions::QuotaWait::Notify { due } => {
                     state.ladder_out_noticed = true;
-                    state.due_ms = Some(resume);
+                    state.due_ms = Some(due);
                     return self.ladder_out_note(state, resume, now);
                 }
-                state.due_ms = Some(bound.map_or(resume, |bound| bound.min(resume)));
-                self.save_allowance(state)?;
-                return Ok(());
+                state_decisions::QuotaWait::Wait { due } => {
+                    state.due_ms = Some(due);
+                    self.save_allowance(state)?;
+                    return Ok(());
+                }
             }
         }
-        if state.quota_ms.is_some() {
+        if state_decisions::entry_action(state.quota_ms.is_some(), state.stopping)
+            == state_decisions::EntryAction::ResumeQuota
+        {
             let effect = self
                 .store
                 .effect(&state.delivery.key)?
@@ -128,7 +133,9 @@ impl Controller {
             self.save_allowance(state)?;
             return Ok(());
         }
-        if state.stopping {
+        if state_decisions::entry_action(state.quota_ms.is_some(), state.stopping)
+            == state_decisions::EntryAction::FinishStall
+        {
             self.finish_stall(state)?;
             return Ok(());
         }
@@ -138,19 +145,22 @@ impl Controller {
             .look(&state.delivery);
         let result = match result {
             Err(error)
-                if error.is_github_not_found()
-                    && state.failure.as_deref() == Some("not_found")
-                    && matches!(state.delivery.output, Out::Effect { .. }) =>
+                if state_decisions::missing_is_absent(
+                    error.is_github_not_found(),
+                    state.failure.as_deref() == Some("not_found"),
+                    matches!(state.delivery.output, Out::Effect { .. }),
+                ) =>
             {
                 Ok(Look::Absent)
             }
             result => result,
         };
-        if matches!(&result, Ok(look) if !matches!(look, Look::Waiting { .. } | Look::Pending | Look::Alive { .. }))
-        {
+        let read =
+            state_decisions::read_decision(look_kind(&result), state.external_wait.is_some());
+        if read.reset_failures {
             state.read_failures = 0;
         }
-        if !matches!(result, Ok(Look::Waiting { .. })) && state.external_wait.is_some() {
+        if read.clear_wait {
             self.adapters
                 .get(Upstream::PrismaBuild)?
                 .watch_wait(&state.delivery, None)?;
@@ -217,16 +227,18 @@ impl Controller {
                             break;
                         }
                     }
-                    let new = effect.state.is_pending()
-                        || setup_gap
-                        || (state.found.as_ref() != Some(&found)
-                            && !completion.observations.is_empty());
+                    let action = state_decisions::found_action(
+                        effect.state.is_pending(),
+                        setup_gap,
+                        state.found.as_ref() != Some(&found),
+                        !completion.observations.is_empty(),
+                    );
                     state.found = Some(found);
-                    if new {
+                    if action != state_decisions::FoundAction::Skip {
                         if completion.releases_holds() {
                             self.retry_held_effects(upstream(state.delivery.output));
                         }
-                        if effect.state.is_pending() {
+                        if action == state_decisions::FoundAction::Complete {
                             self.complete(&effect.key, completion)?;
                         } else {
                             self.look_observations(&state.delivery, completion)?;
@@ -239,16 +251,21 @@ impl Controller {
                     .store
                     .effect(&state.delivery.key)?
                     .expect("allowance effect");
-                if self.hold_class(&state.delivery) == Some(CHECKS_PENDING) {
-                    // Waiting for checks is not a failure: release the guard to run
-                    // again rather than spending a retry on the effect's absence.
+                let action = if self.hold_class(&state.delivery) == Some(CHECKS_PENDING) {
+                    state_decisions::absence_action(true, false, false, false, false, false)
+                } else {
+                    state_decisions::absence_action(
+                        false,
+                        self.is_held(&state.delivery),
+                        state.failure.as_deref() == Some("not_found"),
+                        effect.state.is_pending(),
+                        effect.state == EffectState::Cancelling,
+                        matches!(state.delivery.output, Out::Effect { .. }),
+                    )
+                };
+                if action == state_decisions::AbsenceAction::ReleaseHold {
                     self.remove_hold(&state.delivery);
-                } else if (self.is_held(&state.delivery)
-                    || state.failure.as_deref() == Some("not_found"))
-                    && effect.state.is_pending()
-                    && effect.state != EffectState::Cancelling
-                    && matches!(state.delivery.output, Out::Effect { .. })
-                {
+                } else if action == state_decisions::AbsenceAction::Retry {
                     // Absence or a repeated 404 spends the existing retry allowance.
                     self.complete(
                         &effect.key,
@@ -268,14 +285,15 @@ impl Controller {
                 // An unacknowledged effect that stopped moving past its allowance
                 // keeps its failure count, so the stall can escalate (#356).
                 // Inside the allowance an alive look is a successful read (#373).
-                let within = now.saturating_sub(state.progress_ms)
-                    < u64::from(self.allowance(&state.delivery).no_progress_secs) * 1000;
-                if changed
-                    || within
-                    || !self
-                        .store
-                        .effect(&state.delivery.key)?
-                        .is_some_and(|effect| effect.state.is_pending())
+                if state_decisions::alive_resets_early(
+                    changed,
+                    now,
+                    state.progress_ms,
+                    u64::from(self.allowance(&state.delivery).no_progress_secs) * 1000,
+                ) || !self
+                    .store
+                    .effect(&state.delivery.key)?
+                    .is_some_and(|effect| effect.state.is_pending())
                 {
                     state.read_failures = 0;
                 }
@@ -296,8 +314,8 @@ impl Controller {
                 } else {
                     Ok(crate::executor::WaitRecord::Ended)
                 };
-                match record {
-                    Ok(crate::executor::WaitRecord::Alive) => {
+                match state_decisions::wait_action(wait_status(&record), state.wait_ended) {
+                    state_decisions::WaitAction::WatchAlive => {
                         self.adapters
                             .get(Upstream::PrismaBuild)?
                             .watch_wait(&state.delivery, Some(&wait))?;
@@ -305,12 +323,12 @@ impl Controller {
                         state.wait_ended = false;
                         state.progress = None;
                     }
-                    Ok(crate::executor::WaitRecord::Ended) => {
+                    state_decisions::WaitAction::WatchEnded { start_clock } => {
                         self.adapters
                             .get(Upstream::PrismaBuild)?
                             .watch_wait(&state.delivery, None)?;
                         state.read_failures = 0;
-                        if !state.wait_ended {
+                        if start_clock {
                             state.wait_ended = true;
                             state.progress_ms = now;
                         }
@@ -318,7 +336,9 @@ impl Controller {
                             return Ok(());
                         }
                     }
-                    Err(error) => self.look_failed(state, error)?,
+                    state_decisions::WaitAction::Fail => {
+                        self.look_failed(state, record.err().expect("failed wait record"))?
+                    }
                 }
             }
             Ok(Look::Healthy) => {
@@ -330,7 +350,7 @@ impl Controller {
             }
             Ok(Look::Quota { reset_ms }) => {
                 state.quota_ms = Some(reset_ms);
-                state.due_ms = Some(reset_ms.max(now));
+                state.due_ms = Some(state_decisions::quota_due(reset_ms, now));
             }
             Ok(Look::Pending) => {
                 self.look_failed(state, crate::Error::Invalid("upstream record unavailable"))?;
@@ -339,7 +359,7 @@ impl Controller {
                 let reset =
                     now.saturating_add(retry_after.as_millis().min(u64::MAX as u128) as u64);
                 state.quota_ms = Some(reset);
-                state.due_ms = Some(reset.max(now));
+                state.due_ms = Some(state_decisions::quota_due(reset, now));
             }
             Err(error) => {
                 self.look_failed(state, error)?;
@@ -778,6 +798,112 @@ impl Controller {
         }
         Ok(Some(changed))
     }
+    pub(crate) fn progress_allowance(
+        &mut self,
+        snapshot: &Snapshot,
+        key: &str,
+        checkpoint: String,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        if let Some(row) = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "allowances" && r.id == key)
+        {
+            let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
+            if state.progress.as_ref() != Some(&checkpoint) {
+                if state.external_wait.take().is_some() {
+                    self.retire_wait(snapshot, &state.delivery, commit)?;
+                }
+                state.wait_ended = false;
+                state.progress = Some(checkpoint);
+                state.progress_ms = self.now_ms();
+                // A model turn or tool result: a model served this step (#759).
+                state.unserved_since_ms = None;
+                state.ladder_out_noticed = false;
+                state.due_ms = Some(state_decisions::progress_due(
+                    state.progress_ms,
+                    u64::from(self.allowance(&state.delivery).silence_secs) * 1000,
+                    u64::from(self.allowance(&state.delivery).no_progress_secs) * 1000,
+                ));
+                commit
+                    .rows
+                    .push(put("allowances", key.into(), json!(state)));
+            }
+        }
+        Ok(())
+    }
+    pub(crate) fn quota_allowance(
+        &self,
+        snapshot: &Snapshot,
+        key: &str,
+        reset_ms: u64,
+        model: Option<&str>,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        // Q53: record the model's quota so every step's ladder can skip it.
+        if let Some(model) = model
+            && state_decisions::record_quota(
+                snapshot
+                    .rows
+                    .iter()
+                    .find(|r| r.table == "model_quotas" && r.id == model)
+                    .and_then(|r| r.value["reset_ms"].as_u64()),
+                reset_ms,
+            )
+        {
+            commit.rows.push(put(
+                "model_quotas",
+                model.into(),
+                json!({"reset_ms": reset_ms}),
+            ));
+        }
+        if let Some(row) = snapshot
+            .rows
+            .iter()
+            .find(|r| r.table == "allowances" && r.id == key)
+        {
+            let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
+            // A replayed ending of the same model never restarts its wait.
+            if state_decisions::quota_replayed(
+                state.last_quota_ms,
+                state.last_quota_model.as_deref() == model,
+                reset_ms,
+            ) {
+                return Ok(());
+            }
+            state.last_quota_ms = Some(reset_ms);
+            state.last_quota_model = model.map(str::to_owned);
+            state.quota_ms = Some(reset_ms);
+            state.unserved_since_ms.get_or_insert(self.now_ms());
+            // The look asks the adapter whether another model can take the step now.
+            state.due_ms = Some(self.now_ms());
+            commit
+                .rows
+                .push(put("allowances", key.into(), json!(state)));
+        }
+        Ok(())
+    }
+    fn expire_model_quotas(&mut self, now: u64) -> Result<()> {
+        let snapshot = self.store.load()?;
+        let mut commit = Commit::new(
+            format!("model-quota-reset:{}", snapshot.revision.get()),
+            json!({"model_quota_reset": now}),
+            &snapshot,
+        );
+        for row in snapshot.rows.iter().filter(|row| {
+            row.table == "model_quotas" && row.value["reset_ms"].as_u64().is_none_or(|r| r <= now)
+        }) {
+            commit.rows.push(RowChange::Delete {
+                table: row.table.clone(),
+                id: row.id.clone(),
+            });
+        }
+        if !commit.rows.is_empty() {
+            self.store.commit(&commit)?;
+        }
+        Ok(())
+    }
 }
 pub(crate) fn incident_needs_rob(cause: IncidentCause) -> bool {
     let cause = match cause {
@@ -967,5 +1093,24 @@ fn stall_upstream(source: Upstream) -> decisions::StallUpstream {
         Upstream::Mergify => decisions::StallUpstream::Mergify,
         Upstream::PrismaBuild => decisions::StallUpstream::PrismaBuild,
         Upstream::Worktrees => decisions::StallUpstream::Worktrees,
+    }
+}
+fn look_kind(result: &Result<Look>) -> state_decisions::LookKind {
+    match result {
+        Ok(Look::Found(_)) => state_decisions::LookKind::Found,
+        Ok(Look::Absent) => state_decisions::LookKind::Absent,
+        Ok(Look::Alive { .. }) => state_decisions::LookKind::Alive,
+        Ok(Look::Waiting { .. }) => state_decisions::LookKind::Waiting,
+        Ok(Look::Healthy) => state_decisions::LookKind::Healthy,
+        Ok(Look::Quota { .. }) => state_decisions::LookKind::Quota,
+        Ok(Look::Pending) => state_decisions::LookKind::Pending,
+        Err(_) => state_decisions::LookKind::Failed,
+    }
+}
+fn wait_status(result: &Result<crate::executor::WaitRecord>) -> state_decisions::WaitStatus {
+    match result {
+        Ok(crate::executor::WaitRecord::Alive) => state_decisions::WaitStatus::Alive,
+        Ok(crate::executor::WaitRecord::Ended) => state_decisions::WaitStatus::Ended,
+        Err(_) => state_decisions::WaitStatus::Failed,
     }
 }

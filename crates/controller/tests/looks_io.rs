@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, time::Duration};
 use tl3_controller::{Error, Repository};
-use tl3_controller_core::looks as decisions;
+use tl3_controller_core::{looks as decisions, looks_state as state_decisions};
 use tl3_kernel::{Ack, Event, Fact, NodeId, Phase, World};
 use tl3_store::{Commit, Effect, EffectState, RowChange, Snapshot};
 type Result<T> = std::result::Result<T, Error>;
@@ -213,7 +213,11 @@ macro_rules! controller {
             fn observe(&self, key: &str, o: Observation) -> Result<()> {
                 io::observe(key, o)
             }
-            fn look_observations_stub(&self) {}
+            fn retire_wait(&self, _: &Snapshot, d: &Delivery, c: &mut Commit) -> Result<()> {
+                io::record("retire_wait", json!(d.key));
+                c.rows.push(RowChange::Delete { table: "waits".into(), id: d.key.clone() });
+                Ok(())
+            }
             fn queue_observation(
                 &self,
                 _: &Snapshot,
@@ -236,23 +240,24 @@ macro_rules! controller {
                 Ok(io::world())
             }
             fn complete(&self, key: &str, c: Completion) -> Result<()> {
-                io::write("complete", json!([key, c]), |_| {})
-            }
-            fn expire_model_quotas(&self, now: u64) -> Result<()> {
-                io::record("expire_quotas", json!(now));
-                Ok(())
+                io::write("complete", json!([key, c]), |r| {
+                    r.files.insert(format!("completed/{key}"), serde_json::to_vec(&c).unwrap());
+                })
             }
             fn ladder_out_note(&self, s: &AllowanceState, resume: u64, now: u64) -> Result<()> {
-                io::write("ladder_note", json!([s, resume, now]), |_| {})
+                io::write("ladder_note", json!([s, resume, now]), |r| {
+                    r.files.insert(format!("ladder-note/{}", s.delivery.key), serde_json::to_vec(&json!([resume, now])).unwrap());
+                    r.files.insert(format!("allowances/{}", s.delivery.key), serde_json::to_vec(s).unwrap());
+                })
             }
             fn remove_hold(&self, d: &Delivery) {
                 io::record("remove_hold", json!(d.key));
             }
             fn hold_class(&self, _: &Delivery) -> Option<&str> {
-                None
+                io::checks().then_some(CHECKS_PENDING)
             }
             fn is_held(&self, _: &Delivery) -> bool {
-                false
+                io::held()
             }
         }
         pub(super) fn run(
@@ -269,6 +274,16 @@ macro_rules! controller {
                 io::Entry::Alive(changed) => c.look_alive(state, changed).map(|_| ()),
                 io::Entry::Probe => c.probe_passed(Some(state), state.incident.as_deref()),
                 io::Entry::Stall => c.finish_stall(state),
+                io::Entry::Progress(code) => {
+                    let mut commit = Commit::new("progress", json!({"entry":"progress"}), s);
+                    c.progress_allowance(s, &state.delivery.key, format!("checkpoint-{code}"), &mut commit)?;
+                    c.store.commit(&commit)
+                }
+                io::Entry::Quota(code) => {
+                    let mut commit = Commit::new("quota", json!({"entry":"quota"}), s);
+                    c.quota_allowance(s, &state.delivery.key, 2_000_000 + u64::from(code / 2), (code & 1 != 0).then_some("model-a"), &mut commit)?;
+                    c.store.commit(&commit)
+                }
             }
         }
     };
@@ -303,9 +318,18 @@ trait LocalQueueFact {
 }
 impl LocalQueueFact for tl3_controller::adapters::mergify::QueueFact {
     fn setup(&self) -> bool {
-        false
+        use tl3_controller::adapters::mergify::Evidence;
+        matches!(
+            self.evidence,
+            Evidence::ChecksUnavailable { .. }
+                | Evidence::CheckMissing { .. }
+                | Evidence::CheckReported { .. }
+                | Evidence::QueueBlocked { .. }
+        )
     }
     fn recorded(&self, _: &Snapshot) -> Result<bool> {
-        Ok(false)
+        Ok(io::read("queue.recorded", json!(self))? & 1 != 0)
     }
 }
+#[path = "looks_io/d2.rs"]
+mod d2;

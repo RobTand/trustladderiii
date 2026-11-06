@@ -177,6 +177,7 @@ fn differential_schedules() {
                 stopping: bits & 2048 != 0,
                 progress: bits & 4096 != 0,
                 counted: (bits & 8192 != 0).then_some(1_000_000),
+                ..Schedule::default()
             };
             io::compare(&s);
             Ok(())
@@ -194,7 +195,9 @@ fn function<'a>(source: &'a str, name: &str, method: bool) -> &'a str {
         + if method { 7 } else { 3 };
     &source[start..end]
 }
-/// Extraction fidelity: SHA-256 pins cdacce8f and every compiled body is verbatim.
+/// Extraction fidelity: SHA-256 pins cdacce8f. Q53 shells deliberately changed
+/// by #828 remain pinned to the audited extraction; quota_hold exercises their
+/// current real-store paths. All other shells still match current production.
 #[test]
 fn source_pins_and_production_copies() {
     let base = include_str!("base-looks.rs.txt");
@@ -210,6 +213,12 @@ fn source_pins_and_production_copies() {
         function(include_str!("../../src/looks.rs"), "incident_view", false),
         function(include_str!("current.rs"), "incident_view", false)
     );
+    for name in ["look_kind", "wait_status"] {
+        assert_eq!(
+            function(include_str!("../../src/looks.rs"), name, false),
+            function(include_str!("current.rs"), name, false)
+        );
+    }
     for (source, copy) in [
         (base, include_str!("reference.rs")),
         (
@@ -228,12 +237,37 @@ fn source_pins_and_production_copies() {
             "save_allowance",
             "allowance_row",
             "record_progress",
+            "progress_allowance",
+            "quota_allowance",
+            "expire_model_quotas",
         ] {
-            assert_eq!(
-                function(source, name, true),
-                function(copy, name, true),
-                "{name}"
-            );
+            let frozen = match name {
+                "look_state" => {
+                    Some("a9c9ec39cc5c88298ca802e01a5a4aee810d0f260dbedccfee4a24703b8016d1")
+                }
+                "look_observations" => {
+                    Some("1a991da694bcffaf150cb7de7e62345efda6f2ca2bce8252f1fd462433a83c2f")
+                }
+                "quota_allowance" => {
+                    Some("110744e12e5b6193b0c1753b4b1d140b92b246a5e5b33807367ab975c0a52aed")
+                }
+                _ => None,
+            };
+            if source != base
+                && let Some(digest) = frozen
+            {
+                assert_eq!(
+                    format!("{:x}", Sha256::digest(function(copy, name, true))),
+                    digest,
+                    "{name}"
+                );
+            } else {
+                assert_eq!(
+                    function(source, name, true),
+                    function(copy, name, true),
+                    "{name}"
+                );
+            }
         }
         for name in [
             "incident_needs_rob",

@@ -2,20 +2,26 @@
 impl executor::Executor for Adapter {
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.fence(delivery)?;
-        match self.read_enqueue(delivery)? {
-            Reconciliation::Found(completion) => {
-                if completion.ack == Ack::Confirmed
-                    && !matches!(self.records.reconcile(delivery)?, Reconciliation::Found(_))
+        match execute_core::start(execution_receipt(self.read_enqueue(delivery)?)) {
+            execute_core::Start::Found {
+                value: completion,
+                read_receipt,
+            } => {
+                if read_receipt
+                    && execute_core::needs_delivery(matches!(
+                        self.records.reconcile(delivery)?,
+                        Reconciliation::Found(_)
+                    ))
                 {
                     self.records
                         .deliver(delivery, Completion::confirmed(vec![]))?;
                 }
                 return Ok(*completion);
             }
-            Reconciliation::Pending => {
+            execute_core::Start::Pending => {
                 return Err(Error::Invalid("Mergify acceptance is still unknown"));
             }
-            Reconciliation::Absent => {}
+            execute_core::Start::Proceed => {}
         }
         let snapshot = self.snapshot()?;
         let (state, _) = self.read(delivery, snapshot.as_ref())?;
@@ -56,22 +62,22 @@ impl executor::Executor for Adapter {
                 _ => return Err(Error::Invalid("unexpected enqueue execution gate")),
             }
         }
-        let attempt = match self.baseline(delivery)? {
-            Some(attempt) => attempt,
-            None => Attempt {
+        let attempt = match execute_core::attempt(self.baseline(delivery)?) {
+            execute_core::Attempt::Saved(attempt) => attempt,
+            execute_core::Attempt::New => Attempt {
                 before: state.check.clone(),
-                last_event: self
-                    .runtime
-                    .block_on(github.issue_events(&repo, number))?
-                    .iter()
-                    .map(|event| event.id)
-                    .max()
-                    .unwrap_or(0),
-                requeue: issue
-                    .labels
-                    .iter()
-                    .any(|label| label.name == QUEUE_LABEL)
-                    .then_some(Requeue::Ready),
+                last_event: execute_core::last_event(
+                    &self
+                        .runtime
+                        .block_on(github.issue_events(&repo, number))?
+                        .iter()
+                        .map(|event| event.id)
+                        .collect::<Vec<_>>(),
+                ),
+                requeue: execute_core::ready(
+                    issue.labels.iter().any(|label| label.name == QUEUE_LABEL),
+                    Requeue::Ready,
+                ),
             },
         };
         let (prepared, effects) = lifecycle::decide(
@@ -88,17 +94,34 @@ impl executor::Executor for Adapter {
             },
         );
         let mut effects = std::collections::VecDeque::from(effects);
-        while let Some(effect) = effects.pop_front() {
+        loop {
+            let effect = match execute_core::next(effects.pop_front()) {
+                execute_core::Next::Effect(effect) => effect,
+                execute_core::Next::Applied => {
+                    self.records.write(
+                        &self.records.path(&delivery.key).with_extension("applied"),
+                        b"true",
+                    )?;
+                    break;
+                }
+            };
             match effect {
                 lifecycle::Effect::SaveIntent => {
-                    self.records.write(
-                        &self.records.path(&delivery.key).with_extension("intent"),
-                        &serde_json::to_vec(&attempt)?,
-                    )?;
-                    self.fence(delivery)?;
+                    let plan = execute_core::intent();
+                    for step in [plan.0, plan.1] {
+                        match step {
+                            execute_core::IntentEffect::Save => self.records.write(
+                                &self.records.path(&delivery.key).with_extension("intent"),
+                                &serde_json::to_vec(&attempt)?,
+                            )?,
+                            execute_core::IntentEffect::Fence => self.fence(delivery)?,
+                        }
+                    }
                 }
                 lifecycle::Effect::Read(lifecycle::Need::Command) => {
-                    if let Reconciliation::Found(completion) = self.queue_command(delivery, None)? {
+                    if let Some(completion) =
+                        execute_core::found(execution_receipt(self.queue_command(delivery, None)?))
+                    {
                         return Ok(*completion);
                     }
                 }
@@ -119,28 +142,29 @@ impl executor::Executor for Adapter {
                         .block_on(github.add_label(&repo, number, QUEUE_LABEL))?;
                 }
                 lifecycle::Effect::Complete(lifecycle::Complete::Retryable) => {
-                    return match self.completion(delivery, self.snapshot()?.as_ref())? {
-                        Reconciliation::Found(completion) => Ok(*completion),
-                        _ => Err(Error::Invalid("PR changed during enqueue")),
+                    return match execute_core::found(execution_receipt(
+                        self.completion(delivery, self.snapshot()?.as_ref())?,
+                    )) {
+                        Some(completion) => Ok(*completion),
+                        None => Err(Error::Invalid("PR changed during enqueue")),
                     };
                 }
                 lifecycle::Effect::Error(failure) => return Err(lifecycle_error(failure)),
                 _ => return Err(Error::Invalid("unexpected enqueue execution effect")),
             }
         }
-        self.records.write(
-            &self.records.path(&delivery.key).with_extension("applied"),
-            b"true",
-        )?;
-        match self.read_enqueue(delivery)? {
-            Reconciliation::Found(completion) => {
-                if completion.ack == Ack::Confirmed {
+        match execute_core::finish(execution_receipt(self.read_enqueue(delivery)?)) {
+            execute_core::Final::Found {
+                value: completion,
+                deliver,
+            } => {
+                if deliver {
                     self.records
                         .deliver(delivery, Completion::confirmed(vec![]))?;
                 }
                 Ok(*completion)
             }
-            _ => Err(Error::Invalid(
+            execute_core::Final::Unknown => Err(Error::Invalid(
                 "enqueue request sent; Mergify acceptance is still unknown",
             )),
         }
