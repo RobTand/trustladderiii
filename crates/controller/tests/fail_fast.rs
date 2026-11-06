@@ -1478,26 +1478,12 @@ fn rp_2648_reopen_keeps_one_use_feedback_and_terminal_reason() {
             let plans: Arc<Mutex<Vec<Delivery>>> = Arc::default();
             let registry = || {
                 let mut registry = adapters::simulation(&fakes).unwrap();
-                let counted = plans.clone();
                 registry.register(
                     Upstream::Workers,
-                    support::workers::Workers::new(
-                        None,
-                        adapters::workers::Fake::new(&fakes),
-                        vec![],
-                        move |delivery: &Delivery, completion: &mut Completion| {
-                            if completion
-                                .observations
-                                .iter()
-                                .any(|o| matches!(o, Observation::Plan { .. }))
-                            {
-                                counted.lock().unwrap().push(delivery.clone());
-                                completion
-                                    .observations
-                                    .retain(|o| !matches!(o, Observation::Plan { .. }));
-                            }
-                        },
-                    ),
+                    RpHeldPlans {
+                        fake: adapters::workers::Fake::new(&fakes),
+                        plans: plans.clone(),
+                    },
                 );
                 registry.register(
                     Upstream::GitHub,
@@ -1517,7 +1503,11 @@ fn rp_2648_reopen_keeps_one_use_feedback_and_terminal_reason() {
             c.intake(labelled()).unwrap();
             drain(&mut c);
             let before = c.world().unwrap();
-            assert!(matches!(before.nodes[0].phase, Phase::Planning { .. }));
+            assert!(
+                matches!(before.nodes[0].phase, Phase::Planning { .. }),
+                "{:?}",
+                before.nodes[0]
+            );
             assert_eq!(plans.lock().unwrap().len(), 1);
             let metadata = PlanCheckProvenance {
                 objections: vec![PlanObjection {
@@ -1616,5 +1606,37 @@ fn rp_2648_reopen_keeps_one_use_feedback_and_terminal_reason() {
                     .contains("one empty-allowed re-plan")
             );
         }
+    }
+}
+
+struct RpHeldPlans {
+    fake: adapters::workers::Fake,
+    plans: Arc<Mutex<Vec<Delivery>>>,
+}
+impl Executor for RpHeldPlans {
+    fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
+        if matches!(
+            delivery.output,
+            Output::Effect {
+                kind: EffectKind::StartRun(Role::Plan),
+                ..
+            }
+        ) {
+            self.plans.lock().unwrap().push(delivery.clone());
+            return Ok(Completion::confirmed(vec![]));
+        }
+        self.fake.execute(delivery)
+    }
+    fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        if matches!(
+            delivery.output,
+            Output::Effect {
+                kind: EffectKind::StartRun(Role::Plan),
+                ..
+            }
+        ) {
+            return Ok(Reconciliation::Found(Completion::confirmed(vec![])));
+        }
+        self.fake.reconcile(delivery)
     }
 }
