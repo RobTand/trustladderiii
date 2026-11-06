@@ -2490,8 +2490,9 @@ fn retirement_continues_after_corrupt_node(settings: &tl3_config::Store) {
 /// #849 / Q51: the same retained PB ending has the same incident cause at every
 /// controller entry, and only a new release clears a TL3-side incident once.
 fn completion_failure_cause(settings: &tl3_config::Store, path: &str, mode: &str) {
-    let harness = mode != "no_report";
-    fn transport_error(root: &Path) {
+    let retained_results = matches!(mode, "retained_results" | "failed_retained_results");
+    let harness = matches!(mode, "harness_error" | "retained_results");
+    fn transport_error(root: &Path, retain_results: bool) {
         let actions = fs::read_to_string(root.join("queue/publications")).unwrap();
         let path = root.join(format!("queue/{}.ending", actions.lines().last().unwrap()));
         let mut value: serde_json::Value =
@@ -2500,16 +2501,21 @@ fn completion_failure_cause(settings: &tl3_config::Store, path: &str, mode: &str
         ending["status"] = "failed".into();
         ending["succeeded"] = false.into();
         ending["exit_code"] = 1.into();
-        ending["result"] = serde_json::Value::Null;
+        if retain_results {
+            // A failed PB action may retain verified stdout without a success receipt.
+            ending["result"]["receipt_sha256"] = serde_json::Value::Null;
+        } else {
+            ending["result"] = serde_json::Value::Null;
+        }
         fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
     }
-    struct Synchronous(Adapter, bool, Option<PathBuf>);
+    struct Synchronous(Adapter, bool, Option<(PathBuf, bool)>);
     impl Executor for Synchronous {
         fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
             self.0.execute(delivery)?;
             if self.1 {
-                if let Some(root) = &self.2 {
-                    transport_error(root);
+                if let Some((root, retain_results)) = &self.2 {
+                    transport_error(root, *retain_results);
                 }
                 Ok(completion(&mut self.0, delivery))
             } else {
@@ -2523,7 +2529,7 @@ fn completion_failure_cause(settings: &tl3_config::Store, path: &str, mode: &str
     let root = tempfile::tempdir().unwrap();
     let mut delivery = run(root.path(), false);
     let retained: Completion = serde_json::from_str(incident_100060::DONE).unwrap();
-    if mode == "retained_results" {
+    if retained_results {
         let Observation::Checks {
             results,
             report,
@@ -2563,7 +2569,7 @@ fn completion_failure_cause(settings: &tl3_config::Store, path: &str, mode: &str
             Synchronous(
                 adapter,
                 synchronous,
-                (!harness).then(|| root.path().to_owned()),
+                (!harness).then(|| (root.path().to_owned(), retained_results)),
             ),
         );
         registry.register(
@@ -2627,7 +2633,7 @@ fn completion_failure_cause(settings: &tl3_config::Store, path: &str, mode: &str
         })
         .unwrap();
     while controller.drive_once().unwrap() {}
-    for incident_round in 0..if mode == "retained_results" { 2 } else { 1 } {
+    for incident_round in 0..if retained_results { 2 } else { 1 } {
         if incident_round == 1 {
             let first = controller
                 .snapshot()
@@ -2665,7 +2671,7 @@ fn completion_failure_cause(settings: &tl3_config::Store, path: &str, mode: &str
                 let action = fs::read_to_string(root.path().join("queue/publications")).unwrap();
                 finish(root.path(), action.lines().last().unwrap(), mode);
                 if !harness {
-                    transport_error(root.path());
+                    transport_error(root.path(), retained_results);
                 }
                 let (sender, receiver) = mpsc::channel();
                 let runtime = tokio::runtime::Builder::new_current_thread()
@@ -2695,7 +2701,7 @@ fn completion_failure_cause(settings: &tl3_config::Store, path: &str, mode: &str
                 let mut retained = fixture(root.path(), "pending");
                 let watched: Delivery = serde_json::from_value(watched.value.clone()).unwrap();
                 let ended = completion(&mut retained, &watched);
-                if mode == "retained_results" {
+                if retained_results {
                     let Observation::Checks {
                         results,
                         failed_tests,
@@ -2778,8 +2784,7 @@ fn completion_failure_cause(settings: &tl3_config::Store, path: &str, mode: &str
         }
     );
     assert_eq!(
-        incident.value["needs_rob"],
-        mode == "retained_results",
+        incident.value["needs_rob"], retained_results,
         "Q7 retains first/later incident accounting; Q51 clears TL3 incidents either way"
     );
     assert!(
@@ -2816,15 +2821,18 @@ fn completion_failure_cause(settings: &tl3_config::Store, path: &str, mode: &str
 
 /// #849 extension / Q7 / Q51 / #817: parsed no-report outcomes belong to TL3,
 /// retain their feedback, and wait on a deploy-clearable incident without silence.
-fn retained_results_failure_causes(database: &mut support::Database) {
+fn retained_results_failure_causes(database: &mut support::Database, successful: bool) {
+    let mode = if successful {
+        "retained_results"
+    } else {
+        "failed_retained_results"
+    };
     let mut failures = 0;
     for path in ["sync", "source", "watch", "allowance"] {
-        let settings = database.create(&format!("pb_retained_{path}"));
-        let result = std::panic::catch_unwind(|| {
-            completion_failure_cause(&settings, path, "retained_results")
-        });
+        let settings = database.create(&format!("pb_retained_{successful}_{path}"));
+        let result = std::panic::catch_unwind(|| completion_failure_cause(&settings, path, mode));
         println!(
-            "test retained_results_failure_cause_{path} ... {}",
+            "test retained_results_failure_cause_{successful}_{path} ... {}",
             if result.is_ok() { "ok" } else { "FAILED" }
         );
         failures += usize::from(result.is_err());
@@ -3196,9 +3204,19 @@ fn main() {
     }
 
     let args: Vec<_> = std::env::args().collect();
+    if args
+        .get(1)
+        .is_some_and(|arg| arg == "--failed-retained-results")
+    {
+        let mut database = support::Database::start();
+        retained_results_failure_causes(&mut database, false);
+        database.stop();
+        println!("4 failed retained results scenarios passed; no skips");
+        return;
+    }
     if args.get(1).is_some_and(|arg| arg == "--retained-results") {
         let mut database = support::Database::start();
-        retained_results_failure_causes(&mut database);
+        retained_results_failure_causes(&mut database, true);
         database.stop();
         println!("4 retained results scenarios passed; no skips");
         return;
@@ -3480,14 +3498,15 @@ fn main() {
     println!("test quiet_alive_job_is_not_a_failed_read ... ok");
     quiet_alive_job_is_not_a_failed_read(&database.create("pb_unreadable"), true);
     println!("test unreadable_job_record_is_a_failed_read ... ok");
-    retained_results_failure_causes(&mut database);
+    retained_results_failure_causes(&mut database, true);
+    retained_results_failure_causes(&mut database, false);
     completion_failure_causes(&mut database);
     first_pb_incident_probes_after_terminal_completion(&database.create("pb_incident_probe"));
     println!("test first_pb_incident_probes_after_terminal_completion ... ok");
     pb_probe_uses_delivery_class_and_fails_closed();
     println!("test pb_probe_uses_delivery_class_and_fails_closed ... ok");
     database.stop();
-    println!("67 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("71 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {
