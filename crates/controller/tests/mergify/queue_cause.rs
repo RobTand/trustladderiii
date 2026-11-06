@@ -1,6 +1,8 @@
 use super::*;
 
-pub(super) struct Fixture { parsed: bool }
+pub(super) struct Fixture {
+    parsed: bool,
+}
 impl Fixture {
     pub(super) fn respond(&self, path: &str) -> Option<ResponseTemplate> {
         let body: Value = if path.ends_with("/pulls/3331") {
@@ -11,9 +13,11 @@ impl Fixture {
         } else if path.ends_with("/pulls/100/files") {
             json!([{"filename":"src/change.rs"}])
         } else if path.contains("/actions/jobs/") && path.ends_with("/logs") {
-            return Some(ResponseTemplate::new(200).set_body_string(
-                if self.parsed { "FAILED: tests/queue_cause.py::test_gate" } else { "plan refused at planning; upload refused\nProcess completed with exit code 75." },
-            ));
+            return Some(ResponseTemplate::new(200).set_body_string(if self.parsed {
+                "FAILED: tests/queue_cause.py::test_gate"
+            } else {
+                "plan refused at planning; upload refused\nProcess completed with exit code 75."
+            }));
         } else {
             return None;
         };
@@ -65,7 +69,12 @@ fn observe(
     }
     for _ in 0..12 {
         controller.drive_once().unwrap();
-        if matches!(controller.world().unwrap().nodes[0].phase, Phase::Making | Phase::Stopping(_) | Phase::Closed(_)) { break; }
+        if matches!(
+            controller.world().unwrap().nodes[0].phase,
+            Phase::Making | Phase::Stopping(_) | Phase::Closed(_)
+        ) {
+            break;
+        }
     }
 }
 
@@ -151,7 +160,9 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         state.checks = captured["check_runs"].clone();
         state.queue_rule["conclusion"] = json!("success");
         state.pull["base"]["sha"] = json!("ef817b9d48f4e2f55a3b7d8e83caef25573ad544");
-        state.cause_fixture = Some(Fixture { parsed: mode == "positive-environment" });
+        state.cause_fixture = Some(Fixture {
+            parsed: mode == "positive-environment",
+        });
     }
     if mode == "own-batch" {
         health(
@@ -163,15 +174,29 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         );
     }
     if mode != "own-batch" {
-    let prior = serde_json::from_str::<Value>(include_str!("../fixtures/mergify/pq3221/prior-drafts.json")).unwrap();
-    let mut checks = serde_json::from_str::<Value>(include_str!("../fixtures/mergify/pq3221/prior-checks.json")).unwrap();
-    if mode == "positive-environment" {
-        for check in checks["check_runs"].as_array_mut().unwrap() {
-            if check["conclusion"] == "failure" { check["output"]["summary"] = json!("FAILED: tests/queue_cause.py::test_gate"); }
+        let prior = serde_json::from_str::<Value>(include_str!(
+            "../fixtures/mergify/pq3221/prior-drafts.json"
+        ))
+        .unwrap();
+        let mut checks = serde_json::from_str::<Value>(include_str!(
+            "../fixtures/mergify/pq3221/prior-checks.json"
+        ))
+        .unwrap();
+        if mode == "positive-environment" {
+            for check in checks["check_runs"].as_array_mut().unwrap() {
+                if check["conclusion"] == "failure" {
+                    check["output"]["summary"] = json!("FAILED: tests/queue_cause.py::test_gate");
+                }
+            }
         }
-    }
-    let changes = serde_json::from_value(json!({"repository":"owner/sandbox", "issues":[], "comments":[], "labels":[], "pull_requests":prior, "check_runs":checks["check_runs"], "check_suites":[]})).unwrap();
-    for input in Translator::new(api.clients()).unwrap().catch_up(&config.repos[0], &changes, &controller.snapshot().unwrap()).unwrap() { ingress::apply(&mut controller, input).unwrap(); }
+        let changes = serde_json::from_value(json!({"repository":"owner/sandbox", "issues":[], "comments":[], "labels":[], "pull_requests":prior, "check_runs":checks["check_runs"], "check_suites":[]})).unwrap();
+        for input in Translator::new(api.clients())
+            .unwrap()
+            .catch_up(&config.repos[0], &changes, &controller.snapshot().unwrap())
+            .unwrap()
+        {
+            ingress::apply(&mut controller, input).unwrap();
+        }
     }
     failure(&mut controller, &api, &config);
     if mode == "own-batch" {
@@ -205,7 +230,13 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     );
     assert_eq!(api.state.lock().unwrap().pull["state"], "open");
     let facts = queue_facts(&mut controller);
-    assert!(facts.iter().any(|fact| if mode == "positive-environment" { fact["evidence"]["CiFailed"]["details"]["cause"].get("Environment").is_some() } else { fact["evidence"]["CiFailed"]["details"]["cause"] == "Unattributed" }));
+    assert!(facts.iter().any(|fact| if mode == "positive-environment" {
+        fact["evidence"]["CiFailed"]["details"]["cause"]
+            .get("Environment")
+            .is_some()
+    } else {
+        fact["evidence"]["CiFailed"]["details"]["cause"] == "Unattributed"
+    }));
     if matches!(mode, "restart" | "restart-witness") {
         drop(controller);
         let mut registry = adapters::simulation(root.path()).unwrap();
@@ -253,7 +284,15 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             before.credit.spent
         );
     }
-    if matches!(mode, "witness-pass" | "retry-fail-fast" | "retry-making" | "gate-witness-pass" | "q58-after-hold" | "restart-witness") {
+    if matches!(
+        mode,
+        "witness-pass"
+            | "retry-fail-fast"
+            | "retry-making"
+            | "gate-witness-pass"
+            | "q58-after-hold"
+            | "restart-witness"
+    ) {
         // Earlier or same-base merges are not a new-base health witness.
         health(
             &mut controller,
@@ -265,25 +304,44 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         controller.look_now().unwrap();
         assert_eq!(api.state.lock().unwrap().requeues, 0);
         if mode == "gate-witness-pass" {
-            let mut prior: Value = serde_json::from_str(include_str!("../fixtures/mergify/pq3221/prior-drafts.json")).unwrap();
+            let mut prior: Value =
+                serde_json::from_str(include_str!("../fixtures/mergify/pq3221/prior-drafts.json"))
+                    .unwrap();
             for pull in prior.as_array_mut().unwrap() {
                 pull["base"]["sha"] = json!("ffffffffffffffffffffffffffffffffffffffff");
-                let body = pull["body"].as_str().unwrap().replace("ef817b9d48f4e2f55a3b7d8e83caef25573ad544", "ffffffffffffffffffffffffffffffffffffffff");
+                let body = pull["body"].as_str().unwrap().replace(
+                    "ef817b9d48f4e2f55a3b7d8e83caef25573ad544",
+                    "ffffffffffffffffffffffffffffffffffffffff",
+                );
                 pull["body"] = json!(body);
             }
-            let mut checks: Value = serde_json::from_str(include_str!("../fixtures/mergify/pq3221/prior-checks.json")).unwrap();
-            for check in checks["check_runs"].as_array_mut().unwrap() { check["status"] = json!("completed"); check["conclusion"] = json!("success"); check["completed_at"] = json!("2026-11-06T03:00:00Z"); }
+            let mut checks: Value =
+                serde_json::from_str(include_str!("../fixtures/mergify/pq3221/prior-checks.json"))
+                    .unwrap();
+            for check in checks["check_runs"].as_array_mut().unwrap() {
+                check["status"] = json!("completed");
+                check["conclusion"] = json!("success");
+                check["completed_at"] = json!("2026-11-06T03:00:00Z");
+            }
             let changes = serde_json::from_value(json!({"repository":"owner/sandbox", "issues":[], "comments":[], "labels":[], "pull_requests":prior, "check_runs":checks["check_runs"], "check_suites":[]})).unwrap();
-            for input in Translator::new(api.clients()).unwrap().catch_up(&config.repos[0], &changes, &controller.snapshot().unwrap()).unwrap() { ingress::apply(&mut controller, input).unwrap(); }
-            for _ in 0..12 { controller.drive_once().unwrap(); }
+            for input in Translator::new(api.clients())
+                .unwrap()
+                .catch_up(&config.repos[0], &changes, &controller.snapshot().unwrap())
+                .unwrap()
+            {
+                ingress::apply(&mut controller, input).unwrap();
+            }
+            for _ in 0..12 {
+                controller.drive_once().unwrap();
+            }
         } else {
-        health(
-            &mut controller,
-            &api,
-            &config,
-            "2026-11-06T03:00:00Z",
-            "ffffffffffffffffffffffffffffffffffffffff",
-        );
+            health(
+                &mut controller,
+                &api,
+                &config,
+                "2026-11-06T03:00:00Z",
+                "ffffffffffffffffffffffffffffffffffffffff",
+            );
         }
         controller.look_now().unwrap();
         controller.look_now().unwrap();
@@ -292,7 +350,10 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             1,
             "one command after health, including duplicate looks"
         );
-        if matches!(mode, "witness-pass" | "gate-witness-pass" | "restart-witness") {
+        if matches!(
+            mode,
+            "witness-pass" | "gate-witness-pass" | "restart-witness"
+        ) {
             {
                 let mut state = api.state.lock().unwrap();
                 state.merged(false);
@@ -312,11 +373,18 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             {
                 let mut state = api.state.lock().unwrap();
                 let head = state.pull["head"]["sha"].clone();
-                let captured: Value = serde_json::from_str(include_str!("../fixtures/mergify/pq3221/checks.json")).unwrap();
+                let captured: Value =
+                    serde_json::from_str(include_str!("../fixtures/mergify/pq3221/checks.json"))
+                        .unwrap();
                 state.checks = captured["check_runs"].clone();
-                for check in state.checks.as_array_mut().unwrap() { check["head_sha"] = head.clone(); check["pull_requests"] = json!([]); }
+                for check in state.checks.as_array_mut().unwrap() {
+                    check["head_sha"] = head.clone();
+                    check["pull_requests"] = json!([]);
+                }
                 state.queue_check_mut()["completed_at"] = json!("2026-11-06T04:00:00Z");
-                if mode == "q58-after-hold" { state.cause_fixture.as_mut().unwrap().parsed = true; }
+                if mode == "q58-after-hold" {
+                    state.cause_fixture.as_mut().unwrap().parsed = true;
+                }
             }
             failure(&mut controller, &api, &config);
             let facts = queue_facts(&mut controller);
@@ -330,9 +398,20 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             );
             let text = serde_json::to_string(&facts).unwrap();
             assert!(text.contains("Remote Bazel selection and shards"));
-            let findings = Store::open(settings).unwrap().worker_document("0", "maker_findings").unwrap().unwrap();
-            assert!(findings.to_string().contains("Remote Bazel selection and shards"), "both Q54 outcomes retain actual failing checks");
-            if config.fail_fast { drain(&mut controller); }
+            let findings = Store::open(settings)
+                .unwrap()
+                .worker_document("0", "maker_findings")
+                .unwrap()
+                .unwrap();
+            assert!(
+                findings
+                    .to_string()
+                    .contains("Remote Bazel selection and shards"),
+                "both Q54 outcomes retain actual failing checks"
+            );
+            if config.fail_fast {
+                drain(&mut controller);
+            }
             let phase = controller.world().unwrap().nodes[0].phase;
             assert_eq!(
                 phase,
@@ -343,7 +422,6 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
                 },
                 "SECOND failure is Change and follows today's Q54 failed round"
             );
-
         }
         assert_eq!(api.state.lock().unwrap().requeues, 1);
     }

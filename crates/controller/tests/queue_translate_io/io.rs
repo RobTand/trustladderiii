@@ -348,6 +348,31 @@ fn prior_run(mut run: Run) -> Run {
 pub(super) fn compare(s: &Schedule) -> Run {
     let old = prior_run(run(s, false, None));
     let new = prior_run(run(s, true, None));
+    if new.rows.iter().any(|row| row["table"] == "queue_holds") {
+        // Explicit #854 delta, not an equivalence projection: the opaque
+        // current-head failure stops before interning or emitting CiFailed.
+        let Evidence::CiFailed { head, head_check, completed_at, details, .. } = &s.fact.evidence else { panic!("hold without failure") };
+        assert!(!head_check && details.failed_tests.is_empty());
+        assert_eq!(head, OLD_HEAD);
+        assert!(!s.snapshot.rows.iter().any(|row| row.table == "queue_facts" && row.value["evidence"]["CiFailed"]["infra"] == true && row.value["repository"] == json!(s.fact.repository) && row.value["number"] == s.fact.number && row.value["evidence"]["CiFailed"]["head"] == *head));
+        let hold = put("queue_holds", format!("0:{head}"), json!({
+            "repository":s.fact.repository,"number":s.fact.number,"node":0,
+            "head":head,"identity":s.fact.identity(),
+            "context":{"base":"","branch":"","batch":null,"members":[]},
+            "failed_at":completed_at.as_ref().and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok()).map(|at|at.with_timezone(&chrono::Utc)),
+            "since_ms":0,"witness":null,"witnessed_ms":null,"reporters":[]
+        }));
+        let mut fact = json!(s.fact);
+        fact["evidence"]["CiFailed"]["details"]["decision"] = json!("upstream_classification");
+        prior_fields(&mut fact);
+        let fact = put("queue_facts", s.fact.identity(), fact);
+        let rows = vec![hold.clone(),fact.clone()];
+        let initial: BTreeMap<_,_> = s.snapshot.interned.iter().filter(|i| i.kind == InternKind::Commit).map(|i| ((i.scope.clone(),i.value.clone()),i.id as u64)).collect();
+        let mut calls: Vec<_> = old.calls.iter().take_while(|call| call["op"] == "check_run").cloned().collect();
+        calls.extend([json!({"op":"clock.now","args":0}),json!({"op":"row.push","args":hold}),json!({"op":"row.push","args":fact}),json!({"op":"transaction.commit","args":null})]);
+        assert_eq!(new, Run {calls,rows:rows.clone(),effects:vec![],result:json!({"event":null}),pending_intern:initial.clone(),persisted_intern:initial,persisted_rows:rows,writes:0}, "#854 opaque hold delta {s:?}");
+        return new;
+    }
     assert_eq!(old, new, "Queue I/O schedule {s:?}");
     for write in 0..old.writes {
         for after in [false, true] {

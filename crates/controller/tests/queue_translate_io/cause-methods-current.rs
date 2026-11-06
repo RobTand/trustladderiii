@@ -27,7 +27,8 @@ impl Shell<'_> {
             .filter(|row| row.table == "queue_holds")
         {
             let mut hold: Hold = decode_stored(row.value.clone())?;
-            if !gate.healthy_for(&hold.reporters) || hold.repository != fact.repository
+            if !gate.healthy_for(&hold.reporters)
+                || hold.repository != fact.repository
                 || hold.context.branch != gate.context.branch
                 || hold.context.base == gate.context.base
                 || decision::hold(true, hold.witness.is_some(), false)
@@ -87,8 +88,16 @@ impl Shell<'_> {
                 && row.value["evidence"]["CiFailed"]["head"] == *head
                 && row.value["evidence"]["CiFailed"]["infra"] == true
         });
-        let completed = completed_at.as_ref().and_then(|at| DateTime::parse_from_rfc3339(at).ok()).map(|at| at.with_timezone(&Utc));
-        let retried = (q58_used && details.failed_tests.is_empty()) || prior.as_ref().is_some_and(|hold| hold.witness.as_ref().is_some_and(|witness| completed.is_some_and(|at| at > witness.at)));
+        let completed = completed_at
+            .as_ref()
+            .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
+            .map(|at| at.with_timezone(&Utc));
+        let retried = (q58_used && details.failed_tests.is_empty())
+            || prior.as_ref().is_some_and(|hold| {
+                hold.witness
+                    .as_ref()
+                    .is_some_and(|witness| completed.is_some_and(|at| at > witness.at))
+            });
         let context = details.context.clone().unwrap_or(QueueContext {
             base: String::new(),
             branch: String::new(),
@@ -176,7 +185,10 @@ impl Shell<'_> {
                 since_ms: self.now_ms(),
                 witness: None,
                 witnessed_ms: None,
-                reporters: match &fact.evidence { Evidence::CiFailed { details, .. } => details.reporters.clone(), _ => vec![] },
+                reporters: match &fact.evidence {
+                    Evidence::CiFailed { details, .. } => details.reporters.clone(),
+                    _ => vec![],
+                },
             };
             commit
                 .rows

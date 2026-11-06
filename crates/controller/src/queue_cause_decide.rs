@@ -66,4 +66,6 @@ pub fn hold(witness: bool, spent: bool, expired: bool) -> HoldAction {
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out =>
     ensures out == (cause == Attribution::Change),
 ))]
-pub fn failed_round(cause: Attribution) -> bool { cause == Attribution::Change }
+pub fn failed_round(cause: Attribution) -> bool {
+    cause == Attribution::Change
+}

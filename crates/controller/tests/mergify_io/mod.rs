@@ -720,7 +720,10 @@ mod properties {
     }
     #[test]
     fn expanded_helpers_are_verbatim() {
-        assert_eq!(include_str!("../../src/adapters/mergify/queue_cause.rs"), include_str!("queue-cause-current.rs"));
+        assert_eq!(
+            include_str!("../../src/adapters/mergify/queue_cause.rs"),
+            include_str!("queue-cause-current.rs")
+        );
         assert_eq!(
             include_str!("../../src/adapters/mergify/queue_entry.rs"),
             include_str!("queue-entry-current.rs")

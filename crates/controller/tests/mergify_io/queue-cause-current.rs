@@ -102,12 +102,24 @@ pub(super) fn batch(
 ) -> Option<QueueFact> {
     let context = batch_context(pull)?;
     let mut latest = BTreeMap::new();
-    for check in checks.iter().filter(|check| check.head_sha == pull.head.sha) {
-        let entry = latest.entry((check.app.as_ref().map(|app| app.id), &check.name)).or_insert(check);
-        if check.id > entry.id { *entry = check; }
+    for check in checks
+        .iter()
+        .filter(|check| check.head_sha == pull.head.sha)
+    {
+        let entry = latest
+            .entry((check.app.as_ref().map(|app| app.id), &check.name))
+            .or_insert(check);
+        if check.id > entry.id {
+            *entry = check;
+        }
     }
     let checks: Vec<_> = latest.values().copied().collect();
-    if checks.is_empty() || checks.len() > 128 || checks.iter().any(|check| check.status != "completed") { return None; }
+    if checks.is_empty()
+        || checks.len() > 128
+        || checks.iter().any(|check| check.status != "completed")
+    {
+        return None;
+    }
     let at = checks.iter().filter_map(|check| check.completed_at).max()?;
     let mut parts = Vec::new();
     let mut complete = true;
@@ -116,8 +128,15 @@ pub(super) fn batch(
     let mut successful = true;
     for check in checks {
         if check.conclusion.as_deref() == Some("success") {
-            if let Some(app) = &check.app { passed.push(crate::queue_cause::CheckIdentity { app: app.id, name: check.name.clone() }); }
-        } else if check.conclusion.as_deref() != Some("skipped") { successful = false; }
+            if let Some(app) = &check.app {
+                passed.push(crate::queue_cause::CheckIdentity {
+                    app: app.id,
+                    name: check.name.clone(),
+                });
+            }
+        } else if check.conclusion.as_deref() != Some("skipped") {
+            successful = false;
+        }
         if check.conclusion.as_deref() != Some("failure") {
             continue;
         }
@@ -132,15 +151,15 @@ pub(super) fn batch(
         );
         let tests = ci_evidence::failures(&text);
         complete &= !tests.is_empty();
-        parts.extend(tests.into_iter().map(|test| {
-            (
-                Some(app.id),
-                check.name.clone(),
-                test.test,
-            )
-        }));
+        parts.extend(
+            tests
+                .into_iter()
+                .map(|test| (Some(app.id), check.name.clone(), test.test)),
+        );
     }
-    if !failed && (!successful || passed.is_empty()) { return None; }
+    if !failed && (!successful || passed.is_empty()) {
+        return None;
+    }
     Some(QueueFact {
         repository: repo.clone(),
         number: pull.number,
@@ -153,4 +172,3 @@ pub(super) fn batch(
         }),
     })
 }
-

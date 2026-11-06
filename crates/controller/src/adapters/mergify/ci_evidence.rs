@@ -150,8 +150,14 @@ pub(super) async fn read_checks(
     let mut fingerprint_parts = Vec::new();
     let mut identified = true;
     for check in failed.into_iter().take(20) {
-        if let Some(app) = &check.app { details.reporters.push(crate::queue_cause::CheckIdentity { app: app.id, name: check.name.clone() }); }
-        else { identified = false; }
+        if let Some(app) = &check.app {
+            details.reporters.push(crate::queue_cause::CheckIdentity {
+                app: app.id,
+                name: check.name.clone(),
+            });
+        } else {
+            identified = false;
+        }
         let mut summary = vec![format!(
             "Conclusion: {}",
             check.conclusion.as_deref().unwrap_or("unknown")

@@ -292,17 +292,32 @@ fn run(schedule: &Schedule, entry: Entry, new: bool, cut: Option<Cut>) -> Run {
 // Controller scenarios separately assert the new metadata and changed routes.
 fn prior_evidence(value: &mut Value) {
     match value {
-        Value::Array(values) => for value in values { prior_evidence(value); },
-        Value::Object(fields) => {
-            if let Some(details) = fields.get_mut("CiFailed").and_then(|value| value.get_mut("details")).and_then(Value::as_object_mut) {
-                details.remove("context"); details.remove("fingerprint"); details.remove("reporters");
+        Value::Array(values) => {
+            for value in values {
+                prior_evidence(value);
             }
-            for value in fields.values_mut() { prior_evidence(value); }
+        }
+        Value::Object(fields) => {
+            if let Some(details) = fields
+                .get_mut("CiFailed")
+                .and_then(|value| value.get_mut("details"))
+                .and_then(Value::as_object_mut)
+            {
+                details.remove("context");
+                details.remove("fingerprint");
+                details.remove("reporters");
+            }
+            for value in fields.values_mut() {
+                prior_evidence(value);
+            }
         }
         _ => {}
     }
 }
-fn prior_run(mut run: Run) -> Run { prior_evidence(&mut run.result); run }
+fn prior_run(mut run: Run) -> Run {
+    prior_evidence(&mut run.result);
+    run
+}
 pub(super) fn compare(schedule: &Schedule, entry: Entry) -> ::std::result::Result<usize, String> {
     let old = prior_run(run(schedule, entry, false, None));
     let new = prior_run(run(schedule, entry, true, None));

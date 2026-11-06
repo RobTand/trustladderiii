@@ -245,6 +245,24 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     let before = controller.world().unwrap().nodes[0];
     failure(&api, mode, false);
     observe(&mut controller, &api, &config);
+    if matches!(mode, "unparsed" | "logs-unavailable") {
+        // #854b: the first opaque refusal is a Q50 hold, even if fail_fast
+        // would otherwise close the fixture. It never spends a failed round.
+        let after = controller.world().unwrap().nodes[0];
+        assert_eq!(after.phase, Phase::Queued);
+        assert_eq!(after.run, before.run);
+        assert_eq!(after.round, before.round);
+        assert_eq!(after.attempt, before.attempt);
+        assert_eq!(after.credit.spent, before.credit.spent);
+        assert_eq!(api.state.lock().unwrap().requeues, 0);
+        let facts = queue_facts(&mut controller);
+        let details = &facts.last().unwrap()["evidence"]["CiFailed"]["details"];
+        assert_eq!(details["cause"], "Unattributed");
+        assert_eq!(details["checks"][0]["name"], "Bazel");
+        assert!(controller.snapshot().unwrap().rows.iter().any(|row| row.table == "queue_holds"));
+        println!("test ci_evidence_{mode} ... ok");
+        return;
+    }
     if matches!(
         mode,
         "outside" | "repeat" | "multiple-drafts" | "redelivery"
