@@ -652,7 +652,7 @@ impl Controller {
             } else {
                 observed
             };
-            retain_fact(
+            let fact = retain_fact(
                 snapshot,
                 commit,
                 ExternalFact {
@@ -664,16 +664,14 @@ impl Controller {
                     status,
                 },
             )?;
-            if let Some(fact) = retained_fact(snapshot, commit, &request.repo, kind, number)? {
-                record_closure(node, &fact, commit);
-            }
+            record_closure(node, &fact, commit);
             declarations.push(Declaration {
                 target: DependencyTarget {
                     kind,
                     number,
                     request: root,
                 },
-                status: kernel_status(kind, status),
+                status: kernel_status(kind, fact.status),
                 source_quote: quote.into(),
             });
         }
