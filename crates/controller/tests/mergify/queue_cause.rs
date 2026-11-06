@@ -101,7 +101,12 @@ fn health(controller: &mut Controller, api: &Server, config: &Bootstrap, at: &st
     pull["merge_commit_sha"] = json!(sha);
     body["pull_request"] = pull;
     body["action"] = json!("closed");
-    observe(controller, api, config, body, "pull_request");
+    // Deliver this gate before allowing background watch reads. The next
+    // queued failure can then be delivered explicitly by the test schedule.
+    for input in Translator::new(api.clients()).unwrap().webhook(&parsed("pull_request", body), &controller.snapshot().unwrap(), &config.repos).unwrap() {
+        ingress::apply(controller, input).unwrap();
+    }
+    controller.drive_once().unwrap();
 }
 
 pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
@@ -504,6 +509,7 @@ pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
                 state.queue_check_mut()["completed_at"]=json!("2026-11-06T04:00:00Z");
             }
             failure(&mut controller,&api,&config);
+            if mode == "retry-no-time" { drain(&mut controller); }
             assert_eq!(controller.world().unwrap().nodes[0].phase,
                 if mode=="retry-no-time" {Phase::Closed(Outcome::Stopped)} else {Phase::Queued},
                 "r1.2: only a failure bound to our dispatched retry is Change, regardless of timestamps");
