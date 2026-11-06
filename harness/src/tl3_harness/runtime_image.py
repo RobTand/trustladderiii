@@ -56,6 +56,40 @@ def preflight_profile(map_path, profile, *, host, platform, podman, environment,
     return resolved
 
 
+def prepare_runtime_profile(destination, *, host_interpreter, container_interpreter, podman, systemctl,
+                            mode, memory_limit_bytes, image_map, profile, host, platform, environment,
+                            mode_observations=None, timeout=10):
+    """Prepare artifact inputs for Rust's generated RuntimeIdentity, not a mirror.
+
+    Execute only on the admitted named host, with ops-provided executable paths.
+    Image observations are read-only. Missing mode observations confer no runtime
+    capability; Rust must refuse qualification until its evidence is supplied.
+    """
+    from .runtime import stage_host_runtime
+
+    for executable in (host_interpreter, container_interpreter, podman, systemctl):
+        if not Path(executable).is_absolute():
+            raise ValueError('prepared profile executable paths must be explicit and absolute')
+    observations = preflight_profile(image_map, profile, host=host, platform=platform, podman=podman,
+                                     environment=environment, timeout=timeout)
+    mode_reference = None
+    if mode_observations is not None:
+        path = Path(mode_observations).resolve(strict=True)
+        with path.open('rb') as source:
+            raw = source.read(4 * 1024 * 1024 + 1)
+        if len(raw) > 4 * 1024 * 1024:
+            raise ValueError('mode observations exceed byte bound')
+        mode_reference = {'path': str(path), 'sha256': hashlib.sha256(raw).hexdigest(), 'bytes': len(raw)}
+    prepared = {'host_interpreter': host_interpreter, 'container_interpreter': container_interpreter,
+                'podman': podman, 'systemctl': systemctl, 'container_mode': mode,
+                'memory_limit_bytes': memory_limit_bytes, 'scratch_root': '/var/tmp/flux-vanilla',
+                'host': host, 'platform': platform,
+                'access_environment': {key: environment[key] for key in ('HOME', 'XDG_RUNTIME_DIR')},
+                'image_observations': observations, 'mode_observations': mode_reference}
+    stage_host_runtime(destination, interpreter=host_interpreter, _prepared_profile=prepared)
+    return Path(destination).resolve() / 'prepared-profile.json'
+
+
 def _stop(child, timeout):
     if child is None or child.returncode is not None:
         return

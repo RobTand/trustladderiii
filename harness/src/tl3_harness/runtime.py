@@ -233,7 +233,7 @@ def collector_main():
     raise SystemExit(code if code >= 0 else 128 - code)
 
 
-def stage_host_runtime(destination, *, interpreter):
+def stage_host_runtime(destination, *, interpreter, _prepared_profile=None):
     """Construct immutable collector inputs; run only through authorized generation.
 
     The returned executable/manifest paths are hashed by the Rust request builder.
@@ -272,6 +272,17 @@ def stage_host_runtime(destination, *, interpreter):
     manifest = root / 'collector-manifest.json'
     manifest.write_text(json.dumps({'interpreter': interpreter, 'files': files}, sort_keys=True) + '\n')
     manifest.chmod(0o444)
+    if _prepared_profile is not None:
+        prepared = dict(_prepared_profile)
+        prepared['trusted_root'] = str(package)
+        prepared['artifacts'] = {}
+        for role, artifact in (('collector', executable), ('cleanup', cleanup), ('manifest', manifest)):
+            data = artifact.read_bytes()
+            prepared['artifacts'][role] = {'path': str(artifact), 'sha256': hashlib.sha256(data).hexdigest(),
+                                            'bytes': len(data)}
+        config = root / 'prepared-profile.json'
+        config.write_text(json.dumps(prepared, sort_keys=True) + '\n')
+        config.chmod(0o444)
     for directory in (package, package.parent, root):
         directory.chmod(0o555)
     return executable, manifest, package
