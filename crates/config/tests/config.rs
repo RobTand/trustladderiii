@@ -5,6 +5,19 @@ use toml::Value;
 const EXAMPLE: &str = include_str!("../example.toml");
 
 #[test]
+fn execution_backend_preserves_legacy_pb_and_accepts_explicit_pb() {
+    Config::parse(EXAMPLE).unwrap();
+    Config::parse(&format!("execution_backend = 'prismabuild'\n{EXAMPLE}")).unwrap();
+}
+
+#[test]
+fn execution_backend_never_falls_back_from_missing_flux_settings() {
+    for backend in ["flux", "unknown", "", "Flux"] {
+        assert!(Config::parse(&format!("execution_backend = '{backend}'\n{EXAMPLE}")).is_err());
+    }
+}
+
+#[test]
 fn repository_test_demand_is_optional_and_bounded() {
     assert!(
         Config::parse(EXAMPLE).unwrap().github.repos[0]
