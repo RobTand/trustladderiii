@@ -170,15 +170,24 @@ pub(super) open spec fn removed(w: World, v: World, i: int,
         }
 }
 
+/// #806 removal: a refused removal preserves the complete world and local frame.
+pub(super) proof fn removal_stutter(w: World, i: int, kind: PrerequisiteKind, number: u64)
+    requires 0 <= i < w.nodes@.len(),
+        w.nodes@[i].phase != Phase::Ingesting || w.nodes@[i].planning_started,
+    ensures removed(w, w, i, kind, number), dependencies::dependency_frame(w, w, i),
+{
+    reveal(removed); reveal(unchanged); reveal(dependencies::dependency_frame);
+}
+
 /// #806 stable removal: fold the already-proved table, wait and node frames locally.
 pub(super) proof fn removal_result(w: World, v: World, i: int,
     kind: PrerequisiteKind, number: u64)
     requires 0 <= i < w.nodes@.len(), dependencies::dependency_frame(w, v, i),
         w.nodes@[i].phase == Phase::Ingesting, !w.nodes@[i].planning_started,
         v.dependencies@ == kept(w.dependencies@, NodeId(i as u64), kind, number, w.dependencies@.len()),
-        v.nodes@[i].waiting_prerequisite.is_none() == dependencies::prerequisites_delivered(v, NodeId(i as u64)),
-        v.nodes@[i].credit.withheld == (!dependencies::prerequisites_delivered(v, NodeId(i as u64))
+        v.nodes@[i].waiting_prerequisite.is_none() == dependencies::delivered(v.dependencies@, NodeId(i as u64)),
+        v.nodes@[i].credit.withheld == (!dependencies::delivered(v.dependencies@, NodeId(i as u64))
             && w.nodes@[i].credit.ready),
     ensures removed(w, v, i, kind, number),
-{ reveal(removed); }
+{ reveal(removed); dependencies::prerequisite_definition(v, NodeId(i as u64)); }
 }

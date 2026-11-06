@@ -1064,6 +1064,7 @@ def verus_proofs():
             "port_deps_s2_compact_step": ("kernel::port_deps_apply_specs#compact_step", 1),
             "port_deps_s2_compact_finish": ("kernel::port_deps_apply_specs#compact_finish", 1),
             "port_deps_s2_removal_result": ("kernel::port_deps_apply_specs#removal_result", 1),
+            "port_deps_s2_removal_stutter": ("kernel::port_deps_apply_specs#removal_stutter", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

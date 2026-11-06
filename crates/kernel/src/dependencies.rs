@@ -714,42 +714,13 @@ impl World {
     pub(super) fn remove_dependency(&mut self, i: usize, kind: PrerequisiteKind,
         number: u64) -> (result: ()) [
         requires i < old(self).nodes@.len(),
-        ensures port_deps_apply_specs::removed(*old(self), *final(self), i as int, kind, number),
-             final(self).nodes@[i as int] == (Node {
-            waiting_prerequisite: final(self).nodes@[i as int].waiting_prerequisite,
-            credit: Credit { withheld: final(self).nodes@[i as int].credit.withheld,
-                ..old(self).nodes@[i as int].credit },
-            ..old(self).nodes@[i as int]
-        }),
-            final(self).next_ticket == old(self).next_ticket,
-            final(self).next_question == old(self).next_question,
-            final(self).gates@ == old(self).gates@,
-            final(self).pool_capacity == old(self).pool_capacity,
-            final(self).fail_fast == old(self).fail_fast,
-            final(self).file_sets@ == old(self).file_sets@,
-            final(self).nodes@.len() == old(self).nodes@.len(),
-            forall|j: int| 0 <= j < old(self).nodes@.len() && j != i
-                ==> final(self).nodes@[j] == old(self).nodes@[j],
-            final(self).nodes@[i as int].repo == old(self).nodes@[i as int].repo,
-            final(self).nodes@[i as int].footprint == old(self).nodes@[i as int].footprint,
-            final(self).nodes@[i as int].phase == old(self).nodes@[i as int].phase,
-            final(self).nodes@[i as int].pos == old(self).nodes@[i as int].pos,
-            final(self).nodes@[i as int].pool == old(self).nodes@[i as int].pool,
-            final(self).nodes@[i as int].holds == old(self).nodes@[i as int].holds,
-            final(self).nodes@[i as int].last_cmd == old(self).nodes@[i as int].last_cmd,
-            final(self).nodes@[i as int].generation == old(self).nodes@[i as int].generation,
-            final(self).nodes@[i as int].next_seq == old(self).nodes@[i as int].next_seq,
-            final(self).nodes@[i as int].credit.start == old(self).nodes@[i as int].credit.start,
-            final(self).nodes@[i as int].credit.earned == old(self).nodes@[i as int].credit.earned,
-            final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
-            final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
-    ] proof [reveal(prerequisites_delivered); reveal(delivered);] {
+        ensures dependency_frame(*old(self), *final(self), i as int),
+            port_deps_apply_specs::removed(*old(self), *final(self), i as int, kind, number),
+    ] {
         kernel_snapshot! { before_removal = *self }
         if self.nodes[i].phase != Phase::Ingesting || self.nodes[i].planning_started {
             kernel_proof! {
-                assert(port_deps_apply_specs::removed(before_removal@, *self, i as int, kind, number)) by {
-                    reveal(port_deps_apply_specs::removed); reveal(port_deps_specs::unchanged); reveal(dependency_frame);
-                }
+                port_deps_apply_specs::removal_stutter(*self, i as int, kind, number);
             }
             return;
         }
@@ -774,9 +745,11 @@ impl World {
         kernel_proof! { port_deps_apply_specs::compact_finish(self.dependencies@, before_removal@.dependencies@, node, kind, number, read as int, write as int); }
         self.dependencies.truncate(write);
         self.nodes[i].waiting_prerequisite = self.first_undelivered(node).map(|d| d.target.number);
+        kernel_snapshot! { before_removal_credit = *self }
         self.nodes[i].credit.withheld =
             !self.dependencies_delivered(node) && self.nodes[i].credit.ready;
         kernel_proof! {
+            prerequisite_definition(before_removal_credit@, node);
             assert(dependency_frame(before_removal@, *self, i as int)) by { reveal(dependency_frame); }
             port_deps_apply_specs::removal_result(before_removal@, *self, i as int, kind, number);
         }
@@ -982,6 +955,7 @@ impl World {
     // The pinned Verus frontend needs an explicit match to retain the exact wait number.
     #[allow(clippy::manual_map)]
     #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
     fn record_dependency(&mut self, i: usize, existing: Option<usize>,
         dependency: Dependency, out: &mut Outbox) -> (result: ()) [
         requires i < old(self).nodes@.len(), old(out).len < OUTBOX,
@@ -1016,7 +990,7 @@ impl World {
                             && old(self).nodes@[0].credit.ready), ..old(self).nodes@[0].credit },
                     ..old(self).nodes@[0]
                 }),
-    ] proof [reveal(dependency_frame); reveal(prerequisites_delivered); reveal(delivered);] {
+    ] {
         kernel_snapshot! { before_record = *self }
         kernel_snapshot! { before_record_world = *self }
         kernel_snapshot! { before_record_output = *out }
@@ -1065,13 +1039,16 @@ impl World {
             }
         }
         kernel_proof! {
+            assert(self.nodes@[i as int].waiting_prerequisite.is_none()
+                == prerequisites_delivered(*self, node)) by { reveal(prerequisites_delivered); }
             assert(dependency_frame(before_record_world@, *self, i as int)) by { reveal(dependency_frame); }
         }
         kernel_snapshot! { before_record_withhold = *self }
         self.withhold_dependency_credit(i);
         kernel_proof! {
             port_deps_specs::frame_transitive(before_record_world@, before_record_withhold@, *self, i as int);
-            reveal(prerequisites_delivered);
+            prerequisite_definition(before_record_withhold@, node);
+            prerequisite_definition(*self, node);
         }
     }
     }
