@@ -618,6 +618,10 @@ def verus_proofs():
             "kernel::ranks::advance_enabled": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::ranks::advance_pre": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::ranks::advance_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_failfast_diversion::plan_count": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_failfast_diversion::plan_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_failfast_diversion::plan_result": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_failfast_diversion::plan_retry_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
@@ -695,7 +699,7 @@ def verus_proofs():
             "work_replies_plan": ("kernel::work_replies#reply_plan", 1),
             "work_replies_rebase": ("kernel::work_replies#reply_rebase", 1),
             "work_replies_recheck_head": ("kernel::work_replies#update_recheck_head", 1),
-            "retries": ("kernel::retries", 7),
+            "retries": ("kernel::retries#run_failed", 1),
             "acknowledgements_confirmed": ("kernel::acknowledgements#confirmed", 1),
             "acknowledgements_confirmed_agenda": ("kernel::acknowledgements#confirmed_agenda", 1),
             "acknowledgements_delivery_failed": ("kernel::acknowledgements#delivery_failed", 1),
@@ -845,7 +849,20 @@ def verus_proofs():
             "facts_merge_open_result": ("kernel::facts_merge_lemmas#open_result", 1),
             "plan_check": ("kernel::plan_check", 1),
             "plan_check_witness": ("kernel::plan_check_witness", 3),
-            "port_failfast_diversion": ("kernel::port_failfast_diversion", 2),
+            "port_failfast_diversion": ("kernel::port_failfast_diversion#verify_stop", 1),
+            "port_failfast_stop_diversion": ("kernel::port_failfast_stop#diversion", 1),
+            "port_failfast_stop_preserves_node": ("kernel::port_failfast_stop#preserves_node", 1),
+            "port_failfast_witness_world": ("kernel::port_failfast_witness#world", 1),
+            "port_failfast_stop_completed_node": ("kernel::port_failfast_stop#preserves_completed_node", 1),
+            "port_failfast_frame": ("kernel::port_failfast_frame#completed_stop", 1),
+            "retries_stop_for_review": ("kernel::retries#stop_for_review", 1),
+            "retries_failed_round": ("kernel::retries#failed_round", 1),
+            "retries_next_rung": ("kernel::retries#next_rung", 1),
+            "retries_out_of_room": ("kernel::retries#out_of_room", 1),
+            "retries_plan_retry": ("kernel::retries#plan_retry", 1),
+            "retries_recheck": ("kernel::retries#recheck", 1),
+            "port_failfast_plan_stop": ("kernel::port_failfast_diversion#verify_plan_stop", 1),
+            "port_failfast_plan_composition": ("kernel::port_failfast_diversion#compose_plan", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

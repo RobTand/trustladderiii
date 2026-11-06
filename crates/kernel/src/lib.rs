@@ -66,6 +66,15 @@ mod retirement_witness;
 #[path = "../verus/port_failfast_diversion.rs"]
 mod port_failfast_diversion;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/port_failfast_stop.rs"]
+mod port_failfast_stop;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_failfast_witness.rs"]
+mod port_failfast_witness;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_failfast_frame.rs"]
+mod port_failfast_frame;
+#[cfg(verus_keep_ghost)]
 verus! {
 /// #806: domain of the retired two-node Kani consistency checks.
 pub closed spec fn retirement_domain(w: World) -> bool { retirement::domain(w) }
