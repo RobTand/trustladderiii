@@ -553,6 +553,9 @@ class Reporter:
             message = str(call.excinfo.value) + '\n' + message
         source_read = bool(call.excinfo and isinstance(call.excinfo.value, source_reads.SubjectSourceRead))
         if source_read:
+            # The test may have raised an added-name error after reading. Its
+            # exception context must not turn this guard violation into RED.
+            missing = None
             message = str(call.excinfo.value) + '\n' + message
         if self.summary:
             if self.declared_symptom is not None and report.failed and call.excinfo:
