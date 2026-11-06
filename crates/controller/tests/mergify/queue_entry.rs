@@ -2,6 +2,7 @@ use super::*;
 
 pub(super) const MODES: &[&str] = &[
     "repair",
+    "repair-enqueuing",
     "nested-repair",
     "nested-satisfied",
     "nested-other-app",
@@ -60,6 +61,10 @@ impl Fixture {
 /// rebound to the simulated pipeline's independently checked/approved commit.
 pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     let api = Server::new();
+    // #862 (tessera #1574): Mergify has not yet acknowledged the enqueue, so the
+    // leaf is still Publishing with its Enqueue effect in flight.
+    let enqueuing = mode == "repair-enqueuing";
+    api.state.lock().unwrap().lag = enqueuing;
     let root = tempfile::tempdir().unwrap();
     let clock = head_checks::Clock(std::rc::Rc::new(std::cell::Cell::new(
         std::time::SystemTime::now(),
@@ -68,7 +73,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         settings,
         &api,
         root.path(),
-        true,
+        !enqueuing,
         &[],
         bootstrap(),
         Some(clock.clone()),
@@ -94,6 +99,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         }
         state.suites = suites["check_suites"].clone();
         state.entry_fixture = Some(Fixture { mode: mode.into() });
+        state.lag = false;
         match mode {
             "nested-repair" | "nested-satisfied" | "nested-other-app" | "nested-unknown" => {
                 let summary = match mode {
@@ -199,7 +205,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         }
         let node = controller.world().unwrap().nodes[0];
         let snapshot = controller.snapshot().unwrap();
-        if matches!(mode, "repair" | "nested-repair") {
+        if matches!(mode, "repair" | "repair-enqueuing" | "nested-repair") {
             if mode == "nested-repair" && node.phase != Phase::Making {
                 assert!(snapshot.rows.iter().any(|r| r.table == "queue_facts"
                     && r.value["evidence"].get("QueueBlocked").is_some()));
@@ -226,11 +232,13 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             );
             assert_eq!(node.round, before.round + 1);
             assert!(!node.waiting_incident);
+            // #862: round 1 makes maker-input `/feedback` required, and the
+            // maker's feedback is exactly these stored findings.
             let findings = Store::open(settings)
                 .unwrap()
                 .worker_document("0", "maker_findings")
                 .unwrap()
-                .unwrap()
+                .expect("#862: a D2 repair round needs maker feedback (/feedback required)")
                 .to_string();
             let expected: &[&str] = if mode == "nested-repair" {
                 &["Bazel", "test_installed_commit_owner.py"]

@@ -4192,6 +4192,14 @@ impl Controller {
                         tl3_kernel::Phase::Reviewing => tail::Phase::Reviewing,
                         tl3_kernel::Phase::Making => tail::Phase::Making,
                         tl3_kernel::Phase::Queued => tail::Phase::Queued,
+                        // #862: the kernel's ci_failed runs a failed round here too.
+                        tl3_kernel::Phase::Publishing
+                            if n.effect.is_some_and(|effect| {
+                                effect.kind == tl3_kernel::EffectKind::Enqueue
+                            }) =>
+                        {
+                            tail::Phase::Enqueuing
+                        }
                         _ => tail::Phase::Other,
                     },
                     generation: n.generation,
