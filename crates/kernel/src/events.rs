@@ -75,15 +75,13 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
         progress_gate_apply::resume_apply_post(*old(w), *final(w), event),
         (match event {
             Event::Reply { node: NodeId(0), generation, reply: Reply::AuditDisagrees } =>
-                old(w).nodes@.len() > 0 && old(w).nodes@[0].phase == Phase::Auditing
-                && old(w).nodes@[0].audit_rounds >= 1
-                && current_item(old(w).nodes@[0]) == Some(Item::Await)
-                && old(w).nodes@[0].run == Some(generation) ==>
-                    final(w).nodes@[0].review_stop == Some(ReviewStop::AuditDisagreement),
+                old(w).nodes@.len() > 0 ==> port_t860_contracts::reply_post(*old(w), *final(w), 0,
+                    generation, Reply::AuditDisagrees, *old(out), *final(out)),
             _ => true,
         }),
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
     kernel_snapshot! { before_apply = *w }
+    kernel_snapshot! { before_apply_out = *out }
     kernel_proof! { events_lemmas::selected_input(before_apply@, event); }
     match event {
         Event::NewAdoption {

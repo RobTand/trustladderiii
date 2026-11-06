@@ -374,7 +374,9 @@ fn check_apply(event: Event) -> World {
 /// `attempt` past the first leaf plan's 1, re-plans, or enters Planning other
 /// than through Rob's answer, and the planner never re-runs on `cant_meet`.
 /// A stop for TL3 review spends nothing and asks nothing. Without the flag,
-/// only a TL3-created OpenPr body refusal stops for TL3 review (#629).
+/// stops are PublicationBody for a TL3-created OpenPr refusal (#629), the second
+/// AuditDisagrees (#832-A), or a code-owned PlanCheckRejected/NeedsSplit (#832).
+/// The latter reply cases are verified by Verus, including the #860 audit port.
 fn check_fail_fast(before: &World, after: &World, event: Event) {
     let mut i = 0;
     while i < before.nodes.len() {
@@ -965,10 +967,6 @@ proof!(
     check_apply(reply(Reply::ProtectedPaths))
 );
 proof!(apply_audit_agrees, check_apply(reply(Reply::AuditAgrees)));
-proof!(
-    apply_audit_disagrees,
-    check_apply(reply(Reply::AuditDisagrees))
-);
 proof!(
     apply_plan_leaf,
     check_apply(reply(Reply::PlanLeaf {

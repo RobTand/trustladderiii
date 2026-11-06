@@ -4,7 +4,8 @@ use super::*;
 kernel_fn! {
 /// Reply rows / #771: phase, schema and commit identity use the executable checks.
 pub(super) fn accepts(w: &World, n: &Node, reply: &Reply) -> (result: bool) [
-    ensures result == match (n.phase, *reply) {
+    ensures result == port_t860_contracts::admissible(*w, *n, *reply),
+        result == match (n.phase, *reply) {
         (Phase::Ingesting | Phase::Auditing | Phase::Planning { .. }, Reply::ProtectedPaths) => true,
         (Phase::Ingesting, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_)) => true,
         (Phase::Auditing, Reply::AuditAgrees | Reply::AuditDisagrees) => true,
@@ -23,7 +24,7 @@ pub(super) fn accepts(w: &World, n: &Node, reply: &Reply) -> (result: bool) [
         (Phase::Rebasing, Reply::RebaseClean { .. } | Reply::RebaseNeedsChanges) => true,
         _ => false,
     },
-] {
+] proof [reveal(port_t860_contracts::admissible);] {
     match (n.phase, reply) {
         (Phase::Ingesting | Phase::Auditing | Phase::Planning { .. }, Reply::ProtectedPaths) => {
             true
@@ -61,7 +62,8 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
         footprint::valid_footprint(*old(w), old(w).nodes@[i as int].footprint),
         footprint::ordered_table(*old(w)),
-    ensures progress_gate_contracts::maker_reply(*old(w), *final(w), i as int,
+    ensures port_t860_contracts::reply_post(*old(w), *final(w), i as int, generation, reply, *old(out), *final(out)),
+        progress_gate_contracts::maker_reply(*old(w), *final(w), i as int,
             generation, reply, *old(out), *final(out)),
         (node_checked(*old(w), old(w).nodes@[i as int])
             && generation == old(w).nodes@[i as int].generation
@@ -131,6 +133,9 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
             progress_gate_contracts::maker_reply_inactive(before_reply@, *w, i as int,
                 generation, reply, before_outputs@, *out);
         }
+        kernel_proof! {
+            port_t860_link::inactive(before_reply@, *w, i as int, generation, reply, before_outputs@, *out);
+        }
         return; // stale
     }
     // A reply that breaks its schema or names the wrong commit counts as a failed run.
@@ -144,6 +149,11 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
     if !accepts(w, n, &reply) {
         on_rejected_reply(w, i, generation, reply, out);
         return;
+    }
+    kernel_proof! {
+        if reply == Reply::AuditDisagrees {
+            assert(w.nodes@[i as int].phase == Phase::Auditing);
+        }
     }
     on_admitted_reply(w, i, generation, reply, out);
 }
@@ -169,7 +179,8 @@ pub(super) fn on_admitted_reply(w: &mut World, i: usize, _generation: u64, reply
                 footprint::valid_footprint(*old(w), footprint),
             _ => true,
         }),
-    ensures progress_gate_contracts::maker_reply(*old(w), *final(w), i as int,
+    ensures port_t860_contracts::reply_post(*old(w), *final(w), i as int, _generation, reply, *old(out), *final(out)),
+        progress_gate_contracts::maker_reply(*old(w), *final(w), i as int,
             _generation, reply, *old(out), *final(out)),
         (node_checked(*old(w), old(w).nodes@[i as int])
             && _generation == old(w).nodes@[i as int].generation
@@ -244,6 +255,7 @@ pub(super) fn on_admitted_reply(w: &mut World, i: usize, _generation: u64, reply
             kernel_proof! { footprint::valid_under_table_growth(before_operation@, *w, files); }
             reply_files(w, i, files, fits, out);
             kernel_proof! {
+                port_t860_link::irrelevant(before_reply@, *w, i as int, _generation, reply, before_outputs@, *out);
                 progress_gate_contracts::maker_reply_inactive(before_reply@, *w, i as int,
                     _generation, reply, before_outputs@, *out);
             }
@@ -251,6 +263,13 @@ pub(super) fn on_admitted_reply(w: &mut World, i: usize, _generation: u64, reply
         _ => {
             reply_transition(w, i, reply, out);
             kernel_proof! {
+                assert(port_t860_contracts::reply_post(before_reply@, *w, i as int, _generation, reply, before_outputs@, *out)) by {
+                    if reply == Reply::AuditDisagrees {
+                        port_t860_link::admitted(before_reply@, after_operation@, *w, i as int, _generation, reply, before_outputs@, *out);
+                    } else {
+                        port_t860_link::irrelevant(before_reply@, *w, i as int, _generation, reply, before_outputs@, *out);
+                    }
+                }
                 progress_gate_contracts::reply_bounds_result(after_operation@, *w, i as int,
                     before_outputs@.len, out.len);
                 progress_gate_contracts::table_order_frame(after_operation@, *w);
@@ -341,7 +360,8 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(reply is MakerNeedsFiles),
-    ensures progress_gate_contracts::maker_transition(*old(w), *final(w), i as int,
+    ensures port_t860_contracts::transition_post(*old(w), *final(w), i as int, reply, *old(out), *final(out)),
+        progress_gate_contracts::maker_transition(*old(w), *final(w), i as int,
             reply, *old(out), *final(out)),
         (successful_reply_input(old(w).nodes@[i as int], reply)
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
@@ -369,7 +389,7 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
                     && final(w).next_question == old(w).next_question
                     && *final(out) == *old(out)
             }),
-] proof [reveal(progress_gate_contracts::maker_transition); reveal(distance);] {
+] proof [reveal(port_t860_contracts::transition_post); reveal(progress_gate_contracts::maker_transition); reveal(distance);] {
     match reply {
         Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees
             | Reply::AuditDisagrees | Reply::ProtectedPaths => reply_ingest(w, i, reply, out),
@@ -392,28 +412,10 @@ pub(super) fn on_rejected_reply(w: &mut World, i: usize, _generation: u64, _repl
         footprint::valid_footprint(*old(w), old(w).nodes@[i as int].footprint),
         footprint::ordered_table(*old(w)),
         !(old(w).nodes@[i as int].phase is Stopping),
-        current_item(old(w).nodes@[i as int]) == Some(Item::Await),
-        old(w).nodes@[i as int].run == Some(_generation) || old(w).nodes@[i as int].job == Some(_generation),
-        !(match (old(w).nodes@[i as int].phase, _reply) {
-        (Phase::Ingesting | Phase::Auditing | Phase::Planning { .. }, Reply::ProtectedPaths) => true,
-        (Phase::Ingesting, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_)) => true,
-        (Phase::Auditing, Reply::AuditAgrees | Reply::AuditDisagrees) => true,
-        (Phase::Planning { .. }, Reply::PlanLeaf { footprint, .. }) =>
-            footprint::valid_footprint(*old(w), footprint),
-        (Phase::Planning { .. }, Reply::PlanSplit | Reply::PlanCantMeet
-            | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit) => true,
-        (Phase::Making, Reply::MakerDone { .. }) => true,
-        (Phase::Making, Reply::MakerNeedsFiles { files, .. }) =>
-            footprint::valid_footprint(*w, files),
-        (Phase::Making, Reply::MakerCantMeet | Reply::MakerOutOfRoom) => true,
-        (Phase::Checking, Reply::ChecksDone { report, .. }) => report,
-        (Phase::Reviewing, Reply::Approved { head }) =>
-            old(w).nodes@[i as int].head == Some(head) && old(w).nodes@[i as int].checked == Some(head),
-        (Phase::Reviewing, Reply::ChangesRequested | Reply::ReviewerOutOfRoom) => true,
-        (Phase::Rebasing, Reply::RebaseClean { .. } | Reply::RebaseNeedsChanges) => true,
-        _ => false,
-    }),
-    ensures progress_gate_contracts::maker_reply(*old(w), *final(w), i as int,
+        port_t860_contracts::active(old(w).nodes@[i as int], _generation),
+        !port_t860_contracts::admissible(*old(w), old(w).nodes@[i as int], _reply),
+    ensures port_t860_contracts::reply_post(*old(w), *final(w), i as int, _generation, _reply, *old(out), *final(out)),
+        progress_gate_contracts::maker_reply(*old(w), *final(w), i as int,
             _generation, _reply, *old(out), *final(out)),
         (node_checked(*old(w), old(w).nodes@[i as int])
             && _generation == old(w).nodes@[i as int].generation
@@ -470,7 +472,7 @@ pub(super) fn on_rejected_reply(w: &mut World, i: usize, _generation: u64, _repl
 ] {
     kernel_snapshot! { before_reply = *w }
     kernel_snapshot! { before_outputs = *out }
-    kernel_proof! {
+    kernel_proof! { reveal(port_t860_contracts::admissible);
         if successful_reply_input(w.nodes@[i as int], _reply) {
             if let Reply::PlanLeaf { footprint, .. } = _reply {
                 if footprint::footprint_empty(w.nodes@[i as int].footprint) { footprint::inline_is_valid(*w, 1); }
@@ -483,6 +485,9 @@ pub(super) fn on_rejected_reply(w: &mut World, i: usize, _generation: u64, _repl
             progress_gate_contracts::table_order_frame(before_reply@, *w);
             progress_gate_contracts::maker_reply_inactive(before_reply@, *w, i as int,
                 _generation, _reply, before_outputs@, *out);
+        }
+        kernel_proof! {
+            port_t860_link::rejected(before_reply@, *w, i as int, _generation, _reply, before_outputs@, *out);
         }
 
 }
@@ -500,7 +505,8 @@ pub(super) fn on_stopping_reply(w: &mut World, i: usize, generation: u64, _reply
         footprint::valid_footprint(*old(w), old(w).nodes@[i as int].footprint),
         footprint::ordered_table(*old(w)),
         old(w).nodes@[i as int].phase is Stopping,
-    ensures progress_gate_contracts::maker_reply(*old(w), *final(w), i as int,
+    ensures port_t860_contracts::reply_post(*old(w), *final(w), i as int, generation, _reply, *old(_out), *final(_out)),
+        progress_gate_contracts::maker_reply(*old(w), *final(w), i as int,
             generation, _reply, *old(_out), *final(_out)),
         (node_checked(*old(w), old(w).nodes@[i as int])
             && generation == old(w).nodes@[i as int].generation
@@ -556,16 +562,25 @@ pub(super) fn on_stopping_reply(w: &mut World, i: usize, generation: u64, _reply
             }),
 ] {
     kernel_snapshot! { before_reply = *w }
+    kernel_snapshot! { before_stopping_node = w.nodes@[i as int] }
     kernel_snapshot! { before_outputs = *_out }
         // The run or job ended on its own, so teardown needn't stop it.
         let m = &mut w.nodes[i];
         release_run(m, generation);
         release_job(m, generation);
+        kernel_proof! {
+            assert(port_t860_contracts::stopping_post(before_stopping_node@, w.nodes@[i as int], generation)) by {
+                reveal(port_t860_contracts::stopping_post);
+            }
+        }
         kernel_proof! { footprint::valid_under_table_growth(before_reply@, *w, w.nodes@[i as int].footprint); }
         kernel_proof! {
             progress_gate_contracts::table_order_frame(before_reply@, *w);
             progress_gate_contracts::maker_reply_inactive(before_reply@, *w, i as int,
                 generation, _reply, before_outputs@, *_out);
+        }
+        kernel_proof! {
+            port_t860_link::inactive(before_reply@, *w, i as int, generation, _reply, before_outputs@, *_out);
         }
 
 }
