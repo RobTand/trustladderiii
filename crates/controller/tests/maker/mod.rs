@@ -744,7 +744,12 @@ fn process_contract(settings: &tl3_config::Store) {
         kind: EffectKind::StartRun(Role::Make),
         head: None,
     };
-    delivery.paths = vec!["greeting.py".into(), "test_greeting.py".into()];
+    delivery.paths = tl3_contracts::footprint::Footprint::new(vec![
+        "./greeting.py".into(),
+        "test_greeting.py".into(),
+        "greeting.py".into(),
+    ])
+    .unwrap();
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
@@ -753,6 +758,22 @@ fn process_contract(settings: &tl3_config::Store) {
     .unwrap();
     supervisor.execute(&delivery).unwrap();
     let completion = terminal(&mut supervisor, &delivery);
+    let request: Value = serde_json::from_slice(
+        &fs::read(root_for(&config, &delivery.key).join("attempt-00000000/request.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        request["inputs"]["footprint"],
+        json!(["greeting.py", "test_greeting.py"])
+    );
+    assert_eq!(
+        request["inputs"]["footprint"],
+        request["inputs"]["plan"]["files"]
+    );
+    let typed: tl3_contracts::roles::maker_input::MakerInput =
+        serde_json::from_value(request["inputs"].clone()).unwrap();
+    assert_eq!(typed.footprint, delivery.paths);
+
     assert!(!root_for(&config, &delivery.key).join("worktree").exists());
     assert!(
         matches!(completion.observations.as_slice(), [Observation::WorkerReply {role, reply, ..}] if role == "maker" && reply["kind"] == "done")
@@ -815,7 +836,11 @@ fn restart_after_replan(settings: &tl3_config::Store) {
         kind: EffectKind::StartRun(Role::Make),
         head: None,
     };
-    delivery.paths = vec!["greeting.py".into(), "test_greeting.py".into()];
+    delivery.paths = tl3_contracts::footprint::Footprint::new(vec![
+        "greeting.py".into(),
+        "test_greeting.py".into(),
+    ])
+    .unwrap();
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
@@ -891,7 +916,11 @@ pub(super) fn adopted_fix_without_session(settings: &tl3_config::Store) {
         kind: EffectKind::StartRun(Role::Make),
         head: None,
     };
-    delivery.paths = vec!["greeting.py".into(), "test_greeting.py".into()];
+    delivery.paths = tl3_contracts::footprint::Footprint::new(vec![
+        "greeting.py".into(),
+        "test_greeting.py".into(),
+    ])
+    .unwrap();
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
@@ -926,7 +955,11 @@ pub(super) fn legacy_session(settings: &tl3_config::Store) {
         kind: EffectKind::StartRun(Role::Make),
         head: None,
     };
-    delivery.paths = vec!["greeting.py".into(), "test_greeting.py".into()];
+    delivery.paths = tl3_contracts::footprint::Footprint::new(vec![
+        "greeting.py".into(),
+        "test_greeting.py".into(),
+    ])
+    .unwrap();
     let mut supervisor = Supervisor::new(
         &config,
         &root.path().join("fakes"),
@@ -996,7 +1029,11 @@ pub(super) fn repository_images(database: &mut Database) {
             kind: EffectKind::StartRun(Role::Make),
             head: None,
         };
-        delivery.paths = vec!["greeting.py".into(), "test_greeting.py".into()];
+        delivery.paths = tl3_contracts::footprint::Footprint::new(vec![
+            "greeting.py".into(),
+            "test_greeting.py".into(),
+        ])
+        .unwrap();
         let mut supervisor = Supervisor::new(
             &config,
             &root.path().join("fakes"),

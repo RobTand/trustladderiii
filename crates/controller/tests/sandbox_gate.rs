@@ -97,7 +97,7 @@ fn replay(name: &str) -> Vec<bool> {
         },
         issue: 17,
         pull_request: Some(number),
-        paths: vec![],
+        paths: Default::default(),
         attempt: 1,
         round: 0,
         replanned: false,

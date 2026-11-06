@@ -573,7 +573,7 @@ impl crate::Controller {
             repository: request.repo,
             issue: request.issue,
             pull_request: None,
-            paths: vec![],
+            paths: Default::default(),
             attempt: 1,
             round: 0,
             replanned: n.replanned,

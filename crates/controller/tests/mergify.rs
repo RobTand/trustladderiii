@@ -1698,7 +1698,7 @@ fn delivery() -> Delivery {
         repository: bootstrap().repos.remove(0),
         issue: 12,
         pull_request: Some(100),
-        paths: vec![],
+        paths: Default::default(),
         attempt: 1,
         round: 0,
         replanned: false,

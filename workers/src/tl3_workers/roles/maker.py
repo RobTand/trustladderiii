@@ -335,8 +335,6 @@ def run(model, request, worktree, emit):
     worktree.generator = forecast.get("generator")
     worktree.generator_timeout_s = forecast.get("generator_timeout_s", 120)
     worktree.protected_paths = tuple(inputs.get("protected_paths", ()))
-    worktree.generator_files = inputs["plan"]["files"]
-    worktree.declared_files = frozenset(inputs["plan"]["files"])
     worktree.generator_state = session.with_suffix(".generator") if session else None
 
     worktree.hindsight_endpoint = inputs.get("hindsight", {}).get("endpoint")

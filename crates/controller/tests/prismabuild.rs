@@ -113,7 +113,7 @@ fn run(root: &Path, outside: bool) -> Delivery {
         repository: repository(),
         issue: 42,
         pull_request: None,
-        paths: vec!["value.py".into()],
+        paths: tl3_contracts::footprint::Footprint::new(vec!["value.py".into()]).unwrap(),
         attempt: 1,
         round: 0,
         replanned: false,

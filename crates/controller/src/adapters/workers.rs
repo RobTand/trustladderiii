@@ -466,6 +466,7 @@ impl Supervisor {
             }
             inputs["current_review_findings"] = current;
             inputs["plan"]["files"] = json!(delivery.paths);
+            inputs["footprint"] = json!(delivery.paths);
             inputs["context_size"] = json!(self.limits.context_tokens);
             inputs["tests"] = json!({"image": self.images.for_repository(&delivery.repository, &self.tests.container_image), "tools_path": self.tests.tools_dir});
             let demand = self

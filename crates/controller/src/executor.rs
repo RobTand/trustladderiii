@@ -104,7 +104,7 @@ pub struct Delivery {
     pub pull_request: Option<u64>,
     #[serde(default)]
     pub proposed: Option<crate::adoption::ProposedPullRequest>,
-    pub paths: Vec<String>,
+    pub paths: tl3_contracts::footprint::Footprint,
     pub attempt: u8,
     pub round: u8,
     #[serde(default)]

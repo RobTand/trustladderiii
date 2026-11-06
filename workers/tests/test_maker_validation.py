@@ -59,7 +59,7 @@ class _Configured(Exception):
 
 
 @contextmanager
-def _pq3312_tools(maker_request, monkeypatch, extra_files=()):
+def _pq3312_tools(maker_request, monkeypatch, extra_files=(), footprint=None):
     """The maker's own tools on a worktree its run configured for the #3312 plan.
 
     maker.run configures the worktree and stops where it would build the agent,
@@ -83,7 +83,9 @@ def _pq3312_tools(maker_request, monkeypatch, extra_files=()):
 
     monkeypatch.setattr(maker, "_check_inputs", lambda inputs: None)
     monkeypatch.setattr(runtime, "build_agent", configured)
-    with Worktree(root) as worktree:
+    footprint = plan["files"] if footprint is None else footprint
+    maker_request["inputs"]["footprint"] = footprint
+    with Worktree(root, footprint=footprint) as worktree:
         with pytest.raises(_Configured):
             maker.run(None, maker_request, worktree, lambda event: None)
         tools = {tool.name: tool for tool in build_tools(worktree, maker.ROLE.tools)}
@@ -138,12 +140,13 @@ def test_a_declared_file_absent_on_base_can_still_be_created(maker_request, monk
     assert (root / "tests/test_new_reporter.py").read_text() == "def test_new(): pass\n"
 
 
-@pytest.mark.parametrize(("declared", "written"), [
-    ("./x.py", "x.py"), ("a//b.py", "a/b.py"), ("x.py", "./x.py"),
-    ("a/./b.py", "a/b.py"), ("dir/", "dir"),
+@pytest.mark.parametrize(("declared", "written", "canonical"), [
+    ("./x.py", "x.py", "x.py"), ("a//b.py", "a/b.py", "a/b.py"), ("x.py", "./x.py", "x.py"),
+    ("a/./b.py", "a/b.py", "a/b.py"), ("dir/", "dir", "dir"),
 ])
-def test_canonical_plan_paths_allow_declared_writes(maker_request, monkeypatch, declared, written):
-    with _pq3312_tools(maker_request, monkeypatch, extra_files=[declared]) as (root, call):
+def test_canonical_plan_paths_allow_declared_writes(maker_request, monkeypatch, declared, written, canonical):
+    with _pq3312_tools(maker_request, monkeypatch, extra_files=[declared],
+                       footprint=[*PQ3312_FILES, canonical]) as (root, call):
         result = call("write", path=written, content="# declared\n")
     assert result.text == "File written.", result.text
     assert (root / written).read_text() == "# declared\n"

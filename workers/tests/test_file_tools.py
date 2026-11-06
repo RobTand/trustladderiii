@@ -866,3 +866,24 @@ def test_grep_regex_handles_crlf_line_endings(tmp_path):
         assert lines(worktree.grep("^one$")) == [1]
         assert lines(worktree.grep("^three$")) == [3]
         assert lines(worktree.grep(r"two\$$")) == [2]
+
+
+def test_constructor_footprint_limits_writes_and_supplies_generator_files(tree):
+    root, _ = tree
+    footprint = ["src/code.py"]
+    with Worktree(root, footprint=footprint) as worktree:
+        assert worktree.generator_files is footprint
+        tools = tools_for(worktree)
+        assert invoke(tools["write"], "./src/code.py").text == "File written."
+        refused = invoke(tools["write"], "tests/test_zz_diag.py")
+        assert refused.status == "error"
+        assert refused.text.startswith("tests/test_zz_diag.py is not a declared file")
+    assert not (root / "tests/test_zz_diag.py").exists()
+
+
+def test_empty_constructor_footprint_allows_no_writes(tree):
+    root, _ = tree
+    with Worktree(root, footprint=[]) as worktree:
+        refused = invoke(tools_for(worktree)["write"], "src/code.py")
+    assert refused.status == "error"
+    assert (root / "src/code.py").read_text() == "hello\nhello again\n"

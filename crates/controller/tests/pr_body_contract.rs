@@ -193,7 +193,15 @@ fn t629_generated_reservations_do_not_hide_true_production_edits() {
     for (production, expected) in [(false, "test"), (true, "fix")] {
         let mut f = Fixture::pb(&[]);
         if production {
-            f.delivery.paths.push("src/prismabuild/pool.py".into());
+            f.delivery.paths = tl3_contracts::footprint::Footprint::new(
+                f.delivery
+                    .paths
+                    .iter()
+                    .cloned()
+                    .chain(["src/prismabuild/pool.py".into()])
+                    .collect(),
+            )
+            .unwrap();
         }
         f.publish().unwrap();
         assert!(
@@ -238,21 +246,30 @@ fn t629_conflicting_or_invalid_contract_never_mutates_github() {
 #[test]
 fn t629_one_repair_then_validate_final_body_and_reconcile() {
     let mut f = Fixture::pb(&[]);
-    f.delivery.paths = vec!["tests/test_pool.py".into()];
+    f.delivery.paths =
+        tl3_contracts::footprint::Footprint::new(vec!["tests/test_pool.py".into()]).unwrap();
     f.publish().unwrap();
     f.delivery = {
         let mut value = serde_json::to_value(&f.delivery).unwrap();
         value["evidence"]["goals"][0]["publication"]["body_lines"] = json!(["Change type: test"]);
         serde_json::from_value(value).unwrap()
     };
-    f.delivery.paths.extend(
-        [
-            "BUILD.bazel",
-            "src/prismabuild/BUILD.bazel",
-            "tools/BUILD.bazel",
-        ]
-        .map(String::from),
-    );
+    f.delivery.paths = tl3_contracts::footprint::Footprint::new(
+        f.delivery
+            .paths
+            .iter()
+            .cloned()
+            .chain(
+                [
+                    "BUILD.bazel",
+                    "src/prismabuild/BUILD.bazel",
+                    "tools/BUILD.bazel",
+                ]
+                .map(String::from),
+            )
+            .collect(),
+    )
+    .unwrap();
     let original = f.body();
     f.api.0.lock().unwrap().0.as_mut().unwrap()["body"] = json!(format!(
         "Human context stays.\n{original}\nChange type: fix\nChange type: test\n"

@@ -371,7 +371,7 @@ class MissingWorktreeFile(ValueError):
 
 
 class Worktree:
-    def __init__(self, root, *, generated_files=(), generator=None):
+    def __init__(self, root, *, footprint=None, generated_files=(), generator=None):
         self._root = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         self._path = os.path.abspath(root)
         self._mutation_lock = Lock()
@@ -380,8 +380,9 @@ class Worktree:
         self.generated_files = generated_files
         self.generator = generator
         self.protected_paths = ()
-        # The maker sets its plan's files; write and edit change nothing else (#875).
-        self.declared_files = None
+        self.declared_files = None if footprint is None else frozenset(footprint)
+        if footprint is not None:
+            self.generator_files = footprint
         # Set by the runtime for roles without a blocked reply.
         self.environment_errors_end_run = False
 
