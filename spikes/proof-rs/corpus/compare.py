@@ -102,7 +102,7 @@ for row in rows(out / 'sources.log'):
             normalizations.append({'sha256': row['sha256'], 'name': py['name'], 'source': py['source'],
                                    'python': py['unparse'], 'ruff': row['generated']})
 report['parser'] = {'counts': counts, 'normalization_differences': normalizations, 'semantic_differences': semantics, 'literal_differences': literals}
-metadata = json.loads((out / 'metadata.log').read_text())
+metadata = json.loads(next(line for line in (out / 'metadata.log').read_text().splitlines() if line.startswith('{')))
 report['dependencies'] = {'packages': len(metadata['packages']),
     'licenses': dict(Counter(package.get('license') or '<unspecified>' for package in metadata['packages'])),
     'inventory': [{'name': package['name'], 'version': package['version'], 'license': package.get('license'),

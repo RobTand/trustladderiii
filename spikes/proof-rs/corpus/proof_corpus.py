@@ -58,7 +58,7 @@ def install():
         try:
             receipt = original(base, head, destination, check, config, **kwargs)
             row['python_ns'] = time.perf_counter_ns() - started
-            row['python'] = {'accepted': True, 'receipt': receipt,
+            row['python'] = {'accepted': True, 'receipt': json.loads(json.dumps(receipt)),
                              'staged': files(destination), 'staged_sha256': proof.tree_sha256(destination)}
             return receipt
         except proof.ProofRefusal as error:
