@@ -95,6 +95,7 @@ impl Generated {
         let mut adapter = f.adapter().with_generation(&config).unwrap();
         let mut prepare = f.delivery(EffectKind::PrepareWorktree, 1);
         prepare.epoch = 0;
+        prepare.key = "fixture:prepare:0".into();
         prepare.paths = vec!["src/a.txt".into(), "gen/manifest.json".into()];
         adapter.execute(&prepare).unwrap();
         let checkout = adapter.checkout(&prepare);
