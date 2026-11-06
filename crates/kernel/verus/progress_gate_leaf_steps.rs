@@ -118,6 +118,8 @@ pub(super) proof fn teardown_cases(n: Node, ticket: u64, out_len: usize,
     requires advance_pre(n, ticket, out_len), !n.waiting_incident, n.effect.is_none(),
         current_item(n) == Some(Item::Teardown(kind)),
     ensures n.phase is Stopping, n.pos < 5, n.next_seq < u64::MAX,
+        kind == EffectKind::StopRun || kind == EffectKind::WithdrawJob
+            || kind == EffectKind::ClosePr || kind == EffectKind::RemoveWorktree,
         out_len as int + 2 <= OUTBOX as int,
         advance_enabled(n, context) == n.question.is_none(),
         advance_post(n, n, ticket, ticket, false),
