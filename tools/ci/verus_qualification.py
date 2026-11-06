@@ -12,9 +12,9 @@ import tempfile
 import bazel_gate
 import remote_gate
 
-PROOF = '//crates/mergify:verus_delivery'
-MODULE = 'crates/mergify/src/decide/delivery_step.rs'
-SPEC = 'crates/mergify/proofs/delivery_spec.rs'
+PROOF = '//crates/verus-runner:verus_delivery'
+MODULE = 'crates/verus-runner/src/delivery_step.rs'
+SPEC = 'crates/verus-runner/proofs/delivery_spec.rs'
 PINS = 'tools/bazel/verus_pins.bzl'
 
 
@@ -29,7 +29,7 @@ def commit(workspace, path, text):
 def run_proof(workspace, name):
     statuses = workspace.test([PROOF], 'remote', {'ROLE': 'VERUS_QUALIFICATION'}, name,
                               extra=['--jobs=16', '--nocache_test_results'])
-    log = workspace.root / 'bazel-testlogs/crates/mergify/verus_delivery/test.log'
+    log = workspace.root / 'bazel-testlogs/crates/verus-runner/verus_delivery/test.log'
     text = log.read_text() if log.is_file() else ''
     print(text, flush=True)
     return statuses, text
@@ -73,7 +73,7 @@ def main():
             statuses = workspace.test([PROOF], 'remote', {'ROLE': 'VERUS_QUALIFICATION'},
                                       'verus-changed-pin', extra=['--jobs=16'])
             assert statuses.get(PROOF) == 'PASSED', statuses
-            log = workspace.root / 'bazel-testlogs/crates/mergify/verus_delivery/test.log'
+            log = workspace.root / 'bazel-testlogs/crates/verus-runner/verus_delivery/test.log'
             assert 'VERUS_PROOF' in log.read_text()
             # Bazel's execution log is also retained by the outer runner. BEP
             # stays in /tmp and is reduced to cache/attempt facts before upload.
@@ -89,7 +89,7 @@ def main():
                 commit(workspace, MODULE, path.read_text().replace(
                     '    delivered || acknowledgement', '    delivered && acknowledgement'))
             else:
-                commit(workspace, 'crates/mergify/proofs/delivery.rs', 'use vstd::prelude::*;\nfn main() {}\n')
+                commit(workspace, 'crates/verus-runner/proofs/delivery.rs', 'use vstd::prelude::*;\nfn main() {}\n')
             statuses, text = run_proof(workspace, 'verus-' + args.case)
             assert statuses.get(PROOF) == 'FAILED', statuses
             if args.case == 'empty':

@@ -3169,6 +3169,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tl3-verus-runner"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "tl3-worktrees"
 version = "0.1.0"
 dependencies = [

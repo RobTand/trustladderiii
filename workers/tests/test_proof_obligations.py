@@ -133,8 +133,9 @@ def test_t613_missing_contract_has_a_safe_repair_diagnostic():
     from tl3_workers.tracing import failure_tags
     with pytest.raises(ValueError) as caught:
         preflight({'tool_capabilities': [CAPABILITY]}, {'kind': 'brief'})
-    assert failure_tags(caught.value)['failure_message'] == (
-        'Return evidence_contract with source requirements and separately marked method choices.')
+    message = failure_tags(caught.value)['failure_message']
+    assert 'evidence.contract_missing' in message and '/evidence_contract' in message
+    assert 'array' in message and 'add' in message
 
 
 def planner_prompt():

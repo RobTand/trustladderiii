@@ -3,7 +3,7 @@ use crate::{
     Error, Result,
     contracts::report::{
         CheckReport as Report, CheckResult, Custody, Outcome, PhaseEvidence, PhaseOutcome,
-        RedMessageMatch, RunOutcome, SymptomSide, Verdict,
+        RedClass, RedMessageMatch, RunOutcome, SymptomSide, Verdict,
     },
     executor::{Completion, Observation},
     findings::{FailedTest, MAX_FAILED_TESTS, MAX_MESSAGE_CHARS, clipped},
@@ -597,6 +597,38 @@ fn rejudged(report: &Report, job: &Job) -> bool {
                     .tests
                     .iter()
                     .any(|test| test.passed && !matches!(test.head_forced, Some(Outcome::Passed)))
+        {
+            return false;
+        }
+        if result
+            .proof
+            .as_ref()
+            .and_then(|proof| proof.red_classes.as_ref())
+            .is_some_and(|classes| {
+                classes.iter().any(|(node, class)| {
+                    result
+                        .tests
+                        .iter()
+                        .find(|test| test.test.as_str() == node)
+                        .is_none_or(|test| {
+                            !test.passed
+                                || match class {
+                                    RedClass::Assertion => {
+                                        result.declared_symptom.is_some()
+                                            || !matches!(test.base, Outcome::Assertion)
+                                    }
+                                    RedClass::AddedName => {
+                                        result.declared_symptom.is_some()
+                                            || !matches!(test.base, Outcome::AddedName)
+                                    }
+                                    RedClass::Symptom => {
+                                        result.declared_symptom.is_none()
+                                            || !matches!(test.base, Outcome::Error)
+                                    }
+                                }
+                        })
+                })
+            })
         {
             return false;
         }
