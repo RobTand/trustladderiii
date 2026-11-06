@@ -86,6 +86,8 @@ impl crate::run_backend::RunBackend for DaytimePayload {
     fn cancel(&self, _: &crate::run_backend::Owner) -> crate::run_backend::Result<crate::run_backend::CancelAck> { unreachable!() }
     fn probe(&self, _: &crate::run_backend::Reservation, _: &crate::run_backend::Placement) -> crate::run_backend::Result<crate::run_backend::Probe> { unreachable!() }
     fn launch_context(&self, _: &crate::run_backend::Owner, _: &str) -> crate::run_backend::Result<crate::run_backend::LaunchContext> { unreachable!() }
+    fn retain_runtime(&self, _: &crate::run_backend::Owner, _: crate::run_backend::RuntimeOwnership) -> crate::run_backend::Result<()> { unreachable!() }
+    fn cleanup_runtime(&self, _: &crate::run_backend::Owner) -> crate::run_backend::Result<crate::run_backend::CleanupResult> { unreachable!() }
     fn daytime_payload(&self, _: &crate::run_backend::Owner, _: &crate::run_backend::Terminal) -> crate::run_backend::Result<Report> {
         self.0.clone().ok_or_else(|| crate::run_backend::BackendError::unknown("verified payload unavailable"))
     }

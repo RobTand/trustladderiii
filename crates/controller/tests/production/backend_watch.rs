@@ -17,6 +17,8 @@ impl RunBackend for Backend {
     fn cancel(&self, _: &Owner) -> Result<CancelAck> { panic!("local observer teardown must never cancel native execution") }
     fn probe(&self, _: &Reservation, _: &Placement) -> Result<Probe> { panic!("observer must never census") }
     fn launch_context(&self, _: &Owner, _: &str) -> Result<LaunchContext> { panic!("observer must never launch") }
+    fn retain_runtime(&self, _: &Owner, _: RuntimeOwnership) -> Result<()> { panic!("observer must never launch") }
+    fn cleanup_runtime(&self, _: &Owner) -> Result<CleanupResult> { panic!("observer teardown must never clean native execution") }
     fn daytime_payload(&self, _: &Owner, _: &Terminal) -> Result<tl3_controller::contracts::report::CheckReport> { panic!("observer must not judge payloads") }
 }
 fn release(released: &Arc<(Mutex<bool>, Condvar)>) {
