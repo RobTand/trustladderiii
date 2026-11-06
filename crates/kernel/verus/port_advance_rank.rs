@@ -31,6 +31,41 @@ pub(super) proof fn start(n: Node, ticket: u64, c: AdvanceContext, role: Role)
     if n.paused {} else if n.ticket.is_none() {} else if c.pool {} else {}
 }
 
+/// #771 / #806: a finished node with nothing enabled stutters within every bound.
+pub(super) proof fn finished_stutter(n: Node, ticket: u64)
+    ensures advance_post(n, n, ticket, ticket, false),
+{
+    reveal(advance_post); reveal(distance);
+}
+
+/// Publishing / Q30 / #771 / #806: queueing strictly lowers the local rank.
+pub(super) proof fn finished_queued(n: Node, ticket: u64)
+    requires advance_pre(n, ticket, 0), n.phase == Phase::Publishing,
+        !n.waiting_incident, n.effect.is_none(), current_item(n).is_none(),
+    ensures advance_post(n, retirement::phased(n, Phase::Queued), ticket, ticket, true),
+{
+    reveal(advance_post); reveal(distance);
+}
+
+/// Stopping / Closed finality / #771 / #806: the real close_node frame is exactly
+/// `closed`, and closure strictly lowers the local rank.
+pub(super) proof fn finished_closed(n: Node, after: Node, ticket: u64, outcome: Outcome)
+    requires advance_pre(n, ticket, 0), n.phase == Phase::Stopping(outcome),
+        !n.waiting_incident, n.effect.is_none(), n.question.is_none(),
+        current_item(n).is_none(),
+        after == (Node { phase: Phase::Closed(outcome), pos: 0, ticket: None,
+            credit: Credit { earned: after.credit.earned,
+                merge_credited: after.credit.merge_credited, ..n.credit }, ..n }),
+        after.credit.earned as int == n.credit.earned as int
+            + if outcome == Outcome::Merged && !n.credit.merge_credited { 1int } else { 0int },
+        after.credit.merge_credited == (n.credit.merge_credited || outcome == Outcome::Merged),
+    ensures after == port_advance_contracts::closed(n, outcome),
+        advance_post(n, after, ticket, ticket, true),
+{
+    assert(after == port_advance_contracts::closed(n, outcome));
+    reveal(advance_post); reveal(distance);
+}
+
 /// Stopping / #771: extract only the bounds needed by the executable cleanup.
 pub(super) proof fn teardown_bounds(n: Node, ticket: u64, out_len: usize, kind: EffectKind)
     requires advance_pre(n, ticket, out_len), !(n.phase is Closed),

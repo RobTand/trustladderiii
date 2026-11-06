@@ -1199,6 +1199,9 @@ def verus_proofs():
             "port_advance_rank_teardown_question": ("kernel::ranks::port_advance_rank#teardown_question", 1),
             "port_advance_rank_teardown_absent": ("kernel::ranks::port_advance_rank#teardown_absent", 1),
             "port_advance_rank_teardown_emission": ("kernel::ranks::port_advance_rank#teardown_emission", 1),
+            "port_advance_rank_finished_stutter": ("kernel::ranks::port_advance_rank#finished_stutter", 1),
+            "port_advance_rank_finished_queued": ("kernel::ranks::port_advance_rank#finished_queued", 1),
+            "port_advance_rank_finished_closed": ("kernel::ranks::port_advance_rank#finished_closed", 1),
             "ranks_advance_teardown_missing": ("kernel::ranks#advance_teardown_missing", 1),
             "ranks_advance_teardown_emitting": ("kernel::ranks#advance_teardown_emitting", 1),
         }

@@ -672,17 +672,19 @@ kernel_fn! {
             port_advance_contracts::exact(*old(node), *final(node),
                 *old(_next_ticket), *final(_next_ticket), context, *old(out), *final(out)),
     ] proof [port_advance_step_frames::finished_quiet(*node, *_next_ticket, context, *out);
-        reveal(advance_post); reveal(distance);] {
+        port_advance_rank::finished_stutter(*node, *_next_ticket);] {
         kernel_snapshot! { advance_out = *out }
         let n = *node;
         match n.phase {
             Phase::Publishing => {
                 set_phase(node, Phase::Queued);
+                kernel_proof! { port_advance_rank::finished_queued(n, *_next_ticket); }
                 true
             }
             Phase::Stopping(outcome) if n.question.is_none() => {
                 close_node(node, context.node, outcome, out);
-                kernel_proof! { port_advance_step_frames::finished_close(n, *_next_ticket,
+                kernel_proof! { port_advance_rank::finished_closed(n, *node, *_next_ticket, outcome);
+                    port_advance_step_frames::finished_close(n, *_next_ticket,
                     context, advance_out@, *out, outcome); }
                 true
             }
