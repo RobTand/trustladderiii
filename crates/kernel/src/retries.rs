@@ -85,25 +85,49 @@ pub(super) fn failed_round(w: &mut World, i: usize, step: ReviewStop,
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures report::failed_round(old(report).entries@, final(report).entries@,
+            NodeId(i as u64), report::failure_cause(step)),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(retry_bounds);] {
+    kernel_snapshot! { before_report = report.entries@ }
+    kernel_proof! { report::lemmas::failure_kind(step); }
     let cause = match step {
         ReviewStop::ChecksFailed => FailedRoundCause::ChecksFailed,
         ReviewStop::ChangesRequested => FailedRoundCause::ChangesRequested,
         ReviewStop::CiFailed => FailedRoundCause::CiFailed,
         _ => FailedRoundCause::MakerCantMeet,
     };
-    report.record_failed_round(NodeId(i as u64), cause);
+    if step != ReviewStop::MakerCantMeet || w.nodes[i].round == 0 {
+        report.record_failed_round(NodeId(i as u64), cause);
+        kernel_proof! {
+            report::lemmas::read_failed_round(before_report@, report.entries@,
+                NodeId(i as u64), cause);
+        }
+    }
     let m = &mut w.nodes[i];
     if m.round == 0 {
         // The fix round resumes the maker's session. It's free.
         m.round = 1;
         set_phase(m, Phase::Making);
     } else {
+        kernel_snapshot! { before_rung_report = report.entries@ }
         next_rung(w, i, step, out, report);
+        kernel_proof! {
+            report::lemmas::round_shape(NodeId(i as u64),
+                if step == ReviewStop::MakerCantMeet { Some(FailedRoundCause::MakerCantMeet) }
+                else { None });
+            report::lemmas::read_forwards(before_rung_report@, report.entries@,
+                report::round_entries(NodeId(i as u64),
+                    if step == ReviewStop::MakerCantMeet { Some(FailedRoundCause::MakerCantMeet) }
+                    else { None }));
+        }
+    }
+    kernel_proof! {
+        report::lemmas::append_failed_round(before_report@, report.entries@,
+            NodeId(i as u64), cause);
     }
 }
 }
@@ -117,13 +141,25 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures report::forwards(old(report).entries@, final(report).entries@,
+            report::round_entries(NodeId(i as u64),
+                if step == ReviewStop::MakerCantMeet { Some(FailedRoundCause::MakerCantMeet) }
+                else { None })),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(retry_bounds);] {
+    kernel_snapshot! { before_report = report.entries@ }
     if step == ReviewStop::MakerCantMeet {
         report.record_failed_round(NodeId(i as u64), FailedRoundCause::MakerCantMeet);
+        kernel_proof! { report::lemmas::read_failed_round(before_report@, report.entries@,
+            NodeId(i as u64), FailedRoundCause::MakerCantMeet); }
+    }
+    kernel_proof! {
+        report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64),
+            if step == ReviewStop::MakerCantMeet { Some(FailedRoundCause::MakerCantMeet) }
+            else { None });
     }
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];

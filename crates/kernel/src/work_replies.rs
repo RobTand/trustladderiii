@@ -54,7 +54,9 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
             | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees | Reply::AuditDisagrees
             | Reply::ProtectedPaths | Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet
             | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit),
-    ensures progress_gate_contracts::maker_transition(*old(w), *final(w), i as int,
+    ensures report::forwards(old(report).entries@, final(report).entries@,
+            report::round_entries(NodeId(i as u64), report::work_failure(reply))),
+        progress_gate_contracts::maker_transition(*old(w), *final(w), i as int,
             reply, *old(out), *final(out)),
         (successful_reply_input(old(w).nodes@[i as int], reply)
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
@@ -63,6 +65,8 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(progress_gate_contracts::maker_transition); reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds);] {
+    kernel_snapshot! { before_report = report.entries@ }
+    kernel_proof! { report::lemmas::work_kind(reply); }
     match reply {
         Reply::MakerDone { head } => {
             let m = &mut w.nodes[i];
@@ -70,7 +74,11 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
             m.checked = None;
             set_phase(m, Phase::Checking);
         }
-        Reply::MakerCantMeet => next_rung(w, i, ReviewStop::MakerCantMeet, out, report),
+        Reply::MakerCantMeet => {
+            next_rung(w, i, ReviewStop::MakerCantMeet, out, report);
+            kernel_proof! { report::lemmas::round_delta(before_report@, report.entries@,
+                NodeId(i as u64), Some(FailedRoundCause::MakerCantMeet)); }
+        }
         Reply::MakerOutOfRoom => out_of_room(w, i, ReviewStop::MakerOutOfRoom, out),
         Reply::ChecksDone {
             pass, in_footprint, ..
@@ -81,6 +89,11 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
                 set_phase(m, Phase::Reviewing);
             } else {
                 failed_round(w, i, ReviewStop::ChecksFailed, out, report);
+                kernel_proof! {
+                    report::lemmas::failure_kind(ReviewStop::ChecksFailed);
+                    report::lemmas::read_failed_round(before_report@, report.entries@,
+                        NodeId(i as u64), FailedRoundCause::ChecksFailed);
+                }
             }
         }
         Reply::Approved { head } => {
@@ -88,7 +101,14 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
             m.approved = Some(head);
             set_phase(m, Phase::Publishing);
         }
-        Reply::ChangesRequested => failed_round(w, i, ReviewStop::ChangesRequested, out, report),
+        Reply::ChangesRequested => {
+            failed_round(w, i, ReviewStop::ChangesRequested, out, report);
+            kernel_proof! {
+                report::lemmas::failure_kind(ReviewStop::ChangesRequested);
+                report::lemmas::read_failed_round(before_report@, report.entries@,
+                    NodeId(i as u64), FailedRoundCause::ChangesRequested);
+            }
+        }
         Reply::ReviewerOutOfRoom => {
             if w.nodes[i].review_restarted {
                 out_of_room(w, i, ReviewStop::ReviewerOutOfRoom, out);
@@ -98,6 +118,10 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
             }
         }
         _ => reply_rebase(w, i, reply, out),
+    }
+    kernel_proof! {
+        report::lemmas::forward_round(before_report@, report.entries@,
+            NodeId(i as u64), report::work_failure(reply));
     }
 }
 }

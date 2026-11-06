@@ -63,7 +63,7 @@ pub enum ReportEntry {
 }
 
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Report {
     pub entries: Vec<ReportEntry>,
 }
@@ -113,6 +113,51 @@ pub closed spec fn stale_refusal(r0: Seq<ReportEntry>, r1: Seq<ReportEntry>,
 #[verifier::opaque]
 pub closed spec fn counter_exhausted(headroom: bool, refused: bool) -> bool {
     refused == !headroom
+}
+
+#[verifier::opaque]
+pub closed spec fn round_entries(node: NodeId, cause: Option<FailedRoundCause>) -> Seq<ReportEntry> {
+    match cause {
+        Some(cause) => seq![ReportEntry::FailedRound { node, cause }],
+        None => Seq::empty(),
+    }
+}
+
+#[verifier::opaque]
+pub closed spec fn failure_cause(step: ReviewStop) -> FailedRoundCause {
+    match step {
+        ReviewStop::ChecksFailed => FailedRoundCause::ChecksFailed,
+        ReviewStop::ChangesRequested => FailedRoundCause::ChangesRequested,
+        ReviewStop::CiFailed => FailedRoundCause::CiFailed,
+        _ => FailedRoundCause::MakerCantMeet,
+    }
+}
+
+#[verifier::opaque]
+pub closed spec fn work_failure(reply: Reply) -> Option<FailedRoundCause> {
+    match reply {
+        Reply::MakerCantMeet => Some(FailedRoundCause::MakerCantMeet),
+        Reply::ChecksDone { pass, in_footprint, .. } => if pass && in_footprint {
+            None
+        } else { Some(FailedRoundCause::ChecksFailed) },
+        Reply::ChangesRequested => Some(FailedRoundCause::ChangesRequested),
+        _ => None,
+    }
+}
+
+#[verifier::opaque]
+pub closed spec fn ci_failure(phase: Phase, current: Option<Item>, infra: bool)
+    -> Option<FailedRoundCause> {
+    if !infra && (phase == Phase::Queued
+        || phase == Phase::Publishing && current == Some(Item::Do(EffectKind::Enqueue))) {
+        Some(FailedRoundCause::CiFailed)
+    } else { None }
+}
+
+#[verifier::opaque]
+pub closed spec fn fact_failure(phase: Phase, current: Option<Item>, fact: Fact)
+    -> Option<FailedRoundCause> {
+    match fact { Fact::CiFailed { infra } => ci_failure(phase, current, infra), _ => None }
 }
 }
 
