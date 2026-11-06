@@ -84,7 +84,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
         }),
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
     kernel_snapshot! { report_before = report.entries@ }
-    kernel_proof! { report::lemmas::entries_for_event(event, report_input(*w, event)); }
+    kernel_proof! { report_projection(*w, event); report::lemmas::entries_for_event(event, report_input(*w, event)); }
     let target = match event {
         Event::Reply { node, .. } | Event::Ack { node, .. } | Event::Fact { node, .. }
             | Event::Command { node, .. } => Some(node),
@@ -170,12 +170,10 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
         }
     }
     kernel_snapshot! { report_middle = report.entries@ }
-    let mut stop_review = None;
     if let Some(node) = if matches!(event, Event::Fact { .. }) { None } else { target } {
         if let Some(before) = before_phase {
             if let Some(i) = w.index(node) {
                 let after = w.nodes[i].phase;
-                stop_review = w.nodes[i].review_stop;
                 let cause = StopCause::from_phase(after, w.nodes[i].review_stop,
                     matches!(event, Event::Fact { fact: Fact::PrClosedByPerson, .. }),
                     matches!(event, Event::Command { command: Command::Stop, .. }
@@ -184,6 +182,10 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
             }
         }
     }
+    kernel_snapshot! { stop_review = match report::event_target(event) {
+        Some(node) if node.0 < w.nodes@.len() => w.nodes@[node.0 as int].review_stop,
+        _ => None,
+    } }
     kernel_proof! {
         if !(event is Fact) {
             assert forall|j: int| 0 <= j < before_apply@.nodes@.len()
@@ -197,7 +199,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
             }
         }
         report::lemmas::observe(event, phase_view(before_apply@.nodes@), phase_view(w.nodes@),
-            report_input(before_apply@, event), stop_review, report_before@, report_middle@, report.entries@);
+            report_input(before_apply@, event), stop_review@, report_before@, report_middle@, report.entries@);
     }
     kernel_proof! {
         if before_apply@.nodes@.len() > 0
