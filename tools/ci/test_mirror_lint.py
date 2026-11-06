@@ -22,6 +22,8 @@ class MirrorLintTests(unittest.TestCase):
         cases = [
             ('crates/a/tests/check.rs', 'include_str!("../src/lib.rs");', True),
             ('crates/a/tests/check.rs', 'include_bytes!("../src/lib.rs");', True),
+            ('crates/a/tests/check.rs', 'include_str!(r#"../src/lib.rs"#);', True),
+            ('crates/a/tests/check.rs', '// include_str!("../src/lib.rs");', False),
             ('crates/a/tests/check.rs', 'include_str!("fixtures/input.rs");', False),
             ('crates/a/src/lib.rs', '#[cfg(test)] mod tests { const S: &str = include_str!("logic.rs"); }', True),
             ('crates/a/src/lib.rs', 'const S: &str = include_str!("logic.rs");', False),
@@ -46,12 +48,17 @@ class MirrorLintTests(unittest.TestCase):
                 self.assertEqual(('a/tests/fixtures/old.rs', 'frozen-copy') in result, expected)
         text = '\n'.join(['use example::module;', '{', '}', 'import example'] * 20)
         self.assertEqual(self.scan({'a/src/lib.rs': text, 'a/tests/copy.rs': text}), set())
+        imports = 'from example import (\n' + '\n'.join(
+            f'    imported_symbol_{i},' for i in range(15)) + '\n)'
+        self.assertEqual(self.scan({'a/src/lib.py': imports, 'tests/test_a.py': imports}), set())
 
     def test_declarations_only_in_comments_or_docstrings(self):
         for source, expected in [
             ('# read-only mirror', True), ('"""Mirror of foo.bar."""', True),
             ('# Mirrors foo.bar', True), ('# MIRROR: foo', True),
             ('# git mirror URL', False), ('value = "mirror of foo"', False),
+            ('# git mirrors upstream repositories', False),
+            ('"""Check mirrors and their exceptions."""', False),
         ]:
             with self.subTest(source=source):
                 result = self.scan({'a/src/a.py': source})
