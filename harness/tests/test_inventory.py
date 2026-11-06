@@ -281,3 +281,35 @@ def test_source_edit_has_a_relative_path_and_instruction(path, instruction):
     from tl3_harness.rules import SourceEdit
     with pytest.raises(ValueError):
         SourceEdit(path, instruction)
+
+
+@pytest.mark.parametrize('repair_kind', ['cant_meet', 'source', 'edit'])
+def test_render_context_preserves_reply_and_distinguishes_tool_repairs(repair_kind):
+    from tl3_harness import rules as core, terminal_forms as forms
+
+    reason = 'Declare it via needs_files, or use run_tests/grep/read.'
+    allowed = core.Allowed('const', 'tests/test_observer.py')
+    repairs = {
+        'cant_meet': core.CantMeet(reason),
+        'source': core.SourceEdit('tests/test_observer.py', 'Move the call into the test body.'),
+        'edit': core.Edit(core.Name('field', '/value'), 'replace', allowed),
+    }
+    row = core.Rule('maker.footprint', lambda facts: ({},),
+        lambda facts: (core.Name('path', 'tests/test_observer.py'),),
+        allowed, repairs[repair_kind], roles=frozenset({'maker'}))
+    violation, = core.evaluate((row,), {}, role='maker')
+    reply = violation.render(role='maker')
+    assert violation.render(role='maker', context='reply') == reply
+    assert core.render_all((violation,), role='maker', context='reply') == reply
+    for render in (lambda: violation.render(role='maker', context='tool'),
+                   lambda: core.render_all((violation,), role='maker', context='tool')):
+        if repair_kind == 'edit':
+            with pytest.raises(ValueError, match='Edit.*tool'):
+                render()
+        elif repair_kind == 'source':
+            assert render() == reply
+        else:
+            assert forms.MAKER.phrase in reply
+            assert render() == reply.replace(forms.MAKER.phrase + ' ', '')
+            assert reason in render()
+            assert forms.MAKER.phrase not in render()
