@@ -242,6 +242,17 @@ fn admitted_reply(w: &mut World, i: usize, _generation: u64, reply: Reply,
                     && final(w).next_question == old(w).next_question
                     && *final(out) == *old(out)
             }),
+        (reply == Reply::AuditDisagrees && old(w).nodes@[i as int].phase == Phase::Auditing
+            && old(w).nodes@[i as int].audit_rounds >= 1
+            && current_item(old(w).nodes@[i as int]) == Some(Item::Await)
+            && old(w).nodes@[i as int].run == Some(_generation) ==> {
+                let n = final(w).nodes@[i as int];
+                n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none()
+                    && n.review_stop == Some(ReviewStop::AuditDisagreement)
+                    && n.credit == old(w).nodes@[i as int].credit
+                    && final(w).next_question == old(w).next_question
+                    && *final(out) == *old(out)
+            }),
 ] proof [reveal(port_review_reply::accepted_reply);] {
     kernel_snapshot! { before_reply = *w }
     kernel_snapshot! { before_outputs = *out }
