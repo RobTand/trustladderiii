@@ -20,6 +20,10 @@ args = sys.argv[1:]
 with pathlib.Path({str(calls)!r}).open('a') as log:
     log.write(json.dumps(args) + '\\n')
 if args[0] == 'run':
+    evidence = pathlib.Path({str(tmp_path / 'stderr')!r})
+    if evidence.exists():
+        sys.stderr.write(evidence.read_text())
+        sys.stderr.flush()
     print('{{"event":"start","schema":1}}', flush=True)
     sys.exit(0)
 if args[:2] == ['container', 'exists']:
@@ -93,3 +97,61 @@ def test_flux_command_at_launcher_boundary(launcher):
     assert not any('flux-out' in mount or 'token' in mount for mount in mounts)
     assert '--cpuset-cpus' not in arguments
     assert arguments[-2:] == ['/harness/runtime_evidence.py', '-']
+
+
+def test_owned_scratch_cleanup_refuses_replaced_leaf(tmp_path):
+    from tl3_harness import scratch
+
+    tmp_path.chmod(0o700)
+    leaf = scratch.private_directory(tmp_path)
+    original = leaf.with_suffix('.retained')
+    leaf.rename(original)
+    leaf.mkdir()
+    (leaf / 'foreign').write_text('keep')
+    with pytest.raises(RuntimeError, match='identity changed'):
+        scratch.release_directory(leaf)
+    assert (leaf / 'foreign').read_text() == 'keep'
+
+
+def test_owned_scratch_removes_only_fresh_leaf(tmp_path):
+    from tl3_harness import scratch
+
+    tmp_path.chmod(0o700)
+    leaf = scratch.private_directory(tmp_path)
+    sibling = tmp_path / 'unrelated'
+    sibling.mkdir()
+    (leaf / 'payload').write_text('temporary')
+    scratch.release_directory(leaf)
+    assert not leaf.exists()
+    assert sibling.is_dir()
+    with pytest.raises(RuntimeError, match='unowned'):
+        scratch.release_directory(sibling)
+
+
+@pytest.mark.parametrize('evidence_present', [False, True])
+def test_runtime_evidence_is_retained_outside_report(launcher, monkeypatch, evidence_present):
+    from tl3_harness import runtime
+    from tl3_harness.runtime_evidence import PREFIX
+
+    executable, calls = launcher
+    output = executable.parent / 'output'
+    output.mkdir()
+    facts = {'Cpus_allowed_list': '2-3', 'cgroup': '0::/flux/job-fixture\n'}
+    monkeypatch.setattr(runtime.Evidence, 'host_snapshot', staticmethod(lambda: facts))
+    monkeypatch.setattr(runtime, 'evidence_sink', lambda name: runtime.Evidence(output, name))
+    if evidence_present:
+        (executable.parent / 'stderr').write_text(PREFIX + json.dumps(facts) + '\n')
+    with calls.with_suffix('.stdin').open('w+b') as selection:
+        if evidence_present:
+            with Supervised([str(executable), 'run', 'immutable-fixture'], selection, ()) as process:
+                assert list(process.records()) == [b'{"event":"start","schema":1}\n']
+                assert process.stderr_diagnostic == ''
+        else:
+            with pytest.raises(ExecutionFailure, match='missing_runtime_evidence'):
+                with Supervised([str(executable), 'run', 'immutable-fixture'], selection, ()) as process:
+                    list(process.records())
+    records = [json.loads(line) for line in next(output.iterdir()).read_text().splitlines()]
+    assert records[0] == {'event': 'host', **facts}
+    assert records[-1] == {'event': 'cleanup', 'confirmed': True}
+    assert [record['event'] for record in records] == (
+        ['host', 'container', 'cleanup'] if evidence_present else ['host', 'cleanup'])
