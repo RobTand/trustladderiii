@@ -13,6 +13,19 @@ from unittest.mock import patch
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
+from tl3_harness import selector_identity as identity
+from tl3_harness.selector_identity import selector_identity
+
+
+# Frozen reference dependency, copied verbatim from b7781f1da8dfff98fe055625861b15a035be9981
+# harness/src/tl3_harness/selector_identity.py:15. Only the reference imports this copy.
+def selection_matches(value, selectors):
+    """Compare a full list or digest to the trusted full selection, never its prefix."""
+    if isinstance(value, list):
+        return value == list(selectors)
+    return (isinstance(value, dict) and type(value.get('count')) is int
+            and value == selector_identity(selectors))
+
 
 def reference(name):
     module = types.ModuleType("t780_reference_" + name)
@@ -21,7 +34,9 @@ def reference(name):
     return module
 
 
-old = {name: reference(name) for name in ("exploration", "session", "forecast", "maker")}
+old = {name: reference(name) for name in ("exploration", "session", "forecast")}
+with patch.object(identity, 'selection_matches', selection_matches, create=True):
+    old["maker"] = reference("maker")
 
 
 def check(op, **facts):
