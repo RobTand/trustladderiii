@@ -826,6 +826,8 @@ def verus_proofs():
             "kernel::reply_equivalence::compare": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
             "kernel::reply_equivalence::admitted_extraction_matches_original": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
             "kernel::reply_equivalence::audit_disagreement_runs_once_before_reset": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
+            "kernel::retries_facts::failed_run": "Q50 hidden failed-run update, typechecked in every selection.",
+            "kernel::retries_facts::abandoned": "Q30 operation ownership update, typechecked in every selection.",
             "kernel::port_t860_contracts::admissible": "#860: nonrecursive acceptance table predicate",
             "kernel::port_t860_contracts::stopping_post": "#860: nonrecursive release frame predicate",
             "kernel::port_t860_contracts::ended_post": "#860: nonrecursive frame predicate",
@@ -1108,6 +1110,10 @@ def verus_proofs():
             "port_t860_link_rejected": ("kernel::port_t860_link#rejected", 1),
             "port_t860_link_admitted": ("kernel::port_t860_link#admitted", 1),
             "port_t860_link_irrelevant": ("kernel::port_t860_link#irrelevant", 1),
+            "command_helpers_mark_handled_resources": ("kernel::command_helpers#mark_handled_resources", 1),
+            "retries_facts_restarted": ("kernel::retries_facts#restarted", 1),
+            "retries_facts_incident": ("kernel::retries_facts#incident", 1),
+            "retries_facts_failed_result": ("kernel::retries_facts#failed_result", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
