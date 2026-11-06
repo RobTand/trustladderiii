@@ -247,6 +247,22 @@ def verus_proofs():
             "clone_command_read": ("refused_sticky", "enqueue#CommandRead::clone", 1),
             "clone_queue_event": ("refused_sticky", "enqueue#QueueEvent::clone", 1),
             "clone_effect": ("refused_sticky", "enqueue#Effect::clone", 1),
+            # ctrl-core C2: required-check port and rerun-budget selectors.
+            "required_check": ("required_check", "enqueue#required_check", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
+            "required_check_types": ("required_check", "enqueue#RequiredState::clone", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
+            "required_check_witness": ("required_check", "witness#covers", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
+            "required_check_oracle_witness": ("required_check", "witness#oracle", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
+            "rerun_budget": ("rerun_budget", "enqueue#decide", 1),
+            "rerun_budget_consumed_receipt_witness": ("rerun_budget", "witness#consumed_receipt", 1),
+            "rerun_budget_retained_budget_witness": ("rerun_budget", "witness#retained_budget", 1),
+            "rerun_budget_dispatch_once_witness": ("rerun_budget", "witness#dispatch_once", 1),
+            "rerun_budget_result_budget_witness": ("rerun_budget", "witness#result_budget", 1),
+            "rerun_budget_read_gates_witness": ("rerun_budget", "witness#read_gates", 1),
+            "rerun_budget_read_receipts_witness": ("rerun_budget", "witness#read_receipts", 1),
+            "rerun_budget_absent_results_witness": ("rerun_budget", "witness#absent_results", 1),
+            "rerun_budget_terminal_results_witness": ("rerun_budget", "witness#terminal_results", 1),
+            "rerun_budget_resumable_results_witness": ("rerun_budget", "witness#resumable_results", 1),
+            "rerun_budget_pending_covers_witness": ("rerun_budget", "witness#pending_covers", 1),
         }
         for name, entry in enqueue_groups.items():
             root, module, count = entry[:3]
@@ -275,48 +291,6 @@ def verus_proofs():
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
 
-        # ctrl-core C2: required-check Kani port and rerun budgets, independently owned.
-        for part, root, module, count in [
-            ("required_check", "required_check", "enqueue#required_check", 1),
-            ("required_check_types", "required_check", "enqueue#RequiredState::clone", 1),
-            ("required_check_witness", "required_check", "witness#covers", 1),
-            ("required_check_oracle_witness", "required_check", "witness#oracle", 1),
-            ("rerun_budget", "rerun_budget", "enqueue#decide", 1),
-            ("rerun_budget_consumed_receipt_witness", "rerun_budget", "witness#consumed_receipt", 1),
-            ("rerun_budget_retained_budget_witness", "rerun_budget", "witness#retained_budget", 1),
-            ("rerun_budget_dispatch_once_witness", "rerun_budget", "witness#dispatch_once", 1),
-            ("rerun_budget_result_budget_witness", "rerun_budget", "witness#result_budget", 1),
-            ("rerun_budget_read_gates_witness", "rerun_budget", "witness#read_gates", 1),
-            ("rerun_budget_read_receipts_witness", "rerun_budget", "witness#read_receipts", 1),
-            ("rerun_budget_absent_results_witness", "rerun_budget", "witness#absent_results", 1),
-            ("rerun_budget_terminal_results_witness", "rerun_budget", "witness#terminal_results", 1),
-            ("rerun_budget_resumable_results_witness", "rerun_budget", "witness#resumable_results", 1),
-            ("rerun_budget_pending_covers_witness", "rerun_budget", "witness#pending_covers", 1),
-        ]:
-            verus_test(
-                name = "verus_enqueue_" + part,
-                src = "proofs/enqueue_" + root + ".rs",
-                srcs = [
-                    "src/decide/enqueue.rs",
-                    "src/decide/check.rs",
-                    "src/decide/observe.rs",
-                    "src/decide/verification.rs",
-                ],
-                specs = [
-                    "proofs/enqueue_helpers.rs",
-                    "proofs/enqueue_refused_sticky_spec.rs",
-                    "proofs/enqueue_" + root + "_spec.rs",
-                    "proofs/enqueue_" + root + "_witness.rs",
-                ],
-                module = module,
-                expected_obligations = count,
-                tags = ["rust", "verus"],
-                size = "small",
-                timeout = "short",
-                target_compatible_with = ["@platforms//cpu:x86_64"],
-                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
-                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
-            )
 
 
     if native.package_name() == "crates/controller":
