@@ -91,3 +91,11 @@ pub fn checks_reply(
 pub fn generation_fresh(completed: bool, unchanged: bool) -> bool {
     completed && unchanged
 }
+
+/// #845 / Queued and Publishing enqueue rows: refresh only a generator's work failure.
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures
+    result == (configured && !infra && (queued || enqueuing)),
+))]
+pub fn refresh_queue_repair(configured: bool, infra: bool, queued: bool, enqueuing: bool) -> bool {
+    configured && !infra && (queued || enqueuing)
+}

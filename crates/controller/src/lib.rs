@@ -4234,6 +4234,33 @@ impl Controller {
                 return Ok(None);
             }
         };
+        if let Event::Fact {
+            node,
+            fact: Fact::CiFailed { infra },
+        } = event
+        {
+            let n = &world.nodes[node.0 as usize];
+            let enqueuing = n.phase == tl3_kernel::Phase::Publishing
+                && n.effect.is_some_and(|effect| {
+                    effect.kind == tl3_kernel::EffectKind::Enqueue && !effect.cancelling
+                });
+            let configured = self
+                .adapters
+                .get(executor::Upstream::Worktrees)?
+                .generator_configured(&request(snapshot, node)?.repo);
+            if tl3_controller_core::translate_checks::refresh_queue_repair(
+                configured,
+                infra,
+                n.phase == tl3_kernel::Phase::Queued,
+                enqueuing,
+            ) {
+                commit.rows.push(put(
+                    "generation_repairs",
+                    node.0.to_string(),
+                    json!({"head":commit_sha(snapshot,n.head)}),
+                ));
+            }
+        }
         let finding = {
             use tl3_controller_core::translate_tail as tail;
             let (node, input) = match event {
@@ -4292,10 +4319,6 @@ impl Controller {
                         _ => None,
                     }).unwrap_or_else(|| "The maker could not meet the goals.".into()))),
                 tail::Finding::Ci => {
-                    if let Some(node) = node
-                        && self.adapters.get(executor::Upstream::Worktrees)?.generator_configured(&request(snapshot, node)?.repo) {
-                        commit.rows.push(put("generation_repairs", node.0.to_string(), json!({"queue_ci_failed":true})));
-                    }
                     Some((findings::Kind::FailedCheck, findings::ci_report(&ci_checks, &failed_tests)))
                 },
                 tail::Finding::None => None,

@@ -16,6 +16,12 @@ import remote_gate  # noqa: E402
 
 
 CASES = {
+    'queue_generation_repair': (
+        'crates/controller-core/src/translate_checks.rs',
+        '    configured && !infra && (queued || enqueuing)',
+        '    configured && (queued || enqueuing)',
+        '//crates/controller-core:verus_translate_checks_decisions',
+    ),
     'generated_freshness': (
         'crates/controller-core/src/translate_checks.rs',
         '    completed && unchanged',

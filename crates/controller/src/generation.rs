@@ -216,28 +216,7 @@ impl crate::Controller {
     ) -> Result<Delivery> {
         let request = crate::request(snapshot, node)?;
         let n = &world.nodes[node.0 as usize];
-        let paths = if let Some(row) = snapshot
-            .rows
-            .iter()
-            .find(|row| row.table == "declared_scopes" && row.id == node.0.to_string())
-        {
-            serde_json::from_value(row.value.clone()).map_err(Error::StoredJson)?
-        } else {
-            world
-                .files(n.footprint)
-                .ok_or(Error::Invalid("unknown generation scope"))?
-                .map(|file| {
-                    snapshot
-                        .interned
-                        .iter()
-                        .find(|entry| {
-                            entry.kind == tl3_store::InternKind::Path && entry.id == file.0 as i64
-                        })
-                        .map(|entry| entry.value.clone())
-                        .ok_or(Error::Invalid("generation scope path missing"))
-                })
-                .collect::<Result<Vec<_>>>()?
-        };
+        let paths = crate::declared_scope::paths(snapshot, None, world, node, &snapshot.interned)?;
         Ok(Delivery {
             key: format!("freshness:{}:{generation}", node.0),
             epoch: snapshot.epoch.get(),

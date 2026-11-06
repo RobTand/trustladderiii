@@ -475,7 +475,7 @@ def verus_proofs():
     if native.package_name() == "crates/controller-core":
         # Group G2a2: preparation, plan retargeting and check replies.
         for name, module, count in [
-            ("decisions", "translate_checks", 7),
+            ("decisions", "translate_checks", 8),
             ("witnesses", "translate_checks_witnesses", 4),
         ]:
             verus_test(
