@@ -886,6 +886,12 @@ def verus_proofs():
             "review_retry_recheck_progress": ("kernel::port_review_retry_lemmas#recheck_progress", 1),
             "review_admission_rebase_progress": ("kernel::port_review_admission#rebase_progress", 1),
             "review_admission_clean_pair": ("kernel::port_review_admission#clean_pair", 1),
+            "review_admission_admitted_reply": ("kernel::reply_admission#admitted_reply", 1),
+            "review_admission_mount": ("kernel::port_review_admission#mount", 1),
+            "review_admission_inactive": ("kernel::port_review_admission#inactive", 1),
+            "review_admission_rejected": ("kernel::port_review_admission#rejected", 1),
+            "review_admission_unselected": ("kernel::port_review_admission#unselected", 1),
+            "review_admission_accepted": ("kernel::port_review_admission#accepted", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

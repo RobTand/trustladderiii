@@ -2260,3 +2260,6 @@ mod port_review_retry_lemmas;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_review_admission.rs"]
 mod port_review_admission;
+
+#[cfg(all(test, not(verus_keep_ghost)))]
+mod reply_equivalence;
