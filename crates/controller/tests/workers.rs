@@ -6,6 +6,8 @@ const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(450);
 
 #[path = "workers/classifier.rs"]
 mod classifier;
+#[path = "workers/ingest_verbatim.rs"]
+mod ingest_verbatim;
 mod maker;
 #[path = "workers/postmortem.rs"]
 mod postmortem_reply;
@@ -2965,7 +2967,9 @@ fn run_default() {
         finish_fixture("worker_waits");
     });
     shard.run(WorkerGroup::IngestMaterials, || {
+        ingest_verbatim::run();
         let database = fixture.database();
+        ingest_verbatim::stored_reply(&database.create("stored_ingest_verbatim"));
         for wrapped in [false, true] {
             linked_materials(
                 &database.create(&format!("linked_materials_{wrapped}")),

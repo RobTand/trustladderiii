@@ -1,4 +1,8 @@
 use super::*;
+// #854: the current queue_facts body calls the current queue-entry shell.
+mod queue_entry {
+    include!("queue-entry-current.rs");
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct QueueFact {
     pub repository: Repository,
@@ -596,18 +600,13 @@ async fn queue_facts(
                 .is_some_and(|check| !tl3_mergify::unmet_conditions(check).is_empty()),
         ) {
             let suites = github.check_suites(&repo_name, &pull.head.sha).await?;
-            let completed = facts::suites_completed(&suite_statuses(&suites));
+            let completed =
+                queue_entry::suites_completed(github, &repo_name, state, &suites).await?;
             let required = route::queue::required(checks.missing.clone(), checks.reported.clone());
             if let Some((conditions, failed)) = queue_blocked(state, completed, &required) {
-                facts.push(QueueFact {
-                    repository: repo.clone(),
-                    number: pull.number,
-                    evidence: Evidence::QueueBlocked {
-                        head: pull.head.sha.clone(),
-                        conditions,
-                        failed,
-                    },
-                });
+                facts.push(
+                    queue_entry::failure(github, repo, state, conditions, failed, snapshot).await?,
+                );
             }
         }
         facts.extend(

@@ -361,6 +361,9 @@ mod reference {
 }
 #[allow(clippy::needless_question_mark)]
 mod current {
+    mod queue_entry {
+        include!("queue-entry-current.rs");
+    }
     adapter!();
     include!("current.rs");
     include!("router_current_executor.rs");
@@ -729,6 +732,10 @@ mod properties {
     }
     #[test]
     fn expanded_helpers_are_verbatim() {
+        assert_eq!(
+            include_str!("../../src/adapters/mergify/queue_entry.rs"),
+            include_str!("queue-entry-current.rs")
+        );
         for (source, copy) in [
             (
                 include_str!("../../src/adapters/mergify.rs"),
@@ -2110,6 +2117,9 @@ mod a2_reference {
 }
 #[allow(clippy::needless_question_mark)]
 mod a2_current {
+    mod queue_entry {
+        include!("queue-entry-current.rs");
+    }
     adapter!();
     include!("current.rs");
     mod ci_evidence {
