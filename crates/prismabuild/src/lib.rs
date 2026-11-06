@@ -6,8 +6,9 @@ mod submit;
 
 pub use bell::{Changes, Watcher};
 pub use queue::{
-    AcceptedProgress, ActionRecord, ActionState, Attempt, LEASE_TIMEOUT_S, Lease,
-    MAX_STDERR_TAIL_BYTES, Observations, ProgressObservation, RecordRead,
+    AcceptedProgress, ActionRecord, ActionState, Attempt, HEARTBEAT_FUTURE_TOLERANCE_S,
+    HeartbeatStamps, LEASE_TIMEOUT_S, Lease, MAX_STDERR_TAIL_BYTES, Observations,
+    ProgressObservation, RecordRead,
 };
 pub use submit::{
     Demand, ProgressPhase, Submission, SubmissionStatus, SubmitAction, Tool, Withdrawal,

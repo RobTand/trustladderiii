@@ -118,18 +118,103 @@ pub struct Lease {
     pub owner: String,
     pub host: String,
     pub progress_observation: Option<ProgressObservation>,
+    /// Contended-heartbeat stamps under `lease-heartbeats/<key>/`, read beside
+    /// the lease. They are not part of the lease document.
+    #[serde(skip)]
+    pub stamps: HeartbeatStamps,
+}
+
+/// PrismaBuild's `_stamp_contended_heartbeat` renews only these stamps, never
+/// the lease, while the claim's key lock is contended.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct HeartbeatStamps {
+    /// `heartbeat_unix` of every well-formed stamp naming this action.
+    pub heartbeats: Vec<f64>,
+    /// A stamp could not be read. PrismaBuild: "unreadable I/O retains custody".
+    pub unreadable: bool,
 }
 
 /// PrismaBuild's lease timeout (`pool.LEASE_TIMEOUT_S`, 300 s): a claim whose
-/// heartbeat is older is expired by PrismaBuild's own contract (design.md,
-/// "Lease": the effective heartbeat plus the lease timeout).
+/// effective heartbeat is older is expired by PrismaBuild's own contract
+/// (`PoolQueue._effective_heartbeat`; design.md, "Lease").
 pub const LEASE_TIMEOUT_S: f64 = 300.0;
+/// PrismaBuild's cross-host skew bound for a stamp (`OFFER_FUTURE_TOLERANCE_S`).
+pub const HEARTBEAT_FUTURE_TOLERANCE_S: f64 = 60.0;
 
 impl Lease {
     /// Q43 (#817, found by: live probe, PB #2819 and #2821): an expired lease
     /// is the claim lost by its own record, even while the record stays CLAIMED.
+    ///
+    /// The effective heartbeat follows `_effective_heartbeat`: the lease beat,
+    /// raised by any stamp within the skew bound (capped at now). Conservative
+    /// reading: PrismaBuild credits only the stamp of the lease's exact claim
+    /// identity; here every well-formed stamp naming the action counts, so a
+    /// doubt keeps the claim alive. An unreadable stamp keeps it alive too.
     pub fn expired(&self, now_unix: f64) -> bool {
-        now_unix - self.heartbeat_unix > LEASE_TIMEOUT_S
+        if self.stamps.unreadable {
+            return false;
+        }
+        let beat = self
+            .stamps
+            .heartbeats
+            .iter()
+            .filter(|stamp| **stamp - now_unix <= HEARTBEAT_FUTURE_TOLERANCE_S)
+            .map(|stamp| stamp.min(now_unix))
+            .fold(self.heartbeat_unix, f64::max);
+        now_unix - beat > LEASE_TIMEOUT_S
+    }
+}
+
+/// Bounds one stamp read; PrismaBuild's stamps are a few hundred bytes.
+const MAX_STAMP_BYTES: u64 = 64 * 1024;
+
+async fn heartbeat_stamps(directory: &Path, key: &ActionKey) -> HeartbeatStamps {
+    let mut stamps = HeartbeatStamps::default();
+    let mut entries = match tokio::fs::read_dir(directory).await {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return stamps,
+        Err(_) => {
+            stamps.unreadable = true;
+            return stamps;
+        }
+    };
+    loop {
+        let entry = match entries.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => return stamps,
+            Err(_) => {
+                stamps.unreadable = true;
+                return stamps;
+            }
+        };
+        let path = entry.path();
+        if path.extension().is_none_or(|extension| extension != "json") {
+            continue;
+        }
+        let bytes = match tokio::fs::metadata(&path).await {
+            Ok(metadata) if metadata.len() > MAX_STAMP_BYTES => continue,
+            Ok(_) => tokio::fs::read(&path).await,
+            Err(e) => Err(e),
+        };
+        let bytes = match bytes {
+            Ok(bytes) => bytes,
+            // An atomic replace can remove the name between listing and read.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => {
+                stamps.unreadable = true;
+                return stamps;
+            }
+        };
+        // Malformed or foreign stamps add no credit, as in PrismaBuild.
+        let Ok(stamp) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            continue;
+        };
+        if stamp["action_key"].as_str() == Some(key.as_str())
+            && let Some(beat) = stamp["heartbeat_unix"].as_f64()
+            && beat.is_finite()
+        {
+            stamps.heartbeats.push(beat);
+        }
     }
 }
 
@@ -418,10 +503,13 @@ impl PrismaBuild {
                     {
                         return Err(invalid(&lease_path, "lease identity or schema mismatch"));
                     }
-                    let lease = value.lease;
+                    let mut lease = value.lease;
                     if !lease.heartbeat_unix.is_finite() || lease.heartbeat_unix < 0.0 {
                         return Err(invalid(&lease_path, "invalid heartbeat"));
                     }
+                    lease.stamps =
+                        heartbeat_stamps(&root.join("lease-heartbeats").join(key.as_str()), key)
+                            .await;
                     Some(lease)
                 }
             }
@@ -489,9 +577,54 @@ mod tests {
             owner: "host:1:owner".into(),
             host: "host".into(),
             progress_observation: None,
+            stamps: HeartbeatStamps::default(),
         };
         assert!(!lease.expired(1_000.0 + LEASE_TIMEOUT_S));
         assert!(lease.expired(1_000.0 + LEASE_TIMEOUT_S + 0.001));
+        let now = 1_000.0 + 10.0 * LEASE_TIMEOUT_S;
+        let stamped = |heartbeats: Vec<f64>, unreadable| Lease {
+            stamps: HeartbeatStamps {
+                heartbeats,
+                unreadable,
+            },
+            ..lease.clone()
+        };
+        // A fresh stamp renews a stale lease; an old one does not.
+        assert!(!stamped(vec![now - 1.0], false).expired(now));
+        assert!(stamped(vec![now - LEASE_TIMEOUT_S - 1.0], false).expired(now));
+        // A stamp past the skew bound adds no credit; within it, it counts as now.
+        assert!(stamped(vec![now + HEARTBEAT_FUTURE_TOLERANCE_S + 1.0], false).expired(now));
+        assert!(!stamped(vec![now + HEARTBEAT_FUTURE_TOLERANCE_S], false).expired(now));
+        // Unreadable custody evidence keeps the claim alive.
+        assert!(!stamped(vec![], true).expired(now));
+    }
+
+    #[tokio::test]
+    async fn heartbeat_stamps_read_only_well_formed_stamps_for_the_action() {
+        let (root, _client, key) = fixture();
+        let directory = root.path().join("lease-heartbeats").join(key.as_str());
+        assert_eq!(
+            heartbeat_stamps(&directory, &key).await,
+            HeartbeatStamps::default()
+        );
+        std::fs::create_dir_all(&directory).unwrap();
+        let write = |name: &str, body: String| std::fs::write(directory.join(name), body).unwrap();
+        write(
+            "a.json",
+            serde_json::json!({"action_key": key, "heartbeat_unix": 7.5}).to_string(),
+        );
+        write(
+            "b.json",
+            serde_json::json!({"action_key": "b".repeat(64), "heartbeat_unix": 9.0}).to_string(),
+        );
+        write("c.json", "{not json".into());
+        write(
+            "d.tmp",
+            serde_json::json!({"action_key": key, "heartbeat_unix": 9.0}).to_string(),
+        );
+        let stamps = heartbeat_stamps(&directory, &key).await;
+        assert_eq!(stamps.heartbeats, vec![7.5]);
+        assert!(!stamps.unreadable);
     }
 
     #[tokio::test]
