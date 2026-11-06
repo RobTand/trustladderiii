@@ -44,6 +44,7 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: boo
             },
         exists|context: AdvanceContext| context.node == i
             && result == advance_enabled(old(w).nodes@[i as int], context)
+            && port_advance_contracts::context_safe(*old(w), i as int, context)
             && port_advance_contracts::exact(old(w).nodes@[i as int], final(w).nodes@[i as int],
                 old(w).next_ticket, final(w).next_ticket, context, *old(out), *final(out)),
 ] {
@@ -75,11 +76,13 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: boo
     }
     kernel_proof! {
         assert(movable(*w, i as int) ==> advance_enabled(w.nodes@[i as int], context));
+        assert(port_advance_contracts::context_safe(*w, i as int, context));
     }
     let changed = advance_node(&mut w.nodes[i], &mut w.next_ticket, context, out);
     kernel_proof! {
         assert(exists|c: AdvanceContext| c.node == i
             && changed == advance_enabled(before_advance@.nodes@[i as int], c)
+            && port_advance_contracts::context_safe(before_advance@, i as int, c)
             && port_advance_contracts::exact(before_advance@.nodes@[i as int], w.nodes@[i as int],
                 before_advance@.next_ticket, w.next_ticket, c, before_out@, *out));
         reveal(advance_post);
@@ -183,6 +186,7 @@ pub(super) fn slot_free(w: &World, i: usize) -> (result: bool) [
         && w.gates@[w.nodes@[i as int].repo.0 as int].w > 0
         && (forall|j: int| 0 <= j < w.nodes@.len() && j != i ==> !w.nodes@[j].holds))
         ==> result,
+        result && !w.nodes@[i as int].holds ==> port_advance_contracts::slot_safe(*w, i as int),
 ] {
     let me = &w.nodes[i];
     let _gate_count = w.gates.len();
@@ -195,6 +199,10 @@ pub(super) fn slot_free(w: &World, i: usize) -> (result: bool) [
             *me == w.nodes@[i as int], repo < w.gates.len(),
             repo as int == me.repo.0 as int, *gate == w.gates@[repo as int],
             holders as int <= open_prefix(w.nodes@, j as nat),
+            !me.holds ==> holders as nat == progress_gate_apply::holders(*w, me.repo, j as nat),
+            forall|k: int| 0 <= k < j && k != i && w.nodes@[k].holds
+                && w.nodes@[k].repo == me.repo
+                ==> footprint::disjoint(*w, w.nodes@[k].footprint, me.footprint),
             ((forall|k: int| 0 <= k < w.nodes@.len() && k != i ==> !w.nodes@[k].holds)
                 ==> holders == 0),
         decreases w.nodes.len() - j,
@@ -202,6 +210,7 @@ pub(super) fn slot_free(w: &World, i: usize) -> (result: bool) [
         let n = &w.nodes[j];
         kernel_proof! {
             reveal(open_prefix);
+            reveal(potential_prefix);
             open_prefix_monotone(w.nodes@, j as nat + 1, w.nodes@.len());
         }
         if j != i && n.holds && n.repo == me.repo {

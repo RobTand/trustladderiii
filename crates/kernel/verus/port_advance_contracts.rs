@@ -158,6 +158,26 @@ pub(super) open spec fn exact(before: Node, after: Node, ticket_before: u64, tic
         && outputs(before, c, out_before, out_after)
 }
 
+/// Q30 / #806: successful slot scans have spare capacity and disjoint holders.
+pub(super) open spec fn slot_safe(w: World, i: int) -> bool {
+    w.nodes@[i].repo.0 < w.gates@.len()
+        && progress_gate_apply::holders(w, w.nodes@[i].repo, w.nodes@.len())
+            < w.gates@[w.nodes@[i].repo.0 as int].w
+        && forall|j: int| 0 <= j < w.nodes@.len() && j != i
+            && w.nodes@[j].holds && w.nodes@[j].repo == w.nodes@[i].repo
+            ==> footprint::disjoint(w, w.nodes@[j].footprint, w.nodes@[i].footprint)
+}
+
+/// Q30 / Q39 / #806: real scheduler decisions respect gate and pool capacities.
+pub(super) open spec fn context_safe(w: World, i: int, c: AdvanceContext) -> bool {
+    (c.pool ==> pool_users(w.nodes@, w.nodes@.len()) < w.pool_capacity)
+        && (c.slot && !w.nodes@[i].holds ==> slot_safe(w, i))
+        && (c.admit ==> dependencies::delivered(w.dependencies@, NodeId(i as u64))
+            && w.nodes@[i].repo.0 < w.gates@.len()
+            && slot_waiters(w.nodes@, w.nodes@.len(), w.nodes@[i].repo)
+                < w.gates@[w.nodes@[i].repo.0 as int].w)
+}
+
 /// #806: blocked dispatch only discards an incident waiter's pending ticket.
 pub(super) open spec fn blocked_after(n: Node) -> Node {
     if n.phase is Closed { n }
