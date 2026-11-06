@@ -82,6 +82,16 @@ def optional_encoding():
     )
 
 
+PATH_CONDITIONS = {
+    'path.unusable': 'unusable',
+    'path.noncanonical': 'not a canonical relative path',
+    'path.not_regular': 'not a regular file inside the worktree',
+    'path.hard_cap': f'over the {HARD_CAP_BYTES}-byte limit',
+    'path.binary': 'binary',
+    'path.encoding': 'not UTF-8 text',
+}
+
+
 class DeclaredFileError(ValueError):
     """A declared file the forecast can't use, named with its measured size.
 
@@ -93,7 +103,9 @@ class DeclaredFileError(ValueError):
     def __init__(self, path, reason, size=None):
         self.path, self.reason, self.size = path, reason, size
         self.rule = getattr(reason, "rule", "path.unusable")
-        super().__init__(f"{path}: {reason}" + (f" ({size} bytes)" if size is not None else ""))
+        self.reason = PATH_CONDITIONS[self.rule]
+        self.facts = dict(path=path, reason=self.reason, bytes=size)
+        super().__init__(f"{path}: {self.reason}" + (f" ({size} bytes)" if size is not None else ""))
 
 
 def _environment(error):
@@ -106,10 +118,10 @@ def _file_tokens(worktree, path, encoding):
     Without an encoding, a small file costs its byte count, an upper bound."""
     try:
         parts = _parts(path)
-    except ValueError as error:
-        raise DeclaredFileError(path, named("path.noncanonical", str(error), dict(path=path))) from None
+    except ValueError:
+        raise DeclaredFileError(path, named('path.noncanonical', '', dict(path=path))) from None
     if not parts or str(PurePosixPath(path)) != path:
-        raise DeclaredFileError(path, named('path.noncanonical', "not a canonical relative path", dict(path=path)))
+        raise DeclaredFileError(path, named('path.noncanonical', '', dict(path=path)))
     # New files, including those in new directories, have no base content.
     # Existing ancestors still pass the file tools' descriptor confinement.
     try:
@@ -120,31 +132,31 @@ def _file_tokens(worktree, path, encoding):
     except (OSError, ValueError) as error:
         if _environment(error):
             raise
-        raise DeclaredFileError(path, named('path.not_regular', "not a regular file inside the worktree", dict(path=path))) from None
+        raise DeclaredFileError(path, named('path.not_regular', '', dict(path=path))) from None
     try:
         with worktree._file(path) as stream:
             size = os.fstat(stream.fileno()).st_size
             if size > HARD_CAP_BYTES:
-                raise DeclaredFileError(path, named('path.hard_cap', f"over the {HARD_CAP_BYTES}-byte limit", dict(path=path)), size)
+                raise DeclaredFileError(path, named('path.hard_cap', '', dict(path=path)), size)
             decoder = codecs.getincrementaldecoder("utf-8")()
             chunks = []
             read = 0
             while chunk := stream.buffer.read(1_048_576):
                 read += len(chunk)
                 if read > HARD_CAP_BYTES:
-                    raise DeclaredFileError(path, named('path.hard_cap', f"over the {HARD_CAP_BYTES}-byte limit", dict(path=path)), read)
+                    raise DeclaredFileError(path, named('path.hard_cap', '', dict(path=path)), read)
                 if any(byte < 32 and byte not in (9, 10, 13) for byte in chunk):
-                    raise DeclaredFileError(path, named('path.binary', "binary", dict(path=path)), size)
+                    raise DeclaredFileError(path, named('path.binary', '', dict(path=path)), size)
                 text = decoder.decode(chunk)
                 if read <= LARGE_FILE_BYTES:
                     chunks.append(text)
             decoder.decode(b"", final=True)
     except UnicodeDecodeError:
-        raise DeclaredFileError(path, named('path.encoding', "not UTF-8 text", dict(path=path)), size) from None
+        raise DeclaredFileError(path, named('path.encoding', '', dict(path=path)), size) from None
     except (OSError, ValueError) as error:
         if isinstance(error, DeclaredFileError) or _environment(error):
             raise
-        raise DeclaredFileError(path, named('path.not_regular', "not a regular file inside the worktree", dict(path=path))) from None
+        raise DeclaredFileError(path, named('path.not_regular', '', dict(path=path))) from None
     if worktree.is_generated(path):
         return GENERATED_FILE_TOKENS, read if read > LARGE_FILE_BYTES else None
     if read > LARGE_FILE_BYTES:

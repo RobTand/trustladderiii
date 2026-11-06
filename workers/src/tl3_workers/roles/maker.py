@@ -15,7 +15,7 @@ from jsonschema import Draft202012Validator
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 
-from tl3_workers.contracts import read_json, read_reply, registry, schema
+from tl3_workers.contracts import model_facing, read_json, read_reply, registry, schema
 from tl3_workers.exploration import BudgetUnavailable, ExplorationBudget
 from tl3_workers.budget_check import check as budget_check, history_facts
 from tl3_workers.forecast import forecast_fit, measure_files, optional_encoding
@@ -27,6 +27,8 @@ from tl3_workers.roles.base import Role
 from tl3_workers.session import ContextCharacters, is_unaccepted_session, out_of_room, save
 from tl3_workers.tools import _parts, build_tools
 from tl3_workers.turns import TurnControl, Unrepairable, repaired
+from tl3_harness import Check, HarnessInputError, Kind, Proof
+from tl3_workers.rules import Allowed, CantMeet, Edit, Name, Rule, evaluate, register, render_all
 
 
 def _check_inputs(inputs):
@@ -34,35 +36,159 @@ def _check_inputs(inputs):
     check_inputs("maker", inputs)
 
 
+def _done_property(field):
+    document = schema('maker-reply')
+    return model_facing({**document['oneOf'][0]['properties'][field], '$defs': document['$defs']})
+
+
+def _entry_allowed(goal):
+    expected = 'met' if goal.get('stage', 'maker') == 'maker' else 'pending'
+    document = _done_property('self_check')
+    return {'allOf': [document['items'], {'properties': {
+        'goal_id': {'const': goal['id']}, 'status': {'const': expected}}}],
+        '$defs': document['$defs']}
+
+
+def _goal_coverage(facts):
+    reply, inputs = facts['reply'], facts['inputs']
+    if reply['kind'] != 'done':
+        return
+    goals = inputs['goals']
+    checked = [item['goal_id'] for item in reply['self_check']]
+    if len(checked) != len(goals) or set(checked) != {goal['id'] for goal in goals}:
+        yield {'pointer': '/self_check', 'allowed': Allowed('schema', {
+            'type': 'array', 'minItems': len(goals), 'maxItems': len(goals),
+            'items': {'anyOf': [_entry_allowed(goal) for goal in goals]},
+            'allOf': [{'contains': {'properties': {'goal_id': {'const': goal['id']}}},
+                       'minContains': 1, 'maxContains': 1} for goal in goals]})}
+
+
+def _status(facts, maker):
+    if facts['reply']['kind'] != 'done':
+        return
+    goals = {goal['id']: goal for goal in facts['inputs']['goals']}
+    checked = [item['goal_id'] for item in facts['reply']['self_check']]
+    if len(checked) != len(goals) or set(checked) != set(goals):
+        return  # The coverage row replaces this array with all stage constraints.
+    for index, item in enumerate(facts['reply']['self_check']):
+        goal = goals.get(item['goal_id'])
+        if goal is None or (goal.get('stage', 'maker') == 'maker') != maker:
+            continue
+        if item['status'] != ('met' if maker else 'pending'):
+            yield {'pointer': f'/self_check/{index}', 'allowed': Allowed('schema', _entry_allowed(goal))}
+
+
+def _maker_status(facts):
+    return _status(facts, True)
+
+
+def _downstream_status(facts):
+    return _status(facts, False)
+
+
+def _finding_coverage(facts):
+    reply, inputs = facts['reply'], facts['inputs']
+    if reply['kind'] != 'done':
+        return
+    findings = sorted({item['id'] for item in inputs.get('current_review_findings', [])})
+    mapped = [item['finding_id'] for item in reply.get('reproductions', [])]
+    if len(mapped) != len(findings) or set(mapped) != set(findings):
+        document = _done_property('reproductions')
+        yield {'pointer': '/reproductions', 'op': 'replace' if 'reproductions' in reply else 'add',
+               'allowed': Allowed('schema', {**document, 'minItems': len(findings), 'maxItems': len(findings),
+                   'items': {'allOf': [document['items'], {'properties': {'finding_id': {'enum': findings}}}]},
+                   'allOf': [{'contains': {'properties': {'finding_id': {'const': finding}}},
+                              'minContains': 1, 'maxContains': 1} for finding in findings]})}
+
+
+def _reproduction_proof(facts):
+    if facts['reply']['kind'] != 'done':
+        return
+    for index, item in enumerate(facts['reply'].get('reproductions', [])):
+        if 'tests' not in item:
+            continue
+        pointer = f'/reproductions/{index}'
+        if 'proof' not in item:
+            yield {'pointer': pointer + '/proof', 'harness_rule': 'proof.red_missing'}
+            continue
+        try:
+            Check(item['finding_id'], Kind.REPRODUCING, tuple(item['tests']), proof=Proof.parse(item['proof']))
+        except HarnessInputError as error:
+            yield {'pointer': pointer, 'harness_rule': error.args[0].rule}
+
+
+def _requested_path(facts):
+    if facts['reply']['kind'] != 'needs_files':
+        return
+    for index, item in enumerate(facts['reply']['files']):
+        try:
+            if _parts(item['path']):
+                continue
+        except ValueError:
+            pass
+        yield {'pointer': f'/files/{index}/path'}
+
+
+def _reply_names(facts):
+    return (Name('field', facts['pointer']),)
+
+
+def _reply_allowed(facts):
+    return facts.get('allowed', Allowed('enum', []))
+
+
+def _reply_repair(facts):
+    if 'allowed' not in facts:
+        reason = facts.get('harness_rule', 'path.unusable')
+        return CantMeet(f'{reason}: no replacement is supported by the supplied facts.')
+    return Edit(Name('field', facts['pointer']), facts.get('op', 'replace'), facts['allowed'])
+
+
+def _reply_row(rule_id, check, example, witness):
+    return register(Rule(rule_id, check, _reply_names, _reply_allowed, _reply_repair,
+                         example=example, witness=witness), roles=('maker',))
+
+
+_GOAL = {'id': 'goal'}
+_MET = {'goal_id': 'goal', 'status': 'met', 'evidence': 'Verified.'}
+_PENDING = {'goal_id': 'goal', 'status': 'pending', 'why': 'Owned downstream.'}
+_DONE = {'kind': 'done', 'self_check': [_MET]}
+MAKER_ROWS = (
+    _reply_row('maker.goals', _goal_coverage,
+               {'inputs': {'goals': [_GOAL]}, 'reply': {'kind': 'done', 'self_check': []}}, _DONE),
+    _reply_row('maker.maker_status', _maker_status,
+               {'inputs': {'goals': [_GOAL]}, 'reply': {'kind': 'done', 'self_check': [_PENDING]}}, _DONE),
+    _reply_row('maker.downstream_status', _downstream_status,
+               {'inputs': {'goals': [{**_GOAL, 'stage': 'checking'}]}, 'reply': _DONE},
+               {'kind': 'done', 'self_check': [_PENDING]}),
+    _reply_row('maker.reproductions', _finding_coverage,
+               {'inputs': {'current_review_findings': [{'id': 'finding'}]}, 'reply': _DONE},
+               {**_DONE, 'reproductions': [{'finding_id': 'finding', 'reason': 'Manual review.'}]}),
+    _reply_row('maker.reproduction_proof', _reproduction_proof,
+               {'reply': {**_DONE, 'reproductions': [{'finding_id': 'finding', 'tests': ['test_x.py::test_x']}]}},
+               {'kind': 'cant_meet'}),
+    _reply_row('maker.requested_path', _requested_path,
+               {'reply': {'kind': 'needs_files', 'files': [{'path': '.'}]}}, {'kind': 'cant_meet'}),
+)
+
+
+class MakerReplyError(HarnessInputError):
+    rule_role = 'maker'
+
+    def __init__(self, violations):
+        self.rule_violations = violations
+        super().__init__(render_all(violations, role=self.rule_role))
+
+
 def _check_reply(inputs, reply):
-    if reply["kind"] == "done":
-        goals = [goal["id"] for goal in inputs["goals"]]
-        checked = [check["goal_id"] for check in reply["self_check"]]
-        if len(checked) != len(goals) or set(checked) != set(goals):
-            raise ValueError("self-check must cover every goal exactly once")
-        stages = {goal["id"]: goal.get("stage", "maker") for goal in inputs["goals"]}
-        for check in reply["self_check"]:
-            if stages[check["goal_id"]] == "maker":
-                if check["status"] != "met":
-                    raise ValueError("done requires every maker goal to be met")
-            elif check["status"] != "pending":
-                raise ValueError("downstream goals must remain pending for their owning stage")
-        findings = {item["id"] for item in inputs.get("current_review_findings", [])}
-        reproductions = reply.get("reproductions", [])
-        mapped = [item["finding_id"] for item in reproductions]
-        if len(mapped) != len(findings) or set(mapped) != findings:
-            raise ValueError("reproductions must cover each current review finding exactly once")
-        from tl3_harness import Check, HarnessInputError, Kind, Proof
-        for item in reproductions:
-            if "tests" in item:
-                if 'proof' not in item:
-                    raise HarnessInputError('A reproduction needs proof.red_message for its assertion RED.')
-                Check(item["finding_id"], Kind.REPRODUCING, tuple(item["tests"]),
-                      proof=Proof.parse(item['proof']))
-    elif reply["kind"] == "needs_files":
-        for item in reply["files"]:
-            if not _parts(item["path"]):
-                raise ValueError("expected a requested file")
+    violations = evaluate(MAKER_ROWS, {'inputs': inputs, 'reply': reply}, role='maker')
+    if violations:
+        order = {'maker.goals': 0, 'maker.maker_status': 1, 'maker.downstream_status': 1,
+                 'maker.reproductions': 2, 'maker.reproduction_proof': 3, 'maker.requested_path': 4}
+        violations = tuple(sorted(violations, key=lambda item: (
+            order[item.rule.id], int(item.facts['pointer'].split('/')[2])
+            if item.rule.id in ('maker.maker_status', 'maker.downstream_status') else 0)))
+        raise MakerReplyError(violations)
 
 
 def _checking_handoff(inputs, head, tree):

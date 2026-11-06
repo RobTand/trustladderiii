@@ -177,6 +177,7 @@ def test_review662_reproduction_contract_carries_assertion_reason(review_fix):
 @pytest.mark.parametrize('case,pointer,kind', [
     ('goals', '/self_check', 'Edit'),
     ('maker_status', '/self_check/0', 'Edit'),
+    ('downstream_status', '/self_check/0', 'Edit'),
     ('finding_coverage', '/reproductions', 'Edit'),
     ('proof', '/reproductions/0/proof', 'CantMeet'),
     ('selector', '/reproductions/0', 'CantMeet'),
@@ -193,6 +194,10 @@ def test_maker_refusals_render_and_guard_the_same_repair(review_fix, case, point
     elif case == 'maker_status':
         before['self_check'][0] = {'goal_id': before['self_check'][0]['goal_id'],
                                    'status': 'pending', 'why': 'Deferred.'}
+    elif case == 'downstream_status':
+        goal_id = before['self_check'][0]['goal_id']
+        next(goal for goal in inputs['goals'] if goal['id'] == goal_id)['stage'] = 'checking'
+        original['self_check'][0] = {'goal_id': goal_id, 'status': 'pending', 'why': 'Owned downstream.'}
     elif case == 'finding_coverage':
         before['reproductions'] = []
     elif case == 'proof':
@@ -217,7 +222,7 @@ def test_maker_refusals_render_and_guard_the_same_repair(review_fix, case, point
         assert not permits(violations, before, original, role='maker')
     else:
         value = original['self_check'] if case == 'goals' else (
-            original['self_check'][0] if case == 'maker_status' else original['reproductions'])
+            original['self_check'][0] if case in ('maker_status', 'downstream_status') else original['reproductions'])
         assert isinstance(violation.repair, Edit)
         after = apply_edit(before, violation.repair, value)
         assert violation.allowed.accepts(value)
@@ -242,3 +247,20 @@ def test_maker_collects_status_and_findings_in_original_failure_order(review_fix
     assert [item.rule.id for item in raised.value.rule_violations] == [
         'maker.maker_status', 'maker.reproductions']
     assert permits(raised.value.rule_violations, before, good, role='maker')
+
+
+def test_maker_coverage_repair_owns_overlapping_status_diagnostics(review_fix):
+    from copy import deepcopy
+    from tl3_workers.rules import permits
+
+    inputs, good = review_fix
+    before = deepcopy(good)
+    bad = {'goal_id': before['self_check'][0]['goal_id'], 'status': 'pending', 'why': 'Deferred.'}
+    before['self_check'] = [bad, bad]
+    with pytest.raises(ValueError) as raised:
+        maker._check_reply(inputs, before)
+    violations = raised.value.rule_violations
+    assert [item.rule.id for item in violations] == ['maker.goals']
+    assert violations[0].repair.pointer.value == '/self_check'
+    assert permits(violations, before, good, role='maker')
+    maker._check_reply(inputs, good)

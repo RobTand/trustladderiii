@@ -439,7 +439,7 @@ def _judged_run(model, request, workdir, emit):
                        and not item.facts['pointer'].startswith('/postmortem/') for item in violations):
                     raise ReplyCheckInfrastructureError('reply validator returned invalid output') from error
                 error.rule_violations = tuple(Violation(item.rule, {
-                    **item.facts, 'pointer': item.facts['pointer'].removeprefix('/postmortem')})
+                    **item.facts, 'pointer': item.facts['pointer'].removeprefix('/postmortem')}, role=item.role)
                     for item in violations)
                 raise
             try:
