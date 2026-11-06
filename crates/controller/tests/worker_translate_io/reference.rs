@@ -53,6 +53,7 @@ impl Shell<'_> {
                 role,
                 mut reply,
                 model,
+                plan_check: _,
             } => {
                 let n = world
                     .nodes

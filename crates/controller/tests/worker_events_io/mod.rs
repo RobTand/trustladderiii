@@ -222,19 +222,28 @@ fn pinned_reference_and_production_copies() {
             "b2a68b003639a1e65b7fbb770763302996cb73abcf440affadef21bf69e6e253",
         ),
     ] {
-        assert_eq!(
-            format!(
-                "{:x}",
-                Sha256::digest(function(include_str!("pre_fix.rs"), name))
-            ),
-            digest
-        );
+        let original = function(include_str!("pre_fix.rs"), name);
+        let adapted = if name == "parse_reply" {
+            let field = "        plan_check: None,\n";
+            assert_eq!(original.matches(field).count(), 1);
+            original.replacen(field, "", 1)
+        } else {
+            original.to_owned()
+        };
+        assert_eq!(format!("{:x}", Sha256::digest(adapted)), digest);
     }
     for name in ["refresh", "progress", "external_wait", "parse_reply"] {
-        assert_eq!(
-            function(base, name),
-            function(include_str!("reference.rs"), name)
-        );
+        let reference = function(include_str!("reference.rs"), name);
+        // #832 adds an optional observation field. The frozen shell still supplies
+        // None, and every original statement must remain byte-identical.
+        let adapted = if name == "parse_reply" {
+            let field = "        plan_check: None,\n";
+            assert_eq!(reference.matches(field).count(), 1);
+            reference.replacen(field, "", 1)
+        } else {
+            reference.to_owned()
+        };
+        assert_eq!(function(base, name), adapted);
     }
     for name in [
         "refresh",
