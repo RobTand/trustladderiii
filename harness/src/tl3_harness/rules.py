@@ -313,34 +313,55 @@ def register(rule, *, roles: Iterable[str]):
         raise ValueError('registration needs an example with reply')
     if re.fullmatch(r'[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+', row.id) is None:
         raise ValueError('rule id must be stable and dotted')
-    for role in row.roles:
-        violations = evaluate((row,), example, role=role)
+    examples = {role: evaluate((row,), example, role=role) for role in row.roles}
+    role_dependent = _uses_role(row.repair) or _uses_role(row.allowed)
+    source_repairs = any(isinstance(item.repair, SourceEdit)
+                         for violations in examples.values() for item in violations)
+    by_role = isinstance(witness, dict) and (
+        role_dependent or source_repairs or bool(row.roles.intersection(witness)))
+    if role_dependent and not isinstance(witness, dict):
+        raise ValueError('role-dependent repair needs witnesses by role')
+    if by_role and row.roles.difference(witness):
+        raise ValueError('witness missing declared roles: ' + ', '.join(sorted(row.roles.difference(witness))))
+    for role, violations in examples.items():
         if not violations:
             raise ValueError('registration needs a violating example')
         for violation in violations:
             violation.render(role=role)
+        selected = witness[role] if by_role else witness
+        if any(isinstance(item.repair, SourceEdit) for item in violations):
+            if selected is not None:
+                raise ValueError('SourceEdit requires no reply witness; use None for its role')
+            # A source change is validated by the editor's ordinary test/proof run.
+            if all(isinstance(item.repair, SourceEdit) for item in violations):
+                continue
         if any(isinstance(item.repair, CantMeet) for item in violations):
-            if not permits(violations, example['reply'], witness, role=role):
+            if not permits(violations, example['reply'], selected, role=role):
                 raise ValueError('rendered repair rejects its own witness')
             continue
-        # Source changes cannot be witnessed by changing a reply. The source
-        # editor's ordinary test/proof run validates those changes instead.
-        if any(isinstance(item.repair, SourceEdit) for item in violations):
-            continue
-        repaired = deepcopy(example['reply'])
-        for violation in violations:
-            repaired = apply_edit(repaired, violation.repair, witness)
+        # Role maps carry complete edited replies. A0's single value witnesses
+        # remain accepted for rows that do not resolve repairs by role.
+        if by_role or permits(violations, example['reply'], selected, role=role):
+            repaired = deepcopy(selected)
+        else:
+            repaired = deepcopy(example['reply'])
+            for violation in violations:
+                if isinstance(violation.repair, Edit):
+                    repaired = apply_edit(repaired, violation.repair, selected)
+        if not permits(violations, example['reply'], repaired, role=role):
+            raise ValueError('rendered repair rejects its own witness')
         candidates = [repaired]
         for violation in violations:
             edit = violation.repair
-            if edit.op != 'remove':
+            if isinstance(edit, Edit) and edit.op != 'remove':
                 choices = (edit.allowed.value,) if edit.allowed.keyword == 'const' else (
                     edit.allowed.value if edit.allowed.keyword == 'enum' else ())
                 candidates.extend(apply_edit(repaired, Edit(edit.pointer, 'replace', edit.allowed), value)
                                   for value in choices)
         for candidate in candidates:
             if (not permits(violations, example['reply'], candidate, role=role)
-                    or evaluate((row,), {**example, 'reply': candidate}, role=role)):
+                    or any(not isinstance(item.repair, SourceEdit) for item in
+                           evaluate((row,), {**example, 'reply': candidate}, role=role))):
                 raise ValueError('rendered repair rejects its own witness')
 
     return row
