@@ -273,7 +273,8 @@ kernel_fn! {
 pub(super) fn first_in_line(w: &World, i: usize) -> (result: bool) [
     requires i < w.nodes@.len(), scheduling_safe(*w),
     ensures oldest_waiter(*w, i as int) ==> result,
-] {
+        !(w.nodes@[i as int].phase is Ready) ==> result == oldest_waiter(*w, i as int),
+] proof [reveal(oldest_waiter);] {
     let me = &w.nodes[i];
     let Some(mine) = me.ticket else { return false };
     if !matches!(me.phase, Phase::Ready(_)) {
@@ -281,6 +282,7 @@ pub(super) fn first_in_line(w: &World, i: usize) -> (result: bool) [
         kernel_while! { (index < w.nodes.len()) [
             invariant index <= w.nodes.len(), i < w.nodes.len(),
                 *me == w.nodes@[i as int], !(me.phase is Ready), me.ticket == Some(mine),
+                forall|k: int| 0 <= k < index ==> !pool_precedes(w.nodes@[k], *me),
             decreases w.nodes.len() - index,
         ] {
             if earlier_in_pool(&w.nodes[index], me) { return false; }
