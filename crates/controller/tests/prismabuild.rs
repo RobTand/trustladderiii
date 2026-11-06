@@ -4088,7 +4088,7 @@ fn main() {
     );
     assert_eq!(
         names.len(),
-        123,
+        124,
         "preserve every independent row and all stateful scenarios"
     );
     let weights = scenario_shard::weights_ms(
