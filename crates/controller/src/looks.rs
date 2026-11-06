@@ -804,7 +804,8 @@ impl Controller {
         }
         // The existing PR read may have rebound the hold or widened its
         // reporters. Use that persisted deadline, not a retired witness's grace.
-        let Some(hold) = crate::queue_cause::held(&self.store.load()?, hold.node, &hold.head)? else {
+        let Some(hold) = crate::queue_cause::held(&self.store.load()?, hold.node, &hold.head)?
+        else {
             return Ok(true);
         };
         let since = hold.witnessed_ms.unwrap_or(hold.since_ms);
