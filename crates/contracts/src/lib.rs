@@ -149,5 +149,6 @@ pub mod decision_context;
 
 pub mod request;
 pub mod roles;
+pub mod rules;
 
 pub mod plan_check;
