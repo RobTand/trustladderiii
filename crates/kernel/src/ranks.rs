@@ -797,6 +797,7 @@ kernel_fn! {
 
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
     fn advance_slot(node: &mut Node, next_ticket: &mut u64,
         context: AdvanceContext, _out: &mut Outbox) -> (result: bool) [
         requires advance_pre(*old(node), *old(next_ticket), old(_out).len),
@@ -809,28 +810,42 @@ kernel_fn! {
         old(node).phase == Phase::Ready(Resume::Making) ==> *final(next_ticket) == retirement_gate::slot_ticket(*old(node), *old(next_ticket)),
         *final(_out) == *old(_out),
         result == retirement_gate::slot_changed(*old(node), context.slot),
-] proof [reveal(advance_post); reveal(distance);reveal(retirement_gate::slot_node);] {
+] proof [reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { slot_before = *node }
+        kernel_snapshot! { ticket_before = *next_ticket }
         let n = *node;
         let Phase::Ready(r) = n.phase else {
+            kernel_proof! { assert(slot_before@.phase == Phase::Ready(Resume::Making) ==>
+                *node == retirement_gate::slot_node(slot_before@, ticket_before@, context.slot)) by { reveal(retirement_gate::slot_node); } }
             return false;
         };
         if n.paused {
             if n.ticket.is_some() {
                 node.ticket = None;
+                kernel_proof! { assert(slot_before@.phase == Phase::Ready(Resume::Making) ==>
+                *node == retirement_gate::slot_node(slot_before@, ticket_before@, context.slot)) by { reveal(retirement_gate::slot_node); } }
                 return true;
             }
+            kernel_proof! { assert(slot_before@.phase == Phase::Ready(Resume::Making) ==>
+                *node == retirement_gate::slot_node(slot_before@, ticket_before@, context.slot)) by { reveal(retirement_gate::slot_node); } }
             return false;
         }
         if n.ticket.is_none() {
             take_ticket_node(node, next_ticket);
-            return true;
+            kernel_proof! { assert(slot_before@.phase == Phase::Ready(Resume::Making) ==>
+                *node == retirement_gate::slot_node(slot_before@, ticket_before@, context.slot)) by { reveal(retirement_gate::slot_node); } }
+                return true;
         }
         if context.slot {
             let m = &mut *node;
             m.holds = true;
             set_phase(m, r.phase());
-            return true;
+            kernel_proof! { assert(slot_before@.phase == Phase::Ready(Resume::Making) ==>
+                *node == retirement_gate::slot_node(slot_before@, ticket_before@, context.slot)) by { reveal(retirement_gate::slot_node); } }
+                return true;
         }
+        kernel_proof! { assert(slot_before@.phase == Phase::Ready(Resume::Making) ==>
+                *node == retirement_gate::slot_node(slot_before@, ticket_before@, context.slot)) by { reveal(retirement_gate::slot_node); } }
         false
     }
 }

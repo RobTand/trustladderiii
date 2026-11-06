@@ -151,7 +151,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             + if retirement_retry::fact_result(old(w).nodes@[i as int], fact, old(w).fail_fast, old(w).next_question).1 { 1int } else { 0int },
         retirement_retry::selected(fact) && retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
         retirement_retry::selected(fact) ==> final(w).dependencies@ == old(w).dependencies@,
-] proof [reveal(retirement_retry::fact_result); reveal(retry_bounds); reveal(retirement::fact_node); reveal(retirement::incident);] {
+] {
     kernel_snapshot! { before_transition = *w }
     kernel_snapshot! { before_out = *out }
     match fact {
@@ -179,6 +179,10 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
         Fact::PushByOther { head } => {
             let m = &w.nodes[i];
             if !m.had_pr {
+                kernel_proof! {
+        assert(retirement_retry::selected(fact) ==> w.nodes@[i as int] == retirement_retry::fact_result(before_transition@.nodes@[i as int], fact, before_transition@.fail_fast, before_transition@.next_question).0) by { reveal(retirement_retry::fact_result); }
+        assert(retirement_retry::selected(fact) ==> w.next_question as int == before_transition@.next_question as int + if retirement_retry::fact_result(before_transition@.nodes@[i as int], fact, before_transition@.fail_fast, before_transition@.next_question).1 { 1int } else { 0int }) by { reveal(retirement_retry::fact_result); }
+    }
                 return;
             }
             notice(out, i, Notice::Note(NoteKind::OutsidePush));
@@ -201,6 +205,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             kernel_proof! { reveal(retirement::fact_node); }
         }
         Fact::UpstreamStalled => {
+            kernel_proof! { reveal(retirement::fact_node); reveal(retirement::incident); }
             let m = &mut w.nodes[i];
             if m.phase != Phase::Queued || m.waiting_incident {
                 return;
@@ -210,6 +215,10 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             raise_incident(w, i, needs_rob, out);
         }
         Fact::IncidentCleared { by_rob } => incident_cleared(w, i, by_rob, out),
+    }
+    kernel_proof! {
+        assert(retirement_retry::selected(fact) ==> w.nodes@[i as int] == retirement_retry::fact_result(before_transition@.nodes@[i as int], fact, before_transition@.fail_fast, before_transition@.next_question).0) by { reveal(retirement_retry::fact_result); }
+        assert(retirement_retry::selected(fact) ==> w.next_question as int == before_transition@.next_question as int + if retirement_retry::fact_result(before_transition@.nodes@[i as int], fact, before_transition@.fail_fast, before_transition@.next_question).1 { 1int } else { 0int }) by { reveal(retirement_retry::fact_result); }
     }
     kernel_proof! {
         if fact is PrDequeuedByPerson || fact is CiFailed || fact is IncidentCleared {

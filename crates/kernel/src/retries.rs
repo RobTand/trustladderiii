@@ -49,6 +49,7 @@ kernel_fn! {
 /// Q54 / #771: stopping for review spends no credit and allocates at most one generation.
 /// Under `fail_fast`, a step that would retry the work stops for TL3 review.
 /// It asks Rob nothing; the summary offers `restart`, as for any stop (Q49).
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn stop_for_review(m: &mut Node, step: ReviewStop) -> (result: ()) [
     requires old(m).generation < u64::MAX,
     ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
@@ -65,6 +66,7 @@ pub(super) fn stop_for_review(m: &mut Node, step: ReviewStop) -> (result: ()) [
 
 kernel_fn! {
 /// Failed-round rows / #771: the free fix and paid ladder share one-step bounds.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn failed_round(w: &mut World, i: usize, step: ReviewStop,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
@@ -93,6 +95,7 @@ kernel_fn! {
 /// Q54 / #771: the ladder after a failed fix round costs at most one credit.
 /// It tries a bigger budget, another model, one re-plan, then asks Rob.
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
@@ -105,7 +108,8 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
         final(w).nodes@[i as int] == retirement_retry::rung(old(w).nodes@[i as int], old(w).fail_fast, old(w).next_question, step),
         final(w).next_question as int == old(w).next_question as int + if retirement_retry::rung_asks(old(w).nodes@[i as int], old(w).fail_fast) { 1int } else { 0int },
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
-] proof [reveal(retry_bounds);reveal(retirement_retry::rung);] {
+] proof [reveal(retry_bounds);] {
+    kernel_snapshot! { before_rung = *w }
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
     if fail_fast {
@@ -148,6 +152,12 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
     } else {
         ask_rob(w, i, QKind::CantMeet, Cont::Ready(Resume::Making), 1, out);
     }
+    kernel_proof! {
+        assert(w.nodes@[i as int] == retirement_retry::rung(before_rung@.nodes@[i as int], before_rung@.fail_fast, before_rung@.next_question, step)) by {
+            reveal(retirement_retry::rung);
+        }
+    }
+
 }
 }
 
@@ -220,6 +230,7 @@ pub(super) fn plan_retry(w: &mut World, i: usize, cant_meet: bool,
 
 kernel_fn! {
 /// Recheck rows / #771: a new head or reviewer uses the same free allowance.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
     out: &mut Outbox) -> (result: ()) [
     requires !(target is Closed), i < old(w).nodes@.len(), old(out).len < OUTBOX,

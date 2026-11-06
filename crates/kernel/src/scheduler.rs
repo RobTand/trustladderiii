@@ -95,6 +95,15 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: boo
             reveal(footprint::ordered_table);
         }
     }
+    kernel_proof! {
+        assert(before_advance@.nodes@[i as int].phase == Phase::Ready(Resume::Making)
+            && before_advance@.nodes@[i as int].pos == 0
+            && !before_advance@.nodes@[i as int].waiting_incident && before_advance@.nodes@[i as int].effect.is_none() ==>
+            w.nodes@[i as int] == retirement_gate::slot_node(before_advance@.nodes@[i as int], before_advance@.next_ticket,
+                retirement_gate::slot(before_advance@, i as int) && retirement_gate::line(before_advance@, i as int))) by {
+            reveal(retirement_gate::slot_node);
+        }
+    }
     changed
 }
 }
