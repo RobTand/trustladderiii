@@ -161,7 +161,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 final(w).nodes@[i as int], infra, old(w).fail_fast, old(w).next_question, final(w).next_question),
             _ => true,
         },
-] hide [current_item, items] {
+] {
     kernel_snapshot! { before_transition = *w }
     kernel_snapshot! { before_out = *out }
     match fact {
@@ -185,7 +185,10 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             }
             kernel_proof! { reveal(retirement::fact_node); }
         }
-        Fact::PrDequeuedByPerson => pr_dequeued(w, i, out),
+        Fact::PrDequeuedByPerson => {
+            pr_dequeued(w, i, out);
+            kernel_proof! { facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out); }
+        }
         Fact::PushByOther { head } => {
             let m = &w.nodes[i];
             if !m.had_pr {
@@ -211,7 +214,10 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 if !published { retirement_runtime::retry_noop(before_transition@.nodes@[i as int], fact, w.fail_fast, w.next_question); }
             }
         }
-        Fact::CiFailed { infra } => ci_failed(w, i, infra, out),
+        Fact::CiFailed { infra } => {
+            ci_failed(w, i, infra, out);
+            kernel_proof! { facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out); }
+        }
         Fact::Conflict => {
             let m = &mut w.nodes[i];
             if matches!(m.phase, Phase::Publishing | Phase::Queued) {
@@ -230,14 +236,12 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             raise_incident(w, i, needs_rob, out);
             kernel_proof! { retirement_runtime::upstream_result(before_transition@.nodes@[i as int]); }
         }
-        Fact::IncidentCleared { by_rob } => incident_cleared(w, i, by_rob, out),
-    }
-
-    kernel_proof! {
-        if fact is PrDequeuedByPerson || fact is CiFailed || fact is IncidentCleared {
-            facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out);
+        Fact::IncidentCleared { by_rob } => {
+            incident_cleared(w, i, by_rob, out);
+            kernel_proof! { facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out); }
         }
     }
+
 }
 }
 
