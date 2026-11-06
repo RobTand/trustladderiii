@@ -416,13 +416,13 @@ def test_host_artifact_staging_produces_executable_and_hashed_readonly_manifest(
     from tl3_harness import runtime
 
     destination = tmp_path / 'artifact'
-    executable, manifest, trusted_root = runtime.stage_host_runtime(destination, interpreter=sys.executable)
+    executable, manifest, trusted_root = runtime.stage_host_runtime(destination, interpreter=sys.executable, producer_commit='a' * 40)
     files = json.loads(manifest.read_text())
     assert files['interpreter'] == sys.executable
     assert trusted_root.joinpath('runner.py').is_file()
     assert trusted_root.joinpath('runtime_evidence.py').is_file()
     for entry in files['files']:
-        path = destination / entry['path']
+        path = executable.parent / entry['path']
         assert hashlib.sha256(path.read_bytes()).hexdigest() == entry['sha256']
         assert path.stat().st_size == entry['bytes']
         assert path.stat().st_mode & 0o222 == 0
@@ -430,8 +430,8 @@ def test_host_artifact_staging_produces_executable_and_hashed_readonly_manifest(
     assert executable.stat().st_mode & 0o222 == 0
     completed = subprocess.run([str(executable), '--help'], capture_output=True, timeout=10, check=True)
     assert b'--timeout' in completed.stdout
-    with pytest.raises(FileExistsError):
-        runtime.stage_host_runtime(destination, interpreter=sys.executable)
+    assert runtime.stage_host_runtime(destination, interpreter=sys.executable, producer_commit='a' * 40) == (
+        executable, manifest, trusted_root)
 
 
 @pytest.fixture
@@ -543,14 +543,14 @@ def test_published_host_entry_verifies_imported_bytes_before_any_operation(tmp_p
     from tl3_harness import runtime
 
     destination = tmp_path / 'artifact'
-    executable, manifest, trusted_root = runtime.stage_host_runtime(destination, interpreter=sys.executable)
+    executable, manifest, trusted_root = runtime.stage_host_runtime(destination, interpreter=sys.executable, producer_commit='a' * 40)
     target = trusted_root / 'runtime.py'
     target.chmod(0o600)
     target.write_text('raise RuntimeError("untrusted import executed")\n')
-    completed = subprocess.run([str(destination / entrypoint), '--help'], capture_output=True, timeout=10)
+    completed = subprocess.run([str(executable.parent / entrypoint), '--help'], capture_output=True, timeout=10)
     assert completed.returncode != 0
     assert b'trusted runtime' in completed.stderr
     assert b'untrusted import executed' not in completed.stderr
     assert executable.stat().st_mode & 0o777 == 0o500
     assert manifest.stat().st_mode & 0o777 == 0o400
-    assert destination.stat().st_mode & 0o777 == 0o500
+    assert executable.parent.stat().st_mode & 0o777 == 0o500

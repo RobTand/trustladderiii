@@ -175,6 +175,7 @@ def test_prepared_profile_contains_actual_map_store_and_both_executable_artifact
     config = runtime_image.prepare_runtime_profile(
         root / 'prepared', host_interpreter=sys.executable, container_interpreter='/explicit/container/python',
         podman=executable, systemctl='/explicit/systemctl', mode='own_scope', memory_limit_bytes=268435456,
+        producer_commit='a' * 40,
         image_map=path, profile='sandbox', host='dl380g10', platform='linux/amd64',
         environment={'HOME': str(root), 'XDG_RUNTIME_DIR': str(root)})
     prepared = json.loads(config.read_text())
@@ -187,7 +188,7 @@ def test_prepared_profile_contains_actual_map_store_and_both_executable_artifact
     assert prepared['scratch_root'] == '/var/tmp/flux-vanilla'
     for role in ('collector', 'cleanup', 'manifest'):
         artifact = prepared['artifacts'][role]
-        data = Path(artifact['path']).read_bytes()
+        data = (config.parent / artifact['path']).read_bytes()
         assert artifact['sha256'] == hashlib.sha256(data).hexdigest() and artifact['bytes'] == len(data)
     assert Path(prepared['artifacts']['cleanup']['path']).name == 'host-cleanup'
     assert config.stat().st_mode & 0o222 == 0
