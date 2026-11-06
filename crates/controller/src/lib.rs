@@ -86,6 +86,8 @@ use tl3_store::{Commit, Effect, EffectState, EffectTransition, RowChange, Snapsh
 pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("configured generation is still running")]
+    GenerationPending,
     #[error("replay-check: {0}")]
     Replay(String),
     #[error("{0}")]
@@ -1192,6 +1194,9 @@ impl Controller {
         } else {
             snapshot
         };
+        if self.poll_generation_checks(&snapshot)? {
+            return Ok(true);
+        }
         if let Some(row) = snapshot
             .rows
             .iter()
@@ -1331,6 +1336,9 @@ impl Controller {
             if looks::outage_waiting(&snapshot, &delivery.key) && !cancelling {
                 continue;
             }
+            if !cancelling && !self.prepare_queue_generation_repair(&delivery)? {
+                continue;
+            }
             match effect.state {
                 EffectState::Intended => {
                     let (prior_dispatch, predecessor) = if approval_delivery::is_approval(&delivery)
@@ -1363,7 +1371,6 @@ impl Controller {
                     if self.observe_pending_effect(&delivery)? {
                         return Ok(true);
                     }
-                    self.prepare_queue_generation_repair(&delivery)?;
                     let current = self.store.load()?;
                     let delivery = hydrate(effect, &current)?;
                     let result = self.adapters.adapter(&delivery)?.execute(&delivery);
@@ -1418,6 +1425,9 @@ impl Controller {
                                 self.store.commit(&commit)?;
                             }
                             self.complete(&effect.key, completion)?;
+                            return Ok(true);
+                        }
+                        Err(Error::GenerationPending) => {
                             return Ok(true);
                         }
                         Err(Error::ApprovalAmbiguous) => {

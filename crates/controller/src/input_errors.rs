@@ -312,6 +312,10 @@ impl Controller {
             }
             return Ok(false);
         }
+        if matches!(result, Err(Error::GenerationPending)) {
+            self.park_generation_check(row)?;
+            return Ok(true);
+        }
         let (accepted, attempted) = result?;
         if accepted && !self.contention_notices.is_empty() {
             self.contention_notices

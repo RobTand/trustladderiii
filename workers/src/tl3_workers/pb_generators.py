@@ -265,6 +265,13 @@ def main():
     request = json.loads(Path(sys.argv[-1]).read_text())
     schema = json.loads((Path(__file__).parent / "schemas/generation-request.json").read_text())
     Draft202012Validator(schema).validate(request)
+    import fcntl
+    with Path(request["state"]).with_suffix(".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        _controller_generate(request, Worktree)
+
+
+def _controller_generate(request, Worktree):
     with Worktree(request["checkout"], generated_files=request["generated_files"],
                   generator=request["command"]) as worktree:
         worktree.test_checkout = Path(request["checkout"])

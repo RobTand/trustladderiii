@@ -7,6 +7,7 @@ pub struct Registration {
     pub webhooks: Webhooks,
     pub workers: adapters::workers::WorkerOutputSource,
     pub bell: adapters::prismabuild::Source,
+    pub generation: crate::generation::Source,
     pub mergify: adapters::direct_merge::Translator,
     pub adoption: crate::adoption::Translator,
 }
@@ -171,6 +172,9 @@ fn register_owned(
         )?
         .with_repositories(&config.github.repos)?,
     );
+    let generation = worktrees
+        .generation_source()
+        .ok_or(Error::Invalid("generation source already registered"))?;
     adapters.register(Upstream::Worktrees, worktrees);
     adapters.register(Upstream::Workers, supervisor);
     adapters.register(Upstream::PrismaBuild, pb);
@@ -207,6 +211,7 @@ fn register_owned(
         webhooks,
         workers,
         bell,
+        generation,
         mergify,
         adoption,
     })

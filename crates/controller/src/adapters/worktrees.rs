@@ -119,6 +119,9 @@ fn adapter(error: impl Into<Error>) -> Error {
 }
 
 impl Real {
+    pub fn generation_source(&self) -> Option<crate::generation::Source> {
+        self.generation.as_ref().and_then(|runner| runner.source())
+    }
     pub fn with_generation(mut self, config: &tl3_config::Config) -> Result<Self> {
         let runner = crate::generation::Runner::new(config);
         for repo in &mut self.repositories {
@@ -611,7 +614,10 @@ impl Served {
                                 .join("generation")
                                 .join(hex(record.delivery.key.as_bytes()));
                             if let Some(mut report) =
-                                runner.run(&self.git, &directory, &record.delivery, &head)?
+                                match runner.run(&self.git, &directory, &record.delivery, &head) {
+                                    Err(Error::GenerationPending) => return Ok(None),
+                                    result => result?,
+                                }
                             {
                                 if !report.completed {
                                     if let Some(mut run) = record.delivery.checks.clone() {
@@ -859,13 +865,35 @@ impl Real {
             true,
             &mut hook,
         )?
-        .ok_or(Error::Invalid(
-            "worktree operation has no terminal evidence",
-        ))
+        .ok_or(Error::GenerationPending)
     }
 }
 
 impl Executor for Real {
+    fn look(&mut self, delivery: &Delivery) -> Result<crate::executor::Look> {
+        Ok(match self.reconcile(delivery)? {
+            Reconciliation::Found(c) => crate::executor::Look::Found(c),
+            Reconciliation::Absent => crate::executor::Look::Absent,
+            Reconciliation::Pending => crate::executor::Look::Alive {
+                progress: "configured generation pending".into(),
+            },
+        })
+    }
+    fn reconcile_cancellation(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
+        if matches!(
+            delivery.output,
+            Out::Effect {
+                kind: EffectKind::StartRebase,
+                ..
+            }
+        ) && self.generator_configured(&delivery.repository)
+        {
+            return Ok(Reconciliation::Found(Box::new(Completion::confirmed(
+                vec![],
+            ))));
+        }
+        self.reconcile(delivery)
+    }
     fn generator_configured(&self, repository: &Repository) -> bool {
         self.generation
             .as_ref()
@@ -979,9 +1007,6 @@ impl Executor for Real {
             )? {
                 Some(completion) => Reconciliation::Found(Box::new(completion)),
                 None if !writable => Reconciliation::Absent,
-                // Not a quiet live operation (#369): under the repository mutex
-                // this read runs the recorded operation to completion, so
-                // Pending means it can't finish, and a look counts it as failed.
                 None => Reconciliation::Pending,
             },
         )

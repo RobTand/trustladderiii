@@ -97,7 +97,7 @@ impl Generated {
         prepare.epoch = 0;
         prepare.key = "fixture:prepare:0".into();
         prepare.paths = vec!["src/a.txt".into(), "gen/manifest.json".into()];
-        adapter.execute(&prepare).unwrap();
+        adapter.await_execute(&prepare).unwrap();
         let checkout = adapter.checkout(&prepare);
         Self {
             _root: root,
@@ -136,7 +136,7 @@ fn clean_rebase_regenerates_exact_combined_tree_before_observing() {
     g.leaf();
     g.upstream();
     let delivery = g.rebase(2);
-    let completion = g.adapter.execute(&delivery).unwrap();
+    let completion = g.adapter.await_execute(&delivery).unwrap();
     let head = completion
         .observations
         .iter()
@@ -152,7 +152,7 @@ fn clean_rebase_regenerates_exact_combined_tree_before_observing() {
     );
     assert_eq!(git(&g.checkout, &["status", "--porcelain"]), "");
     assert_eq!(
-        serde_json::to_value(g.adapter.execute(&delivery).unwrap()).unwrap(),
+        serde_json::to_value(g.adapter.await_execute(&delivery).unwrap()).unwrap(),
         serde_json::to_value(completion).unwrap()
     );
 }
@@ -165,7 +165,7 @@ fn independent_freshness_check_refuses_stale_output_without_mutating_leaf() {
     let before = g.f.head(&delivery);
     let report = g
         .adapter
-        .check_generation(&delivery)
+        .await_check_generation(&delivery)
         .unwrap()
         .expect("configured generation must be independently checked");
     assert!(report.completed);
@@ -187,7 +187,7 @@ fn failing_generator_cannot_report_a_clean_rebase() {
     );
     g.upstream();
     let delivery = g.rebase(2);
-    let completion = g.adapter.execute(&delivery).unwrap();
+    let completion = g.adapter.await_execute(&delivery).unwrap();
     assert!(
         !completion
             .observations
@@ -209,7 +209,7 @@ fn queue_failure_updates_and_regenerates_before_maker_repair() {
     let delivery = g.rebase(2);
     let report = g
         .adapter
-        .prepare_generated_repair(&delivery)
+        .await_prepare_generated_repair(&delivery)
         .unwrap()
         .expect("queue repair must update configured generator branches");
     assert!(report.completed, "{report:?}");
@@ -224,7 +224,7 @@ fn queue_failure_updates_and_regenerates_before_maker_repair() {
     check.head_sha = Some(report.head);
     assert!(
         g.adapter
-            .check_generation(&check)
+            .await_check_generation(&check)
             .unwrap()
             .unwrap()
             .changed
@@ -376,18 +376,18 @@ impl Controlled {
         self.c
             .observe(&format!("case-{}", self.sequence), observation)
             .unwrap();
-        for _ in 0..60 {
+        for _ in 0..1500 {
             if !self
                 .c
                 .snapshot()
                 .unwrap()
                 .rows
                 .iter()
-                .any(|row| row.table == "inbox")
+                .any(|row| row.table == "inbox" || row.table == "generation_checks")
             {
                 return;
             }
-            assert!(self.c.drive_once().unwrap());
+            tick(&mut self.c);
         }
         panic!("observation not consumed");
     }
@@ -455,7 +455,7 @@ fn controller_generator_failure_is_a_leaf_rebase_failure() {
     g.upstream();
     let delivery = g.rebase(2);
     let old_head = delivery.head_sha.clone().unwrap();
-    let completion = g.adapter.execute(&delivery).unwrap();
+    let completion = g.adapter.await_execute(&delivery).unwrap();
     let failed = completion
         .observations
         .into_iter()
@@ -575,11 +575,11 @@ fn required_queue_check_refuses_stale_tree_then_updates_repairs_and_rechecks() {
         }],
     });
     assert_ne!(f.c.world().unwrap().nodes[0].phase, Phase::Queued);
-    for _ in 0..80 {
+    for _ in 0..1500 {
         if !f.dispatched.lock().unwrap().is_empty() {
             break;
         }
-        assert!(f.c.drive_once().unwrap());
+        tick(&mut f.c);
     }
     let (delivery, head, manifest) = f.dispatched.lock().unwrap().last().unwrap().clone();
     assert_eq!(
@@ -634,11 +634,11 @@ fn queue_repair_preserves_non_generator_and_conflicted_update_routes() {
             infra: false,
             checks: vec![],
         });
-        for _ in 0..80 {
+        for _ in 0..1500 {
             if !f.dispatched.lock().unwrap().is_empty() {
                 break;
             }
-            assert!(f.c.drive_once().unwrap());
+            tick(&mut f.c);
         }
         let (_, head, manifest) = f.dispatched.lock().unwrap().last().unwrap().clone();
         assert_eq!(
@@ -678,8 +678,8 @@ fn generation_recovery_after_record_install_and_before_observation() {
         delivery.epoch = 0;
         delivery.paths = vec!["src/a.txt".into(), "gen/manifest.json".into()];
         delivery.head_sha = Some(f.head(&delivery));
-        adapter
-            .execute_with(&delivery, |boundary| {
+        await_generation(|| {
+            adapter.execute_with(&delivery, |boundary| {
                 if matches!(
                     (stage.as_str(), boundary),
                     ("record", Boundary::AfterGenerationRecorded)
@@ -689,7 +689,8 @@ fn generation_recovery_after_record_install_and_before_observation() {
                     std::process::exit(77);
                 }
             })
-            .unwrap();
+        })
+        .unwrap();
         panic!("crash boundary was not reached");
     }
     for stage in ["record", "install", "observe"] {
@@ -713,7 +714,7 @@ fn generation_recovery_after_record_install_and_before_observation() {
             "{}",
             String::from_utf8_lossy(&child.stderr)
         );
-        let completion = g.adapter.execute(&delivery).unwrap();
+        let completion = g.adapter.await_execute(&delivery).unwrap();
         let head = completion
             .observations
             .iter()
@@ -728,7 +729,7 @@ fn generation_recovery_after_record_install_and_before_observation() {
         );
         assert_eq!(git(&g.checkout, &["status", "--porcelain"]), "");
         assert_eq!(
-            serde_json::to_value(g.adapter.execute(&delivery).unwrap()).unwrap(),
+            serde_json::to_value(g.adapter.await_execute(&delivery).unwrap()).unwrap(),
             serde_json::to_value(completion).unwrap()
         );
     }
@@ -862,7 +863,7 @@ fn two_authored_leaves_hold_slots_rebase_regenerate_and_merge_fresh_trees() {
         kind: EffectKind::PrepareWorktree,
         head: None,
     };
-    real.execute(&second).unwrap();
+    real.await_execute(&second).unwrap();
     let checkout1 = real.checkout(&second);
     f.checkouts.lock().unwrap().insert(1, checkout1.clone());
     commit(&checkout1, "src/b.txt", "1\n");
@@ -891,7 +892,7 @@ fn two_authored_leaves_hold_slots_rebase_regenerate_and_merge_fresh_trees() {
             kind: EffectKind::StartRebase,
             head: None,
         };
-        let completion = real.execute(&rebase).unwrap();
+        let completion = real.await_execute(&rebase).unwrap();
         let rebased = completion
             .observations
             .into_iter()
@@ -984,7 +985,7 @@ fn two_authored_leaves_hold_slots_rebase_regenerate_and_merge_fresh_trees() {
         {
             break;
         }
-        assert!(f.c.drive_once().unwrap());
+        tick(&mut f.c);
     }
     let (_, repaired, manifest) = f
         .dispatched
@@ -1103,7 +1104,7 @@ fn r1_blocked_generation_allows_another_input_and_stop() {
         },
     )
     .unwrap();
-    for _ in 0..60 {
+    for _ in 0..1500 {
         f.c.drive_once().unwrap();
         if !f
             .c
@@ -1147,7 +1148,7 @@ fn r1_mandatory_protection_survives_empty_configured_paths() {
         g.adapter = g.adapter.with_generation(&g.config).unwrap();
         let mut delivery = g.rebase(2);
         delivery.paths.push(path.into());
-        let completion = g.adapter.execute(&delivery).unwrap();
+        let completion = g.adapter.await_execute(&delivery).unwrap();
         assert!(
             completion
                 .observations
@@ -1183,12 +1184,11 @@ fn r1_undeclared_output_is_durable_failure_and_queue_repair_keeps_running() {
                 infra: false,
                 checks: vec![],
             });
-            for _ in 0..80 {
+            for _ in 0..1500 {
                 if !f.dispatched.lock().unwrap().is_empty() {
                     break;
                 }
-                f.c.drive_once()
-                    .expect("undeclared output must not exit the controller drive");
+                tick(&mut f.c);
             }
             assert!(
                 !f.dispatched.lock().unwrap().is_empty(),
@@ -1199,7 +1199,7 @@ fn r1_undeclared_output_is_durable_failure_and_queue_repair_keeps_running() {
             let mut adapter = f.g.f.adapter().with_generation(&f.g.config).unwrap();
             let delivery = f.g.rebase(2);
             let completion = adapter
-                .execute(&delivery)
+                .await_execute(&delivery)
                 .expect("undeclared output must return failure evidence");
             let report = completion
                 .observations
@@ -1236,4 +1236,90 @@ fn r1_undeclared_output_is_durable_failure_and_queue_repair_keeps_running() {
             "undeclared output must never be installed"
         );
     }
+}
+
+fn await_generation<T>(
+    mut operation: impl FnMut() -> tl3_controller::Result<T>,
+) -> tl3_controller::Result<T> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        match operation() {
+            Err(tl3_controller::Error::GenerationPending)
+                if std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(10))
+            }
+            result => return result,
+        }
+    }
+}
+trait AwaitGeneration {
+    fn await_execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion>;
+    fn await_check_generation(
+        &mut self,
+        delivery: &Delivery,
+    ) -> tl3_controller::Result<Option<tl3_controller::generation::Report>>;
+    fn await_prepare_generated_repair(
+        &mut self,
+        delivery: &Delivery,
+    ) -> tl3_controller::Result<Option<tl3_controller::generation::Report>>;
+}
+impl AwaitGeneration for Real {
+    fn await_execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
+        await_generation(|| self.execute(delivery))
+    }
+    fn await_check_generation(
+        &mut self,
+        delivery: &Delivery,
+    ) -> tl3_controller::Result<Option<tl3_controller::generation::Report>> {
+        await_generation(|| self.check_generation(delivery))
+    }
+    fn await_prepare_generated_repair(
+        &mut self,
+        delivery: &Delivery,
+    ) -> tl3_controller::Result<Option<tl3_controller::generation::Report>> {
+        await_generation(|| self.prepare_generated_repair(delivery))
+    }
+}
+fn tick(controller: &mut Controller) {
+    if !controller.drive_once().unwrap() {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn r1_failed_executor_evidence_is_bounded_and_retained() {
+    let mut g = Generated::new();
+    let script = g._root.path().join("transport.py");
+    fs::write(&script, "import json\nprint(json.dumps({'status': 'failed', 'action_key': 'e' * 64, 'message': 'executor refused gen/manifest.json', 'diagnostics': 'x' * 20000}))\n").unwrap();
+    let delivery = g.rebase(2);
+    let completion = g.adapter.await_execute(&delivery).unwrap();
+    assert!(
+        completion
+            .observations
+            .iter()
+            .any(|o| matches!(o, Observation::RebaseGenerationFailed { .. }))
+    );
+    let root = g.f.repo.join("tl3-controller/generation");
+    let operation = fs::read_dir(&root).unwrap().next().unwrap().unwrap().path();
+    let contract = fs::read_dir(operation)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let path = contract.join("failed.json");
+    let bytes =
+        fs::read(&path).expect("failure evidence promised by the repair message must be durable");
+    assert!(bytes.len() < 20000, "failure evidence must be bounded");
+    let evidence: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(evidence["action_key"], "e".repeat(64));
+    assert_eq!(evidence["message"], "executor refused gen/manifest.json");
+    assert!(evidence["diagnostics"].as_str().unwrap().len() <= 16000);
+    g.adapter.await_execute(&delivery).unwrap();
+    assert_eq!(
+        fs::read(path).unwrap(),
+        bytes,
+        "replay must retain failure evidence"
+    );
 }

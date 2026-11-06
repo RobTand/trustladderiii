@@ -355,6 +355,7 @@ fn production(config: tl3_config::Config) -> Result<()> {
     sources.register(registration.webhooks);
     sources.register(registration.workers);
     sources.register(registration.bell);
+    sources.register(registration.generation);
     sources.register(crate::console::Wakes::new(config.store.clone()));
     sources.run(&mut controller)
 }

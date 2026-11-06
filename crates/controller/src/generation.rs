@@ -2,7 +2,14 @@
 use crate::{Error, Result, executor::Delivery};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{fs, path::Path, process::Command};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::{Arc, Mutex, mpsc},
+    thread,
+};
 use tl3_contracts::{generation::GenerationRequest, roles::maker_reply::GenerationReceipt};
 use tl3_worktrees::{CommitId, Worktrees};
 
@@ -28,6 +35,27 @@ impl Report {
 #[derive(Clone)]
 pub(crate) struct Runner {
     config: tl3_config::Config,
+    tasks: Arc<Mutex<HashMap<PathBuf, Task>>>,
+    wakes: mpsc::Sender<()>,
+    source: Arc<Mutex<Option<mpsc::Receiver<()>>>>,
+}
+struct Task {
+    head: String,
+    result: mpsc::Receiver<Result<Option<Report>>>,
+    completed: Option<Option<Report>>,
+}
+
+/// Like the worker and PB sources, only wake the owner; never mutate controller state here.
+pub struct Source(mpsc::Receiver<()>);
+impl crate::ingress::Source for Source {
+    fn run(self, sender: crate::sync::mpsc::Sender<crate::cli::Input>) -> Result<()> {
+        while self.0.recv().is_ok() {
+            if sender.send(crate::cli::Input::Wake).is_err() {
+                break;
+            }
+        }
+        Ok(())
+    }
 }
 #[derive(Serialize, Deserialize)]
 struct Completed {
@@ -36,9 +64,85 @@ struct Completed {
 }
 impl Runner {
     pub fn new(config: &tl3_config::Config) -> Self {
+        let (wakes, source) = mpsc::channel();
         Self {
             config: config.clone(),
+            tasks: Arc::default(),
+            wakes,
+            source: Arc::new(Mutex::new(Some(source))),
         }
+    }
+    pub fn source(&self) -> Option<Source> {
+        self.source.lock().unwrap().take().map(Source)
+    }
+    pub fn run(
+        &self,
+        git: &Worktrees,
+        directory: &Path,
+        delivery: &Delivery,
+        head: &CommitId,
+    ) -> Result<Option<Report>> {
+        if !self.configured(delivery) {
+            return Ok(None);
+        }
+        let mut tasks = self
+            .tasks
+            .lock()
+            .map_err(|_| Error::Invalid("generation tasks poisoned"))?;
+        if let Some(task) = tasks.get_mut(directory) {
+            if task.head != head.as_str()
+                && !task
+                    .completed
+                    .as_ref()
+                    .and_then(|r| r.as_ref())
+                    .is_some_and(|r| r.head == head.as_str())
+            {
+                return Err(Error::Invalid("generation task changed its input head"));
+            }
+            if let Some(report) = &task.completed {
+                return Ok(report.clone());
+            }
+            match task.result.try_recv() {
+                Ok(Ok(report)) => {
+                    task.completed = Some(report.clone());
+                    return Ok(report);
+                }
+                Ok(Err(error)) => {
+                    tasks.remove(directory);
+                    return Err(error);
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    tasks.remove(directory);
+                    return Err(Error::Invalid("generation source ended without a result"));
+                }
+                Err(mpsc::TryRecvError::Empty) => return Err(Error::GenerationPending),
+            }
+        }
+        let runner = self.clone();
+        let directory = directory.to_owned();
+        let common = git.common_directory().to_owned();
+        let delivery = delivery.clone();
+        let head = head.clone();
+        let (sender, result) = mpsc::channel();
+        tasks.insert(
+            directory.clone(),
+            Task {
+                head: head.as_str().into(),
+                result,
+                completed: None,
+            },
+        );
+        thread::spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                // Private snapshots and object import may block; branch refs are installed only by the owner.
+                let git = Worktrees::open(&common, &common)?;
+                runner.run_blocking(&git, &directory, &delivery, &head)
+            }))
+            .unwrap_or(Err(Error::Invalid("generation source panicked")));
+            let _ = sender.send(result);
+            let _ = runner.wakes.send(());
+        });
+        Err(Error::GenerationPending)
     }
     fn repository(&self, delivery: &Delivery) -> Option<&tl3_config::Repository> {
         self.config.github.repos.iter().find(|repo| {
@@ -59,7 +163,7 @@ impl Runner {
         self.repository(delivery)
             .is_some_and(|repo| repo.generator.is_some())
     }
-    pub fn run(
+    fn run_blocking(
         &self,
         git: &Worktrees,
         directory: &Path,
@@ -79,14 +183,10 @@ impl Runner {
             command: repo.generator.clone().unwrap(),
             generated_files: repo.generated_files.clone(),
             files: delivery.paths.clone(),
-            protected_paths: self
-                .config
-                .planning
-                .protected_paths
-                .iter()
-                .chain(repo.protected_paths.iter())
-                .cloned()
-                .collect(),
+            protected_paths: tl3_config::protected_paths(
+                &self.config.planning.protected_paths,
+                repo,
+            ),
             image: repo
                 .container_image
                 .clone()
@@ -102,6 +202,12 @@ impl Runner {
         request.checkout = directory.join("checkout");
         request.state = directory.join("executor.json");
         fs::create_dir_all(directory)?;
+        let lock = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(directory.join("operation.lock"))?;
+        lock.lock()?;
         let completed = directory.join("completed.json");
         if let Some(saved) = crate::adapters::worktrees::read::<Completed>(&completed)? {
             if head.as_str() != saved.input && head.as_str() != saved.report.head {
@@ -148,9 +254,32 @@ impl Runner {
             .arg(&request_path)
             .output();
         let receipt = output
+            .as_ref()
             .ok()
             .filter(|output| output.status.success())
             .and_then(|output| serde_json::from_slice::<GenerationReceipt>(&output.stdout).ok());
+        if receipt.is_none() {
+            // Retain bounded executor evidence, including failure replies which are not success receipts.
+            let (reply, diagnostics) = match &output {
+                Ok(output) => (
+                    serde_json::from_slice::<serde_json::Value>(&output.stdout).ok(),
+                    format!(
+                        "stdout: {}\nstderr: {}",
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr)
+                    ),
+                ),
+                Err(error) => (None, error.to_string()),
+            };
+            crate::adapters::worktrees::write(
+                &directory.join("failed.json"),
+                &serde_json::json!({
+                    "action_key": reply.as_ref().and_then(|r| r.get("action_key")).and_then(|v| v.as_str()).map(|v| crate::findings::clipped(v, 128)),
+                    "message": crate::findings::clipped(reply.as_ref().and_then(|r| r.get("message")).and_then(|v| v.as_str()).unwrap_or("Generator executor did not return a success receipt"), 2000),
+                    "diagnostics": crate::findings::clipped(&diagnostics, 16000),
+                }),
+            )?;
+        }
         let mut report = Report {
             completed: false,
             changed: Vec::new(),
@@ -181,24 +310,30 @@ impl Runner {
                 .collect();
             // The existing executor validates configured globs, declared scope and protection.
             // Independently restrict the commit to declared output paths at the Rust boundary.
-            if report
+            let undeclared: Vec<_> = report
                 .changed
                 .iter()
-                .any(|path| !delivery.paths.contains(path))
-            {
-                return Err(Error::Invalid("generator changed an undeclared output"));
-            }
-            git.import_commit(snapshot.common_directory(), &generated)?;
-            report.completed = true;
-            report.head = generated.as_str().into();
-            report.message = if report.changed.is_empty() {
-                "Configured generated outputs are fresh.".into()
+                .filter(|path| !delivery.paths.contains(path))
+                .cloned()
+                .collect();
+            if !undeclared.is_empty() {
+                report.message = format!(
+                    "Generator changed undeclared outputs: {}. Request scope growth for these paths, then run run_generator. Do not hand-edit generated outputs.",
+                    undeclared.join(", ")
+                );
             } else {
-                format!(
-                    "Stale generated outputs: {}. Repair generator inputs and call run_generator before completing the maker repair. Do not hand-edit generated outputs.",
-                    report.changed.join(", ")
-                )
-            };
+                git.import_commit(snapshot.common_directory(), &generated)?;
+                report.completed = true;
+                report.head = generated.as_str().into();
+                report.message = if report.changed.is_empty() {
+                    "Configured generated outputs are fresh.".into()
+                } else {
+                    format!(
+                        "Stale generated outputs: {}. Repair generator inputs and call run_generator before completing the maker repair. Do not hand-edit generated outputs.",
+                        report.changed.join(", ")
+                    )
+                };
+            }
         }
         crate::adapters::worktrees::write(
             &completed,
@@ -255,7 +390,7 @@ impl crate::Controller {
         })
     }
 
-    pub(crate) fn prepare_queue_generation_repair(&mut self, delivery: &Delivery) -> Result<()> {
+    pub(crate) fn prepare_queue_generation_repair(&mut self, delivery: &Delivery) -> Result<bool> {
         if !matches!(
             delivery.output,
             crate::executor::Output::Effect {
@@ -263,7 +398,7 @@ impl crate::Controller {
                 ..
             }
         ) {
-            return Ok(());
+            return Ok(true);
         }
         let snapshot = self.store.load()?;
         let id = delivery.node().0.to_string();
@@ -272,13 +407,17 @@ impl crate::Controller {
             .iter()
             .any(|row| row.table == "generation_repairs" && row.id == id)
         {
-            return Ok(());
+            return Ok(true);
         }
         // The queued marker and effect intent are durable before any Git write.
-        let result = self
+        let result = match self
             .adapters
             .get(crate::executor::Upstream::Worktrees)?
-            .prepare_generated_repair(delivery)?;
+            .prepare_generated_repair(delivery)
+        {
+            Err(Error::GenerationPending) => return Ok(false),
+            result => result?,
+        };
         let mut commit = tl3_store::Commit::new(
             format!("generation-repair:{}", delivery.key),
             serde_json::json!({"generation_repair":delivery.key}),
@@ -303,6 +442,91 @@ impl crate::Controller {
             ));
         }
         self.store.commit(&commit)?;
+        Ok(true)
+    }
+}
+
+impl crate::Controller {
+    pub(crate) fn park_generation_check(&mut self, row: &tl3_store::WorldRow) -> Result<()> {
+        let snapshot = self.store.load()?;
+        let mut commit = tl3_store::Commit::new(
+            format!("generation-wait:{}:{}", row.id, snapshot.revision.get()),
+            serde_json::json!({"generation_wait":row.id}),
+            &snapshot,
+        );
+        commit.rows.push(crate::put(
+            "generation_checks",
+            row.id.clone(),
+            row.value.clone(),
+        ));
+        commit.rows.push(tl3_store::RowChange::Delete {
+            table: row.table.clone(),
+            id: row.id.clone(),
+        });
+        self.store.commit(&commit)?;
         Ok(())
+    }
+    pub(crate) fn poll_generation_checks(
+        &mut self,
+        snapshot: &tl3_store::Snapshot,
+    ) -> Result<bool> {
+        let world = crate::snapshot::decode(snapshot)?;
+        for row in snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "generation_checks")
+        {
+            let observation: crate::executor::Observation =
+                crate::decode_stored(row.value.clone())?;
+            let crate::executor::Observation::Checks {
+                node,
+                generation,
+                ref sha,
+                ..
+            } = observation
+            else {
+                return Err(Error::Invalid("invalid pending generation check"));
+            };
+            let n = world
+                .nodes
+                .get(node.0 as usize)
+                .ok_or(Error::Invalid("generation check node absent"))?;
+            let current = tl3_controller_core::translate_checks::checks_reply(
+                n.job,
+                n.generation,
+                generation,
+                crate::commit_sha(snapshot, n.head) == Some(sha.as_str()),
+                true,
+            )
+            .record;
+            if current {
+                let delivery = self.generation_delivery(snapshot, &world, node, generation, sha)?;
+                match self
+                    .adapters
+                    .get(crate::executor::Upstream::Worktrees)?
+                    .check_generation(&delivery)
+                {
+                    Err(Error::GenerationPending) => continue,
+                    result => {
+                        result?;
+                    }
+                }
+            }
+            let mut commit = tl3_store::Commit::new(
+                format!("generation-ready:{}:{}", row.id, snapshot.revision.get()),
+                serde_json::json!({"generation_ready":row.id}),
+                snapshot,
+            );
+            commit
+                .rows
+                .push(crate::put("inbox", row.id.clone(), row.value.clone()));
+            commit.rows.push(tl3_store::RowChange::Delete {
+                table: row.table.clone(),
+                id: row.id.clone(),
+            });
+            self.store.commit(&commit)?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 }
