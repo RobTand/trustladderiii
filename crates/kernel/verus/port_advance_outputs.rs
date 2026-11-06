@@ -38,4 +38,13 @@ pub(super) proof fn output_rules(w: World, before: Node, after: Node, ticket_bef
         assert(out_before.items@[slot].is_none());
     }
 }
+
+/// #806: a false result of the real dispatcher has no output, including notices.
+pub(super) proof fn stutter(n: Node, c: AdvanceContext, before: Outbox, after: Outbox)
+    requires !advance_enabled(n, c), port_advance_contracts::outputs(n, c, before, after),
+    ensures after == before,
+{
+    reveal(port_advance_contracts::outputs); reveal(port_advance_contracts::effect_kind);
+}
+
 }

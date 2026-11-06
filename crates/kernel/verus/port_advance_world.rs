@@ -107,4 +107,18 @@ pub(super) proof fn checker_reserves(w: World, v: World, c: AdvanceContext,
         assert(j == 0 || j == 1);
     }
 }
+
+/// #806: complete original consistency and small counters discharge scheduler/checker scopes.
+pub(super) proof fn prepared(w: World)
+    requires retirement::domain(w), retirement::accepted(w), retirement::bounded(w), storage_ordered(w),
+    ensures scheduling_safe(w), world_headroom(w), advance_pre(w.nodes@[0], w.next_ticket, 0),
+{
+    reveal(retirement::accepted); reveal(retirement::bounded); reveal(storage_ordered);
+    reveal(retirement::node_rules); reveal(node_checked); reveal(world_headroom);
+    open_prefix_monotone(w.nodes@, 0, w.nodes@.len());
+    reveal(open_prefix);
+    local_capacities(w.nodes@[0]);
+    assert forall|j: int| 0 <= j < w.nodes@.len() implies node_headroom(w.nodes@[j]) by {}
+}
+
 }

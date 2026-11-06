@@ -864,7 +864,7 @@ def verus_proofs():
             "plan_check": ("kernel::plan_check", 1),
             "plan_check_witness": ("kernel::plan_check_witness", 3),
             "port_advance_contracts": ("kernel::port_advance_contracts", 6),
-            "port_advance_outputs": ("kernel::port_advance_outputs", 1),
+            "port_advance_outputs": ("kernel::port_advance_outputs", 2),
             "review_retry_stop": ("kernel::retries#stop_for_review", 1),
             "review_retry_round": ("kernel::retries#failed_round", 1),
             "review_retry_rung": ("kernel::retries#next_rung", 1),
@@ -885,13 +885,14 @@ def verus_proofs():
             "port_advance_node_teardown_rules": ("kernel::port_advance_node_rules#teardown_rules", 1),
             "port_advance_node_idle_rules": ("kernel::port_advance_node_rules#idle_rules", 1),
             "port_advance_node_node_rules": ("kernel::port_advance_node_rules#node_rules", 1),
-            "port_advance_world_inline_symmetric": ("kernel::port_advance_world#inline_symmetric", 1),
+            "port_advance_world_inline_symmetric": ("kernel::port_advance_world#inline_symmetric", 2),
             "port_advance_world_resource_frame": ("kernel::port_advance_world#resource_frame", 1),
             "port_advance_world_consistent": ("kernel::port_advance_world#consistent", 1),
             "port_advance_world_checker_reserves": ("kernel::port_advance_world#checker_reserves", 1),
             "port_advance_node_teardown_wait_rules": ("kernel::port_advance_node_rules#teardown_wait_rules", 1),
             "port_advance_node_teardown_gone_rules": ("kernel::port_advance_node_rules#teardown_gone_rules", 1),
             "port_advance_node_teardown_emit_rules": ("kernel::port_advance_node_rules#teardown_emit_rules", 1),
+            "port_advance_world_prepared": ("kernel::port_advance_world#prepared", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
