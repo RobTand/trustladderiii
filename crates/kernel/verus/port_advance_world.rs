@@ -1,6 +1,6 @@
 //! #806: compose local step contracts with the complete two-node world checker.
-use super::*;
 use super::port_advance_contracts::*;
+use super::*;
 
 verus! {
 /// #806: Footprint::Arbitrary generates exactly the four-file inline domain.

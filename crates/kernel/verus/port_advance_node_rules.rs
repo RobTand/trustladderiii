@@ -1,6 +1,6 @@
 //! #806: local consistency follows from exact contracts, without executing steps again.
-use super::*;
 use super::port_advance_contracts::*;
+use super::*;
 
 verus! {
 /// #806: the immutable checker environment and exact global ticket allocation.

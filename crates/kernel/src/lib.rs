@@ -2280,7 +2280,6 @@ mod port_advance_contracts;
 #[path = "../verus/retirement_gate_bridge.rs"]
 mod retirement_gate_bridge;
 
-
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_advance_outputs.rs"]
 mod port_advance_outputs;
@@ -2330,3 +2329,7 @@ mod reply_equivalence;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_advance_step_frames.rs"]
 mod port_advance_step_frames;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/retirement_retry_bridge.rs"]
+mod retirement_retry_bridge;

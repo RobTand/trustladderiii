@@ -192,7 +192,12 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             );
             if published {
                 update_recheck_head(&mut w.nodes[i], head);
+                kernel_snapshot! { recheck_before = *w }
                 recheck(w, i, Phase::Ready(Resume::Checking), out);
+                kernel_proof! {
+                    reveal(port_review_retry::recheck_post);
+                    retirement_retry_bridge::recheck(recheck_before@.nodes@[i as int], Phase::Ready(Resume::Checking), recheck_before@.next_question);
+                }
                 kernel_proof! { reveal(retry_bounds); }
             }
         }
@@ -404,6 +409,7 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
         failed_round(w, i, ReviewStop::CiFailed, out);
         kernel_proof! {
             facts_ci_failed_lemmas::retry_frame(prepared_ci@, *w, i, prepared_out@, *out);
+            retirement_retry_bridge::round(prepared_ci@.nodes@[i as int], prepared_ci@.fail_fast, prepared_ci@.next_question, ReviewStop::CiFailed);
         }
         kernel_proof! {
         assert(w.nodes@[i as int] == retirement_retry::fact_result(ci_world@.nodes@[i as int], Fact::CiFailed { infra }, ci_world@.fail_fast, ci_world@.next_question).0) by {

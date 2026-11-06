@@ -1,6 +1,6 @@
 //! #806: small exact step frames, separate from executable rank arithmetic.
-use super::*;
 use super::port_advance_contracts::*;
+use super::*;
 
 verus! {
 /// Q39 / #806: StartRun's paused, ticket-allocation and nongrant branches emit nothing.

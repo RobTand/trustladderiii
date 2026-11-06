@@ -1045,6 +1045,12 @@ def verus_proofs():
             "port_advance_step_teardown_quiet": ("kernel::port_advance_step_frames#teardown_quiet", 1),
             "port_advance_step_teardown_emit": ("kernel::port_advance_step_frames#teardown_emit", 1),
             "port_advance_step_release_frame": ("kernel::port_advance_step_frames#release_frame", 1),
+            "retirement_retry_bridge_rung": ("kernel::retirement_retry_bridge#rung", 1),
+            "retirement_retry_bridge_round": ("kernel::retirement_retry_bridge#round", 1),
+            "retirement_retry_bridge_recheck": ("kernel::retirement_retry_bridge#recheck", 1),
+            "retirement_gate_bridge_count": ("kernel::retirement_gate_bridge#count", 1),
+            "retirement_gate_bridge_queries": ("kernel::retirement_gate_bridge#queries", 1),
+            "retirement_gate_bridge_post": ("kernel::retirement_gate_bridge#post", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

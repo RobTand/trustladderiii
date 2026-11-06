@@ -1,7 +1,7 @@
 //! #806: executable original-domain covers for every slice-one phase parameter.
-use super::*;
 use super::port_advance_phase::*;
 use super::retirement::{accepted, bounded, domain};
+use super::*;
 
 verus! {
 /// #806: the exact optional-head bound of proofs.rs::small.
