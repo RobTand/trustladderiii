@@ -288,3 +288,67 @@ def test_finding_coverage_repair_cannot_invent_an_assertion_message(review_fix):
                               for item in inputs['current_review_findings']]
     assert permits(raised.value.rule_violations, before, after, role='maker')
     maker._check_reply(inputs, after)
+
+
+def _captured_assertion():
+    from tl3_harness.red_message import capture
+    try:
+        raise AssertionError('empty greeting')
+    except AssertionError as error:
+        return capture(error, None)[0]
+
+
+@pytest.mark.parametrize('case', ['missing_proof', 'selector', 'missing_finding'])
+def test_maker_repair_preserves_captured_run_paths(review_fix, case):
+    from copy import deepcopy
+    from tl3_workers.rules import Edit, evaluate, permits
+
+    inputs, supplied = review_fix
+    good = deepcopy(supplied)
+    good['reproductions'][0]['proof']['red_message'] = _captured_assertion()
+    before = deepcopy(good)
+    if case == 'missing_proof':
+        before['reproductions'][0].pop('proof')
+        pointer = '/reproductions/0/proof'
+    elif case == 'selector':
+        before['reproductions'][0]['tests'] = ['test_greeting.py']
+        pointer = '/reproductions/0/tests'
+    else:
+        before['reproductions'].pop(0)
+        pointer = '/reproductions'
+    violations = evaluate(maker.MAKER_ROWS, {
+        'inputs': inputs, 'reply': before,
+        'captured_assertions': (_captured_assertion(),)}, role='maker')
+    assert len(violations) == 1
+    row = violations[0]
+    assert isinstance(row.repair, Edit)
+    assert row.repair.pointer.value == pointer
+    assert permits(violations, before, good, role='maker')
+    maker._check_reply(inputs, good)
+    invented = deepcopy(good)
+    invented['reproductions'][0]['proof']['red_message'] = 'model invented evidence'
+    assert not permits(violations, before, invented, role='maker')
+    unrelated = deepcopy(good)
+    unrelated['self_check'][0]['evidence'] = 'unrelated change'
+    assert not permits(violations, before, unrelated, role='maker')
+    if case == 'selector':
+        mutated = deepcopy(good)
+        mutated['reproductions'][0]['proof']['subjects'] = ['new.py::subject']
+        assert not permits(violations, before, mutated, role='maker')
+    if case == 'missing_finding':
+        mutated = deepcopy(good)
+        mutated['reproductions'][1]['reason'] = 'rewritten captured item'
+        assert not permits(violations, before, mutated, role='maker')
+
+
+def test_maker_missing_proof_without_captured_run_stays_cant_meet(review_fix):
+    from copy import deepcopy
+    from tl3_workers.rules import CantMeet, evaluate, permits
+
+    inputs, good = review_fix
+    before = deepcopy(good)
+    before['reproductions'][0].pop('proof')
+    rows = evaluate(maker.MAKER_ROWS, {'inputs': inputs, 'reply': before}, role='maker')
+    assert len(rows) == 1 and isinstance(rows[0].repair, CantMeet)
+    assert not permits(rows, before, good, role='maker')
+    assert permits(rows, before, {'kind': 'cant_meet', 'report': 'No captured assertion.'}, role='maker')

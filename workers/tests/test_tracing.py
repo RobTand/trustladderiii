@@ -1207,3 +1207,24 @@ def test_t653_controller_input_failure_exports_attribution_without_inputs(reques
         'worker inputs break role schema: role=reviewer pointer=/checks/0/tests/0/phases rule=additionalProperties')
     assert root.status.code == 2
     assert not root.events and not root.status.message
+
+
+@pytest.mark.parametrize('row_name,message', [
+    ('FORECAST_OWNED', 'only code may supply a forecast'),
+    ('SIZED_FILES', 'sized briefs must declare their root files'),
+])
+def test_ingest_row_failure_tags_keep_fixed_legacy_diagnostics(row_name, message):
+    from tl3_workers.roles import ingest
+    from tl3_workers.rules import evaluate
+    from tl3_workers.tracing import failure_tags
+    from tl3_workers.turns import InvalidReply
+
+    row = getattr(ingest, row_name)
+    error = ingest.IngestReplyError(evaluate((row,), {
+        'reply': {'forecast': {'private': 'fixture-secret-value /private/key'}}}, role='ingest'))
+    error.args = ('fixture-secret-value /private/key',)
+    assert failure_tags(error) == {'failure_class': 'IngestReplyError', 'failure_message': message}
+    tags = failure_tags(InvalidReply(error, error))
+    assert tags['failure_message'] == f'invalid reply: {message}; repaired reply: {message}'
+    assert 'fixture-secret-value' not in json.dumps(tags)
+    assert '/private/key' not in json.dumps(tags)
