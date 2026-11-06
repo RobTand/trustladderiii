@@ -67,16 +67,30 @@ def test_lower_observations_include_lifecycle_failures():
     assert 'base_definition' not in calls
 
 
-def test_local_correction_retains_current_base_sha_asymmetry():
+def test_local_correction_uses_immutable_base_after_831():
     cases = [case for case in DOCUMENT['cases'] if case['id'].startswith('extra/local-base-sha-asymmetry#')]
     base, check, correction = cases
     assert unpacked(base['outcome']['return']) == (False, False)
     assert check['inputs']['base_sha'] == 'immutable-base'
     assert check['outcome']['error']['class'].endswith('.PlanConsistencyError')
-    assert unpacked(correction['outcome']['return']) == []
+    assert unpacked(check['outcome']['error']['mismatch'])['base_sha'] == 'immutable-base'
+    assert unpacked(correction['mismatch']['mismatch'])['base_sha'] == 'immutable-base'
+    assert unpacked(correction['outcome']['return']) == [
+        'Corrected check must name a test defined at the base: tests/test_base.py::test_only_at_head']
     assert any(row['call'] == 'git' for row in base['facts'])
-    assert any(row['call'] == 'Worktree.file.read' for row in correction['facts'])
-    assert not any(row['call'] == 'git' for row in correction['facts'])
+    assert any(row['call'] == 'git' for row in correction['facts'])
+    assert not any(row['call'].startswith('Worktree.') for row in correction['facts'])
+
+
+def test_intended_divergences_are_exactly_the_two_831_cases():
+    cases = [case for case in DOCUMENT['cases'] if 'intended_divergence' in case]
+    assert len(cases) == 2
+    assert {case['id'] for case in cases} == {
+        'extra/local-base-sha-asymmetry#3', 'extra/corrections#43'}
+    for case in cases:
+        divergence = case['intended_divergence']
+        assert divergence['issue'] == 'https://github.com/RobTand/trustladderiii/issues/831'
+        assert divergence['reason']
 
 
 def test_mismatch_capture_includes_every_constructor_defect():

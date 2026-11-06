@@ -319,6 +319,7 @@ tl3_py_test(
 )
 
 # #835: boundary fixtures remain beside the Rust fixtures; execute the Python edge here.
+# gazelle:ignore
 py_test(
     name = "test_limits_boundary",
     srcs = ["//crates/harness-core:tests/fixtures/limits/test_boundary.py"],

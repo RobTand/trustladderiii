@@ -421,6 +421,10 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
                         .request(&delivery, role, &mut store, &snapshot)
                         .unwrap_or_else(|error| panic!("{role} {:?}: {error}", n.phase));
                     protocol::validate_inputs(role, &request["inputs"]).unwrap();
+                    assert!(
+                        crate::input_check::request(&request).unwrap().is_empty(),
+                        "{role}: envelope rejected"
+                    );
                     typed_round_trip::<tl3_contracts::request::WorkerRequest>(&request);
                     if role == "planner" {
                         assert_eq!(
