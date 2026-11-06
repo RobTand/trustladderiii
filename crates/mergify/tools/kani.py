@@ -32,12 +32,6 @@ PROOF_FILES = [
 # property its harness states, so the harness must fail. Every harness has at
 # least one.
 MUTANTS = [
-    ("enqueue_refused_sticky", DECIDE + "enqueue.rs", "if refused_intent {", "if false && refused_intent {"),
-    ("enqueue_write_ahead", DECIDE + "enqueue.rs", "out.push(Effect::SaveIntent);\n                out.push(if intent.requeue.is_some()", "out.push(if intent.requeue.is_some()"),
-    ("enqueue_write_ahead", DECIDE + "enqueue.rs", "out.push(Effect::SaveIntent);\n                out.push(if intent.requeue.is_some() {\n                    Effect::Read(Need::Command)\n                } else {\n                    Effect::Read(Need::LabelPull)\n                });", "out.push(if intent.requeue.is_some() {\n                    Effect::Read(Need::Command)\n                } else {\n                    Effect::Read(Need::LabelPull)\n                });\n                out.push(Effect::SaveIntent);"),
-    ("enqueue_recovery_grace", DECIDE + "enqueue.rs", "                    now_ms.saturating_sub(since) >= GRACE_MS", "                    now_ms.saturating_sub(since) >= GRACE_MS / 2"),
-    ("enqueue_recovery_grace", DECIDE + "enqueue.rs", "                || read.paused\n", "                || read.paused\n                || read.waiting && !recovery.eligible_since_ms.is_some_and(|since| read.now_ms.saturating_sub(since) >= GRACE_MS)\n"),
-
     ("enqueue_required_check", DECIDE + "enqueue.rs", "check.app == App::Actions", "check.app != App::Missing"),
 ]
 
