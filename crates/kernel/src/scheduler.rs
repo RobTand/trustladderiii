@@ -45,8 +45,20 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: boo
         exists|context: AdvanceContext| context.node == i
             && result == advance_enabled(old(w).nodes@[i as int], context)
             && port_advance_contracts::context_safe(*old(w), i as int, context)
+            && port_advance_contracts::pool_context(*old(w), i as int, context)
             && port_advance_contracts::exact(old(w).nodes@[i as int], final(w).nodes@[i as int],
                 old(w).next_ticket, final(w).next_ticket, context, *old(out), *final(out)),
+        port_advance_contracts::pool_waiting(old(w).nodes@[i as int]) ==> result
+            == (pool_users(old(w).nodes@, old(w).nodes@.len()) < old(w).pool_capacity
+                && oldest_waiter(*old(w), i as int)),
+        result && old(w).nodes@[i as int].phase == Phase::Unplanned
+            && old(w).nodes@[i as int].pos == 0 && old(w).nodes@[i as int].ticket.is_none()
+            ==> final(w).nodes@[i as int] == (Node {
+                credit: Credit { withheld: false, ..old(w).nodes@[i as int].credit },
+                planning_started: true, phase: Phase::Planning { must_split: false },
+                generation: (old(w).nodes@[i as int].generation + 1) as u64,
+                pos: 0, ticket: None, ..old(w).nodes@[i as int]
+            }) && *final(out) == *old(out),
 ] {
     kernel_snapshot! { before_advance = *w }
     kernel_snapshot! { before_out = *out }
@@ -77,12 +89,19 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: boo
     kernel_proof! {
         assert(movable(*w, i as int) ==> advance_enabled(w.nodes@[i as int], context));
         assert(port_advance_contracts::context_safe(*w, i as int, context));
+        assert(port_advance_contracts::pool_context(*w, i as int, context));
     }
     let changed = advance_node(&mut w.nodes[i], &mut w.next_ticket, context, out);
     kernel_proof! {
+        if changed && before_advance@.nodes@[i as int].phase == Phase::Unplanned
+            && before_advance@.nodes@[i as int].pos == 0 && before_advance@.nodes@[i as int].ticket.is_none() {
+            port_advance_contracts::admission_frame(before_advance@.nodes@[i as int], w.nodes@[i as int],
+                before_advance@.next_ticket, w.next_ticket, context, before_out@, *out, changed);
+        }
         assert(exists|c: AdvanceContext| c.node == i
             && changed == advance_enabled(before_advance@.nodes@[i as int], c)
             && port_advance_contracts::context_safe(before_advance@, i as int, c)
+            && port_advance_contracts::pool_context(before_advance@, i as int, c)
             && port_advance_contracts::exact(before_advance@.nodes@[i as int], w.nodes@[i as int],
                 before_advance@.next_ticket, w.next_ticket, c, before_out@, *out));
         reveal(advance_post);

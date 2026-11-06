@@ -178,6 +178,18 @@ pub(super) open spec fn context_safe(w: World, i: int, c: AdvanceContext) -> boo
                 < w.gates@[w.nodes@[i].repo.0 as int].w)
 }
 
+/// Q39 / #806: an unobstructed node with a ticket waits for a worker run.
+pub(super) open spec fn pool_waiting(n: Node) -> bool {
+    !(n.phase is Closed) && !n.waiting_incident && n.effect.is_none()
+        && !n.paused && n.ticket.is_some() && matches!(current_item(n), Some(Item::Start(_)))
+}
+
+/// Q39 / #806: the real pool decision is spare capacity and first priority order.
+pub(super) open spec fn pool_context(w: World, i: int, c: AdvanceContext) -> bool {
+    pool_waiting(w.nodes@[i]) ==> c.pool == (pool_users(w.nodes@, w.nodes@.len()) < w.pool_capacity
+        && oldest_waiter(w, i))
+}
+
 /// #806: blocked dispatch only discards an incident waiter's pending ticket.
 pub(super) open spec fn blocked_after(n: Node) -> Node {
     if n.phase is Closed { n }
