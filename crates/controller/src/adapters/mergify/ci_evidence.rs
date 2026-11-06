@@ -139,6 +139,8 @@ fn log_line(line: &str) -> &str {
 fn diagnostic_lines(text: &str) -> Vec<String> {
     static EXCEPTION: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"^[A-Za-z_][A-Za-z0-9_.]*(?::|$)").unwrap());
+    static GATE_FAILURE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)\bgate\b.*(?:failed|failure|did not finish)").unwrap());
     let mut traceback = false;
     let mut panic_context: usize = 0;
     let mut seen = BTreeSet::new();
@@ -160,10 +162,7 @@ fn diagnostic_lines(text: &str) -> Vec<String> {
             || message.contains("##[error]")
             || message.starts_with("ERROR:")
             || lower.contains("fix with ")
-            || (lower.contains("gate")
-                && (lower.contains("failed")
-                    || lower.contains("failure")
-                    || lower.contains("did not finish")))
+            || GATE_FAILURE.is_match(message)
         {
             if seen.insert(message.to_owned()) {
                 diagnostics.push(message.to_owned());
@@ -226,10 +225,15 @@ fn check_summary(summary: &[String], text: &str, parsed: &[FailedTest]) -> Strin
         excerpt.push('\n');
         excerpt.push_str(DIAGNOSTICS_OMITTED);
     }
+    let mut seen: BTreeSet<_> = diagnostics.into_iter().collect();
     let header = safe(&summary.join("\n"), usize::MAX);
+    let header = header
+        .lines()
+        .filter(|line| !seen.contains(log_line(line).trim()))
+        .collect::<Vec<_>>()
+        .join("\n");
     let header = byte_excerpt(&header, 192, "[summary omitted]");
     let mut result = format!("{header}\n{excerpt}");
-    let mut seen: BTreeSet<_> = diagnostics.into_iter().collect();
     seen.extend(header.lines().map(str::to_owned));
     // Keep target lines and the existing suffix, without re-emitting diagnostics
     // already selected above. Drop the suffix's potentially partial first line.

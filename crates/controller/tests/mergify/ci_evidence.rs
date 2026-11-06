@@ -214,9 +214,11 @@ fn failure(api: &Server, mode: &str, repeat: bool) {
         _ => {}
     }
     let summary = if mode == "hostile" {
-        "password=planted-password"
+        "password=planted-password".to_owned()
+    } else if mode == "diagnostics-limits" {
+        "summary line ".repeat(1000)
     } else {
-        "Bazel tests failed"
+        "Bazel tests failed".to_owned()
     };
     state.ci_fixture = Some(Fixture {
         pull: draft,
@@ -503,6 +505,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             .map(|check| check["summary"].as_str().unwrap())
             .collect::<Vec<_>>()
             .join("\n");
+        assert_eq!(summaries.matches("Gate failed").count(), 1);
         assert!(report.chars().count() <= 16000);
         for check in finding["ci_checks"].as_array().unwrap() {
             assert!(check["summary"].as_str().unwrap().chars().count() <= 1000);
@@ -550,6 +553,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
                 }
             }
             "diagnostics-limits" => {
+                assert!(summaries.contains("[summary omitted]"), "{summaries}");
                 assert!(summaries.contains("[diagnostics omitted]"), "{summaries}");
                 assert!(summaries.contains("[diagnostic clipped]"), "{summaries}");
                 assert!(summaries.len() <= 1000);
