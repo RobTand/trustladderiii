@@ -123,7 +123,9 @@ impl Journal {
             number(d)?
         );
         let key = format!("direct:{:x}", Sha256::digest(identity.as_bytes()));
-        Ok(Records::new(&self.records_root).path(&key).with_extension("merged"))
+        Ok(Records::new(&self.records_root)
+            .path(&key)
+            .with_extension("merged"))
     }
     fn remember_merged(
         &self,
