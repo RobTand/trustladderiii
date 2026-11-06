@@ -1,7 +1,6 @@
 //! CC-E: the mirror is checked against real Controller / Store steps, without
 //! modifying the read-only drive_once or dispatch-liveness implementation.
-#[path = "../../../store/tests/support/mod.rs"]
-mod database;
+use crate::database;
 use serde_json::json;
 use std::{
     collections::VecDeque,
@@ -365,8 +364,7 @@ fn cancelling_conforms_for_found_and_absent() {
     }
 }
 
-#[path = "../support/controller_restart.rs"]
-mod controller_restart;
+use crate::controller_restart;
 
 /// Complete durable projection at each real committed boundary. The enqueue
 /// commit and the input transaction are observed independently through Store's
