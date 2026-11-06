@@ -181,6 +181,19 @@ impl Fixture {
             .clone()
     }
 
+    fn documents(&mut self, rows: &[(&str, Value)]) {
+        let snapshot = self.controller.snapshot().unwrap();
+        let mut commit = Commit::new(
+            format!("feedback-documents-{}", snapshot.revision.get()),
+            json!(null),
+            &snapshot,
+        );
+        for (table, value) in rows {
+            commit.rows.push(crate::put(table, "0".into(), value.clone()));
+        }
+        self.controller.store.commit(&commit).unwrap();
+    }
+
     fn worker(&mut self, role: &str, reply: Value) {
         self.observe(Observation::WorkerReply {
             node: NodeId(0),
@@ -621,4 +634,66 @@ fn closing_a_request_clears_rebase_conflict_context() {
             .value["conflict"]
             .is_null()
     );
+}
+
+#[test]
+fn a_failed_step_persists_only_the_canonical_feedback_document() {
+    let mut f = Fixture::new();
+    f.seed(Phase::Making, 2);
+    f.observe(Observation::WorkerFailed {
+        node: NodeId(0),
+        generation: 10,
+        failure_class: "worker_exit".into(),
+        failure_message: "failed while reproducing".into(),
+    });
+    let snapshot = f.controller.snapshot().unwrap();
+    let document = snapshot.rows.iter().find(|row| row.table == "feedback").unwrap();
+    assert_eq!(document.value["maker"][0]["report"], "failed while reproducing");
+    assert!(!snapshot.rows.iter().any(|row| {
+        ["maker_findings", "findings", "rebase_conflicts"].contains(&row.table.as_str())
+    }), "a step must store one representation of feedback");
+}
+
+#[test]
+fn legacy_only_rows_yield_the_same_maker_input_as_the_canonical_document() {
+    let mut f = Fixture::new();
+    f.seed(Phase::Making, 2);
+    let maker = json!([{"kind":"failed_check", "goal_ids":[], "report":"legacy check"}]);
+    let planner = json!(["legacy planner guidance"]);
+    let conflict = json!({"head":f.repo.head,"target":f.repo.base,"files":["README.md"]});
+    f.documents(&[
+        ("maker_findings", maker.clone()),
+        ("findings", planner.clone()),
+        ("rebase_conflicts", conflict.clone()),
+    ]);
+    let legacy = f.maker();
+    assert!(legacy["feedback"].to_string().contains("legacy check"));
+    assert!(legacy["feedback"].to_string().contains("Resolve the merge"));
+    assert!(!f.controller.snapshot().unwrap().rows.iter().any(|row| row.table == "feedback"));
+    f.documents(&[("feedback", json!({"generation":10,"maker":maker,"planner":planner,"conflict":conflict}))]);
+    assert_eq!(f.maker(), legacy);
+}
+
+#[test]
+fn malformed_feedback_on_closed_nodes_does_not_poison_later_steps() {
+    for canonical in [false, true] {
+        let mut f = Fixture::new();
+        f.seed(Phase::Making, 2);
+        f.documents(&[
+            (if canonical { "feedback" } else { "maker_findings" }, json!({"maker":"malformed", "conflict":{"head":"old"}})),
+            ("rebase_conflicts", json!({"head":"old"})),
+        ]);
+        f.observe(Observation::Steering { node:NodeId(0), command:tl3_kernel::Command::Stop });
+        assert!(f.controller.world().unwrap().nodes[0].phase.is_closed());
+        assert!(!f.controller.snapshot().unwrap().rows.iter().any(|row| row.table == "rebase_conflicts"));
+        if canonical {
+            let snapshot = f.controller.snapshot().unwrap();
+            let document = snapshot.rows.iter().find(|row| row.table == "feedback").unwrap();
+            assert!(document.value["conflict"].is_null());
+            assert_eq!(document.value["maker"], "malformed");
+        }
+        for _ in 0..2 {
+            f.observe(Observation::Steering { node:NodeId(0), command:tl3_kernel::Command::Resume });
+        }
+    }
 }
