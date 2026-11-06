@@ -3,7 +3,7 @@ use crate::{
     Error, Result,
     contracts::report::{
         CheckReport as Report, CheckResult, Custody, Outcome, PhaseEvidence, PhaseOutcome,
-        RunOutcome, SymptomSide, Verdict,
+        RedMessageMatch, RunOutcome, SymptomSide, Verdict,
     },
     executor::{Completion, Observation},
     findings::{FailedTest, MAX_FAILED_TESTS, MAX_MESSAGE_CHARS, clipped},
@@ -232,7 +232,21 @@ fn evidence_with_read(
             return Err(Error::Invalid("PrismaBuild result log changed"));
         }
         // The typed report clips each message to MAX_MESSAGE_CHARS as it parses.
-        if let Some(parsed) = parse(&raw, job) {
+        let parsed = match parse(&raw, job) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                // #848/Q51: a complete report that TL3 cannot decode is a harness defect.
+                let diagnostic = FailedTest {
+                    test: "TL3_CHECKS".into(),
+                    message: clipped(
+                        &format!("TL3 harness could not decode TL3_CHECKS: {error}"),
+                        MAX_MESSAGE_CHARS,
+                    ),
+                };
+                return Ok((false, false, vec![], vec![diagnostic], Some(HARNESS)));
+            }
+        };
+        if let Some(parsed) = parsed {
             if !rejudged(&parsed, job) {
                 return Ok((false, false, vec![], vec![], JUDGE_MISMATCH_CLASS));
             }
@@ -349,16 +363,23 @@ fn completion(
     Ok(Completion::confirmed(observations))
 }
 
-fn parse(raw: &[u8], job: &Job) -> Option<Report> {
-    let text = std::str::from_utf8(raw).ok()?;
+fn parse(raw: &[u8], job: &Job) -> serde_json::Result<Option<Report>> {
+    let Ok(text) = std::str::from_utf8(raw) else {
+        return Ok(None);
+    };
     let reports: Vec<_> = text
         .lines()
         .filter_map(|line| line.strip_prefix("TL3_CHECKS "))
         .collect();
     if reports.len() != 1 {
-        return None;
+        return Ok(None);
     }
-    let report: Report = serde_json::from_str(reports[0]).ok()?;
+    // Check the complete JSON frame first: a truncated document can otherwise raise
+    // a field error before serde reaches its missing tail (#848).
+    if let Err(error) = serde_json::from_str::<&serde_json::value::RawValue>(reports[0]) {
+        return if error.is_eof() { Ok(None) } else { Err(error) };
+    }
+    let report: Report = serde_json::from_str(reports[0])?;
     if report.effect_key != job.delivery.key
         || report.base.as_str() != job.run.base_sha.as_str()
         || Some(report.head.as_str()) != job.delivery.head_sha.as_deref()
@@ -369,7 +390,7 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
                 .as_ref()
                 .map(tl3_worktrees::CommitId::as_str)
     {
-        return None;
+        return Ok(None);
     }
     if report
         .results
@@ -381,7 +402,7 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
                 .is_some_and(|phases| !phases_valid(phases, test.test.as_str()))
         })
     {
-        return None;
+        return Ok(None);
     }
     let mut plan = job.run.plan.clone();
     if !job.always_tests.is_empty() {
@@ -395,9 +416,11 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
         });
     }
     // Only a job staged with selection may carry one trailing selected check (#359).
-    let extra = report.results.len().checked_sub(plan.len())?;
+    let Some(extra) = report.results.len().checked_sub(plan.len()) else {
+        return Ok(None);
+    };
     if extra > usize::from(job.selected_tests.is_some()) {
-        return None;
+        return Ok(None);
     }
     if let Some(selected) = report.results.get(plan.len()) {
         let Custody::InProcess = selected.custody;
@@ -405,7 +428,7 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
             || selected.kind != Kind::Regression
             || selected.tests.len() > job.selected_tests.unwrap_or(0) as usize
         {
-            return None;
+            return Ok(None);
         }
     }
     for (result, check) in report.results.iter().zip(&plan) {
@@ -413,22 +436,22 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
             || result.kind != check.kind
             || result.tests.len() != check.tests.len()
         {
-            return None;
+            return Ok(None);
         }
         let Custody::InProcess = result.custody;
         if result.declared_symptom != check.declared_symptom {
-            return None;
+            return Ok(None);
         }
         if let Some(declaration) = &check.declared_symptom {
             if !symptom_identity(result, declaration, check, job) {
-                return None;
+                return Ok(None);
             }
         } else if result.symptom_evidence.is_some() {
-            return None;
+            return Ok(None);
         }
         for (result, test) in result.tests.iter().zip(&check.tests) {
             if result.test.as_str() != test {
-                return None;
+                return Ok(None);
             }
         }
         if let Some(identity) = &result.proof {
@@ -443,7 +466,7 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
                         .is_some_and(Option::is_some)
                 })
             {
-                return None;
+                return Ok(None);
             }
             if let Some(declaration) = &check.proof {
                 let subjects = &declaration.subjects;
@@ -465,18 +488,18 @@ fn parse(raw: &[u8], job: &Job) -> Option<Report> {
                             test.passed && !matches!(test.head, Outcome::Passed)
                         }))
                 {
-                    return None;
+                    return Ok(None);
                 }
             }
         } else if check.proof.is_some() && result.tests.iter().any(|test| test.passed) {
-            return None;
+            return Ok(None);
         }
         // A forced check passes only on evidence from its forced head run (#393).
         if result.forcing.is_some() != check.forcing.is_some() {
-            return None;
+            return Ok(None);
         }
     }
-    Some(report)
+    Ok(Some(report))
 }
 
 fn judge_kind(kind: Kind) -> core_judge::Kind {
@@ -597,7 +620,13 @@ fn rejudged(report: &Report, job: &Job) -> bool {
                     .proof
                     .as_ref()
                     .and_then(|proof| proof.red_message_matches.as_ref())
-                    .is_some_and(|matches| matches.contains_key(test.test.as_str()))
+                    .and_then(|matches| matches.get(test.test.as_str()))
+                    .is_some_and(|matched| {
+                        matches!(
+                            matched,
+                            RedMessageMatch::Message | RedMessageMatch::SourceAssertion
+                        )
+                    })
                 {
                     core_judge::Reason::Matched
                 } else {

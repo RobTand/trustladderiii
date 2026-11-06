@@ -82,7 +82,7 @@ fn producer_overrides_preserve_retained_phases() {
 fn disagreement_uses_the_confirmed_harness_class() {
     let (job, report) = fixture("skipped", "passed", true, false);
     assert!(
-        parse(&raw(&report), &job).is_some(),
+        parse(&raw(&report), &job).unwrap().is_some(),
         "shape/identity validation must not swallow a judge disagreement"
     );
     let (report, pass, results, failed, class) = evaluate(&job, &report);
@@ -230,7 +230,7 @@ fn retained_boundary_requires_positive_proof_identity() {
         .unwrap(),
     );
     report["results"][0]["kind"] = json!("demonstrating");
-    assert!(parse(&raw(&report), &job).is_none());
+    assert!(parse(&raw(&report), &job).unwrap().is_none());
 }
 
 #[test]
@@ -323,7 +323,7 @@ fn campaign_planned_proof_requires_positive_ordinary_head() {
     report["results"] = vector["results"].clone();
     // Prove the receipt and campaign are accepted when the ordinary head is positive.
     report["results"][0]["tests"][0]["head"] = json!("passed");
-    assert!(parse(&raw(&report), &job).is_some());
+    assert!(parse(&raw(&report), &job).unwrap().is_some());
     assert!(evaluate(&job, &report).1);
     report["results"][0]["tests"][0]["head"] = json!("error");
     let bytes = raw(&report);
@@ -333,7 +333,7 @@ fn campaign_planned_proof_requires_positive_ordinary_head() {
         || normalized(before::run(ending(&bytes), &job)),
     );
     assert_eq!(normalized(Ok(evaluate(&job, &report))), old);
-    assert!(parse(&bytes, &job).is_none());
+    assert!(parse(&bytes, &job).unwrap().is_none());
     assert_eq!(old["class"], Value::Null);
     assert_eq!(old["pass"], false);
 }
@@ -359,7 +359,7 @@ fn shell_invariant_counterexample(selected: bool, forced: bool) {
         report["results"][1]["tests"][0]["pre_existing"] = json!(true);
     }
     assert!(
-        parse(&raw(&report), &job).is_some(),
+        parse(&raw(&report), &job).unwrap().is_some(),
         "the counterexample is shape-valid"
     );
     let (reported, passed, results, failed, class) = evaluate(&job, &report);
@@ -500,6 +500,7 @@ fn missing_and_truncated_reports_remain_unclassified() {
         b"no report\n",
         b"TL3_CHECKS {\"schema\":",
         b"TL3_CHECKS ",
+        b"TL3_CHECKS {\"schema\":\"future\"",
         b"\xff",
     ] {
         let result = evidence_with_read(ending(raw), &job, |_| Ok(raw.to_vec())).unwrap();
