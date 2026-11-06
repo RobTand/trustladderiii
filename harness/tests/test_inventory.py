@@ -166,3 +166,60 @@ def test_rule_core_loads_standalone_and_repairs_its_table():
         for name in reversed(loaded):
             del sys.modules[name]
         del sys.modules[package.__name__]
+
+
+@pytest.mark.parametrize('role', ['planner', 'maker'])
+def test_role_dependent_proof_repairs(role):
+    from dataclasses import asdict, replace
+    from tl3_harness import rules as core, terminal_forms as forms
+
+    assert hasattr(core, 'SourceEdit'), 'proof rows cannot express source repairs'
+    before = {'checks': [{'proof': {'subjects': ['wrong.py']}}], 'untouched': True}
+    field = core.Name('field', '/checks/0/proof/subjects/0')
+    path = 'tests/test_observer.py'
+    allowed = core.Allowed('const', 'subject.py')
+    source = core.SourceEdit(path, 'Move this call into the observer test body.')
+    row = core.register(core.Rule(
+        'proof.role_repair',
+        lambda facts: () if core.at(facts['reply'], field.value) == 'subject.py' else ({'path': path},),
+        lambda facts: (core.Name('path', facts['path']),),
+        lambda facts, role: allowed if role == 'planner' else core.Allowed('const', path),
+        lambda facts, role: core.Edit(field, 'replace', allowed) if role == 'planner' else source,
+        example={'reply': before}, witness='subject.py'), roles=('planner', 'maker'))
+    violation, = core.evaluate((row,), {'reply': before}, role=role)
+    text = violation.render(role=role)
+    assert forms.PLANNER.phrase not in text and forms.MAKER.phrase not in text
+    if role == 'planner':
+        assert field.value in text and 'replace' in text
+        after = core.apply_edit(before, violation.repair, 'subject.py')
+        assert core.permits(violation, before, after, role=role)
+        assert not core.permits(violation, before, {**after, 'untouched': False}, role=role)
+    else:
+        assert f'Change "{path}": {source.instruction}' in text
+        assert asdict(violation)['repair'] == {'path': path, 'instruction': source.instruction}
+        assert core.permits(violation, before, before, role=role)
+        assert not core.permits(violation, before, {'kind': 'cant_meet'}, role=role)
+        with pytest.raises(ValueError, match='source editor'):
+            core.register(replace(row, repair=source), roles=('planner',))
+        rogue = replace(row, repair=lambda facts, role: source)
+        with pytest.raises(ValueError, match='source editor'):
+            core.evaluate((rogue,), {'reply': before}, role='planner')
+        with pytest.raises(ValueError, match='source editor'):
+            replace(violation, rule=rogue, role='planner').render(role='planner')
+    with pytest.raises(ValueError, match='terminal reply form'):
+        core.register(replace(row, repair=core.CantMeet('declaration is wrong')),
+                      roles=('postmortem',))
+
+
+def test_resolved_rule_values_are_stable():
+    from tl3_harness import rules as core
+    allowed = core.Allowed('const', 'ok')
+    row = core.register(core.Rule('proof.static',
+        lambda facts: () if facts['reply']['value'] == 'ok' else ({},),
+        lambda facts: (core.Name('field', '/value'),), allowed,
+        core.Edit(core.Name('field', '/value'), 'replace', allowed),
+        example={'reply': {'value': 'bad'}}, witness='ok'), roles=('planner',))
+    violation, = core.evaluate((row,), row.example, role='planner')
+    assert violation.allowed == allowed
+    assert violation.repair == row.repair
+    assert core.permits(violation, row.example['reply'], {'value': 'ok'}, role='planner')
