@@ -267,7 +267,11 @@ pub(super) fn sanitized_json_using(
 }
 
 fn daytime_payload(bytes: &[u8]) -> Result<crate::contracts::report::CheckReport> {
-    if bytes.len() > MAX_BYTES { return Err(BackendError::invalid("daytime payload exceeds protocol bound")); }
+    if bytes.len() > MAX_BYTES {
+        return Err(BackendError::invalid(
+            "daytime payload exceeds protocol bound",
+        ));
+    }
     let report = serde_json::from_slice(bytes)?;
     let value: serde_json::Value = serde_json::from_slice(bytes)?;
     let mut sanitized = value.clone();
@@ -305,7 +309,10 @@ impl Flux {
         if input.run.instance != record.intent.instance
             || input.run.uri != record.intent.uri
             || !record.dispatched
-            || record.binding.as_ref().is_none_or(|binding| binding.id != input.run)
+            || record
+                .binding
+                .as_ref()
+                .is_none_or(|binding| binding.id != input.run)
         {
             return Err(BackendError::invalid(
                 "collector run differs from retained dispatch",
@@ -317,8 +324,14 @@ impl Flux {
             ));
         }
         let bounds = output_bounds(&record.request.suite);
-        let raw = checked_blob_limit(&input.stdout, &record.intent.output_dir, bounds.stdout_bytes)?;
-        if let Some(stderr) = &input.stderr { checked_blob_limit(stderr, &record.intent.output_dir, bounds.stderr_bytes)?; }
+        let raw = checked_blob_limit(
+            &input.stdout,
+            &record.intent.output_dir,
+            bounds.stdout_bytes,
+        )?;
+        if let Some(stderr) = &input.stderr {
+            checked_blob_limit(stderr, &record.intent.output_dir, bounds.stderr_bytes)?;
+        }
         let mut frames = raw
             .split(|byte| *byte == b'\n')
             .filter_map(|line| line.strip_prefix(b"TL3_CHECKS "));
@@ -330,7 +343,11 @@ impl Flux {
                 "stdout has duplicate or empty TL3_CHECKS frames",
             ));
         }
-        if payload.len() > bounds.payload_bytes { return Err(BackendError::invalid("TL3_CHECKS payload exceeds protocol byte bound")); }
+        if payload.len() > bounds.payload_bytes {
+            return Err(BackendError::invalid(
+                "TL3_CHECKS payload exceeds protocol byte bound",
+            ));
+        }
         daytime_payload(payload)?;
         let out = &record.intent.output_dir;
         let payload = blob(&out.join("retained-payload.json"), payload)?;
@@ -455,7 +472,11 @@ impl Flux {
                 let path = out.join(name);
                 if path.exists() {
                     let bounds = output_bounds(&record.request.suite);
-                    let limit = match name { "stdout" => bounds.stdout_bytes, "stderr" => bounds.stderr_bytes, _ => MAX_BYTES };
+                    let limit = match name {
+                        "stdout" => bounds.stdout_bytes,
+                        "stderr" => bounds.stderr_bytes,
+                        _ => MAX_BYTES,
+                    };
                     let bytes = read_limit(&path, limit)?;
                     evidence.push(blob(
                         &out.join(format!("retained-{name}")),
@@ -606,8 +627,12 @@ impl Flux {
     ) -> Result<bool> {
         validate::trusted_artifacts(&record.request)?;
         let bounds = output_bounds(&record.request.suite);
-        if let Some(stdout) = &report.stdout { checked_blob_limit(stdout, &record.intent.output_dir, bounds.stdout_bytes)?; }
-        if let Some(stderr) = &report.stderr { checked_blob_limit(stderr, &record.intent.output_dir, bounds.stderr_bytes)?; }
+        if let Some(stdout) = &report.stdout {
+            checked_blob_limit(stdout, &record.intent.output_dir, bounds.stdout_bytes)?;
+        }
+        if let Some(stderr) = &report.stderr {
+            checked_blob_limit(stderr, &record.intent.output_dir, bounds.stderr_bytes)?;
+        }
         if report.schema != "tl3.runner_report.v1"
             || report.run != binding.id
             || report.request_digest != record.intent.request_digest

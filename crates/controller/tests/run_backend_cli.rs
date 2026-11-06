@@ -1865,13 +1865,29 @@ fn test_summary() -> Value {
 
 #[test]
 fn protocol_bounds_are_config_free_generated_scalars() {
-    for suite in [Suite::WorkerTests { input_digest:"a".repeat(64) }, Suite::Generator { input_digest:"b".repeat(64) },
-        Suite::DaytimeChecks {base:"a".repeat(40),head:"b".repeat(40),reviewed:None,plan_digest:"c".repeat(64)}] {
+    for suite in [
+        Suite::WorkerTests {
+            input_digest: "a".repeat(64),
+        },
+        Suite::Generator {
+            input_digest: "b".repeat(64),
+        },
+        Suite::DaytimeChecks {
+            base: "a".repeat(40),
+            head: "b".repeat(40),
+            reviewed: None,
+            plan_digest: "c".repeat(64),
+        },
+    ] {
         let frames = cli(&json!({"op":"output_bounds","suite":suite}));
         assert_eq!(frames.last().unwrap()["kind"], "result", "{frames:?}");
-        let bounds: OutputBounds = serde_json::from_value(frames.last().unwrap()["result"]["bounds"].clone()).unwrap();
+        let bounds: OutputBounds =
+            serde_json::from_value(frames.last().unwrap()["result"]["bounds"].clone()).unwrap();
         assert_eq!(bounds, output_bounds(&suite));
-        assert_eq!(bounds.cli_result_bytes, bounds.payload_bytes + bounds.cli_envelope_bytes);
+        assert_eq!(
+            bounds.cli_result_bytes,
+            bounds.payload_bytes + bounds.cli_envelope_bytes
+        );
         assert!(bounds.stderr_bytes > 0);
         assert!(bounds.stdout_bytes >= bounds.payload_bytes);
     }
@@ -1880,13 +1896,15 @@ fn protocol_bounds_are_config_free_generated_scalars() {
 #[test]
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn worker_frames_and_verified_terminal_preserve_symptom_and_owner_identity() {
-    let f = worker_fixture(Suite::WorkerTests {input_digest:"a".repeat(64)});
+    let f = worker_fixture(Suite::WorkerTests {
+        input_digest: "a".repeat(64),
+    });
     let records = json!([{"event":"result","test":"test_subject","outcome":"error"}]);
     let receipt = json!({"run":1,"sha256":digest(records.to_string().as_bytes()),"records":records,"outcome":"symptom","target_hits":{}});
     let mut entry = receipt.clone();
     entry.as_object_mut().unwrap().remove("records");
     let mut summary = test_summary();
-    summary["declared_symptom"] = json!({"repeat":1,"node":"test_subject","exception":"ValueError","phase":"call","parallel":0});
+    summary["declared_symptom"] = json!({"repeat":1,"node":"test_subject","exception":"builtins.ValueError","phase":"call","parallel":0});
     summary["symptom_runs"] = json!([entry]);
     let raw = format!("diagnostic\nTL3_SYMPTOM_RUN {receipt}\nTL3_TEST_SUMMARY {summary}\n");
     let frames = collect_worker(&f, raw.as_bytes());
@@ -1895,7 +1913,14 @@ fn worker_frames_and_verified_terminal_preserve_symptom_and_owner_identity() {
     let retained_report = f.intent.output_dir.join("report.json");
     let report: Value = serde_json::from_slice(&fs::read(&retained_report).unwrap()).unwrap();
     f.events(&completed(0));
-    for field in ["request_digest", "tree", "runner_digest", "runtime_digest", "suite", "run"] {
+    for field in [
+        "request_digest",
+        "tree",
+        "runner_digest",
+        "runtime_digest",
+        "suite",
+        "run",
+    ] {
         let mut wrong = report.clone();
         match field {
             "tree" => wrong["tree"]["head"] = json!("d".repeat(40)),
@@ -1905,7 +1930,11 @@ fn worker_frames_and_verified_terminal_preserve_symptom_and_owner_identity() {
         }
         fs::write(&retained_report, wrong.to_string()).unwrap();
         let attach = f.attach();
-        assert_eq!(attach.last().unwrap()["result"]["observation"]["kind"], "unknown", "{field}: {attach:?}");
+        assert_eq!(
+            attach.last().unwrap()["result"]["observation"]["kind"],
+            "unknown",
+            "{field}: {attach:?}"
+        );
     }
     fs::write(&retained_report, report.to_string()).unwrap();
     let attach = f.attach();
@@ -1913,9 +1942,16 @@ fn worker_frames_and_verified_terminal_preserve_symptom_and_owner_identity() {
     // A failed test is a valid transport payload, never native rc-only semantic judgment.
     assert_eq!(terminal["ending"], "passed", "{attach:?}");
     let result = f.call(json!({"op":"worker_payload","owner":f.intent.owner,"correlation":f.intent.correlation,"terminal":terminal}));
-    assert_eq!(result.last().unwrap()["result"]["payload"], expected, "{result:?}");
+    assert_eq!(
+        result.last().unwrap()["result"]["payload"],
+        expected,
+        "{result:?}"
+    );
     let reference: BlobRef = serde_json::from_value(expected["symptom_runs"][0].clone()).unwrap();
-    assert_eq!(fs::read(&reference.path).unwrap(), receipt.to_string().as_bytes());
+    assert_eq!(
+        fs::read(&reference.path).unwrap(),
+        receipt.to_string().as_bytes()
+    );
     let other = f.call(json!({"op":"worker_payload","owner":"other-owner","correlation":f.intent.correlation,"terminal":terminal}));
     assert_eq!(other.last().unwrap()["kind"], "error");
     fs::write(reference.path, b"{}").unwrap();
@@ -1926,28 +1962,52 @@ fn worker_frames_and_verified_terminal_preserve_symptom_and_owner_identity() {
 #[test]
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn worker_collector_rejects_missing_duplicate_malformed_and_misbound_protocols() {
-    let f = worker_fixture(Suite::WorkerTests {input_digest:"a".repeat(64)});
+    let f = worker_fixture(Suite::WorkerTests {
+        input_digest: "a".repeat(64),
+    });
     let valid = test_summary();
-    for raw in ["no report\n".to_owned(), "TL3_TEST_SUMMARY {\n".into(), "TL3_TEST_SUMMARY {}\n".into(),
+    for raw in [
+        "no report\n".to_owned(),
+        "TL3_TEST_SUMMARY {\n".into(),
+        "TL3_TEST_SUMMARY {}\n".into(),
         format!("TL3_TEST_SUMMARY {valid}\nTL3_TEST_SUMMARY {valid}\n"),
         format!("TL3_SYMPTOM_RUN {{}}\nTL3_TEST_SUMMARY {valid}\n"),
-        format!("TL3_GENERATOR_ARTIFACT {{}}\nTL3_TEST_SUMMARY {valid}\n")] {
+        format!("TL3_GENERATOR_ARTIFACT {{}}\nTL3_TEST_SUMMARY {valid}\n"),
+    ] {
         let result = collect_worker(&f, raw.as_bytes());
         assert_eq!(result.last().unwrap()["kind"], "error", "{result:?}");
     }
     let mut missing = valid.clone();
     missing["declared_symptom"] = json!({"repeat":1});
     missing["symptom_runs"] = json!([{"run":1}]);
-    assert_eq!(collect_worker(&f, format!("TL3_TEST_SUMMARY {missing}\n").as_bytes()).last().unwrap()["kind"], "error");
-    let stdout = api::durable::blob(&f.intent.output_dir.join("raw-worker-stdout"), format!("TL3_TEST_SUMMARY {valid}\n").as_bytes()).unwrap();
+    assert_eq!(
+        collect_worker(&f, format!("TL3_TEST_SUMMARY {missing}\n").as_bytes())
+            .last()
+            .unwrap()["kind"],
+        "error"
+    );
+    let stdout = api::durable::blob(
+        &f.intent.output_dir.join("raw-worker-stdout"),
+        format!("TL3_TEST_SUMMARY {valid}\n").as_bytes(),
+    )
+    .unwrap();
     let mut run = f.ownership().run;
     run.job = "fOTHER".into();
     let wrong = f.call(json!({"op":"collect_worker","owner":f.intent.owner,"correlation":f.intent.correlation,"facts":{"run":run,"stdout":stdout,"cleanup":null,"runtime_binding":null}}));
     assert_eq!(wrong.last().unwrap()["kind"], "error");
-    let stderr = api::durable::blob(&f.intent.output_dir.join("raw-worker-stderr"), &vec![b'x';output_bounds(&f.request.suite).stderr_bytes+1]).unwrap();
+    let stderr = api::durable::blob(
+        &f.intent.output_dir.join("raw-worker-stderr"),
+        &vec![b'x'; output_bounds(&f.request.suite).stderr_bytes + 1],
+    )
+    .unwrap();
     let wrong = f.call(json!({"op":"collect_worker","owner":f.intent.owner,"correlation":f.intent.correlation,"facts":{"run":f.ownership().run,"stdout":stdout,"stderr":stderr,"cleanup":null,"runtime_binding":null}}));
     assert_eq!(wrong.last().unwrap()["kind"], "error");
-    assert_eq!(collect_worker(&f, format!("TL3_TEST_SUMMARY {valid}\n").as_bytes()).last().unwrap()["kind"], "result");
+    assert_eq!(
+        collect_worker(&f, format!("TL3_TEST_SUMMARY {valid}\n").as_bytes())
+            .last()
+            .unwrap()["kind"],
+        "result"
+    );
 }
 
 fn generator_artifact(outputs: Value) -> Value {
@@ -1963,7 +2023,9 @@ fn generator_output(name: &str, bytes: &[u8]) -> Value {
 #[test]
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn generator_collector_preserves_large_artifact_and_refuses_limits_and_corruption() {
-    let f = worker_fixture(Suite::Generator {input_digest:"a".repeat(64)});
+    let f = worker_fixture(Suite::Generator {
+        input_digest: "a".repeat(64),
+    });
     let small = generator_output("generated/a.txt", b"generated text\n");
     let valid = generator_artifact(json!([small]));
     let mut wrong = valid.clone();
@@ -1973,29 +2035,79 @@ fn generator_collector_preserves_large_artifact_and_refuses_limits_and_corruptio
     let mut bad_base64 = valid.clone();
     bad_base64["outputs"][0]["data"] = json!("%%%invalid");
     let mut duplicate = valid.clone();
-    duplicate["outputs"].as_array_mut().unwrap().push(small.clone());
-    for raw in ["missing\n".to_owned(), "TL3_GENERATOR_ARTIFACT {\n".into(),
+    duplicate["outputs"]
+        .as_array_mut()
+        .unwrap()
+        .push(small.clone());
+    for raw in [
+        "missing\n".to_owned(),
+        "TL3_GENERATOR_ARTIFACT {\n".into(),
+        "TL3_GENERATOR_ARTIFACT {}\n".into(),
         format!("TL3_GENERATOR_ARTIFACT {valid}\nTL3_GENERATOR_ARTIFACT {valid}\n"),
-        format!("TL3_GENERATOR_ARTIFACT {wrong}\n"), format!("TL3_GENERATOR_ARTIFACT {traversal}\n"),
-        format!("TL3_GENERATOR_ARTIFACT {bad_base64}\n"),format!("TL3_GENERATOR_ARTIFACT {duplicate}\n")] {
-        assert_eq!(collect_worker(&f, raw.as_bytes()).last().unwrap()["kind"], "error");
+        format!("TL3_GENERATOR_ARTIFACT {wrong}\n"),
+        format!("TL3_GENERATOR_ARTIFACT {traversal}\n"),
+        format!("TL3_GENERATOR_ARTIFACT {bad_base64}\n"),
+        format!("TL3_GENERATOR_ARTIFACT {duplicate}\n"),
+    ] {
+        assert_eq!(
+            collect_worker(&f, raw.as_bytes()).last().unwrap()["kind"],
+            "error"
+        );
     }
     let bounds = output_bounds(&f.request.suite);
     for outputs in [
-        json!([generator_output("large.txt", &vec![b'x';bounds.artifact_file_bytes+1])]),
-        Value::Array((0..bounds.artifact_files+1).map(|n| generator_output(&format!("file{n}"), b"x")).collect()),
-        Value::Array((0..3).map(|n| generator_output(&format!("file{n}"), &vec![b'x';bounds.decoded_artifact_bytes/3+1])).collect()),
+        json!([generator_output(
+            "large.txt",
+            &vec![b'x'; bounds.artifact_file_bytes + 1]
+        )]),
+        Value::Array(
+            (0..bounds.artifact_files + 1)
+                .map(|n| generator_output(&format!("file{n}"), b"x"))
+                .collect(),
+        ),
+        Value::Array(
+            (0..3)
+                .map(|n| {
+                    generator_output(
+                        &format!("file{n}"),
+                        &vec![b'x'; bounds.decoded_artifact_bytes / 3 + 1],
+                    )
+                })
+                .collect(),
+        ),
     ] {
         let artifact = generator_artifact(outputs);
-        assert_eq!(collect_worker(&f, format!("TL3_GENERATOR_ARTIFACT {artifact}\n").as_bytes()).last().unwrap()["kind"], "error");
+        assert_eq!(
+            collect_worker(
+                &f,
+                format!("TL3_GENERATOR_ARTIFACT {artifact}\n").as_bytes()
+            )
+            .last()
+            .unwrap()["kind"],
+            "error"
+        );
     }
     let mut oversized = format!("TL3_GENERATOR_ARTIFACT {valid}").into_bytes();
-    oversized.resize(b"TL3_GENERATOR_ARTIFACT ".len() + bounds.payload_bytes + 1, b' ');
+    oversized.resize(
+        b"TL3_GENERATOR_ARTIFACT ".len() + bounds.payload_bytes + 1,
+        b' ',
+    );
     oversized.push(b'\n');
-    assert_eq!(collect_worker(&f, &oversized).last().unwrap()["kind"], "error");
+    assert_eq!(
+        collect_worker(&f, &oversized).last().unwrap()["kind"],
+        "error"
+    );
     let failed = json!({"status":"failed","exit_code":null,"message":"Generator action infrastructure failed."});
-    assert_eq!(collect_worker(&f, format!("TL3_GENERATOR_ARTIFACT {failed}\n").as_bytes()).last().unwrap()["kind"], "result");
-    let artifact = generator_artifact(json!([generator_output("large.txt", &vec![b'x';7*1024*1024])]));
+    assert_eq!(
+        collect_worker(&f, format!("TL3_GENERATOR_ARTIFACT {failed}\n").as_bytes())
+            .last()
+            .unwrap()["kind"],
+        "result"
+    );
+    let artifact = generator_artifact(json!([generator_output(
+        "large.txt",
+        &vec![b'x'; 7 * 1024 * 1024]
+    )]));
     let bytes = format!("TL3_GENERATOR_ARTIFACT {artifact}\n");
     assert!(bytes.len() > api::durable::MAX_BYTES);
     let result = collect_worker(&f, bytes.as_bytes());
@@ -2006,35 +2118,65 @@ fn generator_collector_preserves_large_artifact_and_refuses_limits_and_corruptio
     let terminal = attach.last().unwrap()["result"]["observation"]["terminal"].clone();
     assert_eq!(terminal["ending"], "passed", "{attach:?}");
     let result = f.call(json!({"op":"worker_payload","owner":f.intent.owner,"correlation":f.intent.correlation,"terminal":terminal}));
-    assert_eq!(result.last().unwrap()["result"]["payload"], expected, "{result:?}");
+    assert_eq!(
+        result.last().unwrap()["result"]["payload"],
+        expected,
+        "{result:?}"
+    );
     let reference: BlobRef = serde_json::from_value(expected["artifact"].clone()).unwrap();
-    assert_eq!(fs::read(reference.path).unwrap(), artifact.to_string().as_bytes());
+    assert_eq!(
+        fs::read(reference.path).unwrap(),
+        artifact.to_string().as_bytes()
+    );
 }
 
 #[test]
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn daytime_collector_preserves_near_eight_mib_complete_refusal_and_refuses_overflow() {
-    let f = worker_fixture(Suite::DaytimeChecks {base:"b".repeat(40),head:"c".repeat(40),reviewed:None,plan_digest:"a".repeat(64)});
+    let f = worker_fixture(Suite::DaytimeChecks {
+        base: "b".repeat(40),
+        head: "c".repeat(40),
+        reviewed: None,
+        plan_digest: "a".repeat(64),
+    });
     let bounds = output_bounds(&f.request.suite);
     let mut report = json!({"schema":"tl3.checks.v3","effect_key":"fixture","base":"b".repeat(40),"head":"c".repeat(40),"reviewed":null,"results":[{
         "name":"complete refusal","kind":"demonstrating","verdict":"infrastructure-failure","custody":"in-process","tests":[]}]});
     let tests = report["results"][0]["tests"].as_array_mut().unwrap();
-    let refusal = "complete proof refusal ".repeat(2900);
-    for index in 0..130 {
+    let refusal = "complete proof refusal ".repeat(2800);
+    for index in 0..129 {
         tests.push(json!({"test":format!("test_{index}"),"base":"uncollected","head":"uncollected","pre_existing":false,"passed":false,"message":"summary","proof_refusal":refusal}));
     }
     let bytes = report.to_string();
-    assert!(bytes.len() > bounds.payload_bytes - 128*1024 && bytes.len() < bounds.payload_bytes, "{}",bytes.len());
-    let stdout = api::durable::blob(&f.intent.output_dir.join("near-budget-stdout"),format!("TL3_CHECKS {bytes}\n").as_bytes()).unwrap();
+    assert!(
+        bytes.len() > bounds.payload_bytes - 128 * 1024 && bytes.len() < bounds.payload_bytes,
+        "{}",
+        bytes.len()
+    );
+    let stdout = api::durable::blob(
+        &f.intent.output_dir.join("near-budget-stdout"),
+        format!("TL3_CHECKS {bytes}\n").as_bytes(),
+    )
+    .unwrap();
     // Stderr is additional, not deducted from the legal stdout frame budget.
-    let stderr = api::durable::blob(&f.intent.output_dir.join("near-budget-stderr"), &vec![b'x';bounds.stderr_bytes]).unwrap();
+    let stderr = api::durable::blob(
+        &f.intent.output_dir.join("near-budget-stderr"),
+        &vec![b'x'; bounds.stderr_bytes],
+    )
+    .unwrap();
     let result = f.call(json!({"op":"collect_runner","owner":f.intent.owner,"correlation":f.intent.correlation,"facts":{"run":f.ownership().run,"stdout":stdout,"stderr":stderr,"runtime_binding":null,"cleanup":null}}));
     assert_eq!(result.last().unwrap()["kind"], "result", "{result:?}");
-    let payload: BlobRef = serde_json::from_value(result.last().unwrap()["result"]["payload"].clone()).unwrap();
+    let payload: BlobRef =
+        serde_json::from_value(result.last().unwrap()["result"]["payload"].clone()).unwrap();
     assert_eq!(fs::read(&payload.path).unwrap(), bytes.as_bytes());
     let mut over = bytes.into_bytes();
-    over.extend(std::iter::repeat_n(b' ', bounds.payload_bytes+1-over.len()));
-    let mut raw = b"TL3_CHECKS ".to_vec(); raw.extend(over); raw.push(b'\n');
+    over.extend(std::iter::repeat_n(
+        b' ',
+        bounds.payload_bytes + 1 - over.len(),
+    ));
+    let mut raw = b"TL3_CHECKS ".to_vec();
+    raw.extend(over);
+    raw.push(b'\n');
     let stdout = api::durable::blob(&f.intent.output_dir.join("overflow-stdout"), &raw).unwrap();
     let result = f.call(json!({"op":"collect_runner","owner":f.intent.owner,"correlation":f.intent.correlation,"facts":{"run":f.ownership().run,"stdout":stdout,"runtime_binding":null,"cleanup":null}}));
     assert_eq!(result.last().unwrap()["kind"], "error", "{result:?}");
@@ -2043,5 +2185,9 @@ fn daytime_collector_preserves_near_eight_mib_complete_refusal_and_refuses_overf
     let terminal = attach.last().unwrap()["result"]["observation"]["terminal"].clone();
     assert_eq!(terminal["ending"], "passed", "{attach:?}");
     let result = f.call(json!({"op":"daytime_payload","owner":f.intent.owner,"correlation":f.intent.correlation,"terminal":terminal}));
-    assert_eq!(result.last().unwrap()["result"]["report"], report, "retained complete refusal changed");
+    assert_eq!(
+        result.last().unwrap()["result"]["report"],
+        report,
+        "retained complete refusal changed"
+    );
 }
