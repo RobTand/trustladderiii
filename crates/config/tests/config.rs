@@ -42,6 +42,25 @@ fn flux_requires_an_explicit_backend_cli() {
 }
 
 #[test]
+fn flux_requires_explicit_container_mode_without_fallback() {
+    use tl3_config::ContainerMode;
+    for (wire, expected) in [("in_job", ContainerMode::InJob), ("own_scope", ContainerMode::OwnScope)] {
+        let mut document = flux_document();
+        document["flux"]["container_mode"] = wire.into();
+        let config = Config::parse(&toml::to_string(&document).unwrap()).unwrap();
+        assert_eq!(config.flux.unwrap().container_mode, expected);
+        assert_eq!(serde_json::to_value(expected).unwrap(), wire);
+    }
+    let mut document = flux_document();
+    document["flux"].as_table_mut().unwrap().remove("container_mode");
+    assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
+    for invalid in ["", "auto", "in-job", "OwnScope"] {
+        document["flux"]["container_mode"] = invalid.into();
+        assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
+    }
+}
+
+#[test]
 fn execution_selection_validates_only_the_selected_backend() {
     use tl3_config::{ExecutionBackend, SelectedExecution};
     let legacy = Config::parse(EXAMPLE).unwrap();
