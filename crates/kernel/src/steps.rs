@@ -88,6 +88,7 @@ pub fn step_with_passes(mut world: World, event: Event) -> (result: (StepResult,
 
 kernel_fn! {
 /// Refuse counter exhaustion before applying an event or settling the world.
+#[allow(clippy::result_large_err)]
 pub fn step_checked(world: World, event: Event) -> (result: Result<StepResult, StepRefusal>) [
     requires world_checked(world), storage_ordered(world),
     ensures report::counter_exhausted(world_headroom(world), result.is_err()),

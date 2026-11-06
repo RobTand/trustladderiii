@@ -327,6 +327,7 @@ pub(super) closed spec fn settled_forwards(before: Seq<Phase>, after: Seq<Phase>
 
 kernel_fn! {
 impl Report {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> (result: Self) [
         ensures result.entries@ == Seq::<ReportEntry>::empty(),
     ] {
@@ -433,6 +434,7 @@ impl StopCause {
 
 kernel_fn! {
 /// Fact reporting is isolated from the fact handlers' world frames.
+#[allow(clippy::collapsible_if)]
 pub(super) fn record_fact(report: &mut Report, node: NodeId, before: Phase, after: Phase,
     fact: Fact, ci: Option<FailedRoundCause>) -> (result: ()) [
 
