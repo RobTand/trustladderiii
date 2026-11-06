@@ -359,7 +359,8 @@ fn delivery() -> Delivery {
                 head: "b".repeat(40),
                 head_repository: "owner/sandbox".into(),
             });
-            d.paths = vec!["src/changed.rs".into()];
+            d.paths =
+                tl3_contracts::footprint::Footprint::new(vec!["src/changed.rs".into()]).unwrap();
             d.request_text = Some("A normal request".into());
         }
         11 => d.steering = Some(serde_json::from_value(json!({"FileRequest":{"text":"correction","comment":7,"correction":true,"revert":true,"since":"2026-11-01T00:00:00Z","comment_issue":12}})).unwrap()),
