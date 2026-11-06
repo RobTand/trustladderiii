@@ -48,6 +48,12 @@ fn bootstrap_publication_is_private_and_refuses_a_lost_claim() {
     let retained: Options = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(serde_json::to_value(&retained).unwrap(), serde_json::to_value(&options).unwrap());
     assert_eq!(fs::metadata(&options.bootstrap.config).unwrap().permissions().mode() & 0o777, 0o600);
+    let environment_path = options.journal_root.join("job-environment.json");
+    let environment: BTreeMap<String, String> = serde_json::from_slice(&fs::read(&environment_path).unwrap()).unwrap();
+    assert_eq!(environment, production::flux_job_environment());
+    assert_eq!(environment, BTreeMap::from([("HOME".into(), "/home/rob".into()), ("XDG_RUNTIME_DIR".into(), "/run/user/1000".into()), ("PATH".into(), "/usr/bin:/bin".into())]));
+    assert_ne!(environment.get("PATH"), config.environment.get("PATH"));
+    assert_eq!(fs::metadata(&environment_path).unwrap().permissions().mode() & 0o777, 0o600);
     // Repeat publication preserves the exact shared profile.
     production::provision_flux_options(&config, &mut ownership).unwrap();
     assert_eq!(fs::read(&options.bootstrap.config).unwrap(), bytes);

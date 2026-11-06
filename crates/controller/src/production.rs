@@ -4,7 +4,7 @@ use tl3_worktrees::{CommitId, Worktrees};
 mod flux_options;
 mod checks;
 pub use checks::{CheckSource, register_execution};
-pub use flux_options::{flux_options, provision_flux_options};
+pub use flux_options::{flux_job_environment, flux_options, provision_flux_options};
 
 pub struct Registration {
     pub adapters: Registry,
@@ -23,8 +23,7 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
     config.validate()?;
     if config.execution_backend == tl3_config::ExecutionBackend::Flux {
         require_drained_pb(&config.workers.runs.join(".controller/prismabuild"))?;
-        // Until the provisioned runtime bundle is connected, selection must fail closed.
-        return Err(Error::Invalid("Flux runtime preparation is not registered; refusing backend fallback"));
+        adapters::flux_checks::staging::require_runtime_activation()?;
     }
     config.validate_secret_files()?;
     let bootstrap = Bootstrap::from_config(config)?;

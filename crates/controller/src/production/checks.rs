@@ -11,8 +11,8 @@ pub enum CheckSource {
 impl crate::ingress::Source for CheckSource {
     fn run(self, sender: crate::sync::mpsc::Sender<crate::cli::Input>) -> Result<()> {
         match self {
-            Self::PrismaBuild(source) => source.run(sender),
-            Self::Flux(source) => source.run(sender),
+            Self::PrismaBuild(source) => crate::ingress::Source::run(source, sender),
+            Self::Flux(source) => crate::ingress::Source::run(source, sender),
         }
     }
 }
@@ -26,6 +26,17 @@ pub fn register_execution(
     ownership: &mut Ownership,
 ) -> Result<CheckSource> {
     ownership.ensure_held()?;
+    if let tl3_config::SelectedExecution::Flux(flux) = config.selected_execution()? {
+        require_drained_pb(&records.join("prismabuild"))?;
+        let preparation = adapters::flux_checks::staging::Stager::new(config)?;
+        let options = provision_flux_options(flux, ownership)?;
+        let backend = std::sync::Arc::new(adapters::run_backend::flux::Flux::new(options.clone())
+            .map_err(|error| Error::Adapter(Box::new(error)))?);
+        let mut adapter = adapters::flux_checks::Adapter::new(backend, options, &records.join("flux-checks"), preparation, ownership)?;
+        let source = adapter.source()?;
+        registry.register(crate::executor::Upstream::PrismaBuild, adapter);
+        return Ok(CheckSource::Flux(source));
+    }
     let tools = &config.prismabuild.tools_dir;
     let tool = Tool {
         program: "python3".into(),

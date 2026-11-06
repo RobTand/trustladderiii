@@ -4,6 +4,104 @@ use crate::adapters::prismabuild::checks;
 use std::os::unix::fs::PermissionsExt;
 use tl3_worktrees::Worktrees;
 
+/// Production staging settings. Job environment is supplied by the one production mapper.
+pub struct Stager {
+    config: tl3_config::Flux,
+    images: crate::adapters::images::Images,
+    protected: crate::scope::ProtectedPaths,
+    global_protected: Vec<String>,
+    no_progress: std::num::NonZeroU32,
+}
+
+impl Stager {
+    pub fn new(config: &tl3_config::Config) -> Result<Self> {
+        let tl3_config::SelectedExecution::Flux(flux) = config.selected_execution()? else {
+            return Err(Error::Invalid("Flux preparation requires explicit Flux selection"));
+        };
+        Ok(Self {
+            config: flux.clone(),
+            images: crate::adapters::images::Images::new(&config.github.repos),
+            protected: crate::scope::ProtectedPaths::new(&config.github.repos),
+            global_protected: config.planning.protected_paths.clone(),
+            no_progress: config.allowances.prismabuild.no_progress_secs.try_into()
+                .map_err(|_| Error::Invalid("positive check no-progress allowance required"))?,
+        })
+    }
+
+    fn reservation(&self, delivery: &Delivery) -> Result<backend::Reservation> {
+        let demand = self.images.test_demand(&delivery.repository).unwrap_or_default();
+        let parallel = delivery.checks.as_ref().into_iter().flat_map(|run| &run.plan)
+            .filter_map(|check| Some(check.declared_symptom.as_ref()?.parallel.get()))
+            .max().unwrap_or(1).clamp(1, 4) as u32;
+        let cpus = demand.cpus.max(parallel);
+        let memory = u64::from(demand.mem_gb).checked_mul(u64::from(parallel))
+            .and_then(|gib| gib.checked_mul(1 << 30)).ok_or(Error::Invalid("check memory demand overflow"))?;
+        Ok(backend::Reservation {
+            cpus: cpus.try_into().map_err(|_| Error::Invalid("positive check CPU demand required"))?,
+            gpus: 0,
+            memory_bytes: memory.try_into().map_err(|_| Error::Invalid("positive check memory demand required"))?,
+            memory_guarantee: backend::MemoryGuarantee::DeclaredOnly,
+            parallelism: parallel.try_into().expect("clamped positive parallelism"),
+            native_threads: (cpus / parallel).max(1).try_into().expect("positive thread bound"),
+        })
+    }
+
+    /// Build immutable input and shared runtime identities without launching native work.
+    pub fn prepare_request(&self, delivery: &Delivery) -> Result<PreparedCheck> {
+        let reservation = self.reservation(delivery)?;
+        let image = self.images.for_repository(&delivery.repository, &self.config.container_image);
+        let root = self.config.staging_root.join(correlation(delivery));
+        // The collector supports at most one day. Existing no-progress allowance still bounds silence.
+        let walltime = std::num::NonZeroU32::new(86400).expect("positive collector bound");
+        let arguments = vec!["--timeout".into(), walltime.to_string(), "--".into(),
+            "/usr/bin/python3.14".into(), "-I".into(), "-B".into(),
+            root.join("tree/action.py").to_str().ok_or(Error::Invalid("UTF-8 input path required"))?.into()];
+        let prepared = select_runtime(&self.config.runtime_bundles, image, self.config.container_mode, &reservation, arguments)?;
+        let backend::ExecutionRuntime::RootlessPodman { trusted_root, .. } = &prepared.runtime.runtime else {
+            return Err(Error::Invalid("daytime checks require the prepared Podman runtime"));
+        };
+        let protected = self.protected.for_repository(&delivery.repository, &self.global_protected)?;
+        let tests = self.images.additional_tests(&delivery.repository);
+        fs::create_dir_all(&self.config.staging_root)?;
+        let input = stage_input(delivery, &root, trusted_root, image, &protected, &tests.generated, tests.selected, &tests.always)?;
+        let head = delivery.head_sha.as_ref().ok_or(Error::Invalid("missing served head"))?;
+        let request = backend::Request {
+            repo: format!("{}/{}", delivery.repository.owner, delivery.repository.name),
+            tree: input.tree,
+            suite: backend::Suite::DaytimeChecks {
+                plan_digest: durable::digest(&serde_json::to_vec(&input.run.plan)?),
+                base: input.run.base_sha.as_str().into(), head: head.as_str().into(),
+                reviewed: input.run.reviewed_sha.as_ref().map(|sha| sha.as_str().into()),
+            },
+            reservation, runner: prepared.runner, runtime: prepared.runtime,
+            environment: crate::production::flux_job_environment(), scratch_root: prepared.scratch_root,
+            no_progress_seconds: Some(self.no_progress), walltime_seconds: walltime,
+        };
+        Ok(PreparedCheck { request, run: input.run, changed_paths: input.changed_paths,
+            selected_tests: input.selected_tests, always_tests: input.always_tests })
+    }
+}
+
+/// The current collector publishes null binding/cleanup. Never activate it from production.
+/// This gate must be replaced only with the shared qualified-profile contract and its evidence.
+pub(crate) fn require_runtime_activation() -> Result<()> {
+    Err(Error::Invalid("Flux runtime preparation requires qualified binding and cleanup evidence before activation"))
+}
+
+impl Preparation for Stager {
+    fn prepare(&mut self, delivery: &Delivery) -> Result<PreparedCheck> {
+        require_runtime_activation()?;
+        self.prepare_request(delivery)
+    }
+    fn capacity(&self, delivery: &Delivery) -> Result<(backend::Reservation, backend::Placement)> {
+        require_runtime_activation()?;
+        let reservation = self.reservation(delivery)?;
+        let image = self.images.for_repository(&delivery.repository, &self.config.container_image);
+        let prepared = select_runtime(&self.config.runtime_bundles, image, self.config.container_mode, &reservation, vec![])?;
+        Ok((reservation, prepared.runtime.placement()))
+    }
+}
+
 pub struct PreparedInput {
     pub tree: backend::TreeIdentity,
     pub run: CheckRun,
