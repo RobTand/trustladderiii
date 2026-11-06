@@ -459,7 +459,7 @@ fn batch_health(controller: &mut Controller, api: &Server, config: &Bootstrap, n
     controller.drive_once().unwrap();
 }
 
-pub(super) const REVIEW_MODES: &[&str] = &["witness-before", "before-post", "paused-before-post", "retry-no-time", "incomplete-reporters"];
+pub(super) const REVIEW_MODES: &[&str] = &["witness-before", "before-post", "paused-before-post", "retry-no-time", "incomplete-reporters", "lint-only-health"];
 
 /// #854b r1: real Controller/adapter schedules requested by the review.
 pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
@@ -549,6 +549,13 @@ pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
             let snap=controller.snapshot().unwrap();
             let hold=snap.rows.iter().find(|r|r.table=="queue_holds").unwrap();
             assert!(hold.value["witness"].is_null());
+        }
+        "lint-only-health" => {
+            batch_health(&mut controller,&api,&config,&["lint"],"ef817b9d48f4e2f55a3b7d8e83caef25573ad544","main");
+            failure(&mut controller,&api,&config);
+            assert_eq!(controller.world().unwrap().nodes[0].phase,Phase::Queued,"r1.4: lint does not prove our failing identities healthy");
+            assert_eq!(api.state.lock().unwrap().requeues,0);
+            assert_eq!(controller.world().unwrap().nodes[0].credit.spent,0);
         }
         _ => panic!("unknown review schedule {mode}"),
     }
