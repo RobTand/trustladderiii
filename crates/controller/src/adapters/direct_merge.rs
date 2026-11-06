@@ -21,9 +21,10 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
+use tl3_github::checks::{self, required};
 use tl3_github::{GitHub, MergeMethod, PullRequest};
 use tl3_kernel::{EffectKind, Phase};
-use tl3_mergify::decide::{enqueue as lifecycle, required};
+use tl3_mergify::decide::enqueue as lifecycle;
 use tl3_store::{Snapshot, Store};
 
 pub const VISIBILITY: &str = "delivered directly (CI bypassed by repo config)";
@@ -439,12 +440,11 @@ impl Adapter {
                 // C1's record folds EVERY report conjunctively, including a same-name legacy status.
                 for check in matching {
                     let view =
-                        tl3_mergify::views(std::slice::from_ref(*check), &pull.head.sha, |_| true)
-                            [0];
+                        checks::views(std::slice::from_ref(*check), &pull.head.sha, |_| true)[0];
                     let runner = if required::needs_annotations(
-                        view.status == tl3_mergify::decide::Status::Completed,
-                        view.app == tl3_mergify::decide::App::Actions,
-                        view.conclusion == Some(tl3_mergify::decide::Conclusion::Failure),
+                        view.status == checks::Status::Completed,
+                        view.app == checks::App::Actions,
+                        view.conclusion == Some(checks::Conclusion::Failure),
                     ) {
                         let annotations = self
                             .runtime

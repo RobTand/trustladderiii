@@ -1,4 +1,4 @@
-#[path = "../src/decide/required.rs"]
+#[path = "../src/checks/required.rs"]
 mod required;
 mod required_spec;
 fn main() {}
