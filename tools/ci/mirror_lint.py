@@ -1,4 +1,4 @@
-"""Reject new source mirrors and stale mirror exceptions (PRD #878, M1)."""
+"""Reject source copies and stale exceptions (PRD #878, M1)."""
 
 import argparse
 import ast
