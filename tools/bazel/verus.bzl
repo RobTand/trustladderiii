@@ -683,6 +683,7 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::ingest_facts::incremented": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::ingest_equivalence::reference::reference": "Test-only extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
             "kernel::ingest_equivalence::option": "Test-only extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
             "kernel::ingest_equivalence::phase": "Test-only extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",

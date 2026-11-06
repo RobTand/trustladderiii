@@ -21,20 +21,27 @@ pub(super) open spec fn audit_post(b: Node, a: Node) -> bool {
     }
 }
 
+/// Audit disagreement: hide the unchanged counter frame from phase-update queries.
+#[verifier::opaque]
+pub(super) open spec fn incremented(b: Node, a: Node) -> bool {
+    a == Node { audit_rounds: if b.audit_rounds < u8::MAX {
+        (b.audit_rounds + 1) as u8
+    } else { u8::MAX }, ..b }
+}
+
 /// Auditing: the first disagreement uses the one ingest repair.
-pub(super) proof fn audit_first(b: Node, a: Node)
-    requires b.audit_rounds == 0,
-        a == retirement::phased(Node { audit_rounds: 1, ..b }, Phase::Ingesting),
+pub(super) proof fn audit_first(b: Node, updated: Node, a: Node)
+    requires b.audit_rounds == 0, incremented(b, updated),
+        a == retirement::phased(updated, Phase::Ingesting),
     ensures audit_post(b, a),
-{ reveal(audit_post); }
+{ reveal(audit_post); reveal(incremented); }
 
 /// Auditing: a spent repair stops without a question or credit change.
-pub(super) proof fn audit_spent(b: Node, a: Node)
-    requires b.audit_rounds >= 1,
-        a == retirement::stopped(Node { review_stop: Some(ReviewStop::AuditDisagreement),
-            audit_rounds: if b.audit_rounds < 255 { (b.audit_rounds + 1) as u8 } else { 255u8 }, ..b }, Outcome::Stopped),
+pub(super) proof fn audit_spent(b: Node, updated: Node, a: Node)
+    requires b.audit_rounds >= 1, incremented(b, updated),
+        a == retirement::stopped(Node { review_stop: Some(ReviewStop::AuditDisagreement), ..updated }, Outcome::Stopped),
     ensures audit_post(b, a),
-{ reveal(audit_post); }
+{ reveal(audit_post); reveal(incremented); }
 
 /// Auditing: connect the hidden branch result to the existing public audit contract.
 pub(super) proof fn audit_result(b: Node, a: Node)

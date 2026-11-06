@@ -174,14 +174,15 @@ fn audit_disagreement_node(m: &mut Node) -> (result: ()) [
 ] {
     kernel_snapshot! { before_audit = *m }
     increment_audit(m);
+    kernel_snapshot! { before_phase = *m }
     if m.audit_rounds < 2 {
         // Ingest revises once with the audit's objections.
         set_phase(m, Phase::Ingesting);
-        kernel_proof! { ingest_facts::audit_first(before_audit@, *m); }
+        kernel_proof! { ingest_facts::audit_first(before_audit@, before_phase@, *m); }
     } else {
         // Intake cannot split. The one repair is spent.
         stop_for_review(m, ReviewStop::AuditDisagreement);
-        kernel_proof! { ingest_facts::audit_spent(before_audit@, *m); }
+        kernel_proof! { ingest_facts::audit_spent(before_audit@, before_phase@, *m); }
     }
 }
 }
@@ -189,10 +190,16 @@ fn audit_disagreement_node(m: &mut Node) -> (result: ()) [
 kernel_fn! {
 /// Audit disagreement: verbatim saturation isolated from world frames.
 fn increment_audit(m: &mut Node) -> (result: ()) [
-    ensures *final(m) == (Node { audit_rounds: if old(m).audit_rounds < u8::MAX {
-        (old(m).audit_rounds + 1) as u8
-    } else { u8::MAX }, ..*old(m) }),
-] {
+    ensures ingest_facts::incremented(*old(m), *final(m)),
+        final(m).audit_rounds == if old(m).audit_rounds < u8::MAX {
+            (old(m).audit_rounds + 1) as u8
+        } else { u8::MAX },
+        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+        settle_shape(*old(m)) == settle_shape(*final(m)),
+        final(m).generation == old(m).generation,
+        final(m).next_seq == old(m).next_seq, final(m).last_cmd == old(m).last_cmd,
+        final(m).credit == old(m).credit,
+] proof [reveal(ingest_facts::incremented);] {
     m.audit_rounds = m.audit_rounds.saturating_add(1);
 }
 }
