@@ -855,6 +855,66 @@ kernel_fn! {
 }
 
 kernel_fn! {
+    /// Stopping: private verbatim absent-resource branch.
+    #[allow(clippy::needless_return)] // Preserve the original block's return.
+    fn advance_teardown_missing(node: &mut Node, _next_ticket: &mut u64,
+        _context: AdvanceContext, _out: &mut Outbox, kind: EffectKind) -> (result: bool) [
+        requires advance_pre(*old(node), *old(_next_ticket), old(_out).len),
+            !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none()
+                && current_item(*old(node)) == Some(Item::Teardown(kind)) && old(node).question.is_none(),
+            match kind {
+                EffectKind::StopRun => old(node).run.is_none(),
+                EffectKind::WithdrawJob => old(node).job.is_none(),
+                EffectKind::ClosePr => !old(node).pr_open,
+                EffectKind::RemoveWorktree => !old(node).worktree,
+                _ => false,
+            },
+        ensures (!result ==> final(_out).len == old(_out).len),
+            advance_post(*old(node), *final(node),
+                *old(_next_ticket), *final(_next_ticket), result),
+            result == advance_enabled(*old(node), _context),
+] proof [
+        let n = *node;
+        let after = Node { pool: n.pool && kind != EffectKind::StopRun,
+            pos: (n.pos + 1) as u8, ..n };
+        assert(n.phase is Stopping);
+        assert(pending_rank(n) == 0 && pending_rank(after) == 0);
+        teardown_facts::absent(n, *_next_ticket, _context, kind);
+    ] {
+        let m = &mut *node;
+        if kind == EffectKind::StopRun {
+            m.pool = false;
+        }
+        m.pos += 1;
+        return true;
+    }
+}
+
+kernel_fn! {
+    /// Stopping: private verbatim cleanup-emission branch.
+    fn advance_teardown_emitting(node: &mut Node, _next_ticket: &mut u64,
+        context: AdvanceContext, out: &mut Outbox, kind: EffectKind) -> (result: bool) [
+        requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
+            !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none()
+                && current_item(*old(node)) == Some(Item::Teardown(kind)) && old(node).question.is_none(),
+            !(match kind {
+                EffectKind::StopRun => old(node).run.is_none(),
+                EffectKind::WithdrawJob => old(node).job.is_none(),
+                EffectKind::ClosePr => !old(node).pr_open,
+                EffectKind::RemoveWorktree => !old(node).worktree,
+                _ => false,
+            }),
+        ensures (!result ==> final(out).len == old(out).len),
+            advance_post(*old(node), *final(node),
+                *old(_next_ticket), *final(_next_ticket), result),
+            result == advance_enabled(*old(node), context),
+] proof [reveal(advance_post); reveal(distance);] {
+        emit_node(node, context.node, kind, out);
+        true
+    }
+}
+
+kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
     #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
     #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
@@ -880,15 +940,9 @@ kernel_fn! {
             _ => false,
         };
         if gone {
-            let m = &mut *node;
-            if kind == EffectKind::StopRun {
-                m.pool = false;
-            }
-            m.pos += 1;
-            return true;
+            return advance_teardown_missing(node, _next_ticket, context, out, kind);
         }
-        emit_node(node, context.node, kind, out);
-        true
+        advance_teardown_emitting(node, _next_ticket, context, out, kind)
     }
 }
 
@@ -939,3 +993,7 @@ kernel_fn! {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "teardown_equivalence/mod.rs"]
+mod teardown_equivalence;

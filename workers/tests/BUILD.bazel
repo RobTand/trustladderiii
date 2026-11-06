@@ -577,6 +577,7 @@ tl3_py_test(
     deps = [
         ":conftest",
         ":planner_fixtures",
+        "//harness/src/tl3_harness",
         "//workers/src",
         "@tl3_pip//langchain_core",
         "@tl3_pip//pytest",
@@ -650,11 +651,13 @@ tl3_py_test(
 tl3_py_test(
     name = "test_planner_protocol",
     srcs = ["test_planner_protocol.py"],
+    data = ["//crates/plan-check:tests/fixtures/p2a.json"],  # keep: replay the live Python oracles read-only
     deps = [
         ":conftest",
         ":planner_fixtures",
         "//harness/src/tl3_harness",
         "//workers/src",
+        "@tl3_pip//jsonschema",
         "@tl3_pip//pytest",
     ],
 )
@@ -1209,52 +1212,6 @@ tl3_py_test(
     srcs = ["test_schema_identity.py"],
     deps = [
         ":conftest",
-        "@tl3_pip//pytest",
-    ],
-)
-
-py_library(
-    name = "planner_vectors",
-    srcs = ["planner_vectors.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        "//harness/src/tl3_harness",
-        "//workers/src",
-        "@tl3_pip//jsonschema",
-    ],
-)
-
-tl3_py_test(
-    name = "test_planner_vectors",
-    srcs = ["test_planner_vectors.py"],
-    deps = [
-        ":conftest",
-        ":planner_vectors",
-        "//workers/src",
-        "@tl3_pip//pytest",
-    ],
-)
-
-py_binary(
-    name = "planner_vectors_record",
-    testonly = True,
-    srcs = ["planner_vectors_record.py"],
-    data = glob([
-        "*.py",
-        "*.json.gz",
-    ]) + [
-        "//harness:project_files",
-        "//workers:runtime_files",
-    ],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":checker_stub",
-        ":planner_fixtures",
-        ":planner_vectors",
-        ":worker_process",
-        "//harness/src/tl3_harness",
-        "//workers/src",
-        "@tl3_pip//langchain_core",
         "@tl3_pip//pytest",
     ],
 )
