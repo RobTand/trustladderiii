@@ -71,7 +71,7 @@ fn inventory(root: &Path, directory: &Path, files: &mut Vec<backend::InputFile>)
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
         let path = entry.path();
-        if directory == root && (entry.file_name() == ".git" || entry.file_name() == "action.py") { continue; }
+        if directory == root && entry.file_name() == ".git" { continue; }
         let kind = entry.file_type()?;
         if kind.is_dir() {
             inventory(root, &path, files)?;
