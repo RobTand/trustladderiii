@@ -1,0 +1,6 @@
+    fn head(&mut self, node: NodeId, sha: &str) -> Result<HeadId> {
+        tl3_worktrees::CommitId::new(sha)?;
+        Ok(HeadId(
+            self.store.intern_commit(&node.0.to_string(), sha)?.get() as u64,
+        ))
+    }

@@ -150,6 +150,13 @@ pub(super) open spec fn distance(n: Node) -> nat {
 /// #771: public view of the executable node distance.
 pub closed spec fn node_distance(n: Node) -> nat { distance(n) }
 
+/// #806: expose the existing public node-distance view to the world sum.
+pub(super) proof fn node_distance_definition(n: Node)
+    ensures node_distance(n) == distance(n),
+{
+    reveal(node_distance);
+}
+
 /// #771: local moves left before this node blocks, independent of scheduling.
 /// Stopping has five agenda entries and closure, hence at most six moves.
 pub(super) open spec fn internal_height(n: Node) -> nat {
@@ -774,6 +781,7 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
+            result ==> final(node).phase == (Phase::Planning { must_split: false }),
     ] proof [reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.paused || !context.admit {
@@ -844,6 +852,7 @@ kernel_fn! {
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
     #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
     fn advance_teardown(node: &mut Node, _next_ticket: &mut u64,
         context: AdvanceContext, out: &mut Outbox, kind: EffectKind) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
@@ -902,6 +911,8 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
             result == advance_enabled(*old(node), context),
+            old(node).phase == Phase::Unplanned && old(node).pos == 0 && old(node).ticket.is_none()
+                ==> (result ==> final(node).phase == (Phase::Planning { must_split: false })),
     ] {
         let n = *node;
         if n.phase.is_closed() || n.waiting_incident || n.effect.is_some() {

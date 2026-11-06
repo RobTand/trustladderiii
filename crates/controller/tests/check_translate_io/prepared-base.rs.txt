@@ -1,0 +1,43 @@
+            Observation::WorktreePrepared {
+                node,
+                repository,
+                base_sha,
+                sha,
+            } => {
+                let Some(n) = world.nodes.get(node.0 as usize) else {
+                    return Ok(None);
+                };
+                if !n.adopted || commit_sha(snapshot, n.head) != Some(sha.as_str()) {
+                    return Ok(None);
+                }
+                let id = node.0.to_string();
+                let mut run = if let Some(materials) = self.store.worker_materials(&id)?
+                    && let Some(run) = materials.get("check_run")
+                {
+                    decode_stored::<adapters::prismabuild::CheckRun>(run.clone())?
+                } else {
+                    let brief = self
+                        .store
+                        .worker_document(&id, "briefs")?
+                        .ok_or(Error::Invalid("adoption needs its accepted brief"))?;
+                    let plan = self
+                        .store
+                        .worker_document(&id, "plans")?
+                        .ok_or(Error::Invalid("adoption needs its accepted plan"))?;
+                    let inputs = production::maker_inputs(&brief, &plan)?;
+                    adapters::prismabuild::CheckRun {
+                        repository: repository.clone(),
+                        base_sha: tl3_worktrees::CommitId::new(&base_sha)?,
+                        reviewed_sha: None,
+                        reproducing_unavailable: None,
+                        selected_failures: Vec::new(),
+                        plan: decode_stored(inputs["plan"]["checks"].clone())?,
+                    }
+                };
+                run.repository = repository;
+                run.base_sha = tl3_worktrees::CommitId::new(base_sha)?;
+                commit
+                    .rows
+                    .push(put("check_plans", format!("{}:{sha}", node.0), json!(run)));
+                return Ok(None);
+            }
