@@ -922,6 +922,25 @@ fn scope_extra_file_deleted() {
     );
 }
 
+/// #895: committing a requested deletion and trimming unrelated work keeps the deletion.
+#[test]
+fn scope_keeps_a_deleted_footprint_file() {
+    let f = Fixture::new();
+    let base = f.checkout().base;
+    fs::remove_file(f.worktree.join("shared.txt")).unwrap();
+    fs::write(f.worktree.join("scratch.txt"), "outside the plan\n").unwrap();
+    let head = Worktrees::commit_check_input(&f.worktree).unwrap();
+    assert_eq!(f.manager.head_locked(&f.name).unwrap(), head);
+    let trim = f.manager.trim_scope(
+        &f.name, &f.worktree, &["shared.txt".into()], &[],
+    ).unwrap();
+    assert!(!f.worktree.join("shared.txt").exists());
+    assert!(!f.worktree.join("scratch.txt").exists());
+    assert_eq!(trim.removed_paths, vec![PathBuf::from("scratch.txt")]);
+    assert_eq!(f.manager.changed_files(&base, &trim.head).unwrap(), vec![PathBuf::from("shared.txt")]);
+    f.assert_clean();
+}
+
 #[test]
 fn scope_file_to_directory_swap_restores_base() {
     scope_tree_swap(false);

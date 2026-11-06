@@ -183,7 +183,7 @@ def test_non_regular_and_hardlinked_files_are_rejected(tree, name, kind):
     assert (outside / "secret.txt").read_text() == "external fixture\n"
 
 
-@pytest.mark.parametrize("name", ["execute", "task", "fetch", "read_file", "delete"])
+@pytest.mark.parametrize("name", ["execute", "task", "fetch", "read_file"])
 def test_only_tl3_file_tools_can_be_declared(tree, name):
     root, _ = tree
     with Worktree(root) as worktree:
@@ -878,7 +878,7 @@ def test_constructor_footprint_limits_writes_and_supplies_generator_files(tree):
         assert invoke(tools["write"], "./src/code.py").text == "File written."
         refused = invoke(tools["write"], "tests/test_zz_diag.py")
         assert refused.status == "error"
-        assert refused.text.startswith("tests/test_zz_diag.py is not a declared file")
+        assert "tests/test_zz_diag.py is not a declared file" in refused.text
     assert not (root / "tests/test_zz_diag.py").exists()
 
 
@@ -900,3 +900,104 @@ def test_shared_footprint_path_vectors():
                 _parts(case["path"])
         else:
             assert "/".join(_parts(case["path"])) == case["canonical"], case
+
+
+@pytest.mark.parametrize("op", ["write", "edit", "delete"])
+@pytest.mark.parametrize("case,path,refusal", [
+    ("inside", "src/code.py", None),
+    ("inside", "./src/code.py", None),
+    ("outside", "src/cod.py", "footprint"),
+    ("outside", "./src/cod.py", "footprint"),
+    ("protected", "src/code.py", "protected"),
+    ("protected_outside", "src/cod.py", "protected"),
+    ("generated", "src/code.py", "generated"),
+    ("generated_outside", "src/cod.py", "footprint"),
+    ("reserved", ".tl3-generator-import", "reserved"),
+])
+def test_change_tool_table(tree, op, case, path, refusal):
+    """#895: every mutation shares reserved/protected/footprint/generated precedence."""
+    from tl3_harness.rules import CantMeet, Name
+
+    root, _ = tree
+    (root / "src/cod.py").write_text("hello\n")
+    (root / ".tl3-generator-import").write_text("hello\n")
+    with Worktree(root, footprint=["src/code.py"]) as worktree:
+        worktree.protected_paths = ("**",) if case.startswith("protected") or case == "reserved" else ()
+        worktree.generated_files = ("**",) if case.startswith("generated") or case == "reserved" else ()
+        tools = tools_for(worktree, {op})
+        args = {"path": path}
+        if op == "write":
+            args["content"] = "changed"
+        elif op == "edit":
+            args.update(old="hello", new="changed", replace_all=True)
+        if refusal:
+            with pytest.raises(ValueError) as caught:
+                worktree.check_change(path, op)
+            violation, = caught.value.violations
+            assert violation.rule.id == f"worktree.change.{refusal}"
+            assert violation.rule.roles == frozenset({"maker"})
+            assert Name("path", path.removeprefix("./")) in violation.rule.names(violation.facts)
+            assert isinstance(violation.repair, CantMeet)
+            assert "src/code.py" in str(caught.value)
+            if refusal == "footprint":
+                assert "nearest declared path" in str(caught.value)
+                for advice in ("not a declared file", "needs_files", "run_tests", "grep", "read"):
+                    assert advice in str(caught.value)
+            if refusal == "generated":
+                assert "run_generator" in str(caught.value)
+        result = tools[op].invoke({"name": op, "args": args, "id": "change", "type": "tool_call"})
+        assert result.status == ("error" if refusal else "success")
+        canonical = root / path
+        if refusal:
+            assert canonical.read_text().startswith("hello")
+        elif op == "delete":
+            assert not canonical.exists()
+        else:
+            assert canonical.read_text().startswith("changed")
+
+
+@pytest.mark.parametrize("kind", ["missing", "directory", "symlink", "fifo", "hardlink"])
+def test_delete_refuses_nonfiles_without_changing_them(tree, kind):
+    root, outside = tree
+    target = root / "target"
+    if kind == "directory":
+        target.mkdir()
+    elif kind == "symlink":
+        target.symlink_to(outside / "secret.txt")
+    elif kind == "fifo":
+        os.mkfifo(target)
+    elif kind == "hardlink":
+        os.link(outside / "secret.txt", target)
+    with Worktree(root, footprint=["target"]) as worktree:
+        result = invoke(tools_for(worktree, {"delete"})["delete"], "target")
+    assert result.status == "error"
+    assert "worktree.change.delete_target" in result.text
+    assert (outside / "secret.txt").read_text() == "external fixture\n"
+    assert target.exists() == (kind != "missing")
+
+
+@pytest.mark.parametrize("op", ["write", "edit", "delete"])
+def test_change_gate_is_used_before_any_mutation(tree, op, monkeypatch):
+    root, _ = tree
+    with Worktree(root, footprint=["src/code.py"]) as worktree:
+        def refuse(path, operation):
+            assert (path, operation) == ("./src/code.py", op)
+            raise ValueError("gate fixture refusal")
+
+        monkeypatch.setattr(worktree, "check_change", refuse)
+        result = invoke(tools_for(worktree, {op})[op], "./src/code.py")
+        assert result.status == "error"
+        assert result.text == "gate fixture refusal"
+    assert (root / "src/code.py").read_text() == "hello\nhello again\n"
+
+
+def test_change_refusal_bounds_the_visible_footprint(tree):
+    root, _ = tree
+    footprint = [f"tests/test_{index:04d}.py" for index in range(1000)]
+    with Worktree(root, footprint=footprint) as worktree:
+        with pytest.raises(ValueError) as caught:
+            worktree.check_change("tests/test_0000.p", "write")
+    text = str(caught.value)
+    assert len(text) < 2200
+    assert "more" in text
+    assert "nearest declared path" in text and "tests/test_0000.py" in text
