@@ -409,7 +409,7 @@ impl Served {
                 })
             }
             Out::Effect {
-                kind: EffectKind::StartRebase | EffectKind::StartRun(tl3_kernel::Role::Maker),
+                kind: EffectKind::StartRebase | EffectKind::StartRun(tl3_kernel::Role::Make),
                 ..
             } => {
                 let target = self
@@ -898,7 +898,7 @@ impl Executor for Real {
         update.output = Out::Effect {
             node: delivery.node(),
             seq: 0,
-            kind: EffectKind::StartRun(tl3_kernel::Role::Maker),
+            kind: EffectKind::StartRun(tl3_kernel::Role::Make),
             head: None,
         };
         let completion = self.execute_with(&update, |_| {})?;
@@ -976,7 +976,7 @@ pub(crate) fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option
         Err(error) => Err(error.into()),
     }
 }
-fn write(path: &Path, value: &impl Serialize) -> Result<()> {
+pub(crate) fn write(path: &Path, value: &impl Serialize) -> Result<()> {
     let temporary = path.with_extension("tmp");
     let mut file = File::create(&temporary)?;
     file.write_all(&serde_json::to_vec(value)?)?;

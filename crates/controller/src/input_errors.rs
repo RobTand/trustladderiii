@@ -931,6 +931,7 @@ pub(crate) fn observation_context(
         | Observation::Plan { node, .. }
         | Observation::Made { node, .. }
         | Observation::Reviewed { node, .. }
+        | Observation::RebaseGenerationFailed { node, .. }
         | Observation::RebaseConflict { node, .. }
         | Observation::Rebased { node, .. }
         | Observation::Merged { node, .. }

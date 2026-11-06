@@ -69,6 +69,14 @@ impl Runner {
                     "generation operation changed its input head",
                 ));
             }
+            if saved.report.completed {
+                let snapshot =
+                    Worktrees::open(directory.join("checkout"), directory.join("checkout"))?;
+                git.import_commit(
+                    snapshot.common_directory(),
+                    &CommitId::new(saved.report.head.clone())?,
+                )?;
+            }
             return Ok(Some(saved.report));
         }
         let intent = directory.join("head.json");
@@ -122,15 +130,21 @@ impl Runner {
         let output = Command::new(&self.config.workers.python)
             .args(["-m", "tl3_workers.pb_generators"])
             .arg(&request_path)
-            .output()?;
-        let receipt = if output.status.success() {
-            serde_json::from_slice::<GenerationReceipt>(&output.stdout).ok()
-        } else {
-            None
+            .output();
+        let receipt = output
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| serde_json::from_slice::<GenerationReceipt>(&output.stdout).ok());
+        let mut report = Report {
+            completed: false,
+            changed: Vec::new(),
+            message: format!(
+                "Configured generator failed for outputs {}. Repair its inputs and run run_generator; inspect the generation action evidence. Do not hand-edit generated outputs.",
+                serde_json::to_string(&repo.generated_files)?
+            ),
+            head: head.as_str().into(),
+            evidence: receipt,
         };
-        let mut report = Report { completed: false, changed: Vec::new(),
-            message: "Configured generator failed. Repair its inputs and run run_generator; inspect the generation action evidence. Do not hand-edit generated outputs.".into(),
-            head: head.as_str().into(), evidence: receipt };
         if let Some(receipt) = &report.evidence {
             let generated = snapshot.commit_generation_input(head)?;
             if snapshot.tree(&generated)? != receipt.output_tree.as_str() {
@@ -176,7 +190,7 @@ impl Runner {
 }
 
 impl crate::Controller {
-    fn generation_delivery(
+    pub(crate) fn generation_delivery(
         &self,
         snapshot: &tl3_store::Snapshot,
         world: &tl3_kernel::World,
@@ -214,7 +228,7 @@ impl crate::Controller {
             output: crate::executor::Output::Effect {
                 node,
                 seq: 0,
-                kind: tl3_kernel::EffectKind::StartChecks,
+                kind: tl3_kernel::EffectKind::SubmitChecks,
                 head: n.head,
             },
             generation,
@@ -240,11 +254,11 @@ impl crate::Controller {
         })
     }
 
-    fn prepare_queue_generation_repair(&mut self, delivery: &Delivery) -> Result<()> {
+    pub(crate) fn prepare_queue_generation_repair(&mut self, delivery: &Delivery) -> Result<()> {
         if !matches!(
             delivery.output,
             crate::executor::Output::Effect {
-                kind: tl3_kernel::EffectKind::StartRun(tl3_kernel::Role::Maker),
+                kind: tl3_kernel::EffectKind::StartRun(tl3_kernel::Role::Make),
                 ..
             }
         ) {

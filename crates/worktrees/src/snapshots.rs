@@ -96,7 +96,12 @@ impl Worktrees {
                 GitEnvironment::Snapshot,
             )?,
         )?;
-        commit_line(&output.stdout)
+        let generated = commit_line(&output.stdout)?;
+        self.update_refs(&format!(
+            "update refs/tl3/generated {}\n",
+            generated.as_str()
+        ))?;
+        Ok(generated)
     }
 
     /// #845: install a recorded generator commit using the rebase recovery marker.
