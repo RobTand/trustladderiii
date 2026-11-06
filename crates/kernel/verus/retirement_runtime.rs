@@ -71,4 +71,22 @@ pub(super) proof fn outside_retry(n: Node, head: HeadId, fast: bool, id: u64,
     retirement_retry_bridge::recheck(outside_prepared(n, head), Phase::Ready(Resume::Checking), id);
     reveal(retirement_retry::fact_result);
 }
+
+/// #806: cancellation changes no field used by the common fact frame.
+pub(super) proof fn ci_frame(before: World, prepared: World, after: World, i: usize,
+    ob: Outbox, oa: Outbox)
+    requires i < before.nodes@.len(),
+        prepared.nodes@ == before.nodes@.update(i as int, ci_prepared(before.nodes@[i as int])),
+        prepared.gates@ == before.gates@, prepared.file_sets@ == before.file_sets@,
+        prepared.dependencies@ == before.dependencies@, prepared.next_ticket == before.next_ticket,
+        prepared.next_question == before.next_question, prepared.fail_fast == before.fail_fast,
+        prepared.pool_capacity == before.pool_capacity,
+        retirement::fact_frame(prepared, after, i, ob, oa),
+    ensures retirement::fact_frame(before, after, i, ob, oa),
+{ reveal(retirement::fact_frame); }
+/// #806: an ignored CI fact preserves the complete world and output frame.
+pub(super) proof fn noop_frame(w: World, i: usize, out: Outbox)
+    requires i < w.nodes@.len(),
+    ensures retirement::fact_frame(w, w, i, out, out),
+{ reveal(retirement::fact_frame); }
 }

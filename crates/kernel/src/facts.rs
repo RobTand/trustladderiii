@@ -376,8 +376,9 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
         final(w).nodes@[i as int] == retirement_retry::fact_result(old(w).nodes@[i as int], Fact::CiFailed { infra }, old(w).fail_fast, old(w).next_question).0,
         final(w).next_question as int == old(w).next_question as int + if retirement_retry::fact_result(old(w).nodes@[i as int], Fact::CiFailed { infra }, old(w).fail_fast, old(w).next_question).1 { 1int } else { 0int },
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
-] proof [reveal(retirement::fact_frame);] {
+] {
     kernel_snapshot! { ci_world = *w }
+    kernel_snapshot! { ci_out = *out }
     kernel_snapshot! { before_ci = w.nodes@[i as int] }
     let m = &mut w.nodes[i];
     let before_enqueue =
@@ -385,6 +386,7 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
     if m.phase != Phase::Queued && !before_enqueue {
         kernel_proof! { reveal(retirement::fact_node);
             retirement_runtime::retry_noop(ci_world@.nodes@[i as int], Fact::CiFailed { infra }, w.fail_fast, w.next_question);
+            retirement_runtime::noop_frame(ci_world@, i, ci_out@);
         }
 
         return;
@@ -400,6 +402,7 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
         failed_round(w, i, ReviewStop::CiFailed, out);
         kernel_proof! {
             facts_ci_failed_lemmas::retry_frame(prepared_ci@, *w, i, prepared_out@, *out);
+            retirement_runtime::ci_frame(ci_world@, prepared_ci@, *w, i, ci_out@, *out);
             retirement_runtime::ci_retry(ci_world@.nodes@[i as int], ci_world@.fail_fast,
                 ci_world@.next_question, w.nodes@[i as int], w.next_question);
         }
@@ -410,7 +413,10 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
         facts_ci_failed_lemmas::cancellation_input(before_ci@, w.nodes@[i as int]);
     }
     ci_infrastructure(w, i, out);
-    kernel_proof! { retirement_runtime::ci_infra(ci_world@.nodes@[i as int], ci_world@.fail_fast, ci_world@.next_question); }
+    kernel_proof! {
+        retirement_runtime::ci_frame(ci_world@, prepared_ci@, *w, i, ci_out@, *out);
+        retirement_runtime::ci_infra(ci_world@.nodes@[i as int], ci_world@.fail_fast, ci_world@.next_question);
+    }
 
 }
 }
@@ -458,6 +464,7 @@ pub(super) fn ci_infrastructure(w: &mut World, i: usize, out: &mut Outbox) -> (r
 ] {
     kernel_snapshot! { before_world = *w }
     kernel_snapshot! { before_out = *out }
+    kernel_snapshot! { ci_out = *out }
     kernel_snapshot! { before_ci = w.nodes@[i as int] }
     let escalation = infrastructure_retry(&mut w.nodes[i]);
     if let Some(needs_rob) = escalation {

@@ -37,7 +37,7 @@ pub(super) proof fn queries(w: World, i: int)
         && retirement_gate::eligible(w, i, j) == port_advance_gate::gate_eligible(w, i, j) by {
         count(w, j, w.nodes@.len());
         assert forall|t: u64| retirement_gate::overlap(w, j, t)
-            == port_advance_gate::gate_overlap(w, j, t) by {}
+            == port_advance_gate::gate_overlap(w, j, t) by { overlaps(w, j, t); }
     }
     assert forall|j: int| 0 <= j < w.nodes@.len() implies
         retirement_gate::older(w, i, j) == port_advance_gate::gate_older(w, i, j) by {}
@@ -52,5 +52,20 @@ pub(super) proof fn post(n: Node, m: Node, ticket: u64, next: u64, grant: bool,
         changed == retirement_gate::slot_changed(n, grant),
 {
     reveal(port_advance_gate::gate_slot_node); reveal(retirement_gate::slot_node);
+}
+
+/// Q48 / #806: each existential scan has exactly the same concrete witness.
+pub(super) proof fn overlaps(w: World, i: int, ticket: u64)
+    ensures retirement_gate::overlap(w, i, ticket) == port_advance_gate::gate_overlap(w, i, ticket),
+{
+    reveal(port_advance_gate::gate_overlap);
+    if retirement_gate::overlap(w, i, ticket) {
+        let j = choose|j: int| retirement_gate::overlapping_before(w, i, j, ticket);
+        assert(port_advance_gate::gate_overlapping_before(w, i, j, ticket));
+    }
+    if port_advance_gate::gate_overlap(w, i, ticket) {
+        let j = choose|j: int| port_advance_gate::gate_overlapping_before(w, i, j, ticket);
+        assert(retirement_gate::overlapping_before(w, i, j, ticket));
+    }
 }
 }

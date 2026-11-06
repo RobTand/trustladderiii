@@ -1057,6 +1057,9 @@ def verus_proofs():
             "retirement_runtime_ci_infra": ("kernel::retirement_runtime#ci_infra", 1),
             "retirement_runtime_ci_retry": ("kernel::retirement_runtime#ci_retry", 1),
             "retirement_runtime_outside_retry": ("kernel::retirement_runtime#outside_retry", 1),
+            "retirement_runtime_ci_frame": ("kernel::retirement_runtime#ci_frame", 1),
+            "retirement_runtime_noop_frame": ("kernel::retirement_runtime#noop_frame", 1),
+            "retirement_gate_bridge_overlaps": ("kernel::retirement_gate_bridge#overlaps", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
