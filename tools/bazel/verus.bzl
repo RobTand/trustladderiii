@@ -663,6 +663,8 @@ def verus_proofs():
             "kernel::port_review_witness::cover_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_review_retry_lemmas::room_paid_frame": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_review_retry_lemmas::room_question_frame": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::reply_admission::stopping_reference::reference_on_reply": "Test-only stopping extraction reference; absent from the Verus cfg and exercised by every reply equivalence comparison.",
+            "kernel::port_review_reply::review_transition_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
@@ -951,6 +953,8 @@ def verus_proofs():
             "review_rebase_gate": ("kernel::port_review_checks#rebase_gate", 1),
             "review_rebase_before_await": ("kernel::port_review_checks#before_await", 1),
             "review_rebase_awaiting": ("kernel::port_review_checks#awaiting", 1),
+            "review_progress_admitted": ("kernel::port_review_dispatch#progress_admitted", 1),
+            "review_stopping_release": ("kernel::reply_admission#release_stopping_reply", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

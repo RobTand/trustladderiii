@@ -2291,3 +2291,7 @@ mod port_review_failure;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_review_checks.rs"]
 mod port_review_checks;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_dispatch.rs"]
+mod port_review_dispatch;

@@ -1383,7 +1383,6 @@ proof!(gate_grant_w3, check_gate_grant(3));
 proof!(gate_planning_w2, check_gate_planning(2));
 proof!(gate_planning_w3, check_gate_planning(3));
 
-
 fn publishing_ci_transition(infra: bool) -> (World, World) {
     let before = any_settled_world(Some(Phase::Publishing));
     let b = &before.nodes[0];
