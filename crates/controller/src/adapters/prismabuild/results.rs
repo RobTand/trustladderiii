@@ -236,11 +236,19 @@ fn evidence_with_read(
             Ok(parsed) => parsed,
             Err(error) => {
                 // #848/Q51: a complete report that TL3 cannot decode is a harness defect.
+                // Serde's display text can quote report values; persist only a safe category.
+                let category = match error.classify() {
+                    serde_json::error::Category::Io => "io",
+                    serde_json::error::Category::Syntax => "syntax",
+                    serde_json::error::Category::Data => "data",
+                    serde_json::error::Category::Eof => "eof",
+                };
                 let diagnostic = FailedTest {
                     test: "TL3_CHECKS".into(),
-                    message: clipped(
-                        &format!("TL3 harness could not decode TL3_CHECKS: {error}"),
-                        MAX_MESSAGE_CHARS,
+                    message: format!(
+                        "report schema decode failed: {category} at line {} column {}",
+                        error.line(),
+                        error.column(),
                     ),
                 };
                 return Ok((false, false, vec![], vec![diagnostic], Some(HARNESS)));
@@ -374,12 +382,11 @@ fn parse(raw: &[u8], job: &Job) -> serde_json::Result<Option<Report>> {
     if reports.len() != 1 {
         return Ok(None);
     }
-    // Check the complete JSON frame first: a truncated document can otherwise raise
-    // a field error before serde reaches its missing tail (#848).
-    if let Err(error) = serde_json::from_str::<&serde_json::value::RawValue>(reports[0]) {
-        return if error.is_eof() { Ok(None) } else { Err(error) };
-    }
-    let report: Report = serde_json::from_str(reports[0])?;
+    // #848: framing/syntax failures retain no-report; only typed decoding is a harness defect.
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(reports[0]) else {
+        return Ok(None);
+    };
+    let report: Report = serde_json::from_value(value)?;
     if report.effect_key != job.delivery.key
         || report.base.as_str() != job.run.base_sha.as_str()
         || Some(report.head.as_str()) != job.delivery.head_sha.as_deref()
