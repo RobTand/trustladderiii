@@ -28,6 +28,7 @@ def assemble(case, root):
 
 @pytest.mark.parametrize('row_id', [id for id in ROWS if id not in ('forcing.raise_class', 'proof.staging.single_check')])
 def test_row_has_real_assembly_input_and_source_repair(tmp_path, row_id):
+    from tl3_harness.rules import CantMeet, Edit, SourceEdit
     case = partitions()[row_id]
     with pytest.raises(model.ProofRefusal) as caught:
         assemble(case['bad'], tmp_path / 'bad')
@@ -36,6 +37,14 @@ def test_row_has_real_assembly_input_and_source_repair(tmp_path, row_id):
     for v in caught.value.violations:
         message = v.render(role='maker')
         assert v.rule.id in message and 'Allowed:' in message
+        subjects = v.rule.names(v.facts)
+        assert subjects and all(name.render() in message for name in subjects)
+        if isinstance(v.repair, CantMeet):
+            assert v.repair.reason in message
+        elif isinstance(v.repair, SourceEdit):
+            assert v.repair.instruction in message
+        else:
+            assert isinstance(v.repair, Edit) and v.repair.pointer.render() in message
     assemble(case['good'], tmp_path / 'good')
 
 
@@ -107,6 +116,7 @@ def test_recorded_main_verdict(tmp_path, key, record):
                 path = tmp_path / side / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(base64.b64decode(content))
+                path.chmod(data['modes'][side][name])
         staged = tmp_path / 'staged'
         if data['destination_exists']:
             staged.mkdir()

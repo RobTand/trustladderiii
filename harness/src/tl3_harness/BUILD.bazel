@@ -54,3 +54,10 @@ py_binary(
     imports = [".."],
     visibility = ["//visibility:public"],
 )
+
+py_binary(
+    name = "proof_rules",
+    srcs = ["proof_rules.py"],
+    imports = [".."],
+    visibility = ["//visibility:public"],
+)

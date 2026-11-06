@@ -17,15 +17,15 @@
     "names": [
       {
         "kind": "field",
-        "value": "{field}"
+        "value": "{declaration_field}"
       },
       {
         "kind": "path",
-        "value": "{path}"
+        "value": "{module}"
       },
       {
         "kind": "symbol",
-        "value": "{symbol}"
+        "value": "{module}::{definition}"
       },
       {
         "kind": "path",
@@ -35,7 +35,8 @@
     "repair": {
       "kind": "CantMeet",
       "reason": "{path} could shadow the standard-library module `{stdlib}` that the observer loader trusts, because it is a top-level name in an import root (the repository root, a pytest pythonpath entry, or a directory without __init__.py); rename or move it if this change owns it, otherwise (for example a vendored dependency) put the observer and its loading code in the test body of a test module that already exists on the base commit."
-    }
+    },
+    "role": "planner"
   },
   {
     "allowed": {
@@ -73,15 +74,15 @@
     "names": [
       {
         "kind": "field",
-        "value": "{field}"
+        "value": "{declaration_field}"
       },
       {
         "kind": "path",
-        "value": "{path}"
+        "value": "{module}"
       },
       {
         "kind": "symbol",
-        "value": "{symbol}"
+        "value": "{module}::{definition}"
       },
       {
         "kind": "path",
@@ -91,7 +92,8 @@
     "repair": {
       "kind": "CantMeet",
       "reason": "Move any check that inspects a parameter or variable into the observer test body. For string formatting use an f-string over local values there."
-    }
+    },
+    "role": "planner"
   },
   {
     "allowed": {
@@ -105,15 +107,15 @@
     "names": [
       {
         "kind": "field",
-        "value": "{field}"
+        "value": "{declaration_field}"
       },
       {
         "kind": "path",
-        "value": "{path}"
+        "value": "{module}"
       },
       {
         "kind": "symbol",
-        "value": "{symbol}"
+        "value": "{module}::{definition}"
       },
       {
         "kind": "path",
@@ -123,13 +125,25 @@
     "repair": {
       "kind": "CantMeet",
       "reason": "Use a plain class without bases, or move this into the observer test body."
-    }
+    },
+    "role": "planner"
   },
   {
     "allowed": {
       "keyword": "const",
       "value": {
-        "with": "scoped sys.argv setup with mock.patch.object from unittest.mock"
+        "context_managers": [
+          "mock.patch.object(sys, \"argv\", value)",
+          "unittest.mock.patch.object(sys, \"argv\", value)"
+        ],
+        "imports": [
+          "from unittest import mock",
+          "import sys",
+          "import unittest",
+          "import unittest.mock"
+        ],
+        "keywords": [],
+        "scope": "with"
       }
     },
     "gating": false,
@@ -137,15 +151,15 @@
     "names": [
       {
         "kind": "field",
-        "value": "{field}"
+        "value": "{declaration_field}"
       },
       {
         "kind": "path",
-        "value": "{path}"
+        "value": "{module}"
       },
       {
         "kind": "symbol",
-        "value": "{symbol}"
+        "value": "{module}::{definition}"
       },
       {
         "kind": "path",
@@ -155,7 +169,8 @@
     "repair": {
       "kind": "CantMeet",
       "reason": "Move the with block into the observer test body; support admits only the scoped sys.argv setup."
-    }
+    },
+    "role": "planner"
   },
   {
     "allowed": {
@@ -169,15 +184,15 @@
     "names": [
       {
         "kind": "field",
-        "value": "{field}"
+        "value": "{declaration_field}"
       },
       {
         "kind": "path",
-        "value": "{path}"
+        "value": "{module}"
       },
       {
         "kind": "symbol",
-        "value": "{symbol}"
+        "value": "{module}::{definition}"
       },
       {
         "kind": "path",
@@ -187,7 +202,8 @@
     "repair": {
       "kind": "CantMeet",
       "reason": "Move the fixture body into the observer test body, or declare the fixture module as a new observer module. A plain undecorated support function called by the observer is also allowed; @pytest.fixture remains refused."
-    }
+    },
+    "role": "planner"
   },
   {
     "allowed": {
@@ -201,15 +217,15 @@
     "names": [
       {
         "kind": "field",
-        "value": "{field}"
+        "value": "{declaration_field}"
       },
       {
         "kind": "path",
-        "value": "{path}"
+        "value": "{module}"
       },
       {
         "kind": "symbol",
-        "value": "{symbol}"
+        "value": "{module}::{definition}"
       },
       {
         "kind": "path",
@@ -219,7 +235,8 @@
     "repair": {
       "kind": "CantMeet",
       "reason": "Remove later rebinding, or move setup into the observer test body or a new support factory."
-    }
+    },
+    "role": "planner"
   },
   {
     "allowed": {
@@ -233,15 +250,15 @@
     "names": [
       {
         "kind": "field",
-        "value": "{field}"
+        "value": "{declaration_field}"
       },
       {
         "kind": "path",
-        "value": "{path}"
+        "value": "{module}"
       },
       {
         "kind": "symbol",
-        "value": "{symbol}"
+        "value": "{module}::{definition}"
       },
       {
         "kind": "path",
@@ -251,7 +268,8 @@
     "repair": {
       "kind": "CantMeet",
       "reason": "Move other uses into the observer test body so the selected support definition is self-contained."
-    }
+    },
+    "role": "planner"
   },
   {
     "allowed": {
@@ -265,15 +283,15 @@
     "names": [
       {
         "kind": "field",
-        "value": "{field}"
+        "value": "{declaration_field}"
       },
       {
         "kind": "path",
-        "value": "{path}"
+        "value": "{module}"
       },
       {
         "kind": "symbol",
-        "value": "{symbol}"
+        "value": "{module}::{definition}"
       },
       {
         "kind": "path",
@@ -283,7 +301,8 @@
     "repair": {
       "kind": "CantMeet",
       "reason": "Move the setup into the observer test body or a new support factory, preserving the partial definition."
-    }
+    },
+    "role": "planner"
   },
   {
     "allowed": {
@@ -297,15 +316,15 @@
     "names": [
       {
         "kind": "field",
-        "value": "{field}"
+        "value": "{declaration_field}"
       },
       {
         "kind": "path",
-        "value": "{path}"
+        "value": "{module}"
       },
       {
         "kind": "symbol",
-        "value": "{symbol}"
+        "value": "{module}::{definition}"
       },
       {
         "kind": "path",
@@ -315,7 +334,8 @@
     "repair": {
       "kind": "CantMeet",
       "reason": "Select exact new definitions from an existing module; an existing whole module cannot be observer support."
-    }
+    },
+    "role": "planner"
   },
   {
     "allowed": {
@@ -329,15 +349,15 @@
     "names": [
       {
         "kind": "field",
-        "value": "{field}"
+        "value": "{declaration_field}"
       },
       {
         "kind": "path",
-        "value": "{path}"
+        "value": "{module}"
       },
       {
         "kind": "symbol",
-        "value": "{symbol}"
+        "value": "{module}::{definition}"
       },
       {
         "kind": "path",
@@ -347,7 +367,8 @@
     "repair": {
       "kind": "CantMeet",
       "reason": "Use new plain support names; move setup into the observer test body instead of rebinding base source."
-    }
+    },
+    "role": "planner"
   },
   {
     "allowed": {
@@ -361,15 +382,15 @@
     "names": [
       {
         "kind": "field",
-        "value": "{field}"
+        "value": "{declaration_field}"
       },
       {
         "kind": "path",
-        "value": "{path}"
+        "value": "{module}"
       },
       {
         "kind": "symbol",
-        "value": "{symbol}"
+        "value": "{module}::{definition}"
       },
       {
         "kind": "path",
@@ -379,7 +400,8 @@
     "repair": {
       "kind": "CantMeet",
       "reason": "Put test data inside the observer test body or a new support factory."
-    }
+    },
+    "role": "planner"
   },
   {
     "allowed": {
@@ -393,15 +415,15 @@
     "names": [
       {
         "kind": "field",
-        "value": "{field}"
+        "value": "{declaration_field}"
       },
       {
         "kind": "path",
-        "value": "{path}"
+        "value": "{module}"
       },
       {
         "kind": "symbol",
-        "value": "{symbol}"
+        "value": "{module}::{definition}"
       },
       {
         "kind": "path",
@@ -411,7 +433,8 @@
     "repair": {
       "kind": "CantMeet",
       "reason": "Put test data inside the observer test body or a new support factory, including its initialization context."
-    }
+    },
+    "role": "planner"
   },
   {
     "allowed": {
@@ -425,15 +448,15 @@
     "names": [
       {
         "kind": "field",
-        "value": "{field}"
+        "value": "{declaration_field}"
       },
       {
         "kind": "path",
-        "value": "{path}"
+        "value": "{module}"
       },
       {
         "kind": "symbol",
-        "value": "{symbol}"
+        "value": "{module}::{definition}"
       },
       {
         "kind": "path",
@@ -443,7 +466,8 @@
     "repair": {
       "kind": "CantMeet",
       "reason": "Put initialization inside the observer test body or a new support factory."
-    }
+    },
+    "role": "planner"
   },
   {
     "allowed": {
@@ -457,15 +481,15 @@
     "names": [
       {
         "kind": "field",
-        "value": "{field}"
+        "value": "{declaration_field}"
       },
       {
         "kind": "path",
-        "value": "{path}"
+        "value": "{module}"
       },
       {
         "kind": "symbol",
-        "value": "{symbol}"
+        "value": "{module}::{definition}"
       },
       {
         "kind": "path",
@@ -475,7 +499,8 @@
     "repair": {
       "kind": "CantMeet",
       "reason": "Use a local observer value or import; inferred literal support must preserve base wildcard bindings."
-    }
+    },
+    "role": "planner"
   },
   {
     "allowed": {
@@ -489,15 +514,15 @@
     "names": [
       {
         "kind": "field",
-        "value": "{field}"
+        "value": "{declaration_field}"
       },
       {
         "kind": "path",
-        "value": "{path}"
+        "value": "{module}"
       },
       {
         "kind": "symbol",
-        "value": "{symbol}"
+        "value": "{module}::{definition}"
       },
       {
         "kind": "path",
@@ -507,7 +532,8 @@
     "repair": {
       "kind": "CantMeet",
       "reason": "Build the value and bind it to a new name, or move this into the observer test body."
-    }
+    },
+    "role": "planner"
   },
   {
     "allowed": {
@@ -560,15 +586,15 @@
     "names": [
       {
         "kind": "field",
-        "value": "{field}"
+        "value": "{declaration_field}"
       },
       {
         "kind": "path",
-        "value": "{path}"
+        "value": "{module}"
       },
       {
         "kind": "symbol",
-        "value": "{symbol}"
+        "value": "{module}::{definition}"
       },
       {
         "kind": "path",
@@ -578,7 +604,8 @@
     "repair": {
       "kind": "CantMeet",
       "reason": "Use plain support bindings; move dynamic namespace operations into the observer test body."
-    }
+    },
+    "role": "planner"
   },
   {
     "allowed": {
@@ -592,15 +619,15 @@
     "names": [
       {
         "kind": "field",
-        "value": "{field}"
+        "value": "{declaration_field}"
       },
       {
         "kind": "path",
-        "value": "{path}"
+        "value": "{module}"
       },
       {
         "kind": "symbol",
-        "value": "{symbol}"
+        "value": "{module}::{definition}"
       },
       {
         "kind": "path",
@@ -610,7 +637,8 @@
     "repair": {
       "kind": "CantMeet",
       "reason": "Select new observer support. Keep existing base subjects outside observer_support."
-    }
+    },
+    "role": "planner"
   },
   {
     "allowed": {
@@ -625,15 +653,15 @@
     "names": [
       {
         "kind": "field",
-        "value": "{field}"
+        "value": "{declaration_field}"
       },
       {
         "kind": "path",
-        "value": "{path}"
+        "value": "{module}"
       },
       {
         "kind": "symbol",
-        "value": "{symbol}"
+        "value": "{module}::{definition}"
       },
       {
         "kind": "path",
@@ -643,7 +671,8 @@
     "repair": {
       "kind": "CantMeet",
       "reason": "Use an f-string over local values in the observer test body."
-    }
+    },
+    "role": "planner"
   },
   {
     "allowed": {
@@ -663,15 +692,15 @@
     "names": [
       {
         "kind": "field",
-        "value": "{field}"
+        "value": "{declaration_field}"
       },
       {
         "kind": "path",
-        "value": "{path}"
+        "value": "{module}"
       },
       {
         "kind": "symbol",
-        "value": "{symbol}"
+        "value": "{module}::{definition}"
       },
       {
         "kind": "path",
@@ -681,7 +710,8 @@
     "repair": {
       "kind": "CantMeet",
       "reason": "Use an f-string, or move this into the observer test body."
-    }
+    },
+    "role": "planner"
   },
   {
     "allowed": {
@@ -695,15 +725,15 @@
     "names": [
       {
         "kind": "field",
-        "value": "{field}"
+        "value": "{declaration_field}"
       },
       {
         "kind": "path",
-        "value": "{path}"
+        "value": "{module}"
       },
       {
         "kind": "symbol",
-        "value": "{symbol}"
+        "value": "{module}::{definition}"
       },
       {
         "kind": "path",
@@ -713,6 +743,7 @@
     "repair": {
       "kind": "CantMeet",
       "reason": "Import each needed name explicitly, or move this into the observer test body."
-    }
+    },
+    "role": "planner"
   }
 ]
