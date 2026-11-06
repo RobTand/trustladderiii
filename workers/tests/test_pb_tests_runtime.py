@@ -95,7 +95,8 @@ def test_rehearsal_failure_diagnostic_reaches_cant_meet(rehearsal, monkeypatch, 
     reply = events[-1]['reply']
     assert sum(event.get('unit') == 'model_turn' for event in events) == 3
     assert events[-1]['plan_check']['repair'] == {
-        'status': 'unavailable', 'reason': 'format_allowance_consumed'}
+        'status': 'unavailable',
+        'reason': 'message_limit' if stage == 'forced' else 'format_allowance_consumed'}
     assert {item['class'] for item in events[-1]['plan_check']['objections']} == {'other'}
     assert any(status in text and message in text for text in reply['violations'])
     assert reply['violations']
