@@ -687,3 +687,123 @@ fn older_closed_read_cannot_override_newer_reopen_at_ingest() {
         Phase::Unplanned
     );
 }
+
+fn completed_root_reopened_before_admission(
+    c: &mut Controller,
+    repo: &Repo,
+    repository: &Repository,
+) -> (NodeId, NodeId) {
+    set_issue(repo, 2761, "closed", Some("completed"));
+    let root = intake(c, repository, 2761);
+    reply(c, root, Reply::IngestEarlyEnd(EarlyEnd::AlreadyDone));
+    reply(c, root, Reply::AuditAgrees);
+    assert_eq!(
+        c.world().unwrap().nodes[root.0 as usize].phase,
+        Phase::Closed(Outcome::AlreadyDone)
+    );
+    let waiter = intake(c, repository, 42);
+    ingest_brief(c, waiter, &[2761, 2772]);
+    assert_eq!(
+        c.world().unwrap().dependencies()[0].status,
+        DependencyStatus::Delivered
+    );
+    set_issue(repo, 2761, "open", None);
+    observation(
+        c,
+        Observation::Prerequisite(ExternalFact {
+            repository: repository.clone(),
+            kind: PrerequisiteKind::Issue,
+            number: 2761,
+            status: DependencyStatus::Pending,
+            reason: None,
+            updated_at: Some("2026-11-03T23:00:00Z".parse().unwrap()),
+        }),
+    );
+    assert_eq!(
+        c.world().unwrap().dependencies()[0].status,
+        DependencyStatus::Pending
+    );
+    (root, waiter)
+}
+
+/// #839 / Q27: an authoritative Open read wins over the bound root's old completion.
+#[test]
+fn completed_bound_root_reopened_before_planning_stays_open_on_reingest() {
+    let mut db = Database::start();
+    let (repo, mut c, repository, _) = fixture_with_settings(&mut db, "t839_completed_reingest");
+    let (_, waiter) = completed_root_reopened_before_admission(&mut c, &repo, &repository);
+    reply(&mut c, waiter, Reply::AuditDisagrees);
+    ingest(&mut c, waiter, &[2761, 2772]);
+    let snapshot = c.snapshot().unwrap();
+    let commit = Commit::new("inspect-current-open", json!(null), &snapshot);
+    let current = retained_fact(
+        &snapshot,
+        &commit,
+        &repository,
+        PrerequisiteKind::Issue,
+        2761,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        current.status,
+        DependencyStatus::Pending,
+        "current Open must not inherit historical AlreadyDone"
+    );
+    assert_eq!(
+        current.updated_at,
+        Some("2026-11-03T23:00:00Z".parse().unwrap())
+    );
+    external(&mut c, &repository, 2772, DependencyStatus::Delivered);
+    let world = c.world().unwrap();
+    assert_eq!(world.nodes[waiter.0 as usize].phase, Phase::Unplanned);
+    assert_eq!(
+        world.nodes[waiter.0 as usize].waiting_prerequisite,
+        Some(2761)
+    );
+}
+
+/// #839 / Q27: reconciling a historical root ending cannot overwrite a newer Open fact.
+#[test]
+fn completed_bound_root_reopened_before_planning_stays_open_on_ending_reconciliation() {
+    let mut db = Database::start();
+    let (repo, mut c, repository, _) = fixture_with_settings(&mut db, "t839_completed_reconcile");
+    let (root, waiter) = completed_root_reopened_before_admission(&mut c, &repo, &repository);
+    let snapshot = c.snapshot().unwrap();
+    let mut world = c.world().unwrap();
+    let mut commit = Commit::new("reconcile-completed-root", json!({}), &snapshot);
+    let mut outputs = Vec::new();
+    c.announce_dependency_endings(&snapshot, &mut world, vec![root], &mut outputs, &mut commit)
+        .unwrap();
+    c.record_kernel_result(&snapshot, world, outputs, &mut commit)
+        .unwrap();
+    c.store.commit(&commit).unwrap();
+    let snapshot = c.snapshot().unwrap();
+    let commit = Commit::new("inspect-reconciled-open", json!(null), &snapshot);
+    let current = retained_fact(
+        &snapshot,
+        &commit,
+        &repository,
+        PrerequisiteKind::Issue,
+        2761,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        current.status,
+        DependencyStatus::Pending,
+        "unversioned root ending must not replace authoritative Open"
+    );
+    assert_eq!(
+        current.updated_at,
+        Some("2026-11-03T23:00:00Z".parse().unwrap())
+    );
+    reply(&mut c, waiter, Reply::AuditAgrees);
+    external(&mut c, &repository, 2772, DependencyStatus::Delivered);
+    let world = c.world().unwrap();
+    assert_eq!(world.nodes[waiter.0 as usize].phase, Phase::Unplanned);
+    assert_eq!(
+        world.nodes[waiter.0 as usize].waiting_prerequisite,
+        Some(2761)
+    );
+}
