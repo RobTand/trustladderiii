@@ -338,6 +338,15 @@ CASES = {
         '    m.review_stop = Some(step);',
         '    m.review_stop = None;',
         '//crates/kernel:verus_review_retry_stop'),
+    'review_checks_head': ('crates/kernel/src/work_replies.rs',
+        '                m.checked = m.head;',
+        '                m.checked = None;',
+        '//crates/kernel:verus_work_replies'),
+    'review_fast_round_output': ('crates/kernel/src/retries.rs',
+        '        next_rung(w, i, step, out);',
+        '        next_rung(w, i, step, out);\n'
+        '        notice(out, i, Notice::Note(NoteKind::Replanned));',
+        '//crates/kernel:verus_review_retry_round'),
 
     'review_room_credit': ('crates/kernel/src/retries.rs',
         '        m.plan_retries = 0;\n        set_phase(m, Phase::Planning { must_split: true });',

@@ -46,7 +46,7 @@ pub(super) proof fn rejected(n: Node, after: Node, fail_fast: bool)
 
 /// Review/rebase rows and Q54: exact admitted updates spend once or stop without spending.
 pub(super) proof fn accepted(n: Node, after: Node, reply: Reply, fail_fast: bool, id: u64)
-    requires port_review_reply::selected(reply), n.review_stop.is_none(),
+    requires port_review_reply::selected(reply), !(reply is ChecksDone), n.review_stop.is_none(),
         n.phase == Phase::Reviewing || n.phase == Phase::Rebasing,
         after == port_review_reply::transition(port_review_reply::ended(n), fail_fast, id, reply).0,
     ensures node_post(n, after, fail_fast),
