@@ -53,7 +53,44 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         return; // an answer to a question that is no longer open
     }
     match w.nodes[i].phase {
-        Phase::Stopping(_) => match answer {
+        Phase::Stopping(_) => answer_stopping(w, i, id, answer),
+        Phase::AwaitingRob => answer_awaiting(w, i, q, answer, out),
+        _ => {}
+    }
+}
+}
+
+kernel_fn! {
+/// Cleanup question row / #806: the original Stopping answer branch, unchanged.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn answer_stopping(w: &mut World, i: usize, _id: u64, answer: Answer) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(w).nodes@[i as int].phase is Stopping,
+    ensures (node_checked(*old(w), old(w).nodes@[i as int])
+            && answer_progress_input(old(w).nodes@[i as int], _id, answer)
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
+        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
+        final(w).nodes@[i as int].credit.start == old(w).nodes@[i as int].credit.start,
+        final(w).nodes@[i as int].credit.earned == old(w).nodes@[i as int].credit.earned,
+        final(w).nodes@[i as int].credit.added as int <= old(w).nodes@[i as int].credit.added as int + 255,
+        final(w).nodes@[i as int].credit.spent as int <= old(w).nodes@[i as int].credit.spent as int + 1,
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question as int <= old(w).next_question as int + 1,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+] proof [reveal(distance);] {
+    match answer {
             Answer::Retry => w.nodes[i].question = None,
             Answer::MarkHandled => {
                 let m = &mut w.nodes[i];
@@ -61,8 +98,46 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
                 mark_handled(m);
             }
             _ => {}
-        },
-        Phase::AwaitingRob => {
+        }
+}
+}
+
+kernel_fn! {
+/// AwaitingRob question rows / #806: the original answer branch, unchanged.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn answer_awaiting(w: &mut World, i: usize, q: Question, answer: Answer,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        old(w).nodes@[i as int].phase == Phase::AwaitingRob,
+        old(w).nodes@[i as int].question == Some(q),
+        node_headroom(old(w).nodes@[i as int]), arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures (node_checked(*old(w), old(w).nodes@[i as int])
+            && answer_progress_input(old(w).nodes@[i as int], q.id, answer)
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
+        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
+        final(w).nodes@[i as int].credit.start == old(w).nodes@[i as int].credit.start,
+        final(w).nodes@[i as int].credit.earned == old(w).nodes@[i as int].credit.earned,
+        final(w).nodes@[i as int].credit.added as int <= old(w).nodes@[i as int].credit.added as int + 255,
+        final(w).nodes@[i as int].credit.spent as int <= old(w).nodes@[i as int].credit.spent as int + 1,
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question as int <= old(w).next_question as int + 1,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len <= old(out).len + 1,
+] proof [reveal(distance);] {
             if answer == Answer::Unclear {
                 // One clarifying question. After that the question just stays open.
                 if !q.clarified {
@@ -107,7 +182,8 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
                 _ => {}
             }
         }
-        _ => {}
-    }
 }
-}
+
+#[cfg(test)]
+#[path = "answer_equivalence/mod.rs"]
+mod equivalence;

@@ -296,6 +296,19 @@ CASES = {
                                '    if !approved {',
                                '    if approved {',
                                '//crates/kernel:verus_facts_merge'),
+    'answer_refactor_stopping_repo': ('crates/kernel/src/answers.rs',
+        'Answer::Retry => w.nodes[i].question = None,',
+        'Answer::Retry => w.nodes[i].repo = RepoId(0),',
+        '//crates/kernel:verus_port_answers_stopping_handler'),
+    'answer_refactor_awaiting_repo': ('crates/kernel/src/answers.rs',
+        'w.next_question += 1;',
+        'w.next_question += 1; w.nodes[i].repo = RepoId(0);',
+        '//crates/kernel:verus_port_answers_awaiting_handler'),
+    'answer_refactor_allocator_order': ('crates/kernel/src/answers.rs',
+        'let next = w.next_question;\n                    w.next_question += 1;',
+        'w.next_question += 1;\n                    let next = w.next_question;',
+        '//crates/kernel:lib_test_tl3_kernel'),
+
 }
 
 
