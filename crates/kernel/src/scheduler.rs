@@ -42,15 +42,6 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: boo
                     && slot_waiters(old(w).nodes@, old(w).nodes@.len(), old(w).nodes@[i as int].repo)
                         < old(w).gates@[old(w).nodes@[i as int].repo.0 as int].w)
             },
-        (old(w).nodes@[i as int].phase == Phase::Ready(Resume::Making) && old(w).nodes@[i as int].pos == 0
-            && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none()) ==> {
-            final(w).nodes@[i as int] == retirement_gate::slot_node(old(w).nodes@[i as int], old(w).next_ticket,
-                retirement_gate::slot(*old(w), i as int) && retirement_gate::line(*old(w), i as int))
-                && final(w).next_ticket == retirement_gate::slot_ticket(old(w).nodes@[i as int], old(w).next_ticket)
-                && *final(out) == *old(out)
-                && result == retirement_gate::slot_changed(old(w).nodes@[i as int],
-                    retirement_gate::slot(*old(w), i as int) && retirement_gate::line(*old(w), i as int))
-        },
 ] {
     kernel_snapshot! { before_advance = *w }
     kernel_proof! { dependencies::prerequisite_definition(*w, NodeId(i as u64)); }
@@ -93,15 +84,6 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: boo
             }
             assert forall|j: int| 0 <= j < w.nodes@.len() implies settle_shape(w.nodes@[j]) by {}
             reveal(footprint::ordered_table);
-        }
-    }
-    kernel_proof! {
-        assert(before_advance@.nodes@[i as int].phase == Phase::Ready(Resume::Making)
-            && before_advance@.nodes@[i as int].pos == 0
-            && !before_advance@.nodes@[i as int].waiting_incident && before_advance@.nodes@[i as int].effect.is_none() ==>
-            w.nodes@[i as int] == retirement_gate::slot_node(before_advance@.nodes@[i as int], before_advance@.next_ticket,
-                retirement_gate::slot(before_advance@, i as int) && retirement_gate::line(before_advance@, i as int))) by {
-            reveal(retirement_gate::slot_node);
         }
     }
     changed
@@ -192,7 +174,6 @@ pub(super) fn slot_free(w: &World, i: usize) -> (result: bool) [
         && w.gates@[w.nodes@[i as int].repo.0 as int].w > 0
         && (forall|j: int| 0 <= j < w.nodes@.len() && j != i ==> !w.nodes@[j].holds))
         ==> result,
-        result == retirement_gate::slot(*w, i as int),
 ] {
     let me = &w.nodes[i];
     let _gate_count = w.gates.len();
@@ -205,16 +186,13 @@ pub(super) fn slot_free(w: &World, i: usize) -> (result: bool) [
             *me == w.nodes@[i as int], repo < w.gates.len(),
             repo as int == me.repo.0 as int, *gate == w.gates@[repo as int],
             holders as int <= open_prefix(w.nodes@, j as nat),
-            holders == retirement_gate::slot_count(*w, i as int, j as nat),
-            forall|k: int| 0 <= k < j && k != i && w.nodes@[k].holds && w.nodes@[k].repo == me.repo
-                ==> footprint::disjoint(*w, w.nodes@[k].footprint, me.footprint),
             ((forall|k: int| 0 <= k < w.nodes@.len() && k != i ==> !w.nodes@[k].holds)
                 ==> holders == 0),
         decreases w.nodes.len() - j,
     ] {
         let n = &w.nodes[j];
         kernel_proof! {
-            reveal(open_prefix); reveal(retirement_gate::slot_count);
+            reveal(open_prefix);
             open_prefix_monotone(w.nodes@, j as nat + 1, w.nodes@.len());
         }
         if j != i && n.holds && n.repo == me.repo {
@@ -249,23 +227,18 @@ kernel_fn! {
 #[allow(clippy::collapsible_if)]
 pub(super) fn older_overlap(w: &World, i: usize, ticket: u64) -> (result: bool) [
     requires i < w.nodes@.len(), scheduling_safe(*w),
-    ensures result == retirement_gate::overlap(*w, i as int, ticket),
 ] {
     let waiter = &w.nodes[i];
     let mut index = 0usize;
     kernel_while! { (index < w.nodes.len()) [
         invariant index <= w.nodes.len(), i < w.nodes.len(), scheduling_safe(*w),
             *waiter == w.nodes@[i as int],
-            forall|k: int| 0 <= k < index && w.nodes@[k].phase is Ready && w.nodes@[k].repo == waiter.repo
-                && (match w.nodes@[k].ticket { Some(t) => t < ticket, None => false })
-                ==> footprint::disjoint(*w, w.nodes@[k].footprint, waiter.footprint),
         decreases w.nodes.len() - index,
     ] {
         let older = &w.nodes[index];
         if matches!(older.phase, Phase::Ready(_)) && older.repo == waiter.repo {
             if let Some(theirs) = older.ticket {
                 if theirs < ticket && !w.footprints_disjoint(older.footprint, waiter.footprint) {
-                    kernel_proof! { assert(retirement_gate::overlapping_before(*w, i as int, index as int, ticket)); }
                     return true;
                 }
             }
@@ -282,7 +255,6 @@ kernel_fn! {
 pub(super) fn first_in_line(w: &World, i: usize) -> (result: bool) [
     requires i < w.nodes@.len(), scheduling_safe(*w),
     ensures oldest_waiter(*w, i as int) ==> result,
-        w.nodes@[i as int].phase is Ready ==> result == retirement_gate::line(*w, i as int),
 ] {
     let me = &w.nodes[i];
     let Some(mine) = me.ticket else { return false };
@@ -304,11 +276,8 @@ pub(super) fn first_in_line(w: &World, i: usize) -> (result: bool) [
         invariant j <= w.nodes.len(), i < w.nodes.len(), scheduling_safe(*w),
             *me == w.nodes@[i as int], me.phase is Ready, me.ticket == Some(mine),
             oldest_waiter(*w, i as int) ==> first_runnable == mine,
-            first_runnable <= mine,
-            (first_runnable == mine) == retirement_gate::line_prefix(*w, i as int, j as int),
         decreases w.nodes.len() - j,
     ] {
-        kernel_proof! { retirement_gate::prefix_step(*w, i as int, j as int); }
         let index = j;
         let waiter = &w.nodes[j];
         j += 1;

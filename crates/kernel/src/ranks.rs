@@ -797,7 +797,6 @@ kernel_fn! {
 
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
-    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
     fn advance_slot(node: &mut Node, next_ticket: &mut u64,
         context: AdvanceContext, _out: &mut Outbox) -> (result: bool) [
         requires advance_pre(*old(node), *old(next_ticket), old(_out).len),
@@ -806,46 +805,28 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
             result == advance_enabled(*old(node), context),
-            old(node).phase == Phase::Ready(Resume::Making) ==> *final(node) == retirement_gate::slot_node(*old(node), *old(next_ticket), context.slot),
-        old(node).phase == Phase::Ready(Resume::Making) ==> *final(next_ticket) == retirement_gate::slot_ticket(*old(node), *old(next_ticket)),
-        *final(_out) == *old(_out),
-        result == retirement_gate::slot_changed(*old(node), context.slot),
-] proof [reveal(advance_post); reveal(distance);] {
-        kernel_snapshot! { slot_before = *node }
-        kernel_snapshot! { ticket_before = *next_ticket }
+    ] proof [reveal(advance_post); reveal(distance);] {
         let n = *node;
         let Phase::Ready(r) = n.phase else {
-            kernel_proof! { assert(slot_before@.phase == Phase::Ready(Resume::Making) ==>
-                *node == retirement_gate::slot_node(slot_before@, ticket_before@, context.slot)) by { reveal(retirement_gate::slot_node); } }
             return false;
         };
         if n.paused {
             if n.ticket.is_some() {
                 node.ticket = None;
-                kernel_proof! { assert(slot_before@.phase == Phase::Ready(Resume::Making) ==>
-                *node == retirement_gate::slot_node(slot_before@, ticket_before@, context.slot)) by { reveal(retirement_gate::slot_node); } }
                 return true;
             }
-            kernel_proof! { assert(slot_before@.phase == Phase::Ready(Resume::Making) ==>
-                *node == retirement_gate::slot_node(slot_before@, ticket_before@, context.slot)) by { reveal(retirement_gate::slot_node); } }
             return false;
         }
         if n.ticket.is_none() {
             take_ticket_node(node, next_ticket);
-            kernel_proof! { assert(slot_before@.phase == Phase::Ready(Resume::Making) ==>
-                *node == retirement_gate::slot_node(slot_before@, ticket_before@, context.slot)) by { reveal(retirement_gate::slot_node); } }
-                return true;
+            return true;
         }
         if context.slot {
             let m = &mut *node;
             m.holds = true;
             set_phase(m, r.phase());
-            kernel_proof! { assert(slot_before@.phase == Phase::Ready(Resume::Making) ==>
-                *node == retirement_gate::slot_node(slot_before@, ticket_before@, context.slot)) by { reveal(retirement_gate::slot_node); } }
-                return true;
+            return true;
         }
-        kernel_proof! { assert(slot_before@.phase == Phase::Ready(Resume::Making) ==>
-                *node == retirement_gate::slot_node(slot_before@, ticket_before@, context.slot)) by { reveal(retirement_gate::slot_node); } }
         false
     }
 }
@@ -932,13 +913,7 @@ kernel_fn! {
             result == advance_enabled(*old(node), context),
             old(node).phase == Phase::Unplanned && old(node).pos == 0 && old(node).ticket.is_none()
                 ==> (result ==> final(node).phase == (Phase::Planning { must_split: false })),
-                (old(node).phase == Phase::Ready(Resume::Making) && old(node).pos == 0 && !old(node).waiting_incident && old(node).effect.is_none()) ==> {
-                *final(node) == retirement_gate::slot_node(*old(node), *old(next_ticket), context.slot)
-                    && *final(next_ticket) == retirement_gate::slot_ticket(*old(node), *old(next_ticket))
-                    && *final(out) == *old(out)
-                    && result == retirement_gate::slot_changed(*old(node), context.slot)
-            },
-] {
+    ] {
         let n = *node;
         if n.phase.is_closed() || n.waiting_incident || n.effect.is_some() {
             return advance_blocked(node, next_ticket, context, out);

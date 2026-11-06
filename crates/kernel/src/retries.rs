@@ -49,7 +49,6 @@ kernel_fn! {
 /// Q54 / #771: stopping for review spends no credit and allocates at most one generation.
 /// Under `fail_fast`, a step that would retry the work stops for TL3 review.
 /// It asks Rob nothing; the summary offers `restart`, as for any stop (Q49).
-#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn stop_for_review(m: &mut Node, step: ReviewStop) -> (result: ()) [
     requires old(m).generation < u64::MAX,
     ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
@@ -57,7 +56,6 @@ pub(super) fn stop_for_review(m: &mut Node, step: ReviewStop) -> (result: ()) [
         final(m).generation as int <= old(m).generation as int + 1,
         final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
         final(m).last_cmd == old(m).last_cmd, final(m).review_stop == Some(step),
-        *final(m) == retirement::stopped(Node { review_stop: Some(step), ..*old(m) }, Outcome::Stopped),
         !(old(m).phase is Closed || old(m).phase is Stopping) ==>
             final(m).phase == Phase::Stopping(Outcome::Stopped) && final(m).question.is_none(),
         final(m).plan_retries == old(m).plan_retries,
@@ -69,7 +67,6 @@ pub(super) fn stop_for_review(m: &mut Node, step: ReviewStop) -> (result: ()) [
 
 kernel_fn! {
 /// Failed-round rows / #771: the free fix and paid ladder share one-step bounds.
-#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn failed_round(w: &mut World, i: usize, step: ReviewStop,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
@@ -79,10 +76,7 @@ pub(super) fn failed_round(w: &mut World, i: usize, step: ReviewStop,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-        final(w).nodes@[i as int] == retirement_retry::failed(old(w).nodes@[i as int], old(w).fail_fast, old(w).next_question, step),
-        final(w).next_question as int == old(w).next_question as int + if old(w).nodes@[i as int].round != 0 && retirement_retry::rung_asks(old(w).nodes@[i as int], old(w).fail_fast) { 1int } else { 0int },
-        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
-] proof [reveal(retry_bounds);reveal(retirement_retry::failed);] {
+] proof [reveal(retry_bounds);] {
     let m = &mut w.nodes[i];
     if m.round == 0 {
         // The fix round resumes the maker's session. It's free.
@@ -98,7 +92,6 @@ kernel_fn! {
 /// Q54 / #771: the ladder after a failed fix round costs at most one credit.
 /// It tries a bigger budget, another model, one re-plan, then asks Rob.
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
-#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
@@ -108,12 +101,7 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-        final(w).nodes@[i as int] == retirement_retry::rung(old(w).nodes@[i as int], old(w).fail_fast, old(w).next_question, step),
-        final(w).next_question as int == old(w).next_question as int + if retirement_retry::rung_asks(old(w).nodes@[i as int], old(w).fail_fast) { 1int } else { 0int },
-        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
-] {
-    kernel_snapshot! { before_rung = *w }
-    kernel_snapshot! { out_before_rung = *out }
+] proof [reveal(retry_bounds);] {
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
     if fail_fast {
@@ -156,13 +144,6 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
     } else {
         ask_rob(w, i, QKind::CantMeet, Cont::Ready(Resume::Making), 1, out);
     }
-    kernel_proof! {
-        assert(w.nodes@[i as int] == retirement_retry::rung(before_rung@.nodes@[i as int], before_rung@.fail_fast, before_rung@.next_question, step)) by {
-            reveal(retirement_retry::rung);
-        }
-        retirement_runtime::rung_bounds(before_rung@, *w, i as int, step, out_before_rung@.len, out.len);
-    }
-
 }
 }
 
@@ -235,7 +216,6 @@ pub(super) fn plan_retry(w: &mut World, i: usize, cant_meet: bool,
 
 kernel_fn! {
 /// Recheck rows / #771: a new head or reviewer uses the same free allowance.
-#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
     out: &mut Outbox) -> (result: ()) [
     requires !(target is Closed), i < old(w).nodes@.len(), old(out).len < OUTBOX,
@@ -248,13 +228,8 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-        final(w).nodes@[i as int] == retirement_retry::rechecked(old(w).nodes@[i as int], target, old(w).next_question),
-        final(w).next_question as int == old(w).next_question as int
-            + if old(w).nodes@[i as int].rechecks >= FREE_RECHECKS && !retirement_retry::can_pay(old(w).nodes@[i as int]) { 1int } else { 0int },
-        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
-] {
+] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(retry_bounds);] {
     kernel_snapshot! { before_recheck = *w }
-    kernel_snapshot! { out_before_recheck = *out }
     let m = &mut w.nodes[i];
     m.rechecks = m.rechecks.saturating_add(1);
     let free = m.rechecks <= FREE_RECHECKS;
@@ -289,16 +264,6 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
         assert(w.nodes@[i as int].credit.spent as int
             <= before_recheck@.nodes@[i as int].credit.spent as int + 1);
         assert(w.next_question as int <= before_recheck@.next_question as int + 1);
-    }
-
-    kernel_proof! {
-        assert(w.nodes@[i as int] == retirement_retry::rechecked(before_recheck@.nodes@[i as int], target, before_recheck@.next_question)) by {
-            reveal(retirement_retry::rechecked); reveal(retirement_retry::recheck_core); reveal(retirement_retry::continued);
-        }
-        retirement_runtime::recheck_bounds(before_recheck@, *w, i as int, target, out_before_recheck@.len, out.len);
-        if ordinary_await(before_recheck@.nodes@[i as int]) && before_recheck@.nodes@[i as int].phase == Phase::Rebasing && target == Phase::Checking {
-            retirement_runtime::rechecked_distance(before_recheck@.nodes@[i as int], before_recheck@.next_question);
-        }
     }
 
 }

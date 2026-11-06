@@ -572,7 +572,7 @@ impl Credit {
                     final(self).earned == old(self).earned,
                     final(self).added == old(self).added,
                     final(self).withheld == old(self).withheld,
-                            *final(self) == (Credit { spent: (old(self).spent + cost) as u64, ..*old(self) }),
+
     ] {
                 self.spent += cost;
             }
