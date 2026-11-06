@@ -26,6 +26,7 @@ fn execution_diagnostic_contract_is_generated() {
             .any(|file| file.path.ends_with("/execution-failure.json"))
     );
 }
+
 fn check_report_validator(definition: Option<&str>) -> jsonschema::Validator {
     let mut schema = contracts::check_report_schema();
     if let Some(definition) = definition {
