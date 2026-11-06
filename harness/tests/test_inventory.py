@@ -185,7 +185,9 @@ def test_role_dependent_proof_repairs(role):
         lambda facts: (core.Name('path', facts['path']),),
         lambda facts, role: allowed if role == 'planner' else core.Allowed('const', path),
         lambda facts, role: core.Edit(field, 'replace', allowed) if role == 'planner' else source,
-        example={'reply': before}, witness='subject.py'), roles=('planner', 'maker'))
+        example={'reply': before}, witness={
+            'planner': core.apply_edit(before, core.Edit(field, 'replace', allowed), 'subject.py'),
+            'maker': None}), roles=('planner', 'maker'))
     violation, = core.evaluate((row,), {'reply': before}, role=role)
     text = violation.render(role=role)
     with pytest.raises(ValueError, match='evaluation role'):
@@ -199,6 +201,7 @@ def test_role_dependent_proof_repairs(role):
     else:
         assert f'Change "{path}": {source.instruction}' in text
         assert asdict(violation)['repair'] == {'path': path, 'instruction': source.instruction}
+        assert asdict(violation)['role'] == role
         assert core.permits(violation, before, before, role=role)
         assert not core.permits(violation, before, {'kind': 'cant_meet'}, role=role)
         with pytest.raises(ValueError, match='source editor'):
@@ -244,3 +247,37 @@ def test_edit_allowed_sets_render_once_only_when_equal(same, op):
         assert ('with one of the allowed values above' in text) == (op != 'remove')
     else:
         assert edit_allowed.render() in text
+
+
+def test_per_role_witnesses_cover_edit_terminal_and_source_repairs():
+    from dataclasses import replace
+    from tl3_harness import rules as core
+    before = {'value': 'bad'}
+    allowed = core.Allowed('const', 'ok')
+    row = core.Rule('proof.role_witness',
+        lambda facts: () if facts['reply']['value'] == 'ok' else ({},),
+        lambda facts: (core.Name('path', 'tests/test_observer.py'),), allowed,
+        lambda facts, role: core.Edit(core.Name('field', '/value'), 'replace', allowed)
+            if role == 'planner' else core.CantMeet('declaration must change'),
+        example={'reply': before},
+        witness={'planner': {'value': 'ok'}, 'maker': {'kind': 'cant_meet'}})
+    core.register(row, roles=('planner', 'maker'))
+    for witness in ({}, {'planner': {'value': 'ok'}}, {'maker': {'kind': 'cant_meet'}}):
+        with pytest.raises(ValueError, match='witness.*role'):
+            core.register(replace(row, witness=witness), roles=('planner', 'maker'))
+    with pytest.raises(ValueError, match='own witness'):
+        core.register(replace(row, witness={'planner': {'value': 'ok', 'extra': 1},
+                                           'maker': {'kind': 'cant_meet'}}), roles=('planner', 'maker'))
+    source = core.SourceEdit('tests/test_observer.py', 'Move the call into the test body.')
+    core.register(replace(row, repair=source, witness={'maker': None}), roles=('maker',))
+    with pytest.raises(ValueError, match='no reply witness'):
+        core.register(replace(row, repair=source, witness={'maker': {'value': 'ok'}}), roles=('maker',))
+
+
+@pytest.mark.parametrize('path,instruction', [('', 'fix'), ('../test_x.py', 'fix'),
+    ('tests/../test_x.py', 'fix'), ('/test_x.py', 'fix'), ('tests/test_x.py', ''),
+    ('tests/test_x.py', '   ')])
+def test_source_edit_has_a_relative_path_and_instruction(path, instruction):
+    from tl3_harness.rules import SourceEdit
+    with pytest.raises(ValueError):
+        SourceEdit(path, instruction)
