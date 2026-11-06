@@ -1,5 +1,6 @@
 # ruff: noqa: F811
 
+from contextlib import contextmanager
 from dataclasses import asdict
 from importlib.resources import files
 import json
@@ -11,7 +12,7 @@ from tl3_workers import runtime
 from tl3_workers.contracts import validate
 from tl3_workers.roles import ROLES
 from tl3_workers.roles import maker
-from tl3_workers.tools import TOOL_FACTORIES
+from tl3_workers.tools import TOOL_FACTORIES, Worktree, build_tools
 from worker_process import run_real_entrypoint, start_worker
 from message_invariants import DONE as DONE
 from message_invariants import RETRO_TURN as RETRO_TURN
@@ -40,11 +41,132 @@ def test_goal_references_are_checked_before_tool_calls(tmp_path, maker_request, 
     assert not (Path(maker_request["worktree"]) / "must-not-exist").exists()
 
 
-def test_footprint_is_left_for_the_controller_to_check(tmp_path, maker_request):
-    result = start_worker(tmp_path, maker_request, [write_turn("outside-plan.py"), turn(DONE)])
-    assert result.exit_code == 0, result.stderr
+# PQ #3312 (request 417, TL3 #875): the plan the planner accepted, and the
+# scratch file the repair maker wrote outside it (MLflow trace
+# tr-85c1b5037310f228992ca33a069f72dc, a successful write), which no maker
+# tool could remove.
+PQ3312_FILES = ["BUILD.bazel", "prismaquant/prismabuild_progress.py",
+                "tests/BUILD.bazel", "tests/test_pb_progress_atomic.py"]
+PQ3312_TEST = ("tests/test_pb_progress_atomic.py::ProgressAtomicTest::"
+               "test_two_reporters_never_publish_an_open_truncated_temporary")
+PQ3312_DIAG = ("import unittest\n\nfrom tests.test_pb_progress_atomic import ProgressAtomicTest\n\n\n"
+               "def test_diag():\n    name = 'test_two_reporters_never_publish_an_open_truncated_temporary'\n"
+               "    result = unittest.TestResult()\n    ProgressAtomicTest(name).run(result)\n")
+
+
+class _Configured(Exception):
+    pass
+
+
+@contextmanager
+def _pq3312_tools(maker_request, monkeypatch, extra_files=()):
+    """The maker's own tools on a worktree its run configured for the #3312 plan.
+
+    maker.run configures the worktree and stops where it would build the agent,
+    so the tools are the maker's (ROLE.tools through build_tools' guard) without a
+    model turn or a recorded checker script. The Rust input check is skipped here;
+    the request-boundary tests above cover it.
+    """
     root = Path(maker_request["worktree"])
-    assert git(root, "show", "HEAD:outside-plan.py") == "def greet(): return 'hello'"
+    for path in PQ3312_FILES:
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+        (root / path).write_text(f"# {path}\n")
+    git(root, "add", ".")
+    git(root, "commit", "--quiet", "-m", "PQ #3312 base")
+    plan = maker_request["inputs"]["plan"]
+    plan["files"] = [*PQ3312_FILES, *extra_files]
+    plan["checks"][0]["tests"] = [PQ3312_TEST]
+    plan["checks"][1]["tests"] = [PQ3312_TEST.replace("test_two_reporters", "test_one_reporter")]
+
+    def configured(model, role, worktree, **kwargs):
+        raise _Configured
+
+    monkeypatch.setattr(maker, "_check_inputs", lambda inputs: None)
+    monkeypatch.setattr(runtime, "build_agent", configured)
+    with Worktree(root) as worktree:
+        with pytest.raises(_Configured):
+            maker.run(None, maker_request, worktree, lambda event: None)
+        tools = {tool.name: tool for tool in build_tools(worktree, maker.ROLE.tools)}
+
+        def call(name, **args):
+            return tools[name].invoke({"name": name, "args": args, "id": name, "type": "tool_call"})
+        yield root, call
+
+
+def test_pq3312_scratch_write_is_refused_with_an_actionable_message(maker_request, monkeypatch):
+    with _pq3312_tools(maker_request, monkeypatch) as (root, call):
+        refusal = call("write", path="tests/test_zz_diag.py", content=PQ3312_DIAG)
+        # The repair maker's attempt to undo it: an empty write is refused too.
+        emptied = call("write", path="tests/test_zz_diag.py", content="")
+    assert refusal.status == "error", refusal.text
+    assert refusal.text.startswith("tests/test_zz_diag.py is not a declared file")
+    assert all(path in refusal.text for path in PQ3312_FILES)
+    assert "Scratch or diagnostic files are not allowed" in refusal.text
+    for way in ("read", "grep", "diff", "run_tests", "needs_files"):
+        assert way in refusal.text
+    assert emptied.status == "error" and emptied.text == refusal.text
+    assert not (root / "tests/test_zz_diag.py").exists()
+    assert git(root, "status", "--porcelain") == ""
+
+
+def test_pq3312_edit_of_an_undeclared_tracked_file_is_refused(maker_request, monkeypatch):
+    with _pq3312_tools(maker_request, monkeypatch) as (root, call):
+        refusal = call("edit", path="greeting.py", old="goodbye", new="hello")
+    assert refusal.status == "error"
+    assert refusal.text.startswith("greeting.py is not a declared file")
+    assert (root / "greeting.py").read_text() == "def greet(): return 'goodbye'\n"
+
+
+def test_declared_file_write_and_edit_still_work(maker_request, monkeypatch):
+    fixed = "def report(path, text):\n    return 'unique temporary'\n"
+    with _pq3312_tools(maker_request, monkeypatch) as (root, call):
+        written = call("write", path="prismaquant/prismabuild_progress.py", content=fixed)
+        edited = call("edit", path="tests/test_pb_progress_atomic.py",
+                      old="# tests/test_pb_progress_atomic.py", new="# two reporters")
+        created = call("write", path="tests/BUILD.bazel", content="py_test()\n")
+    assert written.status != "error" and written.text == "File written."
+    assert edited.status != "error" and edited.text == "Replaced 1 occurrence(s)."
+    assert created.text == "File written."
+    assert (root / "prismaquant/prismabuild_progress.py").read_text() == fixed
+    assert (root / "tests/test_pb_progress_atomic.py").read_text() == "# two reporters\n"
+
+
+def test_a_declared_file_absent_on_base_can_still_be_created(maker_request, monkeypatch):
+    with _pq3312_tools(maker_request, monkeypatch, extra_files=["tests/test_new_reporter.py"]) as (root, call):
+        created = call("write", path="tests/test_new_reporter.py", content="def test_new(): pass\n")
+    assert created.text == "File written."
+    assert (root / "tests/test_new_reporter.py").read_text() == "def test_new(): pass\n"
+
+
+def test_long_declared_lists_are_truncated_in_the_refusal(maker_request, monkeypatch):
+    many = [f"pkg/module_{index:03}.py" for index in range(200)]
+    with _pq3312_tools(maker_request, monkeypatch, extra_files=many) as (_, call):
+        refusal = call("write", path="tests/test_zz_diag.py", content=PQ3312_DIAG)
+    assert refusal.status == "error"
+    assert len(refusal.text) < 2000
+    assert "BUILD.bazel" in refusal.text and "pkg/module_199.py" not in refusal.text
+    assert "more" in refusal.text and "Scratch or diagnostic files are not allowed" in refusal.text
+
+
+@pytest.mark.parametrize("path", [
+    "../outside.py", "/tmp/tl3-875-absolute.py", "tests/../tests/test_zz_diag.py",
+    "./tests/test_zz_diag.py", "tests//test_zz_diag.py", "linked/escape.py", "alias.py",
+])
+def test_path_escapes_stay_refused(tmp_path, maker_request, monkeypatch, path):
+    root = Path(maker_request["worktree"])
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    # A declared name that is a symlink to an undeclared file, and a declared path
+    # under a symlinked directory that points outside the worktree.
+    (root / "alias.py").symlink_to("greeting.py")
+    (root / "linked").symlink_to(outside)
+    with _pq3312_tools(maker_request, monkeypatch, extra_files=["alias.py", "linked/escape.py"]) as (_, call):
+        result = call("write", path=path, content="escaped\n")
+    assert result.status == "error", result.text
+    assert not (root / "tests/test_zz_diag.py").exists()
+    assert not (tmp_path / "outside.py").exists() and not Path("/tmp/tl3-875-absolute.py").exists()
+    assert list(outside.iterdir()) == []
+    assert (root / "greeting.py").read_text() == "def greet(): return 'goodbye'\n"
 
 
 @pytest.mark.parametrize("field,value", [
