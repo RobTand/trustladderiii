@@ -545,7 +545,8 @@ impl Credit {
         /// State-table credit ledger: one unit per paid retry or continuation.
         fn spend(&mut self, cost: u64) -> (result: ()) [
             requires old(self).spent as int + cost as int <= u64::MAX as int,
-            ensures final(self).spent as int == old(self).spent as int + cost as int,
+            ensures *final(self) == (Credit { spent: (old(self).spent + cost) as u64, ..*old(self) }),
+                final(self).spent as int == old(self).spent as int + cost as int,
                 final(self).start == old(self).start,
                 final(self).earned == old(self).earned,
                 final(self).added == old(self).added,
@@ -2044,6 +2045,7 @@ kernel_fn! {
         },
         final(m).last_cmd == old(m).last_cmd,
         final(m).holds == if holding(old(m).phase) { false } else { old(m).holds },
+        *final(m) == port_advance_contracts::paused(*old(m)),
     ] {
         kernel_proof! { timing3_lemmas::pause_resume(m.phase); }
         if m.phase.holding() {
@@ -2283,3 +2285,46 @@ mod facts_ci_failed_lemmas;
 
 #[cfg(verus_keep_ghost)]
 mod facts_merge_lemmas;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_advance_contracts.rs"]
+mod port_advance_contracts;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_advance_outputs.rs"]
+mod port_advance_outputs;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_retry.rs"]
+mod port_review_retry;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_reply.rs"]
+mod port_review_reply;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_advance_node_rules.rs"]
+mod port_advance_node_rules;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_advance_world.rs"]
+mod port_advance_world;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_advance_gate.rs"]
+mod port_advance_gate;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_advance_phase.rs"]
+mod port_advance_phase;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_advance_witness.rs"]
+mod port_advance_witness;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_review_output.rs"]
+mod port_review_output;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_advance_step_frames.rs"]
+mod port_advance_step_frames;

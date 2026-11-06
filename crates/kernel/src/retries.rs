@@ -8,7 +8,9 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         old(w).nodes@[i as int].generation as int + 2 <= u64::MAX as int,
         old(w).nodes@[i as int].run_failures <= 1,
         old(w).nodes@[i as int].run_incidents <= 2,
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures final(w).nodes@[i as int] == port_review_retry::failed_run(old(w).nodes@[i as int]),
+        (retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out))),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
         final(w).nodes@.len() == old(w).nodes@.len(),
@@ -29,7 +31,7 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] {
+] proof [reveal(port_review_retry::failed_run);] {
     let m = &mut w.nodes[i];
     abandon_operation(m);
     m.pos = operation_start(m.phase);
@@ -51,7 +53,8 @@ kernel_fn! {
 /// It asks Rob nothing; the summary offers `restart`, as for any stop (Q49).
 pub(super) fn stop_for_review(m: &mut Node, step: ReviewStop) -> (result: ()) [
     requires old(m).generation < u64::MAX,
-    ensures final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+    ensures *final(m) == retirement::stopped(Node { review_stop: Some(step), ..*old(m) }, Outcome::Stopped),
+        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
         (settle_shape(*old(m)) ==> settle_shape(*final(m))),
         final(m).generation as int <= old(m).generation as int + 1,
         final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
@@ -154,11 +157,16 @@ pub(super) fn out_of_room(w: &mut World, i: usize, step: ReviewStop,
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures final(w).nodes@[i as int] == port_review_retry::room(old(w).nodes@[i as int],
+            old(w).fail_fast, old(w).next_question, step).0,
+        final(w).next_question == port_review_retry::room(old(w).nodes@[i as int],
+            old(w).fail_fast, old(w).next_question, step).1,
+        (retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out))),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(retry_bounds);] {
+] proof [reveal(port_review_retry::room); reveal(retry_bounds);] {
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
     if fail_fast {
