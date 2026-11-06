@@ -24,7 +24,9 @@ pub(super) fn phase_world(phase: Phase) -> (result: World) [
     requires selected(phase),
     ensures original_domain(result), bounded(result), storage_ordered(result),
         result.nodes@[0].phase == phase, movable(result, 0) == moves(phase),
-        phase is Stopping ==> result.nodes@[0].pos == 5,
+        phase is Stopping ==> result.nodes@[0].pos == 5
+            && !result.nodes@[0].waiting_incident && result.nodes@[0].effect.is_none()
+            && result.nodes@[0].question.is_none(),
 ] proof [
     reveal(initial_node); reveal(accepted); reveal(retirement::node_rules);
     reveal(node_checked); reveal(ready_checked); reveal(bounded);
