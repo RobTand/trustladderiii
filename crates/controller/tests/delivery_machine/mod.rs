@@ -270,9 +270,9 @@ fn owned_controller_io_shell_remains_verbatim() {
 }
 
 mod full;
-mod executor {
+pub(crate) mod executor {
     use tl3_kernel::Ack;
     include!("conversions.rs");
 }
 
-use full::{Error, decode_stored};
+pub(crate) use full::{Error, decode_stored};

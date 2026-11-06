@@ -451,7 +451,8 @@ pub fn approval_decision(before: Approval, prior: bool, predecessor: bool, read:
 /// Startup's look_now only visits allowances; cleanup_ended_looks deletes those
 /// for closed nodes (looks.rs:323-340,377-416,648-668,2073-2084). Restart alone
 /// therefore supplies no closed-node recovery event. R1's deterministic red
-/// records this production gap; approval/message news have separate entry paths.
+/// records this production gap on branch t730-cc-closed-node-recovery-red;
+/// approval/message news have separate entry paths.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

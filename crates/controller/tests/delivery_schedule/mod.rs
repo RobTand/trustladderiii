@@ -6,14 +6,13 @@ use proptest::prelude::*;
 use proptest::test_runner::{Config, FileFailurePersistence, RngSeed, TestRunner};
 use serde_json::{Value, json};
 use std::{cell::RefCell, collections::BTreeMap, io, path::PathBuf};
-pub use tl3_controller::{Error, Result, executor};
 
 mod reference {
-    use crate::recorded_std as std;
+    use super::recorded_std as std;
     include!("base-record.rs.txt");
 }
 mod current {
-    use crate::recorded_std as std;
+    use super::recorded_std as std;
     include!("../../src/adapters/record.rs");
 }
 
@@ -68,11 +67,11 @@ impl Io {
 mod recorded_std {
     pub use ::std::{cmp, collections, io};
     pub mod path {
-        pub type Path = crate::ScriptPath;
-        pub type PathBuf = crate::ScriptPath;
+        pub type Path = super::super::ScriptPath;
+        pub type PathBuf = super::super::ScriptPath;
     }
     pub mod fs {
-        use crate::{Call, IO, json};
+        use super::super::{Call, IO, json};
         use ::std::{
             io,
             path::{Path, PathBuf},
