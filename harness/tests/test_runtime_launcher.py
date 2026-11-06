@@ -432,3 +432,95 @@ def test_host_artifact_staging_produces_executable_and_hashed_readonly_manifest(
     assert b'--timeout' in completed.stdout
     with pytest.raises(FileExistsError):
         runtime.stage_host_runtime(destination, interpreter=sys.executable)
+
+
+@pytest.fixture
+def cleanup_fixture(tmp_path):
+    import subprocess
+
+    root = tmp_path
+    container_id = 'c' * 64
+    labels = {'tl3.job': 'fJob', 'tl3.instance': 'run/generation', 'tl3.owner': 'owner'}
+    cgroup = root / 'cgroups' / 'user.slice' / 'owned.scope'
+    cgroup.mkdir(parents=True)
+    (cgroup / 'cgroup.events').write_text('populated 1\nfrozen 0\n')
+    (cgroup / 'cgroup.procs').write_text('987654\n')
+    properties = root / 'properties'
+    properties.write_text('LoadState=loaded\nActiveState=active\nInvocationID=' + 'd' * 32 + '\nControlGroup=/user.slice/owned.scope\n')
+    podman = root / 'podman'
+    metadata = root / 'metadata'
+    metadata.write_text(json.dumps({'Id': container_id, 'Labels': labels}))
+    podman.write_text(f'''#!{sys.executable}
+import json
+from pathlib import Path
+import sys
+root = Path({str(root)!r})
+args = sys.argv[1:]
+with (root / 'cleanup-calls').open('a') as target:
+    target.write(json.dumps(args) + '\\n')
+absent = (root / 'absent').exists()
+if args[0] == 'ps':
+    if not absent:
+        print((root / 'sweep').read_text() if (root / 'sweep').exists() else {'c' * 64!r})
+elif args[:2] == ['container', 'exists']:
+    sys.exit(1 if absent else 0)
+elif args[:2] == ['container', 'inspect']:
+    print((root / 'metadata').read_text())
+elif args[0] == 'rm':
+    (root / 'absent').touch()
+    cg = root / 'cgroups' / 'user.slice' / 'owned.scope'
+    for name in ('cgroup.events', 'cgroup.procs'):
+        (cg / name).unlink(missing_ok=True)
+    if cg.exists():
+        cg.rmdir()
+    (root / 'properties').write_text('LoadState=not-found\\nActiveState=inactive\\nInvocationID=\\nControlGroup=\\n')
+else:
+    sys.exit(125)
+''')
+    podman.chmod(0o700)
+    systemctl = root / 'systemctl'
+    systemctl.write_text(f'#!{sys.executable}\nfrom pathlib import Path\nprint(Path({str(properties)!r}).read_text(), end="")\n')
+    systemctl.chmod(0o700)
+    child = subprocess.Popen([sys.executable, '-c', 'pass'], start_new_session=True)
+    child.wait(timeout=10)
+    ownership = {'run': {'backend': 'flux', 'uri': 'local:///native', 'instance': 'run/generation', 'job': 'fJob'},
+                 'owner': {'owner': 'owner', 'correlation': 'correlation'}, 'request_digest': 'a' * 64,
+                 'host': 'dl380g10', 'rank': 0, 'launcher': {'pid': child.pid, 'start_ticks': 1},
+                 'process_group': child.pid, 'container': {'mode': 'own_scope', 'id': container_id, 'labels': labels,
+                     'scope': {'unit': 'owned.scope', 'invocation_id': 'd' * 32, 'cgroup': '/user.slice/owned.scope'}}}
+    return root, str(podman), str(systemctl), ownership
+
+
+def test_independent_cleanup_observes_exact_owned_scope_after_launcher_loss(cleanup_fixture):
+    from tl3_harness import runtime
+
+    root, podman, systemctl, owned = cleanup_fixture
+    for _ in range(2):
+        facts = runtime.cleanup_observations(owned, podman=podman, systemctl=systemctl,
+                                             cgroup_root=root / 'cgroups', timeout=2)
+        assert facts['schema'] == 'tl3.cleanup_evidence.v1'
+        assert facts['ownership'] == owned
+        assert facts['launcher'] == {'kind': 'absent'}
+        assert facts['process_group_probe_errno'] == 3
+        assert facts['container']['id'] == owned['container']['id']
+        assert facts['container']['remove_exit'] == 0 and facts['container']['exists_exit'] == 1
+        assert facts['container']['scope'] == {'identity': owned['container']['scope'],
+            'observed_invocation_id': None, 'cgroup_events': None, 'cgroup_procs': '', 'active_state': 'not-found'}
+
+
+@pytest.mark.parametrize('defect', ['labels', 'scope_generation', 'sweep'])
+def test_independent_cleanup_refuses_ambiguous_or_replaced_ownership(cleanup_fixture, defect):
+    from tl3_harness import runtime
+
+    root, podman, systemctl, owned = cleanup_fixture
+    if defect == 'labels':
+        (root / 'metadata').write_text(json.dumps({'Id': owned['container']['id'], 'Labels': {'tl3.owner': 'foreign'}}))
+    elif defect == 'scope_generation':
+        (root / 'properties').write_text('LoadState=loaded\nActiveState=active\nInvocationID=' + 'e' * 32 + '\nControlGroup=/user.slice/owned.scope\n')
+    else:
+        (root / 'sweep').write_text('f' * 64)
+    with pytest.raises(RuntimeError):
+        runtime.cleanup_observations(owned, podman=podman, systemctl=systemctl,
+                                     cgroup_root=root / 'cgroups', timeout=2)
+    calls = [json.loads(line) for line in (root / 'cleanup-calls').read_text().splitlines()]
+    assert not any(command[0] == 'rm' for command in calls)
