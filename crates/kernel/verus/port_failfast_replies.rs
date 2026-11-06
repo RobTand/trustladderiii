@@ -72,36 +72,64 @@ pub(super) proof fn admitted(before: World, after: World, generation: u64, reply
     reveal(port_review_reply::transition_post); reveal(port_replies_contracts::transition_post);
 }
 
-/// Q54 / #806: one accepted non-file reply, reduced to its actor equation, world
-/// frame and fast-mode output length.
-pub(super) open spec fn side(w: World, after: World, reply: Reply, initial: Outbox, out: Outbox) -> bool {
-    let source = port_review_reply::ended(w.nodes@[0]);
-    let r = if port_replies_maker::selected(reply) {
-        port_replies_maker::work_result(source, w.fail_fast, w.next_question, reply)
-    } else { port_review_reply::transition(source, w.fail_fast, w.next_question, reply) };
-    port_failfast_pair_frame::frame(w, after)
-        && after.nodes@[0] == r.0 && after.next_question == r.1
-        && (w.fail_fast && match reply {
-            Reply::MakerCantMeet | Reply::MakerOutOfRoom => true,
-            Reply::ChangesRequested => source.round != 0,
-            Reply::ReviewerOutOfRoom => source.review_restarted,
-            Reply::ChecksDone { pass, in_footprint, .. } => !(pass && in_footprint) && source.round != 0,
-            _ => false,
-        } ==> out.len == initial.len)
+/// Q54: the shared comparison kind of each non-file work-retry site.
+pub(super) open spec fn kind(reply: Reply) -> u8 {
+    match reply {
+        Reply::MakerCantMeet => 0u8,
+        Reply::MakerOutOfRoom | Reply::ReviewerOutOfRoom => 1u8,
+        _ => 3u8,
+    }
 }
 
-/// Q54 / #806: extract side() from one world's real reply relation.
-pub(super) proof fn accepted_side(w: World, after: World, generation: u64, reply: Reply,
+/// Q54: free review paths that never retry work: the first reviewer restart and passing checks.
+pub(super) open spec fn free(reply: Reply, source: Node) -> bool {
+    (reply == Reply::ReviewerOutOfRoom && !source.review_restarted)
+        || match reply { Reply::ChecksDone { pass, in_footprint, .. } => pass && in_footprint, _ => false }
+}
+
+/// Q54 / #806: one accepted non-file reply, reduced to the shared retry relation
+/// (or the flag-independent free-path result), its world frame and fast output length.
+pub(super) open spec fn side(w: World, after: World, reply: Reply, initial: Outbox, out: Outbox) -> bool {
+    let source = port_review_reply::ended(w.nodes@[0]);
+    port_failfast_pair_frame::frame(w, after)
+        && (w.fail_fast && !free(reply, source) && (kind(reply) != 3 || source.round != 0)
+            ==> out.len == initial.len)
+        && if free(reply, source) {
+            after.nodes@[0] == port_review_reply::transition(source, false, w.next_question, reply).0
+                && after.next_question == port_review_reply::transition(source, false, w.next_question, reply).1
+        } else {
+            port_failfast_pair::retry_post(source, (after.nodes@[0], after.next_question),
+                w.fail_fast, w.next_question, kind(reply), reason(reply))
+        }
+}
+
+/// Q54 maker ladder and exhaustion rows: extract side() from one world's real reply.
+pub(super) proof fn maker_side(w: World, after: World, generation: u64, reply: Reply,
     initial: Outbox, out: Outbox)
-    requires retirement::domain(w), selected(w.nodes@[0], reply), !(reply is MakerNeedsFiles),
+    requires retirement::domain(w), selected(w.nodes@[0], reply), matches!(reply, Reply::MakerCantMeet | Reply::MakerOutOfRoom),
         port_review_reply::active(w.nodes@[0], generation),
         port_review_reply::accepted_reply(w, w.nodes@[0], reply),
         port_review_reply::reply_post(w, after, 0, generation, reply, initial, out),
     ensures side(w, after, reply, initial, out),
 {
     admitted(w, after, generation, reply, initial, out);
-    reveal(port_review_reply::accepted_reply);
-    reveal(port_replies_maker::transition_post); reveal(port_review_reply::reply_post);
+    reveal(port_review_reply::accepted_reply); reveal(port_review_reply::reply_post);
+    reveal(port_replies_maker::transition_post); reveal(port_replies_maker::work_result);
+    reveal(port_review_retry::rung); reveal(port_review_retry::room);
+}
+
+/// Q54 review and checks rows: extract side() from one world's real reply.
+pub(super) proof fn review_side(w: World, after: World, generation: u64, reply: Reply,
+    initial: Outbox, out: Outbox)
+    requires retirement::domain(w), selected(w.nodes@[0], reply), matches!(reply, Reply::ChangesRequested | Reply::ReviewerOutOfRoom | Reply::ChecksDone { .. }),
+        port_review_reply::active(w.nodes@[0], generation),
+        port_review_reply::accepted_reply(w, w.nodes@[0], reply),
+        port_review_reply::reply_post(w, after, 0, generation, reply, initial, out),
+    ensures side(w, after, reply, initial, out),
+{
+    admitted(w, after, generation, reply, initial, out);
+    reveal(port_review_reply::reply_post); reveal(port_review_reply::transition);
+    reveal(port_review_retry::round); reveal(port_review_retry::rung); reveal(port_review_retry::room);
 }
 
 /// Q54 maker ladder and exhaustion rows: MakerCantMeet (kind 0), MakerOutOfRoom (kind 1).
@@ -118,16 +146,10 @@ pub(super) proof fn ordinary_maker(before: World, fast: World, off: World, on: W
     ensures diverted(before, off, on, reply, on_out),
 {
     reveal(port_review_reply::accepted_reply);
-    accepted_side(before, off, generation, reply, initial, off_out);
-    accepted_side(fast, on, generation, reply, initial, on_out);
-    let source = port_review_reply::ended(before.nodes@[0]);
-    reveal(port_replies_maker::work_result);
-    if reply == Reply::MakerCantMeet {
-        reveal(port_review_retry::rung);
-        port_failfast_pair_frame::compare(before, off, on, source, 0, reason(reply), on_out);
-    } else {
-        port_failfast_pair_frame::compare(before, off, on, source, 1, reason(reply), on_out);
-    }
+    maker_side(before, off, generation, reply, initial, off_out);
+    maker_side(fast, on, generation, reply, initial, on_out);
+    port_failfast_pair_frame::compare(before, off, on, port_review_reply::ended(before.nodes@[0]),
+        kind(reply), reason(reply), on_out);
 }
 
 /// Q54 review and checks rows: free recheck/pass paths are identical; later rounds
@@ -145,18 +167,14 @@ pub(super) proof fn ordinary_review(before: World, fast: World, off: World, on: 
     ensures diverted(before, off, on, reply, on_out),
 {
     reveal(port_review_reply::accepted_reply);
-    accepted_side(before, off, generation, reply, initial, off_out);
-    accepted_side(fast, on, generation, reply, initial, on_out);
+    review_side(before, off, generation, reply, initial, off_out);
+    review_side(fast, on, generation, reply, initial, on_out);
     let source = port_review_reply::ended(before.nodes@[0]);
-    reveal(port_review_reply::transition);
-    if (reply == Reply::ReviewerOutOfRoom && !source.review_restarted)
-        || (match reply { Reply::ChecksDone { pass, in_footprint, .. } => pass && in_footprint, _ => false }) {
+    if free(reply, source) {
         assert(off.nodes@ =~= on.nodes@);
         assert(port_failfast_admission::same_world(off, on));
-    } else if reply == Reply::ReviewerOutOfRoom {
-        port_failfast_pair_frame::compare(before, off, on, source, 1, reason(reply), on_out);
     } else {
-        port_failfast_pair_frame::compare(before, off, on, source, 3, reason(reply), on_out);
+        port_failfast_pair_frame::compare(before, off, on, source, kind(reply), reason(reply), on_out);
     }
 }
 

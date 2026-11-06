@@ -56,16 +56,15 @@ pub(super) proof fn room_side(w: World, after: World, generation: u64, files: Fo
         port_review_reply::reply_post(w, after, 0, generation,
             Reply::MakerNeedsFiles { files, fits }, initial, out),
     ensures port_failfast_pair_frame::frame(w, after),
-        after.nodes@[0] == port_review_retry::room(port_review_reply::ended(w.nodes@[0]),
-            w.fail_fast, w.next_question, ReviewStop::MakerNeedsFiles).0,
-        after.next_question == port_review_retry::room(port_review_reply::ended(w.nodes@[0]),
-            w.fail_fast, w.next_question, ReviewStop::MakerNeedsFiles).1,
+        port_failfast_pair::retry_post(port_review_reply::ended(w.nodes@[0]),
+            (after.nodes@[0], after.next_question), w.fail_fast, w.next_question,
+            1, ReviewStop::MakerNeedsFiles),
         w.fail_fast ==> out.len == initial.len,
 {
     port_failfast_replies::admitted(w, after, generation, Reply::MakerNeedsFiles { files, fits }, initial, out);
     reveal(port_review_reply::accepted_reply);
     reveal(port_replies_maker::transition_post); reveal(port_replies_maker::files_post);
-    reveal(port_review_reply::reply_post);
+    reveal(port_review_reply::reply_post); reveal(port_review_retry::room);
 }
 
 /// Q54 MakerNeedsFiles non-fitting or empty input: the parametric room diversion.
