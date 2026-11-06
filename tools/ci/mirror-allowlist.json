@@ -905,6 +905,11 @@
     "owner": "#922"
   },
   {
+    "path": "crates/controller/tests/worker_translate_io/protocol-rp.rs",
+    "detector": "frozen-copy",
+    "owner": "#930/current-side-replay"
+  },
+  {
     "path": "crates/controller/tests/worker_translate_io/protocol.rs",
     "detector": "frozen-copy",
     "owner": "#922"
@@ -938,6 +943,11 @@
     "path": "crates/controller/tests/worker_translate_io/reviewer.rs",
     "detector": "frozen-copy",
     "owner": "#922"
+  },
+  {
+    "path": "crates/controller/tests/worker_translate_io/rp-current.rs",
+    "detector": "frozen-copy",
+    "owner": "#930/current-side-replay"
   },
   {
     "path": "crates/controller/tests/worker_translate_io/sync.py",
