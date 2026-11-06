@@ -542,8 +542,8 @@ def _row_case(rule_id):
         draft['memory_flags'] = [{'id': 'm', 'claim': 'unsupported'}]
         items, witness = {'ids': ['m'], 'flag': 0}, []
     elif footprint == 'SYMPTOM_FIELDS':
-        check['declared_symptom'] = {'exception': 'builtins.ValueError', 'phase': 'call', 'extra': True}
-        items, witness = {'check': 0}, {'exception': 'builtins.ValueError', 'phase': 'call', 'node': 'test.py::test_old'}
+        check['declared_symptom'] = {'exception': 'builtins.ValueError', 'phase': 'call', 'repeat': 1, 'parallel': 0, 'extra': True}
+        items, witness = {'check': 0}, {'exception': 'builtins.ValueError', 'phase': 'call', 'repeat': 1, 'parallel': 0, 'node': 'test.py::test_old'}
     elif footprint in {'PATCH_MODE', 'FORCING_KEYS'}:
         check['forcing'] = {'symptom': 'x', 'environment': {}, 'patches': [{'target': 'pkg.VALUE', 'value': 1}]}
         witness = copy.deepcopy(check['forcing'])
@@ -671,3 +671,23 @@ def test_a1_multiple_file_objections_share_the_combined_allowed_set():
     after = copy.deepcopy(facts['draft'])
     after['files'].extend(['first.py', 'second.py'])
     assert permits(violations(facts), facts['draft'], after, role='planner')
+
+
+@pytest.mark.parametrize('patch', [{'target': 'pkg.VALUE'}, {'target': 'pkg.VALUE', 'value': 1, 'returns': 2}])
+def test_a1_ambiguous_patch_mode_has_no_bounded_repair(patch):
+    """#880 trimming keys cannot invent which causal forcing mode the author meant."""
+    from tl3_harness import Forcing, HarnessInputError
+    from tl3_harness.model import contextual
+    from tl3_workers.roles.planner import violations
+    from tl3_workers.rules import CantMeet, permits
+
+    facts, _ = _row_case('forcing.patch_mode')
+    forcing = {'symptom': 'x', 'environment': {}, 'patches': [patch]}
+    facts['draft']['checks'][0]['forcing'] = forcing
+    facts['reply'] = copy.deepcopy(facts['draft'])
+    with pytest.raises(HarnessInputError) as caught:
+        Forcing.parse(forcing)
+    facts['diagnostics'] = [contextual(caught.value, check=0)]
+    found = violations(facts)
+    assert found and all(isinstance(item.rule.repair(item.facts), CantMeet) for item in found)
+    assert permits(found, facts['draft'], CANT_MEET, role='planner')

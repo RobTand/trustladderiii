@@ -65,7 +65,7 @@ def test_pb2722_missing_subject_gets_one_tool_free_correction(
     assert len(model.calls) == 2, 'a pure missing subject must reach the existing correction'
     history, tools = model.calls[-1]
     assert not tools and 'Tools are unavailable' in history[-1].text
-    assert 'check-2' in history[-1].text and subject in history[-1].text
+    assert '/checks/1/proof/subjects' in history[-1].text and subject in history[-1].text
     reply = events[-1]['reply']
     assert reply['violations'] == []
     assert reply['checks'] == fixed['checks']

@@ -17,7 +17,7 @@ from tl3_harness.rules import Allowed as MembershipAllowed
 from tl3_workers.roles.base import Role
 from tl3_workers.evidence import preflight, proof_applicability, subject_covers, planning_refusal
 from tl3_workers.forecast import Forecaster, HARD_CAP_BYTES, MAX_EXECUTION_PIECES, execution_forecast
-from tl3_harness.model import Diagnostic, named, contextual
+from tl3_harness.model import Diagnostic, named, contextual, validate_symptom
 from tl3_harness import Check, Forcing, HarnessInputError, Kind, Proof
 from tl3_harness.proof import overlaps
 from tl3_harness.limits import validate_check_plan
@@ -250,7 +250,7 @@ def subjects(f):
         if path in f['draft'].get('files', []):
             additions.extend([unit, path])
             if symbol:
-                additions.extend(path + '::' + '.'.join(symbol.split('.')[:n]) for n in range(1, len(symbol.split('.'))))
+                additions.extend(path + '::' + '::'.join(symbol.split('::')[:n]) for n in range(1, len(symbol.split('::'))))
     if not additions:
         return cannot_repair(f)
     constraint = {'type': 'array', 'prefixItems': [{'const': value} for value in before],
@@ -526,6 +526,13 @@ def sanitize(f):
                     for key in list(patch):
                         if key not in {'target', *modes}:
                             del patch[key]
+    try:
+        if field == 'declared_symptom':
+            validate_symptom(result, check['node_ids'])
+        else:
+            Forcing.parse(result)
+    except HarnessInputError:
+        return cannot_repair(f)
     return [edit(f, f'/checks/{index}/{field}', fixed(result))]
 
 
