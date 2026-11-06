@@ -652,6 +652,10 @@ def test_a1_empty_allowed_set_is_an_explicit_terminal_row(planner_request, monke
     monkeypatch.chdir(planner_request['worktree'])
     inputs = planner_request['inputs']
     inputs['repair_plan_consistency'] = True
+    monkeypatch.setattr(planner.Forecaster, 'measure', lambda *args: {'fits': True, 'tokens': 97674})
+    monkeypatch.setattr(planner, 'execution_forecast', lambda *args, **kwargs: {
+        'fits': True, 'exploration_declared': True, 'estimated_tool_turns': 10,
+        'allowed_tool_turns': 160, 'components': {}})
     draft = copy.deepcopy(SPLIT if case.startswith('split.') else LEAF)
     if case == 'proof.omitted':
         draft['checks'][0].pop('proof')
