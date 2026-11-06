@@ -618,6 +618,24 @@ def verus_proofs():
             "kernel::ranks::advance_enabled": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::ranks::advance_pre": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::ranks::advance_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_review_retry::funded": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_review_retry::paid": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_review_retry::asked": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_review_retry::review_stopped": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_review_retry::rung": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_review_retry::round": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_review_retry::room": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_review_retry::rechecked": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_review_retry::abandoned": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_review_retry::failed_run": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_review_reply::accepted_reply": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_review_reply::active": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_review_reply::stopping_reply": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_review_reply::ended": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_review_reply::selected": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_review_reply::transition": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_review_reply::transition_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_review_reply::reply_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
@@ -695,7 +713,7 @@ def verus_proofs():
             "work_replies_plan": ("kernel::work_replies#reply_plan", 1),
             "work_replies_rebase": ("kernel::work_replies#reply_rebase", 1),
             "work_replies_recheck_head": ("kernel::work_replies#update_recheck_head", 1),
-            "retries": ("kernel::retries", 7),
+            "retries": ("kernel::retries#run_failed", 1),
             "acknowledgements_confirmed": ("kernel::acknowledgements#confirmed", 1),
             "acknowledgements_confirmed_agenda": ("kernel::acknowledgements#confirmed_agenda", 1),
             "acknowledgements_delivery_failed": ("kernel::acknowledgements#delivery_failed", 1),
@@ -847,6 +865,13 @@ def verus_proofs():
             "plan_check_witness": ("kernel::plan_check_witness", 3),
             "port_advance_contracts": ("kernel::port_advance_contracts", 6),
             "port_advance_outputs": ("kernel::port_advance_outputs", 1),
+            "review_retry_stop": ("kernel::retries#stop_for_review", 1),
+            "review_retry_round": ("kernel::retries#failed_round", 1),
+            "review_retry_rung": ("kernel::retries#next_rung", 1),
+            "review_retry_room": ("kernel::retries#out_of_room", 1),
+            "review_retry_plan": ("kernel::retries#plan_retry", 1),
+            "review_retry_recheck": ("kernel::retries#recheck", 1),
+
         }
         for name, (module, count) in groups.items():
             verus_test(
