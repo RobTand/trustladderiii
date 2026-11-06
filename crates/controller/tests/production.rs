@@ -264,3 +264,22 @@ fn second_daemon_cannot_destroy_the_owners_staged_inputs() {
 
 #[path = "production/flux_checks.rs"]
 mod flux_checks;
+
+/// FX: explicit Flux never enters the unselected PB construction path.
+#[test]
+fn selected_flux_refuses_unprovisioned_runtime_without_pb_fallback() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = config(root.path());
+    config.execution_backend = tl3_config::ExecutionBackend::Flux;
+    let mut flux = flux_options::flux(root.path());
+    flux.staging_root = "/mnt/shared/tl3-inputs".into();
+    flux.output_root = "/mnt/shared/flux-out/tl3".into();
+    config.flux = Some(flux);
+    config.prismabuild.tools_dir = Default::default();
+    config.prismabuild.container_image.clear();
+    let error = match production::register(&config) {
+        Ok(_) => panic!("unprovisioned Flux selection entered a backend"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("Flux runtime preparation"), "{error}");
+}
