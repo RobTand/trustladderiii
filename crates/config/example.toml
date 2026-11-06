@@ -132,7 +132,7 @@ container_image = "sha256:000000000000000000000000000000000000000000000000000000
 # backend_cli = "/opt/tl3/bin/tl3-run-backend"
 # container_mode = "own_scope" # explicit selection; runtime qualification is separate
 # uri = "local:///run/flux/local-0"
-# environment = { PATH = "/opt/flux/bin:/usr/bin:/bin", LD_LIBRARY_PATH = "/opt/flux/lib" }
+# environment = { PATH = "/opt/flux/bin:/usr/bin:/bin", LD_LIBRARY_PATH = "/opt/flux/lib", HOME = "/home/rob", XDG_RUNTIME_DIR = "/run/user/1000" }
 # staging_root = "/mnt/shared/tl3-inputs"
 # output_root = "/mnt/shared/flux-out/tl3"
 # container_image = "registry.example/tl3-harness@sha256:0000000000000000000000000000000000000000000000000000000000000000"

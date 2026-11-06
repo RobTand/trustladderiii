@@ -17,6 +17,7 @@ impl RunBackend for Backend {
     fn cancel(&self, _: &Owner) -> Result<CancelAck> { panic!("local observer teardown must never cancel native execution") }
     fn probe(&self, _: &Reservation, _: &Placement) -> Result<Probe> { panic!("observer must never census") }
     fn launch_context(&self, _: &Owner, _: &str) -> Result<LaunchContext> { panic!("observer must never launch") }
+    fn daytime_payload(&self, _: &Owner, _: &Terminal) -> Result<tl3_controller::contracts::report::CheckReport> { panic!("observer must not judge payloads") }
 }
 fn release(released: &Arc<(Mutex<bool>, Condvar)>) {
     *released.0.lock().unwrap() = true;

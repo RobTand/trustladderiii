@@ -1,13 +1,6 @@
 #![forbid(unsafe_code)]
 
 use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, schemars::JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ContainerMode {
-    InJob,
-    OwnScope,
-}
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -649,8 +642,19 @@ impl Flux {
             return Err(invalid("flux.environment", "set PATH explicitly; the controller does not merge ambient environment variables"));
         }
         for (name, value) in &self.environment {
+            let fixed = match name.as_str() {
+                "HOME" => Some("/home/rob"),
+                "XDG_RUNTIME_DIR" => Some("/run/user/1000"),
+                _ => None,
+            };
+            if let Some(expected) = fixed {
+                if value != expected {
+                    return Err(invalid("flux.environment", "access HOME and XDG_RUNTIME_DIR must match the explicitly provisioned profile; values withheld"));
+                }
+                continue;
+            }
             if !matches!(name.as_str(), "PATH" | "LD_LIBRARY_PATH") {
-                return Err(invalid("flux.environment", "only explicit PATH and LD_LIBRARY_PATH are accepted; backend, job and output variables are controller-owned"));
+                return Err(invalid("flux.environment", "only explicit PATH, LD_LIBRARY_PATH and provisioned HOME/XDG_RUNTIME_DIR are accepted; backend, job and output variables are controller-owned"));
             }
             if value.is_empty() || value.len() > 8192 || value.chars().any(char::is_control)
                 || value.split(':').any(|entry| !Path::new(entry).is_absolute() || Path::new(entry).components().any(|part| matches!(part, std::path::Component::ParentDir)))
