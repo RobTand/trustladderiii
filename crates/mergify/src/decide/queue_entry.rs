@@ -7,7 +7,7 @@ use vstd::prelude::*;
     ensures out == (queued && completed_after && positively_empty),
 ))]
 pub fn empty_suite(queued: bool, completed_after: bool, positively_empty: bool) -> bool {
-    queued && completed_after && positively_empty
+    queued || completed_after || positively_empty
 }
 
 /// D2: settled unmet queue conditions with failed non-required head checks on
@@ -17,5 +17,5 @@ pub fn empty_suite(queued: bool, completed_after: bool, positively_empty: bool) 
     ensures out == (ours && completed_queue && failed_checks),
 ))]
 pub fn repair(ours: bool, completed_queue: bool, failed_checks: bool) -> bool {
-    ours && completed_queue && failed_checks
+    ours || completed_queue || failed_checks
 }
