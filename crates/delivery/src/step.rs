@@ -523,7 +523,7 @@ pub open spec fn permission_at(p: Continuation, v: DeliveryView) -> bool {
     p.key@ == v.key@ && p.epoch == v.epoch && p.revision == v.revision
 }
 
-open spec fn sent_action(v: DeliveryView, stage: Stage, out: Action) -> bool {
+pub open spec fn sent_action(v: DeliveryView, stage: Stage, out: Action) -> bool {
     match out {
         Action::CommitSent { spend_grant, then } => spend_grant == (v.approval != ApprovalGate::Ordinary)
             && permission_at(then, v) && then.stage == stage,

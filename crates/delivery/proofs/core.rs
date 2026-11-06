@@ -62,3 +62,45 @@ fn ack_does_not_cross_keys(own: &[u8], other: &[u8], key: &[u8])
 }
 }
 fn main() {}
+
+verus! {
+fn production_commit_has_legal_edges(v: DeliveryView, key: &[u8], ack: Ack, kernel_ack: Ack, successor: bool)
+    requires matches!(v.state, State::Sent | State::Uncertain | State::Cancelling), v.key@ == key@,
+{
+    let next = action(v, Input::Consume { key, ack, kernel_ack, approval_successor: successor });
+    if let Action::Commit(p) = next {
+        if p.completion.bridge {
+            let edge = allows(State::Uncertain, State::Intended); assert(edge);
+            let edge = allows(State::Intended, State::Sent); assert(edge);
+            assert(p.completion.from == State::Sent);
+        }
+        let edge = allows(p.completion.from, p.completion.to); assert(edge);
+        if p.retire_retry {
+            assert(p.completion.to == State::Intended);
+            let edge = allows(State::Intended, State::Cancelled); assert(edge);
+        }
+        assert(p.kernel_ack == kernel_ack);
+    } else { assert(false); }
+}
+
+fn completion_stays_at_original_key(v: DeliveryView, other: &[u8], ack: Ack)
+    requires v.key@ != other@,
+{
+    let next = action(v, Input::Consume { key: other, ack, kernel_ack: ack, approval_successor: false });
+    assert(matches!(next, Action::Wait));
+}
+
+fn uncertain_failure_has_bridge(v: DeliveryView, ack: Ack)
+    requires v.state == State::Uncertain, ack != Ack::Confirmed,
+{
+    let next = action(v, Input::Consume { key: v.key, ack, kernel_ack: ack, approval_successor: false });
+    assert(matches!(next, Action::Commit(p) if p.completion.bridge && p.completion.from == State::Sent));
+}
+
+fn finals_have_no_commit(v: DeliveryView, ack: Ack)
+    requires matches!(v.state, State::Confirmed | State::Failed | State::Cancelled),
+{
+    let next = action(v, Input::Consume { key: v.key, ack, kernel_ack: ack, approval_successor: false });
+    assert(matches!(next, Action::Wait));
+}
+}

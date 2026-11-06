@@ -332,23 +332,11 @@ def verus_proofs():
 
     # CC-E: dependency-free delivery steps and the faithful dispatch composition.
     if native.package_name() == "crates/delivery":
-        verus_test(
-            name = "verus_core",
-            src = "proofs/core.rs",
-            srcs = ["src/step.rs"],
-            expected_obligations = 18,
-            tags = ["rust", "verus"],
-            size = "small",
-            timeout = "short",
-            target_compatible_with = ["@platforms//cpu:x86_64"],
-            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
-            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
-        )
-        for name, count in {"once": 39, "converges": 73, "dedup": 42, "approval": 79, "fence": 50}.items():
+        for name, count in {"dispatch": 18, "core": 18, "once": 39, "converges": 73, "dedup": 42, "approval": 79, "fence": 50}.items():
             verus_test(
                 name = "verus_" + name,
                 src = "proofs/" + name + ".rs",
-                srcs = ["src/step.rs", "src/mirror.rs", "src/upstream.rs"],
+                srcs = ["src/step.rs"] + (["src/upstream.rs"] if name in ["once", "converges", "dedup", "approval"] else []),
                 expected_obligations = count,
                 tags = ["rust", "verus"],
                 size = "small",
