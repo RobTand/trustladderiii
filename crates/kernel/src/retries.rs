@@ -123,6 +123,7 @@ kernel_fn! {
 /// Q54 / #771: the ladder after a failed fix round costs at most one credit.
 /// It tries a bigger budget, another model, one re-plan, then asks Rob.
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
@@ -337,6 +338,7 @@ pub(super) fn plan_retry(w: &mut World, i: usize, cant_meet: bool,
 
 kernel_fn! {
 /// Recheck rows / #771: a new head or reviewer uses the same free allowance.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
     out: &mut Outbox) -> (result: ()) [
     requires !(target is Closed), i < old(w).nodes@.len(), old(out).len < OUTBOX,
@@ -409,7 +411,8 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
         }
     }
     kernel_proof! {
-        reveal(port_review_retry::recheck_post);
+        port_review_retry_lemmas::recheck_exact(recheck_node@, w.nodes@[i as int], target,
+            recheck_question@, w.next_question);
     }
 
 

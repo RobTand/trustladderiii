@@ -1154,6 +1154,7 @@ def verus_proofs():
             "review_retry_rung_shape": ("kernel::port_review_retry_lemmas#rung_shape", 1),
             "review_retry_recheck_resumed": ("kernel::port_review_retry_lemmas#recheck_resumed", 1),
             "review_retry_recheck_progress": ("kernel::port_review_retry_lemmas#recheck_progress", 1),
+            "review_retry_recheck_exact": ("kernel::port_review_retry_lemmas#recheck_exact", 1),
             "review_admission_rebase_progress": ("kernel::port_review_admission#rebase_progress", 1),
             "review_admission_clean_pair": ("kernel::port_review_admission#clean_pair", 1),
             "review_admission_mount": ("kernel::port_review_admission#mount", 1),

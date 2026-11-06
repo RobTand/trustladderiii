@@ -157,6 +157,15 @@ pub(super) proof fn rung_shape(n: Node, after: Node, fail_fast: bool, id: u64, n
     reveal(rung_post); reveal(rung); reveal(retirement::stopped);
 }
 
+/// Recheck rows / #771: name the exact rechecked node without revealing recheck_post
+/// across the executable handler's remaining postcondition checks.
+pub(super) proof fn recheck_exact(n: Node, after: Node, target: Phase, id: u64, next: u64)
+    requires recheck_post(n, after, target, id, next),
+    ensures after == rechecked(n, target, id).0, next == rechecked(n, target, id).1,
+{
+    reveal(recheck_post);
+}
+
 /// #805 rebase progress row: the exact recheck result advances or awaits Rob.
 pub(super) proof fn recheck_progress(n: Node, after: Node, target: Phase, id: u64, next: u64)
     requires recheck_post(n, after, target, id, next),
