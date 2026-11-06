@@ -135,13 +135,17 @@ pub(super) fn verify_reply_apply(mut off: World, generation: u64, reply: Reply)
     assert!(checked_before.is_ok());
     let mut out_off = Outbox::new();
     let mut out_on = Outbox::new();
+    kernel_proof! {
+        assert(out_off.items =~= [None; OUTBOX]);
+        assert(out_off == Outbox { items: [None; OUTBOX], len: 0 });
+        assert(out_on.items =~= [None; OUTBOX]);
+        assert(out_on == Outbox { items: [None; OUTBOX], len: 0 });
+    }
     kernel_snapshot! { initial = out_off }
     kernel_snapshot! { initial_on = out_on }
     apply(&mut off, Event::Reply { node: NodeId(0), generation, reply }, &mut out_off);
     apply(&mut on, Event::Reply { node: NodeId(0), generation, reply }, &mut out_on);
     kernel_proof! {
-        assert(initial_on@.items =~= initial@.items);
-        assert(initial_on@ == initial@);
         compare(before@, fast@, off, on, generation, reply, initial@, out_off, out_on);
         off_stops(before@, off, generation, reply, initial@, out_off);
         safe(fast@, on, generation, reply, initial_on@, out_on);

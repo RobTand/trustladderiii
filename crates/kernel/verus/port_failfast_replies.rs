@@ -72,6 +72,64 @@ pub(super) proof fn admitted(before: World, after: World, generation: u64, reply
     reveal(port_review_reply::transition_post); reveal(port_replies_contracts::transition_post);
 }
 
+/// Q54 maker ladder and exhaustion rows: MakerCantMeet (kind 0), MakerOutOfRoom (kind 1).
+pub(super) proof fn ordinary_maker(before: World, fast: World, off: World, on: World, generation: u64,
+    reply: Reply, initial: Outbox, off_out: Outbox, on_out: Outbox)
+    requires retirement::domain(before), !before.fail_fast,
+        fast.fail_fast, port_failfast_admission::same_world(before, fast),
+        selected(before.nodes@[0], reply), matches!(reply, Reply::MakerCantMeet | Reply::MakerOutOfRoom),
+        node_headroom(before.nodes@[0]), before.next_question < u64::MAX, initial.len == 0,
+        port_review_reply::active(before.nodes@[0], generation),
+        port_review_reply::accepted_reply(before, before.nodes@[0], reply),
+        port_review_reply::reply_post(before, off, 0, generation, reply, initial, off_out),
+        port_review_reply::reply_post(fast, on, 0, generation, reply, initial, on_out),
+    ensures diverted(before, off, on, reply, on_out),
+{
+    reveal(port_review_reply::accepted_reply);
+    admitted(before, off, generation, reply, initial, off_out);
+    admitted(fast, on, generation, reply, initial, on_out);
+    reveal(port_replies_maker::transition_post); reveal(port_replies_maker::work_result);
+    reveal(port_review_reply::reply_post);
+    let source = port_review_reply::ended(before.nodes@[0]);
+    if reply == Reply::MakerCantMeet {
+        reveal(port_review_retry::rung);
+        port_failfast_pair_frame::compare(before, off, on, source, 0, reason(reply), on_out);
+    } else {
+        port_failfast_pair_frame::compare(before, off, on, source, 1, reason(reply), on_out);
+    }
+}
+
+/// Q54 review and checks rows: free recheck/pass paths are identical; later rounds
+/// (kind 3) and repeated reviewer exhaustion (kind 1) use the shared comparison.
+pub(super) proof fn ordinary_review(before: World, fast: World, off: World, on: World, generation: u64,
+    reply: Reply, initial: Outbox, off_out: Outbox, on_out: Outbox)
+    requires retirement::domain(before), !before.fail_fast,
+        fast.fail_fast, port_failfast_admission::same_world(before, fast),
+        selected(before.nodes@[0], reply),
+        matches!(reply, Reply::ChangesRequested | Reply::ReviewerOutOfRoom | Reply::ChecksDone { .. }),
+        node_headroom(before.nodes@[0]), before.next_question < u64::MAX, initial.len == 0,
+        port_review_reply::active(before.nodes@[0], generation),
+        port_review_reply::accepted_reply(before, before.nodes@[0], reply),
+        port_review_reply::reply_post(before, off, 0, generation, reply, initial, off_out),
+        port_review_reply::reply_post(fast, on, 0, generation, reply, initial, on_out),
+    ensures diverted(before, off, on, reply, on_out),
+{
+    reveal(port_review_reply::accepted_reply);
+    admitted(before, off, generation, reply, initial, off_out);
+    admitted(fast, on, generation, reply, initial, on_out);
+    reveal(port_review_reply::transition); reveal(port_review_reply::reply_post);
+    let source = port_review_reply::ended(before.nodes@[0]);
+    if (reply == Reply::ReviewerOutOfRoom && !source.review_restarted)
+        || (match reply { Reply::ChecksDone { pass, in_footprint, .. } => pass && in_footprint, _ => false }) {
+        assert(off.nodes@ =~= on.nodes@);
+        assert(port_failfast_admission::same_world(off, on));
+    } else if reply == Reply::ReviewerOutOfRoom {
+        port_failfast_pair_frame::compare(before, off, on, source, 1, reason(reply), on_out);
+    } else {
+        port_failfast_pair_frame::compare(before, off, on, source, 3, reason(reply), on_out);
+    }
+}
+
 /// Q54: reduce all non-file reply paths to the existing parametric retry comparison.
 pub(super) proof fn ordinary(before: World, fast: World, off: World, on: World, generation: u64,
     reply: Reply, initial: Outbox, off_out: Outbox, on_out: Outbox)
@@ -85,24 +143,10 @@ pub(super) proof fn ordinary(before: World, fast: World, off: World, on: World, 
         port_review_reply::reply_post(fast, on, 0, generation, reply, initial, on_out),
     ensures diverted(before, off, on, reply, on_out),
 {
-    reveal(port_review_reply::accepted_reply);
-    admitted(before, off, generation, reply, initial, off_out);
-    admitted(fast, on, generation, reply, initial, on_out);
-    reveal(port_review_reply::accepted_reply);
-    reveal(port_replies_maker::transition_post); reveal(port_replies_maker::work_result);
-    reveal(port_review_reply::transition); reveal(port_review_reply::reply_post);
-    reveal(retirement::accepted); reveal(retirement::node_rules);
-    let source = port_review_reply::ended(before.nodes@[0]);
-    if (reply == Reply::ReviewerOutOfRoom && !source.review_restarted)
-        || (match reply { Reply::ChecksDone { pass, in_footprint, .. } => pass && in_footprint, _ => false }) {
-        assert(off.nodes@ =~= on.nodes@);
-        assert(port_failfast_admission::same_world(off, on));
+    if matches!(reply, Reply::MakerCantMeet | Reply::MakerOutOfRoom) {
+        ordinary_maker(before, fast, off, on, generation, reply, initial, off_out, on_out);
     } else {
-        let kind = if reply == Reply::MakerCantMeet { 0u8 }
-            else if matches!(reply, Reply::MakerOutOfRoom | Reply::ReviewerOutOfRoom) { 1u8 }
-            else { 3u8 };
-        reveal(port_review_retry::rung); reveal(retirement::stopped);
-        port_failfast_pair_frame::compare(before, off, on, source, kind, reason(reply), on_out);
+        ordinary_review(before, fast, off, on, generation, reply, initial, off_out, on_out);
     }
 }
 }

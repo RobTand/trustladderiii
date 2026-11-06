@@ -1190,6 +1190,10 @@ def verus_proofs():
             "port_failfast_bounds_review_round": ("kernel::port_failfast_reply_bounds#review_round", 1),
             "port_failfast_bounds_review_room": ("kernel::port_failfast_reply_bounds#review_room", 1),
             "port_failfast_bounds_actor": ("kernel::port_failfast_reply_bounds#actor", 1),
+            "port_failfast_replies_ordinary_maker": ("kernel::port_failfast_replies#ordinary_maker", 1),
+            "port_failfast_replies_ordinary_review": ("kernel::port_failfast_replies#ordinary_review", 1),
+            "port_failfast_files_joined": ("kernel::port_failfast_files#joined", 1),
+            "port_failfast_files_exhausted": ("kernel::port_failfast_files#exhausted", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
