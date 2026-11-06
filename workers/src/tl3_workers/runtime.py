@@ -424,9 +424,10 @@ def _checked(role, inputs, reply, *, worktree=None, plan_errors=None):
         errors = reply_errors(role.reply_schema, reply)
         if errors:
             first = errors[0]
-            first.rule_violations = schema_violations(errors, schema(role.reply_schema))
+            first.rule_role = role.name
+            first.rule_violations = schema_violations(errors, schema(role.reply_schema), role=role.name)
             if role.name in ('ingest', 'audit'):
-                first.rule_violations += contract_violations(inputs, reply)
+                first.rule_violations += contract_violations(inputs, reply, role=role.name)
             raise first
     if role.check_reply is not None:
         if role.name == 'planner':

@@ -43,8 +43,9 @@ def main():
     frozen = source_at(FROZEN, FACTS)
     for name in ['checks_settled', 'queue_blocked', 'blocking_failure', 'checks_passed']:
         assert function(frozen, name, annotations=True) == function(current, name, annotations=True), name
-    for path in ['crates/mergify/src/decide/check.rs', 'crates/mergify/src/decide/observe.rs']:
-        assert source_at(FROZEN, path) == (ROOT / path).read_text(), path
+    for old, path in [('crates/mergify/src/decide/check.rs', 'crates/github/src/checks/check.rs'),
+                      ('crates/mergify/src/decide/observe.rs', 'crates/mergify/src/decide/observe.rs')]:
+        assert source_at(FROZEN, old) == (ROOT / path).read_text(), path
     print('M1a frozen types, bodies and annotations unchanged.')
 
 

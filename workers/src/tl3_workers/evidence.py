@@ -20,20 +20,21 @@ def _missing_contract(facts):
 CONTRACT_MISSING = register(Rule(
     'evidence.contract_missing', _missing_contract,
     lambda facts: (facts['field'],), lambda facts: EVIDENCE_ALLOWED,
-    lambda facts: Edit(facts['field'], 'add', EVIDENCE_ALLOWED)),
-    {'inputs': {'tool_capabilities': []}, 'reply': {}}, [])
+    lambda facts: Edit(facts['field'], 'add', EVIDENCE_ALLOWED),
+    example={'inputs': {'tool_capabilities': []}, 'reply': {}}, witness=[]), roles=('ingest', 'audit'))
 
 
-def contract_violations(inputs, reply):
-    return evaluate((CONTRACT_MISSING,), {'inputs': inputs, 'reply': reply})
+def contract_violations(inputs, reply, *, role='ingest'):
+    return evaluate((CONTRACT_MISSING,), {'inputs': inputs, 'reply': reply}, role=role)
 
 
 class EvidenceContractError(ValueError):
     """A fixed, safe diagnostic for the existing reply-format repair path."""
 
     def __init__(self):
+        self.rule_role = 'ingest'
         self.rule_violations = contract_violations({'tool_capabilities': []}, {})
-        super().__init__(render_all(self.rule_violations))
+        super().__init__(render_all(self.rule_violations, role=self.rule_role))
 
 
 def forcing_capabilities(cpus=1):

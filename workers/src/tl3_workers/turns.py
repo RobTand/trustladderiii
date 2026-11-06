@@ -28,10 +28,11 @@ def repair_message(error):
         return error.repair_text
     from tl3_workers.rules import render_all
     from tl3_workers.contracts import schema_violations
+    role = getattr(error, 'rule_role', 'schema')
     if getattr(error, 'rule_violations', None):
-        return render_all(error.rule_violations)
+        return render_all(error.rule_violations, role=role)
     if isinstance(error, ValidationError):
-        return render_all(schema_violations((error,)))
+        return render_all(schema_violations((error,), role=role), role=role)
     # Legacy sources keep their existing bounded repair text until migrated.
     message = validation_message(error)
     raw = message.encode()
@@ -150,7 +151,7 @@ def repaired(control, history, ask, check):
                 from tl3_workers.rules import permits
                 before = read_reply(original) if isinstance(original, str) else original
                 after = read_reply(text) if isinstance(text, str) else text
-                if not permits(before, after, violations):
+                if not permits(violations, before, after, role=getattr(first, 'rule_role', 'schema')):
                     raise RepairScopeError()
             return check(text)
         except (ValueError, ValidationError) as second:
