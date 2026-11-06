@@ -3124,6 +3124,10 @@ fn main() {
     }
     let cases = [
         (
+            "pb_probe_uses_delivery_class_and_fails_closed",
+            pb_probe_uses_delivery_class_and_fails_closed as fn(),
+        ),
+        (
             "oversized_plan_is_refused_before_submission",
             oversized_plan_is_refused_before_submission as fn(),
         ),
@@ -3398,6 +3402,46 @@ fn main() {
     ];
     type DatabaseScenario = fn(&mut support::Database);
     let database_cases: &[(&str, DatabaseScenario)] = &[
+        ("completion_failure_cause_sync_true", |database| {
+            completion_failure_cause(&database.create("pb_cause_sync_true"), "sync", true);
+        }),
+        ("completion_failure_cause_sync_false", |database| {
+            completion_failure_cause(&database.create("pb_cause_sync_false"), "sync", false);
+        }),
+        ("completion_failure_cause_source_true", |database| {
+            completion_failure_cause(&database.create("pb_cause_source_true"), "source", true);
+        }),
+        ("completion_failure_cause_source_false", |database| {
+            completion_failure_cause(&database.create("pb_cause_source_false"), "source", false);
+        }),
+        ("completion_failure_cause_watch_true", |database| {
+            completion_failure_cause(&database.create("pb_cause_watch_true"), "watch", true);
+        }),
+        ("completion_failure_cause_watch_false", |database| {
+            completion_failure_cause(&database.create("pb_cause_watch_false"), "watch", false);
+        }),
+        ("completion_failure_cause_allowance_true", |database| {
+            completion_failure_cause(
+                &database.create("pb_cause_allowance_true"),
+                "allowance",
+                true,
+            );
+        }),
+        ("completion_failure_cause_allowance_false", |database| {
+            completion_failure_cause(
+                &database.create("pb_cause_allowance_false"),
+                "allowance",
+                false,
+            );
+        }),
+        (
+            "first_pb_incident_probes_after_terminal_completion",
+            |database| {
+                first_pb_incident_probes_after_terminal_completion(
+                    &database.create("pb_incident_probe"),
+                );
+            },
+        ),
         (
             "oversized_planner_reply_reaches_plan_feedback",
             |database| {
