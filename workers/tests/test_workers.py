@@ -912,3 +912,59 @@ def test_exec_prose_goals_and_audit_objections(case):
     assert rows, 'route-only objections must not demand a new requirement'
     after = apply_edit(before, rows[0].repair, rows[0].repair.allowed.value)
     assert after == {'verdict': 'agree', 'objections': [], 'evidence_contract': []}
+
+
+@pytest.mark.parametrize('text', [
+    'Run any required development checks through PrismaBuild at priority -10. Tests must pass.',
+    'Run unknown validation through PrismaBuild.',
+    'tests/test_example.py must pass on head and fail on base.',
+    'Run GPU validation through PrismaBuild.',
+])
+def test_exec_prose_keeps_unknown_or_mixed_obligations(text):
+    from tl3_workers.evidence import contract_violations
+    reply = dict(copy.deepcopy(BRIEF), evidence_contract=[route_requirement(text)])
+    assert not contract_violations({'tool_capabilities': []}, reply)
+
+
+@pytest.mark.parametrize('dimension,value', [
+    ('methods', ['red_green']), ('runner_features', ['base_head']),
+    ('artifacts', ['numerical_measurement']), ('protected_files', ['runner.py']),
+    ('executor', 'unknown_executor'),
+])
+def test_exec_prose_keeps_structured_verification(dimension, value):
+    from tl3_workers.evidence import contract_violations
+    entry = route_requirement(EXEC_PROSE[0]['route'])
+    entry[dimension] = value
+    reply = dict(copy.deepcopy(BRIEF), evidence_contract=[entry])
+    assert not contract_violations({'tool_capabilities': []}, reply)
+
+
+def test_exec_prose_guard_composes_with_independent_schema_repair():
+    from tl3_workers.rules import apply_edit, permits
+    before = dict(copy.deepcopy(BRIEF), evidence_contract=[route_requirement(EXEC_PROSE[0]['route'])],
+                  unexpected='remove me')
+    inputs = {'tool_capabilities': []}
+    with pytest.raises(ValueError) as caught:
+        runtime._checked(ROLES['ingest'], inputs, copy.deepcopy(before))
+    rows = caught.value.rule_violations
+    assert any(row.rule.id == 'evidence.route_context' for row in rows)
+    assert any(row.repair.pointer.value == '/unexpected' for row in rows)
+    after = copy.deepcopy(before)
+    for row in rows:
+        after = apply_edit(after, row.repair, row.repair.allowed.value)
+    assert permits(rows, before, after, role='ingest')
+    runtime._checked(ROLES['ingest'], inputs, after)
+    assert not permits(rows, before, dict(after, memory_ids=['unrelated']), role='ingest')
+
+
+def test_exec_prose_audit_union_does_not_restore_route_requirements():
+    source = EXEC_PROSE[0]
+    route = route_requirement(source['route'])
+    verification = route_requirement(source['verification'], verification=True)
+    inputs = {'tool_capabilities': [], 'ingest': dict(copy.deepcopy(BRIEF),
+              brief=source['route'], evidence_contract=[route, verification])}
+    before_inputs = copy.deepcopy(inputs)
+    reply = dict(copy.deepcopy(AGREE), evidence_contract=[verification])
+    runtime._checked(ROLES['audit'], inputs, reply)
+    assert reply['evidence_contract'] == [verification]
+    assert inputs == before_inputs

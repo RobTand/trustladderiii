@@ -1,5 +1,7 @@
 """Compare a request's evidence with the installed tools, without substituting proof."""
 
+import re
+
 from tl3_harness.model import named
 from tl3_harness.model import NATIVE_THREAD_ENVIRONMENT, RESERVED_ENVIRONMENT, RESERVED_PREFIXES, MAX_DELAY_SECONDS, MAX_TOTAL_DELAY_SECONDS
 from tl3_workers.contracts import schema
@@ -24,17 +26,113 @@ CONTRACT_MISSING = register(Rule(
     example={'inputs': {'tool_capabilities': []}, 'reply': {}}, witness=[]), roles=('ingest', 'audit'))
 
 
+# #931/Q27: this one row owns the conservative prose fallback. Full clauses
+# must be known execution mechanics; an unknown or mixed clause stays mandatory.
+_ROUTE_CLAUSES = (
+    r"run (?:any required development checks|development tests|validation) "
+    r"(?:only )?through (?:admitted prismabuild with the published entrypoints|"
+    r"prismabuild at priority -10|tl3's normal admitted prismabuild `run_tests`)",
+    r"read the execution policy and operating guide first",
+    r"reserve aggregate demand, bound native threads, preserve assigned affinity, "
+    r"and allow portable work on any eligible worker",
+    r"declare aggregate cpu/memory demand and bound native threads",
+    r"read each run's own verdict and log",
+    r"record skips",
+    r"print only allowlisted status, returncode, hashes, sizes and timestamps",
+    r"read the actual terminal verdict, logs and cas receipts with allowlisted fields only",
+    r"acknowledgement is not a pass",
+    r"verify terminal records, logs and cas receipts",
+)
+
+
+def _route_only(text, entry=None, inputs=None):
+    if not isinstance(text, str) or not text.strip():
+        return False
+    if entry is not None:
+        # Methods and protected edits carry verification/scope obligations. Unknown
+        # dimensions are retained even when the English looks like routing prose.
+        if entry.get('methods') or entry.get('protected_files'):
+            return False
+        capabilities = (inputs or {}).get('tool_capabilities', [])
+        executors = {'prismabuild_pytest'} | {item['executor'] for item in capabilities}
+        if entry.get('tool') != 'run_tests' or entry.get('executor') not in executors:
+            return False
+        if any(not re.fullmatch(r'native_threads_[1-9][0-9]*', value)
+               for value in entry.get('runner_features', [])):
+            return False
+        if set(entry.get('artifacts', [])) - {'cas_receipt', 'terminal_verdict', 'logs', 'sha'}:
+            return False
+    clauses = [part.strip() for part in re.split(r'[.;]\s*', text.lower()) if part.strip()]
+    return bool(clauses) and all(any(re.fullmatch(pattern, clause) for pattern in _ROUTE_CLAUSES)
+                                 for clause in clauses)
+
+
+def _route_context(facts):
+    reply, inputs = facts['reply'], facts['inputs']
+    if not isinstance(reply, dict):
+        return ()
+    changes, context = [], []
+    for field in ('evidence_contract', 'goals', 'objections'):
+        entries = reply.get(field)
+        if not isinstance(entries, list):
+            continue
+        removed, kept = [], []
+        for index, entry in enumerate(entries):
+            text = (entry.get('requirement') if field == 'evidence_contract' else
+                    entry.get('description') if field == 'goals' else entry) if isinstance(entry, dict) else entry
+            route = _route_only(text, entry if field == 'evidence_contract' and isinstance(entry, dict) else None, inputs)
+            if field == 'goals' and isinstance(entry, dict) and set(entry) - {'description', 'verification'}:
+                route = False
+            if route:
+                removed.append(Name('field', f'/{field}/{index}'))
+                context.append(text)
+            else:
+                kept.append(entry)
+        if removed:
+            changes.append({'subjects': tuple(removed), 'pointer': Name('field', '/' + field), 'value': kept})
+    if context and facts['role'] == 'ingest':
+        if reply.get('kind') != 'brief' or not isinstance(reply.get('brief'), str):
+            return ()  # An early-end reply has no context field to preserve.
+        brief = reply['brief']
+        for text in dict.fromkeys(context):
+            if text not in brief:
+                brief += '\n\n' + text
+        if brief != reply['brief']:
+            changes.append({'subjects': (Name('field', '/brief'),), 'pointer': Name('field', '/brief'), 'value': brief})
+    if (facts['role'] == 'audit' and reply.get('verdict') == 'disagree'
+            and any(item['pointer'].value == '/objections' and not item['value'] for item in changes)):
+        changes.append({'subjects': (Name('field', '/verdict'),), 'pointer': Name('field', '/verdict'), 'value': 'agree'})
+    return changes
+
+
+_ROUTE_EXAMPLE = {'inputs': {}, 'role': 'audit', 'reply': {
+    'verdict': 'disagree', 'objections': ['Read each run\'s own verdict and log.']}}
+ROUTE_CONTEXT = register(Rule(
+    'evidence.route_context', _route_context, lambda facts: facts['subjects'],
+    lambda facts: Allowed('const', facts['value']),
+    lambda facts: Edit(facts['pointer'], 'replace', Allowed('const', facts['value'])),
+    example=_ROUTE_EXAMPLE, witness={'verdict': 'agree', 'objections': []}), roles=('ingest', 'audit'))
+
+
 def contract_violations(inputs, reply, *, role='ingest'):
-    return evaluate((CONTRACT_MISSING,), {'inputs': inputs, 'reply': reply}, role=role)
+    return evaluate((CONTRACT_MISSING, ROUTE_CONTEXT),
+                    {'inputs': inputs, 'reply': reply, 'role': role}, role=role)
 
 
 class EvidenceContractError(ValueError):
     """A fixed, safe diagnostic for the existing reply-format repair path."""
 
-    def __init__(self):
-        self.rule_role = 'ingest'
-        self.rule_violations = contract_violations({'tool_capabilities': []}, {})
+    def __init__(self, violations=None, *, role='ingest'):
+        self.rule_role = role
+        self.rule_violations = (contract_violations({'tool_capabilities': []}, {})
+                                if violations is None else violations)
         super().__init__(render_all(self.rule_violations, role=self.rule_role))
+
+
+def check_contract(inputs, reply, *, role):
+    violations = contract_violations(inputs, reply, role=role)
+    if violations:
+        raise EvidenceContractError(violations, role=role)
 
 
 def forcing_capabilities(cpus=1):
@@ -217,7 +315,8 @@ def preflight(inputs, reply, *, planning=False, objections=None):
                                     (True, inputs.get('audit_evidence_contract', [])),
                                     (False, reply['evidence_contract'])):
         for requirement in requirements:
-            if inherited and requirement.get('provenance', {}).get('kind') == 'method':
+            if inherited and (requirement.get('provenance', {}).get('kind') == 'method'
+                              or ('verdict' in reply and _route_only(requirement.get('requirement'), requirement, inputs))):
                 continue
             if requirement not in contract:
                 contract.append(requirement)

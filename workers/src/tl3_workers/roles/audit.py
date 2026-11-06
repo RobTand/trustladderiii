@@ -1,7 +1,7 @@
 """Independently audit an ingest reply against the supplied issue."""
 
 from tl3_workers.roles.base import Role
-from tl3_workers.evidence import preflight
+from tl3_workers.evidence import check_contract, preflight
 from tl3_workers.ingest_retention import preserve_verbatim
 from tl3_workers.generated_scope import audit_generation_scope
 from tl3_workers.exploration import ExplorationBudget
@@ -18,6 +18,7 @@ def ingest_reply_contract():
 
 
 def check_reply(inputs, reply):
+    check_contract(inputs, reply, role='audit')
     preflight(inputs, reply)
     if ("tool_capabilities" in inputs and inputs["ingest"]["kind"] == "brief"
             and reply["evidence_errors"]):
