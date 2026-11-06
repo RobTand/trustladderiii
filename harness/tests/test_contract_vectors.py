@@ -206,6 +206,11 @@ def produce(tmp_path, monkeypatch):
 @pytest.mark.parametrize('name', sorted(SCENARIOS))
 def test_committed_vector_matches_the_harness(produce, name):
     produced = produce(name)
+    if name == 'proof-refusal':
+        test = produced['results'][0]['tests'][0]
+        assert len(test['message']) <= 1000
+        assert 'proof.support.call_allowlist' in test['proof_refusal']
+        assert 'proof.support.member_write' in test['proof_refusal']
     path = VECTORS / f'{name}.json'
     if os.environ.get('TL3_WRITE_CONTRACT_VECTORS') == '1':
         VECTORS.mkdir(exist_ok=True)
