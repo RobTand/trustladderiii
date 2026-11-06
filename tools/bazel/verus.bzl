@@ -939,6 +939,9 @@ def verus_proofs():
             "port_advance_teardown_rank_emission": ("kernel::port_advance_teardown_rank#emission", 1),
             "port_advance_tail_world": ("kernel::port_advance_tail_witness#phase_world", 1),
             "port_advance_tail_cover": ("kernel::port_advance_tail_witness#phase_cover", 1),
+            "port_advance_rank_blocked": ("kernel::port_advance_rank#blocked", 1),
+            "port_advance_rank_start": ("kernel::port_advance_rank#start", 1),
+            "port_advance_teardown_rank_step": ("kernel::port_advance_teardown_rank#step", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

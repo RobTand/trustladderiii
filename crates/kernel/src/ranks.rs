@@ -631,7 +631,7 @@ kernel_fn! {
             port_advance_contracts::exact(*old(node), *final(node),
                 *old(_next_ticket), *final(_next_ticket), _context, *old(_out), *final(_out)),
     ] proof [port_advance_contracts::blocked_frame(*node, *_next_ticket, _context, *_out);
-        reveal(advance_post); reveal(distance);] {
+        port_advance_rank::blocked(*node, *_next_ticket, _context);] {
         let n = *node;
         if n.phase.is_closed() {
             return false;
@@ -723,19 +723,7 @@ kernel_fn! {
                 *old(next_ticket), *final(next_ticket), context, *old(out), *final(out)),
     ] proof [
         port_advance_step_frames::start_quiet(*node, *next_ticket, context, *out);
-        let n = *node;
-        let ticket = *next_ticket;
-        let c = context;
-        let after = if n.paused { port_advance_contracts::paused(n) }
-            else if n.ticket.is_none() { Node { ticket: Some(ticket), ..n } }
-            else if c.pool { port_advance_contracts::emitted(Node { ticket: None, pool: true,
-                run: Some(n.generation), pos: (n.pos + 1) as u8, ..n }, EffectKind::StartRun(role)) }
-            else { n };
-        let ticket_after = (ticket + if !n.paused && n.ticket.is_none() { 1int } else { 0int }) as u64;
-        assert(advance_post(n, after, ticket, ticket_after, advance_enabled(n, c))) by {
-            reveal(advance_post); reveal(distance);
-            if n.paused {} else if n.ticket.is_none() {} else if c.pool {} else {}
-        }
+        port_advance_rank::start(*node, *next_ticket, context, role);
     ] {
         kernel_snapshot! { advance_out = *out }
         let n = *node;
@@ -951,21 +939,7 @@ kernel_fn! {
                 *old(_next_ticket), *final(_next_ticket), context, *old(out), *final(out)),
     ] proof [
         port_advance_step_frames::teardown_quiet(*node, *_next_ticket, context, *out, kind);
-        let n = *node;
-        let ticket = *_next_ticket;
-        let after = if n.question.is_some() { n }
-            else if port_advance_contracts::gone(n, kind) {
-                Node { pool: n.pool && kind != EffectKind::StopRun, pos: (n.pos + 1) as u8, ..n }
-            } else { port_advance_contracts::emitted(n, kind) };
-        assert(n.phase is Stopping);
-        assert(pending_rank(n) == 0 && pending_rank(after) == 0);
-        if n.question.is_some() {
-            port_advance_teardown_rank::question(n, ticket, context, kind);
-        } else if port_advance_contracts::gone(n, kind) {
-            port_advance_teardown_rank::absent(n, ticket, context, kind);
-        } else {
-            port_advance_teardown_rank::emission(n, ticket, context, kind);
-        }
+        port_advance_teardown_rank::step(*node, *_next_ticket, context, kind);
     ] {
         kernel_snapshot! { advance_out = *out }
         let n = *node;
