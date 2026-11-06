@@ -92,10 +92,16 @@ pub struct Options {
     pub bell_url: String,
 }
 
+/// The production PrismaBuild queue: `tools_dir/../../pb-queue` for the live
+/// tools dir `/mnt/shared/prismabuild-fleet/repo/tools` (controller production.rs).
+pub const PRODUCTION_QUEUE_ROOT: &str = "/mnt/shared/prismabuild-fleet/pb-queue";
+
 #[derive(Clone)]
 pub struct PrismaBuild {
     options: Options,
     status_tool: Tool,
+    /// The only queue whose claim leases TL3 may read as lost (#817).
+    production_queue: PathBuf,
     http: reqwest::Client,
     bell_url: reqwest::Url,
 }
@@ -105,6 +111,28 @@ impl PrismaBuild {
     pub fn with_status_tool(mut self, tool: Tool) -> Self {
         self.status_tool = tool;
         self
+    }
+
+    /// Name the queue whose v1 claim leases PrismaBuild renews, for fixtures that
+    /// stand in for production. Defaults to `PRODUCTION_QUEUE_ROOT`.
+    pub fn with_production_queue(mut self, root: impl Into<PathBuf>) -> Self {
+        self.production_queue = root.into();
+        self
+    }
+
+    /// #817 (Flux / M1): only the production PrismaBuild queue renews its claim
+    /// leases. Under M1/Flux, pbd writes the v1 lease once at claim and never
+    /// renews it, so a lease there says nothing about liveness. Default-deny:
+    /// only an exact match of both canonical paths reads leases; any other or
+    /// unresolvable root gives no lease, so a declared wait stays alive.
+    pub(crate) fn leases_renewed(&self) -> bool {
+        match (
+            std::fs::canonicalize(&self.options.queue_root),
+            std::fs::canonicalize(&self.production_queue),
+        ) {
+            (Ok(queue), Ok(production)) => queue == production,
+            _ => false,
+        }
     }
 
     pub fn new(options: Options) -> Result<Self, Error> {
@@ -140,6 +168,7 @@ impl PrismaBuild {
                 program: "python3".into(),
                 args: vec!["/mnt/shared/prismabuild-fleet/repo/tools/pbstatus.py".into()],
             },
+            production_queue: PRODUCTION_QUEUE_ROOT.into(),
             options,
             http,
             bell_url,

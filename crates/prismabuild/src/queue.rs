@@ -521,7 +521,7 @@ impl PrismaBuild {
                 progress_observation: attempt.detail.progress_observation,
             });
         }
-        let lease = if state == ActionState::Claimed {
+        let lease = if state == ActionState::Claimed && self.leases_renewed() {
             let lease_path = root.join("claimed").join(format!("{key}.lease"));
             match claim_lease(&lease_path, key).await? {
                 None => None,
@@ -617,6 +617,30 @@ mod tests {
         assert!(!stamped(vec![now + HEARTBEAT_FUTURE_TOLERANCE_S], false).expired(now));
         // Unreadable custody evidence keeps the claim alive.
         assert!(!stamped(vec![], true).expired(now));
+    }
+
+    #[test]
+    fn leases_are_read_only_in_the_production_queue() {
+        let (root, client, _key) = fixture();
+        assert!(
+            !client.leases_renewed(),
+            "a temporary queue is not production"
+        );
+        assert!(
+            client
+                .clone()
+                .with_production_queue(root.path())
+                .leases_renewed()
+        );
+        // A path that reaches the same queue through a link still matches.
+        let link = root.path().with_extension("link");
+        std::os::unix::fs::symlink(root.path(), &link).unwrap();
+        assert!(client.clone().with_production_queue(&link).leases_renewed());
+        std::fs::remove_file(&link).unwrap();
+        assert!(
+            !client.clone().with_production_queue(&link).leases_renewed(),
+            "unresolvable"
+        );
     }
 
     #[tokio::test]
