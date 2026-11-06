@@ -176,6 +176,10 @@ def test_only_tl3_prompt_and_read_tools_reach_model(request_doc, role, monkeypat
         from tl3_workers.tools import Worktree
         with Worktree(request_doc["worktree"]) as tree:
             expected += "\n\n" + tree.generation_instruction()
+    if role == "audit":
+        # #863: the audit sees the field inventory generated from ingest-reply.json.
+        from tl3_workers.roles.audit import ingest_reply_contract
+        expected += "\n\n" + ingest_reply_contract()
     proposal = copy.deepcopy(schema(role + "-reply"))
     for variant in proposal['oneOf']:
         variant['properties'].pop('evidence_errors', None)

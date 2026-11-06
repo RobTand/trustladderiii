@@ -25,6 +25,7 @@ from langchain_openai import ChatOpenAI
 from tl3_workers.evidence import forcing_capabilities, forcing_guidance
 from tl3_workers.contracts import model_facing, read_json, read_reply, schema, validate
 from tl3_workers.roles import ROLES
+from tl3_workers.roles.audit import ingest_reply_contract
 from tl3_workers.roles.planner import EXPLORATION_DECLARATION, PlanConsistencyError, planner_schema_reply
 from tl3_workers.forcing_rehearsal import ForcingRehearsals
 from tl3_workers.tools import Worktree, build_tools
@@ -150,6 +151,8 @@ def role_prompt(role, *, text=None, test_cpus=None):
     if role.name == 'planner':
         from tl3_workers.forcing_rehearsal import GUIDANCE
         prompt += "\n\n" + GUIDANCE
+    if role.name == 'audit':
+        prompt += "\n\n" + ingest_reply_contract()
     return prompt
 
 

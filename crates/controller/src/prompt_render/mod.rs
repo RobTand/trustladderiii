@@ -46,7 +46,41 @@ fn role(document: &Value) -> Result<Vec<u32>> {
         prompt.extend(text("\n\n"));
         prompt.extend(text(resources::PLANNER));
     }
+    if role == "audit" {
+        prompt.extend(text("\n\n"));
+        prompt.extend(ingest_reply_contract()?);
+    }
     Ok(prompt)
+}
+
+/// #863 (found by live probe, PB #2710 r415): audit objections must be
+/// expressible in an ingest reply, so the audit sees the field inventory
+/// generated from the packaged ingest reply contract, never a hand-written list.
+fn ingest_reply_contract() -> Result<Vec<u32>> {
+    let schema = PACKAGED_SCHEMAS
+        .iter()
+        .find(|(name, _)| *name == "ingest-reply.json")
+        .ok_or(Error::Invalid("unknown prompt schema"))?
+        .1;
+    let schema = json::parse(schema)?;
+    let fields = |definition: &str| match schema.get("$defs").get(definition).get("properties") {
+        Value::Object(properties) => Ok(properties
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(&text(", ")[..])),
+        _ => Err(Error::Invalid(
+            "ingest reply schema lacks a field inventory",
+        )),
+    };
+    let mut contract = text(
+        "Ingest reply contract, generated from ingest-reply.json. A proof_obligation has only these fields: ",
+    );
+    contract.extend(fields("proof_obligation")?);
+    contract.extend(text(". An evidence_contract entry has only these fields: "));
+    contract.extend(fields("evidence_requirement")?);
+    contract.extend(text("."));
+    Ok(contract)
 }
 
 fn shared(inputs: &Value) -> Value {
