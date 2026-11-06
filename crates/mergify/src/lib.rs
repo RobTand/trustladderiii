@@ -5,7 +5,6 @@ use base64::{
     engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig},
 };
 use serde::Deserialize;
-use std::collections::BTreeMap;
 use tl3_github::{CheckRun, GitHub, PullRequest};
 pub mod decide;
 use decide::observe::{Mergeable, PullView};
@@ -167,47 +166,7 @@ pub fn is_merge_queue_pr(pull_request: &PullRequest) -> bool {
         && pull_request.user.login == "mergify[bot]"
 }
 
-/// Parse check runs into the core's views at the adapter boundary. `head` is
-/// the commit the caller reads; `required` marks the caller's required
-/// contexts. Names and app IDs are interned per call.
-pub fn views(
-    checks: &[CheckRun],
-    head: &str,
-    required: impl Fn(&CheckRun) -> bool,
-) -> Vec<CheckView> {
-    let mut names = BTreeMap::new();
-    let mut apps = BTreeMap::new();
-    checks
-        .iter()
-        .map(|check| {
-            let next = names.len() as u32;
-            let name_key = *names.entry(check.name.as_str()).or_insert(next);
-            let next = apps.len() as u32;
-            let app_key = *apps
-                .entry(check.app.as_ref().map(|app| app.id))
-                .or_insert(next);
-            CheckView {
-                id: check.id,
-                head: if check.head_sha == head {
-                    decide::Head::Current
-                } else {
-                    decide::Head::Other
-                },
-                app: decide::App::parse(check.app.as_ref().map(|app| (app.id, app.slug.as_str()))),
-                app_key,
-                name: decide::Name::parse(&check.name),
-                name_key,
-                required: required(check),
-                status: decide::Status::parse(&check.status),
-                conclusion: check.conclusion.as_deref().map(decide::Conclusion::parse),
-                completed_at: check.completed_at.map(|time| decide::Time {
-                    secs: time.timestamp(),
-                    nanos: time.timestamp_subsec_nanos(),
-                }),
-            }
-        })
-        .collect()
-}
+pub use tl3_github::checks::views;
 
 pub fn pull_view(pull_request: &PullRequest) -> PullView {
     PullView {

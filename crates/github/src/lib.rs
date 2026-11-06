@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+pub mod checks;
+
 mod client;
 pub mod message;
 mod models;

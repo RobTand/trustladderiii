@@ -42,7 +42,7 @@ verus_test = rule(
         "module": attr.string(),
         "toolchain": attr.label(default = "@verus_linux_amd64//:toolchain", providers = [VerusToolchainInfo]),
         "measured_runner": attr.label(executable = True, cfg = "exec"),
-        "_runner": attr.label(default = "//crates/mergify:verus-runner", executable = True, cfg = "exec"),
+        "_runner": attr.label(default = "//crates/verus-runner:verus-runner", executable = True, cfg = "exec"),
     },
 )
 
@@ -92,19 +92,6 @@ def verus_proofs():
             exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
             exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
         )
-        verus_test(
-            name = "verus_delivery",
-            src = "proofs/delivery.rs",
-            srcs = ["src/decide/delivery_step.rs"],
-            specs = ["proofs/delivery_spec.rs"],
-            expected_obligations = 2,
-            tags = ["rust", "verus"],
-            size = "small",
-            timeout = "short",
-            target_compatible_with = ["@platforms//cpu:x86_64"],
-            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
-            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
-        )
 
         # Group B1: production recovery residue and full-domain witnesses.
         for name, count in [("budget", 10), ("eligibility", 10), ("schedule", 8), ("command", 6)]:
@@ -121,21 +108,6 @@ def verus_proofs():
                 exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
-        # ctrl-core C1: production required-check/rerun residue and witnesses.
-        verus_test(
-            name = "verus_required",
-            src = "proofs/required.rs",
-            srcs = ["src/decide/required.rs"],
-            specs = ["proofs/required_spec.rs"],
-            expected_obligations = 33,
-            tags = ["rust", "verus"],
-            size = "small",
-            timeout = "short",
-            target_compatible_with = ["@platforms//cpu:x86_64"],
-            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
-            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
-        )
-
         # ctrl-core A1: shell residue, with no contract changes to enqueue::decide.
         verus_test(
             name = "verus_completion",
@@ -153,7 +125,6 @@ def verus_proofs():
         # #743 M1a: real observe/check/facts decisions and original-domain witnesses.
         for name, module, count in [
             ("observe", "observe", 11),
-            ("check", "check", 12),
             ("check_facts", "facts", 26),
             ("observe_witness", "observe_witness", 8),
             ("observe_properties", "observe_properties", 2),
@@ -162,9 +133,9 @@ def verus_proofs():
                 name = "verus_" + name,
                 src = "proofs/observe.rs",
                 srcs = [
-                    "src/decide/check.rs",
+                    "//crates/github:src/checks/check.rs",
                     "src/decide/observe.rs",
-                    "src/decide/verification.rs",
+                    "//crates/github:src/checks/verification.rs",
                     "src/decide/facts.rs",
                 ],
                 specs = ["src/decide/observe_witness.rs", "proofs/observe_properties.rs"],
@@ -248,9 +219,9 @@ def verus_proofs():
                 src = "proofs/enqueue_" + root + ".rs",
                 srcs = [
                     "src/decide/enqueue.rs",
-                    "src/decide/check.rs",
+                    "//crates/github:src/checks/check.rs",
                     "src/decide/observe.rs",
-                    "src/decide/verification.rs",
+                    "//crates/github:src/checks/verification.rs",
                 ],
                 specs = [
                     "proofs/enqueue_helpers.rs",
@@ -304,7 +275,7 @@ def verus_proofs():
             verus_test(
                 name = "verus_" + name,
                 src = "proofs/decide.rs",
-                srcs = ["src/decide/check.rs", "src/decide/observe.rs", "src/decide/facts.rs", "src/decide/translate.rs", "src/decide/verification.rs"],
+                srcs = ["//crates/github:src/checks/check.rs", "src/decide/observe.rs", "src/decide/facts.rs", "src/decide/translate.rs", "//crates/github:src/checks/verification.rs"],
                 specs = ["src/decide/decide_witness.rs", "proofs/decide_properties.rs"],
                 module = module,
                 expected_obligations = count,
@@ -1327,3 +1298,48 @@ def verus_proofs():
                 exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
+
+    if native.package_name() == "crates/verus-runner":
+        verus_test(
+            name = "verus_delivery",
+            src = "proofs/delivery.rs",
+            srcs = ["src/delivery_step.rs"],
+            specs = ["proofs/delivery_spec.rs"],
+            expected_obligations = 2,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+
+    if native.package_name() == "crates/github":
+        verus_test(
+            name = "verus_required",
+            src = "proofs/required.rs",
+            srcs = ["src/checks/required.rs"],
+            specs = ["proofs/required_spec.rs"],
+            expected_obligations = 33,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+
+    if native.package_name() == "crates/github":
+        verus_test(
+            name = "verus_check",
+            src = "proofs/check.rs",
+            srcs = ["src/checks/check.rs", "src/checks/verification.rs"],
+            module = "check",
+            expected_obligations = 12,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
