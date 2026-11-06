@@ -151,8 +151,7 @@ def _stage(worktree, root, base_sha=None, *, action="test_tool", checks=(), forc
         proving = [check for check in checks if check['kind'] in ('demonstrating', 'reproducing')]
         if len(proving) > STAGED_CHECK_COUNT:
             raise ProofRefusal('proof.staging.single_check', role=role, field='/checks',
-                               reply={'checks': list(checks)}, alternatives=[[item] for item in proving[:10]],
-                               replacement_total=len(proving), bad_value={'replacement_total': len(proving)})
+                               reply={'checks': list(checks)}, bad_value=len(proving))
         item = proving[0] if proving else {}
         proof = Proof.parse(item['proof']) if item.get('proof') else None
         tests = tuple(item.get('tests', ()))
@@ -161,7 +160,8 @@ def _stage(worktree, root, base_sha=None, *, action="test_tool", checks=(), forc
         check = Check(item.get('name', 'development proof') if proving or forcing or declared_symptom else ALWAYS_CHECK,
                       Kind(item.get('kind', 'demonstrating')) if proving or forcing or declared_symptom else Kind.REGRESSION,
                       tests or selected or ('_tl3_unselected.py::test_outcome',), projection_forcing, proof, projection_symptom)
-        receipt = assemble_proof(base, head if proving else base, checkout, check, configuration(base) if proving else {}, role=role, check_index=check_index, footprint=getattr(worktree, 'declared_files', ()) or ())
+        receipt = assemble_proof(base, head if proving else base, checkout, check, configuration(base) if proving else {}, role=role, check_index=check_index, footprint=getattr(worktree, 'declared_files', ()) or (),
+                                 protected=getattr(worktree, 'protected_paths', ()), generated=getattr(worktree, 'generated_files', ()))
         (root / 'proof.json').write_text(json.dumps(receipt, sort_keys=True))
         shutil.rmtree(base)
         shutil.rmtree(head)

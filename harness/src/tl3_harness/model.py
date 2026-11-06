@@ -1,7 +1,6 @@
 from .forcing_ownership import MAX_TOTAL_DELAY_SECONDS as MAX_TOTAL_DELAY_SECONDS
 from .red_message import RedMessageMatch
-from .proof_rules import ROWS, forced_exception as forced_exception, render as render_proof, violation_data
-from .rules import evaluate
+from .proof_rules import ROWS, forced_exception as forced_exception, render as render_proof, violation_data, evaluate
 # Diagnostics live in limits.py, which the in-container runner loads by path (#858).
 from .limits import Diagnostic as Diagnostic, contextual as contextual, named as named
 from dataclasses import InitVar, dataclass, field
@@ -104,7 +103,7 @@ class Forcing:
     environment: tuple[tuple[str, str], ...] = ()
     # (target, mode, argument as canonical JSON)
     patches: tuple[tuple[str, str, str], ...] = ()
-    check_index: InitVar[int] = 0
+    check_index: InitVar[int | None] = 0
     role: InitVar[str] = 'planner'
 
     def __post_init__(self, check_index, role):
@@ -136,9 +135,10 @@ class Forcing:
             except (TypeError, ValueError) as error:
                 raise HarnessInputError(named('forcing.literal_json', 'A patch argument must be a JSON literal.', {})) from error
             if mode == "raises" and not (isinstance(value, str) and forced_exception(value)):
-                facts = {'reply': {'checks': [{} for _ in range(check_index)] + [{'forcing': {'patches': [
-                    {'target': name, patch_mode: json.loads(raw)} for name, patch_mode, raw in self.patches[:index + 1]]}}]},
-                         'field': f'/checks/{check_index}/forcing/patches/{index}/raises'}
+                declaration = {'forcing': {'patches': [
+                    {'target': name, patch_mode: json.loads(raw)} for name, patch_mode, raw in self.patches[:index + 1]]}}
+                facts = {'reply': declaration if check_index is None else {'checks': [{} for _ in range(check_index)] + [declaration]},
+                         'field': ('' if check_index is None else f'/checks/{check_index}') + f'/forcing/patches/{index}/raises'}
                 raise ProofRefusal('forcing.raise_class', role=role, **facts)
             if mode == "delay_seconds" and (type(value) not in (int, float) or not 0 < value <= MAX_DELAY_SECONDS):
                 raise HarnessInputError(named('forcing.delay', f"delay_seconds must be above 0 and at most {MAX_DELAY_SECONDS}", {}))
@@ -192,7 +192,7 @@ class ProofRefusal(HarnessInputError):
     def from_violations(cls, violations, *, role='maker'):
         return cls(violations[0].rule.id, violations=violations, role=role)
 
-    def for_check(self, check, role, check_index=0, *, footprint=()):
+    def for_check(self, check, role, check_index=0, *, footprint=(), protected=(), generated=()):
         """Bind field names to the actual editable declaration and caller."""
         violations = []
         for violation in self.violations:
@@ -221,6 +221,8 @@ class ProofRefusal(HarnessInputError):
             facts['field'] = declaration_pointer(facts.get('field', '/proof'), check_index, role)
             facts['check_index'] = check_index
             facts['footprint'] = tuple(footprint or ())
+            facts['protected'] = tuple(protected)
+            facts['generated'] = tuple(generated)
             test_key = declaration_pointer('/tests', check_index, role).rsplit('/', 1)[1]
             declaration = {test_key: list(check.tests)}
             if check.proof:

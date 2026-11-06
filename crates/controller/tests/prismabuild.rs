@@ -422,6 +422,7 @@ fn staged_request_carries_the_repository_protected_paths() {
     let delivery = run(root.path(), false);
     let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
     config.github.repos[0].protected_paths = vec!["release/**".into()];
+    config.github.repos[0].generated_files = vec!["generated/**".into()];
     config.planning.protected_paths = vec!["GLOBAL.md".into()];
     let mut adapter = fixture(root.path(), "done")
         .with_repositories(&config.github.repos)
@@ -434,6 +435,8 @@ fn staged_request_carries_the_repository_protected_paths() {
         .collect();
     let request: serde_json::Value =
         serde_json::from_slice(&fs::read(&staged[0]).unwrap()).unwrap();
+    assert_eq!(request["footprint"], serde_json::json!(delivery.paths));
+    assert_eq!(request["generated_paths"], serde_json::json!(["generated/**"]));
     let protected: BTreeSet<_> = request["protected_paths"]
         .as_array()
         .expect("the staged request names protected paths")

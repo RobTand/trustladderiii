@@ -11,13 +11,13 @@ import textwrap
 import tomllib
 
 from .model import Kind, ProofRefusal
-from .rules import at, evaluate
+from .rules import at
 from .trees import bound_names, is_test, tree_sha256
 from .proof_rules import (
     LOADER_STDLIB, NAMESPACE_API_NAMES, NAMESPACE_API_ATTRIBUTES, NAMESPACE_API_MODULES,
     PURE_SUPPORT_BUILTINS, REFLECTIVE_SUPPORT_ATTRIBUTES, SOURCE_DEFINITION_COUNT,
     SUPPORT_MOCK_IMPORTS, SUPPORT_UNITTEST_IMPORTS, SUPPORT_ARGV_ATTRIBUTE,
-    declaration_pointer,
+    declaration_pointer, evaluate,
 )
 
 
@@ -449,15 +449,15 @@ def refuse_stdlib_shadow(tree: Path, observer):
         raise ProofRefusal('proof.loader.stdlib_shadow', module=observer, path=relative, stdlib=module)
 
 
-def assemble_proof(base: Path, head: Path, destination: Path, check, config, *, role='maker', check_index=0, footprint=()):
+def assemble_proof(base: Path, head: Path, destination: Path, check, config, *, role='maker', check_index=0, footprint=(), protected=(), generated=()):
     try:
         return _assemble_proof(base, head, destination, check, config)
     except SyntaxError as error:
         module = error.filename or next((unit.split('::')[0] for unit in check.tests), '')
         refusal = ProofRefusal('proof.source.unparsable', module=module, bad_value=error.msg, line=error.lineno)
-        raise refusal.for_check(check, role, check_index, footprint=footprint) from None
+        raise refusal.for_check(check, role, check_index, footprint=footprint, protected=protected, generated=generated) from None
     except ProofRefusal as error:
-        refusal = error.for_check(check, role, check_index, footprint=footprint)
+        refusal = error.for_check(check, role, check_index, footprint=footprint, protected=protected, generated=generated)
         if role == 'planner':
             refusal = planner_selections(refusal, base, head, check, config)
         raise refusal from None
@@ -486,29 +486,24 @@ def planner_selections(refusal, base, head, check, config):
             violations.append(violation)
             continue
         def passes(reply):
-            declared = reply['checks'][facts['check_index']]
-            proposed = SimpleNamespace(name=check.name, kind=check.kind, tests=tuple(declared[test_key]),
-                forcing=check.forcing, declared_symptom=check.declared_symptom,
-                proof=replace(check.proof, subjects=tuple(declared['proof']['subjects']),
-                              observer_support=tuple(declared['proof']['observer_support'])) if check.proof else None)
             try:
+                declared = reply['checks'][facts['check_index']]
+                proposed = SimpleNamespace(name=check.name, kind=check.kind, tests=tuple(declared[test_key]),
+                    forcing=check.forcing, declared_symptom=check.declared_symptom,
+                    proof=replace(check.proof, subjects=tuple(declared['proof']['subjects']),
+                                  observer_support=tuple(declared['proof']['observer_support'])) if check.proof else None)
                 with TemporaryDirectory(prefix='proof-selection-') as directory:
                     _assemble_proof(base, head, Path(directory) / 'staged', proposed, config)
             except (ProofRefusal, SyntaxError, OSError, ValueError):
                 return False
             return True
 
-        # Removing an unnecessary declaration is a concrete selection too.
-        parent, key = field.rsplit('/', 1)
-        reduced = deepcopy(facts['reply'])
-        del at(reduced, parent)[int(key)]
-        if (group != test_group or at(reduced, parent)) and passes(reduced):
-            facts.update(field=parent, alternatives=[at(reduced, parent)], replacement_total=1,
-                         bad_value={'replacement_total': 1})
-            violations.extend(evaluate((violation.rule,), facts, role='planner'))
-            continue
+        # Only replacements preserve obligation subjects and nonempty unique lists.
         candidates = []
-        for path in sorted(head.rglob('*.py')):
+        paths = sorted(head.rglob('*.py'), key=lambda path: (
+            (base / path.relative_to(head)).is_file()
+            and (base / path.relative_to(head)).read_bytes() == path.read_bytes(), path.relative_to(head).as_posix()))
+        for path in paths:
             module = path.relative_to(head).as_posix()
             if group == test_group and not is_test(module, config.get('test-files', ())):
                 continue
@@ -520,24 +515,32 @@ def planner_selections(refusal, base, head, check, config):
                 candidates.append(module)
             def definitions(body, prefix=()):
                 for node in body:
-                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                        levels = (*prefix, node.name)
+                    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                        continue
+                    levels = (*prefix, node.name)
+                    if group != test_group or (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                            and node.name.startswith('test') and not node.decorator_list
+                            and (not prefix or all(level.startswith('Test') for level in prefix))):
                         candidates.append(module + '::' + '::'.join(levels))
-                        if isinstance(node, ast.ClassDef):
-                            definitions(node.body, levels)
+                    if isinstance(node, ast.ClassDef) and (group != test_group or (
+                            node.name.startswith('Test') and not any(isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+                            and member.name in ('__init__', '__new__') for member in node.body))):
+                        definitions(node.body, levels)
             definitions(tree.body)
-        passing, total = [], 0
-        for candidate in candidates:
-            if candidate == at(facts['reply'], field):
+        passing, probes = [], 0
+        parent, key = field.rsplit('/', 1)
+        present = at(facts['reply'], parent)
+        for candidate in dict.fromkeys(candidates):
+            if candidate in present:
                 continue
+            if probes >= 25 or len(passing) >= 10:
+                break
             reply = deepcopy(facts['reply'])
-            parent, key = field.rsplit('/', 1)
             at(reply, parent)[int(key)] = candidate
-            if not passes(reply):
-                continue
-            total += 1
-            if len(passing) < 10:
+            probes += 1
+            if passes(reply):
                 passing.append(candidate)
+        total = len(passing)
         facts['selection_search'] = True
         if passing:
             facts.update(alternatives=passing, replacement_total=total,

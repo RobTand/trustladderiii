@@ -195,8 +195,8 @@ pub enum FeedbackitemKind {
 pub struct FeedbackitemFailedTestsitem {
     #[schemars(with = "TextRef")]
     pub test: WireText,
-    #[schemars(with = "TextRef", extend("maxLength" = 1000))]
-    pub message: ReplyText<0, 1, 1000>,
+    #[schemars(with = "TextRef", extend("maxLength" = 65536))]
+    pub message: ReplyText<0, 1, { crate::report::PROOF_MESSAGE_CHARS }>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

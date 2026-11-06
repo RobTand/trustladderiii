@@ -1518,7 +1518,7 @@ def test_review_report_all_and_loader_repairs_survive_run_checks(repository, loa
     check = Check('unclipped rows', Kind.DEMONSTRATING, tuple(case['tests']), proof=model.Proof.parse(case['proof']))
     results, _, _ = round_result(repository, case['before'], case['after'], check)
     message = results[0].tests[0].message
-    encoded = json.loads(execution.result_json(results))[0]['tests'][0]['message']
+    encoded = json.loads(execution.result_json(results))[0]['tests'][0]['proof_refusal']
     for text in (message, encoded):
         if loader:
             assert 'proof.loader.stdlib_shadow' in text

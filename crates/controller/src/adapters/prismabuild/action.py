@@ -21,6 +21,11 @@ def decode(request):
         protected = request.get("protected_paths", [])
         if not isinstance(protected, list) or not all(isinstance(path, str) and path for path in protected):
             raise ValueError("protected_paths must list path patterns")
+        footprint = request.get("footprint", [])
+        generated = request.get("generated_paths", [])
+        if any(not isinstance(paths, list) or not all(isinstance(path, str) and path for path in paths)
+               for paths in (footprint, generated)):
+            raise ValueError("footprint and generated_paths must list paths")
         selected = request.get("selected_tests")
         if selected is not None and (type(selected) is not int or selected < 1):
             raise ValueError("selected_tests must be a positive limit")
@@ -28,7 +33,7 @@ def decode(request):
         if not isinstance(always, list):
             raise ValueError("always_tests must list pytest files or node IDs")
         return (plan, Container(request["image"]),
-                tuple(protected), selected, tuple(always))
+                tuple(protected), selected, tuple(always), tuple(footprint), tuple(generated))
     except (KeyError, TypeError, ValueError) as error:
         raise HarnessInputError(f"invalid check request: {type(error).__name__}") from error
 
@@ -41,17 +46,18 @@ with tempfile.TemporaryDirectory(prefix="tl3-controller-checks-") as directory:
     git(root, "clone", "--quiet", "--template=", "--", str(root / "served.bundle"), str(repo))
     git(repo, "checkout", "--quiet", "--detach", request["head"])
     try:
-        plan, container, protected, selected, always = decode(request)
+        plan, container, protected, selected, always, footprint, generated = decode(request)
         results = run_checks(repo, request["base"], request["head"], plan, container=container,
                              reviewed=request.get("reviewed"), protected=protected, selected_tests=selected,
-                             always_tests=always, selected_failures=request.get("selected_failures", []))
+                             always_tests=always, selected_failures=request.get("selected_failures", []),
+                             footprint=footprint, generated=generated)
     except HarnessInputError as error:
         # The trusted harness rejected TL3's own check input. Repository configuration,
         # admission and container failures stay upstream.
         print("TL3_CHECKS_ERROR " + json.dumps({"schema": "tl3.checks.error.v1", "effect_key": request["effect_key"],
               "error": type(error).__name__}, sort_keys=True, separators=(',', ':')), flush=True)
         raise
-    report = {"schema": "tl3.checks.v2", "effect_key": request["effect_key"],
+    report = {"schema": "tl3.checks.v3", "effect_key": request["effect_key"],
               "base": request["base"], "head": request["head"],
               "reviewed": request.get("reviewed"),
               "results": json.loads(result_json(results))}

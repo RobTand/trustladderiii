@@ -9,7 +9,7 @@ import tempfile
 import time
 from typing import Protocol
 
-from .limits import MAX_DETAILED_FAILURES, MAX_MESSAGE_CHARS, MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES, MAX_RESULT_BYTES, RESULT_ENVELOPE_BYTES, validate_check_plan
+from .limits import MAX_PROOF_MESSAGE_CHARS, MAX_DETAILED_FAILURES, MAX_MESSAGE_CHARS, MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES, MAX_RESULT_BYTES, RESULT_ENVELOPE_BYTES, validate_check_plan
 from .model import (ALWAYS_CHECK, SELECTED_CHECK, Check, FailureNotes, Forcing, HarnessInputError, ProofRefusal, Kind, Outcome, Result, TestResult, Verdict,
                     NATIVE_THREAD_ENVIRONMENT, judge)
 from .node_ids import validate_always_tests
@@ -543,7 +543,7 @@ def forcing_tamper_diff(repo, base, head):
 def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                container: Container, reviewed: str | None = None, tool: TestTool = PYTEST,
                protected: tuple[str, ...] = (), selected_tests: int | None = None,
-               always_tests: tuple[str, ...] = (), selected_failures: tuple[str, ...] = (), footprint: tuple[str, ...] = ()) -> tuple[Result, ...]:
+               always_tests: tuple[str, ...] = (), selected_failures: tuple[str, ...] = (), footprint: tuple[str, ...] = (), generated: tuple[str, ...] = ()) -> tuple[Result, ...]:
     """Run one round inside one admitted PB action, from trusted installed code. `protected`
     holds the repository's protected path patterns; a change to any of them is refused.
     With `selected_tests`, complete execution groups whose imports reach the change
@@ -658,10 +658,10 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             staged = root / f"proof-{index}"
             subject = reviewed_tree if check.kind == Kind.REPRODUCING else old
             try:
-                receipt = assemble_proof(subject, new, staged, check, config, role='maker', check_index=index, footprint=footprint)
+                receipt = assemble_proof(subject, new, staged, check, config, role='maker', check_index=index, footprint=footprint, protected=protected, generated=generated)
             except SyntaxError as error:
                 refusal = ProofRefusal('proof.source.unparsable', module=error.filename or '', bad_value=error.msg, line=error.lineno)
-                return refused(plan, refusal.for_check(check, 'maker', index, footprint=footprint))
+                return refused(plan, refusal.for_check(check, 'maker', index, footprint=footprint, protected=protected, generated=generated))
             except ProofRefusal as error:
                 return refused(plan, error)
             except OSError as error:
@@ -762,7 +762,12 @@ def result_json(results: tuple[Result, ...]) -> str:
                 del test['head_forced']
             if id(test) in retained:
                 from .model import ProofMessage
-                if not isinstance(test['message'], ProofMessage):
+                if isinstance(test['message'], ProofMessage):
+                    if len(test['message']) > MAX_PROOF_MESSAGE_CHARS:
+                        raise HarnessInputError('Complete proof refusal exceeds the bounded result byte budget for a proof message.')
+                    test['proof_refusal'] = str(test['message'])
+                    test['message'] = test['message'][:MAX_MESSAGE_CHARS]
+                else:
                     test['message'] = test['message'][:MAX_MESSAGE_CHARS].encode(errors='backslashreplace').decode()[:MAX_MESSAGE_CHARS]
             else:
                 test['message'] = ''

@@ -987,6 +987,7 @@ mod typed {
                         pre_existing,
                         passed,
                         message: Some(ClippedText::clipped(&message)),
+                        proof_refusal: None,
                         head_forced,
                         phases,
                     }

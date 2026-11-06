@@ -5,9 +5,10 @@ where the checks live. Source changes cannot be granted as declaration edits.
 """
 import builtins
 from dataclasses import replace
+from pathlib import PurePosixPath
 
 from .terminal_forms import PLANNER, MAKER
-from .rules import Allowed, CantMeet, Edit, SourceEdit, Name, Rule, at, evaluate, register, render_all
+from .rules import Allowed, CantMeet, Edit, SourceEdit, Name, Rule, at, evaluate as core_evaluate, register, render_all
 
 
 PURE_SUPPORT_BUILTINS = frozenset({
@@ -52,7 +53,7 @@ def symbol_name(module, selector):
 
 
 def names(facts):
-    source = repair_for(facts, MAKER.role, Allowed('const', None), 'Source correction')
+    source = repair_for(facts, facts.get('role', MAKER.role), Allowed('const', None), 'Source correction')
     result = ([] if isinstance(source, SourceEdit) else
               [Name('field', facts.get('field', declaration_pointer('/proof', facts.get('check_index', 0))))])
     if module := facts.get('module'):
@@ -64,6 +65,11 @@ def names(facts):
         if path != facts.get('module'):
             result.append(Name('path', path))
     return tuple(result)
+
+
+def evaluate(rows, facts, *, role):
+    """Bind the caller role for names, whose core callback receives facts only."""
+    return core_evaluate(rows, {**facts, 'role': role}, role=role)
 
 
 def render(violations, role):
@@ -102,14 +108,26 @@ def repair_for(facts, role, allowed, reason):
         return Edit(Name('field', facts['field']), 'replace', allowed)
     if rule == 'proof.tree.destination_fresh':
         return CantMeet('TL3-side assembly fault: the harness supplied a staging destination that already exists.')
-    path = facts.get('path') if rule == 'proof.loader.stdlib_shadow' else facts.get('module')
+    if rule == 'proof.staging.single_check':
+        return CantMeet('stage one check at a time')
+    path = facts.get('module')
     source_rule = (rule.startswith(('proof.support.', 'proof.loader.'))
                    and rule not in ('proof.support.new', 'proof.support.existing_module')
-                   or rule in ('proof.source.unparsable', 'proof.observer.unresolved_symbol'))
-    if role == MAKER.role and source_rule and path in (facts.get('footprint') or ()):
+                   or rule in ('proof.source.unparsable', 'proof.source.definition',
+                               'proof.observer.module_missing', 'proof.observer.unresolved_symbol'))
+    blocked = path and any(PurePosixPath(path).full_match(pattern)
+                           for pattern in (*facts.get('protected', ()), *facts.get('generated', ())))
+    if role == MAKER.role and source_rule and path in (facts.get('footprint') or ()) and not blocked:
         if rule == 'proof.source.unparsable':
             reason = f"fix the syntax error at line {facts.get('line', '?')}: {facts.get('bad_value', 'invalid Python')}"
-        return SourceEdit(path, reason)
+        instructions = {
+            'proof.source.definition': 'Define the declared definition in this module, preserving the declared source partition.',
+            'proof.observer.module_missing': 'Create this declared observer module and its selected test definitions.',
+            'proof.observer.unresolved_symbol': 'Define the missing name in the observer module or inside the observer test body.',
+            'proof.support.decorator': 'Move the fixture body into the observer test body and remove the decorated support dependency.',
+            'proof.loader.stdlib_shadow': 'Move the observer and its loader into an existing test body in this observer module.',
+        }
+        return SourceEdit(path, instructions.get(rule, reason))
     if role == PLANNER.role and facts.get('selection_search'):
         reason += ' No concrete declaration selection passes assembly on these trees.'
     return CantMeet(reason)

@@ -200,6 +200,10 @@ pub struct CheckRequest {
     pub plan: Vec<Check>,
     pub image: String,
     pub protected_paths: Vec<String>,
+    #[serde(default)]
+    pub footprint: super::footprint::Footprint,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub generated_paths: Vec<String>,
     pub selected_failures: Vec<String>,
     pub always_tests: Vec<String>,
     #[serde(

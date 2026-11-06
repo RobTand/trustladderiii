@@ -13,6 +13,7 @@ struct Settings {
 pub(super) struct AdditionalTests {
     pub selected: Option<u32>,
     pub always: Vec<String>,
+    pub generated: Vec<String>,
 }
 
 #[derive(Clone, Default)]
@@ -36,6 +37,7 @@ impl Images {
                             tests: AdditionalTests {
                                 selected: repo.selected_tests,
                                 always: repo.always_tests.clone(),
+                                generated: repo.generated_files.clone(),
                             },
                         },
                     )

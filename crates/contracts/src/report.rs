@@ -14,6 +14,8 @@ use std::collections::BTreeMap;
 
 /// A test's retained failure message, in characters.
 pub const MESSAGE_CHARS: usize = 1000;
+/// Complete shared proof rows. Oversize diagnostics are refused, never truncated.
+pub const PROOF_MESSAGE_CHARS: usize = 65536;
 
 // The report version the trusted action writes (action.py). A report can outlive the
 // controller that staged its check: PrismaBuild actions finish across a deploy, and each
@@ -31,6 +33,8 @@ pub enum ReportSchema {
     V1,
     #[serde(rename = "tl3.checks.v2")]
     V2,
+    #[serde(rename = "tl3.checks.v3")]
+    V3,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -135,6 +139,10 @@ pub struct TestResult {
     )]
     #[schemars(with = "ClippedText<MESSAGE_CHARS>", transform = message_schema)]
     pub message: Option<ClippedText<MESSAGE_CHARS>>,
+    /// #899: additive v3 diagnostic; older reports retain the ordinary message.
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Text<1, PROOF_MESSAGE_CHARS>")]
+    pub proof_refusal: Option<Text<1, PROOF_MESSAGE_CHARS>>,
     #[serde(
         default,
         deserialize_with = "present",
@@ -152,6 +160,11 @@ pub struct TestResult {
 }
 
 impl TestResult {
+    /// Complete proof rows take precedence in maker findings.
+    pub fn failure_message(&self) -> &str {
+        self.proof_refusal.as_ref().map_or_else(|| self.message(), Text::as_str)
+    }
+
     /// The harness diagnostic text. Older reports may omit the field entirely.
     pub fn message(&self) -> &str {
         self.message.as_ref().map_or("", ClippedText::as_str)
