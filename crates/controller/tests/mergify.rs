@@ -2900,6 +2900,9 @@ fn main() {
         .and_then(|arg| arg.strip_prefix("--dequeue-").map(str::to_owned))
     {
         let mut database = support::Database::start();
+        if let Some((_, reason)) = dequeue::PENDING.iter().find(|(name, _)| *name == mode) {
+            println!("running pending dequeue_{mode} ({reason})");
+        }
         dequeue::scenario(&database.create("dequeue"), &mode);
         database.stop();
         println!("1 Mergify scenarios passed; no skips; no live upstream calls");
@@ -3517,6 +3520,9 @@ fn main() {
             &database.create(&format!("dequeue_{mode}")),
             mode
         ));
+    }
+    for (mode, reason) in dequeue::PENDING {
+        println!("test dequeue_{mode} ... ignored, {reason}");
     }
     database.stop();
     waiting_requeue::run(Some((&mut shard, scenario_count)));
