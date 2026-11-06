@@ -343,6 +343,11 @@ CASES = {
                                   '            reply_transition(w, i, reply, out);',
                                   '//crates/kernel:lib_test_tl3_kernel'),
 
+    'port_failfast_inline_union': (
+        'crates/kernel/src/footprint.rs',
+        '            return Footprint::inline(a | b);',
+        '            return Footprint::inline(a & b);',
+        '//crates/kernel:verus_footprint'),
 }
 
 
