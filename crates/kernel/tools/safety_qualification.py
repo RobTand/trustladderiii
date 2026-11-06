@@ -350,6 +350,12 @@ CASES = {
         'Reply::PlanCantMeet => plan_retry(w, i, false, out),',
         '//crates/kernel:verus_work_replies_plan'),
 
+    'port_failfast_plan_reply': (
+        'crates/kernel/src/work_replies.rs',
+        '            plan_retry(w, i, true, out);',
+        '            plan_retry(w, i, false, out);',
+        '//crates/kernel:verus_work_replies_plan'),
+
 }
 
 

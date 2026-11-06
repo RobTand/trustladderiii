@@ -974,6 +974,12 @@ def verus_proofs():
             "port_replies_output_notices": ("kernel::port_replies_handlers#output_notices", 1),
             "port_replies_plan_forward": ("kernel::port_replies_handlers#plan_forward", 1),
             "port_replies_plan_join": ("kernel::port_replies_handlers#plan_join", 1),
+            "port_failfast_plan_worker": ("kernel::port_failfast_plan#worker_result", 1),
+            "port_failfast_plan_accepted": ("kernel::port_failfast_plan#accepted_result", 1),
+            "port_failfast_plan_stopped_reply": ("kernel::port_failfast_plan#stopped_reply", 1),
+            "port_failfast_plan_paired_reply": ("kernel::port_failfast_plan#paired_reply", 1),
+            "port_failfast_plan_dispatch": ("kernel::port_failfast_plan#dispatch", 1),
+            "port_failfast_plan_dispatch_pair": ("kernel::port_failfast_plan#dispatch_pair", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
