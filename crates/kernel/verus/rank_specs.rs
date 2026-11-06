@@ -560,4 +560,69 @@ pub(super) open spec fn advance_post(before: Node, after: Node,
     && after.credit.spent == before.credit.spent
     && (!changed ==> after == before && ticket_after == ticket_before)
 }
+
+/// Q39 / #806: the original Start rank calculation, checked where the closed
+/// ranks are defined. It moves an erased assertion and changes no contract.
+pub(super) proof fn start_rank_boundary(n: Node, after: Node, ticket: u64,
+    ticket_after: u64, c: AdvanceContext, role: Role, out_len: usize)
+    requires advance_pre(n, ticket, out_len), !(n.phase is Closed),
+        !n.waiting_incident, n.effect.is_none(), current_item(n) == Some(Item::Start(role)),
+        after == (if n.paused { port_advance_contracts::paused(n) }
+            else if n.ticket.is_none() { Node { ticket: Some(ticket), ..n } }
+            else if c.pool { port_advance_contracts::emitted(Node { ticket: None, pool: true,
+                run: Some(n.generation), pos: (n.pos + 1) as u8, ..n }, EffectKind::StartRun(role)) }
+            else { n }),
+        ticket_after == (ticket + if !n.paused && n.ticket.is_none() { 1int } else { 0int }) as u64,
+    ensures advance_post(n, after, ticket, ticket_after, advance_enabled(n, c)),
+{
+    reveal(advance_post); reveal(distance);
+    if n.paused {} else if n.ticket.is_none() {} else if c.pool {} else {}
+}
+
+/// #806: a step that leaves its node and ticket unchanged keeps every rank bound.
+pub(super) proof fn unchanged_rank(n: Node, ticket: u64)
+    ensures advance_post(n, n, ticket, ticket, false),
+{
+    reveal(advance_post);
+}
+
+/// Stopping / #806: the original teardown rank calculation for an effect that is
+/// already gone, checked where the closed ranks are defined.
+pub(super) proof fn teardown_gone_rank(n: Node, ticket: u64, kind: EffectKind, out_len: usize)
+    requires advance_pre(n, ticket, out_len), !(n.phase is Closed),
+        !n.waiting_incident, n.effect.is_none(), current_item(n) == Some(Item::Teardown(kind)),
+        n.question.is_none(), port_advance_contracts::gone(n, kind),
+    ensures advance_post(n, Node { pool: n.pool && kind != EffectKind::StopRun, pos: (n.pos + 1) as u8, ..n },
+        ticket, ticket, true),
+{
+    reveal(advance_post); reveal(distance);
+    assert(n.phase is Stopping);
+    match kind {
+        EffectKind::StopRun => {}, EffectKind::WithdrawJob => {},
+        EffectKind::ClosePr => {}, EffectKind::RemoveWorktree => {}, _ => {},
+    }
+}
+
+/// Stopping / #806: the original teardown rank calculation for an emitted effect.
+pub(super) proof fn teardown_emit_rank(n: Node, ticket: u64, kind: EffectKind, out_len: usize)
+    requires advance_pre(n, ticket, out_len), !(n.phase is Closed),
+        !n.waiting_incident, n.effect.is_none(), current_item(n) == Some(Item::Teardown(kind)),
+        n.question.is_none(), !port_advance_contracts::gone(n, kind),
+    ensures advance_post(n, port_advance_contracts::emitted(n, kind), ticket, ticket, true),
+{
+    reveal(advance_post); reveal(distance);
+    assert(n.phase is Stopping);
+}
+
+/// Q39 / Stopping / #806: the original finished-step rank calculation over the
+/// exact node relation, checked where the closed ranks are defined.
+pub(super) proof fn finished_rank_boundary(n: Node, ticket: u64, c: AdvanceContext, out_len: usize)
+    requires advance_pre(n, ticket, out_len), !(n.phase is Closed),
+        !n.waiting_incident, n.effect.is_none(), current_item(n).is_none(),
+    ensures advance_post(n, port_advance_contracts::node_after(n, ticket, c),
+        ticket, ticket, advance_enabled(n, c)),
+{
+    reveal(port_advance_contracts::node_after); reveal(advance_post); reveal(distance);
+}
+
 }

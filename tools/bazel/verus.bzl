@@ -1352,6 +1352,11 @@ def verus_proofs():
             "progress_gate_leaf_result": ("kernel::progress_gate_leaf_state#advance_result", 1),
             "progress_gate_leaf_update": ("kernel::progress_gate_leaf_state#update_safe", 1),
             "progress_gate_leaf_adapter": ("kernel::progress_gate_leaf_adapter", 1),
+            "rank_specs_start_boundary": ("kernel::rank_specs#start_rank_boundary", 1),
+            "rank_specs_unchanged": ("kernel::rank_specs#unchanged_rank", 1),
+            "rank_specs_teardown_gone": ("kernel::rank_specs#teardown_gone_rank", 1),
+            "rank_specs_teardown_emit": ("kernel::rank_specs#teardown_emit_rank", 1),
+            "rank_specs_finished_boundary": ("kernel::rank_specs#finished_rank_boundary", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
