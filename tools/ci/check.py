@@ -117,6 +117,7 @@ def python(files, *, selected=None, lint=True):
 
 def python_lint(files):
     """What the gate keeps outside Bazel: ruff, and lock checks for test-less projects."""
+    mirror_lint(files)
     run(sys.executable, 'crates/controller/tools/check_command_ids.py')
     projects = python_projects(files)
     untested = {
@@ -126,12 +127,17 @@ def python_lint(files):
     python(files, selected=untested)
 
 
+def mirror_lint(files):
+    run(sys.executable, 'tools/ci/mirror_lint.py')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("language", choices=("rust", "python", "python-lint"))
+    parser.add_argument("language", choices=("rust", "python", "python-lint", "mirror-lint"))
     args = parser.parse_args()
     files = tracked_files()
-    {"rust": rust, "python": python, "python-lint": python_lint}[args.language](files)
+    {"rust": rust, "python": python, "python-lint": python_lint,
+     "mirror-lint": mirror_lint}[args.language](files)
 
 
 if __name__ == "__main__":
