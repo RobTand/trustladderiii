@@ -30,6 +30,7 @@ enum Answer {
 struct Script {
     answers: VecDeque<Answer>,
     target: Option<String>,
+    late_resource: bool,
     observations: VecDeque<Vec<tl3_controller::executor::Observation>>,
     calls: Vec<String>,
 }
@@ -58,6 +59,18 @@ impl Executor for Recording {
             return Ok(Completion::confirmed(vec![]));
         }
         script.calls.push(format!("execute:{}", delivery.key));
+        if script.late_resource
+            && matches!(
+                delivery.output,
+                tl3_controller::executor::Output::Effect {
+                    kind: tl3_kernel::EffectKind::ClosePr | tl3_kernel::EffectKind::RemoveWorktree,
+                    ..
+                }
+            )
+        {
+            script.late_resource = false;
+            return Ok(Completion::confirmed(vec![]));
+        }
         match script.answers.pop_front().unwrap() {
             Answer::Found => Ok(Completion::confirmed(vec![])),
             Answer::Retryable => Ok(Completion {
@@ -840,7 +853,7 @@ fn closed_node_restart_schedules_late_resource_recovery() {
             "stop-before-late-landing",
             tl3_controller::executor::Observation::Kernel(tl3_kernel::Event::Command {
                 node: tl3_kernel::NodeId(0),
-                id: u64::MAX - 1,
+                id: 1000,
                 command: tl3_kernel::Command::Stop,
             }),
         )
@@ -878,7 +891,10 @@ fn closed_node_restart_schedules_late_resource_recovery() {
     controller_restart::wait_for_owner_release(&mut sql);
     // No mutation is issued unless the real Controller invokes the executor.
     // The recorded upstream now contains the old operation's late PR/branch.
-    let calls = Arc::new(Mutex::new(Script::default()));
+    let calls = Arc::new(Mutex::new(Script {
+        late_resource: true,
+        ..Script::default()
+    }));
     let mut registry = tl3_controller::adapters::simulation(root.path()).unwrap();
     registry.register(Upstream::GitHub, Recording(calls.clone(), settings.clone()));
     registry.register(
@@ -890,6 +906,11 @@ fn closed_node_restart_schedules_late_resource_recovery() {
     restarted.look_now().unwrap();
     assert!((0..30).any(|_| !restarted.drive_once().unwrap()));
     let calls = calls.lock().unwrap();
+    assert!(
+        !calls.late_resource,
+        "late PR/branch survived restart and the real look/drive loop: {:?}",
+        calls.calls
+    );
     assert!(
         calls.calls.iter().any(|c| c.starts_with("look:")
             || c.starts_with("execute:")

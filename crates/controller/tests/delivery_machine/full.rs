@@ -161,7 +161,7 @@ fn queue_retirement(c: &mut Commit, d: &Delivery) {
     }
 }
 mod executor {
-    pub use tl3_controller::executor::{Upstream, upstream};
+    pub use tl3_controller::executor::{Output, Upstream, upstream};
     use tl3_kernel::Ack;
     include!("conversions.rs");
 }
