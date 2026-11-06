@@ -156,17 +156,48 @@ fn input(role: Role) -> Value {
 fn new_reply_roots_enforce_generated_boundary_cases() {
     use tl3_contracts::roles::postmortem_reply::Recommendation;
     for n in 1..8 {
-        assert!(Audit::<Value>::validate_reply(json!({"verdict":"agree","objections":vec!["objection";n]})).is_err());
-        assert!(Audit::<Value>::validate_reply(json!({"verdict":"disagree","objections":vec!["objection";n]})).is_ok());
-        let mut planner=json!({"kind":"leaf","files":[],"checks":[{"kind":"regression","node_ids":[],"goal_ids":[]}],"no_design_questions":true,"lands_on_its_own":true});
-        for field in ["forcing","proof","declared_symptom"] { planner["checks"][0][field]=Value::Null;assert!(Planner::<Value>::validate_reply(planner.clone()).is_err());planner["checks"][0].as_object_mut().unwrap().remove(field); }
-        let approve=json!({"verdict":"approve","head_sha":"a".repeat(if n%2==0 {40}else{64}),"blocking_findings":[],"findings":[]});
+        assert!(
+            Audit::<Value>::validate_reply(
+                json!({"verdict":"agree","objections":vec!["objection";n]})
+            )
+            .is_err()
+        );
+        assert!(
+            Audit::<Value>::validate_reply(
+                json!({"verdict":"disagree","objections":vec!["objection";n]})
+            )
+            .is_ok()
+        );
+        let mut planner = json!({"kind":"leaf","files":[],"checks":[{"kind":"regression","node_ids":[],"goal_ids":[]}],"no_design_questions":true,"lands_on_its_own":true});
+        for field in ["forcing", "proof", "declared_symptom"] {
+            planner["checks"][0][field] = Value::Null;
+            assert!(Planner::<Value>::validate_reply(planner.clone()).is_err());
+            planner["checks"][0].as_object_mut().unwrap().remove(field);
+        }
+        let approve = json!({"verdict":"approve","head_sha":"a".repeat(if n%2==0 {40}else{64}),"blocking_findings":[],"findings":[]});
         Reviewer::<Value>::validate_reply(approve.clone()).unwrap();
-        let mut invalid=approve;invalid["head_sha"]=json!("a".repeat(n));assert!(Reviewer::<Value>::validate_reply(invalid).is_err());
-        for (operation,before,after) in [("add","","new"),("remove","old",""),("replace","old","new")] {
-            let valid=json!({"phase":"maker","kind":"code","target":"src/lib.rs","operation":operation,"before":before.repeat(n),"after":after.repeat(n),"evidence":"observed","effect":"repair"});
+        let mut invalid = approve;
+        invalid["head_sha"] = json!("a".repeat(n));
+        assert!(Reviewer::<Value>::validate_reply(invalid).is_err());
+        for (operation, before, after) in [
+            ("add", "", "new"),
+            ("remove", "old", ""),
+            ("replace", "old", "new"),
+        ] {
+            let valid = json!({"phase":"maker","kind":"code","target":"src/lib.rs","operation":operation,"before":before.repeat(n),"after":after.repeat(n),"evidence":"observed","effect":"repair"});
             serde_json::from_value::<Recommendation>(valid.clone()).unwrap();
-            let mut invalid=valid;let field=if operation=="add" {"before"}else{"after"};invalid[field]=json!(if operation=="replace" {""}else{"invalid"});assert!(serde_json::from_value::<Recommendation>(invalid).is_err());
+            let mut invalid = valid;
+            let field = if operation == "add" {
+                "before"
+            } else {
+                "after"
+            };
+            invalid[field] = json!(if operation == "replace" {
+                ""
+            } else {
+                "invalid"
+            });
+            assert!(serde_json::from_value::<Recommendation>(invalid).is_err());
         }
     }
 }
