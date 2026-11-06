@@ -255,9 +255,10 @@ fn observe(controller: &mut Controller, api: &Server, config: &Bootstrap, head_c
             && let tl3_controller::cli::Input::Observation {
                 observation: tl3_controller::executor::Observation::Queue(fact), ..
             } = &mut input
-            && let adapters::mergify::Evidence::CiFailed { head_check, .. } = &mut fact.evidence
+            && let adapters::mergify::Evidence::CiFailed { head_check, infra, .. } = &mut fact.evidence
         {
             *head_check = true;
+            *infra = false;
         }
         ingress::apply(controller, input).unwrap();
     }

@@ -2927,6 +2927,7 @@ fn main() {
         let mut database = support::Database::start();
         ci_evidence::scenario(&database.create("ci_evidence"), &mode);
         database.stop();
+        println!("1 Mergify scenarios passed; no skips; no live upstream calls");
         return;
     }
     if let Some(mode) = std::env::args()
