@@ -23,6 +23,7 @@ fn request(id: u64, phase: Phase) -> Request {
         maker_model: None,
         question_context: None,
         quota_hold: None,
+        prerequisites: vec![],
     }
 }
 

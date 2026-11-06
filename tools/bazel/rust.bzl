@@ -67,6 +67,7 @@ _LIBTEST_SHARDS = {
     "tl3-controller/direct_merge": 8,
     "tl3-controller/quota_hold": 16,
     "tl3-controller/input_resources": 10,
+    "tl3-controller/stderr_incidents": 10,
     "tl3-controller/approval_race": 27,
     "tl3-controller/budget_parity": 3,
     "tl3-controller/p5_checker": 14,
@@ -88,6 +89,7 @@ _CONTROLLER_TEST_COMPILE_DATA = {
 }
 # Only these scenarios execute tl3_workers. Its imports include tl3_harness.
 _CONTROLLER_WORKERS = [
+    "test_test_stderr_incidents",
     "test_test_harness_summary",
     "test_test_redaction_adapter",
     "test_test_redaction_generated",
@@ -159,6 +161,7 @@ _CONTROLLER_TEST_SOURCES = {
     "tests/approval_race.rs": ["tests/support/github.rs", "tests/support/controller_restart.rs"],
     "tests/budget_parity/main.rs": ["tests/budget_parity/*.py", "tests/budget_parity/*.txt"],
     "tests/production.rs": ["tests/prismabuild_fixture/**"],
+    "tests/stderr_incidents.rs": ["tests/redaction_support/**"],
     "tests/redaction_parity.rs": ["tests/redaction_support/**"],
     "tests/redaction_generated.rs": ["tests/redaction_support/**"],
     "tests/worker_supervisor/main.rs": ["tests/worker_supervisor/legacy.py", "tests/worker_supervisor/restart.rs", "tests/support/ownership.rs"],
@@ -194,6 +197,13 @@ _CONTROLLER_TEST_SOURCES = {
     "tests/worktrees.rs": ["tests/worktree_fixture/**", "tests/support/ownership.rs"],
     "tests/writer_references.rs": ["tests/writer_reference_model.py"],
 }
+
+# CC-E: reuse existing topic targets for delivery coverage without fanout growth.
+_CONTROLLER_TEST_SOURCES["tests/approval_race.rs"] += ["tests/delivery_conformance/**", "tests/delivery_fence/**"]
+_CONTROLLER_TEST_SOURCES["tests/publication_io.rs"] = _CONTROLLER_TEST_SOURCES.get("tests/publication_io.rs", []) + ["tests/delivery_schedule/**"]
+_CONTROLLER_TEST_SOURCES["tests/replay_check.rs"] = _CONTROLLER_TEST_SOURCES.get("tests/replay_check.rs", []) + ["tests/delivery_machine/**"]
+# One approval schedule per shard, including the eight controller and two fence cases.
+_LIBTEST_SHARDS["tl3-controller/approval_race"] = 37
 
 def tl3_rust_test(name, binary_id, gate_args, **kwargs):
     package = native.package_name()
@@ -378,8 +388,10 @@ def _crate_test(kind, package, name, source, harness, options):
     if kind == "bin" and name == "verus-runner" and native.package_name() == "crates/mergify":
         sources = [source]
     compile_data = options["compile_data"]
-    if source == "tests/proof_map.rs" and native.package_name() == "crates/kernel":
+    if source == "tests/proof_map.rs" and native.package_name() in ["crates/kernel", "crates/mergify"]:
         compile_data = compile_data + ["//tools/bazel:verus.bzl"]
+        if native.package_name() == "crates/mergify":
+            sources = sources + native.glob(["proofs/enqueue_*.rs"])
     if native.package_name() == "crates/store":
         compile_data = compile_data + native.glob(["tests/fixtures/**"], allow_empty = True)
     if native.package_name() == "crates/controller":

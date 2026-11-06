@@ -49,6 +49,35 @@
         "incidents": {
           "type": "array"
         },
+        "prerequisite_closures": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "issue",
+                  "pull_request"
+                ]
+              },
+              "number": {
+                "type": "integer",
+                "format": "uint64",
+                "minimum": 1
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "number",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
         "plan": {},
         "brief": {},
         "audit": {},

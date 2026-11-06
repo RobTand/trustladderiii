@@ -8,7 +8,8 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         old(w).nodes@[i as int].generation as int + 2 <= u64::MAX as int,
         old(w).nodes@[i as int].run_failures <= 1,
         old(w).nodes@[i as int].run_incidents <= 2,
-    ensures final(w).nodes@[i as int] == port_review_retry::failed_run(old(w).nodes@[i as int]),
+    ensures port_t860_contracts::failed_post(old(w).nodes@[i as int], final(w).nodes@[i as int], *old(out), *final(out)),
+        final(w).nodes@[i as int] == port_review_retry::failed_run(old(w).nodes@[i as int]),
         (retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out))),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
@@ -33,6 +34,8 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
     kernel_snapshot! { failed_before = w.nodes@[i as int] }
+    kernel_snapshot! { before_failed = w.nodes@[i as int] }
+    kernel_snapshot! { before_failed_out = *out }
     let m = &mut w.nodes[i];
     abandon_operation(m);
     m.pos = operation_start(m.phase);
@@ -55,6 +58,12 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
             assert(w.nodes@[i as int] == port_review_retry::failed_run(failed_before@)) by {
                 reveal(port_review_retry::failed_run); reveal(port_review_retry::abandoned);
             }
+        }
+    }
+    kernel_proof! {
+        assert(port_t860_contracts::failed_post(before_failed@, w.nodes@[i as int], before_failed_out@, *out)) by {
+            reveal(port_t860_contracts::failed_post);
+            reveal(port_t860_contracts::failed_node);
         }
     }
 }

@@ -189,7 +189,7 @@ CASES = {
     'gate_reply_admission': ('crates/kernel/src/reply_admission.rs',
                              'end_operation(&mut w.nodes[i]);',
                              'end_operation(&mut w.nodes[i]);\n    w.nodes[i].pool = true;',
-                             '//crates/kernel:verus_reply_admission_on_reply'),
+                             '//crates/kernel:verus_port_t860_on_admitted_reply'),
 
     'gate_apply_merge': ('crates/kernel/src/facts.rs',
                          'm.merged = Some(head);\n    m.pr_open = false;',
@@ -497,6 +497,114 @@ CASES = {
         'go_on(w, i, q, 0, out);',
         '//crates/kernel:verus_port_answers_awaiting_handler'),
 
+    't860_release_run': (
+        'crates/kernel/src/reply_admission.rs',
+        '            m.pool = false;',
+        '            m.pool = true;',
+        '//crates/kernel:verus_port_t860_release_run',
+    ),
+    't860_release_job': (
+        'crates/kernel/src/reply_admission.rs',
+        '            m.job = None;',
+        '            m.job = Some(generation);',
+        '//crates/kernel:verus_port_t860_release_job',
+    ),
+    't860_admitted_no_end': (
+        'crates/kernel/src/reply_admission.rs',
+        '    end_operation(&mut w.nodes[i]);',
+        '    let _ = i;',
+        '//crates/kernel:verus_port_t860_on_admitted_reply',
+    ),
+    't860_admitted_duplicate': (
+        'crates/kernel/src/reply_admission.rs',
+        '            reply_transition(w, i, reply, out);',
+        '            reply_transition(w, i, reply, out);\n            reply_transition(w, i, reply, out);',
+        '//crates/kernel:lib_test_tl3_kernel',
+    ),
+    't860_second_asks': (
+        'crates/kernel/src/ingest.rs',
+        'stop_for_review(m, ReviewStop::AuditDisagreement);',
+        'ask_rob(w, i, QKind::AuditDisagreement, Cont::Unplanned, 0, out);',
+        '//crates/kernel:verus_ingest_reply_ingest',
+    ),
+    't860_second_drops_stop': (
+        'crates/kernel/src/ingest.rs',
+        'stop_for_review(m, ReviewStop::AuditDisagreement);',
+        'set_phase(m, Phase::Unplanned);',
+        '//crates/kernel:verus_ingest_reply_ingest',
+    ),
+    't860_first_stops': (
+        'crates/kernel/src/ingest.rs',
+        'if m.audit_rounds < 2 {',
+        'if false {',
+        '//crates/kernel:verus_ingest_reply_ingest',
+    ),
+    't860_outputs': (
+        'crates/kernel/src/ingest.rs',
+        'm.audit_rounds = m.audit_rounds.saturating_add(1);',
+        'm.audit_rounds = m.audit_rounds.saturating_add(1);\n            emit_node(m, i, EffectKind::PrepareWorktree, out);',
+        '//crates/kernel:verus_ingest_reply_ingest',
+    ),
+    't860_complete_checker': (
+        'crates/kernel/src/ingest.rs',
+        'm.audit_rounds = m.audit_rounds.saturating_add(1);',
+        'm.audit_rounds = m.audit_rounds.saturating_add(1);\n            m.holds = true;',
+        '//crates/kernel:verus_ingest_reply_ingest',
+    ),
+    't860_credit': (
+        'crates/kernel/src/ingest.rs',
+        'm.audit_rounds = m.audit_rounds.saturating_add(1);',
+        'm.audit_rounds = m.audit_rounds.saturating_add(1);\n            m.credit.merge_credited = !m.credit.merge_credited;',
+        '//crates/kernel:verus_ingest_reply_ingest',
+    ),
+    't860_adoption': (
+        'crates/kernel/src/ingest.rs',
+        'm.audit_rounds = m.audit_rounds.saturating_add(1);',
+        'm.audit_rounds = m.audit_rounds.saturating_add(1);\n            m.adopted = false;',
+        '//crates/kernel:verus_ingest_reply_ingest',
+    ),
+    't860_proposed': (
+        'crates/kernel/src/ingest.rs',
+        'm.audit_rounds = m.audit_rounds.saturating_add(1);',
+        'm.audit_rounds = m.audit_rounds.saturating_add(1);\n            m.proposed = None;',
+        '//crates/kernel:verus_ingest_reply_ingest',
+    ),
+    't860_sequence': (
+        'crates/kernel/src/ingest.rs',
+        'm.audit_rounds = m.audit_rounds.saturating_add(1);',
+        'm.audit_rounds = m.audit_rounds.saturating_add(1);\n            m.next_seq = 0;',
+        '//crates/kernel:verus_ingest_reply_ingest',
+    ),
+    't860_attempt': (
+        'crates/kernel/src/ingest.rs',
+        'm.audit_rounds = m.audit_rounds.saturating_add(1);',
+        'm.audit_rounds = m.audit_rounds.saturating_add(1);\n            m.attempt = 3;',
+        '//crates/kernel:verus_ingest_reply_ingest',
+    ),
+    't860_replanned': (
+        'crates/kernel/src/ingest.rs',
+        'm.audit_rounds = m.audit_rounds.saturating_add(1);',
+        'm.audit_rounds = m.audit_rounds.saturating_add(1);\n            m.replanned = true;',
+        '//crates/kernel:verus_ingest_reply_ingest',
+    ),
+    't860_stale': (
+        'crates/kernel/src/reply_admission.rs',
+        'return; // stale',
+        'w.nodes[i].proposed = None;\n        return; // stale',
+        '//crates/kernel:verus_reply_admission_on_reply',
+    ),
+    't860_rejected': (
+        'crates/kernel/src/reply_admission.rs',
+        '        on_rejected_reply(w, i, generation, reply, out);',
+        '        if reply != Reply::AuditDisagrees { on_rejected_reply(w, i, generation, reply, out); }',
+        '//crates/kernel:verus_reply_admission_on_reply',
+    ),
+    't860_closed': (
+        'crates/kernel/src/reply_admission.rs',
+        '    let n = &w.nodes[i];\n    if n.phase.is_stopping() {',
+        '    if reply == Reply::AuditDisagrees && w.nodes[i].phase.is_closed() {\n        w.nodes[i].phase = Phase::Ingesting;\n    }\n    let n = &w.nodes[i];\n    if n.phase.is_stopping() {',
+        '//crates/kernel:verus_reply_admission_on_reply',
+    ),
 }
 
 
