@@ -316,6 +316,8 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        // #806 W1: generic output preservation for the separately owned file handler.
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
 ] proof [reveal(retry_bounds); reveal(footprint::ordered_table);] {
     kernel_snapshot! { before_files = *w }
     if fits && !files.is_empty() && w.nodes[i].credit.can_spend(1) {
