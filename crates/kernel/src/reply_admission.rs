@@ -293,7 +293,7 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
         port_replies_contracts::transition_post(*old(w), *final(w), i as int,
             old(w).nodes@[i as int], reply, *old(out), *final(out)),
 ] proof [reveal(progress_gate_contracts::maker_transition); reveal(distance);
-    reveal(port_replies_contracts::transition_post);] {
+    reveal(port_replies_contracts::transition_post); reveal(reply_bounds);] {
     match reply {
         Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees
             | Reply::AuditDisagrees | Reply::ProtectedPaths => reply_ingest(w, i, reply, out),

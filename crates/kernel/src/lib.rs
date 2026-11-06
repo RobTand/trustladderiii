@@ -2280,3 +2280,6 @@ mod port_replies_exec;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_replies_handlers.rs"]
 mod port_replies_handlers;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_failfast_diversion.rs"]
+mod port_failfast_diversion;

@@ -213,7 +213,9 @@ pub(super) fn plan_retry(w: &mut World, i: usize, cant_meet: bool,
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures port_failfast_diversion::plan_retry_post(*old(w), *final(w), i as int,
+            cant_meet, *old(out), *final(out)),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
@@ -224,8 +226,15 @@ pub(super) fn plan_retry(w: &mut World, i: usize, cant_meet: bool,
         final(w).next_question == (old(w).next_question
             + if !(old(w).fail_fast && cant_meet) && old(w).nodes@[i as int].plan_retries >= 1
                 { 1u64 } else { 0u64 }) as u64,
+        port_replies_contracts::output_post(*old(out), *final(out), i as int,
+            if !(old(w).fail_fast && cant_meet) && old(w).nodes@[i as int].plan_retries >= 1
+                { Some(Notice::Ask { question: old(w).next_question }) } else { None }),
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
-] hide [retirement::notices_only] proof [reveal(retry_bounds); reveal(port_replies_contracts::plan_post); reveal(retirement::stopped);] {
+] proof [reveal(retry_bounds);] {
+    kernel_snapshot! { plan_before = *w }
+    kernel_snapshot! { plan_out = *out }
+    kernel_snapshot! { plan_emission = if !(w.fail_fast && cant_meet) && w.nodes@[i as int].plan_retries >= 1
+        { Some(Notice::Ask { question: w.next_question }) } else { None } }
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
     m.plan_retries = m.plan_retries.saturating_add(1);
@@ -239,6 +248,35 @@ pub(super) fn plan_retry(w: &mut World, i: usize, cant_meet: bool,
         m.plan_retries = 0;
         let must_split = matches!(phase, Phase::Planning { must_split: true });
         ask_rob(w, i, QKind::CantMeet, Cont::Planning { must_split }, 1, out);
+    }
+    kernel_proof! {
+        assert(port_replies_contracts::output_post(plan_out@, *out, i as int, plan_emission@)) by {
+            reveal(port_replies_contracts::output_post);
+        }
+        if plan_before@.nodes@[i as int].phase is Planning {
+            assert(port_replies_contracts::plan_stable(plan_before@.nodes@[i as int], w.nodes@[i as int])) by {
+                reveal(port_replies_contracts::plan_stable); reveal(retirement::stopped);
+            }
+            assert(port_replies_contracts::plan_changes(plan_before@.nodes@[i as int], w.nodes@[i as int],
+                plan_before@.next_question, plan_before@.fail_fast, cant_meet)) by {
+                reveal(port_replies_contracts::plan_changes); reveal(retirement::stopped);
+            }
+            port_replies_handlers::plan_join(plan_before@.nodes@[i as int], w.nodes@[i as int],
+                plan_before@.next_question, plan_before@.fail_fast, cant_meet);
+        }
+        if plan_before@.nodes@[i as int].phase is Planning && plan_before@.fail_fast && cant_meet {
+            port_replies_handlers::plan_forward(plan_before@.nodes@[i as int], w.nodes@[i as int],
+                plan_before@.next_question, w.next_question, plan_before@.fail_fast, cant_meet,
+                plan_out@, *out, i as int);
+        }
+        assert(port_failfast_diversion::plan_retry_post(plan_before@, *w, i as int,
+            cant_meet, plan_out@, *out)) by {
+            reveal(port_failfast_diversion::plan_retry_post);
+            reveal(port_failfast_diversion::plan_result); reveal(port_failfast_diversion::plan_fields);
+        }
+        if retirement::notices_only(plan_out@) {
+            port_replies_handlers::output_notices(plan_out@, *out, i as int, plan_emission@);
+        }
     }
 }
 }

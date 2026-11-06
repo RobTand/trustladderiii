@@ -101,56 +101,12 @@ pub(super) open spec fn transitioned(n: Node, id: u64, fast: bool, reply: Reply)
 /// #806: hide exact node reconstruction from unrelated production rank/bounds queries.
 #[verifier::opaque]
 pub(super) open spec fn node_post(source: Node, after: Node, id: u64, fast: bool, reply: Reply) -> bool {
-    let expected = transitioned(source, id, fast, reply);
-    after.phase == expected.phase
-        && after.pos == expected.pos
-        && after.repo == expected.repo
-        && after.footprint == expected.footprint
-        && after.generation == expected.generation
-        && after.next_seq == expected.next_seq
-        && after.effect == expected.effect
-        && after.run == expected.run
-        && after.job == expected.job
-        && after.pool == expected.pool
-        && after.ticket == expected.ticket
-        && after.holds == expected.holds
-        && after.paused == expected.paused
-        && after.last_cmd == expected.last_cmd
-        && after.question == expected.question
-        && after.attempt == expected.attempt
-        && after.round == expected.round
-        && after.replanned == expected.replanned
-        && after.plan_retries == expected.plan_retries
-        && after.audit_rounds == expected.audit_rounds
-        && after.early_end == expected.early_end
-        && after.run_failures == expected.run_failures
-        && after.run_incidents == expected.run_incidents
-        && after.fx_failures == expected.fx_failures
-        && after.fx_incidents == expected.fx_incidents
-        && after.waiting_incident == expected.waiting_incident
-        && after.incident_needs_rob == expected.incident_needs_rob
-        && after.proposed == expected.proposed
-        && after.adopted == expected.adopted
-        && after.head == expected.head
-        && after.checked == expected.checked
-        && after.approved == expected.approved
-        && after.merged == expected.merged
-        && after.pr_open == expected.pr_open
-        && after.had_pr == expected.had_pr
-        && after.worktree == expected.worktree
-        && after.rechecks == expected.rechecks
-        && after.review_restarted == expected.review_restarted
-        && after.credit == expected.credit
-        && after.priority == expected.priority
-        && after.review_stop == expected.review_stop
-        && after.planning_started == expected.planning_started
-        && after.waiting_prerequisite == expected.waiting_prerequisite
+    after == transitioned(source, id, fast, reply)
 }
 
-/// Q54 / #806: the exact planner frame, opaque at the production call boundary.
+/// #806 planner frame: every field outside the retry, phase and question update.
 #[verifier::opaque]
-pub(super) open spec fn plan_post(source: Node, after: Node, id: u64, fast: bool, cant: bool) -> bool {
-    source.phase is Planning ==> {
+pub(super) open spec fn plan_stable(source: Node, after: Node) -> bool {
         after.repo == source.repo
         && after.footprint == source.footprint
         && after.next_seq == source.next_seq
@@ -183,7 +139,12 @@ pub(super) open spec fn plan_post(source: Node, after: Node, id: u64, fast: bool
         && after.priority == source.priority
         && after.planning_started == source.planning_started
         && after.waiting_prerequisite == source.waiting_prerequisite
-        && after.generation as int == source.generation as int + 1
+}
+
+/// Q54 / #806: only the fields written by the real planner retry branches.
+#[verifier::opaque]
+pub(super) open spec fn plan_changes(source: Node, after: Node, id: u64, fast: bool, cant: bool) -> bool {
+    after.generation as int == source.generation as int + 1
         && after.pos == 0 && after.ticket.is_none()
         && after.effect == match source.effect {
             Some(e) => Some(InFlight { cancelling: true, ..e }), None => None,
@@ -209,7 +170,13 @@ pub(super) open spec fn plan_post(source: Node, after: Node, id: u64, fast: bool
                                 Phase::Planning { must_split: true }) }, cost: 1, clarified: false })
                 }
         }
-    }
+
+}
+
+/// Q54 / #806: combine the stable frame and exact branch fields at the call boundary.
+#[verifier::opaque]
+pub(super) open spec fn plan_post(source: Node, after: Node, id: u64, fast: bool, cant: bool) -> bool {
+    source.phase is Planning ==> plan_stable(source, after) && plan_changes(source, after, id, fast, cant)
 }
 
 /// #806 frame: only exhausted audit/planner retries and PlanSplit allocate questions.
@@ -225,6 +192,24 @@ pub(super) open spec fn asks(n: Node, fast: bool, reply: Reply) -> bool {
     }
 }
 
+/// #806 reply outputs: one Ask, one measures notice, or the unchanged outbox.
+pub(super) open spec fn emission(n: Node, id: u64, fast: bool, reply: Reply) -> Option<Notice> {
+    if asks(n, fast, reply) { Some(Notice::Ask { question: id }) }
+    else if reply == Reply::AuditAgrees && n.early_end.is_none() { Some(Notice::MeasuresPosted) }
+    else { None }
+}
+
+/// #806 output frame: the handler changes exactly one append slot or no slot.
+#[verifier::opaque]
+pub(super) open spec fn output_post(before: Outbox, after: Outbox, i: int, emitted: Option<Notice>) -> bool {
+    before.len < OUTBOX && match emitted {
+        Some(notice) => after.len == before.len + 1
+            && after.items@ == before.items@.update(before.len as int,
+                Some(Out::Notice { node: NodeId(i as u64), notice })),
+        None => after == before,
+    }
+}
+
 /// #806: exact transition, immutable world fields, and notice-only outputs.
 pub(super) open spec fn transition_post(before: World, after: World, i: int,
     source: Node, reply: Reply, out_before: Outbox, out_after: Outbox) -> bool {
@@ -235,6 +220,9 @@ pub(super) open spec fn transition_post(before: World, after: World, i: int,
                 + if asks(source, before.fail_fast, reply) { 1u64 } else { 0u64 }) as u64
             && after.file_sets@ == before.file_sets@
             && (retirement::notices_only(out_before) ==> retirement::notices_only(out_after))
+            && (reply == Reply::PlanCantMeet ==> port_failfast_diversion::plan_result(
+                source, after.nodes@[i], before.fail_fast, true,
+                before.next_question, after.next_question, out_before, out_after))
     }
 }
 }
