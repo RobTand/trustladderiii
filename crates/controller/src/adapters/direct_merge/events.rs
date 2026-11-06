@@ -112,7 +112,11 @@ impl Translator {
                 if !crate::outcome::recorded(snapshot, &identity) {
                     inputs.push(Input::Observation {
                         key: format!("direct:{identity}"),
-                        observation: Observation::Outcome { node, outcome: evidence, receipt: Some(identity) },
+                        observation: Observation::Outcome {
+                            node,
+                            outcome: evidence,
+                            receipt: Some(identity),
+                        },
                     });
                 }
             }

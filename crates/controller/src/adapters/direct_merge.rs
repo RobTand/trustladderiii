@@ -469,12 +469,22 @@ impl Adapter {
                         required::Contribution::Tests | required::Contribution::Infrastructure
                     ) && (failure.is_none() || item == required::Contribution::Tests)
                     {
-                        failure = Some((DeliveryOutcome::CiFailed {
-                            head: pull.head.sha.clone(),
-                            infra: item == required::Contribution::Infrastructure,
-                            failed_tests: vec![],
-                            evidence: Default::default(),
-                        }, format!("head-ci:{}{}", check.id, check.completed_at.map(|time| format!(":{}", time.to_rfc3339())).unwrap_or_default())));
+                        failure = Some((
+                            DeliveryOutcome::CiFailed {
+                                head: pull.head.sha.clone(),
+                                infra: item == required::Contribution::Infrastructure,
+                                failed_tests: vec![],
+                                evidence: Default::default(),
+                            },
+                            format!(
+                                "head-ci:{}{}",
+                                check.id,
+                                check
+                                    .completed_at
+                                    .map(|time| format!(":{}", time.to_rfc3339()))
+                                    .unwrap_or_default()
+                            ),
+                        ));
                     }
                 }
                 if let Some(status) = status {
@@ -486,12 +496,22 @@ impl Adapter {
                     });
                     summary = required::record(summary, item);
                     if item == required::Contribution::Tests {
-                        failure = Some((DeliveryOutcome::CiFailed {
-                            head: pull.head.sha.clone(),
-                            infra: false,
-                            failed_tests: vec![],
-                            evidence: Default::default(),
-                        }, format!("head-ci:{}{}", status.id, status.updated_at.map(|time| format!(":{}", time.to_rfc3339())).unwrap_or_default())));
+                        failure = Some((
+                            DeliveryOutcome::CiFailed {
+                                head: pull.head.sha.clone(),
+                                infra: false,
+                                failed_tests: vec![],
+                                evidence: Default::default(),
+                            },
+                            format!(
+                                "head-ci:{}{}",
+                                status.id,
+                                status
+                                    .updated_at
+                                    .map(|time| format!(":{}", time.to_rfc3339()))
+                                    .unwrap_or_default()
+                            ),
+                        ));
                     }
                 }
             }
@@ -564,16 +584,27 @@ impl Adapter {
             DeliveryOutcome::PushByOther { head } => format!("push:{head}"),
             DeliveryOutcome::Conflict { head } => format!("conflict:{head}"),
             DeliveryOutcome::ClosedByPerson => "closed".into(),
-            DeliveryOutcome::CiFailed { .. } => return Err(Error::Invalid("CI outcome needs a check receipt")),
+            DeliveryOutcome::CiFailed { .. } => {
+                return Err(Error::Invalid("CI outcome needs a check receipt"));
+            }
         };
         self.fact_with_receipt(d, outcome, &suffix)
     }
-    fn fact_with_receipt(&self, d: &Delivery, outcome: DeliveryOutcome, suffix: &str) -> Result<Completion> {
+    fn fact_with_receipt(
+        &self,
+        d: &Delivery,
+        outcome: DeliveryOutcome,
+        suffix: &str,
+    ) -> Result<Completion> {
         let identity = crate::outcome::identity(&d.repository, number(d)?, suffix);
         let observations = if crate::outcome::recorded(&self.snapshot()?, &identity) {
             vec![]
         } else {
-            vec![Observation::Outcome { node: d.node(), outcome, receipt: Some(identity) }]
+            vec![Observation::Outcome {
+                node: d.node(),
+                outcome,
+                receipt: Some(identity),
+            }]
         };
         Ok(Completion::confirmed(observations))
     }
@@ -615,11 +646,19 @@ impl Adapter {
                     head: read.pull.head.sha.clone(),
                 },
             )?,
-            Outcome::Conflict => self.fact(d, DeliveryOutcome::Conflict { head: read.pull.head.sha.clone() })?,
+            Outcome::Conflict => self.fact(
+                d,
+                DeliveryOutcome::Conflict {
+                    head: read.pull.head.sha.clone(),
+                },
+            )?,
             Outcome::Failed => {
-                let (outcome, receipt) = read.failure.clone().ok_or(Error::Invalid("direct check failure lacks evidence"))?;
+                let (outcome, receipt) = read
+                    .failure
+                    .clone()
+                    .ok_or(Error::Invalid("direct check failure lacks evidence"))?;
                 self.fact_with_receipt(d, outcome, &receipt)?
-            },
+            }
             Outcome::Closed => Completion::permanent("direct_pr_closed"),
             Outcome::Wait => {
                 self.wakes.sleep(&d.key);

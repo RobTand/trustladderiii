@@ -2975,25 +2975,54 @@ impl Controller {
         }
 
         let observation = match observation {
-            Observation::Merged { node, sha, checks_passed } => Observation::Outcome {
-                node, outcome: outcome::Outcome::Merged { head: sha, checks_passed }, receipt: None,
+            Observation::Merged {
+                node,
+                sha,
+                checks_passed,
+            } => Observation::Outcome {
+                node,
+                outcome: outcome::Outcome::Merged {
+                    head: sha,
+                    checks_passed,
+                },
+                receipt: None,
             },
-            Observation::CiFailed { node, infra, checks } => Observation::Outcome {
-                node, outcome: outcome::Outcome::CiFailed {
-                    head: commit_sha(snapshot, world.nodes[node.0 as usize].head).unwrap_or_default().to_owned(),
-                    infra, failed_tests: vec![],
-                    evidence: findings::QueueCiEvidence { checks, ..Default::default() },
-                }, receipt: None,
+            Observation::CiFailed {
+                node,
+                infra,
+                checks,
+            } => Observation::Outcome {
+                node,
+                outcome: outcome::Outcome::CiFailed {
+                    head: commit_sha(snapshot, world.nodes[node.0 as usize].head)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    infra,
+                    failed_tests: vec![],
+                    evidence: findings::QueueCiEvidence {
+                        checks,
+                        ..Default::default()
+                    },
+                },
+                receipt: None,
             },
             other => other,
         };
 
         let mut ci_details = match &observation {
-            Observation::Outcome { outcome: outcome::Outcome::CiFailed { failed_tests, evidence, .. }, .. } => {
+            Observation::Outcome {
+                outcome:
+                    outcome::Outcome::CiFailed {
+                        failed_tests,
+                        evidence,
+                        ..
+                    },
+                ..
+            } => {
                 let mut details = evidence.clone();
                 details.failed_tests = failed_tests.clone();
                 details
-            },
+            }
             Observation::Queue(adapters::mergify::QueueFact {
                 evidence: adapters::mergify::Evidence::CiFailed { details, .. },
                 ..
@@ -3284,13 +3313,24 @@ impl Controller {
                 };
                 if let Some(outcome) = fact.evidence.outcome() {
                     return self.translate_with_receipt(
-                        snapshot, world, Observation::Outcome { node, outcome, receipt: None }, commit,
+                        snapshot,
+                        world,
+                        Observation::Outcome {
+                            node,
+                            outcome,
+                            receipt: None,
+                        },
+                        commit,
                         Some(put("queue_facts", identity, value)),
                     );
                 }
                 let fact = match kernel {
                     KernelFact::PrDequeuedByPerson => Fact::PrDequeuedByPerson,
-                    _ => return Err(Error::Invalid("queue evidence routed to another kernel fact")),
+                    _ => {
+                        return Err(Error::Invalid(
+                            "queue evidence routed to another kernel fact",
+                        ));
+                    }
                 };
                 commit.rows.push(put("queue_facts", identity, value));
                 Event::Fact { node, fact }
@@ -3337,11 +3377,22 @@ impl Controller {
             Observation::Kernel(event) => {
                 kernel_boundary::validate_raw_event(event).map_err(Error::Invalid)?
             }
-            Observation::Merged { .. } | Observation::CiFailed { .. } => unreachable!("normalized delivery outcome"),
-            Observation::Outcome { node, outcome, receipt } => {
-                if receipt.as_ref().is_some_and(|id| snapshot.rows.iter().any(|row| {
-                    matches!(row.table.as_str(), "delivery_outcomes" | "queue_facts") && row.id == *id
-                })) { return Ok(None); }
+            Observation::Merged { .. } | Observation::CiFailed { .. } => {
+                unreachable!("normalized delivery outcome")
+            }
+            Observation::Outcome {
+                node,
+                outcome,
+                receipt,
+            } => {
+                if receipt.as_ref().is_some_and(|id| {
+                    snapshot.rows.iter().any(|row| {
+                        matches!(row.table.as_str(), "delivery_outcomes" | "queue_facts")
+                            && row.id == *id
+                    })
+                }) {
+                    return Ok(None);
+                }
                 let recorded = json!({"node": node, "outcome": &outcome});
                 use outcome::Outcome;
                 let current = &world.nodes[node.0 as usize];
@@ -3352,21 +3403,25 @@ impl Controller {
                     return Ok(None);
                 }
                 let fact = match outcome {
-                    Outcome::Merged { head, checks_passed } => Fact::PrMerged {
-                        head: self.head(node, &head)?, checks_passed,
+                    Outcome::Merged {
+                        head,
+                        checks_passed,
+                    } => Fact::PrMerged {
+                        head: self.head(node, &head)?,
+                        checks_passed,
                     },
                     Outcome::CiFailed { head, infra, .. } => {
                         if commit_sha(snapshot, current.head) != Some(head.as_str()) {
                             return Ok(None);
                         }
                         Fact::CiFailed { infra }
-                    },
+                    }
                     Outcome::Conflict { head } => {
                         if commit_sha(snapshot, current.head) != Some(head.as_str()) {
                             return Ok(None);
                         }
                         Fact::Conflict
-                    },
+                    }
                     Outcome::ClosedByPerson => Fact::PrClosedByPerson,
                     Outcome::PushByOther { head } => {
                         let commits: Vec<_> = snapshot
@@ -3377,9 +3432,11 @@ impl Controller {
                                 id: item.id,
                             })
                             .collect();
-                        let previous_sha =
-                            tl3_controller_core::translate::previous_commit(&commits, current.head.map(|head| head.0 as i64))
-                                .map(|index| snapshot.interned[index].value.as_str());
+                        let previous_sha = tl3_controller_core::translate::previous_commit(
+                            &commits,
+                            current.head.map(|head| head.0 as i64),
+                        )
+                        .map(|index| snapshot.interned[index].value.as_str());
                         let carried = tl3_controller_core::translate::carry_plan(
                             node.0,
                             &head,
@@ -3392,14 +3449,18 @@ impl Controller {
                                 json!(carried.plan),
                             ));
                         }
-                        Fact::PushByOther { head: self.head(node, &head)? }
-                    },
+                        Fact::PushByOther {
+                            head: self.head(node, &head)?,
+                        }
+                    }
                 };
                 if let Some(receipt) = receipt {
-                    commit.rows.push(put("delivery_outcomes", receipt, recorded));
+                    commit
+                        .rows
+                        .push(put("delivery_outcomes", receipt, recorded));
                 }
                 Event::Fact { node, fact }
-            },
+            }
             Observation::WorktreePrepared {
                 node,
                 repository,
@@ -4488,9 +4549,10 @@ fn observation_upstream(
         | Observation::WorktreePrepared { .. }
         | Observation::ScratchSaved { .. }
         | Observation::ScratchPruned { .. } => Some(Upstream::Worktrees),
-        Observation::Outcome { .. } | Observation::Merged { .. } | Observation::Queue(_) | Observation::CiFailed { .. } => {
-            Some(Upstream::Delivery)
-        }
+        Observation::Outcome { .. }
+        | Observation::Merged { .. }
+        | Observation::Queue(_)
+        | Observation::CiFailed { .. } => Some(Upstream::Delivery),
         Observation::Kernel(Event::Reply {
             node, generation, ..
         }) => snapshot
