@@ -94,5 +94,5 @@ pub fn healthy(
     complete: bool,
     all_passed: bool,
 ) -> bool {
-    successful && (destination_merge || (complete && all_passed))
+    successful && (destination_merge || complete)
 }
