@@ -2475,6 +2475,214 @@ fn retirement_continues_after_corrupt_node(settings: &tl3_config::Store) {
     );
 }
 
+/// #849 / Q51: the same retained PB ending has the same incident cause at every
+/// controller entry, and only a new release clears a TL3-side incident once.
+fn completion_failure_cause(settings: &tl3_config::Store, path: &str, harness: bool) {
+    struct Synchronous(Adapter, bool);
+    impl Executor for Synchronous {
+        fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
+            self.0.execute(delivery)?;
+            if self.1 {
+                Ok(completion(&mut self.0, delivery))
+            } else {
+                Ok(Completion::confirmed(vec![]))
+            }
+        }
+        fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+            self.0.reconcile(delivery)
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let delivery = run(root.path(), false);
+    let mode = if harness {
+        "harness_error"
+    } else {
+        "no_report"
+    };
+    let adapter = fixture(root.path(), if path == "sync" { mode } else { "pending" });
+    let mut source = adapter.source();
+    let fakes = root.path().join("fakes");
+    let registry = |adapter: Adapter, synchronous: bool| {
+        let mut registry = adapters::simulation(&fakes).unwrap();
+        registry.register(Upstream::PrismaBuild, Synchronous(adapter, synchronous));
+        registry.register(
+            Upstream::Workers,
+            workers(
+                adapters::workers::Fake::new(&fakes),
+                delivery.head_sha.clone().unwrap(),
+            ),
+        );
+        registry
+    };
+    let bootstrap = Bootstrap {
+        operations: None,
+        repos: vec![repository()],
+        rob: 1,
+        slots: 1,
+        pool: 1,
+        fail_fast: false,
+    };
+    let mut controller = Controller::open(
+        tl3_store::Store::open(settings).unwrap(),
+        registry(adapter, path == "sync"),
+        bootstrap.clone(),
+    )
+    .unwrap();
+    controller.start_release("t849-before").unwrap();
+    controller
+        .intake(LabelledIssue {
+            delivery: "pb-cause".into(),
+            owner: "RobTand".into(),
+            repo: "tl3-sandbox".into(),
+            installation: 1,
+            number: 42,
+            title: "PB completion cause".into(),
+            actor: 1,
+            label: "tl3".into(),
+            labels: Vec::new(),
+        })
+        .unwrap();
+    while controller.drive_once().unwrap() {}
+    controller
+        .observe(
+            "check-plan",
+            Observation::CheckPlan {
+                node: NodeId(0),
+                sha: delivery.head_sha.clone().unwrap(),
+                run: delivery.checks.clone().unwrap(),
+            },
+        )
+        .unwrap();
+    while controller.drive_once().unwrap() {}
+    if path != "sync" {
+        for attempt in 0..2 {
+            let action = fs::read_to_string(root.path().join("queue/publications")).unwrap();
+            finish(root.path(), action.lines().last().unwrap(), mode);
+            let (sender, receiver) = mpsc::channel();
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let delivered = (0..10).find_map(|_| {
+                let count = runtime
+                    .block_on(source.poll(&sender, Duration::from_secs(1)))
+                    .unwrap();
+                (count > 0).then_some(count)
+            });
+            assert_eq!(delivered, Some(1));
+            let inputs: Vec<_> = receiver.try_iter().collect();
+            assert!(!inputs.is_empty(), "source delivered the ending");
+            let snapshot = controller.snapshot().unwrap();
+            let watched = snapshot
+                .rows
+                .iter()
+                .find(|r| {
+                    r.table == "watches" && r.value["output"]["Effect"]["kind"] == "SubmitChecks"
+                })
+                .unwrap();
+            let key = watched.id.clone();
+            // The source has retained the complete .done before a restart loses its Input.
+            let mut retained = fixture(root.path(), "pending");
+            let watched: Delivery = serde_json::from_value(watched.value.clone()).unwrap();
+            assert_eq!(
+                completion(&mut retained, &watched).failure_class.as_deref(),
+                harness.then_some("harness")
+            );
+            match path {
+                "source" => {
+                    for input in inputs {
+                        tl3_controller::ingress::apply(&mut controller, input).unwrap();
+                    }
+                }
+                "watch" => {
+                    if attempt == 1 {
+                        drop(controller);
+                        controller = Controller::open(
+                            tl3_store::Store::open(settings).unwrap(),
+                            registry(retained, false),
+                            bootstrap.clone(),
+                        )
+                        .unwrap();
+                    }
+                    controller.drive_once().unwrap();
+                }
+                "allowance" => controller.look_key(&key).unwrap(),
+                _ => unreachable!(),
+            }
+            while controller.drive_once().unwrap() {}
+        }
+    }
+    while controller.drive_once().unwrap() {}
+    let snapshot = controller.snapshot().unwrap();
+    let incidents: Vec<_> = snapshot
+        .rows
+        .iter()
+        .filter(|r| r.table == "incidents" && r.value["open"] == true)
+        .collect();
+    assert_eq!(incidents.len(), 1, "{path}: one blocking incident");
+    let incident = incidents[0];
+    assert_eq!(
+        incident.value["cause"],
+        if harness { "tl3" } else { "upstream" },
+        "{path}: same cause as synchronous completion"
+    );
+    assert_eq!(
+        incident.value["signature"]["class"],
+        if harness {
+            "harness"
+        } else {
+            "operation_failed"
+        }
+    );
+    assert!(
+        controller.world().unwrap().nodes[0].waiting_incident,
+        "#817 stays (d), an open incident"
+    );
+    let id = incident.id.clone();
+    controller.start_release("t849-after").unwrap();
+    if harness {
+        controller.drive_once().unwrap();
+    }
+    let after = controller.snapshot().unwrap();
+    assert_eq!(
+        after
+            .rows
+            .iter()
+            .find(|r| r.table == "incidents" && r.id == id)
+            .unwrap()
+            .value["open"],
+        !harness
+    );
+    let revision = after.revision;
+    controller.start_release("t849-after").unwrap();
+    assert_eq!(
+        controller.snapshot().unwrap().revision,
+        revision,
+        "same release clears nothing twice"
+    );
+    assert_eq!(
+        controller.world().unwrap().nodes[0].waiting_incident,
+        !harness
+    );
+}
+
+fn completion_failure_causes(database: &mut support::Database) {
+    let mut failures = 0;
+    for path in ["sync", "source", "watch", "allowance"] {
+        for harness in [true, false] {
+            let settings = database.create(&format!("pb_cause_{path}_{harness}"));
+            let result =
+                std::panic::catch_unwind(|| completion_failure_cause(&settings, path, harness));
+            println!(
+                "test completion_failure_cause_{path}_{harness} ... {}",
+                if result.is_ok() { "ok" } else { "FAILED" }
+            );
+            failures += usize::from(result.is_err());
+        }
+    }
+    assert_eq!(failures, 0, "#849 completion cause regressions");
+}
+
 fn main() {
     if std::env::args().len() == 1
         || std::env::args().nth(1).as_deref() == Some("--router-regression")
@@ -2488,6 +2696,13 @@ fn main() {
     }
 
     let args: Vec<_> = std::env::args().collect();
+    if args.get(1).is_some_and(|arg| arg == "--completion-causes") {
+        let mut database = support::Database::start();
+        completion_failure_causes(&mut database);
+        database.stop();
+        println!("8 completion cause scenarios passed; no skips");
+        return;
+    }
     if args.get(1).is_some_and(|arg| arg == "--failure-phases") {
         phase_evidence_survives_exact_head_receipts();
         println!("test phase_evidence_survives_exact_head_receipts ... ok");
@@ -2748,8 +2963,9 @@ fn main() {
     println!("test quiet_alive_job_is_not_a_failed_read ... ok");
     quiet_alive_job_is_not_a_failed_read(&database.create("pb_unreadable"), true);
     println!("test unreadable_job_record_is_a_failed_read ... ok");
+    completion_failure_causes(&mut database);
     database.stop();
-    println!("53 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
+    println!("61 PrismaBuild adapter scenarios passed; no nested submissions; no skips");
 }
 
 fn declared_wait_uses_bell() {
