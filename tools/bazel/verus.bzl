@@ -9,6 +9,7 @@ def _verus_test_impl(ctx):
     if not ctx.files.srcs:
         fail("verus_test must name the executable module under proof in srcs")
     toolchain = ctx.attr.toolchain[VerusToolchainInfo]
+    runner = ctx.executable.measured_runner or ctx.executable._runner
     launcher = ctx.actions.declare_file(ctx.label.name + ".sh")
     ctx.actions.write(launcher, """#!/bin/bash
 set -euo pipefail
@@ -16,7 +17,7 @@ cd "${RUNFILES_DIR:-$0.runfiles}/%s"
 exec "%s" "%s" "%s" "%s" "%s" "%s" "%s" "%s"
 """ % (
         ctx.workspace_name,
-        ctx.executable._runner.short_path,
+        runner.short_path,
         toolchain.verifier.short_path,
         toolchain.z3.short_path,
         toolchain.sysroot.short_path,
@@ -25,9 +26,9 @@ exec "%s" "%s" "%s" "%s" "%s" "%s" "%s" "%s"
         ctx.label,
         ctx.attr.module,
     ), is_executable = True)
-    runfiles = ctx.runfiles(files = [ctx.file.src, ctx.executable._runner] + ctx.files.srcs + ctx.files.specs,
+    runfiles = ctx.runfiles(files = [ctx.file.src, runner] + ctx.files.srcs + ctx.files.specs,
                            transitive_files = toolchain.files)
-    runfiles = runfiles.merge(ctx.attr._runner[DefaultInfo].default_runfiles)
+    runfiles = runfiles.merge((ctx.attr.measured_runner or ctx.attr._runner)[DefaultInfo].default_runfiles)
     return [DefaultInfo(executable = launcher, runfiles = runfiles)]
 
 verus_test = rule(
@@ -40,6 +41,7 @@ verus_test = rule(
         "expected_obligations": attr.int(mandatory = True),
         "module": attr.string(),
         "toolchain": attr.label(default = "@verus_linux_amd64//:toolchain", providers = [VerusToolchainInfo]),
+        "measured_runner": attr.label(executable = True, cfg = "exec"),
         "_runner": attr.label(default = "//crates/mergify:verus-runner", executable = True, cfg = "exec"),
     },
 )
@@ -332,6 +334,21 @@ def verus_proofs():
 
     # CC-E: dependency-free delivery steps and the faithful dispatch composition.
     if native.package_name() == "crates/delivery":
+        py_binary(
+            name = "verus_runner",
+            srcs = ["tools/verus_runner.py"],
+            main = "tools/verus_runner.py",
+        )
+        verus_test(
+            name = "verus_probe",
+            src = "proofs/core.rs",
+            srcs = ["src/step.rs"],
+            expected_obligations = 1,
+            module = "help",
+            measured_runner = ":verus_runner",
+            tags = ["manual"],
+            size = "small",
+        )
         for name, count in {"dispatch": 18, "core": 18, "once": 39, "converges": 73, "dedup": 42, "approval": 79, "fence": 50}.items():
             verus_test(
                 name = "verus_" + name,
