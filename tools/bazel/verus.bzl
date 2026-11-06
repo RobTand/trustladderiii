@@ -863,6 +863,10 @@ def verus_proofs():
             "retries_recheck": ("kernel::retries#recheck", 1),
             "port_failfast_plan_stop": ("kernel::port_failfast_diversion#verify_plan_stop", 1),
             "port_failfast_plan_composition": ("kernel::port_failfast_diversion#compose_plan", 1),
+            "port_failfast_pair": ("kernel::port_failfast_pair", 1),
+            "port_failfast_plan_stop_result": ("kernel::port_failfast_diversion#plan_stop_result", 1),
+            "port_failfast_plan_rerun_result": ("kernel::port_failfast_diversion#plan_rerun_result", 1),
+            "port_failfast_plan_ask_result": ("kernel::port_failfast_diversion#plan_ask_result", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

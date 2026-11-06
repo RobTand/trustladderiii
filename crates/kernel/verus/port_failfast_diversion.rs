@@ -23,6 +23,37 @@ pub(super) open spec fn plan_node(n: Node, fail_fast: bool, cant_meet: bool, que
     }
 }
 
+/// Q54 planner stop: compose the counted node with the exact stop contract.
+pub(super) proof fn plan_stop_result(before: Node, after: Node, fast: bool, cant: bool, id: u64)
+    requires fast && cant,
+        after == retirement::stopped(Node { review_stop: Some(ReviewStop::PlanCantMeet),
+            plan_retries: plan_count(before), ..before }, Outcome::Stopped),
+    ensures after == plan_node(before, fast, cant, id),
+{
+    reveal(plan_node);
+}
+
+/// Q54 planner first retry: compose the counted node with the exact phase contract.
+pub(super) proof fn plan_rerun_result(before: Node, after: Node, fast: bool, cant: bool, id: u64)
+    requires !(fast && cant), before.plan_retries == 0,
+        after == retirement::phased(Node { plan_retries: 1, ..before }, before.phase),
+    ensures after == plan_node(before, fast, cant, id),
+{
+    reveal(plan_node);
+}
+
+/// Q54 planner exhausted retry: compose the exact existing question allocation.
+pub(super) proof fn plan_ask_result(before: Node, after: Node, fast: bool, cant: bool, id: u64)
+    requires !(fast && cant), before.plan_retries > 0,
+        after == retirement::phased(Node { plan_retries: 0, holds: false,
+            question: Some(Question { id, kind: QKind::CantMeet,
+                cont: Cont::Planning { must_split: matches!(before.phase, Phase::Planning { must_split: true }) },
+                cost: 1, clarified: false }), ..before }, Phase::AwaitingRob),
+    ensures after == plan_node(before, fast, cant, id),
+{
+    reveal(plan_node);
+}
+
 /// Q54: exact local planner result, kept opaque across world-frame composition.
 #[verifier::opaque]
 pub(super) open spec fn plan_result(before: Node, after: Node, fast: bool, cant_meet: bool,

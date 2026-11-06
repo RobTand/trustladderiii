@@ -215,43 +215,35 @@ pub(super) fn plan_retry(w: &mut World, i: usize, cant_meet: bool,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-        port_failfast_diversion::plan_retry_post(*old(w), *final(w), i as int,
-            cant_meet, *old(out), *final(out)),
-] proof [reveal(retry_bounds); reveal(port_failfast_diversion::plan_retry_post);] {
-    kernel_snapshot! { before_plan_retry = *w }
-    kernel_snapshot! { before_plan_outputs = *out }
+        final(w).nodes@[i as int] == port_failfast_diversion::plan_node(
+            old(w).nodes@[i as int], old(w).fail_fast, cant_meet, old(w).next_question),
+        final(w).next_question == if old(w).fail_fast && cant_meet
+            || old(w).nodes@[i as int].plan_retries == 0 { old(w).next_question }
+            else { (old(w).next_question + 1) as u64 },
+        (old(w).fail_fast && cant_meet || old(w).nodes@[i as int].plan_retries == 0)
+            ==> *final(out) == *old(out),
+] proof [reveal(retry_bounds);] {
+    kernel_snapshot! { before_plan_node = w.nodes@[i as int] }
+    kernel_snapshot! { before_plan_id = w.next_question }
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
     m.plan_retries = m.plan_retries.saturating_add(1);
     kernel_proof! {
-        assert(*m == (Node { plan_retries: port_failfast_diversion::plan_count(
-            before_plan_retry@.nodes@[i as int]), ..before_plan_retry@.nodes@[i as int] }));
+        assert(*m == (Node { plan_retries: port_failfast_diversion::plan_count(before_plan_node@), ..before_plan_node@ }));
     }
     let phase = m.phase;
     if fail_fast && cant_meet {
         stop_for_review(m, ReviewStop::PlanCantMeet);
-        kernel_proof! {
-            port_failfast_diversion::compose_plan(before_plan_retry@.nodes@[i as int],
-                w.nodes@[i as int], before_plan_retry@.fail_fast, cant_meet,
-                before_plan_retry@.next_question, w.next_question, before_plan_outputs@, *out);
-        }
+        kernel_proof! { port_failfast_diversion::plan_stop_result(before_plan_node@, *m, fail_fast, cant_meet, before_plan_id@); }
     } else if m.plan_retries < 2 {
         // Re-run once, with the reason or the next model on the planner's ladder.
         set_phase(m, phase);
-        kernel_proof! {
-            port_failfast_diversion::compose_plan(before_plan_retry@.nodes@[i as int],
-                w.nodes@[i as int], before_plan_retry@.fail_fast, cant_meet,
-                before_plan_retry@.next_question, w.next_question, before_plan_outputs@, *out);
-        }
+        kernel_proof! { port_failfast_diversion::plan_rerun_result(before_plan_node@, *m, fail_fast, cant_meet, before_plan_id@); }
     } else {
         m.plan_retries = 0;
         let must_split = matches!(phase, Phase::Planning { must_split: true });
         ask_rob(w, i, QKind::CantMeet, Cont::Planning { must_split }, 1, out);
-        kernel_proof! {
-            port_failfast_diversion::compose_plan(before_plan_retry@.nodes@[i as int],
-                w.nodes@[i as int], before_plan_retry@.fail_fast, cant_meet,
-                before_plan_retry@.next_question, w.next_question, before_plan_outputs@, *out);
-        }
+        kernel_proof! { port_failfast_diversion::plan_ask_result(before_plan_node@, w.nodes@[i as int], fail_fast, cant_meet, before_plan_id@); }
     }
 }
 }

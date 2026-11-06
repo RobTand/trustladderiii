@@ -296,6 +296,16 @@ CASES = {
                                '    if !approved {',
                                '    if approved {',
                                '//crates/kernel:verus_facts_merge'),
+    'port_failfast_review_outcome': (
+        'crates/kernel/src/retries.rs',
+        '    enter_stopping(m, Outcome::Stopped);',
+        '    enter_stopping(m, Outcome::NotActionable);',
+        '//crates/kernel:verus_retries_stop_for_review'),
+    'port_failfast_plan_counter': (
+        'crates/kernel/src/retries.rs',
+        '    m.plan_retries = m.plan_retries.saturating_add(1);',
+        '    m.plan_retries = m.plan_retries.saturating_add(0);',
+        '//crates/kernel:verus_retries_plan_retry'),
 }
 
 
