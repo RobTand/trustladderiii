@@ -791,10 +791,14 @@ mod tests {
         let snapshot = store.load().unwrap();
         let mut commit = tl3_store::Commit::new("stored-watch", serde_json::json!(null), &snapshot);
         commit.effects.push(tl3_store::NewEffect {
-            key: "t894-stored".into(), kind: "Workers".into(), payload: value.clone(),
+            key: "t894-stored".into(),
+            kind: "Workers".into(),
+            payload: value.clone(),
         });
         commit.rows.push(tl3_store::RowChange::Put {
-            table: "watches".into(), id: "t894-stored".into(), value: value.clone(),
+            table: "watches".into(),
+            id: "t894-stored".into(),
+            value: value.clone(),
         });
         store.commit(&commit).unwrap();
         let watched = watched_deliveries(&mut store).unwrap();
@@ -802,10 +806,21 @@ mod tests {
         assert_eq!(watched[0].paths.as_slice(), ["x.py"]);
         let delivery: Delivery = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(delivery.paths.as_slice(), ["x.py"]);
-        for path in ["../x", "/x", "", "x\0.py", "a\\b", ".git/config", "a/.git/b"] {
+        for path in [
+            "../x",
+            "/x",
+            "",
+            "x\0.py",
+            "a\\b",
+            ".git/config",
+            "a/.git/b",
+        ] {
             let mut unsafe_value = value.clone();
             unsafe_value["paths"] = serde_json::json!([path]);
-            assert!(serde_json::from_value::<Delivery>(unsafe_value).is_err(), "{path:?}");
+            assert!(
+                serde_json::from_value::<Delivery>(unsafe_value).is_err(),
+                "{path:?}"
+            );
         }
     }
 

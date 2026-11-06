@@ -26,7 +26,7 @@ from tl3_workers import retro
 from tl3_workers.roles.base import Role
 from tl3_workers.session import ContextCharacters, is_unaccepted_session, out_of_room, save
 from tl3_workers.tools import _parts, build_tools
-from tl3_workers.turns import TurnControl, repaired
+from tl3_workers.turns import TurnControl, Unrepairable, repaired
 
 
 def _check_inputs(inputs):
@@ -319,6 +319,9 @@ def run(model, request, worktree, emit):
 
     inputs = request["inputs"]
     _check_inputs(inputs)
+    if getattr(worktree, "declared_files", None) != frozenset(inputs["footprint"]):
+        raise Unrepairable(
+            "maker worktree footprint does not match its input; reconstruct the Worktree with inputs.footprint")
     session = Path(request["session_file"]) if "session_file" in request else None
     if (request.get("resume_session") and "last_accepted_generation" in request
             and (session is None or not session.exists())):
@@ -369,7 +372,7 @@ def run(model, request, worktree, emit):
     allowance = control.allowance
     if allowance is not None:
         test_paths = {test.split("::", 1)[0] for check in inputs["plan"]["checks"] for test in check["tests"]}
-        allowance.implementation_files = frozenset(inputs["plan"]["files"]) - test_paths
+        allowance.implementation_files = frozenset(inputs["footprint"]) - test_paths
     characters = ContextCharacters()
     starting_head, merge_target, merge_files = _starting_state(request, session)
     progress = session.with_suffix(".visit") if session else None
@@ -416,7 +419,8 @@ def run(model, request, worktree, emit):
         if session and session.exists() and request.get("resume_session"):
             history = messages_from_dict(read_json(session.read_text()))
         start = len(history)
-        history.append(HumanMessage(content=json.dumps(inputs, ensure_ascii=False)))
+        model_inputs = {key: value for key, value in inputs.items() if key != "footprint"}
+        history.append(HumanMessage(content=json.dumps(model_inputs, ensure_ascii=False)))
 
     def checkpoint(pending=None):
         if not progress:
@@ -528,7 +532,7 @@ def run(model, request, worktree, emit):
                                  "action_key", "artifact_sha256", "receipt_sha256", "budget", "identity",
                                  "phase", "inner", "outer", "timings", "receipts") if key in generated}, sort_keys=True)}
                     break
-                missing = set(configured_outputs(worktree, forecast, worktree.protected_paths)) - set(inputs["plan"]["files"])
+                missing = set(configured_outputs(worktree, forecast, worktree.protected_paths)) - set(inputs["footprint"])
                 if missing:
                     # Old accepted plans and newly created glob matches use the
                     # normal extension transition before a head reaches Checking.
@@ -538,7 +542,7 @@ def run(model, request, worktree, emit):
                     break
                 if "forecast" in inputs:
                     encoding = optional_encoding()
-                    tokens, problems, _ = measure_files(worktree, inputs["plan"]["files"], encoding)
+                    tokens, problems, _ = measure_files(worktree, inputs["footprint"], encoding)
                     if not forecast_fit(inputs["brief"], tokens, inputs["forecast"], encoding, problems)["fits"]:
                         reply = {"kind": "cant_meet", "report": "Generated tree exceeds final fit or file limits."}
                         break
@@ -571,7 +575,7 @@ def run(model, request, worktree, emit):
             "reply cant_meet with a report that names them")))
     if reply["kind"] == "needs_files" and "forecast" in inputs:
         encoding = optional_encoding()
-        paths = set(inputs["plan"]["files"]) | {item["path"] for item in reply["files"]}
+        paths = set(inputs["footprint"]) | {item["path"] for item in reply["files"]}
         file_tokens, problems, _ = measure_files(worktree, paths, encoding)
         reply["fits"] = forecast_fit(inputs["brief"], file_tokens, inputs["forecast"], encoding, problems)["fits"]
     if session and reply["kind"] != "out_of_room":

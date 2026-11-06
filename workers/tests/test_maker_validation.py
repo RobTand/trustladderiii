@@ -215,7 +215,7 @@ def test_check_base_reaches_maker_test_tool(maker_request):
     base = git(maker_request["worktree"], "rev-parse", "HEAD")
     maker_request["inputs"]["check_base_sha"] = base
     response = {"kind": "cant_meet", "report": "Fixture stops after tool binding."}
-    with Worktree(maker_request["worktree"]) as tree:
+    with Worktree(maker_request["worktree"], footprint=maker_request["inputs"]["footprint"]) as tree:
         maker.run(ToolModel(responses=[AIMessage(**turn(response))]), maker_request, tree, lambda event: None)
         assert getattr(tree, "check_base_sha", None) == base
 
@@ -224,7 +224,7 @@ def test_plan_check_kinds_reach_maker_test_tool(maker_request):
     from tl3_workers.tools import Worktree
 
     response = {"kind": "cant_meet", "report": "Fixture stops after tool binding."}
-    with Worktree(maker_request["worktree"]) as tree:
+    with Worktree(maker_request["worktree"], footprint=maker_request["inputs"]["footprint"]) as tree:
         maker.run(ToolModel(responses=[AIMessage(**turn(response))]), maker_request, tree, lambda event: None)
         assert getattr(tree, "test_checks", None) == maker_request["inputs"]["plan"]["checks"]
 
@@ -306,7 +306,7 @@ def test_fix_round_inputs_and_test_settings_reach_their_destinations(tmp_path, m
     assert settings == [inputs["tests"]]
     # The PrismaBuild look ties a declared wait to this checkout's history.
     assert checkouts == [Path(maker_request["worktree"])]
-    assert json.loads(observed[0][1].text) == inputs
+    assert json.loads(observed[0][1].text) == {key: value for key, value in inputs.items() if key != "footprint"}
     system = observed[0][0].text
     assert system.startswith(files("tl3_workers").joinpath("prompts/maker.md").read_text())
     assert maker_request["key_file"] not in system

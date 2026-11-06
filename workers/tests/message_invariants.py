@@ -159,7 +159,7 @@ def requested_fit(maker_request, paths):
     from tl3_workers.tools import Worktree
 
     response = {'kind': 'needs_files', 'files': [{'path': path, 'why': 'Needed.'} for path in paths]}
-    with Worktree(maker_request['worktree']) as tree:
+    with Worktree(maker_request['worktree'], footprint=maker_request['inputs']['footprint']) as tree:
         return maker.run(ToolModel(responses=[AIMessage(**turn(response))]),
                          maker_request, tree, lambda event: None)['fits']
 

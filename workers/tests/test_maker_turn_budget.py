@@ -60,7 +60,8 @@ def test_long_maker_session_bounds_context_and_commits(tmp_path, maker_request, 
     for previous, following in zip(observed, observed[1:]):
         assert [m.model_dump() for m in following[:len(previous)]] == [m.model_dump() for m in previous], \
             'history below the context threshold preserves its exact prefix'
-    request_text = json.dumps(maker_request['inputs'], ensure_ascii=False)
+    model_inputs = {key: value for key, value in maker_request['inputs'].items() if key != 'footprint'}
+    request_text = json.dumps(model_inputs, ensure_ascii=False)
     assert all(any(m.content == request_text for m in messages if isinstance(m, HumanMessage))
                for messages in observed), 'the current request survives across resumed visits'
     assert next(message.text for message in reversed(observed[-1])
