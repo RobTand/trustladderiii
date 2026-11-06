@@ -35,6 +35,9 @@ def test_assembly_receipt_is_independent_of_umask(tmp_path):
         modes.append({path.relative_to(destination).as_posix(): path.stat().st_mode & 0o777
                       for path in destination.rglob('*')})
     assert receipts[0] == receipts[1] == receipts[2]
+    assert digests[0] == digests[1] == digests[2]
+    assert modes == [{'tests': 0o755, 'tests/nested': 0o755,
+                      'tests/nested/test_observer.py': 0o644}] * 3
 
 
 @pytest.mark.parametrize('case', json.loads(
@@ -69,9 +72,6 @@ def test_spike_replay_modes(tmp_path, case):
             if path.is_file() and name not in data['base']:
                 assert path.stat().st_mode & 0o777 == 0o644
     assert receipts[0] == receipts[1] == receipts[2]
-    assert digests[0] == digests[1] == digests[2]
-    assert modes == [{'tests': 0o755, 'tests/nested': 0o755,
-                      'tests/nested/test_observer.py': 0o644}] * 3
 
 
 @pytest.mark.parametrize('base_mode,head_mode', [(0o755, 0o644), (0o644, 0o755)])
