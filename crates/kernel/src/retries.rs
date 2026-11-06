@@ -3,6 +3,7 @@ use super::*;
 
 kernel_fn! {
 /// Failed-run rows / #771: a retry and incident allocate at most two generations.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         old(w).nodes@[i as int].generation as int + 2 <= u64::MAX as int,
@@ -43,12 +44,21 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         m.run_failures = 0;
         m.run_incidents = (m.run_incidents + 1).min(2);
         let needs_rob = m.run_incidents >= 2;
+        kernel_proof! {
+            assert(retirement::incident(*m, needs_rob) == retries_facts::failed_run(before_failed@)) by {
+                retries_facts::incident(before_failed@, *m, needs_rob);
+            }
+        }
         raise_incident(w, i, needs_rob, out);
     }
     kernel_proof! {
+        if before_failed@.run_failures == 0 {
+            assert(w.nodes@[i as int] == retries_facts::failed_run(before_failed@)) by {
+                retries_facts::restarted(before_failed@, w.nodes@[i as int]);
+            }
+        }
         assert(port_t860_contracts::failed_post(before_failed@, w.nodes@[i as int], before_failed_out@, *out)) by {
-            reveal(port_t860_contracts::failed_post);
-            reveal(port_t860_contracts::failed_node);
+            retries_facts::failed_result(before_failed@, w.nodes@[i as int], before_failed_out@, *out);
         }
     }
 }
@@ -102,6 +112,7 @@ kernel_fn! {
 /// Q54 / #771: the ladder after a failed fix round costs at most one credit.
 /// It tries a bigger budget, another model, one re-plan, then asks Rob.
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
@@ -226,6 +237,7 @@ pub(super) fn plan_retry(w: &mut World, i: usize, cant_meet: bool,
 
 kernel_fn! {
 /// Recheck rows / #771: a new head or reviewer uses the same free allowance.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
     out: &mut Outbox) -> (result: ()) [
     requires !(target is Closed), i < old(w).nodes@.len(), old(out).len < OUTBOX,
