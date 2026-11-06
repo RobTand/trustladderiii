@@ -17,9 +17,13 @@ use std::{
 };
 use tl3_controller::{
     adapters::worktrees::Boundary,
+    dispatch_liveness::decision::{
+        ContractEvidence, DeliveryClass, DispatchStatus, Evidence, ProcessEvidence, RetryPending,
+        classify,
+    },
     executor::{Completion, Delivery, Executor, Observation, Reconciliation},
 };
-use tl3_kernel::{Ack, EffectKind};
+use tl3_kernel::{Ack, EffectKind, Wait};
 use worktree_fixture::{Fixture, commit, git};
 static VERIFIED_KILLS: AtomicUsize = AtomicUsize::new(0);
 
@@ -347,6 +351,31 @@ fn leases_and_exact_heads() {
         external
     );
 }
+/// Effect-delivery Converges row: fenced intent cannot certify dispatch.
+fn journal_status(kind: EffectKind, contract: ContractEvidence) -> DispatchStatus {
+    classify(
+        Wait::Effect(kind),
+        Evidence {
+            class: DeliveryClass::Converges,
+            intent: true,
+            contract,
+            watch: false,
+            process: ProcessEvidence::Unknown,
+            ending: contract == ContractEvidence::Ending,
+            deadline: true,
+            quota_reset: None,
+            incident: false,
+            paused: false,
+            ticket: false,
+            obstruction: false,
+            question: false,
+            external: false,
+            closed: false,
+            admission: false,
+        },
+    )
+}
+
 fn old_epoch_partial_attempts() {
     for kind in [
         EffectKind::PrepareWorktree,
@@ -386,7 +415,28 @@ fn old_epoch_partial_attempts() {
             let exists = checkout.exists();
             // Opening the replacement fences stale handles before any new execute.
             let mut stale = f.adapter();
+            let current = stale.contract_evidence(&delivery).unwrap();
+            assert_eq!(
+                current,
+                ContractEvidence::RecordedIntent,
+                "{kind:?}/{boundary}"
+            );
+            assert_eq!(
+                journal_status(kind, current),
+                DispatchStatus::Dispatched(DeliveryClass::Converges),
+                "{kind:?}/{boundary} before the fence"
+            );
             let mut replacement = f.adapter_at(2);
+            for adapter in [&mut stale, &mut replacement] {
+                let fenced = adapter.contract_evidence(&delivery).unwrap();
+                // Check classification first so the red names the false dispatch.
+                assert_eq!(
+                    journal_status(kind, fenced),
+                    DispatchStatus::Retry(RetryPending::Allowance),
+                    "{kind:?}/{boundary}: a fenced unfinished journal is not in flight"
+                );
+                assert_eq!(fenced, ContractEvidence::Absent);
+            }
             assert!(stale.execute(&delivery).is_err());
             let result = stale.reconcile(&delivery).unwrap();
             same_reconciliation(&result, &replacement.reconcile(&delivery).unwrap());
@@ -397,6 +447,13 @@ fn old_epoch_partial_attempts() {
                 }
             } else {
                 let completion = found(result);
+                // Authoritative terminal evidence remains valid across later fences.
+                let mut next = f.adapter_at(3);
+                for adapter in [&mut stale, &mut replacement, &mut next] {
+                    let terminal = adapter.contract_evidence(&delivery).unwrap();
+                    assert_eq!(terminal, ContractEvidence::Ending);
+                    assert_eq!(journal_status(kind, terminal), DispatchStatus::Ending);
+                }
                 match kind {
                     EffectKind::Push => assert_eq!(
                         git(&f.remote, &["rev-parse", branch.as_str()]),

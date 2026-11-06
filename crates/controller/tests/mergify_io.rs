@@ -4,6 +4,7 @@ mod mergify_io;
 pub use mergify_io::{Error, Result, decode_stored, executor};
 
 pub use mergify_io::{evidence, snapshot};
+pub use tl3_controller::dispatch_liveness;
 pub use tl3_controller::looks;
 pub use tl3_controller::pr_body;
 pub use tl3_controller::queue_cause;

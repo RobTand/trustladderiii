@@ -602,6 +602,12 @@ fn main() {
         database.stop();
         return;
     }
+    if args.get(1).is_some_and(|s| s == "--stale-lease") {
+        stale_lease_wait_ends_bounded(&database.create("workers_stale_lease"));
+        println!("test stale_lease_wait_ends_with_retry_then_incident ... ok");
+        database.stop();
+        return;
+    }
     if args.get(1).is_some_and(|s| s == "--r3") {
         external_wait_survives_restart(&database.create("workers_r3_wait"));
         database.stop();
@@ -1352,22 +1358,39 @@ fn killed_worker(settings: &tl3_config::Store) {
         .unwrap();
     assert!(status.success());
     assert!(failed(&terminal(&mut supervisor, &delivery)));
-    // A lost terminal record proves absence only after both processes ended.
+    // Q7: once both processes ended, a lost terminal record is infrastructure
+    // failure evidence, without reading the uncommitted stdout as a reply.
     fs::remove_file(root_for(&config, &delivery.key).join("attempt-00000000/exit.json")).unwrap();
-    assert!(matches!(
-        supervisor.reconcile(&delivery).unwrap(),
-        Reconciliation::Absent
-    ));
+    let Reconciliation::Found(completion) = supervisor.reconcile(&delivery).unwrap() else {
+        panic!("lost terminal record must produce an infrastructure ending");
+    };
+    assert!(matches!(completion.observations.as_slice(),
+        [Observation::WorkerFailed { node, generation, failure_class, .. }]
+            if *node == delivery.node() && *generation == delivery.generation
+                && failure_class == "LostWorker"));
     fs::write(root.path().join("entered.release"), "go").unwrap();
-    supervisor.execute(&delivery).unwrap();
-    supervisor.execute(&delivery).unwrap();
-    assert_eq!(attempts(&root_for(&config, &delivery.key)), 2);
-    assert!(!failed(&terminal(&mut supervisor, &delivery)));
+    for _ in 0..2 {
+        assert!(failed(&supervisor.execute(&delivery).unwrap()));
+    }
+    assert_eq!(attempts(&root_for(&config, &delivery.key)), 1);
+    let mut retry = delivery.clone();
+    retry.key = "effect:0:2".into();
+    retry.generation += 1;
+    retry.output = Out::Effect {
+        node: delivery.node(),
+        seq: 2,
+        kind: EffectKind::StartRun(Role::Ingest),
+        head: None,
+    };
+    supervisor.execute(&retry).unwrap();
+    supervisor.execute(&retry).unwrap();
+    assert_eq!(attempts(&root_for(&config, &retry.key)), 1);
+    assert!(!failed(&terminal(&mut supervisor, &retry)));
     assert_eq!(
         owner(settings)
             .query_one(
-                "SELECT count(*) FROM tl3_worker_runs WHERE run_key = $1",
-                &[&delivery.key]
+                "SELECT count(*) FROM tl3_worker_runs WHERE node_id = '0'",
+                &[]
             )
             .unwrap()
             .get::<_, i64>(0),
@@ -1835,29 +1858,50 @@ fn killed_supervisor(settings: &tl3_config::Store) {
     source.poll_once(&mut store, &tx).unwrap();
     assert!(rx.try_recv().is_err());
     fs::write(root.path().join("entered.release"), "go").unwrap();
-    wait_for_signal(|| matches!(supervisor.reconcile(&run).unwrap(), Reconciliation::Absent));
+    wait_for_signal(|| {
+        matches!(supervisor.reconcile(&run).unwrap(),
+        Reconciliation::Found(completion) if matches!(completion.observations.as_slice(),
+            [Observation::WorkerFailed { node, generation, failure_class, .. }]
+                if *node == run.node() && *generation == run.generation
+                    && failure_class == "LostWorker"))
+    });
     assert!(!attempt.join("exit.json").exists());
     assert!(
         rx.try_recv().is_err(),
         "discard a valid reply without a recorded exit"
     );
+    // Q7 retries under a new operation; replaying the ended key cannot launch.
+    assert!(failed(&supervisor.execute(&run).unwrap()));
+    let mut retry = run.clone();
+    retry.key = "effect:0:2".into();
+    retry.generation += 1;
+    retry.output = Out::Effect {
+        node: run.node(),
+        seq: 2,
+        kind: EffectKind::StartRun(Role::Ingest),
+        head: None,
+    };
     // The retry may start before the source drains the previous pidfd event.
-    supervisor.execute(&run).unwrap();
-    assert!(!failed(&terminal(&mut supervisor, &run)));
+    supervisor.execute(&retry).unwrap();
+    assert!(!failed(&terminal(&mut supervisor, &retry)));
     wait_for_signal(|| {
         source.poll_once(&mut store, &tx).unwrap();
         source.active_runs() == 0
     });
-    let Input::Observation {
-        key,
-        observation: Observation::WorkerReply { .. },
-    } = rx.try_recv().unwrap()
-    else {
-        panic!("missing retried worker reply")
-    };
-    assert!(key.ends_with(":worker:1:0"));
-    assert!(rx.try_recv().is_err());
-    assert_eq!(attempts(&root_for(&config, &run.key)), 2);
+    let endings: Vec<_> = rx.try_iter().collect();
+    assert_eq!(endings.len(), 2);
+    assert!(endings.iter().any(|input| matches!(input,
+        Input::Observation { key, observation: Observation::WorkerFailed {
+            generation, failure_class, ..
+        }} if key == &format!("{}:worker:0:0", run.key)
+            && *generation == run.generation && failure_class == "LostWorker")));
+    assert!(endings.iter().any(|input| matches!(input,
+        Input::Observation { key, observation: Observation::WorkerReply {
+            generation, ..
+        }} if key == &format!("{}:worker:0:0", retry.key)
+            && *generation == retry.generation)));
+    assert_eq!(attempts(&root_for(&config, &run.key)), 1);
+    assert_eq!(attempts(&root_for(&config, &retry.key)), 1);
 }
 
 fn fake_stop(settings: &tl3_config::Store) {
@@ -2683,10 +2727,19 @@ fn confirmed_absence(settings: &tl3_config::Store) {
         source.active_runs() == 0
     });
     assert!(!attempt.join("exit.json").exists());
-    assert!(
-        rx.try_recv().is_err(),
-        "source emits nothing for confirmed absence"
-    );
+    let tl3_controller::cli::Input::Observation { key, observation } =
+        rx.try_recv().expect("confirmed process loss wakes ingress")
+    else {
+        panic!("confirmed absence must emit an infrastructure failure");
+    };
+    assert!(matches!(
+        &observation,
+        Observation::WorkerFailed { node, generation, failure_class, .. }
+            if *node == run.node() && *generation == run.generation
+                && failure_class == "LostWorker"
+    ));
+    controller.observe(&key, observation).unwrap();
+    assert!(rx.try_recv().is_err(), "one authoritative loss observation");
     while controller.drive_once().unwrap() {}
     let replacement = store_worker_run(settings);
     assert_ne!(
@@ -2942,6 +2995,123 @@ fn external_wait_survives_restart(settings: &tl3_config::Store) {
     assert_eq!(c.world().unwrap().nodes[0].run_failures, 1);
 }
 
+/// #817 / Q43 (found by: live probe, PB #2819 action 125367eaf9f2 and PB #2821
+/// action 23a92572f19c): the maker declared a PrismaBuild wait whose action
+/// stayed CLAIMED with cleanup pending and a lease nobody renewed. Q43 counts a
+/// declared job as progress only while its own record shows it neither ended
+/// nor lost; a lease past PrismaBuild's own lease timeout is that record
+/// showing it lost. The stall allowance must then stop the run as an
+/// infrastructure failure, retry it, and raise the incident when the retry
+/// waits on the same wedged action. It must never hold the slot silently.
+fn stale_lease_wait_ends_bounded(settings: &tl3_config::Store) {
+    #[derive(Clone)]
+    struct Clock(std::rc::Rc<std::cell::Cell<u64>>);
+    impl tl3_controller::clock::Clock for Clock {
+        fn now(&self) -> std::time::SystemTime {
+            std::time::UNIX_EPOCH + Duration::from_millis(self.0.get())
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let config = config(settings, root.path(), "external-wait");
+    let mut store = Store::open(settings).unwrap();
+    materials(&mut store);
+    let supervisor = Supervisor::new(
+        &config,
+        &root.path().join("fakes"),
+        &mut crate::startup_ownership::ownership(),
+    )
+    .unwrap();
+    let mut source = supervisor.source();
+    let clock = Clock(std::rc::Rc::new(std::cell::Cell::new(1000)));
+    let mut registry = adapters::simulation(&root.path().join("fakes")).unwrap();
+    registry.register(tl3_controller::executor::Upstream::Workers, supervisor);
+    registry.register(
+        tl3_controller::executor::Upstream::PrismaBuild,
+        waits::adapter(root.path(), &mut crate::startup_ownership::ownership()),
+    );
+    let mut c = Controller::open_with_clock(
+        Store::open(settings).unwrap(),
+        registry,
+        Bootstrap::from_config(&config).unwrap(),
+        clock.clone(),
+    )
+    .unwrap();
+    let mut allowances = config.allowances.clone();
+    allowances.agent_worker.silence_secs = 1;
+    allowances.agent_worker.no_progress_secs = 3;
+    c.set_allowances(allowances);
+    let claimed = root.path().join("queue/claimed");
+    // The wedged record: CLAIMED, cleanup pending, its lease last renewed when
+    // 125367eaf9f2's was (2026-11-06T00:23:08Z), hours before any look.
+    waits::record(root.path(), "claimed");
+    fs::write(
+        claimed.join(format!("{}.lease", waits::key())),
+        json!({"schema": "prismaquant.prismabuild.pool_lease.v1", "action_key": waits::key(),
+            "heartbeat_unix": 1_793_924_588.0, "owner": "dl380g10:2297648:a107a95b",
+            "host": "dl380g10"})
+        .to_string(),
+    )
+    .unwrap();
+    // #2819's only contended-heartbeat stamp (11-05T23:22:10Z) is older than its
+    // lease, so PrismaBuild's effective heartbeat is still the stale lease.
+    let stamps = root
+        .path()
+        .join("queue/lease-heartbeats")
+        .join(waits::key());
+    fs::create_dir_all(&stamps).unwrap();
+    fs::write(
+        stamps.join(format!("{}.json", "c".repeat(64))),
+        json!({"action_key": waits::key(), "host": "dl380g10", "pid": 2297648,
+            "pid_start_ticks": 1, "heartbeat_unix": 1_793_920_930.0})
+        .to_string(),
+    )
+    .unwrap();
+    c.intake(labelled()).unwrap();
+    while c.drive_once().unwrap() {}
+    let (tx, _rx) = mpsc::channel();
+    for round in 1..=2u8 {
+        let run = store_worker_run(settings);
+        wait_for_signal(|| {
+            source.poll_once(&mut store, &tx).unwrap();
+            store
+                .worker_progress(None)
+                .unwrap()
+                .iter()
+                .any(|r| r.key == run.key && r.external_wait.is_some())
+        });
+        // Bind the action to this run's checkout, so only its lease can say lost.
+        let encoded: String = run.key.bytes().map(|b| format!("{b:02x}")).collect();
+        let record_path = claimed.join(format!("{}.json", waits::key()));
+        let mut record: serde_json::Value =
+            serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+        record["checkout_snapshot"]["parent"] = json!(waits::bind(
+            root.path(),
+            &config.workers.runs.join(&encoded).join("worktree")
+        ));
+        record["container_cleanup_pending"] = json!({"attempts": 1618});
+        fs::write(&record_path, record.to_string()).unwrap();
+        c.look_now().unwrap();
+        clock.0.set(clock.0.get() + 3_000);
+        c.look_due().unwrap();
+        while c.drive_once().unwrap() {}
+        let node = c.world().unwrap().nodes[0];
+        // The kernel counts the first infrastructure failure, then on the second
+        // resets the count and raises the incident (Q7).
+        let ended = if round == 1 {
+            node.run_failures == 1 && node.run_incidents == 0
+        } else {
+            node.run_failures == 0 && node.run_incidents == 1 && node.waiting_incident
+        };
+        assert!(
+            ended,
+            "round {round}: a declared wait on a CLAIMED action with an expired lease \
+             held the run silently ({:?}, run failures {}, run incidents {})",
+            node.phase, node.run_failures, node.run_incidents
+        );
+    }
+    fs::write(root.path().join("entered.release"), "go").unwrap();
+}
+
 fn run_default() {
     let mut shard = scenario_shard::Shard::from_env();
     let mut fixture = Fixture(None);
@@ -2960,6 +3130,8 @@ fn run_default() {
         println!("test fake_clock_stops_real_stalled_worker_before_retry ... ok");
         external_wait_survives_restart(&database.create("workers_external_wait"));
         println!("test external_wait_persists_across_source_and_controller_restart ... ok");
+        stale_lease_wait_ends_bounded(&database.create("workers_stale_lease"));
+        println!("test stale_lease_wait_ends_with_retry_then_incident ... ok");
         writer_prompt(&database.create("writer_prompt"));
         println!("test process_writer_sends_the_active_writer_prompt ... ok");
         missing_prompt_holds_launch(&database.create("missing_prompt"));
