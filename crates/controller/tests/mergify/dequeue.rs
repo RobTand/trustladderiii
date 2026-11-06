@@ -14,12 +14,29 @@
 //! arrived afterwards.
 //!
 //! The upstreams are the captured PR states, unmodified except for the
-//! harness's repository, PR number, head and App login.
+//! harness's repository, PR number, head and App login. In the #3318 capture
+//! the in-progress check is the head's own "Remote Bazel selection and
+//! shards" run; the batch's "Merge gate" run lives on Mergify's draft branch
+//! and is not in `pq3318/checks.json`. TL3 decides only from Mergify's queue
+//! check, which shows the dequeue.
+//!
+//! r1 (review, found by: review): the negative consumed-command case, the
+//! Change, other-reason and Conflict routes on the ending path, and the
+//! legacy control for a PR the old executor already re-queued.
 use super::*;
 
-pub(super) struct Fixture;
+pub(super) struct Fixture {
+    /// The head's Remote Bazel log names a failing test (the Change variant).
+    pub(super) parsed: bool,
+}
 impl Fixture {
     pub(super) fn respond(&self, path: &str) -> Option<ResponseTemplate> {
+        if self.parsed && path.ends_with("/actions/jobs/127697164599/logs") {
+            return Some(ResponseTemplate::new(200).set_body_string(
+                "FAILED: tests/test_stage.py::test_bind_actual_stage - AssertionError\n\
+                 ##[error]Process completed with exit code 1.\n",
+            ));
+        }
         if path.ends_with("/actions/jobs/127697164599/logs") {
             return Some(ResponseTemplate::new(200).set_body_string(include_str!(
                 "../fixtures/mergify/pq3309/remote-bazel-job.log"
@@ -44,6 +61,11 @@ pub(super) const MODES: &[&str] = &[
     "pq3318",
     "pq3318-running",
     "witness",
+    "pq3309-late",
+    "pq3309-change",
+    "pq3309-other",
+    "pq3309-conflict",
+    "pq3309-legacy-queued",
 ];
 
 /// Part 2 of 4g: the slot rule is Rob's Q27 call (options A/B/C). These modes
@@ -72,7 +94,7 @@ fn common(state: &mut State, base: &str) {
     state.pull["base"]["sha"] = json!(base);
     state.pull["mergeable"] = json!(true);
     state.pull["mergeable_state"] = json!("unstable");
-    state.dequeue_fixture = Some(Fixture);
+    state.dequeue_fixture = Some(Fixture { parsed: false });
 }
 
 /// PQ #3309 at 06:28Z: both dequeues done, `tl3-queue` and `dequeued`, TL3's
@@ -92,6 +114,51 @@ fn pq3309(state: &mut State) {
     state.label = true;
     state.dequeued = true;
     common(state, "ef817b9d48f4e2f55a3b7d8e83caef25573ad544");
+}
+
+/// r1 negative case: TL3's command was posted after the 04:46:15Z dequeue and
+/// Mergify has not answered it. The receipt is in flight, not consumed.
+fn pq3309_late(state: &mut State) {
+    pq3309(state);
+    for comment in &mut state.comments {
+        if comment["user"]["login"] == "tl3-robtand[bot]" {
+            comment["id"] = json!(6677200000u64);
+            comment["created_at"] = json!("2026-11-06T05:00:00Z");
+            comment["updated_at"] = json!("2026-11-06T05:00:00Z");
+        }
+    }
+}
+
+fn retitle(state: &mut State, title: &str) {
+    let check = state.queue_check_mut();
+    check["output"]["title"] = json!(title);
+}
+
+/// r1 Change route: the answered command's dequeue followed a failed check on
+/// our head whose log names a failing test (no Mergify draft to read).
+fn pq3309_change(state: &mut State) {
+    pq3309(state);
+    retitle(state, "Dequeued — checks failed");
+    let check = state.queue_check_mut();
+    let summary = check["output"]["summary"]
+        .as_str()
+        .unwrap()
+        .replace("draft #3337", "the pull request")
+        .replace("checks timed out", "checks failed");
+    check["output"]["summary"] = json!(summary);
+    state.dequeue_fixture = Some(Fixture { parsed: true });
+}
+
+/// r1 other-reason route: a dequeue reason TL3 does not recognize.
+fn pq3309_other(state: &mut State) {
+    pq3309(state);
+    retitle(state, "Dequeued — merge queue reset");
+}
+
+/// r1 Conflict route: Mergify left the queue on a base conflict.
+fn pq3309_conflict(state: &mut State) {
+    pq3309(state);
+    retitle(state, "Dequeued — conflict with base branch");
 }
 
 /// PQ #3318 while the queue ran (14:42:50Z to 15:13:32Z): Mergify's queue
@@ -189,6 +256,21 @@ fn publish(
     upstream: fn(&mut State),
     enqueue: fn(&mut State, &Delivery),
 ) -> Controller {
+    publish_until(settings, api, root, clock, config, upstream, enqueue, |_| false)
+}
+
+/// As `publish`, stopping once `stop` holds for the request's node.
+#[allow(clippy::too_many_arguments)]
+fn publish_until(
+    settings: &tl3_config::Store,
+    api: &Server,
+    root: &Path,
+    clock: &head_checks::Clock,
+    config: &Bootstrap,
+    upstream: fn(&mut State),
+    enqueue: fn(&mut State, &Delivery),
+    stop: fn(&tl3_kernel::Node) -> bool,
+) -> Controller {
     let mut barrier = postgres::Config::new()
         .host(&settings.host)
         .port(settings.port)
@@ -234,7 +316,7 @@ fn publish(
                 }
             })
             .unwrap();
-        if !progressed {
+        if !progressed || stop(&controller.world().unwrap().nodes[0]) {
             break;
         }
     }
@@ -457,13 +539,18 @@ fn scenario_3309(settings: &tl3_config::Store, mode: &str) {
     let clock = head_checks::Clock(std::rc::Rc::new(std::cell::Cell::new(
         std::time::SystemTime::now(),
     )));
+    let upstream: fn(&mut State) = if mode == "pq3309-other" {
+        pq3309_other
+    } else {
+        pq3309
+    };
     let mut controller = publish(
         settings,
         &api,
         root.path(),
         &clock,
         &config,
-        pq3309,
+        upstream,
         bind_command,
     );
     let mut verdict = Verdict(vec![]);
@@ -570,11 +657,177 @@ fn scenario_restart(settings: &tl3_config::Store, mode: &str) {
         .unwrap(),
     )
     .unwrap();
+    if mode == "pq3309-legacy-queued" {
+        // r1 control: the old executor's requeue was accepted. Mergify runs a
+        // new queue attempt for this head; nothing is dequeued now.
+        let mut state = api.state.lock().unwrap();
+        state.dequeued = false;
+        let check = state.queue_check_mut();
+        check["id"] = json!(127800000001u64);
+        check["status"] = json!("in_progress");
+        check["conclusion"] = Value::Null;
+        check["completed_at"] = Value::Null;
+        check["started_at"] = json!("2026-11-06T06:29:00Z");
+        check["output"]["title"] = json!("Running merge queue checks");
+        check["output"]["summary"] = json!("");
+    }
     let mut controller = open(settings, &api, root.path(), &clock, &config);
     drain(&mut controller);
-    looks(&mut controller, &clock, 100_000, 5);
     let mut verdict = Verdict(vec![]);
+    if mode == "pq3309-legacy-queued" {
+        // Looks inside the no-progress allowance: a healthy queue run.
+        looks(&mut controller, &clock, 60, 3);
+        let node = controller.world().unwrap().nodes[0];
+        let incidents = incident_rows(&mut controller);
+        let causes = causes(&mut controller);
+        println!(
+            "4g {mode}: phase={:?} pending_enqueue={:?} causes={} incidents={}",
+            node.phase,
+            pending_enqueue(&mut controller),
+            serde_json::to_string(&causes).unwrap(),
+            serde_json::to_string(&incidents).unwrap()
+        );
+        verdict.check(
+            node.phase == Phase::Queued && pending_enqueue(&mut controller).is_none(),
+            "the accepted requeue did not confirm the enqueue",
+        );
+        verdict.check(
+            !held(&mut controller),
+            "a legacy dequeue fact held a PR that is queued and running now",
+        );
+        verdict.check(
+            incidents.is_empty(),
+            "a queued, running PR raised an incident",
+        );
+        let state = api.state.lock().unwrap();
+        verdict.check(
+            state.requeues == 0 && state.command_attempts == 0,
+            "a command was sent for a queued PR",
+        );
+        drop(state);
+        verdict.finish(mode);
+        return;
+    }
+    looks(&mut controller, &clock, 100_000, 5);
     ended(&mut verdict, &mut controller, &api, before, 0);
+    verdict.finish(mode);
+}
+
+/// r1: the negative consumed-command case and the Change and Conflict routes.
+fn scenario_route(settings: &tl3_config::Store, mode: &str) {
+    let api = Server::new();
+    let root = tempfile::tempdir().unwrap();
+    let config = bootstrap();
+    let clock = head_checks::Clock(std::rc::Rc::new(std::cell::Cell::new(
+        std::time::SystemTime::now(),
+    )));
+    let (upstream, stop): (fn(&mut State), fn(&tl3_kernel::Node) -> bool) = match mode {
+        "pq3309-late" => (pq3309_late, |_| false),
+        "pq3309-change" => (pq3309_change, |node| node.round > 0),
+        "pq3309-conflict" => (pq3309_conflict, |node| node.phase == Phase::Rebasing),
+        _ => panic!("unknown route mode {mode}"),
+    };
+    let mut controller = publish_until(
+        settings,
+        &api,
+        root.path(),
+        &clock,
+        &config,
+        upstream,
+        bind_command,
+        stop,
+    );
+    let mut verdict = Verdict(vec![]);
+    let node = controller.world().unwrap().nodes[0];
+    let pending = pending_enqueue(&mut controller);
+    let applied = enqueues(settings)
+        .iter()
+        .any(|key| record(root.path(), key, "applied").exists());
+    println!(
+        "4g {mode} after enqueue: phase={:?} round={} pending_enqueue={pending:?} applied_marker={applied} held={} causes={}",
+        node.phase,
+        node.round,
+        held(&mut controller),
+        serde_json::to_string(&causes(&mut controller)).unwrap()
+    );
+    match mode {
+        "pq3309-late" => {
+            verdict.check(
+                node.phase == Phase::Publishing && pending.is_some(),
+                "an unanswered command posted after the dequeue was treated as answered",
+            );
+            verdict.check(!held(&mut controller), "an in-flight command was held");
+            drop(controller);
+            let mut controller = open(settings, &api, root.path(), &clock, &config);
+            looks(&mut controller, &clock, 100_000, 5);
+            let incidents = incident_rows(&mut controller);
+            println!(
+                "4g {mode} after the bound: phase={:?} pending_enqueue={:?} incidents={}",
+                controller.world().unwrap().nodes[0].phase,
+                pending_enqueue(&mut controller),
+                serde_json::to_string(&incidents).unwrap()
+            );
+            verdict.check(
+                incidents
+                    .iter()
+                    .any(|incident| incident["class"] == "queue_requeue"),
+                "the in-flight command left the existing Q7 path",
+            );
+            verdict.check(
+                !held(&mut controller)
+                    && !incidents
+                        .iter()
+                        .any(|incident| incident["class"] == "queue_environment"),
+                "an in-flight command reached the #854 hold",
+            );
+        }
+        "pq3309-change" => {
+            verdict.check(
+                node.phase == Phase::Making && node.round == 1,
+                "the change-caused dequeue did not take its one failed round",
+            );
+            verdict.check(!held(&mut controller), "a change-caused dequeue was held");
+            verdict.check(
+                causes(&mut controller)
+                    .iter()
+                    .any(|cause| cause.get("Change").is_some()),
+                "the dequeue was not attributed to the change",
+            );
+            let findings = Store::open(settings)
+                .unwrap()
+                .worker_document("0", "maker_findings")
+                .unwrap()
+                .map(|document| document.to_string())
+                .unwrap_or_default();
+            verdict.check(
+                findings.contains("Remote Bazel selection and shards")
+                    && findings.contains("test_bind_actual_stage"),
+                "the repair lacks the failing check evidence",
+            );
+            verdict.check(
+                pending.is_none() && !applied,
+                "the enqueue did not end at the dequeue",
+            );
+        }
+        "pq3309-conflict" => {
+            verdict.check(
+                node.phase == Phase::Rebasing,
+                "the conflict dequeue did not route to Rebasing",
+            );
+            verdict.check(!held(&mut controller), "a conflict dequeue was held");
+            verdict.check(
+                pending.is_none() && !applied,
+                "the enqueue did not end at the dequeue",
+            );
+        }
+        _ => unreachable!(),
+    }
+    let state = api.state.lock().unwrap();
+    verdict.check(
+        state.requeues == 0 && state.command_attempts == 0 && state.posts == 0,
+        "an upstream write was sent",
+    );
+    drop(state);
     verdict.finish(mode);
 }
 
@@ -709,8 +962,9 @@ fn scenario_witness(settings: &tl3_config::Store, mode: &str) {
 
 pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
     match mode {
-        "pq3309" | "pq3309-slot" => scenario_3309(settings, mode),
-        "pq3309-restart" => scenario_restart(settings, mode),
+        "pq3309" | "pq3309-slot" | "pq3309-other" => scenario_3309(settings, mode),
+        "pq3309-restart" | "pq3309-legacy-queued" => scenario_restart(settings, mode),
+        "pq3309-late" | "pq3309-change" | "pq3309-conflict" => scenario_route(settings, mode),
         "pq3318" | "pq3318-running" | "pq3318-slot" => scenario_3318(settings, mode),
         "witness" => scenario_witness(settings, mode),
         _ => panic!("unknown 4g mode {mode}"),
