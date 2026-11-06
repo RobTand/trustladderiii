@@ -146,7 +146,11 @@ fn reply_audit_disagrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-    ensures ingest_facts::audit_post(old(w).nodes@[i as int], final(w).nodes@[i as int]),
+    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+        final(w).next_question == old(w).next_question,
+        final(w).file_sets@ == old(w).file_sets@,
+        *final(out) == *old(out),
+        ingest_facts::audit_post(old(w).nodes@[i as int], final(w).nodes@[i as int]),
         (successful_reply_input(old(w).nodes@[i as int], Reply::AuditDisagrees)
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
@@ -163,19 +167,30 @@ fn reply_audit_disagrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
                     && *final(out) == *old(out)
             }),
 ] {
+    kernel_snapshot! { audit_world = *w }
+    kernel_snapshot! { audit_out = *out }
     kernel_snapshot! { before_audit = w.nodes@[i as int] }
     let m = &mut w.nodes[i];
     increment_audit(m);
     if m.audit_rounds < 2 {
         // Ingest revises once with the audit's objections.
         set_phase(m, Phase::Ingesting);
+        kernel_proof! {
+            assert(reply_bounds(audit_world@, *w, i as int, audit_out@.len, out.len)) by {
+                reveal(reply_bounds);
+            }
+        }
         kernel_proof! { ingest_facts::audit_first(before_audit@, w.nodes@[i as int]); }
     } else {
         // Intake cannot split. The one repair is spent.
         stop_for_review(m, ReviewStop::AuditDisagreement);
+        kernel_proof! {
+            assert(reply_bounds(audit_world@, *w, i as int, audit_out@.len, out.len)) by {
+                reveal(reply_bounds);
+            }
+        }
         kernel_proof! { ingest_facts::audit_spent(before_audit@, w.nodes@[i as int]); }
     }
-    kernel_proof! { reveal(reply_bounds); }
 }
 }
 
