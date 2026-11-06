@@ -1,12 +1,59 @@
 """Admitted image transfer I/O; the shared Rust consumer validates identity/architecture."""
 import os
+import hashlib
+import json
 from pathlib import Path
+import re
 import signal
 import subprocess
 
 
 # Inspect only metadata needed for identity. Never export image environment into logs.
 INSPECT = '{"Id":{{json .Id}},"Os":{{json .Os}},"Architecture":{{json .Architecture}},"RepoDigests":{{json .RepoDigests}}}'
+
+
+def resolve_profile(map_path, profile, *, host, platform):
+    """Resolve the ops inventory, without copying its pins into runtime config."""
+    path = Path(map_path).resolve(strict=True)
+    with path.open('rb') as source:
+        raw = source.read(4 * 1024 * 1024 + 1)
+    if len(raw) > 4 * 1024 * 1024:
+        raise ValueError('image map exceeds byte bound')
+    entries = [entry for entry in json.loads(raw)['profiles'] if entry['profile'] == profile]
+    if len(entries) != 1:
+        raise ValueError('image profile must have one ops map entry')
+    entry = entries[0]
+    for field in ('manifest_digest', 'config_digest'):
+        if not re.fullmatch(r'sha256:[0-9a-f]{64}', entry[field]):
+            raise ValueError('image map requires immutable manifest and config digests')
+    repository, separator, digest = entry['registry_ref'].partition('@')
+    if (not separator or not repository or digest != entry['manifest_digest']
+            or any(char.isspace() for char in repository)):
+        raise ValueError('registry reference does not bind the mapped manifest')
+    if platform != entry['platform'] or host not in entry['rootless_present_hosts']:
+        raise ValueError('image profile is not provisioned for requested host/platform')
+    return {'profile': entry, 'map': {'path': str(path), 'sha256': hashlib.sha256(raw).hexdigest(), 'bytes': len(raw)}}
+
+
+def preflight_profile(map_path, profile, *, host, platform, podman, environment, timeout):
+    """Read-only store preflight. Provisioning and placement remain external owners."""
+    from .runtime import check_rootless_directory
+
+    resolved = resolve_profile(map_path, profile, host=host, platform=platform)
+    check_rootless_directory(environment)
+    entry = resolved['profile']
+    reference = entry['registry_ref']
+    subprocess.run([podman, 'image', 'exists', reference], env=environment, stdin=subprocess.DEVNULL,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout, check=True)
+    inspected = subprocess.run([podman, 'image', 'inspect', '--format', INSPECT, reference], env=environment,
+                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                               timeout=timeout, check=True)
+    metadata = json.loads(inspected.stdout)
+    if (metadata['Id'].removeprefix('sha256:') != entry['config_digest'].removeprefix('sha256:')
+            or f"{metadata['Os']}/{metadata['Architecture']}" != entry['platform']):
+        raise ValueError('actual rootless image identity/platform differs from ops map')
+    resolved['store'] = metadata
+    return resolved
 
 
 def _stop(child, timeout):
