@@ -137,6 +137,12 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
     ("advance_awaiting_rob", "port_advance_phase"),
     ("advance_stopping", "port_advance_phase"),
     ("advance_closed", "port_advance_phase"),
+    ("apply_approved", "review_world_verify_apply"),
+    ("apply_changes_requested", "review_world_verify_apply"),
+    ("apply_reviewer_out_of_room", "review_world_verify_apply"),
+    ("apply_rebase_clean", "review_world_verify_apply"),
+    ("apply_rebase_needs_changes", "review_world_verify_apply"),
+    ("apply_run_failed", "review_world_verify_apply"),
 ];
 
 /// Quoted names between the proof-map markers in lib.rs.

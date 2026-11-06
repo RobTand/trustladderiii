@@ -98,13 +98,6 @@
    "seconds": 286.6,
    "tier": "pr"
   },
-  "apply_approved": {
-   "cpu_seconds": 305.4,
-   "invocation": "https://app.buildbuddy.io/invocation/8b9dbd49-fa0d-41ff-9798-db28c6000bb2",
-   "peak_gb": 3.92,
-   "seconds": 302.2,
-   "tier": "pr"
-  },
   "apply_audit_agrees": {
    "cpu_seconds": 277.8,
    "invocation": "https://app.buildbuddy.io/invocation/407c1a50-0f67-4a18-895a-8ba138cab4cb",
@@ -124,13 +117,6 @@
    "invocation": "https://app.buildbuddy.io/invocation/9bae8d02-4ab3-46f6-8150-97f174629c2e",
    "peak_gb": 3.69,
    "seconds": 261.1,
-   "tier": "pr"
-  },
-  "apply_changes_requested": {
-   "cpu_seconds": 273.7,
-   "invocation": "https://app.buildbuddy.io/invocation/b2d4ee06-6c07-4945-9436-d4712828a6de",
-   "peak_gb": 4.47,
-   "seconds": 263.6,
    "tier": "pr"
   },
   "apply_checks_done": {
@@ -280,20 +266,6 @@
    "seconds": 1974.5,
    "tier": "nightly"
   },
-  "apply_rebase_clean": {
-   "cpu_seconds": 256.2,
-   "invocation": "https://app.buildbuddy.io/invocation/9bae8d02-4ab3-46f6-8150-97f174629c2e",
-   "peak_gb": 4.82,
-   "seconds": 242.6,
-   "tier": "pr"
-  },
-  "apply_rebase_needs_changes": {
-   "cpu_seconds": 312.5,
-   "invocation": "https://app.buildbuddy.io/invocation/407c1a50-0f67-4a18-895a-8ba138cab4cb",
-   "peak_gb": 4.8,
-   "seconds": 299.6,
-   "tier": "pr"
-  },
   "apply_rebase_progress_gate": {
    "cpu_seconds": 1.8,
    "invocation": "https://app.buildbuddy.io/invocation/b2d4ee06-6c07-4945-9436-d4712828a6de",
@@ -306,20 +278,6 @@
    "invocation": "https://app.buildbuddy.io/invocation/8b9dbd49-fa0d-41ff-9798-db28c6000bb2",
    "peak_gb": 3.69,
    "seconds": 303.6,
-   "tier": "pr"
-  },
-  "apply_reviewer_out_of_room": {
-   "cpu_seconds": 471.1,
-   "invocation": "https://app.buildbuddy.io/invocation/9bae8d02-4ab3-46f6-8150-97f174629c2e",
-   "peak_gb": 7.34,
-   "seconds": 452.2,
-   "tier": "pr"
-  },
-  "apply_run_failed": {
-   "cpu_seconds": 233.5,
-   "invocation": "https://app.buildbuddy.io/invocation/b2d4ee06-6c07-4945-9436-d4712828a6de",
-   "peak_gb": 3.91,
-   "seconds": 223.6,
    "tier": "pr"
   },
   "apply_stop": {

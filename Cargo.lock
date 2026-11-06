@@ -3102,6 +3102,7 @@ dependencies = [
 name = "tl3-kernel"
 version = "0.1.0"
 dependencies = [
+ "proptest",
  "serde",
 ]
 
