@@ -195,6 +195,13 @@ _CONTROLLER_TEST_SOURCES = {
     "tests/writer_references.rs": ["tests/writer_reference_model.py"],
 }
 
+# CC-E: reuse existing topic targets for delivery coverage without fanout growth.
+_CONTROLLER_TEST_SOURCES["tests/approval_race.rs"] += ["tests/delivery_conformance/**", "tests/delivery_fence/**"]
+_CONTROLLER_TEST_SOURCES["tests/publication_io.rs"] = _CONTROLLER_TEST_SOURCES.get("tests/publication_io.rs", []) + ["tests/delivery_schedule/**"]
+_CONTROLLER_TEST_SOURCES["tests/replay_check.rs"] = _CONTROLLER_TEST_SOURCES.get("tests/replay_check.rs", []) + ["tests/delivery_machine/**"]
+# One approval schedule per shard, including the eight controller and two fence cases.
+_LIBTEST_SHARDS["tl3-controller/approval_race"] = 37
+
 def tl3_rust_test(name, binary_id, gate_args, **kwargs):
     package = native.package_name()
     controller = package == "crates/controller"
