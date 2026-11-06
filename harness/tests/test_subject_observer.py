@@ -971,7 +971,64 @@ def test_t842_loader_trust_rejects_repository_stdlib_shadows(tmp_path, t842_case
     case = t842_cases[1]
     case['after'][shadow] = 'TOKEN = 1\n'
     case['proof']['observer_support'].append(shadow)
-    with pytest.raises(model.ProofRefusal, match='unshadowed standard-library'):
+    with pytest.raises(model.ProofRefusal, match='could shadow the standard-library module'):
+        assemble_t842_case(tmp_path, case)
+
+
+T876_PACKAGE_MEMBERS = [
+    # PB #2829 (found by: live probe): pytest vendored as a regular package;
+    # this file imports as `_pytest.pathlib`, never as `pathlib`.
+    {'qualification_deps/_pytest/__init__.py': '', 'qualification_deps/_pytest/pathlib.py': 'TOKEN = 1\n'},
+    {'vendor/lib/__init__.py': '', 'vendor/lib/unittest/__init__.py': '', 'vendor/lib/unittest/case.py': ''},
+    {'tests/helpers/__init__.py': '', 'tests/helpers/importlib.py': ''},
+    # PB's other stdlib-named vendored file.
+    {'qualification_deps/_pytest/__init__.py': '', 'qualification_deps/_pytest/unittest.py': ''},
+]
+
+
+@pytest.mark.parametrize('files', T876_PACKAGE_MEMBERS)
+def test_t876_stdlib_named_member_of_a_regular_package_is_not_a_shadow(tmp_path, files):
+    case = t842_safe_loader_case()
+    case['before'].update(files)
+    path = 'tests/test_observer.py'
+    receipt, _, head, staged = assemble_t842_case(tmp_path, case)
+    assert (staged / path).read_bytes() == (head / path).read_bytes()
+    assert path in receipt['support_sha256']
+
+
+@pytest.mark.parametrize('files,shadow,module', [
+    ({'pathlib.py': ''}, 'pathlib.py', 'pathlib'),
+    ({'qualification_deps/pathlib.py': ''}, 'qualification_deps/pathlib.py', 'pathlib'),
+    ({'qualification_deps/unittest/__init__.py': ''}, 'qualification_deps/unittest/__init__.py', 'unittest'),
+    ({'tests/importlib/util.py': ''}, 'tests/importlib/util.py', 'importlib'),
+    ({'__init__.py': '', 'importlib.py': ''}, 'importlib.py', 'importlib'),
+    # Only the immediate parent's __init__.py makes a member of a package.
+    ({'a/__init__.py': '', 'a/b/pathlib.py': ''}, 'a/b/pathlib.py', 'pathlib'),
+    # A pytest pythonpath entry is an import root even when it is a package.
+    ({'pyproject.toml': '[tool.pytest.ini_options]\npythonpath = ["src"]\n', 'src/__init__.py': '',
+      'src/pathlib.py': ''}, 'src/pathlib.py', 'pathlib'),
+    ({'setup.cfg': '[tool:pytest]\npythonpath = lib src\n', 'src/__init__.py': '', 'src/unittest/__init__.py': ''},
+     'src/unittest/__init__.py', 'unittest'),
+])
+def test_t876_top_level_stdlib_shadow_is_refused_with_an_actionable_repair(tmp_path, files, shadow, module):
+    case = t842_safe_loader_case()
+    case['before'].update(files)
+    with pytest.raises(model.ProofRefusal) as refusal:
+        assemble_t842_case(tmp_path, case)
+    message = str(refusal.value)
+    assert shadow in message
+    assert f'could shadow the standard-library module `{module}`' in message
+    assert 'directory without __init__.py' in message
+    assert 'already exists on the base commit' in message
+
+
+def test_t876_red_tree_is_checked_where_the_package_marker_is_head_only(tmp_path):
+    # Review S1 (found by: review): RED is base plus the copied observers, so a
+    # head-only tests/__init__.py leaves the declared tests/importlib.py top-level there.
+    case = t842_safe_loader_case()
+    case['after'].update({'tests/__init__.py': '', 'tests/importlib.py': 'TOKEN = 1\n'})
+    case['proof']['observer_support'].append('tests/importlib.py')
+    with pytest.raises(model.ProofRefusal, match='tests/importlib.py could shadow the standard-library module'):
         assemble_t842_case(tmp_path, case)
 
 
