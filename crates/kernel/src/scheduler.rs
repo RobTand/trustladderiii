@@ -254,6 +254,7 @@ pub(super) fn slot_free(w: &World, i: usize) -> (result: bool) [
         }
         if j != i && n.holds && n.repo == me.repo {
             if !w.footprints_disjoint(n.footprint, me.footprint) {
+                kernel_proof! { reveal(port_advance_gate::gate_slot); }
                 return false;
             }
             holders += 1;
@@ -300,7 +301,10 @@ pub(super) fn older_overlap(w: &World, i: usize, ticket: u64) -> (result: bool) 
         if matches!(older.phase, Phase::Ready(_)) && older.repo == waiter.repo {
             if let Some(theirs) = older.ticket {
                 if theirs < ticket && !w.footprints_disjoint(older.footprint, waiter.footprint) {
-                    kernel_proof! { assert(port_advance_gate::gate_overlapping_before(*w, i as int, index as int, ticket)); }
+                    kernel_proof! {
+                        reveal(port_advance_gate::gate_overlap);
+                        assert(port_advance_gate::gate_overlapping_before(*w, i as int, index as int, ticket));
+                    }
                     return true;
                 }
             }
@@ -354,7 +358,14 @@ pub(super) fn first_in_line(w: &World, i: usize) -> (result: bool) [
             continue;
         }
         kernel_proof! { assert(!oldest_waiter(*w, i as int)); }
-        if !w.footprints_disjoint(waiter.footprint, me.footprint) { return false; }
+        if !w.footprints_disjoint(waiter.footprint, me.footprint) {
+            kernel_proof! {
+                reveal(port_advance_gate::gate_line);
+                assert(port_advance_gate::gate_older(*w, i as int, index as int));
+                assert(!port_advance_gate::gate_eligible(*w, i as int, index as int));
+            }
+            return false;
+        }
         if theirs >= first_runnable || !slot_free(w, index) { continue; }
         if !older_overlap(w, index, theirs) { first_runnable = theirs; }
     } }
