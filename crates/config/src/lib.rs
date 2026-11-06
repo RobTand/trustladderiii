@@ -621,6 +621,19 @@ impl Flux {
         {
             return Err(invalid("flux.instance_generation", "use an operator-assigned generation or run-name/32-lowercase-hex-InvocationID; it is an identity, never a filesystem path"));
         }
+        if self.runtime_bundles.is_empty() {
+            return Err(invalid("flux.runtime_bundles", "select at least one provisioned immutable runtime bundle"));
+        }
+        let mut locators = std::collections::BTreeSet::new();
+        for path in &self.runtime_bundles {
+            let digest = path.to_str().and_then(|text| text.strip_prefix("/mnt/shared/flux-out/tl3/.runtime/"))
+                .and_then(|text| text.strip_suffix("/manifest.json"));
+            if !digest.is_some_and(|digest| digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
+                || !locators.insert(path)
+            {
+                return Err(invalid("flux.runtime_bundles", "use unique /mnt/shared/flux-out/tl3/.runtime/<64-lowercase-hex>/manifest.json locators; content verification belongs to runtime preparation"));
+            }
+        }
         absolute("flux.executable", &self.executable)?;
         absolute("flux.backend_cli", &self.backend_cli)?;
         if self.backend_cli.components().any(|part| matches!(part, std::path::Component::ParentDir)) {

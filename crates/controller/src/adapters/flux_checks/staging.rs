@@ -90,6 +90,28 @@ fn inventory(root: &Path, directory: &Path, files: &mut Vec<backend::InputFile>)
     Ok(())
 }
 
+/// Select exactly one already-prepared image/mode identity. The shared producer owns
+/// inventory resolution, original map provenance and all bundle byte/mode checks.
+pub fn select_runtime(
+    bundles: &[PathBuf],
+    image: &str,
+    mode: tl3_config::ContainerMode,
+    reservation: &backend::Reservation,
+    arguments: Vec<String>,
+) -> Result<backend::PreparedRuntime> {
+    let mut selected = None;
+    for bundle in bundles {
+        let prepared = backend::prepared::prepare_runtime(bundle, reservation, arguments.clone()).map_err(adapter_error)?;
+        let Some(identity) = &prepared.runtime.image else { return Err(Error::Invalid("prepared runtime has no immutable image identity")); };
+        if image != identity.reference && image != identity.config_digest { continue; }
+        if !matches!(&prepared.runtime.runtime, backend::ExecutionRuntime::RootlessPodman { mode: prepared_mode, .. } if *prepared_mode == mode) { continue; }
+        if selected.replace(prepared).is_some() {
+            return Err(Error::Invalid("configured image and mode match multiple immutable runtime bundles"));
+        }
+    }
+    selected.ok_or(Error::Invalid("configured immutable image and selected mode have no prepared runtime bundle"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
