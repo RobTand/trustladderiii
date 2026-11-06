@@ -8,12 +8,21 @@ kernel_fn! {
 pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), i <= u64::MAX as int,
         old(out).len + 4 <= OUTBOX,
-        node_headroom(old(w).nodes@[i as int]),
+        (fact is Dependency || fact is DependencyRemove) || node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
-        dependencies::edges_indexable(*old(w)), old(w).next_question < u64::MAX,
+        dependencies::edges_indexable(*old(w)),
+        (fact is Dependency || fact is DependencyRemove) || old(w).next_question < u64::MAX,
     ensures (match fact { Fact::Dependency { target, status } =>
             port_deps_specs::handler_post(*old(w), *final(w), i as int, target, status, *old(out), *final(out)),
             _ => true, }),
+        (match fact {
+            Fact::Dependency { target, status } => target.request.is_none()
+                && dependencies::declarations_unique(*old(w)) ==> port_deps_apply_specs::external_post(
+                    *old(w), *final(w), i as int, target, status, *old(out), *final(out)),
+            Fact::DependencyRemove { kind, number } => port_deps_apply_specs::removed(
+                *old(w), *final(w), i as int, kind, number) && *final(out) == *old(out),
+            _ => true,
+        }),
         (fact_progress_input(*old(w), i as int, fact)
             ==> progress_measure(*final(w)) < progress_measure(*old(w))
                 && dependencies::edges_indexable(*final(w))),

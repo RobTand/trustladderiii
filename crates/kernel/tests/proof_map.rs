@@ -146,6 +146,12 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
     ("advance_awaiting_rob", "port_advance_phase"),
     ("advance_stopping", "port_advance_phase"),
     ("advance_closed", "port_advance_phase"),
+    ("apply_dependency", "port_deps_s2_dependency_fact"),
+    (
+        "apply_dependency_registration",
+        "port_deps_s2_verify_registration",
+    ),
+    ("apply_dependency_remove", "port_deps_s2_removal"),
 ];
 
 /// Quoted names between the proof-map markers in lib.rs.

@@ -449,18 +449,23 @@ impl World {
     pub(super) fn check_dependencies(&self) -> (result: Result<(), Broken>) [
         requires self.nodes@.len() <= u64::MAX as int,
         ensures result.is_ok() ==> dependencies_checked(*self),
+            port_deps_single::domain(*self) ==> result.is_ok() == port_deps_single::dependencies_ok(*self),
             port_deps_specs::checker_dependencies(*self) ==> result.is_ok(),
             progress_unplanned_witness::fixture_edges(*self) ==> result.is_ok(),
             (self.dependencies@.len() == 0
                 && forall|j: int| 0 <= j < self.nodes@.len() ==> !self.nodes@[j].credit.withheld)
                 ==> result.is_ok(),
     ] proof [reveal(dependencies_checked); reveal(edges_indexable); reveal(no_active_graph_edges); reveal(zero_credit);
-        reveal(port_deps_specs::checker_dependencies); reveal(prerequisites_delivered); reveal(delivered);] {
+        reveal(port_deps_specs::checker_dependencies); reveal(prerequisites_delivered); reveal(delivered);
+        reveal(port_deps_single::domain); reveal(port_deps_single::dependencies_ok); reveal(declarations_unique);] {
         let mut node_index = 0usize;
         kernel_while! { (node_index < self.nodes.len()) [
             invariant node_index <= self.nodes.len(), self.nodes@.len() <= u64::MAX as int,
+                port_deps_single::domain(*self) && node_index > 0 && self.nodes@[0].credit.withheld
+                    ==> self.dependencies@.len() > 0,
             decreases self.nodes.len() - node_index,
         ] {
+            kernel_proof! { reveal(port_deps_single::domain); }
             let node = &self.nodes[node_index];
             if node.credit.withheld {
                 kernel_proof! {
@@ -473,13 +478,17 @@ impl World {
                 let mut found = false;
                 let mut edge = 0usize;
                 kernel_while! { (edge < self.dependencies.len()) [
-                    invariant edge <= self.dependencies.len(),
+                    invariant edge <= self.dependencies.len(), found ==> self.dependencies@.len() > 0,
+                        port_deps_single::domain(*self) ==> node_index == 0,
+                        port_deps_single::domain(*self) && self.dependencies@.len() > 0 && !found ==> edge == 0,
                         progress_unplanned_witness::fixture_edges(*self)
                             ==> node_index == 0 && self.dependencies@.len() > 0,
                         !found && progress_unplanned_witness::fixture_edges(*self) ==> edge == 0,
                         !found ==> forall|j: int| 0 <= j < edge
                             ==> self.dependencies@[j].node != NodeId(node_index as u64),
                     ensures found || edge == self.dependencies.len(),
+                        found ==> self.dependencies@.len() > 0,
+                        port_deps_single::domain(*self) && self.dependencies@.len() > 0 ==> found,
                         progress_unplanned_witness::fixture_edges(*self)
                             ==> node_index == 0 && self.dependencies@.len() > 0,
                         !found && progress_unplanned_witness::fixture_edges(*self) ==> edge == 0,
@@ -499,6 +508,7 @@ impl World {
                         assert(edge == 0);
                     }
                 }
+                kernel_proof! { reveal(port_deps_single::domain); reveal(port_deps_single::dependencies_ok); }
                 if !found { return Err(Broken::Dependencies); }
             }
             node_index += 1;
@@ -510,11 +520,19 @@ impl World {
         kernel_while! { (index < self.dependencies.len()) [
             invariant index <= self.dependencies.len(), self.nodes@.len() <= u64::MAX as int,
                 forall|j: int| 0 <= j < index ==> dependency_checked(*self, self.dependencies@[j]),
+                port_deps_single::domain(*self) ==> forall|k: int| 0 <= k < index
+                    ==> port_deps_single::row_ok(*self, self.dependencies@[k]),
                 forall|a: int, b: int| 0 <= a < b < index
                     ==> !same_declaration(self.dependencies@[a], self.dependencies@[b]),
             decreases self.dependencies.len() - index,
         ] {
             let dependency = &self.dependencies[index];
+            kernel_proof! {
+                reveal(port_deps_single::domain); reveal(port_deps_single::dependencies_ok);
+                if port_deps_single::domain(*self) && port_deps_single::dependencies_ok(*self) {
+                    assert(port_deps_single::row_ok(*self, *dependency));
+                }
+            }
             let Some(owner) = self.index(dependency.node) else {
                 return Err(Broken::Dependencies);
             };
@@ -539,7 +557,9 @@ impl World {
             ] {
                 let d = &self.dependencies[previous];
                 kernel_proof! {
-                    if progress_unplanned_witness::fixture_edges(*self) {
+                    reveal(port_deps_single::domain); reveal(port_deps_single::dependencies_ok);
+                    if progress_unplanned_witness::fixture_edges(*self)
+                        || (port_deps_single::domain(*self) && port_deps_single::dependencies_ok(*self)) {
                         assert(declarations_unique(*self));
                         assert(!same_declaration(*d, *dependency));
                     }
@@ -642,7 +662,8 @@ impl World {
             final(self).nodes@[i as int].credit.earned == old(self).nodes@[i as int].credit.earned,
             final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
             final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
-    ] proof [reveal(dependency_frame);] {
+    ] {
+        kernel_snapshot! { before_withhold = *self }
         if !self.dependencies_delivered(NodeId(i as u64))
             && !self.nodes[i].planning_started
             && matches!(
@@ -655,16 +676,21 @@ impl World {
                 n.credit.withheld = true;
             }
         }
+        kernel_proof! {
+            assert(dependency_frame(before_withhold@, *self, i as int)) by { reveal(dependency_frame); }
+        }
     }
     }
 
     kernel_fn! {
     /// Prerequisite removal rows / #693 / #771: stable in-place compaction
     /// preserves every ledger amount and changes only this node's wait flags.
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
     pub(super) fn remove_dependency(&mut self, i: usize, kind: PrerequisiteKind,
         number: u64) -> (result: ()) [
         requires i < old(self).nodes@.len(),
-        ensures final(self).nodes@[i as int] == (Node {
+        ensures port_deps_apply_specs::removed(*old(self), *final(self), i as int, kind, number),
+             final(self).nodes@[i as int] == (Node {
             waiting_prerequisite: final(self).nodes@[i as int].waiting_prerequisite,
             credit: Credit { withheld: final(self).nodes@[i as int].credit.withheld,
                 ..old(self).nodes@[i as int].credit },
@@ -693,17 +719,26 @@ impl World {
             final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
             final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
     ] {
+        kernel_snapshot! { before_removal = *self }
         if self.nodes[i].phase != Phase::Ingesting || self.nodes[i].planning_started {
+            kernel_proof! { reveal(port_deps_apply_specs::removed); reveal(port_deps_specs::unchanged); reveal(dependency_frame); }
             return;
         }
         let node = NodeId(i as u64);
+        kernel_proof! { port_deps_apply_specs::kept_empty(before_removal@.dependencies@, node, kind, number); }
         let mut read = 0usize;
         let mut write = 0usize;
         kernel_while! { (read < self.dependencies.len()) [
             invariant write <= read <= self.dependencies.len(),
+                self.dependencies.len() == before_removal@.dependencies@.len(),
+                self.dependencies@.subrange(0, write as int) == port_deps_apply_specs::kept(
+                    before_removal@.dependencies@, node, kind, number, read as nat),
+                forall|k: int| read <= k < self.dependencies@.len()
+                    ==> self.dependencies@[k] == before_removal@.dependencies@[k],
             decreases self.dependencies.len() - read,
         ] {
             let d = self.dependencies[read];
+            kernel_proof! { port_deps_apply_specs::compact_copy(self.dependencies@, before_removal@.dependencies@, node, kind, number, read as int, write as int); }
             if d.node != node || d.target.kind != kind || d.target.number != number {
                 self.dependencies[write] = d;
                 write += 1;
@@ -714,6 +749,7 @@ impl World {
         self.nodes[i].waiting_prerequisite = self.first_undelivered(node).map(|d| d.target.number);
         self.nodes[i].credit.withheld =
             !self.dependencies_delivered(node) && self.nodes[i].credit.ready;
+        kernel_proof! { reveal(port_deps_apply_specs::removed); reveal(port_deps_specs::unchanged); reveal(dependency_frame); }
     }
     }
 
@@ -756,6 +792,9 @@ impl World {
         ensures dependency_frame(*old(self), *final(self), i as int),
             port_deps_specs::handler_post(*old(self), *final(self), i as int,
                 target, status, *old(out), *final(out)),
+            (target.request.is_none() && declarations_unique(*old(self))
+                ==> port_deps_apply_specs::external_post(*old(self), *final(self), i as int,
+                    target, status, *old(out), *final(out))),
             final(out).len <= old(out).len + 1,
             (status == DependencyStatus::Delivered && delivery_input(*old(self), i as int, target)
                 ==> delivery_changed(*old(self), *final(self), i as int, target)
@@ -764,7 +803,7 @@ impl World {
     ] {
         kernel_snapshot! { before_delivery = *self }
         kernel_snapshot! { before_output = *out }
-        kernel_proof! { reveal(port_deps_specs::handler_post); }
+        kernel_proof! { reveal(port_deps_specs::handler_post); reveal(port_deps_apply_specs::external_post); }
         let Some((existing, dependency)) = self.prepare_dependency(i, target, status) else {
             kernel_proof! { reveal(dependency_frame); }
             return;
@@ -829,7 +868,9 @@ impl World {
                             ..self.dependencies@[k as int] }),
                     _ => false,
                 }),
-    ] proof [reveal(delivery_input);] {
+            (target.request.is_none() && declarations_unique(*self)
+                ==> result == port_deps_apply_specs::prepared(*self, i as int, target, status)),
+    ] proof [reveal(delivery_input); reveal(declarations_unique); reveal(port_deps_apply_specs::prepared); reveal(port_deps_specs::key);] {
         if target.number == 0 {
             return None;
         }
@@ -842,6 +883,9 @@ impl World {
         let node = NodeId(i as u64);
         let existing = self.find_dependency(node, target.kind, target.number);
         kernel_proof! {
+            if target.request.is_none() && declarations_unique(*self) {
+                port_deps_apply_specs::existing_key(*self, i as int, target, existing);
+            }
             if status == DependencyStatus::Delivered && delivery_input(*self, i as int, target) {
                 assert(existing is Some);
             }
@@ -896,6 +940,11 @@ impl World {
             old(self).nodes@[i as int].credit.withheld ==> final(self).nodes@[i as int].credit.withheld,
             final(self).nodes@[i as int].waiting_prerequisite.is_none()
                 == prerequisites_delivered(*final(self), NodeId(i as u64)),
+            final(self).nodes@[i as int].credit.withheld == (old(self).nodes@[i as int].credit.withheld
+                || (!prerequisites_delivered(*final(self), NodeId(i as u64))
+                    && !old(self).nodes@[i as int].planning_started
+                    && (match old(self).nodes@[i as int].phase { Phase::Ingesting | Phase::Auditing | Phase::Unplanned => true, _ => false })
+                    && old(self).nodes@[i as int].credit.ready)),
     ] {
         kernel_snapshot! { before_record_world = *self }
         kernel_snapshot! { before_record_output = *out }

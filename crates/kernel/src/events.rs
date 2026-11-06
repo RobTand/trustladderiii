@@ -6,7 +6,8 @@ kernel_fn! {
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: ()) [
-    requires world_headroom(*old(w)), footprint::ordered_table(*old(w)),
+    requires (match event { Event::Fact { fact: Fact::Dependency { .. } | Fact::DependencyRemove { .. }, .. } => true,
+            _ => world_headroom(*old(w)), }), footprint::ordered_table(*old(w)),
         dependencies::edges_indexable(*old(w)), old(out).len + 4 <= OUTBOX,
         forall|j: int| 0 <= j < old(w).nodes@.len()
             ==> arithmetic_consistent(old(w).nodes@[j])
@@ -16,6 +17,16 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
     ensures (match event { Event::Fact { node, fact: Fact::Dependency { target, status } } =>
             node.0 < old(w).nodes@.len() ==> port_deps_specs::handler_post(*old(w), *final(w),
                 node.0 as int, target, status, *old(out), *final(out)), _ => true, }),
+        (match event {
+            Event::Fact { node, fact: Fact::Dependency { target, status } } =>
+                node.0 < old(w).nodes@.len() && target.request.is_none()
+                    && dependencies::declarations_unique(*old(w)) ==> port_deps_apply_specs::external_post(
+                        *old(w), *final(w), node.0 as int, target, status, *old(out), *final(out)),
+            Event::Fact { node, fact: Fact::DependencyRemove { kind, number } } =>
+                node.0 < old(w).nodes@.len() ==> port_deps_apply_specs::removed(
+                    *old(w), *final(w), node.0 as int, kind, number) && *final(out) == *old(out),
+            _ => true,
+        }),
         (progress_input(*old(w), event)
             ==> progress_measure(*final(w)) < progress_measure(*old(w))
                 && dependencies::edges_indexable(*final(w))),
