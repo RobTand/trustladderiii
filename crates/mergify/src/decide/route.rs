@@ -12,7 +12,7 @@ pub mod queue {
         pub unavailable: bool,
         pub missing_suites: bool,
     }
-    /// Q52, docs/state-table.md:542: unavailable permissions and missing contexts have independent setup gates.
+    /// Q52, docs/state-table.md:542: missing contexts gate suite reads. The independent permission gate preserves existing behaviour (no rule).
     #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures out.unavailable == !permissions_empty && out.missing_suites == !missing_empty,))]
     pub fn setup(permissions_empty: bool, missing_empty: bool) -> Setup {
         Setup {

@@ -97,6 +97,9 @@ fn fixture_snapshot(config: Inputs) -> Snapshot {
             node.credit.merge_credited = true;
         }
         if config.approved_other {
+            if !config.closed && !config.merged {
+                node.phase = Phase::Checking;
+            }
             node.approved = Some(HeadId(i as u64 + 20));
             node.checked = node.approved;
             interned.push(Interned {
@@ -178,7 +181,11 @@ fn fixture_snapshot(config: Inputs) -> Snapshot {
             }
         }
     }
-    assert!(world.check().is_ok(), "invalid A3 fixture: {:?}: {config:?}", world.check());
+    assert!(
+        world.check().is_ok(),
+        "invalid A3 fixture: {:?}: {config:?}",
+        world.check()
+    );
     let Value::Object(mut fields) = serde_json::to_value(world).unwrap() else {
         unreachable!()
     };

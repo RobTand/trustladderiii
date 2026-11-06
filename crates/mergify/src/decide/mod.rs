@@ -52,6 +52,6 @@ pub mod plan;
 #[cfg(test)]
 mod observe_witness;
 
-pub mod route;
 #[cfg(any(test, verus_keep_ghost))]
 mod decide_witness;
+pub mod route;
