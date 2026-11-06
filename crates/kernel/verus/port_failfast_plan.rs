@@ -109,8 +109,8 @@ pub(super) proof fn paired_reply(before: World, off: World, on: World, generatio
         port_failfast_pair_frame::compare(before, off, on,
             port_review_reply::ended(before.nodes@[0]), 2, ReviewStop::PlanCantMeet, on_out);
     } else {
-        port_failfast_admission::inactive_pair(before, off, on, generation,
-            Reply::PlanCantMeet, initial_out, off_out, on_out);
+        port_failfast_admission::inactive_pair(before, World { fail_fast: true, ..before }, off, on,
+            generation, Reply::PlanCantMeet, initial_out, off_out, on_out);
     }
 }
 }

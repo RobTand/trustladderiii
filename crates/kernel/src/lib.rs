@@ -2401,3 +2401,7 @@ mod port_failfast_reply_apply;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_failfast_reply_witness.rs"]
 mod port_failfast_reply_witness;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_failfast_reply_bounds.rs"]
+mod port_failfast_reply_bounds;

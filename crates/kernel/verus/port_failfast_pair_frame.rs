@@ -30,6 +30,7 @@ pub(super) proof fn compare(before: World, off: World, on: World, source: Node,
             && on.nodes@[0].credit == before.nodes@[0].credit
             && on.nodes@[0].phase == Phase::Stopping(Outcome::Stopped)
             && on.nodes@[0].review_stop == Some(reason) && on_out.len == 0
+            && on.nodes@[0].question.is_none()
             && port_failfast_pair::retried(before.nodes@[0], off.nodes@[0])
     },
 {

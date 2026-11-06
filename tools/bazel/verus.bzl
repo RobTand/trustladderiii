@@ -769,6 +769,8 @@ def verus_proofs():
             "kernel::port_failfast_replies::stop_rule": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_failfast_reply_witness::case_reply": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_failfast_reply_witness::input": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_failfast_reply_bounds::grown": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_failfast_reply_bounds::bound": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
@@ -1182,6 +1184,12 @@ def verus_proofs():
             "port_failfast_reply_witness_changed": ("kernel::port_failfast_reply_witness#changed", 1),
             "port_failfast_reply_witness_world": ("kernel::port_failfast_reply_witness#world", 1),
             "port_failfast_reply_witness_cover": ("kernel::port_failfast_reply_witness#cover", 1),
+            "port_failfast_bounds_inactive": ("kernel::port_failfast_reply_bounds#inactive", 1),
+            "port_failfast_bounds_maker_work": ("kernel::port_failfast_reply_bounds#maker_work", 1),
+            "port_failfast_bounds_maker_files": ("kernel::port_failfast_reply_bounds#maker_files", 1),
+            "port_failfast_bounds_review_round": ("kernel::port_failfast_reply_bounds#review_round", 1),
+            "port_failfast_bounds_review_room": ("kernel::port_failfast_reply_bounds#review_room", 1),
+            "port_failfast_bounds_actor": ("kernel::port_failfast_reply_bounds#actor", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

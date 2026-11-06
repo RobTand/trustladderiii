@@ -3,26 +3,29 @@ use super::*;
 
 verus! {
 /// Q54: compose both actual replies through the same parametric diversion lemma.
-pub(super) proof fn compare(before: World, off: World, on: World, generation: u64, reply: Reply,
-    initial: Outbox, off_out: Outbox, on_out: Outbox)
+pub(super) proof fn compare(before: World, fast: World, off: World, on: World, generation: u64,
+    reply: Reply, initial: Outbox, off_out: Outbox, on_out: Outbox)
     requires retirement::domain(before), retirement::accepted(before), retirement::bounded(before),
         !before.fail_fast, before.file_sets@.len() == 0,
+        fast.fail_fast, port_failfast_admission::same_world(before, fast),
         port_failfast_replies::selected(before.nodes@[0], reply), initial.len == 0,
         port_replies_maker_admission::inline_input(before, reply),
         port_review_reply::reply_post(before, off, 0, generation, reply, initial, off_out),
-        port_review_reply::reply_post(World { fail_fast: true, ..before }, on,
-            0, generation, reply, initial, on_out),
+        port_review_reply::reply_post(fast, on, 0, generation, reply, initial, on_out),
     ensures port_failfast_replies::diverted(before, off, on, reply, on_out),
 {
     reveal(retirement::bounded);
     if !port_review_reply::active(before.nodes@[0], generation)
         || !port_review_reply::accepted_reply(before, before.nodes@[0], reply) {
-        port_failfast_admission::inactive_pair(before, off, on, generation, reply, initial, off_out, on_out);
+        port_failfast_admission::inactive_pair(before, fast, off, on, generation, reply,
+            initial, off_out, on_out);
     } else if let Reply::MakerNeedsFiles { files, fits } = reply {
         reveal(port_review_reply::accepted_reply);
-        port_failfast_files::compare(before, off, on, generation, files, fits, initial, off_out, on_out);
+        port_failfast_files::compare(before, fast, off, on, generation, files, fits,
+            initial, off_out, on_out);
     } else {
-        port_failfast_replies::ordinary(before, off, on, generation, reply, initial, off_out, on_out);
+        port_failfast_replies::ordinary(before, fast, off, on, generation, reply,
+            initial, off_out, on_out);
     }
 }
 
@@ -37,24 +40,15 @@ pub(super) proof fn off_stops(before: World, after: World, generation: u64, repl
     ensures forall|i: int| 0 <= i < 2 ==>
         port_failfast_replies::stop_rule(before.nodes@[i], after.nodes@[i], false, reply),
 {
-    reveal(port_review_reply::reply_post); reveal(port_review_reply::reply_result);
-    reveal(port_review_reply::accepted_reply);
-    reveal(port_review_retry::failed_run); reveal(retirement::incident);
-    if port_review_reply::active(before.nodes@[0], generation)
-        && port_review_reply::accepted_reply(before, before.nodes@[0], reply) {
-        port_failfast_replies::admitted(before, after, generation, reply, initial, out);
-        reveal(port_replies_maker::transition_post); reveal(port_replies_maker::work_result);
-        reveal(port_replies_maker::files_post); reveal(port_review_reply::transition);
-        reveal(port_review_retry::rung); reveal(port_review_retry::room);
-        reveal(port_review_retry::round); reveal(port_review_retry::rechecked);
-    }
+    port_failfast_reply_bounds::actor(before, after, generation, reply, initial, out);
+    reveal(port_review_reply::reply_post);
     assert forall|i: int| 0 <= i < 2 implies after.nodes@[i].review_stop == before.nodes@[i].review_stop by {
         assert(i == 0 || i == 1);
     }
 }
 
 /// #806 / Q54: one reply leaves the complete checker enough arithmetic headroom.
-/// Only actor equations are opened; global checker composition stays in safe.
+/// Only the per-branch actor bound is opened; global checker composition stays in safe.
 pub(super) proof fn headroom(before: World, after: World, generation: u64, reply: Reply,
     initial: Outbox, out: Outbox)
     requires retirement::domain(before), retirement::accepted(before), retirement::bounded(before),
@@ -62,18 +56,11 @@ pub(super) proof fn headroom(before: World, after: World, generation: u64, reply
         port_review_reply::reply_post(before, after, 0, generation, reply, initial, out),
     ensures world_headroom(after),
 {
-    reveal(port_review_reply::reply_post); reveal(port_review_reply::reply_result);
-    reveal(port_review_reply::accepted_reply); reveal(retirement::bounded);
-    if port_review_reply::active(before.nodes@[0], generation)
-        && port_review_reply::accepted_reply(before, before.nodes@[0], reply) {
-        port_failfast_replies::admitted(before, after, generation, reply, initial, out);
-        reveal(port_replies_maker::transition_post); reveal(port_replies_maker::work_result);
-        reveal(port_replies_maker::files_post); reveal(port_review_reply::transition);
-        reveal(port_review_retry::round); reveal(port_review_retry::rung);
-        reveal(port_review_retry::room); reveal(port_review_retry::rechecked);
-        reveal(retirement::stopped);
-    } else {
-        reveal(port_review_retry::failed_run); reveal(retirement::incident);
+    port_failfast_reply_bounds::actor(before, after, generation, reply, initial, out);
+    reveal(port_review_reply::reply_post);
+    assert forall|i: int| 0 <= i < 2 implies
+        port_failfast_reply_bounds::grown(before.nodes@[i], #[trigger] after.nodes@[i]) by {
+        assert(i == 0 || i == 1);
     }
     port_replies_safety::checker_headroom(before, after);
 }
@@ -111,24 +98,26 @@ kernel_fn! {
 /// Q54 / #440 six reply harnesses: run real apply under both flags for all
 /// generations and payloads, preserving every original paired assertion.
 /// Settledness and the original small file/head/gate/credit bounds are omitted.
+/// result.2 is the flag-on input: `off` with only fail_fast set.
 pub(super) fn verify_reply_apply(mut off: World, generation: u64, reply: Reply)
-    -> (result: ((World, Outbox), (World, Outbox))) [
+    -> (result: ((World, Outbox), (World, Outbox), Ghost<World>)) [
     requires retirement::domain(off), retirement::accepted(off), retirement::bounded(off), storage_ordered(off),
         !off.fail_fast, off.file_sets@.len() == 0,
         port_failfast_replies::selected(off.nodes@[0], reply),
         port_replies_maker_admission::inline_input(off, reply),
     ensures !result.0.0.fail_fast, result.1.0.fail_fast,
+        result.2@.fail_fast, port_failfast_admission::same_world(off, result.2@),
         retirement::domain(result.1.0), retirement::accepted(result.1.0), retirement::notices_only(result.1.1),
         port_failfast_replies::diverted(off, result.0.0, result.1.0, reply, result.1.1),
         forall|i: int| 0 <= i < 2 ==> port_failfast_safety::node_post(off.nodes@[i], result.1.0.nodes@[i]),
         forall|i: int| 0 <= i < 2 ==>
             port_failfast_replies::stop_rule(off.nodes@[i], result.0.0.nodes@[i], false, reply),
-        port_replies_maker_exec::funding(World { fail_fast: true, ..off }, result.1.0, generation, reply),
+        port_replies_maker_exec::funding(result.2@, result.1.0, generation, reply),
         !port_review_reply::active(off.nodes@[0], generation) ==>
             port_failfast_admission::same_world(result.0.0, result.1.0),
         port_review_reply::reply_post(off, result.0.0, 0, generation, reply,
             Outbox { items: [None; OUTBOX], len: 0 }, result.0.1),
-        port_review_reply::reply_post(World { fail_fast: true, ..off }, result.1.0, 0, generation, reply,
+        port_review_reply::reply_post(result.2@, result.1.0, 0, generation, reply,
             Outbox { items: [None; OUTBOX], len: 0 }, result.1.1),
 ] proof [reveal(retirement_domain); reveal(retirement_accepted); reveal(empty_outbox);
     reveal(retirement::notices_only); reveal(storage_ordered); reveal(footprint::ordered_table);] {
@@ -151,7 +140,9 @@ pub(super) fn verify_reply_apply(mut off: World, generation: u64, reply: Reply)
     apply(&mut off, Event::Reply { node: NodeId(0), generation, reply }, &mut out_off);
     apply(&mut on, Event::Reply { node: NodeId(0), generation, reply }, &mut out_on);
     kernel_proof! {
-        compare(before@, off, on, generation, reply, initial@, out_off, out_on);
+        assert(initial_on@.items =~= initial@.items);
+        assert(initial_on@ == initial@);
+        compare(before@, fast@, off, on, generation, reply, initial@, out_off, out_on);
         off_stops(before@, off, generation, reply, initial@, out_off);
         safe(fast@, on, generation, reply, initial_on@, out_on);
         if let Reply::MakerNeedsFiles { files, fits } = reply {
@@ -163,13 +154,13 @@ pub(super) fn verify_reply_apply(mut off: World, generation: u64, reply: Reply)
             }
         }
         if !port_review_reply::active(before@.nodes@[0], generation) {
-            port_failfast_admission::inactive_pair(before@, off, on, generation,
+            port_failfast_admission::inactive_pair(before@, fast@, off, on, generation,
                 reply, initial@, out_off, out_on);
         }
         headroom(fast@, on, generation, reply, initial_on@, out_on);
     }
     let checked_after = on.check();
     assert!(checked_after.is_ok());
-    ((off, out_off), (on, out_on))
+    ((off, out_off), (on, out_on), fast)
 }
 }

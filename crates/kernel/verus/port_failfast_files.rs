@@ -4,9 +4,10 @@ use super::*;
 verus! {
 /// Q54 MakerNeedsFiles: funded unions agree, unfunded unions ask for credit,
 /// and non-fitting/empty inputs instantiate the same parametric room diversion.
-pub(super) proof fn compare(before: World, off: World, on: World, generation: u64,
+pub(super) proof fn compare(before: World, fast: World, off: World, on: World, generation: u64,
     files: Footprint, fits: bool, initial: Outbox, off_out: Outbox, on_out: Outbox)
     requires retirement::domain(before), retirement::accepted(before), !before.fail_fast,
+        fast.fail_fast, port_failfast_admission::same_world(before, fast),
         before.file_sets@.len() == 0, before.next_question < u64::MAX,
         before.nodes@[0].phase == Phase::Making, node_headroom(before.nodes@[0]), initial.len == 0,
         port_review_reply::active(before.nodes@[0], generation),
@@ -14,17 +15,16 @@ pub(super) proof fn compare(before: World, off: World, on: World, generation: u6
         port_replies_maker_admission::inline_input(before, Reply::MakerNeedsFiles { files, fits }),
         port_review_reply::reply_post(before, off, 0, generation,
             Reply::MakerNeedsFiles { files, fits }, initial, off_out),
-        port_review_reply::reply_post(World { fail_fast: true, ..before }, on,
+        port_review_reply::reply_post(fast, on,
             0, generation, Reply::MakerNeedsFiles { files, fits }, initial, on_out),
     ensures port_failfast_replies::diverted(before, off, on, Reply::MakerNeedsFiles { files, fits }, on_out),
 {
     let reply = Reply::MakerNeedsFiles { files, fits };
     let source = port_review_reply::ended(before.nodes@[0]);
     reveal(port_review_reply::accepted_reply);
-    footprint::storage_frame(before, World { fail_fast: true, ..before }, files, files);
+    footprint::storage_frame(before, fast, files, files);
     port_failfast_replies::admitted(before, off, generation, reply, initial, off_out);
-    port_failfast_replies::admitted(World { fail_fast: true, ..before }, on,
-        generation, reply, initial, on_out);
+    port_failfast_replies::admitted(fast, on, generation, reply, initial, on_out);
     reveal(port_replies_maker::transition_post); reveal(port_replies_maker::files_post);
     reveal(port_review_reply::reply_post); reveal(port_replies_maker::union_post);
     reveal(retirement::accepted); reveal(retirement::node_rules);

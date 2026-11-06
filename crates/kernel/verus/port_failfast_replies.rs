@@ -73,19 +73,18 @@ pub(super) proof fn admitted(before: World, after: World, generation: u64, reply
 }
 
 /// Q54: reduce all non-file reply paths to the existing parametric retry comparison.
-pub(super) proof fn ordinary(before: World, off: World, on: World, generation: u64, reply: Reply,
-    initial: Outbox, off_out: Outbox, on_out: Outbox)
+pub(super) proof fn ordinary(before: World, fast: World, off: World, on: World, generation: u64,
+    reply: Reply, initial: Outbox, off_out: Outbox, on_out: Outbox)
     requires retirement::domain(before), retirement::accepted(before), !before.fail_fast,
+        fast.fail_fast, port_failfast_admission::same_world(before, fast),
         selected(before.nodes@[0], reply), !(reply is MakerNeedsFiles),
         node_headroom(before.nodes@[0]), before.next_question < u64::MAX, initial.len == 0,
         port_review_reply::active(before.nodes@[0], generation),
         port_review_reply::accepted_reply(before, before.nodes@[0], reply),
         port_review_reply::reply_post(before, off, 0, generation, reply, initial, off_out),
-        port_review_reply::reply_post(World { fail_fast: true, ..before }, on,
-            0, generation, reply, initial, on_out),
+        port_review_reply::reply_post(fast, on, 0, generation, reply, initial, on_out),
     ensures diverted(before, off, on, reply, on_out),
 {
-    let fast = World { fail_fast: true, ..before };
     reveal(port_review_reply::accepted_reply);
     admitted(before, off, generation, reply, initial, off_out);
     admitted(fast, on, generation, reply, initial, on_out);

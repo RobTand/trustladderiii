@@ -13,15 +13,15 @@ pub(super) open spec fn same_world(a: World, b: World) -> bool {
 
 /// Q54 / #440: stale and schema-rejected replies do not divert. This composition
 /// uses the shared real on_reply/apply relation for arbitrary generations/payloads.
-pub(super) proof fn inactive_pair(before: World, off: World, on: World,
+/// The flag-on input is any world equal to `before` in every field except fail_fast.
+pub(super) proof fn inactive_pair(before: World, fast: World, off: World, on: World,
     generation: u64, reply: Reply, initial_out: Outbox, off_out: Outbox, on_out: Outbox)
-    requires before.nodes@.len() == 2, !before.fail_fast,
+    requires before.nodes@.len() == 2, !before.fail_fast, fast.fail_fast, same_world(before, fast),
         !(before.nodes@[0].phase is Stopping),
         !port_review_reply::active(before.nodes@[0], generation)
             || !port_review_reply::accepted_reply(before, before.nodes@[0], reply),
         port_review_reply::reply_post(before, off, 0, generation, reply, initial_out, off_out),
-        port_review_reply::reply_post(World { fail_fast: true, ..before }, on,
-            0, generation, reply, initial_out, on_out),
+        port_review_reply::reply_post(fast, on, 0, generation, reply, initial_out, on_out),
     ensures same_world(off, on),
         !port_review_reply::active(before.nodes@[0], generation)
             ==> off_out == initial_out && on_out == initial_out,
@@ -33,9 +33,9 @@ pub(super) proof fn inactive_pair(before: World, off: World, on: World,
         Reply::PlanLeaf { footprint, .. } => footprint,
         _ => before.nodes@[0].footprint,
     };
-    footprint::storage_frame(before, World { fail_fast: true, ..before }, files, files);
+    footprint::storage_frame(before, fast, files, files);
     assert(port_review_reply::accepted_reply(before, before.nodes@[0], reply)
-        == port_review_reply::accepted_reply(World { fail_fast: true, ..before }, before.nodes@[0], reply));
+        == port_review_reply::accepted_reply(fast, before.nodes@[0], reply));
     assert(off.nodes@ =~= on.nodes@);
 }
 

@@ -30,12 +30,13 @@ pub(super) open spec fn input(w: World, case: u8) -> bool {
 
 /// Q54 diverted covers: extract the actual accepted nodes under both flags.
 /// This proves reachability from real reply_post relations, never from an assumed stop.
-pub(super) proof fn changed(before: World, off: World, on: World, case: u8,
+pub(super) proof fn changed(before: World, fast: World, off: World, on: World, case: u8,
     off_out: Outbox, on_out: Outbox)
     requires case < 6, retirement::domain(before), input(before, case),
+        fast.fail_fast, port_failfast_admission::same_world(before, fast),
         port_review_reply::reply_post(before, off, 0, 0, case_reply(case),
             Outbox { items: [None; OUTBOX], len: 0 }, off_out),
-        port_review_reply::reply_post(World { fail_fast: true, ..before }, on, 0, 0, case_reply(case),
+        port_review_reply::reply_post(fast, on, 0, 0, case_reply(case),
             Outbox { items: [None; OUTBOX], len: 0 }, on_out),
     ensures !port_failfast_admission::same_world(off, on),
         on.nodes@[0].phase == Phase::Stopping(Outcome::Stopped),
@@ -45,11 +46,11 @@ pub(super) proof fn changed(before: World, off: World, on: World, case: u8,
     let reply = case_reply(case);
     let initial = Outbox { items: [None; OUTBOX], len: 0 };
     footprint::inline_is_valid(before, 2);
-    footprint::storage_frame(before, World { fail_fast: true, ..before },
+    footprint::storage_frame(before, fast,
         footprint::inline_footprint(2), footprint::inline_footprint(2));
     reveal(port_review_reply::accepted_reply);
     port_failfast_replies::admitted(before, off, 0, reply, initial, off_out);
-    port_failfast_replies::admitted(World { fail_fast: true, ..before }, on, 0, reply, initial, on_out);
+    port_failfast_replies::admitted(fast, on, 0, reply, initial, on_out);
     reveal(port_replies_maker::transition_post); reveal(port_replies_maker::work_result);
     reveal(port_replies_maker::files_post); reveal(port_review_reply::transition);
     reveal(port_review_retry::round); reveal(port_review_retry::room);
@@ -147,9 +148,9 @@ pub(super) fn cover(case: u8, stale: bool)
         footprint::inline_is_valid(w, 2);
         assert(port_replies_maker_admission::inline_input(w, reply));
     }
-    let (off, on) = port_failfast_reply_apply::verify_reply_apply(w, if stale { 1 } else { 0 }, reply);
+    let (off, on, fast) = port_failfast_reply_apply::verify_reply_apply(w, if stale { 1 } else { 0 }, reply);
     kernel_proof! {
-        if !stale { changed(before@, off.0, on.0, case, off.1, on.1); }
+        if !stale { changed(before@, fast@, off.0, on.0, case, off.1, on.1); }
     }
     (before, off, on)
 }
