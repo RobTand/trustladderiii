@@ -41,14 +41,28 @@ pub(super) fn runtime_binding(record: &Record, facts: &RuntimeBindingInput) -> R
             return Err(BackendError::invalid("host CPU affinity does not match mapped native grant"));
         }
         let cgroup = cgroup_path(&facts.host.cgroup)?;
-        if let ExecutionRuntime::RootlessPodman { .. } = record.request.runtime.runtime {
+        if let ExecutionRuntime::RootlessPodman { mode, memory_limit_bytes, .. } = record.request.runtime.runtime {
             let container = facts.container.as_ref().ok_or_else(|| BackendError::invalid("inside-container affinity/cgroup evidence missing"))?;
             if container.rank != facts.host.rank || container.host != facts.host.host || resources::idset(&container.allowed_cpus)? != pus {
                 return Err(BackendError::invalid("container CPU affinity differs from native grant"));
             }
             let child = cgroup_path(&container.cgroup)?;
-            if child != cgroup && !child.strip_prefix(&cgroup).is_some_and(|suffix| suffix.starts_with('/')) {
-                return Err(BackendError::invalid("container escaped host job cgroup"));
+            match mode {
+                ContainerMode::InJob => {
+                    if child != cgroup && !child.strip_prefix(&cgroup).is_some_and(|suffix| suffix.starts_with('/')) {
+                        return Err(BackendError::invalid("in_job container escaped host cgroup"));
+                    }
+                }
+                ContainerMode::OwnScope => {
+                    let scope = facts.container_scope.as_ref().ok_or_else(|| BackendError::invalid("own_scope unit/cpuset/memory evidence missing"))?;
+                    let prefix = format!("tl3-{}-{}", record.intent.correlation, binding.id.job);
+                    if !scope.unit.starts_with(&prefix) || !scope.unit.ends_with(".scope") || !token(&scope.unit)
+                        || !hex(&scope.invocation_id, 32) || cgroup_path(&scope.cgroup)? != child || child == cgroup
+                        || resources::idset(&scope.cpuset_effective)? != pus
+                        || scope.memory_max != memory_limit_bytes.map(|bytes| bytes.get()) || scope.memory_swap_max != Some(0) {
+                        return Err(BackendError::invalid("own_scope generation/cpuset/per-container memory cap mismatch"));
+                    }
+                }
             }
         }
         Ok(())

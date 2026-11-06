@@ -134,12 +134,18 @@ pub struct ProgressPolicy {
 pub enum ExecutionRuntime {
     Native { interpreter: PathBuf },
     RootlessPodman {
+        mode: ContainerMode,
         executable: PathBuf,
         image: String,
         trusted_root: PathBuf,
         interpreter: PathBuf,
+        memory_limit_bytes: Option<std::num::NonZeroU64>,
     },
 }
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContainerMode { InJob, OwnScope }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -523,6 +529,18 @@ pub struct RuntimeBindingInput {
     pub topology: BlobRef,
     pub host: ProcessPlacement,
     pub container: Option<ProcessPlacement>,
+    pub container_scope: Option<ContainerScopeFacts>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ContainerScopeFacts {
+    pub unit: String,
+    pub invocation_id: String,
+    pub cgroup: String,
+    pub cpuset_effective: String,
+    pub memory_max: Option<u64>,
+    pub memory_swap_max: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
