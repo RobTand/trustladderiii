@@ -339,23 +339,40 @@ def verus_proofs():
             srcs = ["tools/verus_runner.py"],
             main = "tools/verus_runner.py",
         )
-        verus_test(
-            name = "verus_probe",
-            src = "proofs/core.rs",
-            srcs = ["src/step.rs"],
-            expected_obligations = 1,
-            module = "measure",
-            measured_runner = ":verus_runner",
-            tags = ["manual"],
-            size = "small",
-        )
         for name, count in {"dispatch": 40, "core": 44, "once": 61, "converges": 64, "dedup": 64, "approval": 68, "fence": 38}.items():
             verus_test(
                 name = "verus_" + name,
                 src = "proofs/" + name + ".rs",
                 srcs = ["src/step.rs"] + (["src/upstream.rs"] if name in ["once", "converges", "dedup", "approval"] else []),
                 expected_obligations = count,
+                measured_runner = ":verus_runner",
                 tags = ["rust", "verus"],
+                size = "small",
+                timeout = "short",
+                target_compatible_with = ["@platforms//cpu:x86_64"],
+                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+            )
+        for mutant, group, count in [
+            ("fresh_sent", "dispatch", 40),
+            ("pending_absent", "converges", 64),
+            ("predecessor_bypass", "approval", 68),
+            ("retain_grant", "approval", 68),
+            ("changed_revision", "dispatch", 40),
+            ("omit_bridge", "core", 44),
+            ("omit_retirement", "converges", 64),
+            ("reject_equal", "fence", 38),
+            ("admit_older", "fence", 38),
+        ]:
+            verus_test(
+                name = "verus_mutant_" + mutant,
+                src = "proofs/" + group + ".rs",
+                srcs = ["src/step.rs", "src/upstream.rs"],
+                specs = ["proofs/dispatch.rs", "proofs/core.rs", "proofs/approval.rs", "proofs/converges.rs", "proofs/fence.rs"],
+                expected_obligations = count,
+                module = "mutant:" + mutant,
+                measured_runner = ":verus_runner",
+                tags = ["rust", "verus", "qualification"],
                 size = "small",
                 timeout = "short",
                 target_compatible_with = ["@platforms//cpu:x86_64"],

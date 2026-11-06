@@ -53,14 +53,22 @@ def main():
         print(result.stdout)
         return result.returncode
     result, seconds = verify(verifier, z3, rustc, source, extra=['--time', '--output-json'])
-    if mode == 'measure':
+    stats = json.loads(result.stdout[result.stdout.index('{'):]) if result.stdout.rstrip().endswith('}') else None
+    if stats is None:
+        stats, _ = json.JSONDecoder().raw_decode(result.stdout[result.stdout.index('{'):])
+    verdict = stats['verification-results']
+    if result.returncode or not verdict['success'] or verdict['verified'] != expected or verdict['errors']:
         print(result.stdout, flush=True)
-        return result.returncode
-    print(result.stdout, flush=True)
-    count = re.search(r'verification results:: (\d+) verified, 0 errors', result.stdout)
-    if result.returncode or not count or int(count[1]) != expected:
         raise RuntimeError(f'baseline failed or obligation count differs from {expected}; wall={seconds:.3f}s')
-    receipt = {'label': label, 'seconds': seconds, 'verified': int(count[1]), 'rlimit_budget': 30}
+    timing = stats['times-ms']
+    smt = timing['smt']
+    functions = [f for m in smt['smt-run-module-times'] for f in m['function-breakdown']]
+    receipt = {'label': label, 'seconds': seconds, 'verified': verdict['verified'],
+               'verus_seconds': timing['total'] / 1000, 'rlimit_budget': 30,
+               'rlimit_init': smt['rlimit-init'], 'rlimit_run': smt['rlimit-run'],
+               'max_function_rlimit': max(f['rlimit'] for f in functions)}
+    if seconds > 20:
+        raise RuntimeError(f'{label}: group exceeds the hard 20s ceiling ({seconds:.3f}s)')
     if mode.startswith('mutant:'):
         name = mode.split(':', 1)[1]
         group, obligation, before, after = MUTANTS[name]
@@ -92,6 +100,7 @@ def main():
     output = os.environ.get('TEST_UNDECLARED_OUTPUTS_DIR')
     if output:
         Path(output, 'delivery-verus.json').write_text(json.dumps(receipt, indent=2) + '\n')
+        Path(output, 'verifier.json').write_text(json.dumps(stats, indent=2) + '\n')
     return 0
 
 
