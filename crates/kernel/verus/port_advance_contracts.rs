@@ -136,7 +136,7 @@ pub(super) open spec fn outputs(n: Node, c: AdvanceContext, before: Outbox, afte
         Some(kind) => appended(before, after, effect_output(n, c.node, kind)),
         None => if !(n.phase is Closed) && !n.waiting_incident && n.effect.is_none()
             && current_item(n).is_none() && n.question.is_none() && n.phase is Stopping {
-            let outcome = n.phase->Stopping_0;
+            let outcome = match n.phase { Phase::Stopping(outcome) => outcome, _ => Outcome::Stopped };
             let summary = Some(Out::Notice { node: NodeId(c.node as u64), notice: Notice::Summary(outcome) });
             if outcome == Outcome::Replaced {
                 after.len == before.len + 2 && after.items@ == before.items@
