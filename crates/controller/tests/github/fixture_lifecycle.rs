@@ -29,9 +29,6 @@ pub(super) struct RetainedOwner {
 
 impl RetainedOwner {
     pub(super) fn start(settings: &tl3_config::Store) -> Option<Self> {
-        if env::var_os("TEST_TL3_RESTART_OWNER_PROBE").is_none() {
-            return None;
-        }
         let mut observer = connect(settings);
         let pid: i32 = observer.query_one("SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND classid::bigint = 1414280003 AND objid::bigint = 1330533458 AND objsubid = 1 AND granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())", &[]).unwrap().get(0);
         signal(pid, "-STOP");

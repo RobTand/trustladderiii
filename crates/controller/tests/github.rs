@@ -609,7 +609,7 @@ fn main() {
         notice_incidents::child(&args);
         return;
     }
-    if env::var_os("TEST_TL3_RESTART_OWNER_PROBE").is_some() {
+    if args.iter().any(|arg| arg == "--fixture-owner-probe") {
         let mut database = support::Database::start();
         steering::restart_owner_probe(&database.create("restart_owner_probe"));
         database.stop();

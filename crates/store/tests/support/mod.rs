@@ -192,7 +192,7 @@ impl Database {
     }
 
     pub fn stop(&self) {
-        let probe = std::env::var_os("TEST_TL3_DATABASE_PROBE").is_some();
+        let probe = std::env::args().any(|arg| arg == "--fixture-database-probe");
         if probe {
             let settings = self.postgres.settings();
             let mut client = postgres::Config::new()
