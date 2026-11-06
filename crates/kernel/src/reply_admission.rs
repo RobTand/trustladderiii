@@ -616,6 +616,7 @@ fn on_stopping_reply(w: &mut World, i: usize, generation: u64, _reply: Reply,
             port_t860_link::inactive(before_reply@, *w, i as int, generation, _reply, before_outputs@, *_out);
         }
         kernel_proof! {
+            port_review_860::stopping_bridge(before_stopping_node@, w.nodes@[i as int], generation);
             port_review_admission::inactive(before_reply@, *w, i as int, generation, _reply, before_outputs@, *_out);
             port_review_admission::mount(before_reply@, *w, i as int, generation, _reply, before_outputs@, *_out);
         }

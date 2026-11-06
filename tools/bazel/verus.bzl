@@ -1198,6 +1198,8 @@ def verus_proofs():
             "review_progress_admitted": ("kernel::port_review_dispatch#progress_admitted", 1),
             "review_stopping_node": ("kernel::allocation#stop_node", 1),
             "review_860_accepted_admissible": ("kernel::port_review_860#accepted_admissible", 1),
+            "review_860_failed_bridge": ("kernel::port_review_860#failed_bridge", 1),
+            "review_860_stopping_bridge": ("kernel::port_review_860#stopping_bridge", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
