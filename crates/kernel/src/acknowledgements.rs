@@ -86,58 +86,16 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
             && (a.effect.is_none())
             && (*final(out) == *old(out))
             && (final(w).next_question == old(w).next_question)) }),
-] hide [node_checked, current_item, items, settle_shape] {
-    kernel_snapshot! { ack_before = *w }
-    kernel_snapshot! { ack_out_before = *out }
-    let Some(e) = w.nodes[i].effect else {
-        kernel_proof! {
-            port_acks_frames::inactive_ack(ack_before@.nodes@[i as int], w.nodes@[i as int],
-                w.next_question, i, seq, ack, ack_out_before@, *out);
-        }
-        return
-    };
-    if e.seq != seq {
-        kernel_proof! {
-            port_acks_frames::inactive_ack(ack_before@.nodes@[i as int], w.nodes@[i as int],
-                w.next_question, i, seq, ack, ack_out_before@, *out);
-        }
-        return;
-    }
-    w.nodes[i].effect = None;
-    kernel_snapshot! { ack_cleared = w.nodes@[i as int] }
+] hide [node_checked, current_item, items, settle_shape, stopping_effect_fits] {
+    kernel_snapshot! { before_ack = *w }
+    kernel_snapshot! { before_ack_out = *out }
+    on_ack_body(w, i, seq, ack, out);
     kernel_proof! {
-        assert(port_acks_specs::cleared_post(ack_before@.nodes@[i as int], ack_cleared@)) by {
-            reveal(port_acks_specs::cleared_post);
+        port_acks_frames::ack_node_bounds(before_ack@.nodes@[i as int], w.nodes@[i as int], before_ack@.next_question, w.next_question, i, seq, ack, before_ack_out@, *out);
+        if ack == Ack::Confirmed {
+            port_acks_frames::ack_adoption_fields(before_ack@.nodes@[i as int], w.nodes@[i as int], before_ack@.next_question, i, seq, before_ack_out@);
+            port_acks_frames::confirmed_progress_from_local(before_ack@, before_ack@.nodes@[i as int], w.nodes@[i as int], before_ack@.next_question, i, seq, before_ack_out@);
         }
-    }
-    kernel_proof! { port_acks_frames::ack_clear_input(ack_before@.nodes@[i as int], ack_cleared@, e); }
-    if e.cancelling {
-        kernel_proof! {
-            port_acks_frames::cancelled_ack_progress(ack_before@, ack_before@.nodes@[i as int], w.nodes@[i as int], e);
-            port_acks_frames::cancelled_ack(ack_before@.nodes@[i as int], w.nodes@[i as int],
-                w.next_question, i, seq, ack, ack_out_before@, e);
-        }
-        return;
-    }
-    match ack {
-        Ack::Confirmed => {
-            confirmed(&mut w.nodes[i], e.kind);
-            kernel_proof! { port_acks_frames::confirmed_ack_progress(ack_before@,
-                ack_before@.nodes@[i as int], ack_cleared@, w.nodes@[i as int], e);
-                port_acks_frames::confirmed_live(ack_before@.nodes@[i as int], ack_cleared@,
-                    w.nodes@[i as int], ack_before@.next_question, i, seq, ack_out_before@, e); }
-        },
-        Ack::Retryable => { delivery_failed(w, i, e.kind, out); kernel_proof! { port_acks_frames::retry_live(ack_before@.nodes@[i as int], ack_cleared@,
-                    w.nodes@[i as int], ack_before@.next_question, i, seq, ack_out_before@, *out, e); } },
-        Ack::Permanent => { effect_failed(w, i, e.kind, out); kernel_proof! { port_acks_frames::permanent_live(ack_before@.nodes@[i as int], ack_cleared@,
-                    w.nodes@[i as int], ack_before@.next_question, w.next_question, i, seq, ack, ack_out_before@, *out, e); } },
-        Ack::BodyPolicyRefused if e.kind == EffectKind::OpenPr => {
-            stop_for_review(&mut w.nodes[i], ReviewStop::PublicationBody);
-            kernel_proof! { port_acks_frames::refused_live(ack_before@.nodes@[i as int], ack_cleared@,
-                    w.nodes@[i as int], ack_before@.next_question, i, seq, ack_out_before@, e); }
-        }
-        Ack::BodyPolicyRefused => { effect_failed(w, i, e.kind, out); kernel_proof! { port_acks_frames::permanent_live(ack_before@.nodes@[i as int], ack_cleared@,
-                    w.nodes@[i as int], ack_before@.next_question, w.next_question, i, seq, ack, ack_out_before@, *out, e); } },
     }
 }
 }
@@ -246,6 +204,7 @@ kernel_fn! {
 /// matching agenda item or enter Checking for an adopted worktree.
 // The pinned Verus frontend requires nested if-let instead of let chains.
 #[allow(clippy::collapsible_if)]
+#[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 fn confirmed_agenda(m: &mut Node, kind: EffectKind) -> (result: ()) [
     requires old(m).generation < u64::MAX,
@@ -314,46 +273,11 @@ fn confirmed_agenda(m: &mut Node, kind: EffectKind) -> (result: ()) [
             && (a.fx_failures == b.fx_failures)
             && (a.fx_incidents == b.fx_incidents)
             && (a.effect == if b.adopted { b.effect } else { match b.effect { Some(e) => Some(InFlight { cancelling: true, ..e }), None => None } })) }),
-] {
+] hide [current_item, items, settle_shape] {
     kernel_snapshot! { before_agenda = *m }
-    kernel_proof! { port_acks_frames::agenda_input(*m); }
-    if !kind.starts_operation() {
-        if let Some(Item::Do(k) | Item::Teardown(k)) = m.current() {
-            if k == kind {
-                if kind == EffectKind::PrepareWorktree && !m.adopted {
-                    if let Some(head) = m.proposed {
-                        m.adopted = true;
-                        m.head = Some(head);
-                        m.checked = None;
-                        kernel_snapshot! { adopted_before_phase = *m }
-                        kernel_proof! {
-                            assert(port_acks_specs::adoption_post(before_agenda@, adopted_before_phase@)) by {
-                                reveal(port_acks_specs::adoption_post);
-                            }
-                        }
-                        set_phase(m, Phase::Checking);
-                        kernel_proof! { port_acks_frames::agenda_adoption_composed(before_agenda@, adopted_before_phase@, *m, kind);
-        port_acks_frames::agenda_contract(before_agenda@, *m, kind);
-        port_acks_frames::adoption_fields(before_agenda@, *m, kind, false); }
-                        return;
-                    }
-                }
-                m.pos += 1;
-                kernel_proof! {
-                    assert(port_acks_specs::handled_increment(before_agenda@, *m)) by {
-                        reveal(port_acks_specs::handled_increment);
-                    }
-                    port_acks_frames::agenda_incremented(before_agenda@, *m, kind);
-                }
-            }
-        }
-    }
+    confirmed_agenda_body(m, kind);
     kernel_proof! {
-            if matches!(kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase)
-                || !(current_item(before_agenda@) == Some(Item::Do(kind)) || current_item(before_agenda@) == Some(Item::Teardown(kind))) {
-                port_acks_frames::agenda_stutter(before_agenda@, kind);
-            }
-            port_acks_frames::agenda_contract(before_agenda@, *m, kind);
+        port_acks_frames::agenda_contract(before_agenda@, *m, kind);
         port_acks_frames::adoption_fields(before_agenda@, *m, kind, false);
     }
 }
@@ -539,5 +463,198 @@ pub(super) fn effect_failed(w: &mut World, i: usize, kind: EffectKind,
         }
         port_acks_frames::two_notices_result(permanent_out_before@, incident_out@, *out, i, permanent_question_before@);
     }
+}
+}
+
+kernel_fn! {
+/// State-table live Ack rows / #806: verbatim match extracted under the 11-06 standing rule.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn apply_live_ack(w: &mut World, i: usize, e: InFlight, ack: Ack, out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]), arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX, old(w).nodes@[i as int].effect.is_none(), !e.cancelling,
+    ensures port_acks_specs::ack_local(Node { effect: Some(e), ..old(w).nodes@[i as int] },
+        final(w).nodes@[i as int], old(w).next_question, final(w).next_question,
+        i, e.seq, ack, *old(out), *final(out)),
+        ack == Ack::Confirmed ==> *final(out) == *old(out) && final(w).next_question == old(w).next_question,
+        (ack == Ack::Confirmed && matches!(e.kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase)
+            ==> distance(final(w).nodes@[i as int]) == distance(old(w).nodes@[i as int])),
+        (ack == Ack::Confirmed && old(w).nodes@[i as int].question.is_none() && !old(w).nodes@[i as int].waiting_incident
+            && (!old(w).nodes@[i as int].paused || old(w).nodes@[i as int].phase is Stopping)
+            && (current_item(old(w).nodes@[i as int]) == Some(Item::Do(e.kind))
+                || current_item(old(w).nodes@[i as int]) == Some(Item::Teardown(e.kind)))
+            ==> distance(final(w).nodes@[i as int]) + 2 <= distance(old(w).nodes@[i as int])),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        (settle_shape(old(w).nodes@[i as int])
+            && (old(w).nodes@[i as int].phase is Stopping ==> current_item(old(w).nodes@[i as int]) == Some(Item::Teardown(e.kind)))
+            ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 2,
+        final(w).nodes@[i as int].next_seq as int <= old(w).nodes@[i as int].next_seq as int + 1,
+        final(w).nodes@[i as int].credit == old(w).nodes@[i as int].credit,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question as int <= old(w).next_question as int + 1,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len <= old(out).len + 2,
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+] hide [current_item, items, settle_shape] {
+    kernel_snapshot! { live_before = w.nodes@[i as int] }
+    kernel_snapshot! { live_original = Node { effect: Some(e), ..w.nodes@[i as int] } }
+    kernel_snapshot! { live_question = w.next_question }
+    kernel_snapshot! { live_out = *out }
+    kernel_proof! { assert(port_acks_specs::cleared_post(live_original@, live_before@)) by { reveal(port_acks_specs::cleared_post); } }
+    match ack {
+        Ack::Confirmed => {
+            confirmed(&mut w.nodes[i], e.kind); kernel_proof! { port_acks_frames::confirmed_live(live_original@, live_before@, w.nodes@[i as int], live_question@, i, e.seq, live_out@, e); }
+
+        },
+        Ack::Retryable => { delivery_failed(w, i, e.kind, out); kernel_proof! { port_acks_frames::retry_live(live_original@, live_before@, w.nodes@[i as int], live_question@, i, e.seq, live_out@, *out, e); }  },
+        Ack::Permanent => { effect_failed(w, i, e.kind, out); kernel_proof! { port_acks_frames::permanent_live(live_original@, live_before@, w.nodes@[i as int], live_question@, w.next_question, i, e.seq, ack, live_out@, *out, e); }  },
+        Ack::BodyPolicyRefused if e.kind == EffectKind::OpenPr => {
+            stop_for_review(&mut w.nodes[i], ReviewStop::PublicationBody); kernel_proof! { port_acks_frames::refused_live(live_original@, live_before@, w.nodes@[i as int], live_question@, i, e.seq, live_out@, e); }
+
+        }
+        Ack::BodyPolicyRefused => { effect_failed(w, i, e.kind, out); kernel_proof! { port_acks_frames::permanent_live(live_original@, live_before@, w.nodes@[i as int], live_question@, w.next_question, i, e.seq, ack, live_out@, *out, e); }  },
+    }
+}
+}
+
+kernel_fn! {
+/// State-table adoption row / #806: four verbatim statements, behaviour-identical standing rule.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn adopt_proposed_worktree(m: &mut Node, head: HeadId) -> (result: ()) [
+    requires old(m).generation < u64::MAX, !old(m).adopted, old(m).proposed == Some(head),
+        current_item(*old(m)) == Some(Item::Do(EffectKind::PrepareWorktree))
+            || current_item(*old(m)) == Some(Item::Teardown(EffectKind::PrepareWorktree)),
+    ensures port_acks_specs::agenda_post(*old(m), *final(m), EffectKind::PrepareWorktree),
+] {
+    kernel_snapshot! { adoption_before = *m }
+    m.adopted = true;
+    m.head = Some(head);
+    m.checked = None;
+
+
+    kernel_snapshot! { adoption_mid = *m }
+    kernel_proof! { assert(port_acks_specs::adoption_post(adoption_before@, adoption_mid@)) by { reveal(port_acks_specs::adoption_post); } }
+    set_phase(m, Phase::Checking);
+    kernel_proof! { port_acks_frames::agenda_adoption_composed(adoption_before@, adoption_mid@, *m, EffectKind::PrepareWorktree); }
+}
+}
+
+#[cfg(test)]
+#[path = "../tests/acknowledgements_equivalence/cases.rs"]
+mod equivalence;
+
+kernel_fn! {
+/// #806 confirmed agenda: verbatim state-writing body isolated from the public field proof.
+#[allow(clippy::collapsible_if)]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn confirmed_agenda_body(m: &mut Node, kind: EffectKind) -> (result: ()) [
+    requires old(m).generation < u64::MAX,
+        kind == EffectKind::StopRun ==> !old(m).pool,
+    ensures port_acks_specs::agenda_post(*old(m), *final(m), kind),
+] hide [current_item, items] {
+    kernel_snapshot! { before_agenda = *m }
+    kernel_proof! { port_acks_frames::agenda_input(*m); }
+    if !kind.starts_operation() {
+        if let Some(Item::Do(k) | Item::Teardown(k)) = m.current() {
+            if k == kind {
+                if kind == EffectKind::PrepareWorktree && !m.adopted {
+                    if let Some(head) = m.proposed {
+                        adopt_proposed_worktree(m, head);
+
+                        return;
+                    }
+                }
+                m.pos += 1;
+                kernel_proof! {
+                    assert(port_acks_specs::handled_increment(before_agenda@, *m)) by {
+                        reveal(port_acks_specs::handled_increment);
+                    }
+                    port_acks_frames::agenda_incremented(before_agenda@, *m, kind);
+                }
+            }
+        }
+    }
+    kernel_proof! {
+            if matches!(kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase)
+                || !(current_item(before_agenda@) == Some(Item::Do(kind)) || current_item(before_agenda@) == Some(Item::Teardown(kind))) {
+                port_acks_frames::agenda_stutter(before_agenda@, kind);
+            }
+
+    }
+}
+}
+
+kernel_fn! {
+/// #806 Ack rows: verbatim state-writing body isolated from the public adoption field proof.
+#[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn on_ack_body(w: &mut World, i: usize, seq: u64, ack: Ack,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures port_acks_specs::ack_local(old(w).nodes@[i as int], final(w).nodes@[i as int],
+        old(w).next_question, final(w).next_question, i, seq, ack, *old(out), *final(out)),
+        final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question as int <= old(w).next_question as int + 1,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len <= old(out).len + 2,
+        ack == Ack::Confirmed ==> *final(out) == *old(out) && final(w).next_question == old(w).next_question,
+] hide [current_item, items, settle_shape, node_headroom, arithmetic_consistent] {
+    kernel_snapshot! { ack_before = *w }
+    kernel_snapshot! { ack_out_before = *out }
+    let Some(e) = w.nodes[i].effect else {
+        kernel_proof! {
+            port_acks_frames::inactive_ack(ack_before@.nodes@[i as int], w.nodes@[i as int],
+                w.next_question, i, seq, ack, ack_out_before@, *out);
+        }
+        return
+    };
+    if e.seq != seq {
+        kernel_proof! {
+            port_acks_frames::inactive_ack(ack_before@.nodes@[i as int], w.nodes@[i as int],
+                w.next_question, i, seq, ack, ack_out_before@, *out);
+        }
+        return;
+    }
+    w.nodes[i].effect = None;
+    kernel_snapshot! { ack_cleared = w.nodes@[i as int] }
+    kernel_proof! {
+        assert(port_acks_specs::cleared_post(ack_before@.nodes@[i as int], ack_cleared@)) by {
+            reveal(port_acks_specs::cleared_post);
+        }
+    }
+    kernel_proof! { port_acks_frames::ack_clear_input(ack_before@.nodes@[i as int], ack_cleared@, e); }
+    if e.cancelling {
+        kernel_proof! {
+
+            port_acks_frames::cancelled_ack(ack_before@.nodes@[i as int], w.nodes@[i as int],
+                w.next_question, i, seq, ack, ack_out_before@, e);
+        }
+        return;
+    }
+    apply_live_ack(w, i, e, ack, out);
+    kernel_proof! {
+        port_acks_frames::lift_live_local(ack_before@.nodes@[i as int], ack_cleared@,
+            w.nodes@[i as int], ack_before@.next_question, w.next_question, i, seq, ack, ack_out_before@, *out, e);
+    }
+
 }
 }
