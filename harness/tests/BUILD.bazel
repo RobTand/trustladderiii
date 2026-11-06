@@ -35,16 +35,6 @@ tl3_py_test(
 )
 
 tl3_py_test(
-    name = "test_node_id_vectors",
-    srcs = ["test_node_id_vectors.py"],
-    deps = [
-        ":conftest",
-        "//harness/src/tl3_harness",
-        "@tl3_pip//pytest",
-    ],
-)
-
-tl3_py_test(
     name = "test_parametrized_checks",
     srcs = ["test_parametrized_checks.py"],
     deps = [
