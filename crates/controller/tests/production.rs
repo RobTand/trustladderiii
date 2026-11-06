@@ -76,6 +76,7 @@ fn flux_selection_holds_legacy_pb_bindings_without_reinterpreting_them() {
                 executable: "/opt/flux/bin/flux".into(),
                 backend_cli: "/opt/tl3/bin/tl3-run-backend".into(),
                 container_mode: tl3_config::ContainerMode::OwnScope,
+                runtime_bundles: vec![format!("/mnt/shared/flux-out/tl3/.runtime/{}/manifest.json", "0".repeat(64)).into()],
                 uri: "local:///run/flux/local-0".into(),
                 environment: BTreeMap::from([("PATH".into(), "/usr/bin:/bin".into()), ("HOME".into(), "/home/rob".into()), ("XDG_RUNTIME_DIR".into(), "/run/user/1000".into())]),
                 staging_root: "/mnt/shared/tl3-inputs".into(),

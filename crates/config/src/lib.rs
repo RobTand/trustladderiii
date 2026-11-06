@@ -585,6 +585,8 @@ pub struct Flux {
     pub executable: PathBuf,
     pub backend_cli: PathBuf,
     pub container_mode: ContainerMode,
+    #[serde(default)]
+    pub runtime_bundles: Vec<PathBuf>,
     pub uri: String,
     #[serde(default)]
     pub environment: BTreeMap<String, String>,
@@ -600,6 +602,7 @@ impl std::fmt::Debug for Flux {
             .field("executable", &self.executable)
             .field("backend_cli", &self.backend_cli)
             .field("container_mode", &self.container_mode)
+            .field("runtime_bundles", &self.runtime_bundles)
             .field("environment", &"[redacted]")
             .field("staging_root", &self.staging_root)
             .field("output_root", &self.output_root)

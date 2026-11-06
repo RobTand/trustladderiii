@@ -25,6 +25,7 @@ fn flux_document() -> Value {
         executable = "/opt/flux/bin/flux"
         backend_cli = "/opt/tl3/bin/tl3-run-backend"
         container_mode = "own_scope"
+        runtime_bundles = ["/mnt/shared/flux-out/tl3/.runtime/0000000000000000000000000000000000000000000000000000000000000000/manifest.json"]
         uri = "local:///run/flux/local-0"
         environment = { PATH = "/opt/flux/bin:/usr/bin:/bin", LD_LIBRARY_PATH = "/opt/flux/lib", HOME = "/home/rob", XDG_RUNTIME_DIR = "/run/user/1000" }
         staging_root = "/mnt/shared/tl3-inputs"
@@ -32,6 +33,28 @@ fn flux_document() -> Value {
         container_image = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
     }.into());
     document
+}
+
+#[test]
+fn selected_flux_requires_unique_canonical_runtime_bundle_locators() {
+    let locator = format!("/mnt/shared/flux-out/tl3/.runtime/{}/manifest.json", "a".repeat(64));
+    for locators in [vec![], vec![locator.clone(), locator.clone()], vec!["relative/manifest.json".into()],
+        vec![locator.replace(&"a".repeat(64), &"A".repeat(64))],
+        vec![locator.replace("/manifest.json", "/../manifest.json")], vec![format!("{locator}/")],
+        vec![locator.replace(".runtime/", ".runtime//")], vec![locator.replace("manifest.json", "options.json")]] {
+        let mut document = flux_document();
+        document["flux"]["runtime_bundles"] = Value::Array(locators.into_iter().map(Value::String).collect());
+        let error = Config::parse(&toml::to_string(&document).unwrap()).unwrap_err().to_string();
+        assert!(error.contains("flux.runtime_bundles"), "{error}");
+        document["execution_backend"] = "prismabuild".into();
+        Config::parse(&toml::to_string(&document).unwrap()).unwrap();
+    }
+    let mut document = flux_document();
+    document["flux"].as_table_mut().unwrap().remove("runtime_bundles");
+    assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
+    document["flux"].as_table_mut().unwrap().insert("runtime_bundles".into(), Value::Array(vec![locator.clone().into()]));
+    let config = Config::parse(&toml::to_string(&document).unwrap()).unwrap();
+    assert_eq!(config.flux.unwrap().runtime_bundles, [std::path::PathBuf::from(locator)]);
 }
 
 #[test]
