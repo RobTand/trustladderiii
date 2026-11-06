@@ -444,7 +444,22 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
 }
 
 
-pub(super) const REVIEW_MODES: &[&str] = &["witness-before", "before-post", "paused-before-post", "retry-no-time"];
+// Real independent-batch catch-up, with only the named check identities green.
+fn batch_health(controller: &mut Controller, api: &Server, config: &Bootstrap, names: &[&str], base: &str, branch: &str) {
+    let mut pulls: Value=serde_json::from_str(include_str!("../fixtures/mergify/pq3221/prior-drafts.json")).unwrap();
+    for pull in pulls.as_array_mut().unwrap() {
+        pull["base"]["sha"]=json!(base); pull["base"]["ref"]=json!(branch);
+        pull["body"]=json!(pull["body"].as_str().unwrap().replace("ef817b9d48f4e2f55a3b7d8e83caef25573ad544",base));
+    }
+    let checks:Value=serde_json::from_str(include_str!("../fixtures/mergify/pq3221/prior-checks.json")).unwrap();
+    let template=checks["check_runs"].as_array().unwrap().iter().find(|c|c["conclusion"]=="failure").unwrap();
+    let checks:Vec<Value>=names.iter().enumerate().map(|(i,name)|{let mut c=template.clone();c["id"]=json!(900000+i);c["name"]=json!(name);c["status"]=json!("completed");c["conclusion"]=json!("success");c["completed_at"]=json!("2026-11-06T03:00:00Z");c}).collect();
+    let changes=serde_json::from_value(json!({"repository":"owner/sandbox","issues":[],"comments":[],"labels":[],"pull_requests":pulls,"check_runs":checks,"check_suites":[]})).unwrap();
+    for input in Translator::new(api.clients()).unwrap().catch_up(&config.repos[0],&changes,&controller.snapshot().unwrap()).unwrap() {ingress::apply(controller,input).unwrap();}
+    controller.drive_once().unwrap();
+}
+
+pub(super) const REVIEW_MODES: &[&str] = &["witness-before", "before-post", "paused-before-post", "retry-no-time", "incomplete-reporters"];
 
 /// #854b r1: real Controller/adapter schedules requested by the review.
 pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
@@ -517,6 +532,23 @@ pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
                 assert_eq!(api.state.lock().unwrap().requeues,0);
                 assert_eq!(controller.world().unwrap().nodes[0].credit.spent,0);
             }
+        }
+        "incomplete-reporters" => {
+            {
+                let mut checks:Value=serde_json::from_str(include_str!("../fixtures/mergify/pq3221/draft-checks.json")).unwrap();
+                let template=checks["check_runs"].as_array().unwrap().iter().find(|c|c["conclusion"]=="failure").unwrap().clone();
+                let mut a=template.clone();a["name"]=json!("A");
+                let mut b=template;b["name"]=json!("B");b["id"]=json!(99033);b["app"]=Value::Null;
+                checks["check_runs"]=json!([a,b]);
+                api.state.lock().unwrap().cause_fixture.as_mut().unwrap().checks=Some(checks);
+            }
+            failure(&mut controller,&api,&config);
+            batch_health(&mut controller,&api,&config,&["A"],"ffffffffffffffffffffffffffffffffffffffff","main");
+            controller.look_now().unwrap(); controller.look_now().unwrap();
+            assert_eq!(api.state.lock().unwrap().requeues,0,"r1.3: A-only batch cannot witness unidentified B");
+            let snap=controller.snapshot().unwrap();
+            let hold=snap.rows.iter().find(|r|r.table=="queue_holds").unwrap();
+            assert!(hold.value["witness"].is_null());
         }
         _ => panic!("unknown review schedule {mode}"),
     }
