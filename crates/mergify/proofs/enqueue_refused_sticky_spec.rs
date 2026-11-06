@@ -6,7 +6,7 @@ verus! {
 /// TL3 #751 K-refused-sticky: a refusal is never silently retried; #608
 /// retains existing refusal handling. Exact terminal receipt/timer values are
 /// preserved existing behaviour (no rule). Context: infrastructure recovery in
-/// docs/state-table.md:555,589; neither row defines terminal receipt encoding.
+/// docs/state-table.md:572,606; neither row defines terminal receipt encoding.
 /// #760 preserves the lifecycle; served incident RobTand/prismabuild#2705 is
 /// identified by #608, not a TL3 issue or an additional rule.
 /// Full typed domains; no loop, unwind bound, assumption, or external body.
