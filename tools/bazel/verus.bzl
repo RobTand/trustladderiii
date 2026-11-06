@@ -1170,7 +1170,7 @@ def verus_proofs():
             "port_failfast_checks_world": ("kernel::port_failfast_checks#world", 1),
             "port_failfast_reply_compare": ("kernel::port_failfast_reply_apply#compare", 1),
             "port_failfast_reply_safe": ("kernel::port_failfast_reply_apply#safe", 1),
-            "port_failfast_reply_apply": ("kernel::port_failfast_reply_apply#reply", 1),
+            "port_failfast_reply_apply": ("kernel::port_failfast_reply_apply#verify_reply_apply", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

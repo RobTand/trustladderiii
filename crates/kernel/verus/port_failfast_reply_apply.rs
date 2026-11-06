@@ -59,7 +59,7 @@ kernel_fn! {
 /// Q54 / #440 six reply harnesses: run real apply under both flags for all
 /// generations and payloads, preserving every original paired assertion.
 /// Settledness and the original small file/head/gate/credit bounds are omitted.
-pub(super) fn reply(mut off: World, generation: u64, reply: Reply)
+pub(super) fn verify_reply_apply(mut off: World, generation: u64, reply: Reply)
     -> (result: ((World, Outbox), (World, Outbox))) [
     requires retirement::domain(off), retirement::accepted(off), retirement::bounded(off), storage_ordered(off),
         !off.fail_fast, off.file_sets@.len() == 0,
