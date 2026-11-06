@@ -122,8 +122,8 @@ fn worlds() -> Vec<(World, Vec<tl3_kernel::Out>)> {
     let mut cases = Vec::new();
     for scenario in 0..8 {
         let tl3_kernel::StepResult {
-            world: mut world,
-            outputs: mut outputs,
+            mut world,
+            mut outputs,
             ..
         } = tl3_kernel::step(
             World::new(&[1], 1),

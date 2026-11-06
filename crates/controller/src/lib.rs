@@ -2110,8 +2110,8 @@ impl Controller {
             return Ok(());
         }
         let tl3_kernel::StepResult {
-            world: mut world,
-            outputs: mut outputs,
+            mut world,
+            mut outputs,
             ..
         } = tl3_kernel::step(world, event);
         outputs.splice(0..0, dependency_outputs);

@@ -490,11 +490,7 @@ fn two_requests_share_one_slot_first_come_first_served() {
     for _ in 0..400 {
         let Some(e) = w.witness() else { break };
         let before = w.measure();
-        let tl3_kernel::StepResult {
-            world: next,
-            outputs: _,
-            ..
-        } = step(w, e);
+        let tl3_kernel::StepResult { world: next, .. } = step(w, e);
         assert!(next.valid() && next.is_settled());
         assert!(next.measure() < before);
         assert!(next.nodes.iter().filter(|n| n.holds).count() <= 1);
@@ -1342,11 +1338,7 @@ fn confirm_all(mut w: World) -> World {
         else {
             return w;
         };
-        let tl3_kernel::StepResult {
-            world: next,
-            outputs: _,
-            ..
-        } = step(
+        let tl3_kernel::StepResult { world: next, .. } = step(
             w,
             Event::Ack {
                 node: NodeId(i as u64),
@@ -1369,11 +1361,7 @@ fn running(w: &World) -> Vec<usize> {
 /// takes a new, younger ticket for its audit.
 fn end_ingest(w: World, i: usize) -> World {
     let generation = w.nodes[i].generation;
-    let tl3_kernel::StepResult {
-        world: next,
-        outputs: _,
-        ..
-    } = step(
+    let tl3_kernel::StepResult { world: next, .. } = step(
         w,
         Event::Reply {
             node: NodeId(i as u64),
@@ -1416,11 +1404,7 @@ fn finish(w: World, i: usize) -> World {
         return end_ingest(w, i);
     }
     let generation = w.nodes[i].generation;
-    let tl3_kernel::StepResult {
-        world: next,
-        outputs: _,
-        ..
-    } = step(
+    let tl3_kernel::StepResult { world: next, .. } = step(
         w,
         Event::Reply {
             node: NodeId(i as u64),
@@ -1469,11 +1453,7 @@ fn a_waiting_p3_yields_to_every_better_priority_however_long_it_waits() {
 fn a_priority_fact_refreshes_an_open_request_and_leaves_a_closed_one() {
     let mut w = admit(pool_world(), Priority::Unranked);
     w = admit(w, Priority::P3);
-    let tl3_kernel::StepResult {
-        world: next,
-        outputs: _,
-        ..
-    } = step(
+    let tl3_kernel::StepResult { world: next, .. } = step(
         w,
         Event::Fact {
             node: NodeId(1),
@@ -1495,11 +1475,7 @@ fn a_priority_fact_refreshes_an_open_request_and_leaves_a_closed_one() {
     );
     let closed = w.nodes[0];
     assert!(closed.phase.is_closed());
-    let tl3_kernel::StepResult {
-        world: after,
-        outputs: _,
-        ..
-    } = step(
+    let tl3_kernel::StepResult { world: after, .. } = step(
         w,
         Event::Fact {
             node: NodeId(0),

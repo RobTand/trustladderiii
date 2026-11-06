@@ -4,11 +4,7 @@
 use tl3_kernel::*;
 
 fn send(world: World, event: Event) -> World {
-    let tl3_kernel::StepResult {
-        world: world,
-        outputs: _,
-        ..
-    } = step(world, event);
+    let tl3_kernel::StepResult { world, .. } = step(world, event);
     assert!(world.valid(), "invalid world after {event:?}: {world:#?}");
     world
 }
