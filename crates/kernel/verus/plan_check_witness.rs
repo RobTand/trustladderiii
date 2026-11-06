@@ -26,7 +26,7 @@ fn check_plan_ending(fail_fast: bool, retries: u8, needs_split: bool) -> (result
     let mut out = Outbox::new();
     kernel_proof! { footprint::inline_is_valid(w, 0); }
     let reply = if needs_split { Reply::PlanCheckNeedsSplit } else { Reply::PlanCheckRejected };
-    on_reply(&mut w, 0, 0, reply, &mut out);
+    on_reply(&mut w, 0, 0, reply, &mut out, &mut Report::new());
     kernel_proof! {
         assert(w.nodes@[0].phase == Phase::Stopping(Outcome::Stopped));
         assert(w.nodes@[0].question.is_none());
@@ -80,7 +80,7 @@ fn check_audit_ending(fail_fast: bool, early_end: Option<EarlyEnd>, rounds: u8)
         file_sets: Vec::new(), dependencies: Vec::new(), fail_fast };
     let mut out = Outbox::new();
     kernel_proof! { footprint::inline_is_valid(w, 0); }
-    on_reply(&mut w, 0, 0, Reply::AuditDisagrees, &mut out);
+    on_reply(&mut w, 0, 0, Reply::AuditDisagrees, &mut out, &mut Report::new());
     kernel_proof! {
         assert(w.nodes@[0].phase == Phase::Stopping(Outcome::Stopped));
         assert(w.nodes@[0].question.is_none());

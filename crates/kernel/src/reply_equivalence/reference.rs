@@ -42,7 +42,7 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, o
         }
     }
     if !accepts(w, n, &reply) {
-        run_failed(w, i, out);
+        run_failed(w, i, out, &mut Report::new());
         kernel_proof! { footprint::valid_under_table_growth(before_reply@, *w, w.nodes@[i as int].footprint); }
         kernel_proof! {
             progress_gate_contracts::table_order_frame(before_reply@, *w);
@@ -74,7 +74,7 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, o
             }
         }
         _ => {
-            reply_transition(w, i, reply, out);
+            reply_transition(w, i, reply, out, &mut Report::new());
             kernel_proof! {
                 progress_gate_contracts::reply_bounds_result(after_operation@, *w, i as int,
                     before_outputs@.len, out.len);

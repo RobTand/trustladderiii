@@ -55,7 +55,7 @@ fn fixture_log_read_only_cli_and_corrupt_snapshot() {
         node: tl3_kernel::NodeId(0),
         fact: tl3_kernel::Fact::Priority(tl3_kernel::Priority::P0),
     };
-    let after = tl3_kernel::step(before.clone(), event).0;
+    let after = tl3_kernel::step(before.clone(), event).world;
     let mut writer = Store::open(&settings).unwrap();
     let snapshot = writer.load().unwrap();
     let mut anchor = Commit::new("fixture:anchor", json!({}), &snapshot);

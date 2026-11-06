@@ -4,12 +4,14 @@ use super::*;
 kernel_fn! {
 /// Failed-run rows / #771: a retry and incident allocate at most two generations.
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
-pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
+pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox, report: &mut Report) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         old(w).nodes@[i as int].generation as int + 2 <= u64::MAX as int,
         old(w).nodes@[i as int].run_failures <= 1,
         old(w).nodes@[i as int].run_incidents <= 2,
-    ensures port_t860_contracts::failed_post(old(w).nodes@[i as int], final(w).nodes@[i as int], *old(out), *final(out)),
+    ensures report::failed_round(old(report).entries@, final(report).entries@,
+            NodeId(i as u64), FailedRoundCause::RunFailed),
+        port_t860_contracts::failed_post(old(w).nodes@[i as int], final(w).nodes@[i as int], *old(out), *final(out)),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
@@ -32,6 +34,7 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         final(out).len <= old(out).len + 1,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
+    report.record_failed_round(NodeId(i as u64), FailedRoundCause::RunFailed);
     kernel_snapshot! { before_failed = w.nodes@[i as int] }
     kernel_snapshot! { before_failed_out = *out }
     let m = &mut w.nodes[i];
@@ -88,22 +91,50 @@ pub(super) fn stop_for_review(m: &mut Node, step: ReviewStop) -> (result: ()) [
 kernel_fn! {
 /// Failed-round rows / #771: the free fix and paid ladder share one-step bounds.
 pub(super) fn failed_round(w: &mut World, i: usize, step: ReviewStop,
-    out: &mut Outbox) -> (result: ()) [
+    out: &mut Outbox, report: &mut Report) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures report::failed_round(old(report).entries@, final(report).entries@,
+            NodeId(i as u64), report::failure_cause(step)),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(retry_bounds);] {
+    kernel_snapshot! { before_report = report.entries@ }
+    kernel_proof! { report::lemmas::failure_kind(step); }
+    let cause = match step {
+        ReviewStop::ChecksFailed => FailedRoundCause::ChecksFailed,
+        ReviewStop::ChangesRequested => FailedRoundCause::ChangesRequested,
+        ReviewStop::CiFailed => FailedRoundCause::CiFailed,
+        _ => FailedRoundCause::MakerCantMeet,
+    };
+    if step != ReviewStop::MakerCantMeet || w.nodes[i].round == 0 {
+        report.record_failed_round(NodeId(i as u64), cause);
+        kernel_proof! {
+            report::lemmas::read_failed_round(before_report@, report.entries@,
+                NodeId(i as u64), cause);
+        }
+    }
     let m = &mut w.nodes[i];
     if m.round == 0 {
         // The fix round resumes the maker's session. It's free.
         m.round = 1;
         set_phase(m, Phase::Making);
     } else {
-        next_rung(w, i, step, out);
+        kernel_snapshot! { before_rung_report = report.entries@ }
+        next_rung(w, i, step, out, report);
+        kernel_proof! {
+            report::lemmas::round_delta(before_rung_report@, report.entries@,
+                NodeId(i as u64),
+                if step == ReviewStop::MakerCantMeet { Some(FailedRoundCause::MakerCantMeet) }
+                else { None });
+        }
+    }
+    kernel_proof! {
+        report::lemmas::append_failed_round(before_report@, report.entries@,
+            NodeId(i as u64), cause);
     }
 }
 }
@@ -114,15 +145,30 @@ kernel_fn! {
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
-    out: &mut Outbox) -> (result: ()) [
+    out: &mut Outbox, report: &mut Report) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
-    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+    ensures report::forwards(old(report).entries@, final(report).entries@,
+            report::round_entries(NodeId(i as u64),
+                if step == ReviewStop::MakerCantMeet { Some(FailedRoundCause::MakerCantMeet) }
+                else { None })),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] proof [reveal(retry_bounds);] {
+    kernel_snapshot! { before_report = report.entries@ }
+    if step == ReviewStop::MakerCantMeet {
+        report.record_failed_round(NodeId(i as u64), FailedRoundCause::MakerCantMeet);
+        kernel_proof! { report::lemmas::read_failed_round(before_report@, report.entries@,
+            NodeId(i as u64), FailedRoundCause::MakerCantMeet); }
+    }
+    kernel_proof! {
+        report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64),
+            if step == ReviewStop::MakerCantMeet { Some(FailedRoundCause::MakerCantMeet) }
+            else { None });
+    }
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
     if fail_fast {

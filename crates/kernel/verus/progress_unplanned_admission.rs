@@ -25,7 +25,7 @@ pub(super) fn verify_admission(mut world: World) -> (result: (World, bool, bool)
         potential_member(world.nodes@, 0, world.nodes@.len(), |n: Node| ticket_capacity(n));
     }
     let mut out = Outbox::new();
-    let admitted = advance(&mut world, 0, &mut out);
+    let admitted = advance(&mut world, 0, &mut out, &mut Report::new());
     proof {
         if admitted {
             assert(world.nodes@[0].phase == (Phase::Planning { must_split: false }));
@@ -45,7 +45,7 @@ pub(super) fn verify_admission(mut world: World) -> (result: (World, bool, bool)
     }
     let mut occupant_moved = false;
     if !admitted {
-        occupant_moved = advance(&mut world, 1, &mut out);
+        occupant_moved = advance(&mut world, 1, &mut out, &mut Report::new());
         assert(occupant_moved);
     }
     (world, admitted, occupant_moved)

@@ -5,7 +5,8 @@ kernel_fn! {
 /// #771: compose the actual event handlers' per-apply counter bounds.
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
-pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: ()) [
+#[allow(clippy::collapsible_if)]
+pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut Report) -> (result: ()) [
     requires world_headroom(*old(w)), footprint::ordered_table(*old(w)),
         dependencies::edges_indexable(*old(w)), old(out).len + 4 <= OUTBOX,
         forall|j: int| 0 <= j < old(w).nodes@.len()
@@ -13,7 +14,11 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
                 && settle_shape(old(w).nodes@[j]) && stopping_effect_fits(old(w).nodes@[j])
                 && (old(w).nodes@[j].phase is Closed ==> old(w).nodes@[j].effect.is_none())
                 && footprint::valid_footprint(*old(w), old(w).nodes@[j].footprint),
-    ensures (progress_input(*old(w), event)
+    ensures report::agrees_except_fact_stops_and_ci_failed(event,
+            phase_view(old(w).nodes@), phase_view(final(w).nodes@), report_input(*old(w), event),
+            old(report).entries@, final(report).entries@,
+            (phase_view(final(w).nodes@), final(report).entries@)),
+(progress_input(*old(w), event)
             ==> progress_measure(*final(w)) < progress_measure(*old(w))
                 && dependencies::edges_indexable(*final(w))),
         forall|j: int| 0 <= j < final(w).nodes@.len() ==>
@@ -80,6 +85,20 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
             _ => true,
         }),
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
+    kernel_snapshot! { report_before = report.entries@ }
+    kernel_proof! { report_projection(*w, event); report::lemmas::entries_for_event(event, report_input(*w, event)); }
+    let target = match event {
+        Event::Reply { node, .. } | Event::Ack { node, .. } | Event::Fact { node, .. }
+            | Event::Command { node, .. } => Some(node),
+        _ => None,
+    };
+    let before_phase = match target {
+        Some(node) => match w.index(node) {
+            Some(i) => Some(w.nodes[i].phase),
+            None => None,
+        },
+        None => None,
+    };
     kernel_snapshot! { before_apply = *w }
     kernel_snapshot! { before_apply_out = *out }
     kernel_proof! { events_lemmas::selected_input(before_apply@, event); }
@@ -109,7 +128,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
             reply,
         } => {
             if let Some(i) = w.index(node) {
-                on_reply(w, i, generation, reply, out);
+                on_reply(w, i, generation, reply, out, report);
                 kernel_proof! {
                     if progress_input(before_apply@, event) {
                         assert(w.nodes@ =~= before_apply@.nodes@.update(i as int, w.nodes@[i as int]));
@@ -133,7 +152,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
         }
         Event::Fact { node, fact } => {
             if let Some(i) = w.index(node) {
-                on_fact(w, i, fact, out);
+                on_fact(w, i, fact, out, report);
             }
         }
         Event::Command { node, id, command } => {
@@ -151,6 +170,38 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
                 }
             }
         }
+    }
+    kernel_snapshot! { report_middle = report.entries@ }
+    if let Some(node) = if matches!(event, Event::Fact { .. }) { None } else { target } {
+        if let Some(before) = before_phase {
+            if let Some(i) = w.index(node) {
+                let after = w.nodes[i].phase;
+                let cause = StopCause::from_phase(after, w.nodes[i].review_stop,
+                    false,
+                    matches!(event, Event::Command { command: Command::Stop, .. }
+                        | Event::Command { command: Command::Answer { answer: Answer::Stop, .. }, .. }));
+                report.record_stop(node, before, after, cause);
+            }
+        }
+    }
+    kernel_snapshot! { stop_review = match report::event_target(event) {
+        Some(node) if node.0 < w.nodes@.len() => w.nodes@[node.0 as int].review_stop,
+        _ => None,
+    } }
+    kernel_proof! {
+        {
+            assert forall|j: int| 0 <= j < before_apply@.nodes@.len()
+                && report::event_target(event) != Some(NodeId(j as u64))
+                implies report::terminal_phase_frame(before_apply@.nodes@[j].phase, w.nodes@[j].phase) by {
+                report::lemmas::phase_refl(before_apply@.nodes@[j].phase);
+            }
+            if !(event is Fact) && !(event is Reply) { report::lemmas::unchanged(report_before@); }
+            if match report::event_target(event) { Some(node) => node.0 >= before_apply@.nodes@.len(), _ => true } {
+                report::lemmas::unchanged(report_before@);
+            }
+        }
+        report::lemmas::observe(event, phase_view(before_apply@.nodes@), phase_view(w.nodes@),
+            report_input(before_apply@, event), stop_review@, report_before@, report_middle@, report.entries@);
     }
     kernel_proof! {
         if before_apply@.nodes@.len() > 0

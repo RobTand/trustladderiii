@@ -436,7 +436,10 @@ fn collect(directory: &Path, prefix: &str, result: &mut Vec<Function>) {
             if matches!(name, "proofs") || (name == "progress" && directory.ends_with("verus")) {
                 continue;
             }
-            let module = if matches!(name, "lib" | "mod" | "headroom" | "progress_specs") {
+            // report.rs is mounted as report::lemmas by src/report.rs.
+            let module = if name == "report" && directory.ends_with("verus") {
+                format!("{prefix}::report::lemmas")
+            } else if matches!(name, "lib" | "mod" | "headroom" | "progress_specs") {
                 prefix.into()
             } else {
                 format!("{prefix}::{name}")

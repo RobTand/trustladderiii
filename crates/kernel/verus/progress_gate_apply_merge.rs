@@ -28,7 +28,7 @@ pub(super) fn verify_merge(mut w: World) -> (result: (World, Outbox)) [
         assert(progress_input(w, event));
     }
     let mut out = Outbox::new();
-    apply(&mut w, event, &mut out);
+    apply(&mut w, event, &mut out, &mut Report::new());
     kernel_proof! { progress_gate_apply_merge_safe::merge_safe(before@, w, head); }
     let checked = w.check();
     assert!(checked.is_ok());
