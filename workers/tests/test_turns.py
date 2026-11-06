@@ -874,3 +874,25 @@ def test_planner_terminal_reply_passes_the_one_repair_turn():
     replies, history, control = iter((before, terminal)), [], TurnControl()
     assert repaired(control, history, lambda: next(replies), check) == terminal
     assert control.repair_attempts == 1 and len(history) == 1
+
+
+def test_source_edit_never_enters_a_tool_free_reply_repair():
+    from tl3_harness.rules import Allowed, Name, Rule, SourceEdit, evaluate
+    from tl3_workers.turns import repaired
+    row = Rule('proof.source', lambda facts: ({},),
+               lambda facts: (Name('path', 'tests/test_observer.py'),),
+               Allowed('const', 'observer test body'),
+               SourceEdit('tests/test_observer.py', 'Move the call into the test body.'),
+               roles=frozenset({'maker'}))
+    error = ValueError('source repair required')
+    error.rule_violations = evaluate((row,), {}, role='maker')
+    error.rule_role = 'maker'
+    asks = []
+
+    def check(text):
+        raise error
+
+    with pytest.raises(ValueError, match='source repair required') as caught:
+        repaired(object(), [], lambda: asks.append(True) or '{}', check)
+    assert caught.value is error
+    assert asks == [True]

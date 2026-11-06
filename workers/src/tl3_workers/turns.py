@@ -133,6 +133,9 @@ def repaired(control, history, ask, check):
     except Unrepairable:
         raise
     except (ValueError, ValidationError) as first:
+        from tl3_harness.rules import SourceEdit
+        if any(isinstance(item.repair, SourceEdit) for item in getattr(first, 'rule_violations', ())):
+            raise first
         try:
             with control.repair(history, first):
                 control.repair_attempts = 1
