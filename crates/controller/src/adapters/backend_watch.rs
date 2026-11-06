@@ -266,7 +266,9 @@ mod detach_tests {
         assert!(handle.unwatch(wrong).is_err());
         assert!(!second.stop.is_stopped());
         handle.unwatch(first.owner.clone()).unwrap();
-        drop(second);
+        second.stop.stop();
+        second.exited.recv_timeout(Duration::from_secs(5)).unwrap();
+        second.release.send(()).unwrap();
         running.stop().unwrap(); running.join().unwrap();
     }
 
@@ -291,7 +293,9 @@ mod detach_tests {
         handle.0.send(Command::Unwatch(owner("absent"), ack)).unwrap();
         let passed_stale = barrier.recv_timeout(Duration::from_secs(5));
         let replacement_alive = !replacement.stop.is_stopped();
-        drop(replacement);
+        replacement.stop.stop();
+        replacement.exited.recv_timeout(Duration::from_secs(5)).unwrap();
+        replacement.release.send(()).unwrap();
         let stopped = running.stop();
         let joined = running.join();
         passed_stale.unwrap().unwrap();
