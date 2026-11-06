@@ -42,7 +42,7 @@ impl Shell<'_> {
     fn translate(&mut self, snapshot: &Snapshot, world: &World, observation: Observation, commit: &mut Commit) -> Result<Option<Event>> {
         self.translate_with_receipt(snapshot, world, observation, commit, None)
     }
-    fn translate_with_receipt(&mut self, snapshot: &Snapshot, world: &World, observation: Observation, commit: &mut Commit, queue_receipt: Option<tl3_store::RowChange>) -> Result<Option<Event>> {
+    fn translate_with_receipt(&mut self, snapshot: &Snapshot, world: &World, observation: Observation, commit: &mut Commit, queue_receipt: Option<Value>) -> Result<Option<Event>> {
         let event = match observation {
             Observation::Queue(mut fact) => {
                 if let adapters::mergify::Evidence::Gate(gate) = &fact.evidence {

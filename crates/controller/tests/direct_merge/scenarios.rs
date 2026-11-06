@@ -956,18 +956,30 @@ fn legacy_delivery_upstream_snapshot_still_routes() {
     assert_eq!(serde_json::to_value(upstream).unwrap(), "Mergify");
     assert_eq!(upstream.kind(), "Mergify");
     assert_eq!(tl3_controller::executor::upstream(delivery.output), upstream);
+    let allowance = snapshot.rows.iter().find(|r| r.table == "allowances" && r.id == delivery.key).unwrap();
+    let mut allowance_value = allowance.value.clone();
+    allowance_value["incident"] = json!("legacy-delivery-incident");
     commit.rows.push(tl3_store::RowChange::Put {
-        table: "legacy_upstream_fixture".into(), id: delivery.key.clone(), value: serde_json::to_value(signature).unwrap(),
+        table: "allowances".into(), id: delivery.key.clone(), value: allowance_value,
+    });
+    commit.rows.push(tl3_store::RowChange::Put {
+        table: "incidents".into(), id: "legacy-delivery-incident".into(), value: json!({
+            "id": "legacy-delivery-incident", "node": 0, "open": true, "needs_rob": false,
+            "blocking": false, "summary": "legacy delivery read", "signature": signature,
+            "effect": delivery.key, "cause": "upstream",
+        }),
     });
     Store::open(&settings).unwrap().commit(&commit).unwrap();
     drop(controller);
     let mut controller = fixture.open(&settings);
-    let restored = controller.snapshot().unwrap().rows.into_iter().find(|r| r.table == "legacy_upstream_fixture").unwrap();
-    let restored: Upstream = serde_json::from_value(restored.value["upstream"].clone()).unwrap();
+    let restored = controller.snapshot().unwrap().rows.into_iter().find(|r| r.table == "incidents" && r.id == "legacy-delivery-incident").unwrap();
+    let restored: Upstream = serde_json::from_value(restored.value["signature"]["upstream"].clone()).unwrap();
     assert_eq!(restored, Upstream::Delivery);
     fixture.check(Some("success"));
+    controller.look_key(&delivery.key).unwrap();
     fixture.check_event(&settings);
     drain(&mut controller);
     assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged));
     assert_eq!(fixture.direct.lock().unwrap().successes, 1);
+    assert!(controller.snapshot().unwrap().rows.iter().any(|r| r.table == "incidents" && r.id == "legacy-delivery-incident" && r.value["open"] == false));
 }
