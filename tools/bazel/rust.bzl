@@ -55,6 +55,7 @@ _SCENARIO_SHARDS = {
     "tl3-controller/github-notices": 32,
     "tl3-controller/mergify": 50,
     "tl3-controller/publishing": 38,
+    "tl3-controller/prismabuild": 7,
     "tl3-controller/simulation": 16,
     "tl3-controller/workers": 32,
 }
@@ -74,6 +75,7 @@ _LIBTEST_SHARDS = {
     "tl3-controller/operations_quota": 4,
     "tl3-controller/worker_budget_orchestration": 21,
     "tl3-controller/tl3_controller": 32,
+    "tl3-controller/tl3_controller_loom": 4,
     "tl3-controller/redaction_generated": 8,
 }
 
@@ -317,7 +319,7 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
         deps = deps + script,
     )
     for name in bins:
-        standalone_verifier = name == "verus-runner" and directory == "crates/mergify"
+        standalone_verifier = name == "verus-runner" and directory == "crates/verus-runner"
         binary_sources = ["src/bin/%s.rs" % name] if standalone_verifier else library_sources
         if directory == "crates/contracts":
             binary_sources = library_sources + ["src/bin/%s.rs" % name]
@@ -350,9 +352,15 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
         deps = test_deps,
     )
     _crate_test("lib", package, crate, "src/lib.rs", True, options)
+    if directory == "crates/controller":
+        loom_options = dict(options)
+        loom_options["crate_features"] = features + ["loom"]
+        loom_options["rustc_flags"] = ["--cfg=loom"]
+        loom_options["deps"] = [dep for dep in test_deps if dep != ":" + crate]
+        _crate_test("lib", package, crate + "_loom", "src/lib.rs", True, loom_options)
     for name in bins:
         binary_options = dict(options)
-        if name == "verus-runner" and directory == "crates/mergify":
+        if name == "verus-runner" and directory == "crates/verus-runner":
             binary_options["deps"] = ["@crates//:serde_json"]
         _crate_test("bin", package, name, "src/bin/%s.rs" % name, True, binary_options)
     for name, source in examples.items():
@@ -383,7 +391,7 @@ def _crate_test(kind, package, name, source, harness, options):
             sources = sources + ["tests/measure_equivalence/reference.rs"]
         if native.package_name() == "crates/store":
             sources = sources + native.glob(["tests/support/**/*.rs"], allow_empty = True)
-    if kind == "bin" and name == "verus-runner" and native.package_name() == "crates/mergify":
+    if kind == "bin" and name == "verus-runner" and native.package_name() == "crates/verus-runner":
         sources = [source]
     compile_data = options["compile_data"]
     if source == "tests/proof_map.rs" and native.package_name() in ["crates/kernel", "crates/mergify"]:
@@ -399,11 +407,13 @@ def _crate_test(kind, package, name, source, harness, options):
             _CONTROLLER_TEST_SOURCES.get(source, []),
             allow_empty = True,
         )
+        if name == "tl3_controller_loom":
+            sources = sources + native.glob(["tests/fixtures/waits/**", "tests/support/ownership.rs"])
         native.filegroup(name = kind + "_sources_" + name, srcs = sources)
         sources = [":" + kind + "_sources_" + name]
         compile_data = compile_data + _CONTROLLER_TEST_DATA + _CONTROLLER_TEST_COMPILE_DATA.get(source, [])
         if kind == "lib":
-            compile_data = compile_data + _CONTROLLER_RUNTIME.get("lib_test_" + name, [])
+            compile_data = compile_data + _CONTROLLER_RUNTIME.get("lib_test_tl3_controller" if name == "tl3_controller_loom" else "lib_test_" + name, [])
     for group in _GATE_GROUPS.get(binary, [""]):
         suffix = "-" + group if group else ""
         tl3_rust_test(
@@ -419,8 +429,10 @@ def _crate_test(kind, package, name, source, harness, options):
             ],
             edition = "2024",
             crate_features = options["crate_features"],
+            rustc_flags = options.get("rustc_flags", []),
             use_libtest_harness = harness,
             aliases = aliases(normal = True, normal_dev = True),
             deps = options["deps"],
-            gate_args = ["--gate-group=" + group] if group else [],
+            gate_args = (["--libtest-select=loom_"] if name == "tl3_controller_loom" else
+                         (["--gate-group=" + group] if group else [])),
         )

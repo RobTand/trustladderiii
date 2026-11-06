@@ -1,6 +1,6 @@
 # Verus proofs
 
-`//crates/mergify:verus_delivery` checks two obligations over a delivery
+`//crates/verus-runner:verus_delivery` checks two obligations over a delivery
 acknowledgement reference step. The same plain Rust module compiles in Cargo
 and in the Verus proof root. Conditional `verus_spec` attributes add contracts
 only for the verifier. This model does not prove controller I/O, persistence,

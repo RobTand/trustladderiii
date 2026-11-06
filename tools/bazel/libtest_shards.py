@@ -69,7 +69,7 @@ def measured_groups(binary, lines):
 
     Every group runs in exactly one shard of a run; across runs the largest time wins.
     """
-    prefix = re.compile(r'^\[' + re.escape(binary) + r'\] scenario group (\w+): ([0-9.]+)s\s*$')
+    prefix = re.compile(r'^\[' + re.escape(binary) + r'\] scenario group "?(\w+)"?: ([0-9.]+)s\s*$')
     seconds = {}
     for line in lines:
         match = prefix.match(line)

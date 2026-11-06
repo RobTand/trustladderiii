@@ -57,6 +57,9 @@
     "observer_sha256": {
      "tests/test_original.py::test_original": "f7c48a9ae14783fe59d247d05db418e385cd91de9b6b1cad2114b1684ed9e52f"
     },
+    "red_classes": {
+     "tests/test_original.py::test_original": "symptom"
+    },
     "rule": "subject-observer-v1",
     "source_base_tree_sha256": "a760ed930d11d30420812de23e57187eb8158753ef713baf4b2dc8855e47969f",
     "subjects": {
