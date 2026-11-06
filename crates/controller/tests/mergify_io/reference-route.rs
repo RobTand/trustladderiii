@@ -6,6 +6,7 @@ pub struct QueueFact {
     pub evidence: Evidence,
 }
 #[derive(Serialize)]
+#[allow(clippy::large_enum_variant)]
 pub enum Input {
     Look {
         key: String,
@@ -874,6 +875,7 @@ mod ci_evidence {
     use crate::mergify_io::io::mock_std as std;
     include!("reference-ci.rs");
 }
+#[allow(clippy::too_many_arguments)]
 pub(super) fn run(
     entry: io::Entry,
     snapshot: &Snapshot,
