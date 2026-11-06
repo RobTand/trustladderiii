@@ -1,5 +1,6 @@
 //! Public Flux 0.91 CLI only. Retained instance generations are operator-owned.
 mod cleanup;
+mod lifecycle;
 mod evidence;
 mod process;
 mod progress;
@@ -140,6 +141,7 @@ impl Flux {
     ) -> Result<RuntimeQualification> {
         let record = self.journal.load(owner)?;
         self.instance(&record)?;
+        if record.cancel_requested || record.terminal.is_some() { return Err(BackendError::unknown("payload gate is held after cancel or terminal")); }
         evidence::runtime_binding(&record, facts)
     }
 
@@ -197,6 +199,7 @@ impl Flux {
                 evidence,
                 report,
                 runtime_ownerships: record.runtime_ownerships.clone(),
+                container_launches: record.container_launches.values().cloned().collect(),
                 cleanup: record.cleanup_evidence.clone(),
             };
             let out = &record.intent.output_dir;
@@ -214,6 +217,8 @@ impl Flux {
 }
 
 impl RunBackend for Flux {
+    fn begin_container_launch(&self, owner: &Owner, launcher: &RuntimeOwnership) -> Result<ContainerLaunchIntent> { self.begin_launch(owner, launcher) }
+    fn bind_container_launch(&self, owner: &Owner, observed: RuntimeOwnership) -> Result<ContainerLaunchBinding> { self.bind_launch(owner, observed) }
     fn submit(&self, request: Request, intent: SubmissionIntent) -> Result<Submission> {
         validate::request(&request, &intent, &self.options)?;
         let owner = Owner {
@@ -239,6 +244,7 @@ impl RunBackend for Flux {
                 events: vec![],
                 terminal: None,
                 runtime_ownerships: vec![],
+                container_launches: Default::default(),
                 cleanup_evidence: Default::default(),
                 jobspec: None,
                 allocation_grant: None,
@@ -444,6 +450,10 @@ impl RunBackend for Flux {
     }
 
     fn retain_runtime(&self, owner: &Owner, owned: RuntimeOwnership) -> Result<()> {
+        if matches!(self.journal.load(owner)?.request.runtime.runtime, ExecutionRuntime::RootlessPodman { .. }) {
+            let bound = self.bind_launch(owner, owned)?;
+            return if bound.payload_allowed { Ok(()) } else { Err(BackendError::unknown("binding retained for cleanup after cancellation; payload held")) };
+        }
         self.journal.transaction(owner, |dir, current| {
             let mut current = current.ok_or_else(|| BackendError::unknown("intent disappeared"))?;
             self.instance(&current)?;

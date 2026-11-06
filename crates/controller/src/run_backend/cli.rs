@@ -6,6 +6,8 @@ use std::io::{BufRead, BufReader, Read, Write};
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    BeginContainerLaunch { owner: String, correlation: String, launcher: Box<RuntimeOwnership> },
+    BindContainerLaunch { owner: String, correlation: String, observed: Box<RuntimeOwnership> },
     PrepareRuntimeBundle {
         input: Box<PrepareBundleInput>,
     },
@@ -114,6 +116,8 @@ pub enum FrameBody {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum CliResult {
+    BeginContainerLaunch { launch: Box<ContainerLaunchIntent> },
+    BindContainerLaunch { binding: Box<ContainerLaunchBinding> },
     PrepareRuntimeBundle {
         bundle: BlobRef,
     },
@@ -229,6 +233,8 @@ pub fn main() -> i32 {
             serde_json::from_slice(&durable::read(PathBuf::from(&args[1]).as_path())?)?;
         let backend = Flux::new(options)?;
         let result = match command {
+            Command::BeginContainerLaunch { owner, correlation, launcher } => CliResult::BeginContainerLaunch { launch: Box::new(backend.begin_container_launch(&Owner { owner, correlation }, &launcher)?) },
+            Command::BindContainerLaunch { owner, correlation, observed } => CliResult::BindContainerLaunch { binding: Box::new(backend.bind_container_launch(&Owner { owner, correlation }, *observed)?) },
             Command::PrepareRuntimeBundle { input } => CliResult::PrepareRuntimeBundle {
                 bundle: prepared::prepare_bundle(&input)?,
             },

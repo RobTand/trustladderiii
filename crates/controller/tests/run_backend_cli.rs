@@ -1106,24 +1106,14 @@ impl Fixture {
             unit,
             invocation_id: "c".repeat(32),
         };
-        let labels = [
-            ("tl3.backend", "flux"),
-            ("flux.jobid", "fABC"),
-            ("tl3.execution", owned.execution.as_str()),
-            ("tl3.uri", self.intent.uri.as_str()),
-            ("tl3.instance", self.intent.instance.as_str()),
-            ("tl3.job", "fABC"),
-            ("tl3.owner", self.intent.owner.as_str()),
-            ("tl3.correlation", self.intent.correlation.as_str()),
-            ("tl3.request_digest", self.intent.request_digest.as_str()),
-        ]
-        .into_iter()
-        .map(|(key, value)| (key.to_owned(), value.to_owned()))
-        .collect();
+        let frames = self.call(json!({"op":"begin_container_launch","owner":self.intent.owner,"correlation":self.intent.correlation,"launcher":owned}));
+        assert_eq!(frames.last().unwrap()["kind"], "result", "{frames:?}");
+        let launch: ContainerLaunchIntent = serde_json::from_value(frames.last().unwrap()["result"]["launch"].clone()).unwrap();
         owned.container = Some(ContainerOwnership {
+            name: launch.name,
             mode,
             id: "d".repeat(64),
-            labels,
+            labels: launch.labels,
             scope: (mode == ContainerMode::OwnScope).then_some(scope),
         });
         owned
@@ -1158,6 +1148,7 @@ fn own_scope_cleanup_requires_exact_generation_absence_and_unpopulated_scope() {
         launcher: ProcessStop::Absent,
         process_group_probe_errno: Some(3),
         container: Some(ContainerStop {
+            name: container.name.clone(), name_exists_exit: 1, sweep_exit: 0, remaining_ids: vec![],
             id: container.id.clone(),
             remove_exit: 0,
             exists_exit: 1,
@@ -1323,6 +1314,7 @@ fn cancellation_uses_independent_cleanup_without_runner_report_after_wrapper_los
         launcher: ProcessStop::Absent,
         process_group_probe_errno: Some(3),
         container: Some(ContainerStop {
+            name: container.name.clone(), name_exists_exit: 1, sweep_exit: 0, remaining_ids: vec![],
             id: container.id.clone(),
             remove_exit: 0,
             exists_exit: 1,
@@ -1449,8 +1441,14 @@ fn append_only_container_executions_require_every_independent_stop() {
     let first = f.container_ownership();
     let mut second = first.clone();
     second.execution = "second-execution".into();
+    let mut launcher = second.clone(); launcher.container = None;
+    let frames = f.call(json!({"op":"begin_container_launch","owner":f.intent.owner,"correlation":f.intent.correlation,"launcher":launcher}));
+    assert_eq!(frames.last().unwrap()["kind"], "result", "{frames:?}");
+    let launch: ContainerLaunchIntent = serde_json::from_value(frames.last().unwrap()["result"]["launch"].clone()).unwrap();
     let container = second.container.as_mut().unwrap();
     container.id = "e".repeat(64);
+    container.name = launch.name;
+    container.labels = launch.labels;
     container
         .labels
         .insert("tl3.execution".into(), second.execution.clone());
@@ -1509,6 +1507,7 @@ fn append_only_container_executions_require_every_independent_stop() {
             launcher: ProcessStop::Absent,
             process_group_probe_errno: Some(3),
             container: Some(ContainerStop {
+            name: container.name.clone(), name_exists_exit: 1, sweep_exit: 0, remaining_ids: vec![],
                 id: container.id.clone(),
                 remove_exit: 0,
                 exists_exit: 1,

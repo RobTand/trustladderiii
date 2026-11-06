@@ -476,6 +476,7 @@ pub struct Receipt {
     pub evidence: Vec<BlobRef>,
     pub report: Option<BlobRef>,
     pub runtime_ownerships: Vec<RuntimeOwnership>,
+    pub container_launches: Vec<ContainerLaunchIntent>,
     pub cleanup: std::collections::BTreeMap<String, BlobRef>,
 }
 
@@ -623,6 +624,8 @@ pub struct Probe {
 
 /// Implementations own dispatch/recovery, event interpretation and evidence retention.
 pub trait RunBackend {
+    fn begin_container_launch(&self, owner: &Owner, launcher: &RuntimeOwnership) -> Result<ContainerLaunchIntent>;
+    fn bind_container_launch(&self, owner: &Owner, observed: RuntimeOwnership) -> Result<ContainerLaunchBinding>;
     fn submit(&self, request: Request, intent: SubmissionIntent) -> Result<Submission>;
     fn attach(
         &self,
@@ -846,6 +849,7 @@ pub struct ProcessIdentity {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ContainerOwnership {
+    pub name: String,
     pub mode: ContainerMode,
     pub id: String,
     pub labels: std::collections::BTreeMap<String, String>,
@@ -866,6 +870,26 @@ pub struct ScopeIdentity {
 pub struct CleanupInput {
     pub schema: String,
     pub ownership: RuntimeOwnership,
+    pub launch: Option<ContainerLaunchIntent>,
+}
+
+/// Durable before Podman invocation. Observed ID/scope are retained separately.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ContainerLaunchIntent {
+    pub schema: String,
+    pub launcher: RuntimeOwnership,
+    pub name: String,
+    pub mode: ContainerMode,
+    pub labels: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ContainerLaunchBinding {
+    pub intent: ContainerLaunchIntent,
+    pub ownership: RuntimeOwnership,
+    pub payload_allowed: bool,
 }
 
 /// Raw observations from the trusted host helper, interpreted only by Rust.
@@ -893,6 +917,10 @@ pub enum ProcessStop {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ContainerStop {
+    pub name: String,
+    pub name_exists_exit: i32,
+    pub sweep_exit: i32,
+    pub remaining_ids: Vec<String>,
     pub id: String,
     pub remove_exit: i32,
     /// Native podman container exists exact-ID status: 1 absent, 125 error.

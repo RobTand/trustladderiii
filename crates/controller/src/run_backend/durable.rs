@@ -18,6 +18,8 @@ pub struct Record {
     #[serde(default)]
     pub runtime_ownerships: Vec<RuntimeOwnership>,
     #[serde(default)]
+    pub container_launches: std::collections::BTreeMap<String, ContainerLaunchIntent>,
+    #[serde(default)]
     pub cleanup_evidence: std::collections::BTreeMap<String, BlobRef>,
     #[serde(default)]
     pub jobspec: Option<BlobRef>,
