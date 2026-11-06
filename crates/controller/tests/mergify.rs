@@ -572,8 +572,16 @@ impl Server {
 fn drain_to_failed_round(controller: &mut Controller) {
     ingress::drain(controller).unwrap();
     for _ in 0..300 {
-        if matches!(controller.world().unwrap().nodes[0].phase, Phase::Making | Phase::Stopping(_) | Phase::Closed(_)) { return; }
-        assert!(controller.drive_once().unwrap(), "failure must reach its existing failed round");
+        if matches!(
+            controller.world().unwrap().nodes[0].phase,
+            Phase::Making | Phase::Stopping(_) | Phase::Closed(_)
+        ) {
+            return;
+        }
+        assert!(
+            controller.drive_once().unwrap(),
+            "failure must reach its existing failed round"
+        );
     }
     panic!("failed round did not settle");
 }
@@ -868,7 +876,11 @@ fn reused_check_dequeues_twice(settings: &tl3_config::Store, generic: bool) {
             state.pull["mergeable"] = json!(true);
             state.pull["mergeable_state"] = json!("clean");
         }
-        if episode == 1 { drain(&mut controller); } else { drain_to_failed_round(&mut controller); }
+        if episode == 1 {
+            drain(&mut controller);
+        } else {
+            drain_to_failed_round(&mut controller);
+        }
         if episode == 1 {
             assert_eq!(
                 api.state.lock().unwrap().posts,
@@ -904,8 +916,11 @@ fn reused_check_dequeues_twice(settings: &tl3_config::Store, generic: bool) {
         2,
         "a second dequeue must not retry again"
     );
-    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Making,
-        "repeated parsed evidence follows the existing failed round");
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::Making,
+        "repeated parsed evidence follows the existing failed round"
+    );
     println!("test reused_check_dequeues_twice_generic_{generic} ... ok");
 }
 
@@ -1292,8 +1307,11 @@ fn generic_dequeue(settings: &tl3_config::Store, dirty: bool, lazy: bool) {
             state.queue_check_mut()["id"] = json!(123697861572_u64);
         }
         drain_to_failed_round(&mut controller);
-        assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Making,
-            "a repeated parsed queue failure follows the existing failed round");
+        assert_eq!(
+            controller.world().unwrap().nodes[0].phase,
+            Phase::Making,
+            "a repeated parsed queue failure follows the existing failed round"
+        );
     }
     println!("test generic_dequeue_dirty_{dirty}_lazy_{lazy} ... ok");
 }
