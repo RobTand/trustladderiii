@@ -694,6 +694,8 @@ kernel_fn! {
             port_advance_contracts::exact(*old(node), *final(node),
                 *old(_next_ticket), *final(_next_ticket), context, *old(out), *final(out)),
     ] proof [reveal(port_advance_contracts::exact);
+        reveal(port_review_output::effect_post);
+        reveal(port_review_output::selected_head);
         reveal(port_advance_contracts::node_after);
         reveal(port_advance_contracts::outputs);
         reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
@@ -719,6 +721,8 @@ kernel_fn! {
             port_advance_contracts::exact(*old(node), *final(node),
                 *old(next_ticket), *final(next_ticket), context, *old(out), *final(out)),
     ] proof [reveal(port_advance_contracts::exact);
+        reveal(port_review_output::effect_post);
+        reveal(port_review_output::selected_head);
         reveal(port_advance_contracts::node_after);
         reveal(port_advance_contracts::outputs);
         reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
@@ -756,6 +760,8 @@ kernel_fn! {
             port_advance_contracts::exact(*old(node), *final(node),
                 *old(_next_ticket), *final(_next_ticket), context, *old(out), *final(out)),
     ] proof [reveal(port_advance_contracts::exact);
+        reveal(port_review_output::effect_post);
+        reveal(port_review_output::selected_head);
         reveal(port_advance_contracts::node_after);
         reveal(port_advance_contracts::outputs);
         reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
@@ -784,6 +790,8 @@ kernel_fn! {
             port_advance_contracts::exact(*old(node), *final(node),
                 *old(_next_ticket), *final(_next_ticket), context, *old(out), *final(out)),
     ] proof [reveal(port_advance_contracts::exact);
+        reveal(port_review_output::effect_post);
+        reveal(port_review_output::selected_head);
         reveal(port_advance_contracts::node_after);
         reveal(port_advance_contracts::outputs);
         reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
@@ -931,6 +939,8 @@ kernel_fn! {
             port_advance_contracts::exact(*old(node), *final(node),
                 *old(_next_ticket), *final(_next_ticket), context, *old(out), *final(out)),
     ] proof [reveal(port_advance_contracts::exact);
+        reveal(port_review_output::effect_post);
+        reveal(port_review_output::selected_head);
         reveal(port_advance_contracts::node_after);
         reveal(port_advance_contracts::outputs);
         reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
