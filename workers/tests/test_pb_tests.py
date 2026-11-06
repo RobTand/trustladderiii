@@ -656,17 +656,41 @@ def test_run_tests_tool_never_returns_operator_stderr(submission, mode):
     assert 'operator-only instruction' not in json.dumps(observed)
 
 
-def test_stderr_raw_boundary_keeps_section_context_before_redaction(tmp_path):
+@pytest.mark.parametrize('context_kind', ['ini', 'csv', 'private-key'])
+def test_stderr_raw_boundary_keeps_section_context_before_redaction(context_kind, monkeypatch, capsys):
     """#826: dropping an incomplete first line must not erase a retained credential section."""
     from tl3_harness.supervision import Supervised, ExecutionOutcome, MAX_STDERR_BYTES
     from tl3_workers.tracing import Redactor
-    secret = 'zE9!pR4#cV7$'
-    header = b'[passwords]\n'
-    process = Supervised([], None, ())
-    process.capture_stderr(b'x' * MAX_STDERR_BYTES)
-    process.capture_stderr(header + b'.' * (MAX_STDERR_BYTES - len(header)))
-    process.capture_stderr(('\nvalue = ' + secret + '\ncontainer shim refused').encode())
-    diagnostic = process.failure(ExecutionOutcome.SETUP_FAILURE, 'container_start', 'incomplete_report').operator_json()
-    assert secret not in json.dumps(diagnostic), 'boundary omission erased a retained section label'
-    assert secret not in Redactor(None).text(json.dumps(diagnostic))
-    assert 'container shim refused' in diagnostic['stderr_tail']
+    from tl3_harness import supervision
+    monkeypatch.setattr(supervision, '_stderr_log_bytes', 0)
+    secret = 'k' * 64 if context_kind == 'private-key' else 'zE9!pR4#cV7$'
+    if context_kind == 'ini':
+        header = b'[passwords]\n'
+        first = header + b'.' * (MAX_STDERR_BYTES - len(header))
+        value = 'value = ' + secret
+    elif context_kind == 'csv':
+        header = b'name,password\n'
+        first = header + b'.' * (MAX_STDERR_BYTES - len(header) - 2) + b',x'
+        value = 'account,' + secret
+    else:
+        header = b'-----BEGIN PRIVATE KEY-----\n'
+        first = (header + (b'A' * 64 + b'\n') * 256)[:MAX_STDERR_BYTES]
+        value = secret
+    later = ('\n' + value + '\ncontainer shim refused\n').encode()
+    assert secret not in supervision._redactor.window((first + later).decode(), 0, len(first + later))
+    # Both the exact review sequence and the earlier incomplete-boundary regression.
+    for prefix in (b'', b'x' * MAX_STDERR_BYTES):
+        process = Supervised([], None, ())
+        for chunk in (prefix, first, later, b'\n'):
+            if chunk:
+                assert len(chunk) <= MAX_STDERR_BYTES
+                process.capture_stderr(chunk)
+        failure = process.failure(ExecutionOutcome.SETUP_FAILURE, 'container_start', 'incomplete_report')
+        diagnostic = failure.operator_json()
+        failure.log()
+        output = capsys.readouterr().out
+        assert 'TL3_EXECUTION_FAILURE ' in output
+        assert secret not in output, 'later raw cut re-exposed a redacted secret in the PB log'
+        assert secret not in json.dumps(diagnostic), 'later raw cut replaced redaction with a secret'
+        assert secret not in Redactor(None).text(json.dumps(diagnostic))
+        assert 'container shim refused' in diagnostic['stderr_tail']

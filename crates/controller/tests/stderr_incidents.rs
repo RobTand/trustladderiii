@@ -76,12 +76,25 @@ with tempfile.TemporaryDirectory() as directory:
         with Supervised(command, None, ()) as process:
             assert list(process.records()) == []
             records.append(process.incomplete().operator_json())
-process = Supervised([], None, ())
-header = b'[passwords]\n'
-process.capture_stderr(b'x' * MAX_STDERR_BYTES)
-process.capture_stderr(header + b'.' * (MAX_STDERR_BYTES - len(header)))
-process.capture_stderr(('\nvalue = ' + secret + '\n' + cause).encode())
-records.append(process.failure(ExecutionOutcome.SETUP_FAILURE, 'container_start', 'incomplete_report').operator_json())
+for kind in ('ini', 'csv', 'private-key'):
+    secret = 'k' * 64 if kind == 'private-key' else 'zE9!pR4#cV7$'
+    if kind == 'ini':
+        header = b'[passwords]\n'
+        first = header + b'.' * (MAX_STDERR_BYTES - len(header))
+        value = 'value = ' + secret
+    elif kind == 'csv':
+        header = b'name,password\n'
+        first = header + b'.' * (MAX_STDERR_BYTES - len(header) - 2) + b',x'
+        value = 'account,' + secret
+    else:
+        header = b'-----BEGIN PRIVATE KEY-----\n'
+        first = (header + (b'A' * 64 + b'\n') * 256)[:MAX_STDERR_BYTES]
+        value = secret
+    process = Supervised([], None, ())
+    for chunk in (first, ('\n' + value + '\n' + cause + '\n').encode(), b'\n'):
+        assert len(chunk) <= MAX_STDERR_BYTES
+        process.capture_stderr(chunk)
+    records.append(process.failure(ExecutionOutcome.SETUP_FAILURE, 'container_start', 'incomplete_report').operator_json())
 print(json.dumps(records))
 "#;
     let output = redaction_support::python_command()
@@ -94,7 +107,7 @@ print(json.dumps(records))
         String::from_utf8_lossy(&output.stderr)
     );
     let diagnostics: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(diagnostics.len(), 5);
+    assert_eq!(diagnostics.len(), 7);
     let mut db = support::Database::start();
     for (index, diagnostic) in diagnostics
         .into_iter()
@@ -155,6 +168,7 @@ print(json.dumps(records))
             "ghp_abcdefghijklmnopqrstuvwxyz1234567890",
             "zE9!pR4#cV7$",
             &"v".repeat(128),
+            &"k".repeat(64),
         ] {
             assert!(!summary.contains(secret), "{summary}");
         }
@@ -177,3 +191,5 @@ boundary!(line_boundary, 1);
 boundary!(total_boundary, 2);
 boundary!(raw_boundary, 3);
 boundary!(raw_section_boundary, 4);
+boundary!(raw_csv_boundary, 5);
+boundary!(raw_private_key_boundary, 6);
