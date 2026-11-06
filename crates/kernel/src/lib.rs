@@ -2014,7 +2014,7 @@ pub closed spec fn report_input(w: World, event: Event) -> report::ReplyInput {
     }
 }
 
-pub(super) proof fn report_projection(w: World, event: Event)
+proof fn report_projection(w: World, event: Event)
     ensures world_phases(w) == phase_view(w.nodes@),
         report_input(w, event) == match event {
             Event::Reply { node, reply, .. } if node.0 < w.nodes@.len() => {
