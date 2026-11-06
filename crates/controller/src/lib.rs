@@ -2704,7 +2704,10 @@ impl Controller {
         for row in std::mem::take(&mut commit.rows) {
             if let RowChange::Put { table, value, .. } = &row
                 && ((table == "queue_facts" && closed_fact(value)?)
-                    || (table == "delivery_outcomes" && value["node"].as_u64().is_some_and(|node| closed.contains(&NodeId(node))))
+                    || (table == "delivery_outcomes"
+                        && value["node"]
+                            .as_u64()
+                            .is_some_and(|node| closed.contains(&NodeId(node))))
                     || (table == "queue_holds" && retired_hold(value)?))
             {
                 continue;
@@ -2735,7 +2738,10 @@ impl Controller {
                         node.merged.is_some() || matches!(node.phase, tl3_kernel::Phase::Closed(_))
                     });
             if discard_rebase_context
-                || (row.table == "delivery_outcomes" && row.value["node"].as_u64().is_some_and(|node| closed.contains(&NodeId(node))))
+                || (row.table == "delivery_outcomes"
+                    && row.value["node"]
+                        .as_u64()
+                        .is_some_and(|node| closed.contains(&NodeId(node))))
                 || (row.table == "queue_holds" && retired_hold(&row.value)?)
                 || row.table == "check_reports"
                     && row
@@ -3020,26 +3026,28 @@ impl Controller {
 
         let mut ci_details = if let Some((_, details)) = &queue_receipt {
             details.clone()
-        } else { match &observation {
-            Observation::Outcome {
-                outcome:
-                    outcome::Outcome::CiFailed {
-                        failed_tests,
-                        evidence,
-                        ..
-                    },
-                ..
-            } => {
-                let mut details = evidence.clone();
-                details.failed_tests = failed_tests.clone();
-                details
+        } else {
+            match &observation {
+                Observation::Outcome {
+                    outcome:
+                        outcome::Outcome::CiFailed {
+                            failed_tests,
+                            evidence,
+                            ..
+                        },
+                    ..
+                } => {
+                    let mut details = evidence.clone();
+                    details.failed_tests = failed_tests.clone();
+                    details
+                }
+                Observation::Queue(adapters::mergify::QueueFact {
+                    evidence: adapters::mergify::Evidence::CiFailed { details, .. },
+                    ..
+                }) => details.clone(),
+                _ => Default::default(),
             }
-            Observation::Queue(adapters::mergify::QueueFact {
-                evidence: adapters::mergify::Evidence::CiFailed { details, .. },
-                ..
-            }) => details.clone(),
-            _ => Default::default(),
-        }};
+        };
         ci_details = adapters::mergify::ci_evidence::bounded(ci_details);
         let ci_checks = ci_details.checks.clone();
         let mut failed_tests = ci_details.failed_tests.clone();
@@ -3422,13 +3430,15 @@ impl Controller {
                         checks_passed,
                     },
                     Outcome::CiFailed { head, infra, .. } => {
-                        if queue_receipt.is_none() && Some(self.head(node, &head)?) != current.head {
+                        if queue_receipt.is_none() && Some(self.head(node, &head)?) != current.head
+                        {
                             return Ok(None);
                         }
                         Fact::CiFailed { infra }
                     }
                     Outcome::Conflict { head } => {
-                        if queue_receipt.is_none() && Some(self.head(node, &head)?) != current.head {
+                        if queue_receipt.is_none() && Some(self.head(node, &head)?) != current.head
+                        {
                             return Ok(None);
                         }
                         Fact::Conflict

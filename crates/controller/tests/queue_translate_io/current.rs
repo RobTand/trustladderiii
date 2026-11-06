@@ -320,13 +320,15 @@ impl Shell<'_> {
                         checks_passed,
                     },
                     Outcome::CiFailed { head, infra, .. } => {
-                        if queue_receipt.is_none() && Some(self.head(node, &head)?) != current.head {
+                        if queue_receipt.is_none() && Some(self.head(node, &head)?) != current.head
+                        {
                             return Ok(None);
                         }
                         Fact::CiFailed { infra }
                     }
                     Outcome::Conflict { head } => {
-                        if queue_receipt.is_none() && Some(self.head(node, &head)?) != current.head {
+                        if queue_receipt.is_none() && Some(self.head(node, &head)?) != current.head
+                        {
                             return Ok(None);
                         }
                         Fact::Conflict

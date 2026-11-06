@@ -331,7 +331,10 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
                 rows.insert((table.as_str(), id.as_str()), (arrival, value));
             }
             RowChange::Delete { table, id }
-                if !matches!(table.as_str(), "check_reports" | "queue_facts" | "delivery_outcomes") =>
+                if !matches!(
+                    table.as_str(),
+                    "check_reports" | "queue_facts" | "delivery_outcomes"
+                ) =>
             {
                 rows.remove(&(table.as_str(), id.as_str()));
             }
@@ -377,12 +380,20 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
                 .scratch_history
                 .push(fields(value, &["node", "reference", "status"])),
             "queue_facts" | "delivery_outcomes" => {
-                let raw = if *table == "delivery_outcomes" { &value["outcome"] } else { &value["evidence"] };
+                let raw = if *table == "delivery_outcomes" {
+                    &value["outcome"]
+                } else {
+                    &value["evidence"]
+                };
                 let mut compact = serde_json::Map::new();
                 if let Some((kind, detail)) = raw.as_object().and_then(|v| v.iter().next()) {
                     let mut selected =
                         fields(detail, &["head", "infra", "head_check", "checks_passed"]);
-                    let details = if *table == "delivery_outcomes" { &detail["evidence"] } else { &detail["details"] };
+                    let details = if *table == "delivery_outcomes" {
+                        &detail["evidence"]
+                    } else {
+                        &detail["details"]
+                    };
                     let checks = details["checks"]
                         .as_array()
                         .into_iter()
