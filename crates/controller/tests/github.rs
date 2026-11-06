@@ -9,8 +9,6 @@ const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(350);
 use tl3_controller::executor::Output as Out;
 #[path = "github/catchup_heads.rs"]
 mod catchup_heads;
-#[path = "github/fixture_lifecycle.rs"]
-mod fixture_lifecycle;
 #[path = "github/intake_errors.rs"]
 mod intake_errors;
 #[path = "github/notice_incidents.rs"]
@@ -607,25 +605,6 @@ fn main() {
     }
     if args.get(1).is_some_and(|arg| arg == "--notice-retry-child") {
         notice_incidents::child(&args);
-        return;
-    }
-    if args.iter().any(|arg| arg == "--fixture-owner-probe") {
-        let mut database = support::Database::start();
-        steering::restart_owner_probe(&database.create("restart_owner_probe"));
-        database.stop();
-        println!("test fixture_restart_owner_release ... ok");
-        println!("1 GitHub fixture lifecycle scenarios passed; no skips");
-        return;
-    }
-    if args.iter().any(|arg| arg == "--fixture-catchup-probe") {
-        let mut database = support::Database::start();
-        catchup_heads::run(&mut database);
-        database.stop();
-        println!("11 GitHub catch-up fixture scenarios passed; no skips");
-        return;
-    }
-    if args.iter().any(|arg| arg == "--fixture-stop-users-probe") {
-        fixture_lifecycle::stop_with_users();
         return;
     }
     let group = args
