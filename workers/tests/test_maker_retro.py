@@ -42,6 +42,7 @@ def maker_request(tmp_path):
     (root / "greeting.py").write_text("def greet(): return 'goodbye'\n")
     git(root, "add", ".")
     git(root, "commit", "--quiet", "-m", "Base")
+    declared = ["greeting.py", "test_greeting.py"]
     return {
         "protocol": 1,
         "operation": {"node": 1, "generation": 0, "kind": "make"},
@@ -55,7 +56,7 @@ def maker_request(tmp_path):
             "goals": [{"id": "greeting", "description": "Return hello.", "verification": "test"},
                       {"id": "interface", "description": "Keep greet's interface.", "verification": "review"}],
             "plan": {
-                "files": ["greeting.py", "test_greeting.py"],
+                "files": declared,
                 "checks": [
                     {"name": "hello", "kind": "demonstrating",
                      "tests": ["test_greeting.py::test_hello"], "goal_ids": ["greeting"]},
@@ -63,6 +64,7 @@ def maker_request(tmp_path):
                      "tests": ["test_greeting.py::test_signature"], "goal_ids": ["interface"]},
                 ],
             },
+            "footprint": declared,
             "attempt": 1, "round": 0,
             "tests": {"image": "sha256:" + "a" * 64,
                       "tools_path": "/mnt/shared/prismabuild-fleet/repo/tools"},

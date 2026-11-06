@@ -33,7 +33,7 @@ def schema_text(role):
     if role.name == "postmortem":
         return judges.postmortem_contract("").split("Authoritative result JSON Schema:\n", 1)[1]
     model = SimpleNamespace(_get_ls_params=lambda: {"ls_provider": "tl3_fixture"})
-    worktree = SimpleNamespace(generation_instruction=lambda: "Fixture generation instruction.")
+    worktree = SimpleNamespace(declared_files=frozenset(), generation_instruction=lambda: "Fixture generation instruction.")
     build_agent = runtime.build_agent
 
     def capture(*args, **kwargs):
@@ -43,7 +43,7 @@ def schema_text(role):
             runtime, "create_deep_agent", side_effect=lambda **kwargs: kwargs["system_prompt"]):
         if role.name == "maker":
             request = {"worktree": "/fixture/worktree", "inputs": {
-                "goals": [], "plan": {"files": [], "checks": []}, "context_size": 150_000,
+                "goals": [], "plan": {"files": [], "checks": []}, "footprint": [], "context_size": 150_000,
                 "tests": {"image": "sha256:" + "a" * 64, "tools_path": "/fixture/tools"},
             }}
             # Capture the prompt; fixture input validation is outside this contract.

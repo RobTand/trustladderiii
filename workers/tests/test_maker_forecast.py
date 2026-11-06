@@ -79,6 +79,7 @@ def test_pq_2629_plan_and_requested_file_fit(maker_request, cache_tokenizer, mon
     for index, (path, tokens) in enumerate(costs.items()):
         (root / path).write_text('large ' * 14000 if index < 2 else 'x\n' * (tokens // 2))
     inputs['plan']['files'] = list(costs)
+    inputs['footprint'] = list(costs)
     # The remaining input brought the old maker JSON count to about 25k.
     inputs['goals'][0]['description'] = ' token' * 21000
     inputs.update(round=1, feedback=[{'kind': 'failed_check', 'report': 'Fix the check.', 'goal_ids': ['greeting']}])

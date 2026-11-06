@@ -114,7 +114,7 @@ fn run(root: &Path, outside: bool) -> Delivery {
         repository: repository(),
         issue: 42,
         pull_request: None,
-        paths: vec!["value.py".into()],
+        paths: tl3_contracts::footprint::Footprint::new(vec!["value.py".into()]).unwrap(),
         attempt: 1,
         round: 0,
         replanned: false,
@@ -2599,6 +2599,45 @@ fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool,
     }
     drop(running);
 }
+/// #894 SF4: stored aliases must not abort PB retirement before it scans retained records.
+fn stored_aliases_do_not_abort_retirement(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    Controller::open(
+        tl3_store::Store::open(settings).unwrap(),
+        adapters::simulation(&root.path().join("fakes")).unwrap(),
+        Bootstrap {
+            repos: vec![repository()],
+            rob: 1,
+            slots: 1,
+            pool: 1,
+            fail_fast: false,
+            operations: None,
+        },
+    )
+    .unwrap();
+    let delivery = run(root.path(), false);
+    let mut stored = serde_json::to_value(&delivery).unwrap();
+    stored["paths"] = serde_json::json!(["./x.py", "x.py"]);
+    let mut store = tl3_store::Store::open(settings).unwrap();
+    let snapshot = store.load().unwrap();
+    let mut commit = tl3_store::Commit::new("stored-aliases", serde_json::json!(null), &snapshot);
+    commit.rows.push(tl3_store::RowChange::Put {
+        table: "watches".into(),
+        id: delivery.key.clone(),
+        value: stored.clone(),
+    });
+    commit.effects.push(tl3_store::NewEffect {
+        key: delivery.key.clone(),
+        kind: "PrismaBuild".into(),
+        payload: stored,
+    });
+    store.commit(&commit).unwrap();
+    let mut adapter = fixture(root.path(), "done");
+    adapter
+        .retire(&mut store)
+        .expect("stored aliases must not abort retirement");
+}
+
 fn retirement_continues_after_corrupt_node(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
     let mut controller = Controller::open(
@@ -3974,6 +4013,9 @@ fn main() {
                 oversized_planner_reply_reaches_plan_feedback(&database.create("pb_plan_budget"));
             },
         ),
+        ("stored_aliases_do_not_abort_retirement", |database| {
+            stored_aliases_do_not_abort_retirement(&database.create("pb_stored_aliases"));
+        }),
         ("retirement_continues_after_corrupt_node", |database| {
             retirement_continues_after_corrupt_node(&database.create("pb_retirement"));
         }),
@@ -4057,7 +4099,7 @@ fn main() {
     );
     assert_eq!(
         names.len(),
-        123,
+        124,
         "preserve every independent row and all stateful scenarios"
     );
     let weights = scenario_shard::weights_ms(

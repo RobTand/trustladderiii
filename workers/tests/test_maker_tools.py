@@ -197,3 +197,57 @@ def test_proxy_stream_requests_usage_and_serial_tools_and_uses_usage(
     else:
         assert git(root, "rev-parse", "HEAD") == before
     assert (root / "greeting.py").read_text() == "def greet(): return 'hello'\n"
+
+
+def test_first_maker_message_contains_the_file_list_once(maker_request, monkeypatch):
+    observed = []
+
+    class ObservedModel(ToolModel):
+        def _generate(self, messages, **kwargs):
+            observed.append(list(messages))
+            return super()._generate(messages, **kwargs)
+
+    model = ObservedModel(responses=[AIMessage(**turn({"kind": "cant_meet", "report": "Fixture."}))])
+    monkeypatch.setattr(runtime, "create_model", lambda request: model)
+    runtime.run(maker_request, lambda event: None)
+    visible = json.loads(next(message.content for message in observed[0] if message.type == "human"))
+    assert "footprint" not in visible
+    assert visible["plan"]["files"] == maker_request["inputs"]["footprint"]
+    assert maker_request["inputs"]["footprint"] == ["greeting.py", "test_greeting.py"]
+
+
+@pytest.mark.parametrize("completion", ["done", "needs_files"])
+def test_maker_accounting_and_generator_use_the_canonical_footprint(maker_request, monkeypatch, completion):
+    inputs = maker_request["inputs"]
+    inputs["plan"]["files"] = ["./greeting.py", "./test_greeting.py"]
+    inputs["forecast"] = {"fit_tokens": 1000, "context_tokens": 2000,
+                          "overhead_tokens": {"reserve": 0}, "generator": "fixture"}
+    measured = []
+    allowances = []
+    original = runtime.build_agent
+
+    def build(*args, **kwargs):
+        agent = original(*args, **kwargs)
+        allowances.append(kwargs["control"].allowance)
+        return agent
+
+    def measure(worktree, paths, encoding):
+        measured.append(set(paths))
+        return {}, [], None
+
+    monkeypatch.setattr(runtime, "build_agent", build)
+    monkeypatch.setattr(maker, "measure_files", measure)
+    monkeypatch.setattr(maker, "optional_encoding", lambda: None)
+    monkeypatch.setattr(maker, "forecast_fit", lambda *args: {"fits": True})
+    monkeypatch.setattr(maker, "make_generator_tool", lambda worktree: lambda: {"status": "completed"})
+    monkeypatch.setattr(maker, "configured_outputs", lambda *args: ["greeting.py"])
+    response = DONE if completion == "done" else {"kind": "needs_files", "files": [
+        {"path": "helper.py", "why": "Needed."}]}
+    model = ToolModel(responses=[AIMessage(**write_turn()), AIMessage(**turn(response))])
+    monkeypatch.setattr(runtime, "create_model", lambda request: model)
+    events = []
+    runtime.run(maker_request, events.append)
+    assert allowances[0].implementation_files == frozenset({"greeting.py"})
+    expected = set(inputs["footprint"]) | ({"helper.py"} if completion == "needs_files" else set())
+    assert measured == [expected]
+    assert events[-1]["reply"]["kind"] == completion

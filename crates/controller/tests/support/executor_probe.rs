@@ -39,7 +39,7 @@ pub fn delivery(role: Role) -> Delivery {
         },
         issue: 12,
         pull_request: None,
-        paths: vec![],
+        paths: Default::default(),
         attempt: 1,
         round: 0,
         replanned: false,

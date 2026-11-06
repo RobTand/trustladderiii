@@ -305,7 +305,8 @@ def _run(request, emit):
     if role.prepare_inputs is not None:
         request = {**request, "inputs": role.prepare_inputs(request["inputs"], request)}
     forecast = request["inputs"].get("forecast", {})
-    with Worktree(request["worktree"], generated_files=forecast.get("generated_files", ()),
+    with Worktree(request["worktree"], footprint=request["inputs"]["footprint"] if role.name == "maker" else None,
+                  generated_files=forecast.get("generated_files", ()),
                   generator=forecast.get("generator")) if role.tools else nullcontext() as worktree:
         if worktree is not None:
             worktree.environment_errors_end_run = role.environment_errors_end_run

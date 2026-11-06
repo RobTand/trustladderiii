@@ -776,6 +776,54 @@ fn ready_name(name: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// #894 SF4: old stored aliases must not silently lose a watched worker on startup.
+    #[test]
+    fn watched_delivery_canonicalises_stored_aliases() {
+        let mut database = crate::git_tests::support::Database::start();
+        let settings = database.create("t894_stored_watch");
+        let mut store = Store::open(&settings).unwrap();
+        let value = serde_json::json!({
+            "key":"t894-stored", "epoch":0, "generation":0,
+            "output":{"Effect":{"node":0,"kind":{"StartRun":"Make"},"seq":0,"head":null}},
+            "repository":{"owner":"owner","name":"repo","installation":1},
+            "issue":1,"paths":["./x.py","x.py"],"attempt":1,"round":0
+        });
+        let snapshot = store.load().unwrap();
+        let mut commit = tl3_store::Commit::new("stored-watch", serde_json::json!(null), &snapshot);
+        commit.effects.push(tl3_store::NewEffect {
+            key: "t894-stored".into(),
+            kind: "Workers".into(),
+            payload: value.clone(),
+        });
+        commit.rows.push(tl3_store::RowChange::Put {
+            table: "watches".into(),
+            id: "t894-stored".into(),
+            value: value.clone(),
+        });
+        store.commit(&commit).unwrap();
+        let watched = watched_deliveries(&mut store).unwrap();
+        assert_eq!(watched.len(), 1, "stored aliases must retain the watch");
+        assert_eq!(watched[0].paths.as_slice(), ["x.py"]);
+        let delivery: Delivery = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(delivery.paths.as_slice(), ["x.py"]);
+        for path in [
+            "../x",
+            "/x",
+            "",
+            "x\0.py",
+            "a\\b",
+            ".git/config",
+            "a/.git/b",
+        ] {
+            let mut unsafe_value = value.clone();
+            unsafe_value["paths"] = serde_json::json!([path]);
+            assert!(
+                serde_json::from_value::<Delivery>(unsafe_value).is_err(),
+                "{path:?}"
+            );
+        }
+    }
+
     /// #817 / Q7: a pidfd ending with no exit record must wake the controller.
     #[test]
     fn lost_worker_evidence_emits_failure_without_a_timer() {

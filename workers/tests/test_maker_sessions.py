@@ -39,7 +39,8 @@ def test_adopted_fix_round_without_session_starts_fresh(tmp_path, maker_request,
     history = json.loads(session.read_text())
     requests = [json.loads(message['data']['content']) for message in history
                 if message['type'] == 'human' and not message['data']['content'].startswith('TL3 execution budget: ')]
-    assert requests == [maker_request['inputs']], 'the fresh visit has exactly its current request inputs'
+    model_inputs = {key: value for key, value in maker_request['inputs'].items() if key != 'footprint'}
+    assert requests == [model_inputs], 'the fresh visit has exactly its current model-visible request inputs'
     assert 'Greeting still fails.' in json.dumps(history)
 
 
