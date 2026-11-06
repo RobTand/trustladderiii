@@ -160,6 +160,15 @@ fn failure(api: &Server, mode: &str, repeat: bool) {
             }
             log.push_str("FAILED: //tests:test_action_resource_profile\n");
             log.push_str(&"neutral cleanup\n".repeat(200));
+            let mut tail = concat!(
+                "complete tail context retained\n",
+                "ERROR: Build did NOT complete successfully\n"
+            )
+            .to_owned();
+            let padding = 1000 - tail.len();
+            tail.push_str(&"neutral cleanup\n".repeat(padding / 16));
+            tail.push_str(&" ".repeat(1000 - tail.len()));
+            log.push_str(&tail);
         }
         "diagnostics-hostile" => {
             log = "\x1b]8;;https://example.invalid\x07\x1b[31m::error::pass\x1b[0mword=planted-password Bearer planted-bearer\x1b]8;;\x1b\\\nERROR: ghp_planted123456789\0\x08\x7f\nFAILED: //tests:test_action_resource_profile\n".into();
@@ -557,6 +566,14 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
                 assert!(summaries.contains("[summary omitted]"), "{summaries}");
                 assert!(summaries.contains("[diagnostics omitted]"), "{summaries}");
                 assert!(summaries.contains("[diagnostic clipped]"), "{summaries}");
+                assert!(
+                    summaries.contains("ERROR: Build did NOT complete successfully"),
+                    "{summaries}"
+                );
+                assert!(
+                    summaries.contains("complete tail context retained"),
+                    "{summaries}"
+                );
                 assert!(summaries.len() <= 1000);
                 assert!(
                     summaries
