@@ -53,9 +53,18 @@ def main():
         print(result.stdout)
         return result.returncode
     result, seconds = verify(verifier, z3, rustc, source, extra=['--time', '--output-json'])
-    stats = json.loads(result.stdout[result.stdout.index('{'):]) if result.stdout.rstrip().endswith('}') else None
+    stats = None
+    for candidate in re.finditer(r'(?m)^\{\s*$', result.stdout):
+        try:
+            value, _ = json.JSONDecoder().raw_decode(result.stdout[candidate.start():])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and 'verification-results' in value:
+            stats = value
+            break
     if stats is None:
-        stats, _ = json.JSONDecoder().raw_decode(result.stdout[result.stdout.index('{'):])
+        print(result.stdout, flush=True)
+        raise RuntimeError('verifier did not emit a result object')
     verdict = stats['verification-results']
     if result.returncode or not verdict['success'] or verdict['verified'] != expected or verdict['errors']:
         print(result.stdout, flush=True)
