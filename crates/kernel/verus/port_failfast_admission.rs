@@ -38,6 +38,21 @@ pub(super) proof fn inactive_pair(before: World, off: World, on: World,
     assert(off.nodes@ =~= on.nodes@);
 }
 
+/// Q30 / Q54: a stale reply preserves the complete production checker and
+/// every shared node assertion, even when the two worlds use different flags.
+pub(super) proof fn stale_world(before: World, after: World)
+    requires retirement::domain(before), retirement::accepted(before),
+        same_world(before, after),
+    ensures retirement::domain(after), retirement::accepted(after),
+        forall|i: int| 0 <= i < 2 ==>
+            port_failfast_safety::node_post(before.nodes@[i], after.nodes@[i]),
+{
+    reveal(retirement::accepted);
+    retirement::node_frame(before, after, before.nodes@[0]);
+    retirement::node_frame(before, after, before.nodes@[1]);
+    footprint::storage_frame(before, after, before.nodes@[0].footprint, before.nodes@[1].footprint);
+}
+
 /// Q54 / #440 rejected maker-file replies: infrastructure recovery preserves
 /// every complete node rule and never changes the work-retry ladder or credit.
 pub(super) proof fn failure_node(w: World, n: Node)
@@ -72,6 +87,7 @@ pub(super) proof fn failure_world(before: World, after: World)
         after.dependencies@ == before.dependencies@, after.pool_capacity == before.pool_capacity,
         after.next_ticket == before.next_ticket, after.next_question == before.next_question,
     ensures retirement::domain(after), retirement::accepted(after),
+        port_failfast_safety::node_post(before.nodes@[0], after.nodes@[0]),
         after.nodes@[0].credit == before.nodes@[0].credit,
         after.nodes@[0].review_stop.is_none(), after.nodes@[0].question.is_none(),
         after.nodes@[0].attempt == before.nodes@[0].attempt,

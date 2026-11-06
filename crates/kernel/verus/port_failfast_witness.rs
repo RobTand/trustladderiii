@@ -72,3 +72,18 @@ pub(super) fn world(planning: bool, split: bool, funding: bool) -> (result: Worl
     w
 }
 }
+
+kernel_fn! {
+/// Q54 / #440 paired-apply construction: copy the original world's actual node
+/// and gate vectors, then enable fail_fast. Empty file/dependency tables are
+/// exactly the original Kani construction, with no alternative state model.
+pub(super) fn fast_copy(w: &World) -> (result: World) [
+    requires w.file_sets@.len() == 0, w.dependencies@.len() == 0,
+    ensures port_failfast_admission::same_world(*w, result), result.fail_fast,
+] {
+    let mut result = snapshot_world(w);
+    result.fail_fast = true;
+    kernel_proof! { assert(result.file_sets@ =~= w.file_sets@); }
+    result
+}
+}

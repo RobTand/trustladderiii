@@ -48,6 +48,33 @@ use plan_check::reply_plan_check;
 #[path = "../verus/plan_check_witness.rs"]
 mod plan_check_witness;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/port_failfast_admission.rs"]
+mod port_failfast_admission;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_failfast_diversion.rs"]
+mod port_failfast_diversion;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_failfast_frame.rs"]
+mod port_failfast_frame;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_failfast_funding.rs"]
+mod port_failfast_funding;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_failfast_pair.rs"]
+mod port_failfast_pair;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_failfast_pair_frame.rs"]
+mod port_failfast_pair_frame;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_failfast_safety.rs"]
+mod port_failfast_safety;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_failfast_stop.rs"]
+mod port_failfast_stop;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_failfast_witness.rs"]
+mod port_failfast_witness;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement.rs"]
 mod retirement;
 #[cfg(verus_keep_ghost)]
@@ -62,27 +89,6 @@ mod retirement_terminal_fact_witness;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/retirement_witness.rs"]
 mod retirement_witness;
-#[cfg(verus_keep_ghost)]
-#[path = "../verus/port_failfast_diversion.rs"]
-mod port_failfast_diversion;
-#[cfg(verus_keep_ghost)]
-#[path = "../verus/port_failfast_stop.rs"]
-mod port_failfast_stop;
-#[cfg(verus_keep_ghost)]
-#[path = "../verus/port_failfast_witness.rs"]
-mod port_failfast_witness;
-#[cfg(verus_keep_ghost)]
-#[path = "../verus/port_failfast_frame.rs"]
-mod port_failfast_frame;
-#[cfg(verus_keep_ghost)]
-#[path = "../verus/port_failfast_pair.rs"]
-mod port_failfast_pair;
-#[cfg(verus_keep_ghost)]
-#[path = "../verus/port_failfast_admission.rs"]
-mod port_failfast_admission;
-#[cfg(verus_keep_ghost)]
-#[path = "../verus/port_failfast_funding.rs"]
-mod port_failfast_funding;
 #[cfg(verus_keep_ghost)]
 verus! {
 /// #806: domain of the retired two-node Kani consistency checks.

@@ -642,6 +642,8 @@ def verus_proofs():
             "kernel::port_failfast_diversion::plan_count": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_failfast_diversion::plan_result": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_failfast_diversion::plan_retry_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_failfast_pair_frame::frame": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_failfast_safety::node_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_failfast_pair::retry_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_failfast_pair::retried": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_failfast_admission::same_world": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -894,6 +896,11 @@ def verus_proofs():
             "port_failfast_extension_world": ("kernel::port_failfast_funding#extension_world", 1),
             "port_failfast_failure_node": ("kernel::port_failfast_admission#failure_node", 1),
             "port_failfast_failure_world": ("kernel::port_failfast_admission#failure_world", 1),
+            "port_failfast_paid_node": ("kernel::port_failfast_funding#paid_node", 1),
+            "port_failfast_paid_world": ("kernel::port_failfast_funding#paid_world", 1),
+            "port_failfast_pair_frame": ("kernel::port_failfast_pair_frame", 1),
+            "port_failfast_witness_fast_copy": ("kernel::port_failfast_witness#fast_copy", 1),
+            "port_failfast_stale_world": ("kernel::port_failfast_admission#stale_world", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

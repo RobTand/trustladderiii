@@ -21,6 +21,7 @@ pub(super) proof fn completed_stop(before: World, after: World, step: ReviewStop
         after.dependencies@ == before.dependencies@, after.pool_capacity == before.pool_capacity,
         after.next_ticket == before.next_ticket, after.next_question == before.next_question,
     ensures retirement::domain(after), retirement::accepted(after),
+        port_failfast_safety::node_post(before.nodes@[0], after.nodes@[0]),
         after.nodes@[0].credit == before.nodes@[0].credit,
         after.nodes@[0].attempt == before.nodes@[0].attempt,
         after.nodes@[0].replanned == before.nodes@[0].replanned,
