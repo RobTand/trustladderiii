@@ -564,10 +564,6 @@ fn complete_proof_feedback_has_a_larger_current_bound() {
     let schedule = schedule(step, vec![]);
     let old = io::run(&schedule, false, None);
     let current = io::run(&schedule, true, None);
-    assert_eq!(old.calls, current.calls);
-    assert_eq!(old.staged_rows, current.staged_rows);
-    assert_eq!(old.persisted_rows, current.persisted_rows);
-    assert_eq!(old.persisted_intern, current.persisted_intern);
     let message = |run: &Run| {
         run.results[0]["feedback"]["failed"][0]["message"]
             .as_str()
@@ -577,10 +573,26 @@ fn complete_proof_feedback_has_a_larger_current_bound() {
     };
     assert_eq!(message(&old), findings::MAX_MESSAGE_CHARS);
     assert_eq!(message(&current), tl3_contracts::report::PROOF_MESSAGE_CHARS);
+    let without_message = |mut run: Run| {
+        for value in run.results.iter_mut().chain(
+            run.calls
+                .iter_mut()
+                .filter_map(|call| call.get_mut("args")),
+        ) {
+            if let Some(message) = value.pointer_mut("/feedback/failed/0/message") {
+                *message = Value::Null;
+            }
+        }
+        run
+    };
+    assert_eq!(without_message(old.clone()), without_message(current.clone()));
     for write in 0..current.writes {
         for after in [false, true] {
             let cut = Some(io::Cut { write, after });
-            assert_eq!(io::run(&schedule, false, cut), io::run(&schedule, true, cut));
+            let old_cut = io::run(&schedule, false, cut);
+            let current_cut = io::run(&schedule, true, cut);
+            assert_eq!(old_cut.results.last().unwrap(), &json!({"crash":true}));
+            assert_eq!(without_message(old_cut), without_message(current_cut));
         }
     }
 }
