@@ -45,15 +45,23 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         m.run_incidents = (m.run_incidents + 1).min(2);
         let needs_rob = m.run_incidents >= 2;
         kernel_proof! {
-            retries_facts::incident(before_failed@, *m, needs_rob);
+            assert(retirement::incident(*m, needs_rob) == port_t860_contracts::failed_node(before_failed@)) by {
+                reveal(retries_facts::abandoned);
+                retries_facts::incident(before_failed@, *m, needs_rob);
+            }
         }
         raise_incident(w, i, needs_rob, out);
     }
     kernel_proof! {
         if before_failed@.run_failures == 0 {
-            retries_facts::restarted(before_failed@, w.nodes@[i as int]);
+            assert(w.nodes@[i as int] == port_t860_contracts::failed_node(before_failed@)) by {
+                reveal(retries_facts::abandoned);
+                retries_facts::restarted(before_failed@, w.nodes@[i as int]);
+            }
         }
-        retries_facts::failed_result(before_failed@, w.nodes@[i as int], before_failed_out@, *out);
+        assert(port_t860_contracts::failed_post(before_failed@, w.nodes@[i as int], before_failed_out@, *out)) by {
+            retries_facts::failed_result(before_failed@, w.nodes@[i as int], before_failed_out@, *out);
+        }
     }
 }
 }

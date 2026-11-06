@@ -3,6 +3,7 @@ use super::*;
 
 verus! {
 /// Q30: abandoning an operation releases ownership and cancels its pending start.
+#[verifier::opaque]
 pub(super) open spec fn abandoned(n: Node) -> Node {
     Node { run: None, job: None, pool: false,
         effect: match n.effect { Some(e) => Some(InFlight { cancelling: e.cancelling
@@ -19,6 +20,7 @@ pub(super) proof fn restarted(before: Node, after: Node)
         }),
     ensures after == port_t860_contracts::failed_node(before),
 {
+    reveal(abandoned);
     reveal(port_t860_contracts::failed_node);
 }
 
@@ -35,6 +37,7 @@ pub(super) proof fn incident(before: Node, ready: Node, needs_rob: bool)
         needs_rob == (ready.run_incidents >= 2),
     ensures retirement::incident(ready, needs_rob) == port_t860_contracts::failed_node(before),
 {
+    reveal(abandoned);
     reveal(port_t860_contracts::failed_node);
 }
 
