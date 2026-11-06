@@ -917,6 +917,7 @@ def verus_proofs():
             "scheduler_older_overlap": ("kernel::scheduler#older_overlap", 2),
             "scheduler_first_in_line": ("kernel::scheduler#first_in_line", 3),
             "port_advance_gate_slot_count": ("kernel::port_advance_gate#gate_slot_count", 1),
+            "port_advance_phase": ("kernel::port_advance_phase", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

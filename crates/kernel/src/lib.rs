@@ -2268,3 +2268,7 @@ mod port_advance_world;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_advance_gate.rs"]
 mod port_advance_gate;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_advance_phase.rs"]
+mod port_advance_phase;
