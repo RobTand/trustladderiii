@@ -881,8 +881,6 @@ mod properties {
                     "recovery",
                     "has_recovery",
                     "save_recovery",
-                    "queue_retry_binding",
-                    "publish_queue_retry",
                     "recovery_eligible",
                     "command_budget",
                     "reconcile_command",
