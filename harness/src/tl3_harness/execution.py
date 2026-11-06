@@ -257,7 +257,7 @@ def configuration_changes(repo: Path, root: Path, base: str, base_tree: Path, he
     try:
         permitted = conftest_subjects(base_tree, head_tree, plan)
     except SyntaxError as error:
-        syntax_refusal = str(ProofRefusal('proof.source.unparsable', module=error.filename or '', bad_value=error.msg))
+        syntax_refusal = str(ProofRefusal('proof.source.unparsable', module=error.filename or '', bad_value=error.msg, line=error.lineno))
         permitted = set()
     except (ProofRefusal, OSError):
         permitted = set()
@@ -660,8 +660,8 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             try:
                 receipt = assemble_proof(subject, new, staged, check, config, role='maker', check_index=index, footprint=footprint)
             except SyntaxError as error:
-                refusal = ProofRefusal('proof.source.unparsable', module=error.filename or '', bad_value=error.msg)
-                return refused(plan, refusal.for_check(check, 'maker', index))
+                refusal = ProofRefusal('proof.source.unparsable', module=error.filename or '', bad_value=error.msg, line=error.lineno)
+                return refused(plan, refusal.for_check(check, 'maker', index, footprint=footprint))
             except ProofRefusal as error:
                 return refused(plan, error)
             except OSError as error:

@@ -24,6 +24,10 @@ NAMESPACE_API_ATTRIBUTES = frozenset({
 NAMESPACE_API_MODULES = frozenset({'builtins', 'sys', 'inspect', 'importlib', '__main__'})
 REFLECTIVE_SUPPORT_ATTRIBUTES = frozenset({'format', 'format_map', 'Formatter', 'TestCase', 'main'})
 LOADER_STDLIB = frozenset({'pathlib', 'unittest', 'importlib'})
+SUPPORT_MOCK_IMPORTS = (('mock', 'from unittest import mock', 'mock'),
+                        ('unittest', 'import unittest.mock', 'unittest.mock'))
+SUPPORT_UNITTEST_IMPORTS = frozenset({'import unittest', *(source for _, source, _ in SUPPORT_MOCK_IMPORTS)})
+SUPPORT_ARGV_ATTRIBUTE = 'argv'
 SOURCE_DEFINITION_COUNT = 1
 STAGED_CHECK_COUNT = 1
 
@@ -190,7 +194,9 @@ add('support', 'decorator', {'support_definition': 'undecorated'},
     'A plain undecorated support function called by the observer is also allowed; @pytest.fixture remains refused.')
 add('support', 'class_bases', {'support_class': 'no base classes or class keywords'},
     'Use a plain class without bases, or move this into the observer test body.')
-add('support', 'context_manager', {'context_managers': ['mock.patch.object(sys, \"argv\", <literal argv>)', 'unittest.mock.patch.object(sys, \"argv\", <literal argv>)'], 'imports': ['import sys', 'from unittest import mock', 'import unittest.mock'], 'keywords': []},
+add('support', 'context_manager', {
+    'context_managers': [root + f'.patch.object(sys, "{SUPPORT_ARGV_ATTRIBUTE}", value)' for _, _, root in SUPPORT_MOCK_IMPORTS],
+    'imports': sorted(SUPPORT_UNITTEST_IMPORTS | {'import sys'}), 'keywords': [], 'scope': 'with'},
     'Move the with block into the observer test body; support admits only the scoped sys.argv setup.')
 add('support', 'call_allowlist', {
     'builtins': sorted(PURE_SUPPORT_BUILTINS), 'builtin_arguments': 'literal positional arguments only',

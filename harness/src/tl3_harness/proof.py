@@ -16,6 +16,7 @@ from .trees import bound_names, is_test, tree_sha256
 from .proof_rules import (
     LOADER_STDLIB, NAMESPACE_API_NAMES, NAMESPACE_API_ATTRIBUTES, NAMESPACE_API_MODULES,
     PURE_SUPPORT_BUILTINS, REFLECTIVE_SUPPORT_ATTRIBUTES, SOURCE_DEFINITION_COUNT,
+    SUPPORT_MOCK_IMPORTS, SUPPORT_UNITTEST_IMPORTS, SUPPORT_ARGV_ATTRIBUTE,
 )
 
 
@@ -213,13 +214,8 @@ def observer_context_imports(tree, module, subjects):
                 allowed.update(id(node) for node in ast.walk(function))
     parents = {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
     plain_sys = sole_import(tree, 'sys', 'import sys')
-    mock_roots = set()
-    if sole_import(tree, 'mock', 'from unittest import mock'):
-        mock_roots.add('mock')
-    if sole_import(tree, 'unittest', 'import unittest.mock'):
-        mock_roots.add('unittest.mock')
-    canonical_imports = {ast.dump(ast.parse(source).body[0]) for source in (
-        'import unittest', 'import unittest.mock', 'from unittest import mock')}
+    mock_roots = {root for name, source, root in SUPPORT_MOCK_IMPORTS if sole_import(tree, name, source)}
+    canonical_imports = {ast.dump(ast.parse(source).body[0]) for source in SUPPORT_UNITTEST_IMPORTS}
     if any(isinstance(node, (ast.Import, ast.ImportFrom))
            and any(name.split('.')[0] == 'unittest' for name in (
                [node.module or ''] if isinstance(node, ast.ImportFrom) else [alias.name for alias in node.names]))
@@ -240,7 +236,7 @@ def observer_context_imports(tree, module, subjects):
                 and len(call.args) == 3 and not call.keywords
                 and isinstance(call.args[1], ast.Constant)
                 and isinstance(call.args[0], ast.Name)
-                and plain_sys and call.args[0].id == 'sys' and call.args[1].value == 'argv'
+                and plain_sys and call.args[0].id == 'sys' and call.args[1].value == SUPPORT_ARGV_ATTRIBUTE
                 and isinstance(parents.get(id(call)), ast.withitem)):
             continue
         mock_roots.clear()
@@ -254,7 +250,7 @@ def observer_context_imports(tree, module, subjects):
         # Only a scoped argv patch is CLI setup. sys cannot escape as an object.
         if (isinstance(parent, ast.Call) and ast.unparse(parent.func) in {name + '.patch.object' for name in mock_roots}
                 and len(parent.args) == 3 and parent.args[0] is node
-                and isinstance(parent.args[1], ast.Constant) and parent.args[1].value == 'argv'
+                and isinstance(parent.args[1], ast.Constant) and parent.args[1].value == SUPPORT_ARGV_ATTRIBUTE
                 and plain_sys and not parent.keywords and isinstance(parents.get(id(parent)), ast.withitem)):
             allowed.add(id(parent))
             continue

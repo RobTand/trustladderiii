@@ -152,7 +152,7 @@ def _stage(worktree, root, base_sha=None, *, action="test_tool", checks=(), forc
         if len(proving) > STAGED_CHECK_COUNT:
             raise ProofRefusal('proof.staging.single_check', role=role, field='/checks',
                                reply={'checks': list(checks)}, alternatives=[[item] for item in proving[:10]],
-                               replacement_total=len(proving))
+                               replacement_total=len(proving), bad_value={'replacement_total': len(proving)})
         item = proving[0] if proving else {}
         proof = Proof.parse(item['proof']) if item.get('proof') else None
         tests = tuple(item.get('tests', ()))
