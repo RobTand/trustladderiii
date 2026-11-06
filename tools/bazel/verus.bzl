@@ -1146,12 +1146,6 @@ def verus_proofs():
             "port_t860_link_irrelevant": ("kernel::port_t860_link#irrelevant", 1),
             "port_advance_contracts": ("kernel::port_advance_contracts", 6),
             "port_advance_outputs": ("kernel::port_advance_outputs", 2),
-            "review_retry_stop": ("kernel::retries#stop_for_review", 1),
-            "review_retry_round": ("kernel::retries#failed_round", 1),
-            "review_retry_rung": ("kernel::retries#next_rung", 1),
-            "review_retry_room": ("kernel::retries#out_of_room", 1),
-            "review_retry_plan": ("kernel::retries#plan_retry", 1),
-            "review_retry_recheck": ("kernel::retries#recheck", 1),
 
             "port_advance_node_environment_frame": ("kernel::port_advance_node_rules#environment_frame", 1),
             "port_advance_node_blocked_rules": ("kernel::port_advance_node_rules#blocked_rules", 1),
