@@ -4698,18 +4698,24 @@ fn proof_rows_survive_check_observation(settings: &tl3_config::Store) {
             None,
             adapters::prismabuild::Fake::new(&fakes),
             vec![],
-            move |_, completion: &mut Completion| {
-                for observation in &mut completion.observations {
-                    if let Observation::Checks {
-                        pass, failed_tests, ..
-                    } = observation
-                    {
-                        *pass = false;
-                        *failed_tests = vec![tl3_controller::findings::FailedTest {
+            move |delivery, completion: &mut Completion| {
+                if matches!(delivery.output, Out::Effect { kind: EffectKind::SubmitChecks, .. }) {
+                    let sha = delivery.head_sha.clone().unwrap();
+                    completion.observations = vec![Observation::Checks {
+                        node: delivery.node(),
+                        generation: delivery.generation,
+                        base_sha: sha.clone(),
+                        sha,
+                        action_key: "a".repeat(64),
+                        changed_paths: vec![],
+                        report: true,
+                        pass: false,
+                        results: vec![],
+                        failed_tests: vec![tl3_controller::findings::FailedTest {
                             test: "tests/test_value.py::test_value".into(),
                             message: message.clone(),
-                        }];
-                    }
+                        }],
+                    }];
                 }
             },
         ),
