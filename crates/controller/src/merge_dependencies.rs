@@ -647,11 +647,8 @@ impl Controller {
             let observed_reason = observed.reason.clone();
             let observed = observed.status;
             let root = bound_root(&requests, snapshot, &request.repo, kind, number);
-            let status = if observed == DependencyStatus::Pending {
-                root.map_or(observed, |root| root_status(world, root))
-            } else {
-                observed
-            };
+            // Current GitHub state wins over a bound request's historical ending.
+            let status = observed;
             let fact = retain_fact(
                 snapshot,
                 commit,
@@ -800,6 +797,9 @@ impl Controller {
             // Persist on the transition, even when no current request waits.
             if root_status(world, root) == DependencyStatus::Delivered {
                 for &(kind, number) in &identities {
+                    if retained_fact(snapshot, commit, &request.repo, kind, number)?.is_some() {
+                        continue;
+                    }
                     retain_fact(
                         snapshot,
                         commit,

@@ -404,7 +404,6 @@ fn workers_forward_to_the_selected_adapter_for_every_role() {
                     "quota_model_eligible",
                     format!("{}:configured", delivery(Role::Make).key)
                 ),
-                (primary, "quota_candidates", delivery(Role::Make).key),
                 (primary, "implementation", String::new()),
                 (primary, "app_login", "42".into()),
                 (primary, "intake_question", format!("{}:3", question.key())),

@@ -387,8 +387,9 @@ In slice one, ingest and audit run before this wait. While prerequisites block
 admission, the root holds no slot, file lock, agent-pool grant or spendable credit.
 Starting credit is withheld until admission. Status says "waiting for #N to merge".
 Closure and merge evidence arrive through Fact in every phase, including Closed. A truly closed prerequisite is delivered for admission.
-Delivered prerequisite facts stay delivered, including when observed before a
-declaration. Historical abandoned edges are upgraded to delivered on closure evidence. Re-ingest preserves the status and announcement identity of each
+Delivered prerequisite facts stay delivered after first planning admission.
+Before admission, current Open evidence revokes an earlier delivery, including
+one observed before a declaration. Historical abandoned edges are upgraded to delivered on closure evidence. Re-ingest preserves the status and announcement identity of each
 retained target, removing only targets no longer declared through Fact.
 No prerequisite may be added after
 first planning admission. A declaration that would close a wait-graph cycle is
