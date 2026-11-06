@@ -375,4 +375,6 @@ def register(rule, *, roles: Iterable[str]):
 
 
 def render_all(violations, *, role, context="reply"):
+    if context not in ('reply', 'tool'):
+        raise ValueError('render context must be reply or tool')
     return '\n'.join(violation.render(role=role, context=context) for violation in violations)
