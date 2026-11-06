@@ -36,7 +36,9 @@ def verify(verifier, z3, rustc, source, selection=None, extra=()):
         result = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 timeout=40, check=False,
                                 env={'PATH': str(sysroot / 'bin') + ':/usr/bin:/bin',
-                                     'VERUS_Z3_PATH': str(Path(z3).resolve())})
+                                     'VERUS_Z3_PATH': str(Path(z3).resolve()),
+                                     'LD_LIBRARY_PATH': str(sysroot / 'lib'), 'VERUS_USE_RUSTUP': '0',
+                                     'OMP_NUM_THREADS': '1', 'RAYON_NUM_THREADS': '1'})
     except subprocess.TimeoutExpired as error:
         raise RuntimeError('proof timed out; this is not mutant rejection') from error
     return result, time.monotonic() - started
@@ -47,8 +49,7 @@ def main():
     source = Path(source)
     expected = int(expected)
     if mode == 'help':
-        result = subprocess.run([str(Path(verifier).resolve()), '--help'], text=True,
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+        result, _ = verify(verifier, z3, rustc, source, extra=['--help'])
         print(result.stdout)
         return result.returncode
     result, seconds = verify(verifier, z3, rustc, source)

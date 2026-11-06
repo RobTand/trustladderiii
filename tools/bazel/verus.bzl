@@ -349,7 +349,7 @@ def verus_proofs():
             tags = ["manual"],
             size = "small",
         )
-        for name, count in {"dispatch": 18, "core": 18, "once": 39, "converges": 73, "dedup": 42, "approval": 79, "fence": 50}.items():
+        for name, count in {"dispatch": 40, "core": 44, "once": 61, "converges": 64, "dedup": 64, "approval": 68, "fence": 38}.items():
             verus_test(
                 name = "verus_" + name,
                 src = "proofs/" + name + ".rs",
