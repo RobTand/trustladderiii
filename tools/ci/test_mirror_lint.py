@@ -1,7 +1,10 @@
 """Mirror lint acceptance cases in isolated repository trees."""
 
+import contextlib
+import io
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 
@@ -87,6 +90,93 @@ class MirrorLintTests(unittest.TestCase):
         self.assertEqual(mirror_lint.ratchet({offender}, [entry]), [])
         self.assertTrue(mirror_lint.ratchet({offender}, []))
         self.assertTrue(mirror_lint.ratchet(set(), [entry]))
+
+    def test_mutation_helpers_are_not_source_includes(self):
+        for body in [
+            'source = Path("pkg/src/a.py")\ntext = source.read_text()\nsource.write_text(text.replace("old", "new"))',
+            'Path("pkg/src/a.py").write_bytes(Path("pkg/src/a.py").read_bytes())',
+            'text = open("pkg/src/a.py").read()\nopen("pkg/src/a.py", "w").write(text)',
+        ]:
+            with self.subTest(body=body):
+                self.assertNotIn(('tests/test_mutant.py', 'source-include'), self.scan({
+                    'pkg/src/a.py': '', 'tests/test_mutant.py': 'from pathlib import Path\n' + body,
+                }))
+        result = self.scan({
+            'pkg/src/a.py': '', 'pkg/src/b.py': '',
+            'tests/test_mutant.py': 'from pathlib import Path\nx = Path("pkg/src/a.py").read_text()\nPath("pkg/src/b.py").write_text(x)',
+        })
+        self.assertIn(('tests/test_mutant.py', 'source-include'), result)
+
+    def test_rust_test_files_are_not_production(self):
+        for target in ['pkg/src/tests.rs', 'pkg/src/test.rs', 'pkg/src/tests/mod.rs']:
+            with self.subTest(target=target):
+                result = self.scan({target: '', 'pkg/tests/check.rs': f'include_str!("../../{target}");'})
+                self.assertNotIn(('pkg/tests/check.rs', 'source-include'), result)
+                result = self.scan({target: 'include_str!("/unused");', 'pkg/src/lib.rs': ''})
+                self.assertTrue(mirror_lint.is_test(Path(target)))
+        result = self.scan({
+            'pkg/src/lib.rs': '',
+            'pkg/src/unit.rs': '#![cfg(test)]\nconst SOURCE: &str = include_str!("lib.rs");',
+            'pkg/tests/check.rs': 'include_str!("../src/unit.rs");',
+        })
+        self.assertIn(('pkg/src/unit.rs', 'source-include'), result)
+        self.assertNotIn(('pkg/tests/check.rs', 'source-include'), result)
+        text = '\n'.join(f'let value_{i} = compute_value({i});' for i in range(12))
+        result = self.scan({'pkg/src/unit.rs': '#![cfg(test)]\n' + text, 'pkg/tests/copy.rs': text})
+        self.assertNotIn(('pkg/tests/copy.rs', 'frozen-copy'), result)
+
+    def test_production_outside_src(self):
+        for source in ['tools/ci/helper.py', 'crates/a/tools/helper.py', 'crates/a/build.rs']:
+            with self.subTest(source=source):
+                text = '\n'.join(f'value_{i} = compute_value({i})' for i in range(12))
+                result = self.scan({source: text, 'tests/test_copy.py': text})
+                self.assertIn(('tests/test_copy.py', 'frozen-copy'), result)
+                result = self.scan({source: '', 'tests/test_read.py': f'open("{source}").read()'})
+                self.assertIn(('tests/test_read.py', 'source-include'), result)
+
+    def test_comments_and_licenses_are_not_copies(self):
+        for prefix, suffix in [('# ', '.py'), ('// ', '.rs'), (' * ', '.rs')]:
+            text = '\n'.join(f'{prefix}Copyright license clause number {i}' for i in range(12))
+            if prefix == ' * ':
+                text = '/* SPDX-License-Identifier: MIT\n' + text + '\n */'
+            with self.subTest(prefix=prefix):
+                result = self.scan({f'pkg/src/lib{suffix}': text, f'tests/copy{suffix}': text})
+                self.assertNotIn((f'tests/copy{suffix}', 'frozen-copy'), result)
+
+    def test_owners_require_issue_references(self):
+        offender = ('tests/test_a.py', 'source-include')
+        for owner in ['unassigned', 'controller-cleanup', '#not-an-issue']:
+            with self.subTest(owner=owner):
+                entry = {'path': offender[0], 'detector': offender[1], 'owner': owner}
+                self.assertTrue(mirror_lint.ratchet({offender}, [entry]))
+
+    def test_main_enforces_allowlist_from_repository(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            offender = root / 'tests/test_read.py'
+            offender.parent.mkdir()
+            offender.write_text('open("tools/helper.py").read()')
+            (root / 'tools').mkdir()
+            (root / 'tools/helper.py').write_text('value = 1')
+            allow = root / mirror_lint.ALLOWLIST
+            allow.parent.mkdir(parents=True)
+            subprocess.run(['git', 'init', '-q', str(root)], check=True)
+            subprocess.run(['git', '-C', str(root), 'add', '.'], check=True)
+            entry = {'path': 'tests/test_read.py', 'detector': 'source-include', 'owner': '#906'}
+            for entries, present, expected, message in [
+                ([], True, 1, 'new offender'),
+                ([entry], True, 0, '0 errors'),
+                ([entry], False, 1, 'stale allowlist'),
+                ([], False, 0, '0 errors'),
+            ]:
+                with self.subTest(entries=entries, present=present):
+                    allow.write_text(json.dumps(entries))
+                    offender.write_text('open("tools/helper.py").read()' if present else 'pass')
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output):
+                        status = mirror_lint.main(['--root', str(root)])
+                    self.assertEqual(status, expected, output.getvalue())
+                    self.assertIn(message, output.getvalue())
 
 
 if __name__ == '__main__':
