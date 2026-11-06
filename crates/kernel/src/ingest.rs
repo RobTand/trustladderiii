@@ -163,6 +163,7 @@ fn reply_audit_disagrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
 
 kernel_fn! {
 /// Audit disagreement: isolate the verbatim node update from mutable world frames.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 fn audit_disagreement_node(m: &mut Node) -> (result: ()) [
     requires old(m).generation < u64::MAX,
     ensures ingest_facts::audit_post(*old(m), *final(m)),
