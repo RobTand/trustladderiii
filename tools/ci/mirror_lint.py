@@ -31,19 +31,35 @@ RUST_TOKEN = re.compile(
 
 def is_test(path):
     return (bool(TEST_DIRS.intersection(path.parts))
+            or path.stem in {'test', 'tests'}
             or path.stem.startswith(('test_', 'tests_')) or path.stem.endswith(('_test', '_tests')))
 
 
 def is_production(path):
-    return path.suffix in {'.rs', '.py'} and 'src' in path.parts and not is_test(path)
+    return path.suffix in {'.rs', '.py'} and not is_test(path)
 
 
 def rust_tokens(text):
     return [token for token in RUST_TOKEN.finditer(text) if token.lastgroup != 'comment']
 
 
+def rust_test_file(tokens):
+    values = [token.group() for token in tokens]
+    depth = 0
+    for index, value in enumerate(values):
+        if depth == 0 and values[index:index + 8] == ['#', '!', '[', 'cfg', '(', 'test', ')', ']']:
+            return True
+        if value == '{':
+            depth += 1
+        elif value == '}':
+            depth -= 1
+    return False
+
+
 def rust_test_spans(tokens):
     """Locate cfg(test) items and #[test] functions without counting string braces."""
+    if rust_test_file(tokens):
+        return [(0, tokens[-1].end())]
     spans = []
     values = [token.group() for token in tokens]
     for start in range(len(tokens)):
@@ -156,8 +172,10 @@ def literal_path(node, bindings, file):
     return None
 
 
-def python_reads(tree, file):
+def python_accesses(tree, file):
+    """Collect literal reads and writes; mutation helpers do not freeze source text."""
     bindings = {}
+    reads, writes = [], []
     for node in ast.walk(tree):
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             value = literal_path(node.value, bindings, file)
@@ -167,22 +185,39 @@ def python_reads(tree, file):
                     bindings[target.id] = value
         if not isinstance(node, ast.Call):
             continue
-        if isinstance(node.func, ast.Attribute) and node.func.attr in {'read_text', 'read_bytes', 'open'}:
+        mode = 'r'
+        if isinstance(node.func, ast.Attribute) and node.func.attr in {
+            'read_text', 'read_bytes', 'write_text', 'write_bytes', 'open',
+        }:
             value = literal_path(node.func.value, bindings, file)
+            if node.func.attr.startswith('write_'):
+                mode = 'w'
+            elif node.func.attr == 'open' and node.args:
+                mode = node.args[0].value if isinstance(node.args[0], ast.Constant) else None
         elif isinstance(node.func, ast.Name) and node.func.id == 'open' and node.args:
             value = literal_path(node.args[0], bindings, file)
+            if len(node.args) > 1:
+                mode = node.args[1].value if isinstance(node.args[1], ast.Constant) else None
         else:
             continue
+        for keyword in node.keywords:
+            if keyword.arg == 'mode':
+                mode = keyword.value.value if isinstance(keyword.value, ast.Constant) else None
         if value is not None:
-            yield value
+            if isinstance(mode, str) and any(flag in mode for flag in 'wax+'):
+                writes.append(value)
+            if mode is None or (isinstance(mode, str) and ('r' in mode or '+' in mode)):
+                reads.append(value)
+    return reads, writes
 
 
-def resolves_to_source(value, file, root, production):
+def source_paths(value, file, root, production):
+    paths = set()
     for candidate in (file.parent / value, root / value):
         resolved = candidate.resolve()
         if resolved.is_relative_to(root) and resolved.relative_to(root) in production:
-            return True
-    return False
+            paths.add(resolved.relative_to(root))
+    return paths
 
 
 def generated_paths(root):
@@ -213,13 +248,26 @@ def shingles(text, suffix):
     importing = False
     import_lines = set()
     if suffix == '.py':
-        for node in ast.walk(python_tree(text)):
+        tree = python_tree(text)
+        for node in ast.walk(tree):
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 import_lines.update(range(node.lineno, node.end_lineno + 1))
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                doc = ast.get_docstring(node)
+                if doc and re.search(r'SPDX-License-Identifier|copyright|permission is hereby granted', doc, re.I):
+                    expression = node.body[0]
+                    import_lines.update(range(expression.lineno, expression.end_lineno + 1))
+    else:
+        # Mask Rust comments without turning comment markers in literals into comments.
+        for token in reversed(list(RUST_TOKEN.finditer(text))):
+            if token.lastgroup == 'comment':
+                text = text[:token.start()] + re.sub(r'[^\n]', ' ', token.group()) + text[token.end():]
     for number, raw in enumerate(text.splitlines(), 1):
         if number in import_lines:
             continue
         line = raw.strip()
+        if line.startswith(('#', '//')):
+            continue
         if suffix == '.rs' and re.match(r'(?:pub(?:\([^)]*\))?\s+)?use\b', line):
             importing = ';' not in line
             continue
@@ -240,35 +288,43 @@ def scan(root, files):
     """Return (repository path, detector) pairs for the supplied tracked files."""
     root = root.resolve()
     files = sorted(set(map(Path, files)))
-    production = {path for path in files if is_production(path)}
+    texts = {}
+    for path in files:
+        absolute = root / path
+        if absolute.is_file() and not absolute.is_symlink():
+            try:
+                texts[path] = absolute.read_text()
+            except UnicodeError:
+                continue
+    tokens_by_path = {path: rust_tokens(text) for path, text in texts.items() if path.suffix == '.rs'}
+    test_files = {path for path in texts if is_test(path)}
+    test_files.update(path for path, tokens in tokens_by_path.items() if rust_test_file(tokens))
+    production = {path for path in texts if is_production(path) and path not in test_files}
     generated = generated_paths(root)
     offenders = set()
     production_windows = {}
     test_windows = {}
-    for path in files:
+    for path, text in texts.items():
         absolute = root / path
-        if not absolute.is_file() or absolute.is_symlink():
-            continue
-        try:
-            text = absolute.read_text()
-        except UnicodeError:
-            continue
         name = path.as_posix()
-        tokens = rust_tokens(text) if path.suffix == '.rs' else []
+        tokens = tokens_by_path.get(path, [])
         spans = rust_test_spans(tokens) if tokens else []
         tree = python_tree(text) if path.suffix == '.py' else None
         if path.suffix == '.rs':
             comments = [m.group() for m in RUST_TOKEN.finditer(text) if m.lastgroup == 'comment']
             reads = (value for offset, value in rust_includes(tokens)
-                     if is_test(path) or any(start <= offset < end for start, end in spans))
+                     if path in test_files or any(start <= offset < end for start, end in spans))
+            writes = []
         elif path.suffix == '.py':
             comments = python_comments(text, tree)
-            reads = python_reads(tree, absolute) if is_test(path) else []
+            reads, writes = python_accesses(tree, absolute) if path in test_files else ([], [])
         else:
-            comments, reads = [], []
+            comments, reads, writes = [], [], []
         if any(DECLARATION.search(comment) for comment in comments):
             offenders.add((name, 'self-declared'))
-        if any(resolves_to_source(value, absolute, root, production) for value in reads):
+        read_paths = set().union(*(source_paths(value, absolute, root, production) for value in reads))
+        write_paths = set().union(*(source_paths(value, absolute, root, production) for value in writes))
+        if read_paths - write_paths:
             offenders.add((name, 'source-include'))
         if path.name.endswith('.schema.json') or (path.suffix == '.json' and 'schemas' in path.parts):
             if path not in generated and not re.search(r'\b(?:auto-?generated|generated (?:by|from))\b', text, re.I):
@@ -278,7 +334,7 @@ def scan(root, files):
                 text = text[:start] + '\n' + text[end:]
             for digest, window in shingles(text, path.suffix):
                 production_windows.setdefault(digest, set()).add(window)
-        elif is_test(path):
+        elif path in test_files:
             test_windows[name] = list(shingles(text, path.suffix))
     for name, windows in test_windows.items():
         if any(window in production_windows.get(digest, ()) for digest, window in windows):
@@ -296,6 +352,8 @@ def ratchet(offenders, entries):
             errors.append('invalid allowlist entry: expected path, detector, owner strings')
             continue
         key = (entry['path'], entry['detector'])
+        if entry['owner'] == 'unassigned' or not re.search(r'#\d+\b', entry['owner']):
+            errors.append(f'{entry["path"]}: owner must name an issue with #<number>')
         if key in allowed:
             errors.append(f'duplicate allowlist entry: {key}')
         allowed.add(key)
