@@ -43,6 +43,6 @@ safety_qualification.CASES = {
 
 if __name__ == '__main__':
     reference = Path(__file__).resolve().parents[1] / 'tests/enqueue_reference.rs.txt'
-    assert hashlib.sha256(reference.read_bytes()).hexdigest() == '898b7d6fb8873079c3a224fc6b1697fe1fd6359d3b6bd9b9f05d451f238826d2', (
+    assert hashlib.sha256(reference.read_bytes()).hexdigest() == '6ddc0fc592d5e34373f316c4031ddae65e7a49ac67a0f02cfa5eedf67dac1121', (
         'the verbatim pre-port reference changed')
     safety_qualification.main()

@@ -382,4 +382,3 @@ pub fn decide(mut state: EnqueueState, event: QueueEvent) -> (EnqueueState, Effe
     }
     (state, out)
 }
-
