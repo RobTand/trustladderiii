@@ -1,0 +1,154 @@
+{
+  "issue": 2825,
+  "trace": {
+    "trace_id": "tr-f098ef3ee1c2eafd8da2e8874f6090e1",
+    "request_time": "2026-11-05T18:52:57.738Z",
+    "execution_duration": "445.766s",
+    "state": "OK",
+    "tags": {
+      "repo": "RobTand/prismabuild",
+      "issue": "2825",
+      "request": "373",
+      "node": "373",
+      "generation": "3",
+      "role": "planner",
+      "outcome": "succeeded",
+      "base_sha": "c8b40a498713a6b4d796691eeba3d7cb2672c56d"
+    }
+  },
+  "base_sha": "c8b40a498713a6b4d796691eeba3d7cb2672c56d",
+  "goals": [
+    {
+      "description": "In src/prismabuild/census.py, change ending_row so that a numeric finish value that is oversized (for example 10**400, which makes float() raise OverflowError), positive infinity, negative infinity or NaN does not raise and does not enter the sort. For such a value, 'finished_unix' must be the file mtime, which is the existing nonnumeric fallback. The result must be a finite float.",
+      "stage": "maker",
+      "verification": "test"
+    },
+    {
+      "description": "Keep the raw record value unchanged in the existing 'timing_finished_unix' field for invalid finish values. Do not make up valid execution timing from them. For healthy records, every field and value must stay the same as before. No new keys, no schema change.",
+      "stage": "maker",
+      "verification": "test"
+    },
+    {
+      "description": "Add a focused parameterized test to tests/test_pbstatus_reader_failures.py. It uses a private queue with two ordinary done/<64hex>.json terminal records and controlled mtimes. One record has a bad finished_unix (10**400, positive infinity, negative infinity, NaN) and the other has a finite finish time. It calls census.endings(queue_root, limit=20). It asserts that both action keys are present, that the bad row has a finite mtime-based 'finished_unix', that the raw timing field is kept, and that the healthy row's 'finished_unix' is unchanged. It uses no live queue, fleet, GPU or multi-host resource.",
+      "stage": "maker",
+      "verification": "test",
+      "proof_obligation": {
+        "kind": "assertion",
+        "observer": "new",
+        "quote": "Add a focused test to `tests/test_pbstatus_reader_failures.py`.",
+        "source": "issue.body",
+        "subjects": [
+          "src/prismabuild/census.py::ending_row"
+        ]
+      }
+    },
+    {
+      "description": "Keep scope to src/prismabuild/census.py and focused tests. Make no change to the queue writer, immutable-record reader, pbmetrics implementation or status rendering. Make no change to JSON field sets, CLI flags, exit codes, action keys, queue or attempt schema, CAS layout, bell protocol or SDK wire. Make no protected-path edit. Do not hand-edit generated files.",
+      "stage": "maker",
+      "verification": "review"
+    },
+    {
+      "description": "Independent checking: the new test fails on the base subject and passes on the changed subject, under the subject/observer proof run on prismabuild_pytest with the native_threads_1 runner feature. The run must give the action key, CAS receipt, logs and terminal verdict. The issue's BuildBuddy flags (bazelrc path, --jobs at 16 or fewer, GATE_WINDOW, declared CPU and memory demand) are not visible in the run_tests receipt. Report them as an unverified gap and do not call them observed.",
+      "stage": "checking",
+      "verification": "test"
+    }
+  ],
+  "draft": {
+    "kind": "leaf",
+    "files": [
+      "BUILD.bazel",
+      "src/prismabuild/BUILD.bazel",
+      "src/prismabuild/census.py",
+      "tests/BUILD.bazel",
+      "tests/test_pbstatus_reader_failures.py",
+      "tools/BUILD.bazel"
+    ],
+    "checks": [
+      {
+        "kind": "demonstrating",
+        "node_ids": [
+          "tests/test_pbstatus_reader_failures.py::test_a_non_finite_finish_time_falls_back_to_mtime"
+        ],
+        "goal_ids": [
+          0,
+          1,
+          2,
+          4
+        ],
+        "proof": {
+          "subjects": [
+            "src/prismabuild/census.py::ending_row"
+          ],
+          "observer_support": [
+            "tests/test_pbstatus_reader_failures.py::_write_ending",
+            "tests/test_pbstatus_reader_failures.py::_assert_unusable_finish_falls_back"
+          ],
+          "red_message": "an unusable finish time entered the ending order"
+        }
+      },
+      {
+        "kind": "demonstrating",
+        "node_ids": [
+          "tests/test_pbstatus_reader_failures.py::test_an_oversized_finish_time_falls_back_to_mtime"
+        ],
+        "goal_ids": [
+          0,
+          1,
+          4
+        ],
+        "proof": {
+          "subjects": [
+            "src/prismabuild/census.py::ending_row"
+          ],
+          "observer_support": [
+            "tests/test_pbstatus_reader_failures.py::_write_ending",
+            "tests/test_pbstatus_reader_failures.py::_assert_unusable_finish_falls_back"
+          ],
+          "red_message": "OverflowError: int too large to convert to float"
+        },
+        "declared_symptom": {
+          "node": "tests/test_pbstatus_reader_failures.py::test_an_oversized_finish_time_falls_back_to_mtime",
+          "exception": "builtins.OverflowError",
+          "phase": "call",
+          "repeat": 1,
+          "parallel": 0
+        }
+      },
+      {
+        "kind": "regression",
+        "node_ids": [
+          "tests/test_pbstatus.py::test_a_record_that_cannot_be_parsed_is_a_row_not_a_silence",
+          "tests/test_pbstatus.py::test_a_readable_ending_carries_no_unreadable_note",
+          "tests/test_pbstatus.py::test_endings_name_their_transport_and_their_slurm_state",
+          "tests/test_pbstatus.py::test_an_oversized_ending_is_reported_without_reading_its_payload",
+          "tests/test_action_resource_profile.py::test_pbstatus_endings_report_peak_memory_io_and_gpu_power",
+          "tests/test_action_resource_profile.py::test_an_ending_from_before_the_profile_renders_absent_not_zero",
+          "tests/test_pbstatus_reader_failures.py::test_success_shape_is_unchanged"
+        ],
+        "goal_ids": [
+          1,
+          3
+        ]
+      },
+      {
+        "kind": "regression",
+        "node_ids": [
+          "tests/test_duplication_baseline.py::test_near_duplicate_pairs_only_shrink",
+          "tests/test_duplication_baseline.py::test_same_name_helpers_only_shrink"
+        ],
+        "goal_ids": [
+          3
+        ]
+      }
+    ],
+    "no_design_questions": true,
+    "lands_on_its_own": true,
+    "estimated_tool_turns": 52,
+    "estimated_exploration_turns": 6
+  },
+  "objections": [
+    "Existing check must name a test defined at the base: tests/test_pbstatus_reader_failures.py::test_an_oversized_finish_time_falls_back_to_mtime."
+  ],
+  "raw_model_reply_truncated": true,
+  "projection_note": "Completed planner declarations only. Model-span drafts were truncated. Tests supply synthetic base source facts, not a reconstructed repository."
+}

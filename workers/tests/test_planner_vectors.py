@@ -47,14 +47,13 @@ def test_repair_limit_cases_cover_both_sides_in_bytes():
             for case in cases} == {(size, unicode) for size in (2047, 2048, 2049) for unicode in (False, True)}
     for case in cases:
         boundary = case['repair_boundary']
-        from tl3_workers.roles.planner import PlanConsistencyError
-        mismatch = PlanConsistencyError([], draft=case['reply'], selectors=unpacked(boundary['selectors']))
-        assert len(str(mismatch).encode()) == boundary['bytes']
-        assert len(str(mismatch)) == boundary['characters']
+        result = unpacked(case['outcome']['return'])
         if boundary['bytes'] <= 2048:
-            assert case['outcome']['error']['class'].endswith('.PlanConsistencyError')
+            assert len(result.encode()) == boundary['bytes']
+            assert len(result) == boundary['characters']
+            assert boundary['identity'] in result
         else:
-            assert 'Planner declarations exceed the existing correction message limit.' in case['outcome']['reply']['violations']
+            assert result is None
 
 
 def test_lower_observations_include_lifecycle_failures():
@@ -123,13 +122,14 @@ def test_pb2710_golden_records_coverage_repair_and_constraints(resolution):
     assert error['local']
     assert error['violations'] == ['Required goals have no check coverage: goal 3: ' + repair['inputs']['ingest']['goals'][3]['description']]
     assert error['repair_text'] == error['message']
+    assert 'goal.coverage' in error['repair_text']
     correction = next(case for case in cases if case['operation'] == 'constrain')
     assert correction['reply']['checks'][0]['goal_ids'] == [0, 1, 4, 3]
     violations = correction['outcome']['reply']['violations']
     if resolution == 'accepted':
         assert violations == []
     else:
-        assert 'Correction changes declarations outside the test consistency error.' in violations
+        assert any('Correction changes declarations outside the named objections:' in item for item in violations)
 
 
 def test_goal_id_oracle_contains_int_float_and_bool_inputs():

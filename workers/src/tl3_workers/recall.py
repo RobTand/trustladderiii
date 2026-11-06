@@ -1,4 +1,6 @@
 """Bounded, read-only access to the configured Hindsight bank."""
+
+from tl3_harness.model import named
 import asyncio
 import json
 from pathlib import Path
@@ -62,18 +64,23 @@ def make_recall_tool(worktree):
     return recall_memory
 
 
-def check_citations(inputs, reply):
+def check_citations(inputs, reply, *, objections=None):
     """A reply cites only supplied memories, and flags only memories it cites by their own words."""
-    supplied = {memory["id"] for memory in inputs.get("memories", [])}
-    cited = set(reply.get("memory_ids", []))
+    def emit(diagnostic):
+        if objections is None:
+            raise ValueError(diagnostic)
+        objections.append(diagnostic)
+    supplied = {memory['id'] for memory in inputs.get('memories', [])}
+    cited = set(reply.get('memory_ids', []))
     if not cited <= supplied:
-        raise ValueError("reply cites a memory it was not given")
-    if not {flag["id"] for flag in reply.get("memory_flags", [])} <= cited:
-        raise ValueError("reply flags a memory it did not cite")
-    contents = {memory["id"]: " ".join(memory["content"].split()) for memory in inputs.get("memories", [])}
-    for flag in reply.get("memory_flags", []):
-        if " ".join(flag["claim"].split()) not in contents[flag["id"]]:
-            raise ValueError("a flag's claim is not in the memory it flags")
+        emit(named('memory.unknown', 'reply cites a memory it was not given', {'ids': sorted(cited-supplied)}))
+    flagged = {flag['id'] for flag in reply.get('memory_flags', [])}
+    if not flagged <= cited:
+        emit(named('memory.flag_uncited', 'reply flags a memory it did not cite', {'ids': sorted(flagged-cited)}))
+    contents = {memory['id']: ' '.join(memory['content'].split()) for memory in inputs.get('memories', [])}
+    for index, flag in enumerate(reply.get('memory_flags', [])):
+        if flag['id'] in contents and ' '.join(flag['claim'].split()) not in contents[flag['id']]:
+            emit(named('memory.claim_absent', "a flag's claim is not in the memory it flags", {'flag': index, 'id': flag['id'], 'claim': flag['claim']}))
 
 
 def redacted_memories(memories):
