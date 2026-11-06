@@ -2,6 +2,8 @@ use crate::{Result, adapters, executor::Registry, ingress::Webhooks};
 use tl3_worktrees::{CommitId, Worktrees};
 
 mod flux_options;
+mod checks;
+pub use checks::{CheckSource, register_execution};
 pub use flux_options::{flux_options, provision_flux_options};
 
 pub struct Registration {
@@ -9,7 +11,7 @@ pub struct Registration {
     pub ownership: crate::Ownership,
     pub webhooks: Webhooks,
     pub workers: adapters::workers::WorkerOutputSource,
-    pub bell: adapters::prismabuild::Source,
+    pub bell: CheckSource,
     pub mergify: adapters::delivery_events::Translator,
     pub adoption: crate::adoption::Translator,
 }
@@ -83,9 +85,8 @@ fn register_owned(
     mut ownership: crate::Ownership,
 ) -> Result<Registration> {
     use crate::{Error, executor::Upstream, ingress::CatchUp};
-    use std::{collections::BTreeMap, fs, time::Duration};
+    use std::{collections::BTreeMap, fs};
     use tl3_github::{AppConfig, ClientOptions, GitHub, message::Policy};
-    use tl3_prismabuild::{Demand, Options, PrismaBuild, Tool};
     use tl3_store::Store;
 
     let bytes = fs::read(&config.github.app_credentials_file)?;
@@ -149,57 +150,7 @@ fn register_owned(
                 issue: operations.number,
             });
     let workers = supervisor.source();
-    let tools = &config.prismabuild.tools_dir;
-    let tool = Tool {
-        program: "python3".into(),
-        args: vec![tools.join("pbrun.py").into()],
-    };
-    let queue = tools
-        .parent()
-        .and_then(std::path::Path::parent)
-        .ok_or(Error::Invalid(
-            "PrismaBuild tools need an installed fleet root",
-        ))?
-        .join("pb-queue");
-    let client = PrismaBuild::new(Options {
-        queue_root: queue,
-        tool,
-        bell_url: "http://127.0.0.1:9470/".into(),
-    })
-    .map_err(|e| Error::Adapter(Box::new(e)))?;
-    let app_root = config
-        .workers
-        .python
-        .ancestors()
-        .nth(4)
-        .ok_or(Error::Invalid(
-            "workers.python needs the installed venv layout",
-        ))?;
-    let pb = adapters::prismabuild::Adapter::new(
-        client,
-        adapters::prismabuild::Settings {
-            records: records.join("prismabuild"),
-            harness: app_root.join("harness/src/tl3_harness"),
-            python: vec![config.workers.python.clone().into_os_string()],
-            image: config.prismabuild.container_image.clone(),
-            demand: Demand {
-                cpus: 1.try_into().expect("positive demand"),
-                mem_gb: 2,
-                gpu: false,
-            },
-            quiet: Duration::from_secs(u64::from(config.allowances.prismabuild.no_progress_secs)),
-            priority: 0,
-            result_tool: Tool {
-                program: "python3".into(),
-                args: vec![tools.join("pbwait.py").into()],
-            },
-        },
-        &mut ownership,
-    )?;
-    let pb = pb
-        .with_repositories(&config.github.repos)
-        .with_protected_paths(&config.planning.protected_paths);
-    let bell = pb.source();
+    let bell = register_execution(config, &records, &mut adapters, &mut ownership)?;
     let writer = adapters::workers::writer::ProcessWriter::new(config, &records.join("writer"))?
         .with_prompts();
     adapters.register(
@@ -216,7 +167,6 @@ fn register_owned(
     );
     adapters.register(Upstream::Worktrees, worktrees);
     adapters.register(Upstream::Workers, supervisor);
-    adapters.register(Upstream::PrismaBuild, pb);
     let direct_wakes = adapters::direct_merge::Wakes::default();
     adapters.register(
         Upstream::Delivery,

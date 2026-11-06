@@ -128,7 +128,7 @@ fn production_registers_every_real_adapter_and_source() {
     ]);
     assert_eq!(registered.adapters.registered_types(), expected);
     assert!(std::any::type_name_of_val(&registered.workers).ends_with("WorkerOutputSource"));
-    assert!(std::any::type_name_of_val(&registered.bell).contains("prismabuild::source::Source"));
+    assert!(matches!(registered.bell, production::CheckSource::PrismaBuild(_)));
     assert!(
         std::any::type_name_of_val(&registered.mergify).ends_with("delivery_events::Translator")
     );
@@ -283,4 +283,26 @@ fn selected_flux_refuses_unprovisioned_runtime_without_pb_fallback() {
         Err(error) => error,
     };
     assert!(error.to_string().contains("Flux runtime preparation"), "{error}");
+}
+
+/// FX: actual production composition selects Flux without dereferencing absent PB settings.
+#[test]
+fn selected_flux_constructs_real_adapter_and_source_without_pb_or_native_launch() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = config(root.path());
+    config.execution_backend = tl3_config::ExecutionBackend::Flux;
+    config.flux = Some(flux_options::flux(root.path()));
+    config.prismabuild.tools_dir = Default::default();
+    config.prismabuild.container_image.clear();
+    let mut database = support::Database::start();
+    let settings = database.create("flux_construction");
+    let mut ownership = tl3_controller::Ownership::claim(tl3_store::Store::open(&settings).unwrap()).unwrap();
+    let mut registry = tl3_controller::executor::Registry::default();
+    let source = production::register_execution(&config, &root.path().join("records"), &mut registry, &mut ownership)
+        .unwrap_or_else(|error| panic!("selected Flux production composition failed: {error}"));
+    assert!(matches!(source, production::CheckSource::Flux(_)));
+    assert_eq!(registry.registered_types().get(&Upstream::PrismaBuild), Some(&"tl3_controller::adapters::flux_checks::Adapter"));
+    assert!(!root.path().join("records/prismabuild").exists());
+    drop((source, registry, ownership));
+    database.stop();
 }
