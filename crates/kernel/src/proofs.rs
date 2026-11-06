@@ -628,51 +628,6 @@ fn check_dependency_delivery() {
     kani::cover!(world.nodes[0].planning_started, "delivery admits planning");
 }
 
-fn check_dependency_abandoned() {
-    let mut world = waiting_dependency_world();
-    let target = world.dependencies[0].target;
-    let mut out = Outbox::new();
-    apply(
-        &mut world,
-        fact(Fact::Dependency {
-            target,
-            status: DependencyStatus::Abandoned,
-        }),
-        &mut out,
-    );
-    assert!(matches!(
-        out.get(0),
-        Some(Out::Notice {
-            notice: Notice::Note(NoteKind::DependencyAbandoned { .. }),
-            ..
-        })
-    ));
-    out = Outbox::new();
-    let status: DependencyStatus = kani::any();
-    apply(
-        &mut world,
-        fact(Fact::Dependency { target, status }),
-        &mut out,
-    );
-    assert!(out.is_empty());
-    let delivered = status == DependencyStatus::Delivered;
-    assert_eq!(advance(&mut world, 0, &mut out), delivered);
-    assert_eq!(
-        world.nodes[0].phase,
-        if delivered {
-            Phase::Planning { must_split: false }
-        } else {
-            Phase::Unplanned
-        }
-    );
-    assert_eq!(world.dependencies[0].status, status);
-    require_consistent(&world);
-    kani::cover!(
-        world.nodes[0].waiting_prerequisite.is_some(),
-        "undelivered abandonment keeps the root blocked"
-    );
-}
-
 fn check_dependency_waiting() {
     let mut world = waiting_dependency_world();
     let mut out = Outbox::new();
@@ -739,77 +694,6 @@ fn check_dependency_cycles() {
     kani::cover!(
         !world.dependencies.last().unwrap().rejected,
         "an acyclic declaration is accepted"
-    );
-}
-
-fn check_dependency_fact() {
-    // Dependency facts do no head or counter arithmetic, so this domain needs
-    // no small-counter assumptions. The root may be in any valid phase.
-    let mut world = World::new(&[3], 1);
-    world.nodes = kani::vec::exact_vec::<Node, 1>();
-    kani::assume(world.consistent());
-    let target = DependencyTarget {
-        kind: PrerequisiteKind::Issue,
-        number: 2761,
-        request: None,
-    };
-    let previous_status: DependencyStatus = kani::any();
-    world.dependencies.push(Dependency {
-        node: NodeId(0),
-        target,
-        status: previous_status,
-        rejected: false,
-    });
-    kani::assume(world.consistent());
-    let phase = world.nodes[0].phase;
-    let status: DependencyStatus = kani::any();
-    let mut out = Outbox::new();
-    apply(
-        &mut world,
-        fact(Fact::Dependency { target, status }),
-        &mut out,
-    );
-    let owner = &world.nodes[0];
-    let can_wait = !owner.planning_started
-        && matches!(
-            phase,
-            Phase::Ingesting
-                | Phase::Auditing
-                | Phase::Unplanned
-                | Phase::AwaitingRob
-                | Phase::Stopping(_)
-                | Phase::Closed(_)
-        )
-        && !matches!(owner.question, Some(q) if !matches!(q.cont,
-            Cont::Ingesting | Cont::Auditing | Cont::Unplanned | Cont::Stop(_) | Cont::Nowhere))
-        && (phase != Phase::Unplanned
-            || (!owner.holds && !owner.pool && owner.ticket.is_none() && owner.run.is_none()));
-    let expected = if previous_status == DependencyStatus::Pending
-        || status == DependencyStatus::Delivered
-        || (can_wait && status == DependencyStatus::Pending)
-    {
-        status
-    } else {
-        previous_status
-    };
-    assert_eq!(world.dependencies[0].status, expected);
-    assert_eq!(world.nodes[0].phase, phase);
-    require_consistent(&world);
-    kani::cover!(
-        phase.is_closed() && status == DependencyStatus::Delivered,
-        "late facts update closed roots"
-    );
-    kani::cover!(
-        phase == Phase::Ingesting && status == DependencyStatus::Abandoned,
-        "facts update ingesting roots"
-    );
-    kani::cover!(
-        phase == Phase::Making,
-        "facts are accepted during maker work"
-    );
-    kani::cover!(
-        phase == Phase::Queued,
-        "facts are accepted in the merge queue"
     );
 }
 
@@ -944,7 +828,6 @@ macro_rules! proof {
     };
 }
 
-proof!(apply_dependency, 3, check_dependency_fact());
 proof!(
     apply_dependency_registration,
     3,
@@ -961,11 +844,6 @@ proof!(
     dependency_delivered_releases,
     2,
     check_dependency_delivery()
-);
-proof!(
-    dependency_abandoned_never_releases,
-    2,
-    check_dependency_abandoned()
 );
 
 // Applying each event variant.

@@ -444,6 +444,8 @@ impl World {
     pub(super) fn check_dependencies(&self) -> (result: Result<(), Broken>) [
         requires self.nodes@.len() <= u64::MAX as int,
         ensures result.is_ok() ==> dependencies_checked(*self),
+            dependency_retirement::edge_domain(*self)
+                ==> result.is_ok() == dependency_retirement::edge_rules(*self),
             progress_unplanned_witness::fixture_edges(*self) ==> result.is_ok(),
             (self.dependencies@.len() == 0
                 && forall|j: int| 0 <= j < self.nodes@.len() ==> !self.nodes@[j].credit.withheld)
@@ -470,12 +472,14 @@ impl World {
                         progress_unplanned_witness::fixture_edges(*self)
                             ==> node_index == 0 && self.dependencies@.len() > 0,
                         !found && progress_unplanned_witness::fixture_edges(*self) ==> edge == 0,
+                        !found && dependency_retirement::edge_domain(*self) ==> edge == 0,
                         !found ==> forall|j: int| 0 <= j < edge
                             ==> self.dependencies@[j].node != NodeId(node_index as u64),
                     ensures found || edge == self.dependencies.len(),
                         progress_unplanned_witness::fixture_edges(*self)
                             ==> node_index == 0 && self.dependencies@.len() > 0,
                         !found && progress_unplanned_witness::fixture_edges(*self) ==> edge == 0,
+                        !found && dependency_retirement::edge_domain(*self) ==> edge == 0,
                     decreases self.dependencies.len() - edge,
                 ] {
                     if self.dependencies[edge].node == NodeId(node_index as u64) {
@@ -498,6 +502,7 @@ impl World {
         kernel_while! { (index < self.dependencies.len()) [
             invariant index <= self.dependencies.len(), self.nodes@.len() <= u64::MAX as int,
                 forall|j: int| 0 <= j < index ==> dependency_checked(*self, self.dependencies@[j]),
+                dependency_retirement::edge_domain(*self) && index > 0 ==> dependency_retirement::edge_rules(*self),
                 forall|a: int, b: int| 0 <= a < b < index
                     ==> !same_declaration(self.dependencies@[a], self.dependencies@[b]),
             decreases self.dependencies.len() - index,
@@ -739,6 +744,9 @@ impl World {
         requires i < old(self).nodes@.len(), i <= u64::MAX as int,
             edges_indexable(*old(self)), old(out).len < OUTBOX,
         ensures dependency_frame(*old(self), *final(self), i as int),
+            dependency_retirement::edge_domain(*old(self)) && i == 0
+                && target == old(self).dependencies@[0].target ==>
+                    dependency_retirement::fact_result(*old(self), *final(self), status, *old(out), *final(out)),
             final(out).len <= old(out).len + 1,
             (status == DependencyStatus::Delivered && delivery_input(*old(self), i as int, target)
                 ==> delivery_changed(*old(self), *final(self), i as int, target)
@@ -746,8 +754,14 @@ impl World {
                     && edges_indexable(*final(self))),
     ] {
         kernel_snapshot! { before_delivery = *self }
+        kernel_snapshot! { before_out = *out }
         let Some((existing, dependency)) = self.prepare_dependency(i, target, status) else {
-            kernel_proof! { reveal(dependency_frame); }
+            kernel_proof! {
+                reveal(dependency_frame);
+                if dependency_retirement::edge_domain(*self) && i == 0 && target == self.dependencies@[0].target {
+                    assert(dependency_retirement::fact_result(before_delivery@, *self, status, before_out@, *out));
+                }
+            }
             return;
         };
         self.record_dependency(i, existing, dependency, out);
@@ -769,7 +783,9 @@ impl World {
     fn prepare_dependency(&self, i: usize, target: DependencyTarget,
         status: DependencyStatus) -> (result: Option<(Option<usize>, Dependency)>) [
         requires i < self.nodes@.len(), i <= u64::MAX as int, edges_indexable(*self),
-        ensures match result {
+        ensures dependency_retirement::edge_domain(*self) && i == 0 && target == self.dependencies@[0].target
+                ==> dependency_retirement::prepared(*self, status, result),
+            match result {
             Some((Some(index), _)) => index < self.dependencies@.len(),
             _ => true,
         },
@@ -857,7 +873,22 @@ impl World {
                 None => old(self).dependencies@.push(dependency),
             },
             final(out).len <= old(out).len + 1,
-    ] proof [reveal(dependency_frame);] {
+            !dependency.rejected && dependency.status != DependencyStatus::Abandoned ==> *final(out) == *old(out),
+            !dependency.rejected && dependency.status == DependencyStatus::Abandoned ==>
+                final(out).len == old(out).len + 1 && final(out).items@[old(out).len as int]
+                    == Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Note(
+                        NoteKind::DependencyAbandoned { number: dependency.target.number }) }),
+            dependency_retirement::edge_domain(*old(self)) && i == 0 && existing == Some(0usize)
+                && dependency.node == NodeId(0) && dependency.target == old(self).dependencies@[0].target
+                && !dependency.rejected ==> final(self).nodes@[0] == (Node {
+                    waiting_prerequisite: if dependency.status == DependencyStatus::Delivered { None } else { Some(2761u64) },
+                    credit: Credit { withheld: old(self).nodes@[0].credit.withheld
+                        || (dependency.status != DependencyStatus::Delivered && !old(self).nodes@[0].planning_started
+                            && matches!(old(self).nodes@[0].phase, Phase::Ingesting | Phase::Auditing | Phase::Unplanned)
+                            && old(self).nodes@[0].credit.ready), ..old(self).nodes@[0].credit },
+                    ..old(self).nodes@[0]
+                }),
+    ] proof [reveal(dependency_frame); reveal(prerequisites_delivered); reveal(delivered);] {
         let node = NodeId(i as u64);
         match existing {
             Some(index) => self.dependencies[index] = dependency,
