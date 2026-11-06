@@ -67,7 +67,8 @@ def boundary_failure(error, request):
             and redactor.text(request_id) == request_id):
         request_id = None
     # Classes are library identifiers. Unrecognized classes become a fixed label.
-    name = type(error).__name__
+    from tl3_workers.reply_check import failure_class
+    name = failure_class(error)
     if (not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,63}', name)
             or redactor.text(name) != name):
         name = 'WorkerError'

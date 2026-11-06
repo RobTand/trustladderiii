@@ -1,0 +1,13 @@
+            Observation::Plan {
+                node,
+                generation,
+                paths,
+                fits,
+            } => Event::Reply {
+                node,
+                generation,
+                reply: Reply::PlanLeaf {
+                    footprint: self.footprint(snapshot, world, node, &paths)?,
+                    fits,
+                },
+            },

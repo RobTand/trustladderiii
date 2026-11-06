@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "QuotaEvent",
+  "type": "object",
+  "properties": {
+    "event": {
+      "type": "string"
+    },
+    "facts": {
+      "$ref": "#/$defs/Facts"
+    },
+    "model": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "role": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "event",
+    "role",
+    "facts"
+  ],
+  "$defs": {
+    "Facts": {
+      "type": "object",
+      "properties": {
+        "links": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Link"
+          }
+        },
+        "now": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "now",
+        "role",
+        "links"
+      ]
+    },
+    "Link": {
+      "type": "object",
+      "properties": {
+        "api_code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "api_status": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64"
+        },
+        "grade_judge": {
+          "type": "boolean"
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "judge": {
+          "type": "boolean"
+        },
+        "judge_code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "judge_status": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64"
+        },
+        "response_status": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "headers",
+        "judge",
+        "grade_judge"
+      ]
+    }
+  }
+}

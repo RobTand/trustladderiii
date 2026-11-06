@@ -7,8 +7,8 @@ import json
 
 import pytest
 from tl3_harness.selector_identity import selection_matches
-from tl3_harness.test_tool import SUMMARY_BYTES, bounded
-from tl3_workers.pb_tests import TestSettings, make_test_tool
+from tl3_harness.test_tool import SUMMARY_BYTES
+from tl3_workers.pb_tests import TestSettings, bounded, make_test_tool
 from tl3_workers.tools import Worktree
 
 from worker_process import IMAGE, git
