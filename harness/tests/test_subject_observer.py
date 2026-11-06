@@ -149,6 +149,23 @@ def test_subject_source_read_invalidates_either_proof_side(repository, read_side
     assert 'subject_source_read' in result.tests[0].message
 
 
+def test_proof_guard_does_not_apply_to_companion_regression(repository):
+    source = 'def value():\n    return 1\n'
+    regression = '''def test_source_asset():
+    import app
+    from pathlib import Path
+    assert 'def value' in Path(app.__file__).read_text()
+'''
+    observer = 'def test_observer():\n    import app\n    assert app.value() == 2, "bug"\n'
+    results, _, _ = round_result(repository,
+        {'app.py': source, 'tests/test_regression.py': regression},
+        {'app.py': source.replace('return 1', 'return 2'), 'tests/test_observer.py': observer},
+        Check('behaviour', Kind.DEMONSTRATING, ('tests/test_observer.py::test_observer',),
+              proof=model.Proof(('app.py',), (), 'bug')),
+        controls=(Check('asset', Kind.REGRESSION, ('tests/test_regression.py::test_source_asset',)),))
+    assert all(result.verdict == Verdict.PASS for result in results), results
+
+
 def test_honest_subject_import_data_read_and_traceback_stay_accepted(repository):
     source = '''from pathlib import Path
 def value():
