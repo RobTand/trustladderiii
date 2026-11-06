@@ -198,6 +198,16 @@ def verus_proofs():
             "clone_command_read": ("refused_sticky", "enqueue#CommandRead::clone", 1),
             "clone_queue_event": ("refused_sticky", "enqueue#QueueEvent::clone", 1),
             "clone_effect": ("refused_sticky", "enqueue#Effect::clone", 1),
+            # ctrl-core A4: independent ack, stale-head and dequeue contract families.
+            "ack_sound": ("ack_sound", "enqueue#decide", 1, {"extra_specs": ["proofs/enqueue_ack_sound_helpers.rs"]}),
+            "ack_sound_issue": ("ack_sound", "enqueue#reconcile_issue", 1, {"extra_specs": ["proofs/enqueue_ack_sound_helpers.rs"]}),
+            "ack_sound_completion": ("ack_sound", "enqueue#command_completion", 1, {"extra_specs": ["proofs/enqueue_ack_sound_helpers.rs"]}),
+            "ack_sound_witness": ("ack_sound", "witness", 4, {"extra_specs": ["proofs/enqueue_ack_sound_helpers.rs"]}),
+            "stale_head": ("stale_head", "enqueue#decide", 1),
+            "stale_head_witness": ("stale_head", "witness", 2),
+            "dequeue_fresh": ("dequeue_fresh", "enqueue#dequeue_pending", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
+            "dequeue_fresh_label_event": ("dequeue_fresh", "enqueue#LabelEvent::clone", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
+            "dequeue_fresh_witness": ("dequeue_fresh", "witness", 4, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
         }
         for name, entry in enqueue_groups.items():
             root, module, count = entry[:3]

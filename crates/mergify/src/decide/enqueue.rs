@@ -1,5 +1,7 @@
 //! Per-delivery enqueue decisions. The adapter owns file formats and I/O.
 use super::{Head, QueueState, Status, Time};
+#[cfg(verus_keep_ghost)]
+use vstd::prelude::SpecOrd;
 
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub const GRACE_MS: u64 = 300_000;
@@ -705,6 +707,8 @@ pub fn decide(mut state: EnqueueState, event: QueueEvent) -> (EnqueueState, Effe
     (state, out)
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub struct LabelEvent {
@@ -713,6 +717,18 @@ pub struct LabelEvent {
     pub at: Time,
 }
 
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures result ==
+    (retry && !rule_concluded && (!dequeued_label || !(match dequeued {
+        None => false,
+        Some(event) => event.labeled && match queued {
+            Some(queued) => event.id > queued,
+            None => match finished {
+                Some(finished) => event.at.secs > finished.secs
+                    || event.at.secs == finished.secs && event.at.nanos >= finished.nanos,
+                None => false,
+            },
+        },
+    }))),))]
 pub fn dequeue_pending(
     retry: bool,
     rule_concluded: bool,
@@ -727,13 +743,23 @@ pub fn dequeue_pending(
     if !dequeued_label {
         return true;
     }
-    !dequeued.is_some_and(|event| {
-        event.labeled
-            && queued.map_or_else(
-                || finished.is_some_and(|finished| event.at >= finished),
-                |queued| event.id > queued,
-            )
-    })
+    !match dequeued {
+        None => false,
+        Some(event) => {
+            event.labeled
+                && match queued {
+                    Some(queued) => event.id > queued,
+                    None => match finished {
+                        Some(finished) => {
+                            event.at.secs > finished.secs
+                                || event.at.secs == finished.secs
+                                    && event.at.nanos >= finished.nanos
+                        }
+                        None => false,
+                    },
+                }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
