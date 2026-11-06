@@ -82,7 +82,8 @@ pub(super) open spec fn retry_side(w: World, after: World, kind: u8, step: Revie
         && (w.fail_fast && (kind != 3 || w.nodes@[0].round != 0) ==> out.len == initial.len)
 }
 
-/// #806 probe: a pair equals a tuple whose projections it repeats.
+/// #806: a pair equals the tuple whose projections it repeats, so one-world
+/// lemmas need not open retry rows only to rebuild their results.
 pub(super) proof fn eta(t: (Node, u64), a: Node, b: u64)
     requires a == t.0, b == t.1,
     ensures (a, b) == t,
@@ -116,7 +117,8 @@ pub(super) proof fn maker_room_side(w: World, after: World, generation: u64, rep
     admitted(w, after, generation, reply, initial, out);
     reveal(port_review_reply::reply_post); reveal(port_review_reply::accepted_reply);
     reveal(port_replies_maker::transition_post); reveal(port_replies_maker::work_result);
-    reveal(port_review_retry::room);
+    eta(port_review_retry::room(port_review_reply::ended(w.nodes@[0]), w.fail_fast, w.next_question, ReviewStop::MakerOutOfRoom),
+        after.nodes@[0], after.next_question);
 }
 
 /// Review fix-round row / Q54: ChangesRequested in one world.
@@ -130,7 +132,8 @@ pub(super) proof fn changes_side(w: World, after: World, generation: u64, reply:
 {
     admitted(w, after, generation, reply, initial, out);
     reveal(port_review_reply::reply_post); reveal(port_review_reply::transition);
-    reveal(port_review_retry::round); reveal(port_review_retry::rung);
+    eta(port_review_retry::round(port_review_reply::ended(w.nodes@[0]), w.fail_fast, w.next_question, ReviewStop::ChangesRequested),
+        after.nodes@[0], after.next_question);
 }
 
 /// Repeated reviewer exhaustion row / Q54: ReviewerOutOfRoom after a restart.
@@ -144,7 +147,9 @@ pub(super) proof fn reviewer_side(w: World, after: World, generation: u64, reply
     ensures retry_side(w, after, 1, ReviewStop::ReviewerOutOfRoom, initial, out),
 {
     admitted(w, after, generation, reply, initial, out);
-    reveal(port_review_reply::reply_post); reveal(port_review_reply::transition); reveal(port_review_retry::room);
+    reveal(port_review_reply::reply_post); reveal(port_review_reply::transition);
+    eta(port_review_retry::room(port_review_reply::ended(w.nodes@[0]), w.fail_fast, w.next_question, ReviewStop::ReviewerOutOfRoom),
+        after.nodes@[0], after.next_question);
 }
 
 /// Failed checks row / Q54: ChecksDone without a pass in footprint, in one world.
@@ -159,7 +164,8 @@ pub(super) proof fn checks_side(w: World, after: World, generation: u64, reply: 
 {
     admitted(w, after, generation, reply, initial, out);
     reveal(port_review_reply::reply_post); reveal(port_review_reply::transition);
-    reveal(port_review_retry::round); reveal(port_review_retry::rung);
+    eta(port_review_retry::round(port_review_reply::ended(w.nodes@[0]), w.fail_fast, w.next_question, ReviewStop::ChecksFailed),
+        after.nodes@[0], after.next_question);
 }
 
 /// Q54 free review rows: the first reviewer restart and passing checks never read fail_fast.

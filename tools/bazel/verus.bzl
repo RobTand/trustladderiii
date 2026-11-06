@@ -1194,6 +1194,8 @@ def verus_proofs():
             "port_failfast_replies_ordinary_maker": ("kernel::port_failfast_replies#ordinary_maker", 1),
             "port_failfast_replies_ordinary_review": ("kernel::port_failfast_replies#ordinary_review", 1),
             "port_failfast_files_joined": ("kernel::port_failfast_files#joined", 1),
+            "port_failfast_files_joined_funded": ("kernel::port_failfast_files#joined_funded", 1),
+            "port_failfast_files_joined_unfunded": ("kernel::port_failfast_files#joined_unfunded", 1),
             "port_failfast_files_exhausted": ("kernel::port_failfast_files#exhausted", 1),
             "port_failfast_replies_eta": ("kernel::port_failfast_replies#eta", 1),
             "port_failfast_replies_cant_meet_side": ("kernel::port_failfast_replies#cant_meet_side", 1),
