@@ -5,7 +5,11 @@ import re
 from tl3_harness.model import named
 from tl3_harness.model import NATIVE_THREAD_ENVIRONMENT, RESERVED_ENVIRONMENT, RESERVED_PREFIXES, MAX_DELAY_SECONDS, MAX_TOTAL_DELAY_SECONDS
 from tl3_workers.contracts import schema
-from tl3_workers.rules import Allowed, Edit, Name, Rule, evaluate, register, render_all
+from tl3_workers.rules import Allowed, CantMeet, Edit, Name, Rule, evaluate, register, render_all
+
+
+PROOF_RULE_IDS = frozenset(('proof.goal_ids', 'proof.observer_kind', 'proof.red_missing',
+                           'proof.subject_identify', 'proof.new_observer'))
 
 
 EVIDENCE_FIELD = Name('field', '/evidence_contract')
@@ -199,34 +203,62 @@ def proof_applicability(goals, checks, defined=None, *, campaign=False, missing_
         if (not isinstance(cited, list) or not cited
                 or any(type(index) is not int or not 0 <= index < len(goals) for index in cited)
                 or len(set(cited)) != len(cited)):
-            errors.append(named('proof.goal_ids', 'Proof applicability requires nonempty goal_ids naming the source goals.', dict(check=check_index, goal_ids=cited)))
+            errors.append(named('proof.goal_ids', 'proof.goal_ids', dict(check=check_index, goal_ids=cited)))
             continue
         for index in cited:
             obligation = goals[index].get('proof_obligation')
             if obligation is None:
                 continue
-            prefix = f'Goal {index} source assertion proof ({obligation["source"]})'
             proof = check.get('proof', {})
             if (check['kind'] not in ('demonstrating', 'reproducing') or 'declared_symptom' in check
                     or campaign and obligation['observer'] == 'new'):
-                errors.append(named('proof.observer_kind', prefix + ' requires an assertion observer; an old-node symptom campaign cannot discharge it.', dict(check=check_index, goal=index, description=goals[index]["description"], obligation=obligation)))
+                errors.append(named('proof.observer_kind', 'proof.observer_kind', dict(check=check_index, goal=index, description=goals[index]["description"], obligation=obligation)))
             elif campaign:
                 # Rehearsal establishes old-test assertion RED. The completed plan
                 # must still bind subjects and the reason before maker handoff.
                 continue
             elif not proof.get('red_message', '').strip():
-                errors.append(named('proof.red_missing', f'check-{check_index + 1} ' + prefix + ' requires proof.red_message binding the deterministic assertion.', dict(check=check_index, goal=index, description=goals[index]["description"], obligation=obligation, field="proof.red_message")))
+                errors.append(named('proof.red_missing', 'proof.red_missing', dict(check=check_index, goal=index, description=goals[index]["description"], obligation=obligation, field="proof.red_message")))
             else:
                 missing = {subject for subject in obligation['subjects']
                            if not any(subject_covers(chosen, subject) for chosen in proof.get('subjects', []))}
                 if missing:
                     if missing_subjects is None:
-                        errors.append(named('proof.subject_identify', prefix + ' must identify its subjects in proof.subjects: ' + ', '.join(obligation['subjects']), dict(check=check_index, goal=index, description=goals[index]["description"], subjects=obligation["subjects"])))
+                        errors.append(named('proof.subject_identify', 'proof.subject_identify', dict(check=check_index, goal=index, description=goals[index]["description"], subjects=obligation["subjects"])))
                     else:
                         missing_subjects.setdefault(check_index, set()).update(missing)
                 if obligation['observer'] == 'new' and any(defined(node) for node in check['node_ids']):
-                    errors.append(named('proof.new_observer', prefix + ' requires a new deterministic observer; an existing base test is insufficient.', dict(check=check_index, goal=index, description=goals[index]["description"], nodes=check["node_ids"])))
+                    errors.append(named('proof.new_observer', 'proof.new_observer', dict(check=check_index, goal=index, description=goals[index]["description"], nodes=check["node_ids"])))
     return errors
+
+
+def _campaign_names(facts):
+    return (Name('field', '/goal_ids' if facts['rule_id'] == 'proof.goal_ids' else '/tests'),)
+
+
+def _campaign_allowed(facts):
+    if facts['rule_id'] != 'proof.goal_ids':
+        return Allowed('enum', [])
+    ids = [index for index, goal in enumerate(facts['goals'])
+           if goal.get('proof_obligation', {}).get('observer') != 'new']
+    return Allowed('schema', {'type': 'array', 'minItems': 1, 'uniqueItems': True,
+                              'items': {'enum': ids}}) if ids else Allowed('enum', [])
+
+
+def _campaign_row(rule_id):
+    def check(facts):
+        return ({**item.items, 'rule_id': item.rule, 'goals': facts['goals']}
+                for item in facts['diagnostics'] if item.rule == rule_id)
+
+    return register(Rule(
+        rule_id, check, _campaign_names, _campaign_allowed,
+        CantMeet('This old-test campaign cannot supply the cited source assertion proof; '
+                 'an assertion observer and valid goal_ids are required.'),
+        example={'reply': {}, 'goals': [], 'diagnostics': [named(rule_id, rule_id, {})]},
+        witness={'kind': 'cant_meet'}), roles=('planner',))
+
+
+CAMPAIGN_ROWS = tuple(_campaign_row(rule_id) for rule_id in ('proof.goal_ids', 'proof.observer_kind'))
 
 
 def branch_satisfies(required, branch, context, *, prefix=False):

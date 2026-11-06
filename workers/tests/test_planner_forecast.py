@@ -2,7 +2,9 @@
 # ruff: noqa: F811
 
 import copy
+import json
 import os
+from pathlib import Path
 
 import pytest
 import tiktoken
@@ -40,14 +42,18 @@ def test_tokenizer_must_be_preloaded_without_network(tmp_path, planner_request, 
     )
 
 
-@pytest.mark.parametrize("content,message", [
-    (b"hello\x00world", "greeting.py: binary (11 bytes)"),
-    (b"\xff\xfe", "greeting.py: not UTF-8 text (2 bytes)"),
+@pytest.mark.parametrize("content,rule", [
+    (b"hello\x00world", 'path.binary'),
+    (b"\xff\xfe", 'path.encoding'),
 ], ids=["binary", "non_utf8"])
-def test_invalid_file_has_clear_error(tmp_path, planner_request, content, message):
+def test_invalid_file_has_clear_error(tmp_path, planner_request, content, rule):
     # #321: a deterministic file problem is a named violation, not a crash a retry repeats.
     (tmp_path / "worktree/greeting.py").write_bytes(content)
-    assert_rule_report(run_reply(tmp_path, planner_request, LEAF), message)
+    result = run_reply(tmp_path, planner_request, LEAF)
+    assert_rule_report(result, rule + ':')
+    assert 'greeting.py' in '\n'.join(result.events[-1]['reply']['violations'])
+    assert any('bytes=' + str(len(content)) in item['items']
+               for item in result.events[-1]['plan_check']['objections'] if item['rule'] == rule)
 
 
 @pytest.mark.parametrize("extra", [0, 1])
@@ -138,7 +144,7 @@ def test_forecaster_refuses_unsafe_files(tmp_path, planner_request, link_kind):
         target.mkdir()
     result = run_reply(tmp_path, planner_request, {**LEAF, "files": [path]})
     # #321: a named violation, not a crash. The outside file is never read.
-    assert_rule_report(result, f"{path}: not a regular file inside the worktree")
+    assert_rule_report(result, 'path.not_regular:')
     assert result.events[-1]["reply"]["forecast"]["file_tokens"][path] == 0
 
 
@@ -193,3 +199,44 @@ def test_one_verified_tokenizer_per_check(monkeypatch, planner_request, proposal
     monkeypatch.setenv("TIKTOKEN_CACHE_DIR", "")
     with pytest.raises(ValueError, match="must be preloaded"):
         check_reply(planner_request["inputs"], copy.deepcopy(proposal))
+
+
+@pytest.mark.parametrize('case', json.loads(
+    Path(__file__).with_name('fixtures').joinpath('footprint-paths.json').read_text()))
+def test_forecast_rows_agree_with_every_f1_footprint_path(tmp_path, case):
+    from tl3_workers.forecast import measure_files
+    from tl3_workers.roles import planner
+    from tl3_workers.rules import CantMeet, Edit, permits
+    from tl3_workers.tools import Worktree
+    from tl3_harness.model import named
+
+    path, canonical = case['path'], case['canonical']
+    with Worktree(tmp_path) as worktree:
+        _, problems, _ = measure_files(worktree, [path])
+    if path == canonical:
+        assert not problems
+        return
+    error, = problems
+    assert error.rule == 'path.noncanonical'
+    before = {'kind': 'leaf', 'files': [path]}
+    facts = {'reply': before, 'draft': before, 'completed': before,
+             'inputs': {'ingest': {'goals': []}},
+             'diagnostics': [named(error.rule, error.rule, error.facts)]}
+    item, = planner.violations(facts)
+    rendered = item.render(role='planner')
+    assert item.rule.names(item.facts)[0].render() in rendered
+    assert item.allowed.render() in rendered
+    if canonical is None:
+        assert isinstance(item.repair, CantMeet)
+        assert item.allowed.value == []
+        after = {'kind': 'cant_meet', 'report': 'No confined path is available.'}
+        assert not permits(item, before, {'kind': 'leaf', 'files': ['invented.py']}, role='planner')
+    else:
+        assert isinstance(item.repair, Edit)
+        assert item.repair.pointer.value == '/files'
+        assert item.allowed.accepts([canonical])
+        after = {**before, 'files': [canonical]}
+        assert not permits(item, before, {**after, 'unrelated': True}, role='planner')
+        with Worktree(tmp_path) as worktree:
+            assert not measure_files(worktree, [canonical])[1]
+    assert permits(item, before, after, role='planner')

@@ -263,7 +263,9 @@ def test_ingest_diagnostic_keeps_both_safe_messages(request_doc, tmp_path, monke
                                          "repaired reply: reply cites a memory it was not given")
 
 
-SCOPE_REPAIR = "Remove the generated-output prohibition: the source restricts hand edits only"
+from tl3_workers.generated_scope import GeneratedOutputProhibition
+
+SCOPE_REPAIR = GeneratedOutputProhibition.message
 
 
 def generated_scope_request(doc):
@@ -292,16 +294,20 @@ def test_generated_freeze_repaired_before_audit_once(request_doc, monkeypatch, f
     generated_scope_request(request_doc)
     corrected = copy.deepcopy(test_workers.BRIEF)
     corrected["evidence_contract"] = []
-    corrected["brief"] = test_workers.REJECTED_FREEZES[0]
+    if field == 'brief':
+        corrected['brief'] = test_workers.REJECTED_FREEZES[0]
+    else:
+        corrected['brief'] = frozen_brief(field)['brief']
+        corrected['goals'][0]['description'] = test_workers.REJECTED_FREEZES[0]
     model = install(monkeypatch, [reply(frozen_brief(field)), reply(corrected)])
     events = []
     runtime.run(request_doc, events.append)
     accepted = events[-1]["reply"]
     assert len(model.calls) == 2
     repair, offered = model.calls[-1]
-    assert repair[-1].text == (
-        f"Your reply failed validation: {SCOPE_REPAIR}\nTools are unavailable for this turn. Return one "
-        "corrected JSON object matching your reply schema and nothing else.")
+    assert 'ingest.generated_scope' in repair[-1].text
+    assert ('/brief' if field == 'brief' else '/goals/0/description') in repair[-1].text
+    assert 'no generated-output prohibition' in repair[-1].text
     assert not offered
     assert accepted == {**corrected, "evidence_errors": []}
     assert [event for event in events if event["event"] == "reply"] == [
@@ -320,11 +326,14 @@ def test_generated_freeze_second_invalid_reply_is_bounded_and_safe(request_doc, 
         runtime.run(request_doc, events.append)
     assert len(model.calls) == 2
     assert not model.calls[-1][1]
-    assert all(type(error) is not ValueError and str(error) == SCOPE_REPAIR for error in raised.value.errors)
+    from tl3_workers.turns import RepairScopeError
+    assert isinstance(raised.value.errors[0], GeneratedOutputProhibition)
+    assert isinstance(raised.value.errors[1], RepairScopeError)
     assert not any(event["event"] == "reply" for event in events)
     reason = json.loads(Path(request_doc["memory"]["summary_file"]).read_text())["reason"]
-    assert reason == {"failure_class": "InvalidReply", "failure_message": (
-        f"invalid reply: {SCOPE_REPAIR}; repaired reply: {SCOPE_REPAIR}")}
+    assert reason['failure_class'] == 'InvalidReply'
+    assert SCOPE_REPAIR in reason['failure_message']
+    assert 'repaired reply changed fields outside the permitted edits' in reason['failure_message']
     assert "private-request-canary" not in json.dumps(reason)
 
 
@@ -911,3 +920,23 @@ def test_schema_violation_constructors_keep_the_consuming_role(original):
     assert '/item' in render_all(violations, role='postmortem')
     assert permits(violations, original, {'item': 'good'}, role='postmortem')
     assert not permits(violations, original, {'item': 'good', 'unrelated': True}, role='postmortem')
+
+
+def test_generated_scope_groups_every_conflict_at_the_same_pointer(request_doc):
+    from tl3_workers.generated_scope import check_ingest_generation_scope
+    from tl3_workers.rules import permits
+
+    generated_scope_request(request_doc)
+    before = frozen_brief('brief')
+    before['brief'] += '\nNever regenerate generated files.'
+    before['goals'][0]['description'] = 'Keep generated outputs unchanged.'
+    with pytest.raises(GeneratedOutputProhibition) as raised:
+        check_ingest_generation_scope(request_doc['inputs'], before)
+    violations = raised.value.rule_violations
+    assert [item.repair.pointer.value for item in violations] == ['/brief', '/goals/0/description']
+    after = copy.deepcopy(test_workers.BRIEF)
+    after['evidence_contract'] = []
+    assert permits(violations, before, after, role='ingest')
+    check_ingest_generation_scope(request_doc['inputs'], after)
+    assert not permits(violations, before, {**after, 'memory_ids': ['unrelated']}, role='ingest')
+    assert not permits(violations, before, {**after, 'brief': 'Never regenerate generated files.'}, role='ingest')

@@ -209,7 +209,7 @@ def test_planner_names_an_unusable_file_as_a_violation(tmp_path, planner_request
     result = run_reply(tmp_path, planner_request, LEAF)
     assert result.exit_code == 0, result.stderr
     violations = result.events[-1]["reply"]["violations"]
-    assert any(f"greeting.py: {reason}" in violation and f"({len(content)} bytes)" in violation
+    assert any('greeting.py' in violation and reason in violation and f'"bytes": {len(content)}' in violation
                for violation in violations), violations
 
 
@@ -219,7 +219,7 @@ def test_planner_names_unusable_files_in_split_pieces(tmp_path, planner_request)
     proposal["pieces"][1]["files"] = ["blob.bin"]
     result = run_reply(tmp_path, planner_request, proposal)
     assert result.exit_code == 0, result.stderr
-    assert any("blob.bin: binary (3 bytes)" in violation
+    assert any('blob.bin' in violation and 'path.binary:' in violation and '"bytes": 3' in violation
                for violation in result.events[-1]["reply"]["violations"])
 
 

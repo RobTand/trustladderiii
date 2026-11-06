@@ -621,11 +621,20 @@ def test_representative_repaired_postmortem_reaches_valid_final_envelope_once(
         tmp_path, model, monkeypatch):
     from langchain_core.messages import AIMessage
     from tl3_workers.runtime import ProxyChatOpenAI
+    from tl3_workers.turns import TurnControl
 
     model.postmortem = dict(written(1), went_wrong=["The maker skipped a test."])
     source = FakeTraces([source_trace("maker", 1_000_000_000, {})])
     monkeypatch.setattr(postmortem, "SOURCE", lambda settings: source)
     repairs = []
+    refusals = []
+    original_repair = TurnControl.repair
+
+    def record_refusal(self, history, error):
+        refusals.extend(error.rule_violations)
+        return original_repair(self, history, error)
+
+    monkeypatch.setattr(TurnControl, 'repair', record_refusal)
 
     def repair(self, history):
         repairs.append(history)
@@ -636,6 +645,8 @@ def test_representative_repaired_postmortem_reaches_valid_final_envelope_once(
     result, _ = run(document)
     validate("postmortem-reply", result)
     assert len(repairs) == 1
+    assert refusals and all(item.role == 'postmortem' for item in refusals)
+    assert any(item.repair.pointer.value == '/went_wrong' for item in refusals)
     assert len(source.logged) == 2
     assert result["assessment_ids"] == ["a-1", "a-2"]
     assert run(document)[0] == result

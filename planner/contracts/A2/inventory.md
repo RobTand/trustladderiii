@@ -41,3 +41,26 @@ A0 permits directly. Harness validation remains at the original maker call point
 
 No tests deleted. Any changed assertion must retain the original rejection or
 accepted repair behavior in its existing target; no parity corpus is added.
+
+## Placement disposition from the lead
+
+Audit's generated_scope projection and evidence branch/capability/missing-contract
+projections remain code-owned audit disagree/objections at their original call
+points. They are outside audit-reply model repair. B1/C4 owns structured objections.
+No fake planner role, audit terminal form or alternate repair is introduced there.
+Their source-projection assertions stay in test_workers/test_turns/test_proof_obligations.
+The original EP route clause vocabulary is unchanged. The new #1455 clause gap is
+explicitly outside A2, per the lead's 2026-11-06 direction.
+
+A1 landed at origin/rust-fv 9aa2480605ca2e4ce8b5d647aff48b00fd0c7129.
+A2 merged that actual ref without rewriting the supplied EP history. Planner
+proof/path facts now feed A1's existing rows. The same resolved violations render
+planner output and guard correction. Forecaster's intake notes remain code-owned
+advisory projections of measured facts, with fixed condition labels, not a second
+correction mechanism. Proof-applicability campaign refusals have planner tool rows;
+these render in tool context and grant no reply edits or fake audit permissions.
+
+Coverage-array errors incorporate all stage predicates into one replacement
+constraint before per-entry statuses run. This prevents two diagnostics granting
+incompatible edits to an array that changes length or identities. Independent
+status/finding errors retain their old ordering and are collected together.

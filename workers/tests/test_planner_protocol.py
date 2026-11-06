@@ -125,7 +125,9 @@ def test_invalid_node_id_is_reported_to_controller(tmp_path, planner_request):
 def test_declared_paths_are_confined(tmp_path, planner_request, path):
     result = run_reply_in_process(tmp_path, planner_request, {**LEAF, "files": [path]})
     # #321: a named violation, not a crash. Nothing outside the worktree is measured.
-    assert_rule_report(result, f"Declared file can't be used: {path}: ")
+    assert_rule_report(result, 'path.noncanonical:')
+    assert any('path=' + json.dumps(path, ensure_ascii=False) in item['items']
+               for item in result.events[-1]['plan_check']['objections'])
     assert result.events[-1]["reply"]["forecast"]["file_tokens"][path] == 0
 
 

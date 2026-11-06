@@ -222,7 +222,7 @@ def schema_violations(errors, root_schema=None, *, role='schema'):
                     required_fields.add(field)
                     constraint = error.schema.get('properties', {}).get(key, {})
                     result.append(Violation(replace(row, id='schema.required'), {
-                        'pointer': field, 'allowed': constraint_allowed(error, constraint), 'op': 'add'}))
+                        'pointer': field, 'allowed': constraint_allowed(error, constraint), 'op': 'add'}, role=role))
                 continue
             if error.validator == 'additionalProperties' and error.validator_value is False:
                 import re
@@ -232,7 +232,7 @@ def schema_violations(errors, root_schema=None, *, role='schema'):
                 for key in extra:
                     result.append(Violation(replace(row, id='schema.additionalproperties'), {
                         'pointer': pointer + '/' + key.replace('~', '~0').replace('/', '~1'),
-                        'allowed': Allowed('enum', []), 'op': 'remove', 'bad_value': error.instance[key]}))
+                        'allowed': Allowed('enum', []), 'op': 'remove', 'bad_value': error.instance[key]}, role=role))
                 continue
             if error.validator in ('oneOf', 'anyOf', 'not', 'unevaluatedProperties'):
                 allowed = constraint_allowed(error, error.schema)
@@ -240,7 +240,7 @@ def schema_violations(errors, root_schema=None, *, role='schema'):
                 allowed = Allowed(error.validator, error.validator_value)
             result.append(Violation(replace(row, id='schema.' + error.validator.lower()),
                                     {'pointer': pointer, 'allowed': allowed,
-                                          'bad_value': error.instance}))
+                                          'bad_value': error.instance}, role=role))
     return tuple(result)
 
 

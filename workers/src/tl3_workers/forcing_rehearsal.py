@@ -10,7 +10,7 @@ import re
 from tl3_harness import Check, Forcing, Kind, HarnessInputError
 from tl3_harness.node_ids import selects
 from tl3_harness.forcing_ownership import ForcingError, preflight_owner
-from tl3_workers.evidence import proof_applicability
+from tl3_workers.evidence import CAMPAIGN_ROWS, proof_applicability
 from tl3_workers.pb_tests import TestSettings, make_test_tool, _git
 from tl3_workers.session import save
 
@@ -183,7 +183,9 @@ class ForcingRehearsals:
             check['declared_symptom'] = declared_symptom
         errors = proof_applicability(self.goals, [check], campaign=True)
         if errors:
-            return {'status': 'refused', 'message': '\n'.join(errors)}
+            from tl3_workers.rules import evaluate, render_all
+            rows = evaluate(CAMPAIGN_ROWS, {'goals': self.goals, 'diagnostics': errors}, role='planner')
+            return {'status': 'refused', 'message': render_all(rows, role='planner', context='tool')}
         try:
             parsed = Forcing.parse(forcing)
             if not isinstance(tests, list) or not tests or len(tests) > 256:

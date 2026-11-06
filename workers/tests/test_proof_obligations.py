@@ -239,7 +239,26 @@ def test_the_prompt_mapping_is_what_proof_applicability_accepts(follows_prompt, 
         assert errors == []
     else:
         # The refusals PQ #3299's planner trace received.
-        assert any("requires an assertion observer" in e for e in errors), errors
+        assert any(e.rule == 'proof.observer_kind' for e in errors), errors
         if not campaign:
-            assert any("requires a new deterministic observer; an existing base test is insufficient" in e
-                       for e in errors), errors
+            assert any(e.rule == 'proof.new_observer' for e in errors), errors
+
+
+@pytest.mark.parametrize('goal_ids', [None, [], [True], [99], [0]])
+def test_campaign_applicability_uses_tool_rows_without_reply_edit_permissions(goal_ids):
+    from tl3_workers.evidence import CAMPAIGN_ROWS, proof_applicability
+    from tl3_workers.rules import CantMeet, evaluate, permits, render_all
+
+    goals = [_obligation_goal('new')]
+    check = {'kind': 'demonstrating', 'node_ids': [OLD], 'goal_ids': goal_ids}
+    diagnostics = proof_applicability(goals, [check], campaign=True)
+    found = evaluate(CAMPAIGN_ROWS, {'goals': goals, 'diagnostics': diagnostics}, role='planner')
+    assert found
+    assert all(isinstance(item.repair, CantMeet) for item in found)
+    text = render_all(found, role='planner', context='tool')
+    assert ('/tests' if goal_ids == [0] else '/goal_ids') in text
+    for item in found:
+        assert item.allowed.render() in text
+        assert permits(item, {}, {'kind': 'cant_meet'}, role='planner')
+        assert not permits(item, {}, {'goal_ids': [0]}, role='planner')
+    assert 'return cant_meet' not in text.lower()

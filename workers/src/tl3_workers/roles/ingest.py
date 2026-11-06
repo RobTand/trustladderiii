@@ -8,6 +8,7 @@ from tl3_workers.contracts import schema
 from tl3_workers.exploration import ExplorationBudget
 from tl3_workers.generated_scope import check_ingest_generation_scope
 from tl3_workers.recall import check_citations
+from tl3_workers.rules import Allowed, Edit, Name, Rule, evaluate, register, render_all
 
 # The brief's maxLength, which the controller validates.
 BRIEF_CHARACTERS = next(
@@ -16,9 +17,43 @@ BRIEF_CHARACTERS = next(
 )["properties"]["brief"]["maxLength"]
 
 
+def _forecast_owned(facts):
+    return ({},) if 'forecast' in facts['reply'] else ()
+
+
+FORECAST_OWNED = register(Rule(
+    'ingest.forecast_owned', _forecast_owned, lambda facts: (Name('field', '/forecast'),),
+    Allowed('const', None), Edit(Name('field', '/forecast'), 'remove', Allowed('const', None)),
+    example={'reply': {'forecast': {}}}, witness={}), roles=('ingest',))
+
+
+FILES_ALLOWED = Allowed('schema', next(
+    variant for variant in schema('ingest-reply')['oneOf']
+    if variant['properties']['kind'].get('const') == 'brief')['properties']['files'])
+
+
+def _sized_files(facts):
+    return ({},) if 'files' not in facts['reply'] else ()
+
+
+SIZED_FILES = register(Rule(
+    'ingest.sized_files', _sized_files, lambda facts: (Name('field', '/files'),),
+    FILES_ALLOWED, Edit(Name('field', '/files'), 'add', FILES_ALLOWED),
+    example={'reply': {}}, witness=[]), roles=('ingest',))
+
+
+class IngestReplyError(ValueError):
+    rule_role = 'ingest'
+
+    def __init__(self, violations):
+        self.rule_violations = violations
+        super().__init__(render_all(violations, role=self.rule_role))
+
+
 def check_memory_ids(inputs, reply):
-    if "forecast" in reply:
-        raise ValueError("only code may supply a forecast")
+    violations = evaluate((FORECAST_OWNED,), {'reply': reply}, role='ingest')
+    if violations:
+        raise IngestReplyError(violations)
     check_contract(inputs, reply, role='ingest')
     preflight(inputs, reply)
     if reply["kind"] == "brief":
@@ -29,8 +64,9 @@ def check_memory_ids(inputs, reply):
 
         if "forecast" in inputs:
             from tl3_workers.forecast import Forecaster
-            if "files" not in reply:
-                raise ValueError("sized briefs must declare their root files")
+            violations = evaluate((SIZED_FILES,), {'reply': reply}, role='ingest')
+            if violations:
+                raise IngestReplyError(violations)
             forecaster = Forecaster(inputs["forecast"])
             file_tokens = forecaster.files(reply["files"])
             # Unusable files are named in the brief rather than failing the run

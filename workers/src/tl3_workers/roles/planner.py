@@ -15,8 +15,8 @@ from jsonschema.validators import extend
 from tl3_harness.rules import Allowed as MembershipAllowed
 
 from tl3_workers.roles.base import Role
-from tl3_workers.evidence import preflight, proof_applicability, subject_covers, planning_refusal
-from tl3_workers.forecast import Forecaster, HARD_CAP_BYTES, MAX_EXECUTION_PIECES, execution_forecast
+from tl3_workers.evidence import PROOF_RULE_IDS, preflight, proof_applicability, subject_covers, planning_refusal
+from tl3_workers.forecast import PATH_CONDITIONS, Forecaster, HARD_CAP_BYTES, MAX_EXECUTION_PIECES, execution_forecast
 from tl3_harness.model import Diagnostic, named, contextual, validate_symptom
 from tl3_harness import Check, Forcing, HarnessInputError, Kind, Proof
 from tl3_harness.proof import overlaps
@@ -833,11 +833,22 @@ class PlanConsistencyError(ValueError):
         self.rule_violations = violations({
             'reply': raw, 'draft': raw, 'completed': completed, 'diagnostics': diagnostics,
             'inputs': inputs, 'base_nodes': base_nodes, 'base_sources': base_sources or {}})
+        self.objections = tuple(self.row_diagnostic(item) for item in self.objections)
         self.repair_text = render_all(self.rule_violations, role='planner')
         self.unavailable_reason = ('disabled' if not inputs.get('repair_plan_consistency', False) else
                                    'message_limit' if len(self.repair_text.encode()) > REPAIR_MESSAGE_BYTES else None)
         self.contract = self
         super().__init__(self.repair_text)
+
+    def row_diagnostic(self, diagnostic):
+        owned = PROOF_RULE_IDS | PATH_CONDITIONS.keys() | {
+            'evidence.contract_missing', 'evidence.branch_conflict', 'evidence.removed_method', 'evidence.unsupported'}
+        if diagnostic.rule not in owned:
+            return diagnostic
+        rows = [item for item in self.rule_violations
+                if item.rule.id == diagnostic.rule and item.facts['items'] == diagnostic.items]
+        return named(diagnostic.rule, '\n'.join(item.render(role='planner') for item in rows) or str(diagnostic),
+                     diagnostic.items)
 
     def check(self, candidate):
         from tl3_workers.rules import PLANNER, permits
@@ -1031,8 +1042,7 @@ def check_reply(inputs, reply, *, rehearsals=None, plan_errors=None):
             lambda node: observed_base(node)[1], missing_subjects=omissions)
         for error in applicability_errors:
             items = {**error.items, 'check': applicable[error.items['check']][0]}
-            text = str(error).replace(f'check-{error.items["check"] + 1} ', f'check-{items["check"] + 1} ', 1) if error.rule == 'proof.red_missing' else str(error)
-            violations.append(named(error.rule, text, items))
+            violations.append(named(error.rule, error.rule, items))
         missing_subjects = {applicable[index][0]: subjects for index, subjects in omissions.items()}
         edit_errors, uncovered = edit_violations(inputs["ingest"]["goals"], reply, inputs.get('base_sha'), observed=observed_base)
         violations.extend(edit_errors)
@@ -1101,7 +1111,7 @@ def check_reply(inputs, reply, *, rehearsals=None, plan_errors=None):
                           "Preserve every obligation in bounded pieces with reason execution_budget before maker work.", dict(execution=execution)))
     # A file the tools can't use is a plan problem, not a crash (#321).
     for error in forecaster.problems:
-        violations.append(named(error.rule, f"Declared file can't be used: {error}. Leave it out.", dict(path=error.path, reason=str(error.reason), bytes=error.size)))
+        violations.append(named(error.rule, error.rule, error.facts))
     if reply["kind"] == "leaf" and not forecast["fits"]:
         violations.append(named('leaf.token_fit', "The leaf forecast does not fit. Propose smaller pieces.", dict(forecast=forecast)))
     if reply["kind"] == "split":
@@ -1126,7 +1136,7 @@ def check_reply(inputs, reply, *, rehearsals=None, plan_errors=None):
                                           config=inputs["forecast"])
             pieces.append(estimate)
             for error in forecaster.problems:
-                violations.append(named(error.rule, f"Declared file can't be used: {error}. Leave it out.", dict(path=error.path, reason=str(error.reason), bytes=error.size)))
+                violations.append(named(error.rule, error.rule, error.facts))
             if reason == "execution_budget":
                 if not estimate["fits"] or estimate["estimated_tool_turns"] >= execution["estimated_tool_turns"]:
                     violations.append(named('split.execution_piece', "Every execution-budget piece must fit the execution backstop and reduce demand. "
@@ -1181,6 +1191,12 @@ def check_reply(inputs, reply, *, rehearsals=None, plan_errors=None):
         # different checks, pieces or fields.
         repair_error = PlanConsistencyError(raw_draft, reply, violations, inputs,
                                             base_nodes=base_nodes, base_sources=base_sources)
+        reply['violations'] = list(dict.fromkeys(repair_error.objections))
+        if reply.get('evidence_errors'):
+            reply['evidence_errors'] = list(dict.fromkeys(repair_error.row_diagnostic(item)
+                                                        for item in reply['evidence_errors']))
+            reply['report'] = '\n'.join(reply['evidence_errors'])
+        repair_error.completed_reply = deepcopy(reply)
         if failed_work:
             repair_error.unavailable_reason = 'failed_work'
         if missing_goals:

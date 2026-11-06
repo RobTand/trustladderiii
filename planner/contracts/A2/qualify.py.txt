@@ -1,0 +1,65 @@
+"""A2 qualification, executed only on BuildBuddy's remote runner."""
+import ast
+import json
+import os
+from pathlib import Path
+import re
+import runpy
+import subprocess
+import sys
+
+
+def run(*args):
+    return subprocess.run(args, check=True)
+
+
+def prepare():
+    runpy.run_path('workers/tests/p5/remote.py')['bootstrap']()
+    run('bash', 'tools/bazel/generate.sh')
+    artifact = Path(os.environ['BUILDBUDDY_ARTIFACTS_DIRECTORY'])
+    (artifact / 'a2-generated.patch').write_bytes(subprocess.check_output(['git', 'diff', '--binary']))
+    run('python3', 'tools/ci/check.py', 'python-lint')
+    run('python3', 'tools/bazel/requirements.py', '--check')
+
+
+def verify(mode):
+    affected = ['test_maker_review', 'test_maker', 'test_maker_evidence', 'test_maker_forecast',
+                'test_workers', 'test_turns', 'test_postmortem', 'test_planner_forecast',
+                'test_planner_protocol', 'test_proof_obligations', 'test_subject_observer_contract',
+                'test_large_files']
+    if mode == 'affected':
+        targets = ['//workers/tests:' + name for name in affected]
+    elif mode == 'workers':
+        targets = ['//workers/tests/...']
+    elif mode.startswith('controller'):
+        text = Path('tools/bazel/rust.bzl').read_text()
+        names = ast.literal_eval(re.search(r'_CONTROLLER_WORKERS = (\[.*?\])', text, re.S)[1])
+        targets = ['//crates/controller:' + name for name in dict.fromkeys([*names, 'test_test_publishing'])]
+        if mode == 'controller1':
+            targets = targets[:7]
+        elif mode == 'controller2':
+            targets = targets[7:]
+    elif mode == 'graph':
+        run('bazel', 'mod', 'deps', '--config=ci', '--lockfile_mode=error')
+        run('python3', 'tools/ci/graph_impact_check.py', '--base', sys.argv[2])
+        return
+    else:
+        raise ValueError(mode)
+    artifact = Path(os.environ['BUILDBUDDY_ARTIFACTS_DIRECTORY'])
+    results = []
+    print('A2 HEAD', subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(), flush=True)
+    for target in targets:
+        print('A2 START', target, flush=True)
+        result = subprocess.run(['bazel', 'test', '--config=remote', '--jobs=16', target,
+                                 '--keep_going', '--nocache_test_results', '--test_output=errors',
+                                 '--remote_download_regex=(^|/)(test[.]xml|test[.]log)$'])
+        results.append({'target': target, 'returncode': result.returncode})
+        print('A2 RESULT', json.dumps(results[-1]), flush=True)
+        (artifact / ('a2-' + mode + '-results.json')).write_text(json.dumps(results, indent=2) + '\n')
+    assert all(item['returncode'] == 0 for item in results), results
+
+
+if sys.argv[1] == 'prepare':
+    prepare()
+else:
+    verify(sys.argv[1])
