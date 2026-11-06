@@ -367,7 +367,7 @@
           "REPO_MAPPING:rules_rust+,rules_rust rules_rust+",
           "FILE:@@+cargo_feature_lock+bazel_cargo_lock//Cargo.lock 14140e116d27cea450418eb405bcc1664988f667810dfdebe6965c6fdb9fb9ab",
           "FILE:@@//Cargo.toml 7c80a39bd212ea0f30a05dd6f008195b8efcc37447d5521160de942781499675",
-          "FILE:@@//crates/config/Cargo.toml da34abb220a0eca65b4ac9f481048cc4d70554fc5a1c02b740e76205a2ecb0f6",
+          "FILE:@@//crates/config/Cargo.toml 6e59fe33653c52563547cd1e3037fcae8822072985346225ed8203e366079116",
           "FILE:@@//crates/worktrees/Cargo.toml 97aecec236d8e485cba2af2f82a0d841d696e362bf62dd31d6face435906bc93",
           "FILE:@@//crates/contracts/Cargo.toml e5694610038349e855b6524b545eca2ef4744244d4d0c9c0826ab0175c680a1d",
           "FILE:@@//crates/controller/Cargo.toml 29e3c7c85d73423d039c1cc00d4e10436e8ac54d6e10525593c5394bbb67740f",
