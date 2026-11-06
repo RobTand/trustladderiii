@@ -47,7 +47,7 @@ pub(super) fn verify_phase(mut w: World) -> (result: (World, Outbox, bool)) [
                 < 4 * node_distance(w.nodes@[0]) + pending_rank(w.nodes@[0]),
         !result.2 ==> same_world(w, result.0) && result.1.len == 0,
         movable(w, 0) ==> result.2,
-] proof [reveal(advance_post); reveal(empty_outbox);
+] proof [reveal(advance_post); reveal(empty_outbox); reveal(accepted);
     reveal(retirement_domain); reveal(retirement_accepted);
     reveal(storage_ordered); reveal(footprint::ordered_table);] {
     kernel_snapshot! { before = w }
