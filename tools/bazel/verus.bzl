@@ -893,6 +893,8 @@ def verus_proofs():
             "port_advance_node_teardown_gone_rules": ("kernel::port_advance_node_rules#teardown_gone_rules", 1),
             "port_advance_node_teardown_emit_rules": ("kernel::port_advance_node_rules#teardown_emit_rules", 1),
             "port_advance_world_prepared": ("kernel::port_advance_world#prepared", 1),
+            "port_advance_gate_prefix_step": ("kernel::port_advance_gate#gate_prefix_step", 1),
+            "port_advance_gate_ready_projection": ("kernel::port_advance_gate#gate_ready_projection", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

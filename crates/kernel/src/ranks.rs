@@ -992,7 +992,11 @@ kernel_fn! {
                 ==> (result ==> final(node).phase == (Phase::Planning { must_split: false })),
             port_advance_contracts::exact(*old(node), *final(node),
                 *old(next_ticket), *final(next_ticket), context, *old(out), *final(out)),
-    ] {
+            old(node).phase == Phase::Ready(Resume::Making) && old(node).pos == 0
+                && !old(node).waiting_incident && old(node).effect.is_none() ==>
+                port_advance_gate::gate_ready_post(*old(node), *final(node),
+                    *old(next_ticket), *final(next_ticket), context.slot, result, *old(out), *final(out)),
+    ] proof [port_advance_gate::gate_ready_projection(*node, *next_ticket, context, *out);] {
         let n = *node;
         if n.phase.is_closed() || n.waiting_incident || n.effect.is_some() {
             return advance_blocked(node, next_ticket, context, out);
