@@ -257,17 +257,24 @@ def shingles(text, suffix):
                 if doc and re.search(r'SPDX-License-Identifier|copyright|permission is hereby granted', doc, re.I):
                     expression = node.body[0]
                     import_lines.update(range(expression.lineno, expression.end_lineno + 1))
+        try:
+            for token in tokenize.generate_tokens(io.StringIO(text).readline):
+                if token.type == tokenize.COMMENT and not token.line[:token.start[1]].strip():
+                    import_lines.add(token.start[0])
+        except (tokenize.TokenError, IndentationError):
+            pass
     else:
         # Mask Rust comments without turning comment markers in literals into comments.
-        for token in reversed(list(RUST_TOKEN.finditer(text))):
+        parts, cursor = [], 0
+        for token in RUST_TOKEN.finditer(text):
             if token.lastgroup == 'comment':
-                text = text[:token.start()] + re.sub(r'[^\n]', ' ', token.group()) + text[token.end():]
+                parts.extend((text[cursor:token.start()], re.sub(r'[^\n]', ' ', token.group())))
+                cursor = token.end()
+        text = ''.join([*parts, text[cursor:]])
     for number, raw in enumerate(text.splitlines(), 1):
         if number in import_lines:
             continue
         line = raw.strip()
-        if line.startswith(('#', '//')):
-            continue
         if suffix == '.rs' and re.match(r'(?:pub(?:\([^)]*\))?\s+)?use\b', line):
             importing = ';' not in line
             continue
