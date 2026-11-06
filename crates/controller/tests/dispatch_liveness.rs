@@ -1,3 +1,5 @@
+#[path = "dispatch_liveness/lost_maker.rs"]
+mod lost_maker;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 

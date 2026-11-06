@@ -1108,6 +1108,46 @@ exit "$status"
         ));
     }
 
+    /// #817 / Q43 (found by: live probe, PB #2819 and #2821): a CLAIMED action
+    /// whose lease is past PrismaBuild's own lease timeout is lost by its own
+    /// record, so a declared wait on it no longer counts as progress. A fresh
+    /// lease keeps the wait alive.
+    #[test]
+    fn expired_claim_lease_ends_wait() {
+        let f = Repo::new();
+        let client = wait_client(f.root.path(), &f.head);
+        let queue = f.root.path().join("queue");
+        let key = "a".repeat(64);
+        fs::rename(
+            queue.join("ready").join(format!("{key}.json")),
+            queue.join("claimed").join(format!("{key}.json")),
+        )
+        .unwrap();
+        let runtime = crate::executor::runtime().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64();
+        // 1793924588 is 125367eaf9f2's last lease renewal (2026-11-06T00:23:08Z).
+        for (heartbeat, alive) in [(now, true), (1_793_924_588.0, false)] {
+            fs::write(
+                queue.join("claimed").join(format!("{key}.lease")),
+                serde_json::to_vec(&serde_json::json!({
+                    "schema": "prismaquant.prismabuild.pool_lease.v1", "action_key": key,
+                    "heartbeat_unix": heartbeat, "owner": "dl380g10:1:fixture", "host": "dl380g10"
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            let record = read_wait(&client, runtime, &key, &f.path).unwrap();
+            assert_eq!(
+                matches!(record, crate::executor::WaitRecord::Alive),
+                alive,
+                "heartbeat {heartbeat}: expected alive={alive}"
+            );
+        }
+    }
+
     #[test]
     fn hostile_read_wait() {
         crate::git_tests::hostile(
