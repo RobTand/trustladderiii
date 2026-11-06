@@ -543,6 +543,27 @@ fn audit_disagreement_stops_with_both_readings_and_named_objections() {
             assert!(report.contains(&format!("audit_objections[{index}]")));
         }
         assert_operations_note(&posted, "audit_disagreement");
+        let stopped = world.nodes[0];
+        assert!(
+            tl3_store::ConsoleCommands::open(&settings)
+                .unwrap()
+                .submit(
+                    "00000000-0000-4000-8000-000000008320",
+                    0,
+                    &json!({"kind":"restart"})
+                )
+                .unwrap()
+        );
+        tl3_controller::ingress::drain(&mut c).unwrap();
+        drain(&mut c);
+        let restarted = c.world().unwrap();
+        assert_eq!(
+            restarted.nodes.len(),
+            2,
+            "Q49 restarts the stopped audit request"
+        );
+        assert_eq!(restarted.nodes[0], stopped);
+        assert_eq!(restarted.nodes[1].phase, Phase::Ingesting);
     }
 }
 
