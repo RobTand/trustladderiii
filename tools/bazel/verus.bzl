@@ -864,7 +864,7 @@ def verus_proofs():
             "facts_merge_ignored_result": ("kernel::facts_merge_lemmas#ignored_result", 1),
             "facts_merge_open_result": ("kernel::facts_merge_lemmas#open_result", 1),
             "plan_check": ("kernel::plan_check", 1),
-            "plan_check_witness": ("kernel::plan_check_witness", 3),
+            "plan_check_witness": ("kernel::plan_check_witness", 5),
         }
         for name, (module, count) in groups.items():
             verus_test(

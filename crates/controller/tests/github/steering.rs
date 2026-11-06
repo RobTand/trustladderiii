@@ -6,6 +6,110 @@ use super::*;
 use sha2::Digest;
 use tl3_kernel::{Command as KernelCommand, Event};
 
+pub(super) struct LegacyIntake;
+impl Executor for LegacyIntake {
+    fn execute(
+        &mut self,
+        _: &Delivery,
+    ) -> tl3_controller::Result<tl3_controller::executor::Completion> {
+        Ok(tl3_controller::executor::Completion::confirmed(vec![]))
+    }
+    fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        Ok(Reconciliation::Pending)
+    }
+}
+
+// #832-A: the upgrade must still accept answers to already-open audit questions.
+pub(super) fn seed_legacy_audit_question(
+    controller: &mut Controller,
+    settings: &tl3_config::Store,
+) {
+    controller.intake(labelled()).unwrap();
+    drain(controller);
+    let ingest = json!({"kind": "brief", "brief": "Fix the greeting.", "goals": [
+        {"description": "Return hello.", "verification": "test"}], "memory_ids": [],
+        "files": ["greeting.py"], "evidence_contract": [], "forecast": {
+            "tokenizer": "o200k_base", "brief_tokens": 1, "file_tokens": {"greeting.py": 1},
+            "overhead_tokens": 0, "tokens": 2, "fit_tokens": 100, "context_tokens": 150,
+            "fits": true}});
+    let audit = json!({"verdict": "disagree", "objections": ["Preserve punctuation."],
+        "evidence_contract": []});
+    for (index, (role, reply)) in [
+        ("ingest", ingest.clone()),
+        ("audit", audit.clone()),
+        ("ingest", ingest),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let generation = controller.world().unwrap().nodes[0].generation;
+        controller
+            .observe(
+                &format!("legacy-audit-reading-{index}"),
+                Observation::WorkerReply {
+                    node: NodeId(0),
+                    generation,
+                    role: role.into(),
+                    reply,
+                    plan_check: None,
+                    model: None,
+                },
+            )
+            .unwrap();
+        drain(controller);
+    }
+    let mut world = controller.world().unwrap();
+    let question = world.next_question;
+    let node = &mut world.nodes[0];
+    assert_eq!(node.phase, Phase::Auditing);
+    assert!(node.effect.is_none());
+    node.phase = Phase::AwaitingRob;
+    node.generation += 1;
+    node.pos = 0;
+    node.run = None;
+    node.pool = false;
+    node.audit_rounds = 2;
+    node.question = Some(tl3_kernel::Question {
+        id: question,
+        kind: tl3_kernel::QKind::AuditDisagreement,
+        cont: tl3_kernel::Cont::Unplanned,
+        cost: 0,
+        clarified: false,
+    });
+    world.next_question += 1;
+    assert!(world.valid(), "valid pre-deployment audit question");
+    let mut store = Store::open(settings).unwrap();
+    let snapshot = store.load().unwrap();
+    assert!(snapshot.pending_effects.is_empty());
+    let mut meta = snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "kernel" && row.id == "meta")
+        .unwrap()
+        .value
+        .clone();
+    meta["world"]["next_question"] = json!(world.next_question);
+    let mut commit = tl3_store::Commit::new("pre-deployment-audit-question", json!({}), &snapshot);
+    for (table, id, value) in [
+        ("nodes", "0".into(), json!(world.nodes[0])),
+        ("kernel", "meta".into(), meta),
+        (
+            "question_context",
+            question.to_string(),
+            json!({"node": 0, "question": question,
+            "kind": "AuditDisagreement", "generation": world.nodes[0].generation,
+            "findings": {"decision": "Continue with the first reading?", "audit": audit}}),
+        ),
+    ] {
+        commit.rows.push(tl3_store::RowChange::Put {
+            table: table.into(),
+            id,
+            value,
+        });
+    }
+    store.commit(&commit).unwrap();
+}
+
 struct Daemon {
     child: std::process::Child,
     root: tempfile::TempDir,
@@ -384,6 +488,7 @@ pub(super) fn commands(settings: &tl3_config::Store) {
 pub(super) fn answers(settings: &tl3_config::Store) {
     let mut d = Daemon::start(settings, "steering-answers");
     d.wait(|s| !s.node()["question"].is_null());
+    assert_eq!(d.node()["question"]["kind"], "AuditDisagreement");
     let original = d.node()["question"]["id"].as_u64().unwrap();
     let before_unsure = d.node();
     d.send(11000, "Maybe do that");
@@ -441,6 +546,61 @@ pub(super) fn answers(settings: &tl3_config::Store) {
     assert_eq!(d.node(), before, "stale answers never enter the kernel");
     d.settled();
     println!("test steering_question_ids_one_clarification_and_stale_answer ... ok");
+}
+
+pub(super) fn legacy_audit_stop(settings: &tl3_config::Store) {
+    let mut d = Daemon::start(settings, "steering-answers");
+    assert_eq!(d.node()["question"]["kind"], "AuditDisagreement");
+    d.send(11501, "Stop instead of continuing with the first reading");
+    d.classified(11501);
+    d.wait(|s| s.node()["phase"] == json!({"Closed": "Stopped"}));
+    d.settled();
+    assert!(d.node()["question"].is_null());
+    assert!(d.node()["review_stop"].is_null());
+    assert!(!d.api.state.lock().unwrap().closed);
+    println!("test steering_already_open_audit_question_accepts_stop ... ok");
+}
+
+pub(super) fn audit_disagreement_stop(settings: &tl3_config::Store) {
+    let mut d = Daemon::start(settings, "steering-audit-stop");
+    d.wait(|s| s.node()["phase"] == json!({"Closed": "Stopped"}));
+    d.settled();
+    let node = d.node();
+    assert_eq!(node["review_stop"], "AuditDisagreement");
+    assert_eq!(node["audit_rounds"], 2);
+    assert_eq!(node["planning_started"], false);
+    assert!(node["question"].is_null());
+    let snapshot = d.store.load().unwrap();
+    let meta = &snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "kernel")
+        .unwrap()
+        .value;
+    assert_eq!(meta["world"]["next_question"], 0);
+    assert!(!d.store.effects().unwrap().iter().any(|effect| {
+        let delivery: Delivery = serde_json::from_value(effect.payload.clone()).unwrap();
+        matches!(
+            delivery.output,
+            Out::Notice {
+                notice: Notice::Ask { .. },
+                ..
+            }
+        )
+    }));
+    let requests = d.requests();
+    assert_eq!(requests.iter().filter(|r| r["role"] == "ingest").count(), 2);
+    assert_eq!(requests.iter().filter(|r| r["role"] == "audit").count(), 2);
+    assert!(!requests.iter().any(|r| r["role"] == "planner"));
+    let state = d.api.state.lock().unwrap();
+    assert!(!state.closed);
+    assert!(state.comments.iter().any(|comment| {
+        comment["body"]
+            .as_str()
+            .unwrap()
+            .contains("Preserve punctuation.")
+    }));
+    println!("test steering_two_audit_disagreements_stop_for_tl3_review_without_question ... ok");
 }
 
 pub(super) fn replacement(settings: &tl3_config::Store) {
