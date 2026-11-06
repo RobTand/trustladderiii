@@ -293,7 +293,7 @@ fn flux_checks_historical_progress_is_journaled_without_fabricating_liveness() {
     let root = tempfile::tempdir().unwrap();
     let mut database = support::Database::start();
     let mut ownership = Ownership::claim(Store::open(&database.create("flux_progress")).unwrap()).unwrap();
-    let (mut adapter, backend, _, _) = setup(root.path(), &mut ownership);
+    let (mut adapter, backend, _attached, _) = setup(root.path(), &mut ownership);
     backend.state.lock().unwrap().emit_progress = true;
     let d = delivery();
     adapter.execute(&d).unwrap();

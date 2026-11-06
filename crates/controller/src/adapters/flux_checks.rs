@@ -353,7 +353,7 @@ impl Executor for Adapter {
                 _ => Look::Pending,
             });
         }
-        if live.authority == backend::ProgressAuthority::FreshNative && live.evidence.is_some()
+        if matches!(live.authority, backend::ProgressAuthority::FreshNative | backend::ProgressAuthority::Historical) && live.evidence.is_some()
             && current.binding.is_some() && live.observed_unix_ms > 0
             && matches!(live.phase, backend::NativePhase::Queued | backend::NativePhase::Running | backend::NativePhase::Finishing)
         {
