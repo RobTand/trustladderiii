@@ -788,9 +788,18 @@ impl Controller {
                 } else {
                     self.look_observations(&state.delivery, *completion)?;
                 }
-                self.rearm(state);
-                self.save_allowance(state)?;
-                return Ok(true);
+                let after = self.store.load()?;
+                let world = snapshot::decode(&after)?;
+                let current = &world.nodes[hold.node.0 as usize];
+                if !matches!(current.phase, Phase::Publishing | Phase::Queued)
+                    || crate::commit_sha(&after, current.head) != Some(hold.head.as_str())
+                {
+                    self.rearm(state);
+                    self.save_allowance(state)?;
+                    return Ok(true);
+                }
+                // A new opaque report is still the same bounded hold. It
+                // cannot postpone the deadline by arriving on every look.
             }
         }
         let since = hold.witnessed_ms.unwrap_or(hold.since_ms);

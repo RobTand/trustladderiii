@@ -39,6 +39,7 @@ pub(super) const MODES: &[&str] = &[
     "retry-fail-fast",
     "retry-making",
     "timeout",
+    "timeout-churn",
     "own-batch",
     "in-progress",
     "change",
@@ -258,12 +259,18 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
         assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
         assert_eq!(api.state.lock().unwrap().requeues, 0);
     }
-    if mode == "timeout" {
+    if matches!(mode, "timeout" | "timeout-churn") {
         let mut allowances = tl3_config::Allowances::default();
         allowances.github_mergify.no_progress_secs = 3;
         allowances.github_mergify.silence_secs = 1;
         controller.set_allowances(allowances);
         clock.0.set(clock.0.get() + Duration::from_secs(3600));
+        if mode == "timeout-churn" {
+            // Another opaque result on the due look must not reset the hold.
+            let mut state = api.state.lock().unwrap();
+            state.queue_check_mut()["id"] = json!(99001);
+            state.queue_check_mut()["completed_at"] = json!("2026-11-06T23:30:00Z");
+        }
         controller.look_now().unwrap();
         for _ in 0..12 {
             controller.drive_once().unwrap();
