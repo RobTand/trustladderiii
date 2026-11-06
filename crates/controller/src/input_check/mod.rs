@@ -136,6 +136,19 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn footprint_shared_vectors_at_maker_input() {
+        let cases: Vec<Value> = serde_json::from_str(include_str!(
+            "../../../../workers/tests/fixtures/footprint-paths.json"
+        )).unwrap();
+        for case in cases {
+            assert_eq!(declared_file(case["path"].as_str().unwrap()).is_ok(),
+                case["canonical"].is_string(), "{case}");
+        }
+        assert!(declared_file("src/bad\n.py").is_err());
+        assert!(declared_file("src/bad\r.py").is_err());
+    }
+
+    #[test]
     fn maker_matches_python_reference() {
         let script = r#"
 import json, sys
