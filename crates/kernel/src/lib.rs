@@ -2239,3 +2239,15 @@ mod facts_ci_failed_lemmas;
 
 #[cfg(verus_keep_ghost)]
 mod facts_merge_lemmas;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_answers_model.rs"]
+mod port_answers_model;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_answers_frames.rs"]
+mod port_answers_frames;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_answers_apply.rs"]
+mod port_answers_apply;

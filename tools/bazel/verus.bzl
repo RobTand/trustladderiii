@@ -845,6 +845,17 @@ def verus_proofs():
             "facts_merge_open_result": ("kernel::facts_merge_lemmas#open_result", 1),
             "plan_check": ("kernel::plan_check", 1),
             "plan_check_witness": ("kernel::plan_check_witness", 3),
+            "port_answers_continue_frame": ("kernel::port_answers_frames#continue_frame", 1),
+            "port_answers_try_again_frame": ("kernel::port_answers_frames#try_again_frame", 1),
+            "port_answers_add_credit_frame": ("kernel::port_answers_frames#add_credit_frame", 1),
+            "port_answers_change_request_frame": ("kernel::port_answers_frames#change_request_frame", 1),
+            "port_answers_stop_frame": ("kernel::port_answers_frames#stop_frame", 1),
+            "port_answers_unclear_frame": ("kernel::port_answers_frames#unclear_frame", 1),
+            "port_answers_retry_frame": ("kernel::port_answers_frames#retry_frame", 1),
+            "port_answers_mark_handled_frame": ("kernel::port_answers_frames#mark_handled_frame", 1),
+            "port_answers_unchanged_node": ("kernel::port_answers_apply#unchanged_node", 1),
+            "port_answers_preserves_world": ("kernel::port_answers_apply#preserves_world", 1),
+            "port_answers_verify_answer": ("kernel::port_answers_apply#verify_answer", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
