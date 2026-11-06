@@ -2241,3 +2241,7 @@ mod facts_ci_failed_lemmas;
 
 #[cfg(verus_keep_ghost)]
 mod facts_merge_lemmas;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_t860_red.rs"]
+mod port_t860_red;
