@@ -188,6 +188,8 @@ def test_role_dependent_proof_repairs(role):
         example={'reply': before}, witness='subject.py'), roles=('planner', 'maker'))
     violation, = core.evaluate((row,), {'reply': before}, role=role)
     text = violation.render(role=role)
+    with pytest.raises(ValueError, match='evaluation role'):
+        violation.render(role='maker' if role == 'planner' else 'planner')
     assert forms.PLANNER.phrase not in text and forms.MAKER.phrase not in text
     if role == 'planner':
         assert field.value in text and 'replace' in text
@@ -223,3 +225,22 @@ def test_resolved_rule_values_are_stable():
     assert violation.allowed == allowed
     assert violation.repair == row.repair
     assert core.permits(violation, row.example['reply'], {'value': 'ok'}, role='planner')
+
+
+@pytest.mark.parametrize('same', [True, False])
+@pytest.mark.parametrize('op', ['add', 'replace', 'remove'])
+def test_edit_allowed_sets_render_once_only_when_equal(same, op):
+    from tl3_harness import rules as core
+    allowed = core.Allowed('enum', ['ValueError', 'TypeError'])
+    edit_allowed = core.Allowed('enum', list(allowed.value) if same else ['RuntimeError'])
+    row = core.Rule('forcing.raise_class', lambda facts: ({},),
+        lambda facts: (core.Name('field', '/checks/0/forcing/patches/0/raises'),),
+        allowed, core.Edit(core.Name('field', '/checks/0/forcing/patches/0/raises'),
+                           op, edit_allowed), roles=frozenset({'planner'}))
+    violation, = core.evaluate((row,), {}, role='planner')
+    text = violation.render(role='planner')
+    assert text.count(allowed.render()) == 1
+    if same:
+        assert ('with one of the allowed values above' in text) == (op != 'remove')
+    else:
+        assert edit_allowed.render() in text
