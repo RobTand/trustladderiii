@@ -51,7 +51,7 @@ with tempfile.TemporaryDirectory(prefix="tl3-controller-checks-") as directory:
         print("TL3_CHECKS_ERROR " + json.dumps({"schema": "tl3.checks.error.v1", "effect_key": request["effect_key"],
               "error": type(error).__name__}, sort_keys=True, separators=(',', ':')), flush=True)
         raise
-    report = {"schema": "tl3.checks.v1", "effect_key": request["effect_key"],
+    report = {"schema": "tl3.checks.v2", "effect_key": request["effect_key"],
               "base": request["base"], "head": request["head"],
               "reviewed": request.get("reviewed"),
               "results": json.loads(result_json(results))}

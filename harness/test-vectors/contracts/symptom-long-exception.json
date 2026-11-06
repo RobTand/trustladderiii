@@ -43,6 +43,7 @@
     "observer_sha256": {
      "tests/test_long.py::test_long": "674f633f1f4cd8766e674cbedf954a4971d20d4b500010e1c4f0374d1c874156"
     },
+    "red_classes": {},
     "rule": "subject-observer-v1",
     "source_base_tree_sha256": "19824bf76b06ed08ebc0c4a9bde7823ce8e19db2f9902d217f92a9825ea87d10",
     "subjects": {
