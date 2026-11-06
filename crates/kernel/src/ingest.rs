@@ -141,6 +141,7 @@ fn reply_audit_agrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: ())
 
 kernel_fn! {
 /// Auditing: private verbatim disagreement branch and isolated counter update.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 fn reply_audit_disagrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
