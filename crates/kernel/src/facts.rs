@@ -175,7 +175,9 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
         }
     }
     match fact {
-        Fact::DependencyRemove { .. } | Fact::Dependency { .. } | Fact::PrMerged { .. } => {}
+        Fact::DependencyRemove { .. } | Fact::Dependency { .. } | Fact::PrMerged { .. } => {
+            kernel_proof! { assert(facts_transition_lemmas::post(before_transition@, *w, i, fact, before_out@, *out)) by { reveal(facts_transition_lemmas::post); } }
+        }
         Fact::Priority(priority) => {
             if !w.nodes[i].phase.is_closed() {
                 w.nodes[i].priority = priority;
@@ -191,6 +193,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                     reveal(retirement::fact_node);
                 }
             }
+            kernel_proof! { assert(facts_transition_lemmas::post(before_transition@, *w, i, fact, before_out@, *out)) by { reveal(facts_transition_lemmas::post); } }
         }
         Fact::PrClosedByPerson => {
             let m = &mut w.nodes[i];
@@ -200,6 +203,10 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                         before_transition@.nodes@[i as int], fact)) by {
                         reveal(retirement::fact_node);
                     }
+                }
+                kernel_proof! {
+                    assert(facts_transition_lemmas::post(before_transition@, *w, i, fact, before_out@, *out)) by { reveal(facts_transition_lemmas::post); }
+                    facts_transition_lemmas::unfold(before_transition@, *w, i, fact, before_out@, *out);
                 }
                 return;
             }
@@ -214,12 +221,23 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                     reveal(retirement::fact_node);
                 }
             }
+            kernel_proof! { assert(facts_transition_lemmas::post(before_transition@, *w, i, fact, before_out@, *out)) by { reveal(facts_transition_lemmas::post); } }
         }
-        Fact::PrDequeuedByPerson => pr_dequeued(w, i, out),
+        Fact::PrDequeuedByPerson => {
+            pr_dequeued(w, i, out);
+            kernel_proof! {
+                facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out);
+                assert(facts_transition_lemmas::post(before_transition@, *w, i, fact, before_out@, *out)) by { reveal(facts_transition_lemmas::post); }
+            }
+        }
         Fact::PushByOther { head } => {
             let m = &w.nodes[i];
             if !m.had_pr {
                 kernel_proof! { retirement_runtime::retry_noop(before_transition@.nodes@[i as int], fact, w.fail_fast, w.next_question); }
+                kernel_proof! {
+                    assert(facts_transition_lemmas::post(before_transition@, *w, i, fact, before_out@, *out)) by { reveal(facts_transition_lemmas::post); }
+                    facts_transition_lemmas::unfold(before_transition@, *w, i, fact, before_out@, *out);
+                }
                 return;
             }
             notice(out, i, Notice::Note(NoteKind::OutsidePush));
@@ -250,6 +268,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             kernel_proof! {
                 if !published { retirement_runtime::retry_noop(before_transition@.nodes@[i as int], fact, w.fail_fast, w.next_question); }
             }
+            kernel_proof! { assert(facts_transition_lemmas::post(before_transition@, *w, i, fact, before_out@, *out)) by { reveal(facts_transition_lemmas::post); } }
         }
         Fact::CiFailed { infra } => {
             ci_failed(w, i, infra, out);
@@ -257,6 +276,8 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 retirement_runtime::ci_retirement(before_transition@.nodes@[i as int],
                     w.nodes@[i as int], infra, before_transition@.fail_fast,
                     before_transition@.next_question, w.next_question);
+                facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out);
+                assert(facts_transition_lemmas::post(before_transition@, *w, i, fact, before_out@, *out)) by { reveal(facts_transition_lemmas::post); }
             }
         }
         Fact::Conflict => {
@@ -268,84 +289,35 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 assert(*m == retirement::fact_node(before_transition@.nodes@[i as int],
                     Fact::Conflict)) by { reveal(retirement::fact_node); };
             }
+            kernel_proof! { assert(facts_transition_lemmas::post(before_transition@, *w, i, fact, before_out@, *out)) by { reveal(facts_transition_lemmas::post); } }
         }
         Fact::UpstreamStalled => {
             let m = &mut w.nodes[i];
             if m.phase != Phase::Queued || m.waiting_incident {
                 kernel_proof! { retirement_runtime::upstream_noop(before_transition@.nodes@[i as int]); }
+                kernel_proof! {
+                    assert(facts_transition_lemmas::post(before_transition@, *w, i, fact, before_out@, *out)) by { reveal(facts_transition_lemmas::post); }
+                    facts_transition_lemmas::unfold(before_transition@, *w, i, fact, before_out@, *out);
+                }
                 return;
             }
             m.run_incidents = (m.run_incidents + 1).min(2);
             let needs_rob = m.run_incidents >= 2;
             raise_incident(w, i, needs_rob, out);
             kernel_proof! { retirement_runtime::upstream_result(before_transition@.nodes@[i as int]); }
+            kernel_proof! { assert(facts_transition_lemmas::post(before_transition@, *w, i, fact, before_out@, *out)) by { reveal(facts_transition_lemmas::post); } }
         }
-        Fact::IncidentCleared { by_rob } => incident_cleared(w, i, by_rob, out),
+        Fact::IncidentCleared { by_rob } => {
+            incident_cleared(w, i, by_rob, out);
+            kernel_proof! {
+                facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out);
+                assert(facts_transition_lemmas::post(before_transition@, *w, i, fact, before_out@, *out)) by { reveal(facts_transition_lemmas::post); }
+            }
+        }
     }
 
     kernel_proof! {
-        if fact is PrDequeuedByPerson || fact is CiFailed || fact is IncidentCleared {
-            facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out);
-        }
-    }
-
-    kernel_proof! {
-        // #806: retain all 33 unchanged postconditions in six independent conjunction cuts.
-        assert(((fact == Fact::IncidentCleared { by_rob: true }
-            && before_transition@.nodes@[i as int].waiting_incident && before_transition@.nodes@[i as int].effect.is_none()
-            && (!before_transition@.nodes@[i as int].paused || before_transition@.nodes@[i as int].phase is Stopping)
-            && !(before_transition@.nodes@[i as int].phase is Closed)
-            ==> distance(w.nodes@[i as int]) < distance(before_transition@.nodes@[i as int])))) by {};
-        assert(((before_transition@.nodes@[i as int].phase is Closed ==> w.nodes@[i as int].phase is Closed))
-            && (w.nodes@[i as int].repo == before_transition@.nodes@[i as int].repo)
-            && (w.nodes@[i as int].footprint == before_transition@.nodes@[i as int].footprint)
-            && ((settle_shape(before_transition@.nodes@[i as int]) ==> settle_shape(w.nodes@[i as int])))
-            && (w.nodes@.len() == before_transition@.nodes@.len())
-            && (forall|j: int| 0 <= j < before_transition@.nodes@.len() && j != i
-            ==> w.nodes@[j] == before_transition@.nodes@[j])) by {};
-        assert((w.nodes@[i as int].generation as int <= before_transition@.nodes@[i as int].generation as int + 1)
-            && (w.nodes@[i as int].next_seq == before_transition@.nodes@[i as int].next_seq)
-            && (w.nodes@[i as int].credit.start == before_transition@.nodes@[i as int].credit.start)
-            && (w.nodes@[i as int].credit.earned == before_transition@.nodes@[i as int].credit.earned)
-            && (w.nodes@[i as int].credit.added == before_transition@.nodes@[i as int].credit.added)
-            && (w.nodes@[i as int].credit.spent as int <= before_transition@.nodes@[i as int].credit.spent as int + 1)) by {};
-        assert((w.next_ticket == before_transition@.next_ticket)
-            && (w.next_question as int <= before_transition@.next_question as int + 1)
-            && (w.gates@ == before_transition@.gates@)
-            && (w.pool_capacity == before_transition@.pool_capacity)
-            && (w.fail_fast == before_transition@.fail_fast)
-            && (w.file_sets@ == before_transition@.file_sets@)
-            && (w.dependencies@ == before_transition@.dependencies@)
-            && (out.len <= before_out@.len + 2)
-            && (w.nodes@[i as int].last_cmd == before_transition@.nodes@[i as int].last_cmd)) by {};
-        assert((retirement::selected(fact) ==> w.next_question == before_transition@.next_question)
-            && (retirement::selected(fact) ==> w.dependencies@ == before_transition@.dependencies@)
-            && (retirement::selected(fact) ==> w.nodes@[i as int]
-            == retirement::fact_node(before_transition@.nodes@[i as int], fact))
-            && (retirement::selected(fact) && retirement::notices_only(before_out@)
-            ==> retirement::notices_only(*out))
-            && (fact is Priority ==> *out == before_out@)
-            && (match fact {
-            Fact::PrMerged { head, checks_passed } => before_transition@.nodes@[i as int].had_pr
-                && before_transition@.nodes@[i as int].merged.is_none()
-                && !(before_transition@.nodes@[i as int].phase is Closed)
-                && !(before_transition@.nodes@[i as int].approved == Some(head) && checks_passed)
-                ==> retirement::unapproved_note(*out, i),
-            _ => true,
-        })) by {};
-        assert((retirement_retry::selected(fact) ==> w.nodes@[i as int]
-            == retirement_retry::fact_result(before_transition@.nodes@[i as int], fact, before_transition@.fail_fast, before_transition@.next_question).0)
-            && (retirement_retry::selected(fact) ==> w.next_question as int == before_transition@.next_question as int
-            + if retirement_retry::fact_result(before_transition@.nodes@[i as int], fact, before_transition@.fail_fast, before_transition@.next_question).1 { 1int } else { 0int })
-            && (retirement_retry::selected(fact) && retirement::notices_only(before_out@) ==> retirement::notices_only(*out))
-            && (retirement_retry::selected(fact) ==> w.dependencies@ == before_transition@.dependencies@)
-            && (match fact {
-            Fact::CiFailed { infra } => retirement_runtime::ci_post(before_transition@.nodes@[i as int],
-                w.nodes@[i as int], infra, before_transition@.fail_fast, before_transition@.next_question, w.next_question)
-                && retirement_runtime::ci_output(before_transition@.nodes@[i as int], infra,
-                    before_transition@.fail_fast, before_out@, *out),
-            _ => true,
-        })) by {};
+        facts_transition_lemmas::unfold(before_transition@, *w, i, fact, before_out@, *out);
     }
 }
 }
