@@ -52,6 +52,12 @@ fn git(root: &Path, args: &[&str]) -> String {
     String::from_utf8(result.stdout).unwrap().trim().into()
 }
 
+fn model_inputs(request: &Value) -> Value {
+    let mut inputs = request["inputs"].clone();
+    inputs.as_object_mut().unwrap().remove("footprint");
+    inputs
+}
+
 fn session_inputs(history: &Value) -> Vec<Value> {
     history
         .as_array()
@@ -633,10 +639,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
         );
         assert_eq!(
             session_inputs(&session),
-            runs[4..]
-                .iter()
-                .map(|run| run["inputs"].clone())
-                .collect::<Vec<_>>(),
+            runs[4..].iter().map(model_inputs).collect::<Vec<_>>(),
             "only this attempt's two exact round inputs are instructions; notices remain persisted separately"
         );
         assert!(
@@ -889,7 +892,7 @@ fn restart_after_replan(settings: &tl3_config::Store) {
         &fs::read(config.workers.runs.join("sessions/0/plan-1/attempt-1.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(session_inputs(&history), vec![request["inputs"].clone()]);
+    assert_eq!(session_inputs(&history), vec![model_inputs(&request)]);
     assert!(history.to_string().contains("replanned attempt"));
     assert!(!history.to_string().contains("shared greeting is here"));
     assert!(git(&worktree, &["show", "HEAD:greeting.py"]).contains("replanned attempt"));
@@ -942,7 +945,7 @@ pub(super) fn adopted_fix_without_session(settings: &tl3_config::Store) {
     assert_eq!(git(&worktree, &["rev-parse", "HEAD^"]), author);
     let session = config.workers.runs.join("sessions/0/plan-0/attempt-1.json");
     let history: Value = serde_json::from_slice(&fs::read(session).unwrap()).unwrap();
-    assert_eq!(session_inputs(&history), vec![runs[0]["inputs"].clone()]);
+    assert_eq!(session_inputs(&history), vec![model_inputs(&runs[0])]);
 }
 
 pub(super) fn legacy_session(settings: &tl3_config::Store) {
