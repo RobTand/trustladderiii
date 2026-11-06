@@ -67,7 +67,7 @@ fn phases(outcome: Outcome) -> [Phase; 20] {
 // Independent words, bytes and presence bits cover every public field without
 // consistency assumptions. MarkHandled has no input precondition.
 fn arbitrary_node() -> impl Strategy<Value = Node> {
-    (any::<[u64; 24]>(), any::<[u8; 16]>(), any::<[bool; 40]>()).prop_map(|(v, b, f)| {
+    (any::<[u64; 24]>(), any::<[u8; 16]>(), any::<[bool; 41]>()).prop_map(|(v, b, f)| {
         let option = |index: usize| f[index].then_some(v[index]);
         let outcome = OUTCOMES[b[1] as usize % OUTCOMES.len()];
         let mut w = World::new(&[], 0);
@@ -120,6 +120,7 @@ fn arbitrary_node() -> impl Strategy<Value = Node> {
             attempt: b[8],
             round: b[9],
             replanned: f[32],
+            empty_allowed_replanned: f[40],
             plan_retries: b[10],
             audit_rounds: b[11],
             early_end: f[33].then_some(
