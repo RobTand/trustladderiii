@@ -65,6 +65,11 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> 
             + if retirement_retry::fact_result(old(w).nodes@[i as int], fact, old(w).fail_fast, old(w).next_question).1 { 1int } else { 0int },
         retirement_retry::selected(fact) && retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
         retirement_retry::selected(fact) ==> final(w).dependencies@ == old(w).dependencies@,
+        match fact {
+            Fact::CiFailed { infra } => retirement_runtime::ci_post(old(w).nodes@[i as int],
+                final(w).nodes@[i as int], infra, old(w).fail_fast, old(w).next_question, final(w).next_question),
+            _ => true,
+        },
 ] proof [reveal(dependencies::dependency_frame);] {
     kernel_snapshot! { before_fact = *w }
     kernel_proof! {
@@ -151,6 +156,11 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             + if retirement_retry::fact_result(old(w).nodes@[i as int], fact, old(w).fail_fast, old(w).next_question).1 { 1int } else { 0int },
         retirement_retry::selected(fact) && retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
         retirement_retry::selected(fact) ==> final(w).dependencies@ == old(w).dependencies@,
+        match fact {
+            Fact::CiFailed { infra } => retirement_runtime::ci_post(old(w).nodes@[i as int],
+                final(w).nodes@[i as int], infra, old(w).fail_fast, old(w).next_question, final(w).next_question),
+            _ => true,
+        },
 ] {
     kernel_snapshot! { before_transition = *w }
     kernel_snapshot! { before_out = *out }
@@ -376,6 +386,8 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
         final(w).nodes@[i as int] == retirement_retry::fact_result(old(w).nodes@[i as int], Fact::CiFailed { infra }, old(w).fail_fast, old(w).next_question).0,
         final(w).next_question as int == old(w).next_question as int + if retirement_retry::fact_result(old(w).nodes@[i as int], Fact::CiFailed { infra }, old(w).fail_fast, old(w).next_question).1 { 1int } else { 0int },
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+        retirement_runtime::ci_post(old(w).nodes@[i as int], final(w).nodes@[i as int], infra,
+            old(w).fail_fast, old(w).next_question, final(w).next_question),
 ] {
     kernel_snapshot! { ci_world = *w }
     kernel_snapshot! { ci_out = *out }
@@ -386,7 +398,9 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
     if m.phase != Phase::Queued && !before_enqueue {
         kernel_proof! { reveal(retirement::fact_node);
             retirement_runtime::retry_noop(ci_world@.nodes@[i as int], Fact::CiFailed { infra }, w.fail_fast, w.next_question);
-            retirement_runtime::noop_frame(ci_world@, *w, i, ci_out@);
+            reveal(retirement::fact_frame);
+            retirement_runtime::ci_forward(ci_world@.nodes@[i as int], *m, infra,
+                ci_world@.fail_fast, ci_world@.next_question, w.next_question);
         }
 
         return;
@@ -405,6 +419,8 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
             retirement_runtime::ci_frame(ci_world@, prepared_ci@, *w, i, ci_out@, *out);
             retirement_runtime::ci_retry(ci_world@.nodes@[i as int], ci_world@.fail_fast,
                 ci_world@.next_question, w.nodes@[i as int], w.next_question);
+            retirement_runtime::ci_forward(ci_world@.nodes@[i as int], w.nodes@[i as int], infra,
+                ci_world@.fail_fast, ci_world@.next_question, w.next_question);
         }
 
         return;
@@ -416,6 +432,8 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
     kernel_proof! {
         retirement_runtime::ci_frame(ci_world@, prepared_ci@, *w, i, ci_out@, *out);
         retirement_runtime::ci_infra(ci_world@.nodes@[i as int], ci_world@.fail_fast, ci_world@.next_question);
+        retirement_runtime::ci_forward(ci_world@.nodes@[i as int], w.nodes@[i as int], infra,
+            ci_world@.fail_fast, ci_world@.next_question, w.next_question);
     }
 
 }

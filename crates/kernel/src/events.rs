@@ -88,6 +88,11 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
                 && final(w).file_sets@ == old(w).file_sets@
                 && final(w).dependencies@ == old(w).dependencies@
                 && (retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)))
+                && match fact {
+                    Fact::CiFailed { infra } => retirement_runtime::ci_post(old(w).nodes@[node.0 as int],
+                        final(w).nodes@[node.0 as int], infra, old(w).fail_fast, old(w).next_question, final(w).next_question),
+                    _ => true,
+                }
             },
             Event::NewRequest { repo, priority } => retirement_wide::creation(*old(w), *final(w), repo, priority, None)
                 && *final(out) == *old(out),

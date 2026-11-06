@@ -93,4 +93,29 @@ pub(super) proof fn noop_frame(w: World, after: World, i: usize, out: Outbox)
         after.pool_capacity == w.pool_capacity,
     ensures retirement::fact_frame(w, after, i, out, out),
 { reveal(retirement::fact_frame); }
+
+/// Q50 / Q54 / #806: the exact CI source and W2 failed-round tuple, for arbitrary flags.
+#[verifier::opaque]
+pub(super) open spec fn ci_post(n: Node, after: Node, infra: bool, fast: bool,
+    id: u64, next: u64) -> bool {
+    if n.phase == Phase::Queued || (n.phase == Phase::Publishing
+        && current_item(n) == Some(Item::Do(EffectKind::Enqueue))) {
+        if infra { after == retirement::fact_node(n, Fact::CiFailed { infra: true }) && next == id }
+        else { (after, next) == port_review_retry::round(ci_prepared(n), fast, id, ReviewStop::CiFailed) }
+    } else { after == n && next == id }
+}
+/// Q50 / Q54 / #806: expose the shared tuple from the complete retirement result.
+pub(super) proof fn ci_forward(n: Node, after: Node, infra: bool, fast: bool, id: u64, next: u64)
+    requires id < u64::MAX,
+        after == retirement_retry::fact_result(n, Fact::CiFailed { infra }, fast, id).0,
+        next as int == id as int + if retirement_retry::fact_result(n,
+            Fact::CiFailed { infra }, fast, id).1 { 1int } else { 0int },
+    ensures ci_post(n, after, infra, fast, id, next),
+{
+    reveal(ci_post); reveal(retirement_retry::fact_result);
+    if !infra && (n.phase == Phase::Queued || (n.phase == Phase::Publishing
+        && current_item(n) == Some(Item::Do(EffectKind::Enqueue)))) {
+        retirement_retry_bridge::round(ci_prepared(n), fast, id, ReviewStop::CiFailed);
+    }
+}
 }

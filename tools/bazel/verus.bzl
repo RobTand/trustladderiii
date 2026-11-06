@@ -529,6 +529,7 @@ def verus_proofs():
             "kernel::retirement_gate::slot_ticket": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::retirement_gate::slot_changed": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::retirement_gate::grant_input": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::retirement_runtime::ci_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::retirement_runtime::ci_prepared": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::retirement_runtime::outside_prepared": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::retirement_retry::can_pay": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -1060,6 +1061,7 @@ def verus_proofs():
             "retirement_runtime_ci_frame": ("kernel::retirement_runtime#ci_frame", 1),
             "retirement_runtime_noop_frame": ("kernel::retirement_runtime#noop_frame", 1),
             "retirement_gate_bridge_overlaps": ("kernel::retirement_gate_bridge#overlaps", 1),
+            "retirement_runtime_ci_forward": ("kernel::retirement_runtime#ci_forward", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
