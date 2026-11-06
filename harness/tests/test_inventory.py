@@ -313,3 +313,22 @@ def test_render_context_preserves_reply_and_distinguishes_tool_repairs(repair_ki
             assert render() == reply.replace(forms.MAKER.phrase + ' ', '')
             assert reason in render()
             assert forms.MAKER.phrase not in render()
+
+
+@pytest.mark.parametrize('entry', ['violation', 'all', 'empty'])
+def test_render_context_rejects_invalid_context(entry):
+    from tl3_harness import rules as core
+    from tl3_harness.terminal_forms import MAKER
+
+    row = core.Rule('render.context', lambda facts: ({},),
+        lambda facts: (core.Name('field', '/value'),),
+        core.Allowed('const', 'ok'), core.CantMeet('Change the declaration.'),
+        roles=frozenset({MAKER.role}))
+    violation, = core.evaluate((row,), {}, role=MAKER.role)
+    renderers = {
+        'violation': lambda: violation.render(role=MAKER.role, context='bogus'),
+        'all': lambda: core.render_all((violation,), role=MAKER.role, context='bogus'),
+        'empty': lambda: core.render_all((), role=MAKER.role, context='bogus'),
+    }
+    with pytest.raises(ValueError, match='render context must be reply or tool'):
+        renderers[entry]()
