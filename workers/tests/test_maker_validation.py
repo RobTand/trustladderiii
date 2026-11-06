@@ -59,7 +59,7 @@ class _Configured(Exception):
 
 
 @contextmanager
-def _pq3312_tools(maker_request, monkeypatch, extra_files=()):
+def _pq3312_tools(maker_request, monkeypatch, extra_files=(), footprint=None):
     """The maker's own tools on a worktree its run configured for the #3312 plan.
 
     maker.run configures the worktree and stops where it would build the agent,
@@ -83,7 +83,9 @@ def _pq3312_tools(maker_request, monkeypatch, extra_files=()):
 
     monkeypatch.setattr(maker, "_check_inputs", lambda inputs: None)
     monkeypatch.setattr(runtime, "build_agent", configured)
-    with Worktree(root) as worktree:
+    footprint = plan["files"] if footprint is None else footprint
+    maker_request["inputs"]["footprint"] = footprint
+    with Worktree(root, footprint=footprint) as worktree:
         with pytest.raises(_Configured):
             maker.run(None, maker_request, worktree, lambda event: None)
         tools = {tool.name: tool for tool in build_tools(worktree, maker.ROLE.tools)}
@@ -136,6 +138,18 @@ def test_a_declared_file_absent_on_base_can_still_be_created(maker_request, monk
         created = call("write", path="tests/test_new_reporter.py", content="def test_new(): pass\n")
     assert created.text == "File written."
     assert (root / "tests/test_new_reporter.py").read_text() == "def test_new(): pass\n"
+
+
+@pytest.mark.parametrize(("declared", "written", "canonical"), [
+    ("./x.py", "x.py", "x.py"), ("a//b.py", "a/b.py", "a/b.py"), ("x.py", "./x.py", "x.py"),
+    ("a/./b.py", "a/b.py", "a/b.py"), ("dir/", "dir", "dir"),
+])
+def test_canonical_plan_paths_allow_declared_writes(maker_request, monkeypatch, declared, written, canonical):
+    with _pq3312_tools(maker_request, monkeypatch, extra_files=[declared],
+                       footprint=[*PQ3312_FILES, canonical]) as (root, call):
+        result = call("write", path=written, content="# declared\n")
+    assert result.text == "File written.", result.text
+    assert (root / written).read_text() == "# declared\n"
 
 
 def test_long_declared_lists_are_truncated_in_the_refusal(maker_request, monkeypatch):
@@ -201,7 +215,7 @@ def test_check_base_reaches_maker_test_tool(maker_request):
     base = git(maker_request["worktree"], "rev-parse", "HEAD")
     maker_request["inputs"]["check_base_sha"] = base
     response = {"kind": "cant_meet", "report": "Fixture stops after tool binding."}
-    with Worktree(maker_request["worktree"]) as tree:
+    with Worktree(maker_request["worktree"], footprint=maker_request["inputs"]["footprint"]) as tree:
         maker.run(ToolModel(responses=[AIMessage(**turn(response))]), maker_request, tree, lambda event: None)
         assert getattr(tree, "check_base_sha", None) == base
 
@@ -210,7 +224,7 @@ def test_plan_check_kinds_reach_maker_test_tool(maker_request):
     from tl3_workers.tools import Worktree
 
     response = {"kind": "cant_meet", "report": "Fixture stops after tool binding."}
-    with Worktree(maker_request["worktree"]) as tree:
+    with Worktree(maker_request["worktree"], footprint=maker_request["inputs"]["footprint"]) as tree:
         maker.run(ToolModel(responses=[AIMessage(**turn(response))]), maker_request, tree, lambda event: None)
         assert getattr(tree, "test_checks", None) == maker_request["inputs"]["plan"]["checks"]
 
@@ -292,7 +306,7 @@ def test_fix_round_inputs_and_test_settings_reach_their_destinations(tmp_path, m
     assert settings == [inputs["tests"]]
     # The PrismaBuild look ties a declared wait to this checkout's history.
     assert checkouts == [Path(maker_request["worktree"])]
-    assert json.loads(observed[0][1].text) == inputs
+    assert json.loads(observed[0][1].text) == {key: value for key, value in inputs.items() if key != "footprint"}
     system = observed[0][0].text
     assert system.startswith(files("tl3_workers").joinpath("prompts/maker.md").read_text())
     assert maker_request["key_file"] not in system
@@ -320,3 +334,38 @@ def test_maker_rejects_shell_and_other_undeclared_tools(tmp_path, maker_request,
         {"event": "reply", "role": "maker", "reply": response},
     ]
     assert not (Path(maker_request["worktree"]) / "forbidden").exists()
+
+
+@pytest.mark.parametrize("footprint", [None, ["other.py"]])
+def test_maker_refuses_a_worktree_with_missing_or_mismatched_footprint(maker_request, footprint):
+    from tl3_workers.tracing import failure_tags
+    from tl3_workers.turns import Unrepairable
+
+    model = ToolModel(responses=[AIMessage(**turn({"kind": "cant_meet", "report": "Unused."}))])
+    with Worktree(maker_request["worktree"], footprint=footprint) as worktree:
+        with pytest.raises(Unrepairable, match="worktree footprint") as caught:
+            maker.run(model, maker_request, worktree, lambda event: None)
+    assert "worktree footprint" in failure_tags(caught.value)["failure_message"]
+
+
+def test_runtime_constructs_a_maker_worktree_that_refuses_undeclared_writes(maker_request, monkeypatch):
+    root = Path(maker_request["worktree"])
+    (root / "tests").mkdir()
+    observed = []
+
+    class ObservedModel(ToolModel):
+        def _generate(self, messages, **kwargs):
+            observed.extend(message for message in messages if isinstance(message, ToolMessage))
+            return super()._generate(messages, **kwargs)
+
+    response = {"kind": "cant_meet", "report": "The diagnostic file is outside the plan."}
+    model = ObservedModel(responses=[AIMessage(**write_turn("tests/test_zz_diag.py", PQ3312_DIAG)),
+                                     AIMessage(**turn(response))])
+    monkeypatch.setattr(runtime, "create_model", lambda request: model)
+    events = []
+    runtime.run(maker_request, events.append)
+    refusal = next(message for message in observed if message.name == "write")
+    assert refusal.status == "error"
+    assert "not a declared file" in refusal.content
+    assert not (root / "tests/test_zz_diag.py").exists()
+    assert events[-1]["reply"] == response

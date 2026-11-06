@@ -20,7 +20,7 @@ def test_schema_inventory():
     assert hashlib.sha256(Path(__file__).with_name("schema-base-pairs.json").read_bytes()).hexdigest() == (
         "601e53cf2b07578499a15b1f026ae9e374add04d88fa1098c02c6e7c715e9520"
     )
-    assert set(CURRENT["schemas"]) == set(CLOSURE_PATHS) | {"check-report.json"}
+    assert set(CURRENT["schemas"]) == set(CLOSURE_PATHS) | {"maker-input.json", "check-report.json"}
     # #832 and #826 add worker/operator contracts outside every model prompt.
     expected = set(BASE["schemas"]) | {"plan-check-provenance.json", "execution-failure.json"}
     assert {path.name for path in SCHEMAS.iterdir() if path.name.endswith(".json")} == expected

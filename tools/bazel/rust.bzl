@@ -25,7 +25,7 @@ _POSTGRES = ["crates/controller", "crates/store"]
 
 # Files that include_str! and build.rs read from outside the crate.
 _COMPILE_DATA = {
-    "crates/contracts": ["//workers:schemas"],
+    "crates/contracts": ["//workers:schemas", "//workers/tests:footprint_paths"],
     "crates/controller": ["//workers:schemas"],
     "crates/config": ["//deploy/dl380g10:models.toml"],
     "crates/github": ["//crates/mergify:sources"],

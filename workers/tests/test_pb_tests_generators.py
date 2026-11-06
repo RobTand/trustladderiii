@@ -262,6 +262,7 @@ def test_request_132_maker_returns_only_the_generated_final_head(
                                        "generator": "python3 generate.py", "generator_available": True},
                           "attempt": 1, "round": 0, "context_size": 150000,
                           "tests": {"image": IMAGE, "tools_path": str(tmp_path / "tools")}}}
+    request["inputs"]["footprint"] = request["inputs"]["plan"]["files"]
     validate("maker-input", request["inputs"])
     events = []
     runtime.run(request, events.append)
@@ -488,6 +489,7 @@ def test_request_163_implicit_generator_failure_retains_safe_causal_receipt(
                           "attempt": 1, "round": 0, "context_size": 150000,
                           "tests": {"image": IMAGE, "tools_path": str(tmp_path / "tools"),
                                     "cpus": 4, "mem_gb": 12}}}
+    request["inputs"]["footprint"] = request["inputs"]["plan"]["files"]
     events = []
     runtime.run(request, events.append)
     reply = events[-1]["reply"]

@@ -189,7 +189,10 @@ def loop(modules, schedule, crash):
                                                             "tests": ["test.py"]}]}}}
     evidence = SimpleNamespace(state=lambda: {"sample": io.read("evidence")},
                                restore=lambda value: io.calls.append(["restore_evidence", value]))
-    worktree = SimpleNamespace(evidence=evidence, pb_identity={"fixture": True})
+    worktree = SimpleNamespace(evidence=evidence, pb_identity={"fixture": True}, declared_files=frozenset({"f"}))
+    # #894 adds transport-only scope; the frozen reference and model both see the original inputs.
+    if module is maker:
+        request["inputs"]["footprint"] = ["f"]
     original_estimate = edge.input_estimate
 
     def estimate(request):
