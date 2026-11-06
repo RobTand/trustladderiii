@@ -402,33 +402,70 @@ fn completion(
     results: Vec<serde_json::Value>,
     failed_tests: Vec<FailedTest>,
 ) -> Result<Completion> {
+    completion_for(&job.report_context(), job.action.as_str(), report, pass, results, failed_tests)
+}
+
+fn completion_for(
+    job: &ReportContext<'_>,
+    action_key: &str,
+    report: bool,
+    pass: bool,
+    results: Vec<serde_json::Value>,
+    failed_tests: Vec<FailedTest>,
+) -> Result<Completion> {
     let head = job
         .delivery
         .head_sha
         .clone()
         .ok_or(Error::Invalid("missing check head"))?;
     let mut observations = vec![];
-    if job.delivery.checks.as_ref() != Some(&job.run) {
+    if job.delivery.checks.as_ref() != Some(job.run) {
         // Staging moved the plan to the base the head descends from; keep it.
         observations.push(Observation::CheckPlan {
             node: job.delivery.node(),
             sha: head.clone(),
-            run: job.run.clone(),
+            run: (*job.run).clone(),
         });
     }
     observations.push(Observation::Checks {
         node: job.delivery.node(),
         generation: job.delivery.generation,
-        action_key: job.action.to_string(),
+        action_key: action_key.to_owned(),
         base_sha: job.run.base_sha.as_str().to_owned(),
         sha: head,
-        changed_paths: job.changed_paths.clone(),
+        changed_paths: job.changed_paths.to_vec(),
         failed_tests,
         report,
         pass,
         results,
     });
     Ok(Completion::confirmed(observations))
+}
+
+/// FX: consume only FX1's verified daytime payload, then apply the existing served-tree judge.
+pub(crate) fn daytime_completion(
+    backend: &dyn crate::run_backend::RunBackend,
+    owner: &crate::run_backend::Owner,
+    terminal: &crate::run_backend::Terminal,
+    context: &ReportContext<'_>,
+    action_key: &str,
+) -> Result<Completion> {
+    let payload = backend.daytime_payload(owner, terminal)
+        .map_err(|error| Error::Adapter(Box::new(error)))?;
+    let mut raw = b"TL3_CHECKS ".to_vec();
+    raw.extend(serde_json::to_vec(&payload)?);
+    let (report, pass, results, failures, failure, diagnostic) = judge_payload(&raw, context, true)?;
+    let mut completion = completion_for(context, action_key, report, pass, results, failures)?;
+    completion.failure_class = failure.map(Into::into);
+    if let Some(diagnostic) = diagnostic {
+        completion.observations.insert(0, Observation::CheckExecutionFailure {
+            node: context.delivery.node(),
+            generation: context.delivery.generation,
+            action_key: action_key.to_owned(),
+            diagnostic,
+        });
+    }
+    Ok(completion)
 }
 
 fn parse(raw: &[u8], job: &impl ReportJob) -> serde_json::Result<Option<Report>> {
