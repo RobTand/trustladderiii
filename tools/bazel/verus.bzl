@@ -529,6 +529,7 @@ def verus_proofs():
             "kernel::retirement_gate::slot_ticket": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::retirement_gate::slot_changed": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::retirement_gate::grant_input": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::retirement_runtime::ci_output": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::retirement_runtime::ci_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::retirement_runtime::ci_prepared": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::retirement_runtime::outside_prepared": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",

@@ -74,9 +74,17 @@ pub(super) open spec fn ci_post(n: Node, after: Node, infra: bool, fast: bool,
         else { (after, next) == port_review_retry::round(ci_prepared(n), fast, id, ReviewStop::CiFailed) }
     } else { after == n && next == id }
 }
+/// Q54 / #806: a fast paid CI retry emits no extra output.
+#[verifier::opaque]
+pub(super) open spec fn ci_output(n: Node, infra: bool, fast: bool,
+    before: Outbox, after: Outbox) -> bool {
+    !infra && fast && n.round != 0 ==> after.len == before.len
+}
+
 /// Q50 / #806: cancellation preserves the source agenda and every callee premise.
 pub(super) proof fn ci_inputs(n: Node)
-    ensures current_item(ci_prepared(n)) == current_item(n),
+    ensures ci_prepared(n).round == n.round,
+        current_item(ci_prepared(n)) == current_item(n),
         node_headroom(ci_prepared(n)) == node_headroom(n),
         arithmetic_consistent(ci_prepared(n)) == arithmetic_consistent(n),
 { reveal(ci_prepared); }

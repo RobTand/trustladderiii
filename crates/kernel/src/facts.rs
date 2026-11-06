@@ -67,7 +67,9 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> 
         retirement_retry::selected(fact) ==> final(w).dependencies@ == old(w).dependencies@,
         match fact {
             Fact::CiFailed { infra } => retirement_runtime::ci_post(old(w).nodes@[i as int],
-                final(w).nodes@[i as int], infra, old(w).fail_fast, old(w).next_question, final(w).next_question),
+                final(w).nodes@[i as int], infra, old(w).fail_fast, old(w).next_question, final(w).next_question)
+                && retirement_runtime::ci_output(old(w).nodes@[i as int], infra,
+                    old(w).fail_fast, *old(out), *final(out)),
             _ => true,
         },
 ] proof [reveal(dependencies::dependency_frame);] {
@@ -158,7 +160,9 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
         retirement_retry::selected(fact) ==> final(w).dependencies@ == old(w).dependencies@,
         match fact {
             Fact::CiFailed { infra } => retirement_runtime::ci_post(old(w).nodes@[i as int],
-                final(w).nodes@[i as int], infra, old(w).fail_fast, old(w).next_question, final(w).next_question),
+                final(w).nodes@[i as int], infra, old(w).fail_fast, old(w).next_question, final(w).next_question)
+                && retirement_runtime::ci_output(old(w).nodes@[i as int], infra,
+                    old(w).fail_fast, *old(out), *final(out)),
             _ => true,
         },
 ] {
@@ -245,6 +249,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out);
         }
     }
+
     kernel_proof! {
         // #806: P and !P partition every fact. Both subproofs retain the entire contract.
         let dispatch_post = ((fact == Fact::IncidentCleared { by_rob: true }
@@ -297,7 +302,9 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             && (retirement_retry::selected(fact) ==> w.dependencies@ == before_transition@.dependencies@)
             && (match fact {
             Fact::CiFailed { infra } => retirement_runtime::ci_post(before_transition@.nodes@[i as int],
-                w.nodes@[i as int], infra, before_transition@.fail_fast, before_transition@.next_question, w.next_question),
+                w.nodes@[i as int], infra, before_transition@.fail_fast, before_transition@.next_question, w.next_question)
+                && retirement_runtime::ci_output(before_transition@.nodes@[i as int], infra,
+                    before_transition@.fail_fast, before_out@, *out),
             _ => true,
         });
         if fact is PushByOther {
@@ -456,7 +463,9 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
         retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
         retirement_runtime::ci_post(old(w).nodes@[i as int], final(w).nodes@[i as int], infra,
             old(w).fail_fast, old(w).next_question, final(w).next_question),
-] hide [current_item, items] proof [reveal(retirement_runtime::ci_post);] {
+        retirement_runtime::ci_output(old(w).nodes@[i as int], infra,
+            old(w).fail_fast, *old(out), *final(out)),
+] hide [current_item, items] proof [reveal(retirement_runtime::ci_post); reveal(retirement_runtime::ci_output);] {
     kernel_snapshot! { ci_world = *w }
     kernel_snapshot! { ci_out = *out }
     kernel_snapshot! { before_ci = w.nodes@[i as int] }
@@ -493,6 +502,8 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
             retirement_runtime::ci_frame(ci_world@, prepared_ci@, *w, i, ci_out@, *out);
         }
 
+
+
         kernel_proof! {
             // #806: discharge the complete CI contract within this accepting path.
             assert((retirement::fact_frame(ci_world@, *w, i, ci_out@, *out))
@@ -501,7 +512,9 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
                 && (infra && retirement::notices_only(ci_out@) ==> retirement::notices_only(*out))
                 && (retirement::notices_only(ci_out@) ==> retirement::notices_only(*out))
                 && (retirement_runtime::ci_post(ci_world@.nodes@[i as int], w.nodes@[i as int], infra,
-                ci_world@.fail_fast, ci_world@.next_question, w.next_question))) by {};
+                ci_world@.fail_fast, ci_world@.next_question, w.next_question))
+                && (retirement_runtime::ci_output(ci_world@.nodes@[i as int], infra,
+                ci_world@.fail_fast, ci_out@, *out))) by {};
         }
 
         return;
@@ -514,6 +527,7 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
         retirement_runtime::ci_frame(ci_world@, prepared_ci@, *w, i, ci_out@, *out);
     }
 
+
     kernel_proof! {
         // #806: discharge the complete CI contract within this accepting path.
         assert((retirement::fact_frame(ci_world@, *w, i, ci_out@, *out))
@@ -522,7 +536,9 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
             && (infra && retirement::notices_only(ci_out@) ==> retirement::notices_only(*out))
             && (retirement::notices_only(ci_out@) ==> retirement::notices_only(*out))
             && (retirement_runtime::ci_post(ci_world@.nodes@[i as int], w.nodes@[i as int], infra,
-            ci_world@.fail_fast, ci_world@.next_question, w.next_question))) by {};
+            ci_world@.fail_fast, ci_world@.next_question, w.next_question))
+            && (retirement_runtime::ci_output(ci_world@.nodes@[i as int], infra,
+            ci_world@.fail_fast, ci_out@, *out))) by {};
     }
 
 }

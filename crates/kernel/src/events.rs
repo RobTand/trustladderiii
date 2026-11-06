@@ -90,7 +90,9 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
                 && (retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)))
                 && match fact {
                     Fact::CiFailed { infra } => retirement_runtime::ci_post(old(w).nodes@[node.0 as int],
-                        final(w).nodes@[node.0 as int], infra, old(w).fail_fast, old(w).next_question, final(w).next_question),
+                        final(w).nodes@[node.0 as int], infra, old(w).fail_fast, old(w).next_question, final(w).next_question)
+                        && retirement_runtime::ci_output(old(w).nodes@[node.0 as int], infra,
+                            old(w).fail_fast, *old(out), *final(out)),
                     _ => true,
                 }
             },
