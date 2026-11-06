@@ -43,8 +43,17 @@ head subjects. node_ids name the observers. Every other base definition stays
 on base, including helpers, fixtures, imports and decorated class context.
 For an explicit partition, use proof with subjects (relative Python paths or
 path::qualified::definition), observer_support (new source definitions or new
-modules needed only by observers), and red_message (the exact call assertion
-message required on base). Module-level imports needed by observers are carried
+modules needed only by observers), and red_message for assertion RED.
+For a demonstrating check, accept these base failures: an assertion failure,
+a missing name that the leaf adds, or the explicitly declared symptom.
+red_message applies only to assertion RED. It is the exact call assertion message
+required on base for that class. Accept a missing-name or declared-symptom RED
+without red_message when the proof receipt shows the failure.
+For a declared symptom, check the exact exception class, exact test node, and
+call or setup phase. The plan declares these before the run. The exception must
+come from the original test's own code or fixture. An unrelated setup error,
+import failure, infrastructure failure, missing report, or outer hang never counts.
+Module-level imports needed by observers are carried
 automatically when their bindings are absent from base. New fixtures and helper
 dependencies belong in observer_support. A missing dependency refusal names its
 module and symbol. Never put the subject or a changed existing helper in support.
