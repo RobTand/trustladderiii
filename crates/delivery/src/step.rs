@@ -301,9 +301,6 @@ pub enum Input<'a> {
         key: &'a [u8],
         matching_open_incident: bool,
     },
-    CheckedApprovalNews {
-        key: &'a [u8],
-    },
     RepairDone {
         copies: Option<u64>,
         dispatches: u64,
@@ -348,7 +345,6 @@ pub enum Action<'a> {
     Commit(CommitPlan),
     /// Atomically restore Intended, authorization and lineage at this key.
     AuthorizeRetry,
-    ScheduleRepair,
     FinishRepair {
         clear_unresolved: bool,
     },
@@ -573,7 +569,11 @@ fn observed<'a>(
     executed_contract(view, pending, outcome, out),
 ))]
 fn executed<'a>(view: DeliveryView<'a>, pending: Continuation<'a>, outcome: Outcome) -> Action<'a> {
-    if !bound(view, &pending) || pending.stage != Stage::Execute || view.state != State::Sent {
+    if !key_matches(view.key, pending.key)
+        || view.epoch != pending.epoch
+        || pending.stage != Stage::Execute
+        || view.state != State::Sent
+    {
         return Action::Wait;
     }
     match outcome {
@@ -695,13 +695,6 @@ pub fn action<'a>(view: DeliveryView<'a>, input: Input<'a>) -> Action<'a> {
                 Action::Wait
             }
         }
-        Input::CheckedApprovalNews { key } => {
-            if key_matches(view.key, key) && view.approval != ApprovalGate::Ordinary {
-                Action::ScheduleRepair
-            } else {
-                Action::Wait
-            }
-        }
         Input::RepairDone { copies, dispatches } => {
             if view.approval == ApprovalGate::Ordinary {
                 return Action::Wait;
@@ -795,7 +788,8 @@ pub open spec fn observed_contract(v: DeliveryView, p: Continuation, changed: bo
 }
 
 pub open spec fn executed_contract(v: DeliveryView, p: Continuation, outcome: Outcome, out: Action) -> bool {
-    if permission_at(p, v) && permission_stage(p) == Stage::Execute && v.state == State::Sent {
+    if permission_key(p) == v.key@ && permission_epoch(p) == v.epoch
+        && permission_stage(p) == Stage::Execute && v.state == State::Sent {
         match outcome {
             Outcome::Acknowledged(ack) => matches!(out, Action::EnqueueCompletion(a) if a == ack),
             Outcome::Ambiguous => matches!(out, Action::RecordAmbiguity { stop: true }),
@@ -849,9 +843,6 @@ pub open spec fn action_contract(v: DeliveryView, input: Input, out: Action) -> 
             if v.key@ == key@ && matching_open_incident && v.approval != ApprovalGate::Ordinary && matches!(v.state, State::Sent | State::Uncertain) {
                 matches!(out, Action::AuthorizeRetry)
             } else { matches!(out, Action::Wait) },
-        Input::CheckedApprovalNews { key } => if v.key@ == key@ && v.approval != ApprovalGate::Ordinary {
-            matches!(out, Action::ScheduleRepair)
-        } else { matches!(out, Action::Wait) },
         Input::RepairDone { copies, dispatches } => if v.approval == ApprovalGate::Ordinary { matches!(out, Action::Wait) }
             else { matches!(out, Action::FinishRepair { clear_unresolved } if clear_unresolved == match copies { Some(c) => c >= dispatches, None => false }) },
     }

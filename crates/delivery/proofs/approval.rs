@@ -104,18 +104,16 @@ fn replacement_provenance(v: DeliveryView, ack: Ack, successor: bool) {
     }
 }
 
-fn final_news_recovery(v: DeliveryView, copies: Option<u64>, dispatches: u64)
+fn final_repair_preserves_unresolved_history(v: DeliveryView, copies: Option<u64>, dispatches: u64)
     requires v.approval != ApprovalGate::Ordinary,
         matches!(v.state, State::Confirmed | State::Failed | State::Cancelled),
 {
-    let next = action(v, Input::CheckedApprovalNews { key: v.key });
-    assert(matches!(next, Action::ScheduleRepair));
     let finished = action(v, Input::RepairDone { copies, dispatches });
     assert(matches!(finished, Action::FinishRepair { clear_unresolved } if clear_unresolved == match copies { Some(c) => c >= dispatches, None => false }));
 }
 
 /// A delayed POST can land after confirmation; all copies still converge to
-/// the same conclusion and output. News schedules repair even for a final row.
+/// the same conclusion and output. The interpreter schedules repair on checked news.
 fn approval_late_witness(v: DeliveryView)
     requires v.state == State::Confirmed, v.approval != ApprovalGate::Ordinary,
 {
@@ -124,8 +122,6 @@ fn approval_late_witness(v: DeliveryView)
     let retry = issue(restart(old));
     let first = land(retry, Class::Approval, true, OnceLaws { atomic_original_key_dedup: false, stable_operation_identity: false });
     let zombie = land(restart(first), Class::Approval, false, OnceLaws { atomic_original_key_dedup: false, stable_operation_identity: false });
-    let news = action(v, Input::CheckedApprovalNews { key: v.key });
-    assert(matches!(news, Action::ScheduleRepair));
     let repaired = approval_converges(zombie);
     assert(repaired.copies == 2 && repaired.incorrect == 0);
     let finished = action(v, Input::RepairDone { copies: Some(repaired.copies), dispatches: 2 });

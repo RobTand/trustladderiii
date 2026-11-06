@@ -327,7 +327,7 @@ fn completion_bridges_uncertain_and_retires_only_kernel_retries() {
 }
 
 #[test]
-fn approval_clear_news_and_repair_preserve_q27() {
+fn approval_clear_and_repair_preserve_q27() {
     let v = DeliveryView {
         approval: ApprovalGate::Prior { predecessor: false },
         ..view(State::Uncertain)
@@ -356,10 +356,6 @@ fn approval_clear_news_and_repair_preserve_q27() {
         state: State::Confirmed,
         ..v
     };
-    assert!(matches!(
-        action(final_v, Input::CheckedApprovalNews { key: b"original" }),
-        Action::ScheduleRepair
-    ));
     assert!(matches!(
         action(
             final_v,

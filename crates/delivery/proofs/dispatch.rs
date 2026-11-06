@@ -54,5 +54,14 @@ fn no_permission_before_sent(v: DeliveryView)
     assert(matches!(next, Action::CommitSent { .. }));
     assert(!matches!(next, Action::Execute(_)));
 }
+
+fn executed_ack_survives_revision_change(v: DeliveryView, pending: Continuation, ack: Ack)
+    requires permission_key(pending) == v.key@, permission_epoch(pending) == v.epoch,
+        permission_stage(pending) == Stage::Execute, v.state == State::Sent,
+{
+    let next = action(v, Input::Executed { pending, outcome: Outcome::Acknowledged(ack) });
+    assert(matches!(next, Action::EnqueueCompletion(a) if a == ack));
+}
+
 }
 fn main() {}
