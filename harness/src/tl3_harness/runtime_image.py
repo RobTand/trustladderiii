@@ -58,7 +58,7 @@ def preflight_profile(map_path, profile, *, host, platform, podman, environment,
 
 def prepare_runtime_profile(destination, *, host_interpreter, container_interpreter, podman, systemctl,
                             mode, memory_limit_bytes, image_map, profile, host, platform, environment,
-                            mode_observations=None, timeout=10):
+                            producer_commit, mode_observations=None, timeout=10):
     """Prepare artifact inputs for Rust's generated RuntimeIdentity, not a mirror.
 
     Execute only on the admitted named host, with ops-provided executable paths.
@@ -86,8 +86,9 @@ def prepare_runtime_profile(destination, *, host_interpreter, container_interpre
                 'host': host, 'platform': platform,
                 'access_environment': {key: environment[key] for key in ('HOME', 'XDG_RUNTIME_DIR')},
                 'image_observations': observations, 'mode_observations': mode_reference}
-    stage_host_runtime(destination, interpreter=host_interpreter, _prepared_profile=prepared)
-    return Path(destination).resolve() / 'prepared-profile.json'
+    executable, _, _ = stage_host_runtime(destination, interpreter=host_interpreter, producer_commit=producer_commit,
+                                         _prepared_profile=prepared)
+    return executable.parent / 'prepared-profile.json'
 
 
 def _stop(child, timeout):
