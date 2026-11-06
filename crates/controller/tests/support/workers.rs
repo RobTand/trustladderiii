@@ -190,6 +190,12 @@ impl<F: FnMut(&Delivery, &mut Completion)> Executor for Workers<F> {
         self.backend(delivery)
             .quota_resume_ms(delivery, announced, now)
     }
+    fn quota_candidates(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<Vec<tl3_controller::looks::QuotaModel>> {
+        self.backend(delivery).quota_candidates(delivery)
+    }
     fn stop_stalled(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.backend(delivery).stop_stalled(delivery)
     }

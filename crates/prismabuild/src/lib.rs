@@ -94,11 +94,18 @@ pub struct Options {
 #[derive(Clone)]
 pub struct PrismaBuild {
     options: Options,
+    status_tool: Tool,
     http: reqwest::Client,
     bell_url: reqwest::Url,
 }
 
 impl PrismaBuild {
+    /// Override the read-only status executable, for recorded upstream fixtures.
+    pub fn with_status_tool(mut self, tool: Tool) -> Self {
+        self.status_tool = tool;
+        self
+    }
+
     pub fn new(options: Options) -> Result<Self, Error> {
         if !options.queue_root.is_absolute() || options.queue_root.to_str().is_none() {
             return Err(Error::InvalidInput(
@@ -128,9 +135,119 @@ impl PrismaBuild {
             .build()
             .map_err(|e| Error::Bell(e.to_string()))?;
         Ok(Self {
+            status_tool: Tool {
+                program: "python3".into(),
+                args: vec!["/mnt/shared/prismabuild-fleet/repo/tools/pbstatus.py".into()],
+            },
             options,
             http,
             bell_url,
         })
+    }
+}
+
+// pbstatus is the PB-owned read boundary. Never retain its jobs, argv or tokens.
+#[derive(Deserialize)]
+struct FleetStatus {
+    schema: String,
+    transport: String,
+    complete: bool,
+    pool: PoolStatus,
+    queue_space: QueueSpace,
+    nodes: Vec<WorkerStatus>,
+}
+#[derive(Deserialize)]
+struct PoolStatus {
+    complete: bool,
+}
+#[derive(Deserialize)]
+struct QueueSpace {
+    state: String,
+}
+#[derive(Deserialize)]
+struct WorkerStatus {
+    healthy: bool,
+    state: String,
+    capacity: Option<Capacity>,
+}
+#[derive(Deserialize)]
+struct Capacity {
+    cpu: u32,
+    mem_gb: u32,
+}
+
+impl PrismaBuild {
+    /// Q7 / #850: one read-only fleet census, independent of any old action's verdict.
+    /// A fresh, admitting CPU worker must have capacity for this delivery.
+    /// Busy capacity is allowed: this tests service recovery, not immediate placement.
+    pub async fn can_serve(&self, demand: &Demand) -> Result<bool, Error> {
+        use std::{process::Stdio, time::Duration};
+        use tokio::{io::AsyncReadExt, process::Command};
+        if demand.gpu {
+            return Ok(false);
+        }
+        let probe = async {
+            let mut child = Command::new(&self.status_tool.program)
+                .args(&self.status_tool.args)
+                .args([
+                    "--json",
+                    "--transport",
+                    "pool",
+                    "--recent",
+                    "0",
+                    "--timeout-s",
+                    "2",
+                    "--queue-root",
+                ])
+                .arg(&self.options.queue_root)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .kill_on_drop(true)
+                .spawn()
+                .map_err(|source| Error::Io {
+                    path: self.status_tool.program.clone(),
+                    source,
+                })?;
+            let mut bytes = Vec::new();
+            child
+                .stdout
+                .take()
+                .expect("piped status stdout")
+                .take(1024 * 1024 + 1)
+                .read_to_end(&mut bytes)
+                .await
+                .map_err(|source| Error::Io {
+                    path: self.status_tool.program.clone(),
+                    source,
+                })?;
+            if bytes.len() > 1024 * 1024 {
+                return Ok(false);
+            }
+            let status = child.wait().await.map_err(|source| Error::Io {
+                path: self.status_tool.program.clone(),
+                source,
+            })?;
+            if !status.success() {
+                return Ok(false);
+            }
+            let fleet: FleetStatus = serde_json::from_slice(&bytes)
+                .map_err(|_| Error::ToolResponse("invalid fleet status".into()))?;
+            Ok(fleet.schema == "prismabuild.pbstatus.v1"
+                && fleet.transport == "pool"
+                && fleet.complete
+                && fleet.pool.complete
+                && fleet.queue_space.state == "ok"
+                && fleet.nodes.iter().any(|node| {
+                    node.healthy
+                        && node.state == "live"
+                        && node.capacity.as_ref().is_some_and(|c| {
+                            c.cpu >= demand.cpus.get() && c.mem_gb >= demand.mem_gb
+                        })
+                }))
+        };
+        tokio::time::timeout(Duration::from_secs(5), probe)
+            .await
+            .unwrap_or(Ok(false))
     }
 }
