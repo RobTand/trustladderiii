@@ -22,6 +22,10 @@ pub(super) fn batch_context(pull: &tl3_github::PullRequest) -> Option<QueueConte
         return None;
     }
     let metadata = body.split_once("```yaml\n---\n")?.1.split_once("\n```")?.0;
+    // A truncated member list cannot establish an independent batch.
+    if metadata.lines().take(513).count() > 512 {
+        return None;
+    }
     let mut base = None;
     let mut members = Vec::new();
     let mut in_members = false;

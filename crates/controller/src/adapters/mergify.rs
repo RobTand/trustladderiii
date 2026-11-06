@@ -2118,6 +2118,17 @@ impl GitHubTranslator for Translator {
 
 #[cfg(test)]
 mod kind_tests {
+    #[test]
+    fn incomplete_queue_membership_is_not_environment_evidence() {
+        let mut pull: tl3_github::PullRequest = serde_json::from_str(include_str!(
+            "../../tests/fixtures/mergify/pq3221/draft.json"
+        )).unwrap();
+        assert!(super::queue_cause::batch_context(&pull).is_some());
+        let body = pull.body.as_ref().unwrap();
+        pull.body = Some(body.replace("\n```", &format!("\n{}pull_requests:\n  - number: 100\n```", "\n".repeat(600))));
+        assert!(super::queue_cause::batch_context(&pull).is_none());
+    }
+
     use super::*;
 
     /// `Evidence::kind` matches every variant with no wildcard, so the compiler
