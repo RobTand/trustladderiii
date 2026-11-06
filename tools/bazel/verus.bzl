@@ -834,6 +834,11 @@ def verus_proofs():
             "kernel::port_acks_apply::output_rules": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_acks_witness::original_bounds": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_acks_apply::same_world": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_deps_adoption::agenda": "Logical definition for #806 adoption; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_deps_adoption::confirmed": "Logical definition for #806 adoption; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_deps_adoption::acknowledged": "Logical definition for #806 adoption; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_deps_adoption::preparing": "Logical definition for #806 adoption; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_deps_adoption::fields": "Neutral field projection for #806 adoption; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
@@ -1303,6 +1308,13 @@ def verus_proofs():
             "port_acks_ack_node_bounds": ("kernel::port_acks_frames#ack_node_bounds", 1),
             "port_acks_lift_live_local": ("kernel::port_acks_frames#lift_live_local", 1),
             "port_acks_command_compose_apply": ("kernel::port_acks_commands#compose_apply", 1),
+            "port_deps_2b_from_fields": ("kernel::port_deps_adoption#from_fields", 1),
+            "port_deps_2b_local_fields": ("kernel::port_deps_adoption#local_fields", 1),
+            "port_deps_2b_node_preserved": ("kernel::port_deps_adoption_proof#node_preserved", 1),
+            "port_deps_2b_world_preserved": ("kernel::port_deps_adoption_proof#world_preserved", 1),
+            "port_deps_2b_adoption": ("kernel::port_deps_adoption_proof#adoption", 1),
+            "port_deps_2b_adoption_world": ("kernel::port_deps_adoption_proof#adoption_world", 1),
+            "port_deps_2b_adoption_cover": ("kernel::port_deps_adoption_proof#adoption_cover", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

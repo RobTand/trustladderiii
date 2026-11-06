@@ -512,6 +512,16 @@ CASES = {
         '                let _ = (i, id, command);',
         '//crates/kernel:verus_events'),
 
+    # #806 W7 slice 2b: first adoption and a later PrepareWorktree have distinct results.
+    'w7_adoption_readopts': ('crates/kernel/src/acknowledgements.rs',
+                            'if kind == EffectKind::PrepareWorktree && !m.adopted {',
+                            'if kind == EffectKind::PrepareWorktree {',
+                            '//crates/kernel:verus_acknowledgements_confirmed_agenda_body'),
+    'w7_adoption_maker_credit': ('crates/kernel/src/acknowledgements.rs',
+                                '    m.head = Some(head);\n    m.checked = None;',
+                                '    m.head = Some(head);\n    m.checked = None;\n    m.credit.spent = 1;',
+                                '//crates/kernel:verus_acknowledgements_adopt_proposed_worktree'),
+
 }
 
 

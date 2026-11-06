@@ -2425,3 +2425,10 @@ mod port_answers_apply;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_answers_handler.rs"]
 mod port_answers_handler;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_deps_adoption.rs"]
+mod port_deps_adoption;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_deps_adoption_proof.rs"]
+mod port_deps_adoption_proof;
