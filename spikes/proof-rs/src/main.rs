@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    io::{self, BufRead},
+    io::{self, BufRead, Write},
     time::Instant,
 };
 
@@ -1523,5 +1523,6 @@ fn main() {
             }
         };
         println!("{value}");
+        io::stdout().flush().unwrap();
     }
 }

@@ -14,10 +14,10 @@ root = Path(__file__).resolve().parents[1]
 out = root / 'measurement-output'
 out.mkdir(exist_ok=True)
 
-def run(argv, name, *, stdin=None):
+def run(argv, name, *, stdin=None, cwd=None):
     started = time.perf_counter()
     with (out / (name + '.log')).open('wb') as log:
-        result = subprocess.run(argv, cwd=root, stdin=stdin, stdout=log, stderr=subprocess.STDOUT)
+        result = subprocess.run(argv, cwd=cwd or root, stdin=stdin, stdout=log, stderr=subprocess.STDOUT)
     info = {'command': argv, 'returncode': result.returncode, 'seconds': time.perf_counter() - started}
     print('STEP ' + json.dumps(info), flush=True)
     if result.returncode:
@@ -41,6 +41,7 @@ if summary['steps'][-1]['returncode'] == 0:
     with (root / 'corpus/data/sources.jsonl').open('rb') as stream:
         summary['steps'].append(run([str(root / 'target/release/proof-rs-spike'), '--sources'], 'sources', stdin=stream))
     summary['steps'].append(run([sys.executable, 'corpus/paired.py', str(root / 'target/release/proof-rs-spike'), 'corpus/data/calls.jsonl'], 'paired'))
+    summary['steps'].append(run([sys.executable, str(root / 'corpus/measure_size.py')], 'size', cwd=root.parents[1]))
     summary['steps'].append(run([sys.executable, 'corpus/compare.py', 'corpus/data', str(out)], 'comparison'))
 (out / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
 if (root / 'Cargo.lock').exists():
