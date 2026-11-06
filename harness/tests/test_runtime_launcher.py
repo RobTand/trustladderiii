@@ -34,6 +34,8 @@ if args[0] == 'run':
     print('{{"event":"start","schema":1}}', flush=True)
     sys.exit(0)
 if args[:2] == ['container', 'inspect']:
+    if any('{{{{json .Id}}}}' in argument for argument in args):
+        sys.exit(125)
     pid = int(pathlib.Path({str(tmp_path / 'run-pid')!r}).read_text())
     print(json.dumps({{'Id': 'a' * 64, 'Pid': pid, 'ConmonPid': pid}}))
     sys.exit(0)
@@ -465,6 +467,8 @@ if args[0] == 'ps':
 elif args[:2] == ['container', 'exists']:
     sys.exit(1 if absent else 0)
 elif args[:2] == ['container', 'inspect']:
+    if any('{{{{json .Id}}}}' in argument for argument in args):
+        sys.exit(125)
     print((root / 'metadata').read_text())
 elif args[0] == 'rm':
     (root / 'absent').touch()

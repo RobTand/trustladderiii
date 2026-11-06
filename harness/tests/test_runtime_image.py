@@ -20,6 +20,8 @@ root = pathlib.Path({str(tmp_path)!r})
 args = sys.argv[1:]
 with (root / 'calls').open('a') as calls:
     calls.write(json.dumps(args) + '\\n')
+if any('{{{{json .Id}}}}' in argument for argument in args):
+    sys.exit(125)
 if args[0] == 'save':
     sys.stdout.buffer.write(b'controlled-archive')
 elif args[:2] == ['pull', '--tls-verify=false']:
@@ -30,7 +32,7 @@ elif args == ['load']:
 elif args[:2] == ['image', 'exists']:
     sys.exit(0 if (root / 'present').exists() else 1)
 elif args[:2] == ['image', 'inspect']:
-    print('{{"Id":"sha256:fixture","Os":"linux","Architecture":"amd64","RepoDigests":[]}}')
+    print((root / 'metadata').read_text() if (root / 'metadata').exists() else '{{"Id":"sha256:fixture","Os":"linux","Architecture":"amd64","RepoDigests":[]}}')
 else:
     sys.exit(125)
 ''')
@@ -193,3 +195,22 @@ def test_prepared_profile_contains_actual_map_store_and_both_executable_artifact
     assert Path(prepared['artifacts']['cleanup']['path']).name == 'host-cleanup'
     assert config.stat().st_mode & 0o222 == 0
     assert prepared['mode_observations'] is None
+
+
+@pytest.mark.parametrize('mismatch', [False, True])
+def test_actual_store_preflight_checks_ops_config_and_platform(store, profile_map, mismatch):
+    from tl3_harness.runtime_image import preflight_profile
+
+    root, executable = store
+    path, entry, _ = profile_map
+    (root / 'present').touch()
+    (root / 'metadata').write_text(json.dumps({'Id': entry['config_digest'], 'Os': 'linux',
+        'Architecture': 'arm64' if mismatch else 'amd64', 'RepoDigests': [entry['registry_ref']]}))
+    def preflight():
+        return preflight_profile(path, 'sandbox', host='dl380g10', platform='linux/amd64', podman=executable,
+                                  environment={'HOME': str(root), 'XDG_RUNTIME_DIR': str(root)}, timeout=10)
+    if mismatch:
+        with pytest.raises(ValueError, match='differs from ops map'):
+            preflight()
+    else:
+        assert preflight()['store']['Id'] == entry['config_digest']
