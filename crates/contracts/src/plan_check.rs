@@ -12,6 +12,9 @@ pub struct PlanCheckProvenance {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct PlanObjection {
+    /// Code-owned row result. Legacy provenance never opts into a re-plan.
+    #[serde(default)]
+    pub allowed_empty: bool,
     pub class: ObjectionClass,
     pub rule: String,
     pub items: Vec<String>,

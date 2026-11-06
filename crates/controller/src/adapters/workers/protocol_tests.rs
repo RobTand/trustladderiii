@@ -13,6 +13,7 @@ fn plan_check_provenance(
     use crate::contracts::plan_check::*;
     PlanCheckProvenance {
         objections: vec![PlanObjection {
+            allowed_empty: false,
             class,
             rule: "check.named_rule".into(),
             items: vec!["check-1".into()],
@@ -565,4 +566,65 @@ fn t653_nested_anyof_failure_keeps_the_matching_leaf_without_values() {
         crate::worker_inputs::Failure::capture("writer", &error).to_string(),
         "worker inputs break role schema: role=writer pointer=/facts/goals/0 rule=type"
     );
+}
+
+/// Q27 option B, PQ #2648: both impossible bounded repairs get a fresh planner.
+#[test]
+fn pq_2648_empty_allowed_replans_once_under_both_flags() {
+    use crate::contracts::plan_check::*;
+    use tl3_kernel::*;
+    let fixtures: Vec<Value> = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/pq-2648-empty-replan.json"
+    ))
+    .unwrap();
+    for case in fixtures {
+        for fail_fast in [false, true] {
+            let provenance = PlanCheckProvenance {
+                objections: vec![PlanObjection {
+                    allowed_empty: true,
+                    class: if case["rule"] == "proof.omitted" {
+                        ObjectionClass::Other
+                    } else {
+                        ObjectionClass::SizeExecutionFit
+                    },
+                    rule: case["rule"].as_str().unwrap().into(),
+                    items: serde_json::from_value(case["items"].clone()).unwrap(),
+                    diagnostic: case["diagnostic"].as_str().unwrap().into(),
+                }],
+                repair: PlanRepair::Attempted,
+            };
+            let MappedReply::Kernel(reply) =
+                map_reply_with_plan_check("planner", &case["reply"], Some(&provenance)).unwrap()
+            else {
+                panic!("kernel reply")
+            };
+            let before = planning_world(fail_fast, 0);
+            let generation = before.nodes[0].generation;
+            let (after, out) = step(
+                before.clone(),
+                Event::Reply {
+                    node: NodeId(0),
+                    generation,
+                    reply,
+                },
+            );
+            assert!(
+                matches!(after.nodes[0].phase, Phase::Planning { .. }),
+                "PQ #2648 {} fail_fast={fail_fast}: empty allowed repair stopped instead of re-planning: {:?}",
+                case["rule"],
+                after.nodes[0].phase
+            );
+            assert!(after.nodes[0].generation > generation);
+            assert_eq!(after.nodes[0].credit, before.nodes[0].credit);
+            assert!(after.nodes[0].question.is_none());
+            assert!(!out.iter().any(|o| matches!(
+                o,
+                Out::Notice {
+                    notice: Notice::Ask { .. },
+                    ..
+                }
+            )));
+            assert!(after.valid());
+        }
+    }
 }

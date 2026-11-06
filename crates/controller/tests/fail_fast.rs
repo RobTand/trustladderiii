@@ -304,6 +304,7 @@ fn plan_check_endings_preserve_evidence_without_questions_or_children() {
             let counted = plans.clone();
             let provenance = PlanCheckProvenance {
                 objections: vec![PlanObjection {
+                    allowed_empty: false,
                     class,
                     rule: "plan.named_obligation".into(),
                     items: vec!["check-1".into()],

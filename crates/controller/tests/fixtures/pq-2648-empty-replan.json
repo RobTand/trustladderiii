@@ -1,0 +1,233 @@
+[
+  {
+    "trace_id": "tr-c0f7bcfd5920024ab4b905e8924f6dc9",
+    "rule": "proof.omitted",
+    "goals": [
+      {
+        "proof_obligation": null
+      },
+      {
+        "proof_obligation": null
+      },
+      {
+        "proof_obligation": null
+      },
+      {
+        "proof_obligation": null
+      },
+      {
+        "proof_obligation": null
+      },
+      {
+        "proof_obligation": null
+      },
+      {
+        "proof_obligation": null
+      },
+      {
+        "proof_obligation": null
+      }
+    ],
+    "forecast": {
+      "brief_tokens": 2098,
+      "context_tokens": 150000,
+      "file_tokens": {
+        "BUILD.bazel": 1024,
+        "CHANGELOG.md": 16384,
+        "docs/audits/digest_site_census_pq1301_2026-10-04.json": 16384,
+        "tests/BUILD.bazel": 1024,
+        "tests/fixtures/digest_profiles_1301_files.json": 16384,
+        "tests/fixtures/duplication_baseline.json": 10058,
+        "tests/test_digest_profiles_1301_files.py": 2328,
+        "tools/generate_transition_rewrites.py": 1744
+      },
+      "fit_tokens": 100000,
+      "fits": true,
+      "overhead_tokens": 30000,
+      "tokenizer": "o200k_base",
+      "tokens": 97428
+    },
+    "execution": {
+      "allowed_tool_turns": 512,
+      "finalization_turns": 8,
+      "usable_tool_turns": 512,
+      "estimated_tool_turns": 91,
+      "components": {
+        "exploration_operations": 8,
+        "file_operations": 54,
+        "check_operations": 24,
+        "scope_operations": 2,
+        "generation_operations": 1,
+        "generated_inspection_operations": 2
+      },
+      "exploration_declared": true,
+      "fits": true
+    },
+    "must_split": false,
+    "diagnostic": "check-1 is missing required proof declarations: observer_support, red_message, subjects. State the expected assertion message supported by this check. Missing subjects or observer_support may only be filled with [] for an inferred partition. Preserve all existing proof values.",
+    "items": [
+      "check-1",
+      "check-2"
+    ],
+    "reply": {
+      "kind": "cant_meet",
+      "files": [
+        "BUILD.bazel",
+        "CHANGELOG.md",
+        "docs/audits/digest_site_census_pq1301_2026-10-04.json",
+        "tests/BUILD.bazel",
+        "tests/fixtures/digest_profiles_1301_files.json",
+        "tests/fixtures/duplication_baseline.json",
+        "tests/test_digest_profiles_1301_files.py",
+        "tools/generate_transition_rewrites.py"
+      ],
+      "forecast": {
+        "brief_tokens": 2098,
+        "context_tokens": 150000,
+        "file_tokens": {
+          "BUILD.bazel": 1024,
+          "CHANGELOG.md": 16384,
+          "docs/audits/digest_site_census_pq1301_2026-10-04.json": 16384,
+          "tests/BUILD.bazel": 1024,
+          "tests/fixtures/digest_profiles_1301_files.json": 16384,
+          "tests/fixtures/duplication_baseline.json": 10058,
+          "tests/test_digest_profiles_1301_files.py": 2328,
+          "tools/generate_transition_rewrites.py": 1744
+        },
+        "fit_tokens": 100000,
+        "fits": true,
+        "overhead_tokens": 30000,
+        "tokenizer": "o200k_base",
+        "tokens": 97428
+      },
+      "report": "PQ #2648: the bounded repair cannot satisfy proof.omitted",
+      "violations": [
+        "check-1 is missing required proof declarations: observer_support, red_message, subjects. State the expected assertion message supported by this check. Missing subjects or observer_support may only be filled with [] for an inferred partition. Preserve all existing proof values.",
+        "check-2 is missing required proof declarations: observer_support, red_message, subjects. State the expected assertion message supported by this check. Missing subjects or observer_support may only be filled with [] for an inferred partition. Preserve all existing proof values.",
+        "Required goals have no check coverage: goal 2: Keep the change inside the digest scope. Do not change prismaquant/digests.py. Do not touch any length_framed_bytes_sha256 caller. Do not touch any joint_replay_frontier.py or export_gguf.py census row. Do not change the other transition modules. Do not change or add tests that reduce existing assertions.; goal 4: Regenerate BUILD.bazel and tests/BUILD.bazel with run_generator (python3 tools/bazel/build_files.py) after the source edits, so the Bazel data dependencies match the routed tool. Do not hand-edit any generated file.",
+        "Correction changes declarations outside the named objections: /checks/0/proof, /checks/1/proof",
+        "Planner coverage correction attempts: 1.",
+        "Plan-check evidence: {\"attempts\": 1, \"binding\": {\"base_sha\": \"704773599f59d8b2c44ab3a12a51a8b6112d6e61\"}, \"constraint_failures\": [{\"class\": \"other\", \"diagnostic\": \"Correction changes declarations outside the named objections: /checks/0/proof, /checks/1/proof\", \"items\": [\"paths=[\\\"/checks/0/proof\\\",\\\"/checks/1/proof\\\"]\"], \"rule\": \"guard.fields_changed\"}], \"final_objections\": [], \"first_objections\": [{\"class\": \"other\", \"diagnostic\": \"check-1 is missing required proof declarations: observer_support, red_message, subjects. State the expected assertion message supported by this check. Missing subjects or observer_support may only be filled with [] for an inferred partition. Preserve all existing proof values.\", \"items\": [\"check-1\", \"fields=[\\\"observer_support\\\",\\\"red_message\\\",\\\"subjects\\\"]\"], \"rule\": \"proof.omitted\"}, {\"class\": \"other\", \"diagnostic\": \"check-2 is missing required proof declarations: observer_support, red_message, subjects. State the expected assertion message supported by this check. Missing subjects or observer_support may only be filled with [] for an inferred partition. Preserve all existing proof values.\", \"items\": [\"check-2\", \"fields=[\\\"observer_support\\\",\\\"red_message\\\",\\\"subjects\\\"]\"], \"rule\": \"proof.omitted\"}, {\"class\": \"other\", \"diagnostic\": \"Required goals have no check coverage: goal 2: Keep the change inside the digest scope. Do not change prismaquant/digests.py. Do not touch any length_framed_bytes_sha256 caller. Do not touch any joint_replay_frontier.py or export_gguf.py census row. Do not change the other transition modules. Do not change or add tests that reduce existing assertions.; goal 4: Regenerate BUILD.bazel and tests/BUILD.bazel with run_generator (python3 tools/bazel/build_files.py) after the source edits, so the Bazel data dependencies match the routed tool. Do not hand-edit any generated file.\", \"items\": [\"goal 2:\", \"goal 4:\"], \"rule\": \"goal.coverage\"}], \"unavailable_reason\": null}"
+      ]
+    }
+  },
+  {
+    "trace_id": "tr-d8b0dc4e77abca3908b75fe9967133e4",
+    "rule": "split.forecast_fits",
+    "goals": [
+      {
+        "proof_obligation": null
+      },
+      {
+        "proof_obligation": null
+      },
+      {
+        "proof_obligation": null
+      },
+      {
+        "proof_obligation": null
+      },
+      {
+        "proof_obligation": null
+      },
+      {
+        "proof_obligation": null
+      },
+      {
+        "proof_obligation": null
+      },
+      {
+        "proof_obligation": null
+      },
+      {
+        "proof_obligation": null
+      },
+      {
+        "proof_obligation": null
+      }
+    ],
+    "forecast": {
+      "brief_tokens": 1053,
+      "context_tokens": 150000,
+      "file_tokens": {
+        "BUILD.bazel": 1024,
+        "CHANGELOG.md": 16384,
+        "docs/audits/digest_site_census_pq1301_2026-10-04.json": 16384,
+        "tests/BUILD.bazel": 1024,
+        "tests/fixtures/digest_profiles_1301_files.json": 16384,
+        "tests/fixtures/duplication_baseline.json": 10058,
+        "tests/test_digest_profiles_1301_files.py": 2328,
+        "tests/test_generate_transition_rewrites.py": 1291,
+        "tests/test_transition_digest_migration_2648.py": 0,
+        "tools/generate_transition_rewrites.py": 1744
+      },
+      "fit_tokens": 100000,
+      "fits": true,
+      "overhead_tokens": 30000,
+      "tokenizer": "o200k_base",
+      "tokens": 97674
+    },
+    "execution": {
+      "allowed_tool_turns": 512,
+      "finalization_turns": 8,
+      "usable_tool_turns": 512,
+      "estimated_tool_turns": 117,
+      "components": {
+        "exploration_operations": 0,
+        "file_operations": 72,
+        "check_operations": 40,
+        "scope_operations": 2,
+        "generation_operations": 1,
+        "generated_inspection_operations": 2
+      },
+      "exploration_declared": false,
+      "fits": false
+    },
+    "must_split": false,
+    "diagnostic": "The forecast fits. Splitting needs a permitted reason.",
+    "items": [
+      "reason"
+    ],
+    "reply": {
+      "kind": "cant_meet",
+      "files": [
+        "tools/generate_transition_rewrites.py",
+        "tests/test_digest_profiles_1301_files.py",
+        "tests/fixtures/digest_profiles_1301_files.json",
+        "tests/test_generate_transition_rewrites.py",
+        "tests/test_transition_digest_migration_2648.py",
+        "docs/audits/digest_site_census_pq1301_2026-10-04.json",
+        "tests/fixtures/duplication_baseline.json",
+        "CHANGELOG.md",
+        "BUILD.bazel",
+        "tests/BUILD.bazel"
+      ],
+      "forecast": {
+        "brief_tokens": 1053,
+        "context_tokens": 150000,
+        "file_tokens": {
+          "BUILD.bazel": 1024,
+          "CHANGELOG.md": 16384,
+          "docs/audits/digest_site_census_pq1301_2026-10-04.json": 16384,
+          "tests/BUILD.bazel": 1024,
+          "tests/fixtures/digest_profiles_1301_files.json": 16384,
+          "tests/fixtures/duplication_baseline.json": 10058,
+          "tests/test_digest_profiles_1301_files.py": 2328,
+          "tests/test_generate_transition_rewrites.py": 1291,
+          "tests/test_transition_digest_migration_2648.py": 0,
+          "tools/generate_transition_rewrites.py": 1744
+        },
+        "fit_tokens": 100000,
+        "fits": true,
+        "overhead_tokens": 30000,
+        "tokenizer": "o200k_base",
+        "tokens": 97674
+      },
+      "report": "PQ #2648: the bounded repair cannot satisfy split.forecast_fits",
+      "violations": [
+        "The forecast fits. Splitting needs a permitted reason.",
+        "Plan-check evidence: {\"attempts\": 1, \"binding\": {\"base_sha\": \"704773599f59d8b2c44ab3a12a51a8b6112d6e61\"}, \"constraint_failures\": [], \"final_objections\": [], \"first_objections\": [{\"class\": \"other\", \"diagnostic\": \"The forecast fits. Splitting needs a permitted reason.\", \"items\": [\"forecast={\\\"brief_tokens\\\":1053,\\\"context_tokens\\\":150000,\\\"file_tokens\\\":{\\\"BUILD.bazel\\\":1024,\\\"CHANGELOG.md\\\":16384,\\\"docs/audits/digest_site_census_pq1301_2026-10-04.json\\\":16384,\\\"tests/BUILD.bazel\\\":1024,\\\"tests/fixtures/digest_profiles_1301_files.json\\\":16384,\\\"tests/fixtures/duplication_baseline.json\\\":10058,\\\"tests/test_digest_profiles_1301_files.py\\\":2328,\\\"tests/test_generate_transition_rewrites.py\\\":1291,\\\"tests/test_transition_digest_migration_2648.py\\\":0,\\\"tools/generate_transition_rewrites.py\\\":1744},\\\"fit_tokens\\\":100000,\\\"fits\\\":true,\\\"overhead_tokens\\\":30000,\\\"tokenizer\\\":\\\"o200k_base\\\",\\\"tokens\\\":97674}\", \"reason=\\\"does_not_fit\\\"\"], \"rule\": \"split.forecast_fits\"}], \"unavailable_reason\": null}"
+      ]
+    }
+  }
+]
