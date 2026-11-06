@@ -345,6 +345,14 @@ CASES = {
                                  'close_node(node, context.node, Outcome::Stopped, out);',
                                  '//crates/kernel:verus_ranks_advance_finished'),
 
+    'advance_teardown_missing_position': ('crates/kernel/src/ranks.rs',
+                                         'm.pos += 1;\n        kernel_proof! { port_advance_rank::teardown_absent',
+                                         'm.pos += 0;\n        kernel_proof! { port_advance_rank::teardown_absent',
+                                         '//crates/kernel:verus_ranks_advance_teardown_missing'),
+    'advance_teardown_duplicate_emission': ('crates/kernel/src/ranks.rs',
+                                           'emit_node(node, context.node, kind, out);\n        kernel_proof! { port_advance_rank::teardown_emission',
+                                           'emit_node(node, context.node, kind, out);\n        emit_node(node, context.node, kind, out);\n        kernel_proof! { port_advance_rank::teardown_emission',
+                                           '//crates/kernel:lib_test_tl3_kernel'),
 
 }
 

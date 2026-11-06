@@ -1000,6 +1000,8 @@ def verus_proofs():
             "port_advance_rank_teardown_question": ("kernel::ranks::port_advance_rank#teardown_question", 1),
             "port_advance_rank_teardown_absent": ("kernel::ranks::port_advance_rank#teardown_absent", 1),
             "port_advance_rank_teardown_emission": ("kernel::ranks::port_advance_rank#teardown_emission", 1),
+            "ranks_advance_teardown_missing": ("kernel::ranks#advance_teardown_missing", 1),
+            "ranks_advance_teardown_emitting": ("kernel::ranks#advance_teardown_emitting", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
