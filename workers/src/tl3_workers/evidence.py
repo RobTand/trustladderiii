@@ -78,7 +78,7 @@ _ROUTE_CLAUSES = {
             r"acknowledgement is not a pass",
             r"verify terminal records, logs and cas receipts",
             r"retain (?:all requested records|the requested records|the action key and requested execution records)",
-            r"report (?:these|unsupported(?: resource details and artifact capabilities| details)) as gaps",
+            r"report (?:these gaps|unsupported(?: resource details and artifact capabilities| details) as gaps)",
             r"do not claim that a receipt proves those details",
             r"(?:the supplied|available) capabilities do not expose (?:priority|resource admission|a worker bound)"
             r"(?:(?:, | or )(?:priority|resource admission|a worker bound))*",

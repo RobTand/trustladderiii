@@ -1,4 +1,5 @@
 import copy
+import hashlib
 from importlib.resources import files
 import json
 from pathlib import Path
@@ -1261,3 +1262,13 @@ def test_ep2_categories_compose_as_a_full_paragraph():
         before = apply_edit(before, row.repair, row.repair.allowed.value)
     assert not before['evidence_contract']
     assert paragraph in before['brief']
+
+
+
+def test_ep2_retained_source_identity():
+    retained = Path(__file__).parent / 'fixtures' / 'ep2-retained-audit.json'
+    assert hashlib.sha256(retained.read_bytes()).hexdigest() == '34376f87eea12b9c31e767c51b082216ea0686535b2f181c3eb381a9caed5432'
+    assert len(EP2_RETAINED['final_audit']['objections']) == 3
+    assert len(EP2_RETAINED['evidence_contract_presented_to_final_audit']) == 4
+    assert len(EP2_RETAINED['final_audit']['evidence_contract']) == 5
+    assert len(EP2_RETAINED['goals_presented_to_final_audit']) == 16
