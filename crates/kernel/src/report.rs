@@ -83,6 +83,74 @@ pub struct StepRefusal {
 
 #[cfg(verus_keep_ghost)]
 verus! {
+/// Admission field group captured before applying the event.
+pub struct ReplyInput {
+    pub phase: Phase,
+    pub current: Option<Item>,
+    pub run: Option<u64>,
+    pub job: Option<u64>,
+    pub accepted: bool,
+}
+
+pub open spec fn event_target(event: Event) -> Option<NodeId> {
+    match event {
+        Event::Reply { node, .. } | Event::Ack { node, .. }
+        | Event::Fact { node, .. } | Event::Command { node, .. } => Some(node),
+        _ => None,
+    }
+}
+
+pub open spec fn user_stop(event: Event) -> bool {
+    match event {
+        Event::Command { command: Command::Stop, .. }
+        | Event::Command { command: Command::Answer { answer: Answer::Stop, .. }, .. } => true,
+        _ => false,
+    }
+}
+
+#[verifier::opaque]
+pub closed spec fn event_entries(event: Event, input: ReplyInput) -> Seq<ReportEntry> {
+    match event {
+        Event::Reply { node, generation, reply } => reply_entries(node, input.phase,
+            input.current, input.run, input.job, generation, reply, input.accepted),
+        _ => Seq::empty(),
+    }
+}
+
+/// A stop's phase and review cause are observed together at the event transition.
+/// Settlement can finish teardown but preserves that outcome and report entry.
+pub open spec fn stop_trace(witness: (Phase, Option<ReviewStop>, Seq<ReportEntry>),
+    event: Event, node: NodeId, before: Phase, after: Phase, input: ReplyInput,
+    r0: Seq<ReportEntry>, r1: Seq<ReportEntry>) -> bool {
+    terminal_phase_frame(witness.0, after)
+        && forwards(r0, witness.2, event_entries(event, input))
+        && stop_cause(witness.2, r1, node, before, witness.0,
+            stop_kind(witness.0, witness.1, false, user_stop(event)))
+}
+
+/// Excludes exactly the report behavior owned by the fact path: its stop
+/// entries and CiFailed failed-round entry. Neither exclusion covers replies,
+/// commands, acknowledgements, or settlement.
+#[verifier::opaque]
+pub closed spec fn agrees_except_fact_stops_and_ci_failed(event: Event,
+    before: Seq<Phase>, after: Seq<Phase>, input: ReplyInput,
+    r0: Seq<ReportEntry>, r1: Seq<ReportEntry>) -> bool {
+    if event is Fact { true } else {
+        before.len() <= after.len() <= before.len() + 1
+        && (forall|j: int| 0 <= j < before.len()
+            && event_target(event) != Some(NodeId(j as u64))
+            ==> terminal_phase_frame(before[j], after[j]))
+        && (forall|j: int| before.len() <= j < after.len()
+            ==> !(after[j] is Stopping || after[j] is Closed))
+        && match event_target(event) {
+            Some(node) if node.0 < before.len() =>
+                exists|witness: (Phase, Option<ReviewStop>, Seq<ReportEntry>)|
+                    stop_trace(witness, event, node, before[node.0 as int], after[node.0 as int], input, r0, r1),
+            _ => forwards(r0, r1, Seq::empty()),
+        }
+    }
+}
+
 #[verifier::opaque]
 pub closed spec fn forwards(r0: Seq<ReportEntry>, r1: Seq<ReportEntry>,
     entries: Seq<ReportEntry>) -> bool {
@@ -116,7 +184,7 @@ pub closed spec fn counter_exhausted(headroom: bool, refused: bool) -> bool {
 }
 
 #[verifier::opaque]
-pub(super) closed spec fn stop_kind(phase: Phase, review: Option<ReviewStop>,
+pub closed spec fn stop_kind(phase: Phase, review: Option<ReviewStop>,
     pr_closed: bool, user_stop: bool) -> StopCause {
 match phase {
             Phase::Stopping(Outcome::Merged) | Phase::Closed(Outcome::Merged) => StopCause::Merged,
@@ -212,7 +280,7 @@ match reply {
 }
 
 #[verifier::opaque]
-pub(super) closed spec fn reply_entries(node: NodeId, phase: Phase, current: Option<Item>,
+pub closed spec fn reply_entries(node: NodeId, phase: Phase, current: Option<Item>,
     run: Option<u64>, job: Option<u64>, generation: u64, reply: Reply, accepted: bool)
     -> Seq<ReportEntry> {
     if phase is Stopping { Seq::empty() }
@@ -223,7 +291,7 @@ pub(super) closed spec fn reply_entries(node: NodeId, phase: Phase, current: Opt
 }
 
 #[verifier::opaque]
-pub(super) closed spec fn terminal_phase_frame(before: Phase, after: Phase) -> bool {
+pub closed spec fn terminal_phase_frame(before: Phase, after: Phase) -> bool {
     match before {
         Phase::Stopping(o) => after == Phase::Stopping(o) || after == Phase::Closed(o),
         Phase::Closed(o) => after == Phase::Closed(o),

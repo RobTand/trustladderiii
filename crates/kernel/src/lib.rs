@@ -1998,6 +1998,19 @@ pub open spec fn phase_view(nodes: Seq<Node>) -> Seq<Phase> {
     Seq::new(nodes.len(), |i: int| nodes[i].phase)
 }
 
+/// Project only the admission fields used by report agreement.
+pub open spec fn report_input(w: World, event: Event) -> report::ReplyInput {
+    match event {
+        Event::Reply { node, generation: _, reply } if node.0 < w.nodes@.len() => {
+            let n = w.nodes@[node.0 as int];
+            report::ReplyInput { phase: n.phase, current: current_item(n),
+                run: n.run, job: n.job, accepted: port_t860_contracts::admissible(w, n, reply) }
+        }
+        _ => report::ReplyInput { phase: Phase::Unplanned, current: None,
+            run: None, job: None, accepted: false },
+    }
+}
+
 spec fn settle_chain(before: World, after: World) -> bool {
     after.nodes@.len() == before.nodes@.len()
         && after.next_question == before.next_question && after.gates@ == before.gates@

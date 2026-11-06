@@ -267,4 +267,73 @@ pub(in super::super) proof fn stop_agreement(r0: Seq<ReportEntry>, middle: Seq<R
         && #[trigger] stop_cause(m, r1, node, before, after, cause));
 }
 
+pub(in super::super) proof fn entries_for_event(event: Event, input: ReplyInput)
+    ensures event_entries(event, input) == match event {
+        Event::Reply { node, generation, reply } => reply_entries(node, input.phase,
+            input.current, input.run, input.job, generation, reply, input.accepted),
+        _ => Seq::empty(),
+    },
+{ reveal(event_entries); }
+
+pub(in super::super) proof fn observe(event: Event, before: Seq<Phase>, after: Seq<Phase>,
+    input: ReplyInput, review: Option<ReviewStop>, r0: Seq<ReportEntry>, middle: Seq<ReportEntry>,
+    r1: Seq<ReportEntry>)
+    requires !(event is Fact) ==> {
+        before.len() <= after.len() <= before.len() + 1
+        && (forall|j: int| 0 <= j < before.len() && event_target(event) != Some(NodeId(j as u64))
+            ==> terminal_phase_frame(before[j], after[j]))
+        && (forall|j: int| before.len() <= j < after.len() ==> !(after[j] is Stopping || after[j] is Closed))
+        && match event_target(event) {
+            Some(node) if node.0 < before.len() =>
+                forwards(r0, middle, event_entries(event, input))
+                && stop_cause(middle, r1, node, before[node.0 as int], after[node.0 as int],
+                    stop_kind(after[node.0 as int], review, false, user_stop(event))),
+            _ => forwards(r0, r1, Seq::empty()),
+        }
+    },
+    ensures agrees_except_fact_stops_and_ci_failed(event, before, after, input, r0, r1),
+{
+    reveal(agrees_except_fact_stops_and_ci_failed);
+    if !(event is Fact) {
+        if let Some(node) = event_target(event) {
+            if node.0 < before.len() {
+                phase_refl(after[node.0 as int]);
+                assert(stop_trace((after[node.0 as int], review, middle), event, node,
+                    before[node.0 as int], after[node.0 as int], input, r0, r1));
+            }
+        }
+    }
+}
+
+pub(in super::super) proof fn through_settle(event: Event, before: Seq<Phase>, applied: Seq<Phase>,
+    after: Seq<Phase>, input: ReplyInput, r0: Seq<ReportEntry>, r1: Seq<ReportEntry>, r2: Seq<ReportEntry>)
+    requires agrees_except_fact_stops_and_ci_failed(event, before, applied, input, r0, r1),
+        settled_forwards(applied, after, r1, r2),
+    ensures agrees_except_fact_stops_and_ci_failed(event, before, after, input, r0, r2),
+{
+    reveal(agrees_except_fact_stops_and_ci_failed);
+    reveal(settled_forwards);
+    read_forwards(r1, r2, Seq::empty());
+    assert(r1 + Seq::empty() =~= r1);
+    if !(event is Fact) {
+        assert forall|j: int| 0 <= j < before.len()
+            && event_target(event) != Some(NodeId(j as u64))
+            implies terminal_phase_frame(before[j], after[j]) by {
+            phase_trans(before[j], applied[j], after[j]);
+        }
+        assert forall|j: int| before.len() <= j < after.len()
+            implies !(after[j] is Stopping || after[j] is Closed) by {
+            reveal(terminal_phase_frame);
+        }
+        if let Some(node) = event_target(event) {
+            if node.0 < before.len() {
+                let witness = choose|witness: (Phase, Option<ReviewStop>, Seq<ReportEntry>)|
+                    stop_trace(witness, event, node, before[node.0 as int], applied[node.0 as int], input, r0, r1);
+                phase_trans(witness.0, applied[node.0 as int], after[node.0 as int]);
+                assert(stop_trace(witness, event, node, before[node.0 as int], after[node.0 as int], input, r0, r2));
+            }
+        }
+    }
+}
+
 }

@@ -8,7 +8,9 @@ kernel_fn! {
 /// `step_budget` bounds every kernel-owned counter and preserves command order.
 pub fn step(world: World, event: Event) -> (result: StepResult) [
     requires world_checked(world), world_headroom(world), storage_ordered(world),
-    ensures step_budget(world, result.world),
+    ensures report::agrees_except_fact_stops_and_ci_failed(event, phase_view(world.nodes@),
+            phase_view(result.world.nodes@), report_input(world, event), Seq::empty(), result.report.entries@),
+        step_budget(world, result.world),
         (progress_input(world, event) ==> progress_measure(result.world) < progress_measure(world)),
 ] {
     kernel_proof! { reveal(storage_ordered); checked_reserves(world); }
@@ -25,7 +27,9 @@ kernel_fn! {
 /// progress theorem separately requires command freshness for every node.
 pub fn step_with_passes(mut world: World, event: Event) -> (result: (StepResult, u32)) [
     requires step_scope(world),
-    ensures step_budget(world, result.0.world),
+    ensures report::agrees_except_fact_stops_and_ci_failed(event, phase_view(world.nodes@),
+            phase_view(result.0.world.nodes@), report_input(world, event), Seq::empty(), result.0.report.entries@),
+        step_budget(world, result.0.world),
         (progress_input(world, event) ==> progress_measure(result.0.world) < progress_measure(world)),
 ] {
     kernel_snapshot! { before_step = world }
@@ -48,10 +52,13 @@ pub fn step_with_passes(mut world: World, event: Event) -> (result: (StepResult,
         assert(settle_ready(world));
     }
     kernel_snapshot! { after_apply = world }
+    kernel_snapshot! { after_apply_report = report.entries@ }
     let mut out = Vec::new();
     outbox.drain_into(&mut out);
     let passes = settle(&mut world, &mut out, None, &mut report);
     kernel_proof! {
+        report::lemmas::through_settle(event, phase_view(before_step@.nodes@), phase_view(after_apply@.nodes@),
+            phase_view(world.nodes@), report_input(before_step@, event), Seq::empty(), after_apply_report@, report.entries@);
         reveal(step_budget);
         if progress_input(before_step@, event) {
             progress::settle_measure(after_apply@, world);
@@ -82,6 +89,10 @@ kernel_fn! {
 pub fn step_checked(world: World, event: Event) -> (result: Result<StepResult, StepRefusal>) [
     requires world_checked(world), storage_ordered(world),
     ensures report::counter_exhausted(world_headroom(world), result.is_err()),
+        match result { Ok(success) => step_budget(world, success.world)
+            && report::agrees_except_fact_stops_and_ci_failed(event, phase_view(world.nodes@),
+                phase_view(success.world.nodes@), report_input(world, event), Seq::empty(), success.report.entries@),
+            Err(_) => true },
 ] {
     kernel_snapshot! { headroom = world_headroom(world) }
     match world.counter_exhaustion() {
