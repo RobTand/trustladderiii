@@ -449,3 +449,63 @@ fn scope_trims_export_exact_records_summary_and_read_only() {
         Some(&postgres::error::SqlState::READ_ONLY_SQL_TRANSACTION)
     );
 }
+
+/// #896 review SF1/SF2: damaged event history must not hide current trim rows.
+#[test]
+fn scope_trims_missing_event_preserves_row_and_total() {
+    let mut db = support::Database::start();
+    let settings = db.create("scope_trims_missing_event");
+    let mut store = Store::open(&settings).unwrap();
+    let mut seed = Commit::new("fixture:trims", json!({}), &store.load().unwrap());
+    for (node, paths) in [("0", vec![]), ("1", vec!["cache%20file"])] {
+        seed.rows.push(RowChange::Put {
+            table: "scope_trims".into(),
+            id: node.into(),
+            value: json!({"head":"aaa","removed_paths":paths}),
+        });
+    }
+    store.commit(&seed).unwrap();
+    let mut sql = postgres::Config::new()
+        .host(&settings.host)
+        .port(settings.port)
+        .user(&settings.user)
+        .dbname(&settings.database)
+        .password("tl3-disposable-test-password")
+        .connect(postgres::NoTls)
+        .unwrap();
+    // Only this disposable fixture bypasses the FK to model damaged history.
+    // The setting resets on commit; the export still uses the normal Reader.
+    let mut tx = sql.transaction().unwrap();
+    tx.batch_execute("SET LOCAL session_replication_role = replica")
+        .unwrap();
+    tx.execute(
+        "UPDATE tl3_world SET version = 999 WHERE table_name = 'scope_trims' AND row_id = '1'",
+        &[],
+    )
+    .unwrap();
+    tx.commit().unwrap();
+    let mut reader = Reader::open(&settings).unwrap();
+    let stats = tl3_controller::store_stats::load(&mut reader).unwrap();
+    let export = tl3_controller::store_stats::load_scope_trims(&mut reader).unwrap();
+    assert_eq!(
+        export["summary"]["total_rows"],
+        stats.world_rows["scope_trims"]
+    );
+    assert_eq!(export["rows"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        export["rows"][1],
+        json!({
+            "node":"1","request":null,"repo":null,"head":"aaa",
+            "removed_paths":["cache%20file"],
+            "written_at":{"revision":999,"committed_at":null}
+        })
+    );
+    assert_eq!(
+        export["summary"],
+        json!({
+            "total_rows":2,"non_empty_rows":1,
+            "by_repo":[{"repo":null,"total_rows":2,"non_empty_rows":1}],
+            "by_request":[{"repo":null,"request":null,"total_rows":2,"non_empty_rows":1}]
+        })
+    );
+}
