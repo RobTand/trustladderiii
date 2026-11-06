@@ -349,3 +349,13 @@ tl3_py_test(
         "@tl3_pip//pytest",
     ],
 )
+
+tl3_py_test(
+    name = "test_runtime_image",
+    srcs = ["test_runtime_image.py"],
+    deps = [
+        ":conftest",
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)
