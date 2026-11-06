@@ -49,10 +49,6 @@ def main():
     verifier, z3, rustc, source, expected, label, mode = sys.argv[1:]
     source = Path(source)
     expected = int(expected)
-    if mode == 'help':
-        result, _ = verify(verifier, z3, rustc, source, extra=['--help'])
-        print(result.stdout)
-        return result.returncode
     result, seconds = verify(verifier, z3, rustc, source, extra=['--time', '--output-json'])
     stats = None
     for candidate in re.finditer(r'(?m)^\{\s*$', result.stdout):

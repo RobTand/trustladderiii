@@ -35,6 +35,8 @@ def main():
     parser.add_argument('mode', choices=['isolated', 'baseline', 'controller', 'checks', 'features', 'graph'])
     parser.add_argument('--base', default=BASE)
     args = parser.parse_args()
+    if not os.environ.get("BUILDBUDDY_ARTIFACTS_DIRECTORY"):
+        parser.error("run this driver through bbrun.py on BuildBuddy")
     if args.mode == 'isolated':
         for group in GROUPS:
             bazel('test', '--config=remote', '--jobs=1', '--nocache_test_results', '//crates/delivery:verus_' + group)

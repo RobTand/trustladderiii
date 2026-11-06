@@ -419,3 +419,43 @@ fn continuations_cannot_cross_key_epoch_or_revision() {
         Action::Wait
     ));
 }
+
+#[test]
+fn unanswered_and_ambiguous_execution_leave_sent_and_preserve_loop_disposition() {
+    for outcome in [Outcome::Unanswered, Outcome::Ambiguous] {
+        let (v, pending) = sent(view(State::Intended));
+        let Action::Observe(pending) = action(v, Input::SentCommitted(pending)) else {
+            panic!()
+        };
+        assert_eq!(
+            Action::Observe(pending).disposition(),
+            Disposition::AwaitInput
+        );
+        let (v, pending) = sent(view(State::Intended));
+        let Action::Observe(pending) = action(v, Input::SentCommitted(pending)) else {
+            panic!()
+        };
+        let Action::Execute(pending) = action(
+            v,
+            Input::Observed {
+                pending,
+                revision_changed: false,
+            },
+        ) else {
+            panic!()
+        };
+        let result = action(v, Input::Executed { pending, outcome });
+        match outcome {
+            Outcome::Unanswered => {
+                assert!(matches!(result, Action::RecordUnanswered));
+                assert_eq!(result.disposition(), Disposition::ContinueProgress);
+            }
+            Outcome::Ambiguous => {
+                assert!(matches!(result, Action::RecordAmbiguity { stop: true }));
+                assert_eq!(result.disposition(), Disposition::ReturnProgress);
+            }
+            Outcome::Acknowledged(_) => unreachable!(),
+        }
+        assert_eq!(v.state, State::Sent);
+    }
+}
