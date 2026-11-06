@@ -8,6 +8,7 @@ mod before;
 
 mod campaign_case;
 mod producer_cases;
+mod tessera_case;
 
 fn fixture(base: &str, head: &str, passed: bool, pre_existing: bool) -> (Job, Value) {
     let job: Job = serde_json::from_value(json!({
@@ -388,4 +389,122 @@ fn shell_invariants_always_forced_head() {
 #[test]
 fn shell_invariants_selected_forced_head() {
     shell_invariant_counterexample(true, true);
+}
+
+fn tessera() -> (Job, Value) {
+    let report: Value = serde_json::from_str(tessera_case::REPORT).unwrap();
+    let (mut job, _) = fixture("passed", "passed", true, false);
+    job.delivery.key = report["effect_key"].as_str().unwrap().into();
+    job.delivery.head_sha = Some(report["head"].as_str().unwrap().into());
+    job.run.base_sha = serde_json::from_value(report["base"].clone()).unwrap();
+    job.run.plan = report["results"].as_array().unwrap().iter().map(|result| {
+        serde_json::from_value(json!({"name":result["name"], "kind":result["kind"],
+            "tests":result["tests"].as_array().unwrap().iter().map(|test| test["test"].clone()).collect::<Vec<_>>(),
+            "proof":result.get("proof").map(|proof| proof["declaration"].clone())})).unwrap()
+    }).collect();
+    job.delivery.checks = Some(job.run.clone());
+    (job, report)
+}
+
+/// #848/live probe: preserve Tessera #1194's complete failed RED as a work failure.
+#[test]
+fn tessera_1194_mismatch_keeps_the_real_failed_check() {
+    let (job, report) = tessera();
+    assert!(
+        parse(&raw(&report), &job).is_some(),
+        "Tessera's complete report became None"
+    );
+    let (reported, passed, results, failed, class) = evaluate(&job, &report);
+    let completion = completion(&job, reported, passed, results.clone(), failed.clone()).unwrap();
+    println!(
+        "TESSERA_COMPLETION {}",
+        serde_json::to_string(&completion).unwrap()
+    );
+    assert!(reported && !passed);
+    assert_eq!(class, None);
+    assert_eq!(
+        results
+            .iter()
+            .map(|r| r["verdict"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["fail", "pass", "pass", "pass"]
+    );
+    assert_eq!(
+        results
+            .iter()
+            .map(|r| r["tests"].as_array().unwrap().len())
+            .collect::<Vec<_>>(),
+        [1, 8, 11, 1]
+    );
+    assert_eq!(failed.len(), 1);
+    assert_eq!(failed[0].test, report["results"][0]["tests"][0]["test"]);
+    assert_eq!(
+        failed[0].message,
+        report["results"][0]["tests"][0]["message"]
+    );
+}
+
+/// #848: a mismatch must never satisfy the declared RED requirement.
+#[test]
+fn tessera_mismatch_cannot_be_claimed_as_a_pass() {
+    let (job, mut report) = tessera();
+    report["results"][0]["verdict"] = json!("pass");
+    report["results"][0]["tests"][0]["passed"] = json!(true);
+    assert_eq!(evaluate(&job, &report).4, Some(HARNESS));
+}
+
+/// #848/Q51: a complete but undecodable report is a diagnosed TL3 defect.
+#[test]
+fn schema_decode_failure_is_a_bounded_harness_diagnostic() {
+    let (job, report) = fixture("passed", "passed", true, false);
+    let mut cases = Vec::new();
+    let mut unknown = report.clone();
+    unknown["results"][0]["tests"][0]["head"] = json!("future-outcome");
+    cases.push((unknown, "future-outcome"));
+    let mut missing = report.clone();
+    missing["results"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("verdict");
+    cases.push((missing, "verdict"));
+    let mut version = report.clone();
+    version["schema"] = json!("tl3.checks.future");
+    cases.push((version, "tl3.checks.future"));
+    let mut long = report.clone();
+    long["results"][0]["tests"][0]["head"] = json!("x".repeat(4000));
+    cases.push((long, "unknown variant"));
+    for (report, diagnostic) in cases {
+        let (reported, passed, results, failed, class) = evaluate(&job, &report);
+        assert_eq!(
+            class,
+            Some(HARNESS),
+            "schema error was stored as generic no-report"
+        );
+        assert!(!reported && !passed && results.is_empty());
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].test, "TL3_CHECKS");
+        assert!(
+            failed[0].message.contains(diagnostic),
+            "{}",
+            failed[0].message
+        );
+        assert!(failed[0].message.chars().count() <= MAX_MESSAGE_CHARS);
+    }
+}
+
+/// #848: absence and truncated output retain their existing unknown/no-report path.
+#[test]
+fn missing_and_truncated_reports_remain_unclassified() {
+    let (job, _) = fixture("passed", "passed", true, false);
+    for raw in [
+        b"".as_slice(),
+        b"no report\n",
+        b"TL3_CHECKS {\"schema\":",
+        b"TL3_CHECKS ",
+        b"\xff",
+    ] {
+        let result = evidence_with_read(ending(raw), &job, |_| Ok(raw.to_vec())).unwrap();
+        assert!(!result.0 && !result.1 && result.2.is_empty() && result.3.is_empty());
+        assert_eq!(result.4, None);
+    }
 }

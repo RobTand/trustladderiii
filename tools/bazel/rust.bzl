@@ -178,7 +178,7 @@ _CONTROLLER_RUNTIME = {
         "//workers/tests:prompt_render_recordings",
     ],
     # The shared harness check-report vectors (#734) the typed contracts parse (#741).
-    "test_test_contracts": ["//harness:project_files"],
+    "test_test_contracts": ["//harness:project_files", "//harness/src/tl3_harness"],
     "test_test_hindsight": ["//workers/src:role_files"],
     "test_test_prismabuild": ["//harness/src/tl3_harness", "//crates/prismabuild:sources"],
     "test_test_publishing": ["//harness/src/tl3_harness", "//crates/prismabuild:sources"],
