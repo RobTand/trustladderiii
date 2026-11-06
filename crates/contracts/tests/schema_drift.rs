@@ -42,6 +42,10 @@ const COMMITTED: &[(&str, &str)] = &[
         "workers/src/tl3_workers/schemas/writer-reply.json",
         include_str!("../../../workers/src/tl3_workers/schemas/writer-reply.json"),
     ),
+    ("workers/src/tl3_workers/schemas/audit-reply.json", include_str!("../../../workers/src/tl3_workers/schemas/audit-reply.json")),
+    ("workers/src/tl3_workers/schemas/planner-reply.json", include_str!("../../../workers/src/tl3_workers/schemas/planner-reply.json")),
+    ("workers/src/tl3_workers/schemas/reviewer-reply.json", include_str!("../../../workers/src/tl3_workers/schemas/reviewer-reply.json")),
+    ("workers/src/tl3_workers/schemas/postmortem-reply.json", include_str!("../../../workers/src/tl3_workers/schemas/postmortem-reply.json")),
     (
         "workers/src/tl3_workers/schemas/reviewer-input.json",
         include_str!("../../../workers/src/tl3_workers/schemas/reviewer-input.json"),

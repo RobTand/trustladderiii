@@ -4,7 +4,7 @@
 //! not the controller's executable, selects the immutable resources it uses.
 mod decision;
 mod json;
-mod resources;
+use tl3_contracts::role_contract::guidance as resources;
 
 use crate::{Error, Result};
 use json::{Value, text};

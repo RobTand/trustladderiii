@@ -44,3 +44,29 @@ pub mod planner_input;
 pub mod writer_input;
 
 pub mod ingest_retention;
+pub mod audit_reply;
+pub mod planner_reply;
+pub mod reviewer_reply;
+pub mod postmortem_reply;
+
+// The planner publishes the same declarations the harness parses. Only schema
+// annotation spelling differs; the runtime boundary types remain shared.
+fn inline_declaration_schema<T: schemars::JsonSchema>() -> schemars::Schema {
+    let mut generator = schemars::generate::SchemaSettings::draft2020_12()
+        .with(|settings| settings.inline_subschemas = true)
+        .into_generator();
+    let mut value = T::json_schema(&mut generator).to_value();
+    fn strip(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(object) => {
+                for key in ["title", "format", "default"] { object.remove(key); }
+                if object.contains_key("enum") { object.remove("type"); }
+                for value in object.values_mut() { strip(value); }
+            }
+            serde_json::Value::Array(items) => items.iter_mut().for_each(strip),
+            _ => (),
+        }
+    }
+    strip(&mut value);
+    value.try_into().expect("a generated schema is an object")
+}

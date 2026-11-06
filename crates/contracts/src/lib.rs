@@ -51,6 +51,10 @@ pub fn generated() -> Vec<Generated> {
             ("classifier", roles::classifier_reply::schema_text()),
             ("maker", roles::maker_reply::schema_text()),
             ("writer", roles::writer_reply::schema_text()),
+            ("audit", roles::audit_reply::schema_text()),
+            ("planner", roles::planner_reply::schema_text()),
+            ("reviewer", roles::reviewer_reply::schema_text()),
+            ("postmortem", roles::postmortem_reply::schema_text()),
         ]
         .into_iter()
         .map(|(role, text)| Generated {
@@ -150,5 +154,6 @@ pub mod decision_context;
 pub mod request;
 pub mod roles;
 pub mod rules;
+pub mod role_contract;
 
 pub mod plan_check;
