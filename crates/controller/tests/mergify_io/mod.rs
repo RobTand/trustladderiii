@@ -181,9 +181,13 @@ fn checks_settled(state: &tl3_mergify::Observation) -> bool {
 mod tl3_store {
     pub(super) use super::io::Store;
     pub(super) use ::tl3_store::RowChange;
-    pub(super) struct Commit {pub rows:Vec<RowChange>}
+    pub(super) struct Commit {
+        pub rows: Vec<RowChange>,
+    }
     impl Commit {
-        pub fn new(_:String,_:super::Value,_:&super::Snapshot) -> Self {Self {rows:vec![]}}
+        pub fn new(_: String, _: super::Value, _: &super::Snapshot) -> Self {
+            Self { rows: vec![] }
+        }
     }
 }
 
@@ -716,7 +720,9 @@ mod properties {
                     ""
                 };
                 assert_eq!(
-                    function(actual, name, after).replace("crate::queue_cause::", "queue_retry::").replace("crate::put(", "queue_retry::put("),
+                    function(actual, name, after)
+                        .replace("crate::queue_cause::", "queue_retry::")
+                        .replace("crate::put(", "queue_retry::put("),
                     function(copy, name, ""),
                     "production copy drifted: {name}"
                 );

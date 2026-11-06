@@ -409,8 +409,14 @@ impl Adapter {
                     if schedule::fence(Self::command_stage(recovery.command)) {
                         self.fence(delivery)?;
                     }
-                    if recovery.command == Command::Sending && recovery.retry.is_none()
-                        && snapshot.as_ref().is_some_and(|snapshot| snapshot.rows.iter().any(|row| row.table == "queue_holds" && row.id == queue_retry::key(delivery.node(), head)))
+                    if recovery.command == Command::Sending
+                        && recovery.retry.is_none()
+                        && snapshot.as_ref().is_some_and(|snapshot| {
+                            snapshot.rows.iter().any(|row| {
+                                row.table == "queue_holds"
+                                    && row.id == queue_retry::key(delivery.node(), head)
+                            })
+                        })
                     {
                         recovery.retry =
                             self.queue_retry_binding(delivery, &fresh, &recovery.command_key)?;

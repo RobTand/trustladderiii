@@ -343,7 +343,7 @@ fn prior_fields(value: &mut Value) {
         Value::Array(values) => for value in values { prior_fields(value); },
         Value::Object(fields) => {
             if let Some(details) = fields.get_mut("CiFailed").and_then(|value| value.get_mut("details")).and_then(Value::as_object_mut) {
-                for key in ["cause", "context", "fingerprint", "reporters"] { details.remove(key); }
+                for key in ["cause", "context", "fingerprint", "reporters", "reporters_complete"] { details.remove(key); }
             }
             for value in fields.values_mut() { prior_fields(value); }
         }
@@ -369,7 +369,7 @@ pub(super) fn compare(s: &Schedule) -> Run {
             "head":head,"identity":s.fact.identity(),
             "context":{"base":"","branch":"","batch":null,"members":[]},
             "failed_at":completed_at.as_ref().and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok()).map(|at|at.with_timezone(&chrono::Utc)),
-            "since_ms":0,"witness":null,"witnessed_ms":null,"reporters":[]
+            "since_ms":0,"witness":null,"witnessed_ms":null,"retry":null,"reporters":[],"reporters_complete":false
         }));
         let mut fact = json!(s.fact);
         fact["evidence"]["CiFailed"]["details"]["decision"] = json!("upstream_classification");

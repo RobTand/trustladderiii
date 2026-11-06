@@ -588,12 +588,18 @@ impl Store {
         }))
     }
     pub fn commit(&mut self, commit: &super::tl3_store::Commit) -> Result<()> {
-        let rows:Vec<Value>=commit.rows.iter().map(|row| match row {
-            ::tl3_store::RowChange::Put {table,id,value} => json!({"table":table,"id":id,"value":value}),
-            ::tl3_store::RowChange::Delete {table,id} => json!({"delete":table,"id":id}),
-        }).collect();
-        let bytes=serde_json::to_vec(&rows)?;
-        write("store.commit","",&bytes,|r|r.effects.push(json!({"rows":rows}).to_string()))?;
+        let rows: Vec<Value> = commit
+            .rows
+            .iter()
+            .map(|row| match row {
+                ::tl3_store::RowChange::Put { table, id, value } => {
+                    json!({"table":table,"id":id,"value":value})
+                }
+                ::tl3_store::RowChange::Delete { table, id } => json!({"delete":table,"id":id}),
+            })
+            .collect();
+        let bytes = serde_json::to_vec(&rows)?;
+        write("store.commit", "", &bytes, |_| {})?;
         Ok(())
     }
     pub fn effects(&self) -> Result<Vec<Archive>> {
