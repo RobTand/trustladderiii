@@ -459,7 +459,7 @@ fn batch_health(controller: &mut Controller, api: &Server, config: &Bootstrap, n
     controller.drive_once().unwrap();
 }
 
-pub(super) const REVIEW_MODES: &[&str] = &["witness-before", "before-post", "paused-before-post", "retry-no-time", "incomplete-reporters", "lint-only-health"];
+pub(super) const REVIEW_MODES: &[&str] = &["witness-before", "before-post", "paused-before-post", "retry-no-time", "incomplete-reporters", "lint-only-health", "reporter-overflow"];
 
 /// #854b r1: real Controller/adapter schedules requested by the review.
 pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
@@ -533,17 +533,18 @@ pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
                 assert_eq!(controller.world().unwrap().nodes[0].credit.spent,0);
             }
         }
-        "incomplete-reporters" => {
+        "incomplete-reporters" | "reporter-overflow" => {
             {
                 let mut checks:Value=serde_json::from_str(include_str!("../fixtures/mergify/pq3221/draft-checks.json")).unwrap();
                 let template=checks["check_runs"].as_array().unwrap().iter().find(|c|c["conclusion"]=="failure").unwrap().clone();
                 let mut a=template.clone();a["name"]=json!("A");
                 let mut b=template;b["name"]=json!("B");b["id"]=json!(99033);b["app"]=Value::Null;
-                checks["check_runs"]=json!([a,b]);
+                checks["check_runs"]=if mode == "reporter-overflow" {json!((0..21).map(|i| {let mut c=a.clone();c["id"]=json!(99040+i);c["name"]=json!(format!("C{i:02}"));c}).collect::<Vec<_>>())} else {json!([a,b])};
                 api.state.lock().unwrap().cause_fixture.as_mut().unwrap().checks=Some(checks);
             }
             failure(&mut controller,&api,&config);
-            batch_health(&mut controller,&api,&config,&["A"],"ffffffffffffffffffffffffffffffffffffffff","main");
+            let names: Vec<String>=if mode=="reporter-overflow" {(0..20).map(|i|format!("C{i:02}")).collect()} else {vec!["A".into()]};
+            batch_health(&mut controller,&api,&config,&names.iter().map(String::as_str).collect::<Vec<_>>(),"ffffffffffffffffffffffffffffffffffffffff","main");
             controller.look_now().unwrap(); controller.look_now().unwrap();
             assert_eq!(api.state.lock().unwrap().requeues,0,"r1.3: A-only batch cannot witness unidentified B");
             let snap=controller.snapshot().unwrap();
