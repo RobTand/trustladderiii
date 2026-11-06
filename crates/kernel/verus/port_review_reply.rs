@@ -67,10 +67,11 @@ pub(super) open spec fn transition(n: Node, fail_fast: bool, id: u64, reply: Rep
 #[verifier::opaque]
 pub(super) open spec fn transition_post(before: World, after: World, i: int, source: Node,
     reply: Reply, out_before: Outbox, out_after: Outbox) -> bool {
-    selected(reply) ==> after.nodes@[i] == transition(source, before.fail_fast, before.next_question, reply).0
+    (selected(reply) ==> after.nodes@[i] == transition(source, before.fail_fast, before.next_question, reply).0
         && after.next_question == transition(source, before.fail_fast, before.next_question, reply).1
         && after.file_sets@ == before.file_sets@
-        && (retirement::notices_only(out_before) ==> retirement::notices_only(out_after))
+        && (retirement::notices_only(out_before) ==> retirement::notices_only(out_after)))
+        && port_replies_contracts::transition_post(before, after, i, source, reply, out_before, out_after)
 }
 
 /// #806: the single reply relation forwarded by on_reply and the apply reply arm.

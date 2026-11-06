@@ -204,7 +204,15 @@ pub(super) fn plan_retry(w: &mut World, i: usize, cant_meet: bool,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(retry_bounds);] {
+
+        (old(w).nodes@[i as int].phase is Planning) ==>
+            port_replies_contracts::plan_post(old(w).nodes@[i as int], final(w).nodes@[i as int],
+                old(w).next_question, old(w).fail_fast, cant_meet),
+        final(w).next_question == (old(w).next_question
+            + if !(old(w).fail_fast && cant_meet) && old(w).nodes@[i as int].plan_retries >= 1
+                { 1u64 } else { 0u64 }) as u64,
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+] proof [reveal(retry_bounds); reveal(port_replies_contracts::plan_post); reveal(retirement::stopped);] {
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
     m.plan_retries = m.plan_retries.saturating_add(1);

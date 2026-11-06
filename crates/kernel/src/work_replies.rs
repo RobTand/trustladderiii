@@ -17,7 +17,11 @@ pub(super) fn reply_plan(w: &mut World, i: usize, reply: Reply,
             || match reply { Reply::PlanLeaf { footprint, .. } => final(w).nodes@[i as int].footprint == footprint, _ => false },
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        port_replies_contracts::transition_post(*old(w), *final(w), i as int,
+            old(w).nodes@[i as int], reply, *old(out), *final(out)),
 ] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds);] {
+    kernel_snapshot! { worker_before = *w }
+    kernel_snapshot! { worker_outputs = *out }
     kernel_proof! { footprint::inline_is_valid(*w, 1); }
     match reply {
         Reply::PlanLeaf { footprint, fits } => {
@@ -37,6 +41,14 @@ pub(super) fn reply_plan(w: &mut World, i: usize, reply: Reply,
         Reply::PlanSplit => ask_rob(w, i, QKind::NeedsSplitting, Cont::Nowhere, 0, out),
         Reply::PlanCantMeet => plan_retry(w, i, true, out),
         _ => {}
+    }
+    kernel_proof! {
+        assert(port_replies_contracts::transition_post(worker_before@, *w, i as int,
+            worker_before@.nodes@[i as int], reply, worker_outputs@, *out)) by {
+            reveal(port_replies_contracts::transition_post);
+            reveal(port_replies_contracts::transitioned);
+            reveal(port_replies_contracts::node_post); reveal(port_replies_contracts::plan_post);
+        }
     }
 }
 }
