@@ -479,7 +479,14 @@ fn proof_receipt() -> BoxedStrategy<Value> {
             ("head_tree_sha256", sha256()),
         ],
         vec![
-            ("red_classes", map(node(), one_of(&["assertion", "added-name", "symptom"]), 0..=3)),
+            (
+                "red_classes",
+                map(
+                    node(),
+                    one_of(&["assertion", "added-name", "symptom"]),
+                    0..=3,
+                ),
+            ),
             (
                 "red_message_matches",
                 map(node(), one_of(&["message", "source-assertion"]), 0..=3),
@@ -1023,7 +1030,13 @@ mod typed {
             ),
             (sha256(), sha256(), sha256()),
             proptest::option::of(btree_map(
-                node(), select(vec![RedClass::Assertion, RedClass::AddedName, RedClass::Symptom]), 0..=3,
+                node(),
+                select(vec![
+                    RedClass::Assertion,
+                    RedClass::AddedName,
+                    RedClass::Symptom,
+                ]),
+                0..=3,
             )),
             proptest::option::of(btree_map(
                 node(),

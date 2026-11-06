@@ -132,8 +132,8 @@ input_drift!(classifier_input_is_generated_byte_identically, "classifier");
 /// #926, tessera #1455: accepted RED classes survive the receipt boundary.
 #[test]
 fn red_classes_round_trip_and_reject_unknown_values() {
-    use serde_json::{json, Value};
     use contracts::ProofReceipt;
+    use serde_json::{Value, json};
     let mut receipt = json!({
         "rule": "subject-observer-v1", "declaration": null, "mode": "head-observer",
         "subjects": {}, "observer_sha256": {}, "support_sha256": {},

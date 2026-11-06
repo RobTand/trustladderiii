@@ -249,17 +249,14 @@ fn red_classes_must_agree_with_the_observed_base() {
     report["results"][0]["proof"]["red_message_matches"] =
         json!({"tests/test_x.py::test_x": "message"});
     assert!(evaluate(&job, &report).1);
-    report["results"][0]["proof"]["red_classes"] =
-        json!({"tests/test_x.py::test_x": "assertion"});
+    report["results"][0]["proof"]["red_classes"] = json!({"tests/test_x.py::test_x": "assertion"});
     assert!(evaluate(&job, &report).1);
     for class in ["added-name", "symptom"] {
-        report["results"][0]["proof"]["red_classes"] =
-            json!({"tests/test_x.py::test_x": class});
+        report["results"][0]["proof"]["red_classes"] = json!({"tests/test_x.py::test_x": class});
         assert_eq!(evaluate(&job, &report).4, Some(HARNESS));
     }
     report["results"][0]["tests"][0]["base"] = json!("added-name");
-    report["results"][0]["proof"]["red_classes"] =
-        json!({"tests/test_x.py::test_x": "added-name"});
+    report["results"][0]["proof"]["red_classes"] = json!({"tests/test_x.py::test_x": "added-name"});
     assert!(evaluate(&job, &report).1);
     report["results"][0]["proof"]["red_classes"] = json!({"unknown": "added-name"});
     assert_eq!(evaluate(&job, &report).4, Some(HARNESS));
@@ -405,7 +402,10 @@ fn campaign_planned_proof_requires_positive_ordinary_head() {
             json!({"tests/test_original.py::test_original": class});
         assert_eq!(evaluate(&job, &report).4, Some(HARNESS));
     }
-    report["results"][0]["proof"].as_object_mut().unwrap().remove("red_classes");
+    report["results"][0]["proof"]
+        .as_object_mut()
+        .unwrap()
+        .remove("red_classes");
     report["results"][0]["tests"][0]["head"] = json!("error");
     let bytes = raw(&report);
     let (old, _) = recorded_io::run(

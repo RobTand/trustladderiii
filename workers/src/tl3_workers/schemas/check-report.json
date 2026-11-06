@@ -433,6 +433,12 @@
           },
           "type": "object"
         },
+        "red_classes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/RedClass"
+          },
+          "type": "object"
+        },
         "red_message_matches": {
           "additionalProperties": {
             "$ref": "#/$defs/RedMessageMatch"
@@ -509,6 +515,15 @@
       ],
       "type": "string"
     },
+    "RedClass": {
+      "description": "The RED class accepted for an observer (#926, tessera #1455).",
+      "enum": [
+        "assertion",
+        "added-name",
+        "symptom"
+      ],
+      "type": "string"
+    },
     "RedMessageMatch": {
       "oneOf": [
         {
@@ -527,7 +542,8 @@
     },
     "ReportSchema": {
       "enum": [
-        "tl3.checks.v1"
+        "tl3.checks.v1",
+        "tl3.checks.v2"
       ],
       "type": "string"
     },

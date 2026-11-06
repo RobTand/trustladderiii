@@ -16,7 +16,7 @@ _PACKAGE_DATA = {
     "deploy/ci-runners": ["//:workflows"],
     # TL3_DEPLOY_HELPER: the deployment tests drive the real helper binary.
     "deploy/dl380g10": ["//crates/config:sources", "//crates/controller:example_tl3-deploy"],
-    "harness/tests": ["//harness:project_files", "//harness/tools:verify_disk_scratch", "//workers:schemas"],
+    "harness/tests": ["//harness:project_files", "//harness/tools:verify_disk_scratch"],
     "tools/ci": [
         "//:bazel_config",
         "//:workflows",
@@ -90,6 +90,8 @@ def tl3_py_test(name, srcs, main = None, deps = [], data = [], **kwargs):
     package = native.package_name()
     module = main or srcs[0]
     package_data = _PACKAGE_DATA.get(package, [])
+    if package == "harness/tests" and name == "test_red_message":
+        package_data = package_data + ["//workers:schemas"]
     if package == "tools/ci" and name == "test_kani_gate":
         package_data = ["//:workflows", "//crates/kernel:src/proofs.rs"]
     tags, exec_properties = nonhermetic(name)

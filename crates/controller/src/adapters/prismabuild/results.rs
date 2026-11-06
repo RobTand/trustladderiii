@@ -496,16 +496,27 @@ fn parse(raw: &[u8], job: &Job) -> serde_json::Result<Option<Report>> {
             }
             if identity.red_classes.as_ref().is_some_and(|classes| {
                 classes.iter().any(|(node, class)| {
-                    result.tests.iter().find(|test| test.test.as_str() == node).is_none_or(|test| {
-                        !test.passed || match class {
-                            RedClass::Assertion => check.declared_symptom.is_some()
-                                || !matches!(test.base, Outcome::Assertion),
-                            RedClass::AddedName => check.declared_symptom.is_some()
-                                || !matches!(test.base, Outcome::AddedName),
-                            RedClass::Symptom => check.declared_symptom.is_none()
-                                || !matches!(test.base, Outcome::Error),
-                        }
-                    })
+                    result
+                        .tests
+                        .iter()
+                        .find(|test| test.test.as_str() == node)
+                        .is_none_or(|test| {
+                            !test.passed
+                                || match class {
+                                    RedClass::Assertion => {
+                                        check.declared_symptom.is_some()
+                                            || !matches!(test.base, Outcome::Assertion)
+                                    }
+                                    RedClass::AddedName => {
+                                        check.declared_symptom.is_some()
+                                            || !matches!(test.base, Outcome::AddedName)
+                                    }
+                                    RedClass::Symptom => {
+                                        check.declared_symptom.is_none()
+                                            || !matches!(test.base, Outcome::Error)
+                                    }
+                                }
+                        })
                 })
             }) {
                 return Ok(None);
