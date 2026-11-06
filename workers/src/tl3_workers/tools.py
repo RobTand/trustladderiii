@@ -1,6 +1,6 @@
 """TL3 file tools. Every filesystem access starts at an open worktree handle."""
 
-from contextlib import contextmanager, nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
 from difflib import get_close_matches
 import errno
 import glob as globlib
@@ -77,6 +77,8 @@ def _page(items, offset, cap, label):
 
 
 def _parts(path):
+    if "\r" in path or "\n" in path:
+        raise ValueError("Use a single-line relative path without carriage returns or newlines")
     if not path or "\x00" in path or "\\" in path or path.startswith("/"):
         raise ValueError("Use a relative worktree path")
     if ".." in path.split("/"):
@@ -107,7 +109,8 @@ def _change_repair(facts):
         "protected": "Cannot edit protected files; the repository protects this path.",
         "footprint": (f"{facts['path']} is not a declared file, so it was not changed. "
                       "write, edit and delete change only the plan's declared files. "
-                      "Scratch or diagnostic files are not allowed. Declare it via needs_files, "
+                      "Scratch or diagnostic files are not allowed. Declare it via needs_files "
+                      f"(reply kind needs_files with files {json.dumps([facts['path']])}), "
                       "or use run_tests, grep or read instead of a scratch file. "
                       "Use read, grep or diff to investigate, run_tests on existing tests, "
                       "or put a new test in a declared test file."),
@@ -116,7 +119,10 @@ def _change_repair(facts):
     }
     omitted = len(facts['footprint']) - len(_visible_footprint(facts['footprint']))
     context = f" Footprint has {omitted} more entries." if omitted else ""
-    nearest = get_close_matches(facts['path'], sorted(facts['footprint']), n=1, cutoff=0)
+    basename = facts['path'].rsplit('/', 1)[-1]
+    candidates = sorted(facts['footprint'], key=lambda path: (path.rsplit('/', 1)[-1] != basename, path))[:200]
+    query = facts['path'].encode('utf-8')[-512:].decode('utf-8', errors='ignore')
+    nearest = get_close_matches(query, candidates, n=1, cutoff=0)
     context += f" The nearest declared path is {json.dumps(nearest[0])}." if nearest else " The footprint is empty."
     return CantMeet(reasons[facts['refusal']] + context)
 
@@ -427,11 +433,11 @@ class Worktree:
         # Set by the runtime for roles without a blocked reply.
         self.environment_errors_end_run = False
 
-    def is_generated(self, path):
+    def is_generated(self, path, *, parent=None):
         if any(PurePosixPath(path).full_match(pattern) for pattern in self.generated_files):
             return True
         try:
-            with self._file(path) as stream:
+            with self._file(path, parent=parent) as stream:
                 # Bytes and lines are both bounded, including a minified first line.
                 lines = stream.buffer.read(4096).splitlines()[:20]
         except (ValueError, FileNotFoundError):
@@ -446,6 +452,7 @@ class Worktree:
                 break
         return False
 
+    @contextmanager
     def check_change(self, path, op):
         """#895: the ordered gate for every file mutation, before filesystem effects."""
         canonical = "/".join(_parts(path))
@@ -455,24 +462,33 @@ class Worktree:
             raise ChangeRefusal('reserved', canonical, op, self.declared_files)
         if any(PurePosixPath(canonical).full_match(pattern) for pattern in self.protected_paths):
             raise ChangeRefusal('protected', canonical, op, self.declared_files)
-        if self.declared_files is not None and canonical not in self.declared_files:
+        if ((op == 'delete' and self.declared_files is None)
+                or (self.declared_files is not None and canonical not in self.declared_files)):
             raise ChangeRefusal('footprint', canonical, op, self.declared_files)
-        target_kind = self._delete_target(canonical) if op == 'delete' else None
-        generated = (any(PurePosixPath(canonical).full_match(pattern) for pattern in self.generated_files)
-                     if target_kind else self.is_generated(canonical))
-        if generated:
-            raise ChangeRefusal('generated', canonical, op, self.declared_files)
-        if target_kind:
-            raise ChangeRefusal('delete_target', canonical, op, self.declared_files, target_kind=target_kind)
-        return canonical
+        with ExitStack() as stack:
+            parent = None
+            target_kind = None
+            if op == 'delete':
+                try:
+                    parent = stack.enter_context(self._directory(_parts(canonical)[:-1]))
+                except FileNotFoundError:
+                    pass
+                if parent is not None:
+                    target_kind = self._delete_target(canonical, parent)
+            generated = (any(PurePosixPath(canonical).full_match(pattern) for pattern in self.generated_files)
+                         if target_kind or (op == 'delete' and parent is None)
+                         else self.is_generated(canonical, parent=parent))
+            if generated:
+                raise ChangeRefusal('generated', canonical, op, self.declared_files)
+            if target_kind:
+                raise ChangeRefusal('delete_target', canonical, op, self.declared_files, target_kind=target_kind)
+            yield canonical, parent
 
-    def _delete_target(self, path):
-        parts = _parts(path)
+    def _delete_target(self, path, parent):
         try:
-            with self._directory(parts[:-1]) as parent:
-                info = os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)
+            info = os.stat(path.rsplit('/', 1)[-1], dir_fd=parent, follow_symlinks=False)
         except FileNotFoundError:
-            return 'a missing path'
+            return None
         if stat.S_ISLNK(info.st_mode):
             return 'a symbolic link'
         if stat.S_ISDIR(info.st_mode):
@@ -536,11 +552,12 @@ class Worktree:
             os.close(fd)
 
     @contextmanager
-    def _file(self, path, *, write=False, create=False):
+    def _file(self, path, *, write=False, create=False, parent=None):
         parts = _parts(path)
         if not parts:
             raise ValueError("Expected a file path")
-        with self._directory(parts[:-1], create=create) as parent:
+        directory = self._directory(parts[:-1], create=create) if parent is None else nullcontext(parent)
+        with directory as parent:
             flags = os.O_RDWR if write else os.O_RDONLY
             if create:
                 flags |= os.O_CREAT
@@ -735,41 +752,44 @@ class Worktree:
 
     def write(self, path: str, content: str) -> str:
         """Write UTF-8 text, creating parent directories as needed."""
-        path = self.check_change(path, 'write')
-        content.encode("utf-8")
-        with self._file(path, write=True, create=True) as stream:
-            size = os.fstat(stream.fileno()).st_size
-            if size > LARGE_FILE_BYTES:
-                # A page read from a large file must not replace the whole file.
-                raise ValueError(f"{path} is {size} bytes; change part of it with edit instead of write")
-            stream.write(content)
-            stream.truncate()
+        with self.check_change(path, 'write') as (path, _):
+            content.encode("utf-8")
+            with self._file(path, write=True, create=True) as stream:
+                size = os.fstat(stream.fileno()).st_size
+                if size > LARGE_FILE_BYTES:
+                    # A page read from a large file must not replace the whole file.
+                    raise ValueError(f"{path} is {size} bytes; change part of it with edit instead of write")
+                stream.write(content)
+                stream.truncate()
         return "File written."
 
     def edit(self, path: str, old: str, new: str, replace_all: bool = False) -> str:
         """Replace exact text. The match must be unique unless replace_all is true."""
-        path = self.check_change(path, 'edit')
-        new.encode("utf-8")
-        if not old:
-            raise ValueError("Expected nonempty text to replace")
-        with self._file(path, write=True) as stream:
-            content = stream.read()
-            count = content.count(old)
-            if not count:
-                raise ValueError("No match found")
-            if count != 1 and not replace_all:
-                raise ValueError("Expected a unique match, or replace_all")
-            stream.seek(0)
-            stream.write(content.replace(old, new))
-            stream.truncate()
+        with self.check_change(path, 'edit') as (path, _):
+            new.encode("utf-8")
+            if not old:
+                raise ValueError("Expected nonempty text to replace")
+            with self._file(path, write=True) as stream:
+                content = stream.read()
+                count = content.count(old)
+                if not count:
+                    raise ValueError("No match found")
+                if count != 1 and not replace_all:
+                    raise ValueError("Expected a unique match, or replace_all")
+                stream.seek(0)
+                stream.write(content.replace(old, new))
+                stream.truncate()
         return f"Replaced {count} occurrence(s)."
 
     def delete(self, path: str) -> str:
         """Remove an existing declared regular file, without following links."""
-        path = self.check_change(path, 'delete')
-        parts = _parts(path)
-        with self._directory(parts[:-1]) as parent:
-            os.unlink(parts[-1], dir_fd=parent)
+        with self.check_change(path, 'delete') as (path, parent):
+            if parent is None:
+                return "File already absent."
+            try:
+                os.unlink(path.rsplit('/', 1)[-1], dir_fd=parent)
+            except FileNotFoundError:
+                return "File already absent."
         if self._memory is not None:
             try:
                 self._memory.file(path, True)

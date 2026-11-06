@@ -932,7 +932,8 @@ def test_change_tool_table(tree, op, case, path, refusal):
             args.update(old="hello", new="changed", replace_all=True)
         if refusal:
             with pytest.raises(ValueError) as caught:
-                worktree.check_change(path, op)
+                with worktree.check_change(path, op):
+                    pytest.fail("change gate admitted the path")
             violation, = caught.value.violations
             assert violation.rule.id == f"worktree.change.{refusal}"
             assert violation.rule.roles == frozenset({"maker"})
@@ -1130,7 +1131,8 @@ def test_change_refusal_bounds_the_visible_footprint(tree):
     footprint = [f"tests/test_{index:04d}.py" for index in range(1000)]
     with Worktree(root, footprint=footprint) as worktree:
         with pytest.raises(ValueError) as caught:
-            worktree.check_change("tests/test_0000.p", "write")
+            with worktree.check_change("tests/test_0000.p", "write"):
+                pytest.fail("change gate admitted the path")
     text = str(caught.value)
     assert len(text) < 2200
     assert "more" in text
