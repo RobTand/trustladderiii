@@ -1000,6 +1000,10 @@ def verus_proofs():
             "port_deps_grant_cover": ("kernel::port_deps_pool_grant#grant_cover", 1),
             "port_deps_grant_is_checked": ("kernel::port_deps_pool_grant#grant_is_checked", 1),
             "port_deps_pool_key": ("kernel#pool_key", 1),
+            "port_deps_s2_pending": ("kernel::port_deps_slice2#pending_contract_gap", 1),
+            "port_deps_s2_registration": ("kernel::port_deps_slice2#registration_contract_gap", 1),
+            "port_deps_s2_removal": ("kernel::port_deps_slice2#removal_contract_gap", 1),
+            "port_deps_s2_adoption": ("kernel::port_deps_slice2#adoption_contract_gap", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(

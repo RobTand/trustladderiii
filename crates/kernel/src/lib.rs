@@ -2349,3 +2349,6 @@ mod port_deps_admission;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_deps_pool_grant.rs"]
 mod port_deps_pool_grant;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_deps_slice2.rs"]
+mod port_deps_slice2;
