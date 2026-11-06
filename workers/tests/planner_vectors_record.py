@@ -608,6 +608,21 @@ def generate(selection=None):
             citation({'memories': []}, reply)
         except ValueError:
             pass
+    # #839: a planner input carrying a non-empty prerequisite_closures (closed-not-planned prerequisite).
+    recorder.source, recorder.node, recorder.ordinal = 'planner_protocol', 'extra/t839/prerequisite-closures', 0
+    validate = recorder.pure('contracts.validate', modules()['contracts'].validate)
+    validate('planner-input', {
+        'must_split': False, 'findings': [],
+        'protected_paths': ['.github/**', '.mergify.yml', '**/conftest.py', 'pytest.ini', 'tox.ini',
+                            'noxfile.py', 'setup.cfg', 'pyproject.toml'],
+        'ingest': {'kind': 'brief', 'brief': 'hello world',
+                   'goals': [{'description': 'Return hello.', 'verification': 'test'},
+                             {'description': 'Keep the API clear.', 'verification': 'review'}],
+                   'memory_ids': []},
+        'forecast': {'fit_tokens': 100000, 'context_tokens': 150000, 'overhead_tokens': {'making': 84000},
+                     'generated_files': ['**/BUILD.bazel'], 'generator': 'tools/bazel/generate.sh'},
+        'prerequisite_closures': [{'kind': 'issue', 'number': 2763, 'reason': 'not_planned'}],
+    })
     document = {'format': 'tl3.planner-vectors.v1', 'cases': recorder.cases,
                 'scenarios': recorder.scenarios, 'english': heuristics(), 'globs': globs()}
     divergences = {
