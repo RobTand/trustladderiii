@@ -40,12 +40,14 @@ pub(super) fn verify_reply_apply(mut w: World, generation: u64, reply: Reply)
     kernel_proof! {
         port_replies_admission::reply_safe(before@, w, generation, reply, before_out@, out);
         port_replies_safety::checker_headroom(before@, w);
+        reveal(storage_ordered); reveal(footprint::ordered_table);
     }
     let checked_after = w.check();
     assert!(checked_after.is_ok());
     kernel_proof! {
-        reveal(port_review_reply::reply_post); reveal(port_review_reply::transition_post);
+        reveal(port_review_reply::reply_post); reveal(port_review_reply::reply_result); reveal(port_review_reply::transition_post);
         reveal(port_replies_contracts::transition_post); reveal(node_post);
+        reveal(port_review_reply::accepted_reply);
     }
     (w, out)
 }
