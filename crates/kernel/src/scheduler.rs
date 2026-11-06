@@ -42,8 +42,13 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: boo
                     && slot_waiters(old(w).nodes@, old(w).nodes@.len(), old(w).nodes@[i as int].repo)
                         < old(w).gates@[old(w).nodes@[i as int].repo.0 as int].w)
             },
+        exists|context: AdvanceContext| context.node == i
+            && result == advance_enabled(old(w).nodes@[i as int], context)
+            && port_advance_contracts::exact(old(w).nodes@[i as int], final(w).nodes@[i as int],
+                old(w).next_ticket, final(w).next_ticket, context, *old(out), *final(out)),
 ] {
     kernel_snapshot! { before_advance = *w }
+    kernel_snapshot! { before_out = *out }
     kernel_proof! { dependencies::prerequisite_definition(*w, NodeId(i as u64)); }
     let n = &w.nodes[i];
     let mut context = AdvanceContext {
@@ -73,6 +78,10 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox) -> (result: boo
     }
     let changed = advance_node(&mut w.nodes[i], &mut w.next_ticket, context, out);
     kernel_proof! {
+        assert(exists|c: AdvanceContext| c.node == i
+            && changed == advance_enabled(before_advance@.nodes@[i as int], c)
+            && port_advance_contracts::exact(before_advance@.nodes@[i as int], w.nodes@[i as int],
+                before_advance@.next_ticket, w.next_ticket, c, before_out@, *out));
         reveal(advance_post);
         advance_sum_bounds(before_advance@.nodes@, w.nodes@, i as int,
             before_advance@.next_ticket, w.next_ticket, changed);

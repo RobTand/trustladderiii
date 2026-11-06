@@ -2044,6 +2044,7 @@ kernel_fn! {
         },
         final(m).last_cmd == old(m).last_cmd,
         final(m).holds == if holding(old(m).phase) { false } else { old(m).holds },
+        *final(m) == port_advance_contracts::paused(*old(m)),
     ] {
         kernel_proof! { timing3_lemmas::pause_resume(m.phase); }
         if m.phase.holding() {
@@ -2239,3 +2240,7 @@ mod facts_ci_failed_lemmas;
 
 #[cfg(verus_keep_ghost)]
 mod facts_merge_lemmas;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/port_advance_contracts.rs"]
+mod port_advance_contracts;

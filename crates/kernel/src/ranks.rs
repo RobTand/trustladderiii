@@ -628,7 +628,12 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), _context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            port_advance_contracts::exact(*old(node), *final(node),
+                *old(_next_ticket), *final(_next_ticket), _context, *old(_out), *final(_out)),
+    ] proof [reveal(port_advance_contracts::exact);
+        reveal(port_advance_contracts::node_after);
+        reveal(port_advance_contracts::outputs);
+        reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.phase.is_closed() {
             return false;
@@ -657,7 +662,12 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            port_advance_contracts::exact(*old(node), *final(node),
+                *old(_next_ticket), *final(_next_ticket), context, *old(out), *final(out)),
+    ] proof [reveal(port_advance_contracts::exact);
+        reveal(port_advance_contracts::node_after);
+        reveal(port_advance_contracts::outputs);
+        reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
         let n = *node;
         match n.phase {
             Phase::Publishing => {
@@ -683,7 +693,12 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            port_advance_contracts::exact(*old(node), *final(node),
+                *old(_next_ticket), *final(_next_ticket), context, *old(out), *final(out)),
+    ] proof [reveal(port_advance_contracts::exact);
+        reveal(port_advance_contracts::node_after);
+        reveal(port_advance_contracts::outputs);
+        reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.paused {
             return pause_node(node);
@@ -703,7 +718,12 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            port_advance_contracts::exact(*old(node), *final(node),
+                *old(next_ticket), *final(next_ticket), context, *old(out), *final(out)),
+    ] proof [reveal(port_advance_contracts::exact);
+        reveal(port_advance_contracts::node_after);
+        reveal(port_advance_contracts::outputs);
+        reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.paused {
             return pause_node(node);
@@ -735,7 +755,12 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            port_advance_contracts::exact(*old(node), *final(node),
+                *old(_next_ticket), *final(_next_ticket), context, *old(out), *final(out)),
+    ] proof [reveal(port_advance_contracts::exact);
+        reveal(port_advance_contracts::node_after);
+        reveal(port_advance_contracts::outputs);
+        reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.paused {
             return pause_node(node);
@@ -758,7 +783,12 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            port_advance_contracts::exact(*old(node), *final(node),
+                *old(_next_ticket), *final(_next_ticket), context, *old(out), *final(out)),
+    ] proof [reveal(port_advance_contracts::exact);
+        reveal(port_advance_contracts::node_after);
+        reveal(port_advance_contracts::outputs);
+        reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.paused {
             return pause_node(node);
@@ -782,7 +812,12 @@ kernel_fn! {
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
             result ==> final(node).phase == (Phase::Planning { must_split: false }),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            port_advance_contracts::exact(*old(node), *final(node),
+                *old(_next_ticket), *final(_next_ticket), context, *old(_out), *final(_out)),
+    ] proof [reveal(port_advance_contracts::exact);
+        reveal(port_advance_contracts::node_after);
+        reveal(port_advance_contracts::outputs);
+        reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.paused || !context.admit {
             return false;
@@ -805,7 +840,12 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            port_advance_contracts::exact(*old(node), *final(node),
+                *old(next_ticket), *final(next_ticket), context, *old(_out), *final(_out)),
+    ] proof [reveal(port_advance_contracts::exact);
+        reveal(port_advance_contracts::node_after);
+        reveal(port_advance_contracts::outputs);
+        reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
         let n = *node;
         let Phase::Ready(r) = n.phase else {
             return false;
@@ -841,7 +881,12 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), _context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            port_advance_contracts::exact(*old(node), *final(node),
+                *old(_next_ticket), *final(_next_ticket), _context, *old(_out), *final(_out)),
+    ] proof [reveal(port_advance_contracts::exact);
+        reveal(port_advance_contracts::node_after);
+        reveal(port_advance_contracts::outputs);
+        reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
         let m = &mut *node;
         m.holds = false;
         m.pos += 1;
@@ -861,7 +906,12 @@ kernel_fn! {
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            port_advance_contracts::exact(*old(node), *final(node),
+                *old(_next_ticket), *final(_next_ticket), context, *old(out), *final(out)),
+    ] proof [reveal(port_advance_contracts::exact);
+        reveal(port_advance_contracts::node_after);
+        reveal(port_advance_contracts::outputs);
+        reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
         let n = *node;
         if n.question.is_some() {
             return false; // waiting for Rob
@@ -897,7 +947,12 @@ kernel_fn! {
             advance_post(*old(_node), *final(_node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(_node), _context),
-    ] proof [reveal(advance_post); reveal(distance);] {
+            port_advance_contracts::exact(*old(_node), *final(_node),
+                *old(_next_ticket), *final(_next_ticket), _context, *old(_out), *final(_out)),
+    ] proof [reveal(port_advance_contracts::exact);
+        reveal(port_advance_contracts::node_after);
+        reveal(port_advance_contracts::outputs);
+        reveal(port_advance_contracts::effect_kind); reveal(advance_post); reveal(distance);] {
         false
     }
 }
@@ -913,6 +968,8 @@ kernel_fn! {
             result == advance_enabled(*old(node), context),
             old(node).phase == Phase::Unplanned && old(node).pos == 0 && old(node).ticket.is_none()
                 ==> (result ==> final(node).phase == (Phase::Planning { must_split: false })),
+            port_advance_contracts::exact(*old(node), *final(node),
+                *old(next_ticket), *final(next_ticket), context, *old(out), *final(out)),
     ] {
         let n = *node;
         if n.phase.is_closed() || n.waiting_incident || n.effect.is_some() {
