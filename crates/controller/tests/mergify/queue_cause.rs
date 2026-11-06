@@ -523,6 +523,8 @@ pub(super) const REVIEW_MODES: &[&str] = &[
     "retry-no-time-restart",
     "reporter-union",
     "reporter-revalidate",
+    "retarget-held",
+    "retarget-attached",
 ];
 
 /// #854b r1: real Controller/adapter schedules requested by the review.
@@ -629,6 +631,34 @@ pub(super) fn review(settings: &tl3_config::Store, mode: &str) {
             let hold = after.rows.iter().find(|r| r.table == "queue_holds").unwrap();
             assert!(hold.value["witness"].is_null());
             assert_eq!(hold.value["reporters_complete"], false);
+            assert_eq!(hold.value["since_ms"], original.value["since_ms"]);
+            assert_eq!(hold.value["retry"], original.value["retry"]);
+            assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+            assert_eq!(controller.world().unwrap().nodes[0].credit.spent, 0);
+        }
+        "retarget-held" | "retarget-attached" => {
+            // #854b r2.B: create the hold before retargeting the same head.
+            failure(&mut controller, &api, &config);
+            let before = controller.snapshot().unwrap();
+            let original = before.rows.iter().find(|r| r.table == "queue_holds").unwrap();
+            assert_eq!(original.value["context"]["branch"], "main");
+            if mode == "retarget-attached" {
+                health(&mut controller, &api, &config, "2026-11-06T03:00:00Z",
+                    "ffffffffffffffffffffffffffffffffffffffff");
+            }
+            api.state.lock().unwrap().pull["base"]["ref"] = json!("release");
+            if mode == "retarget-held" {
+                health(&mut controller, &api, &config, "2026-11-06T03:00:00Z",
+                    "ffffffffffffffffffffffffffffffffffffffff");
+            }
+            controller.look_now().unwrap();
+            controller.look_now().unwrap();
+            assert_eq!(api.state.lock().unwrap().requeues, 0,
+                "r2.B: a retained main hold must not requeue a release PR on main health");
+            let after = controller.snapshot().unwrap();
+            let hold = after.rows.iter().find(|r| r.table == "queue_holds").unwrap();
+            assert_eq!(hold.value["context"]["branch"], "release");
+            assert!(hold.value["witness"].is_null());
             assert_eq!(hold.value["since_ms"], original.value["since_ms"]);
             assert_eq!(hold.value["retry"], original.value["retry"]);
             assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
