@@ -10,7 +10,7 @@
     "sources": 35
   },
   "crate:tl3-delivery": {
-    "reason": "controller-core #730: R7a #925: verified delivery protocol and production mutant qualification; R7b removes the mirror and frozen shells",
+    "reason": "controller-core #730: dependency-free effect-delivery decisions and protocol mirror linked by tl3-controller",
     "sources": 14,
     "max_fanout": 102
   },
