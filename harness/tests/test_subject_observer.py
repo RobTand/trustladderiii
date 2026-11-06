@@ -1520,3 +1520,25 @@ def test_r1_report_all_includes_independent_inferred_support(tmp_path):
     literals = [violation for violation in caught.value.violations
                 if violation.rule.id == 'proof.support.literal_binding']
     assert {violation.facts['symbol'] for violation in literals} == {'_FIRST', '_SECOND'}
+
+
+@pytest.mark.parametrize('loader', [False, True])
+def test_review_report_all_and_loader_repairs_survive_run_checks(repository, loader):
+    from proof_row_cases import partitions
+    case = partitions()['proof.loader.stdlib_shadow']['bad'] if loader else t842_immutable_case(
+        'def first(value): return sorted(value)\ndef second(box): box["x"] = 1', '1')
+    if not loader:
+        case['proof']['observer_support'] = ['tests/test_observer.py::first', 'tests/test_observer.py::second']
+    check = Check('unclipped rows', Kind.DEMONSTRATING, tuple(case['tests']), proof=model.Proof.parse(case['proof']))
+    results, _, _ = round_result(repository, case['before'], case['after'], check)
+    message = results[0].tests[0].message
+    encoded = json.loads(execution.result_json(results))[0]['tests'][0]['message']
+    for text in (message, encoded):
+        if loader:
+            assert 'proof.loader.stdlib_shadow' in text
+            assert 'test module that already exists on the base commit' in text
+        else:
+            assert 'proof.support.call_allowlist' in text
+            assert 'proof.support.member_write' in text
+            assert 'For string formatting use an f-string over local values there.' in text
+            assert 'move this into the observer test body.' in text
