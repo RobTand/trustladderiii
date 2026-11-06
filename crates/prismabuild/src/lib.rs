@@ -99,6 +99,11 @@ pub struct PrismaBuild {
 }
 
 impl PrismaBuild {
+    /// Test injection for the pending read-only status probe.
+    pub fn with_status_tool(self, _tool: Tool) -> Self {
+        self
+    }
+
     pub fn new(options: Options) -> Result<Self, Error> {
         if !options.queue_root.is_absolute() || options.queue_root.to_str().is_none() {
             return Err(Error::InvalidInput(
