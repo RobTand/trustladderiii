@@ -1,6 +1,7 @@
 pub(crate) mod ci_evidence;
 mod head_checks;
 mod queue_entry;
+mod queue_cause;
 mod waiting_requeue;
 pub(crate) use waiting_requeue::PROGRESS_PREFIX as REQUEUE_PROGRESS_PREFIX;
 
@@ -98,6 +99,8 @@ impl RequiredCheck {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Evidence {
+    /// Passive main/queue health evidence. It never maps to a kernel fact.
+    Gate(crate::queue_cause::GateEvidence),
     ChecksUnavailable {
         permissions: Vec<String>,
     },
@@ -156,8 +159,9 @@ pub enum Evidence {
 }
 impl Evidence {
     /// The evidence without its payload, as the core decides on it.
-    pub(crate) fn kind(&self) -> Kind {
-        match self {
+    pub(crate) fn kind(&self) -> Option<Kind> {
+        Some(match self {
+            Self::Gate(_) => return None,
             Self::ChecksUnavailable { .. } => Kind::ChecksUnavailable,
             Self::CheckMissing { .. } => Kind::CheckMissing,
             Self::QueueBlocked { .. } => Kind::QueueBlocked,
@@ -176,7 +180,7 @@ impl Evidence {
             Self::DequeuedByPerson { .. } => Kind::DequeuedByPerson,
             Self::ClosedByPerson { .. } => Kind::ClosedByPerson,
             Self::PushByOther { .. } => Kind::PushByOther,
-        }
+        })
     }
 }
 
@@ -198,7 +202,7 @@ impl QueueFact {
     }
     /// Setup evidence is deduplicated against incidents, not observation receipts.
     pub(crate) fn setup(&self) -> bool {
-        self.evidence.kind().setup()
+        self.evidence.kind().is_some_and(Kind::setup)
     }
     pub(crate) fn recorded(&self, snapshot: &Snapshot) -> Result<bool> {
         if let Evidence::CheckMissing { head, required }
@@ -280,6 +284,7 @@ impl QueueFact {
     }
     pub(crate) fn identity(&self) -> String {
         let mut evidence = match &self.evidence {
+            Evidence::Gate(gate) => format!("gate:{}:{}:{}", gate.context.base, gate.context.batch.as_deref().unwrap_or("main"), gate.at),
             Evidence::ChecksUnavailable { permissions } => {
                 let mut gaps = permissions.clone();
                 gaps.sort();
@@ -1233,6 +1238,7 @@ impl Executor for Adapter {
     /// no-progress allowance catches one that never comes. Only a read that
     /// errors is a failed look.
     fn look(&mut self, delivery: &Delivery) -> Result<Look> {
+        self.retest_hold(delivery)?;
         Ok(match self.read_enqueue(delivery)? {
             Reconciliation::Found(completion) => Look::Found(completion),
             Reconciliation::Absent => Look::Absent,
@@ -1788,6 +1794,7 @@ impl Translator {
         let mut wake = Vec::new();
         match event {
             Event::PullRequestMerged { pull_request, .. } => {
+                facts.extend(queue_cause::merge(repo, pull_request));
                 let binding = QueueFact {
                     repository: repo.clone(),
                     number: pull_request.number,
@@ -1954,6 +1961,10 @@ impl Translator {
             .get(&repo.installation)
             .ok_or(Error::Invalid("missing queue fact client"))?;
         let mut facts = Vec::new();
+        for pull in &changes.pull_requests {
+            facts.extend(queue_cause::merge(repo, pull));
+            facts.extend(queue_cause::batch(repo, pull, &changes.check_runs));
+        }
         let world: World = crate::snapshot::decode(snapshot)?;
         for pull in changes
             .pull_requests
@@ -2192,7 +2203,7 @@ mod kind_tests {
         }
         assert_eq!(cases.len(), 15);
         for (evidence, kind) in cases {
-            assert_eq!(evidence.kind(), kind, "{evidence:?}");
+            assert_eq!(evidence.kind(), Some(kind), "{evidence:?}");
         }
     }
 }

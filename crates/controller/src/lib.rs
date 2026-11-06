@@ -9,6 +9,8 @@ extern crate self as tl3_controller;
 pub mod adoption;
 mod approval_delivery;
 pub mod findings;
+pub mod queue_cause;
+mod queue_cause_decide;
 
 pub mod adapters;
 mod blocked;
@@ -3015,6 +3017,10 @@ impl Controller {
                 return self.linked_request(snapshot, repository, issue, original, commit);
             }
             Observation::Queue(mut fact) => {
+                if let adapters::mergify::Evidence::Gate(gate) = &fact.evidence {
+                    self.queue_gate(snapshot, &fact, gate, commit)?;
+                    return Ok(None);
+                }
                 let identity = fact.identity();
                 let Some(translation) =
                     tl3_controller_core::translate::begin(fact.recorded(snapshot)?)
@@ -3047,7 +3053,8 @@ impl Controller {
                 };
                 // A closed node takes only a merge it has not recorded. A later
                 // active enqueue must still be able to consume head evidence.
-                if !queue::admit(fact.evidence.kind(), view) {
+                let Some(kind) = fact.evidence.kind() else { return Ok(None); };
+                if !queue::admit(kind, view) {
                     return Ok(None);
                 }
                 if let Evidence::CiFailed {
@@ -3092,6 +3099,10 @@ impl Controller {
                     *infra = classified;
                     details.decision = Some(decision.as_str().into());
                 }
+                let q58 = matches!(&fact.evidence, Evidence::CiFailed { details, .. } if details.decision.as_deref() == Some("outside_change"));
+                if self.queue_failure_cause(snapshot, &mut fact, node, q58, commit)? {
+                    return Ok(None);
+                }
                 let value = json!(&fact);
                 let head_current = match &fact.evidence {
                     Evidence::CiFailed { head, .. }
@@ -3109,7 +3120,7 @@ impl Controller {
                     _ => false,
                 };
                 let route =
-                    match queue::route(fact.evidence.kind(), view, head_current, approved_head) {
+                    match queue::route(fact.evidence.kind().expect("queue evidence"), view, head_current, approved_head) {
                         queue::Route::Record => core::Route::Record,
                         queue::Route::Skip => core::Route::Skip,
                         queue::Route::SetupIncident

@@ -14,6 +14,10 @@ impl Fixture {
                 "plan refused at planning; upload refused\nProcess completed with exit code 75."
             ));
         } else { return None; };
+        let mut body = body;
+        if path.ends_with("/pulls/3331") {
+            if let Some(text) = body["body"].as_str() { body["body"] = json!(text.replace("number: 3330", "number: 100")); }
+        }
         Some(ResponseTemplate::new(200).set_body_json(body))
     }
 }

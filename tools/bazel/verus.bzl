@@ -234,6 +234,18 @@ def verus_proofs():
             visibility = ["//visibility:public"],
         )
         verus_test(
+            name = "verus_queue_cause",
+            src = "proofs/queue_cause.rs",
+            srcs = ["src/queue_cause_decide.rs"],
+            expected_obligations = 4,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
+        verus_test(
             name = "verus_direct_merge",
             src = "proofs/direct_merge.rs",
             srcs = ["src/adapters/direct_merge/decide.rs"],

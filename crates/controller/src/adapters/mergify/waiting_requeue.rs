@@ -613,6 +613,15 @@ impl Adapter {
         }
         Ok(Reconciliation::Pending)
     }
+    /// #854b uses the same per-head command receipt as Q58. Human holds and
+    /// pauses still fence dispatch; unknown POSTs are reconciled, never replayed.
+    pub(super) fn queue_hold_command(&mut self, delivery: &Delivery, snapshot: &Snapshot) -> Result<()> {
+        let github = &self.clients[&delivery.repository.installation];
+        let events = self.runtime.block_on(github.issue_events(&full_name(&delivery.repository), enqueue(delivery)?.0))?;
+        if self.human_hold_in_events(delivery, Some(snapshot), &events)? { return Ok(()); }
+        let _ = self.queue_command(delivery, None)?;
+        Ok(())
+    }
     pub(super) fn requeue_progress(&self, delivery: &Delivery) -> Result<Option<String>> {
         let Some(recovery) = self.recovery(delivery)? else {
             return Ok(None);

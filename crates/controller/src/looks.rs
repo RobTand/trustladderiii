@@ -665,6 +665,7 @@ impl Controller {
                 state.delivery = hydrate(&effect, &snapshot)?;
             }
             github_due |= upstream(state.delivery.output) == Upstream::GitHub;
+            if self.look_queue_hold(&snapshot, &mut state, now)? { continue; }
             if let Err(error) = self.look_state(&snapshot, &mut state, now) {
                 self.look_failed(&mut state, error)?;
                 self.save_allowance(&state)?;
@@ -723,6 +724,88 @@ impl Controller {
                 Err(error) => eprintln!("GitHub delivery look failed: {error}"),
             }
         }
+        Ok(())
+    }
+
+    /// #854b / Q50: this persisted hold uses the existing allowance clock. It
+    /// consumes neither a failed round nor the generic upstream/Rob stall path.
+    fn look_queue_hold(&mut self, snapshot: &Snapshot, state: &mut AllowanceState, now: u64) -> Result<bool> {
+        if upstream(state.delivery.output) != Upstream::Mergify { return Ok(false); }
+        let Some(head) = state.delivery.head_sha.as_deref() else { return Ok(false); };
+        let Some(hold) = crate::queue_cause::held(snapshot, state.delivery.node(), head)? else { return Ok(false); };
+        let world = snapshot::decode(snapshot)?;
+        let node = &world.nodes[state.delivery.node().0 as usize];
+        if !matches!(node.phase, Phase::Publishing | Phase::Queued) || crate::commit_sha(snapshot, node.head) != Some(head) { return Ok(false); }
+        if state.incident.as_ref().is_some_and(|id| snapshot.rows.iter().any(|row| row.table == "incidents" && row.id == *id && row.value["open"] == true)) {
+            state.due_ms = None;
+            self.save_allowance(state)?;
+            return Ok(true);
+        }
+        // Keep observing the same PR on the same scheduled look. Read or command
+        // uncertainty stays in the hold until its TL3-side bound.
+        if let Ok(Look::Found(mut completion)) = self.adapters.adapter(&state.delivery)?.look(&state.delivery) {
+            completion.progress = None;
+            let fresh = completion.observations.iter().any(|observation| match observation {
+                Observation::Queue(fact) => !fact.recorded(snapshot).unwrap_or(true),
+                _ => true,
+            });
+            if fresh {
+                if self.store.effect(&state.delivery.key)?.is_some_and(|effect| effect.state.is_pending()) {
+                    self.complete(&state.delivery.key, *completion)?;
+                } else { self.look_observations(&state.delivery, *completion)?; }
+                self.rearm(state);
+                self.save_allowance(state)?;
+                return Ok(true);
+            }
+        }
+        let since = hold.witnessed_ms.unwrap_or(hold.since_ms);
+        let deadline = since.saturating_add(u64::from(self.allowance(&state.delivery).no_progress_secs) * 1000);
+        let action = crate::queue_cause_decide::hold(hold.witness.is_some(), hold.witness.is_some(), now >= deadline);
+        if action == crate::queue_cause_decide::HoldAction::Incident {
+            self.queue_hold_incident(state, &hold)?;
+        } else {
+            state.failure = None;
+            state.due_ms = Some(deadline);
+            self.save_allowance(state)?;
+        }
+        Ok(true)
+    }
+
+    fn queue_hold_incident(&mut self, state: &mut AllowanceState, hold: &crate::queue_cause::Hold) -> Result<()> {
+        let snapshot = self.store.load()?;
+        let id = format!("queue-environment:{}:{}", hold.node.0, hold.head);
+        let signature = IncidentSignature { upstream: Upstream::Mergify, class: "queue_environment".into() };
+        let checks = snapshot.rows.iter().find(|row| row.table == "queue_facts" && row.id == hold.identity)
+            .and_then(|row| row.value["evidence"]["CiFailed"]["details"]["checks"].as_array()).cloned().unwrap_or_default();
+        let summary = format!("Queue environment hold for PR #{} on head {} reached its no-progress allowance. No newer-base healthy gate or completed retest was observed. No work round or credit was charged. Checks: {}", hold.number, hold.head, checks.iter().filter_map(|check| check["name"].as_str()).collect::<Vec<_>>().join(", "));
+        let mut commit = Commit::new(format!("queue-environment:{}:{}", hold.identity, snapshot.revision.get()), json!({"queue_hold":hold.identity}), &snapshot);
+        let open = snapshot.rows.iter().any(|row| row.table == "incidents" && row.id == id && row.value["open"] == true);
+        state.incident = Some(id.clone());
+        state.failure = Some("queue_environment".into());
+        state.due_ms = None;
+        commit.rows.push(put("allowances", state.delivery.key.clone(), json!(state)));
+        if !open {
+            let key = format!("incident:{id}:{}", snapshot.revision.get());
+            commit.rows.push(put("incidents", id.clone(), json!(Incident {
+                id: id.clone(), node: Some(hold.node), input_failure: None, open: true,
+                needs_rob: false, blocking: false, summary: summary.clone(), signature: signature.clone(),
+                effect: Some(state.delivery.key.clone()), post_key: Some(key.clone()), cause: Some(Cause::Tl3),
+            })));
+            let request = crate::request(&snapshot, hold.node)?;
+            let mut notice = state.delivery.clone();
+            notice.key = key;
+            notice.epoch = snapshot.epoch.get();
+            notice.output = Out::Notice { node: hold.node, notice: tl3_kernel::Notice::Incident { needs_rob: false } };
+            notice.note = Some(incident_note(&request.repo, request.issue, &summary));
+            notice.question_context = Some(json!({"incident_id":id, "signature":signature, "issue_title":request.title}));
+            if let Some(operations) = &self.bootstrap.operations {
+                notice.repository = crate::Repository { owner: operations.owner.clone(), name: operations.name.clone(), installation: operations.installation_id };
+                notice.issue = operations.number;
+            }
+            commit.rows.push(self.allowance_row(notice.clone()));
+            commit.effects.push(notice.into_effect());
+        }
+        self.store.commit(&commit)?;
         Ok(())
     }
 

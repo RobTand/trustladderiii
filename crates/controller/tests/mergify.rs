@@ -2783,6 +2783,7 @@ fn main() {
             queue_cause::scenario(&database.create(&format!("queue_cause_{mode}")), mode);
         }
         database.stop();
+        println!("{} Mergify scenarios passed; no skips; no live upstream calls", queue_cause::MODES.len());
         return;
     }
     if let Some(mode) = std::env::args()
