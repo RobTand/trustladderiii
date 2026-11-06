@@ -694,3 +694,44 @@ def test_stderr_raw_boundary_keeps_section_context_before_redaction(context_kind
         assert secret not in json.dumps(diagnostic), 'later raw cut replaced redaction with a secret'
         assert secret not in Redactor(None).text(json.dumps(diagnostic))
         assert 'container shim refused' in diagnostic['stderr_tail']
+
+
+@pytest.mark.parametrize('context_kind', ['ini', 'csv', 'private-key'])
+def test_new_stderr_secret_after_context_eviction(context_kind, monkeypatch, capsys):
+    """#826 review3: new bytes remain secret after their governing header is evicted."""
+    from tl3_harness import supervision
+    from tl3_harness.supervision import Supervised, ExecutionOutcome, MAX_STDERR_BYTES
+    from tl3_workers.tracing import Redactor
+    monkeypatch.setattr(supervision, '_stderr_log_bytes', 0)
+    secret = 'k' * 64 if context_kind == 'private-key' else 'zE9!pR4#cV7$'
+    if context_kind == 'ini':
+        header = b'[passwords]\n'
+        first = header + b'.' * (MAX_STDERR_BYTES - len(header))
+        advance = b'\n'
+        value = 'value = ' + secret
+    elif context_kind == 'csv':
+        header = b'name,password\n'
+        first = header + b'.' * (MAX_STDERR_BYTES - len(header) - 2) + b',x'
+        advance = b'\nother,x'
+        value = 'account,' + secret
+    else:
+        header = b'-----BEGIN PRIVATE KEY-----\n'
+        first = (header + (b'A' * 64 + b'\n') * 256)[:MAX_STDERR_BYTES]
+        advance = b'\n' + b'A' * 64 + b'\n'
+        value = secret + '\n-----END PRIVATE KEY-----'
+    chunks = (first, advance, ('\n' + value + '\ncontainer shim refused\n').encode(), b'\n')
+    whole = b''.join(chunks).decode()
+    assert secret not in supervision._redactor.window(whole, 0, len(whole))
+    process = Supervised([], None, ())
+    for chunk in chunks:
+        assert len(chunk) <= MAX_STDERR_BYTES
+        process.capture_stderr(chunk)
+    failure = process.failure(ExecutionOutcome.SETUP_FAILURE, 'container_start', 'incomplete_report')
+    diagnostic = failure.operator_json()
+    failure.log()
+    output = capsys.readouterr().out
+    assert 'TL3_EXECUTION_FAILURE ' in output
+    assert secret not in output, 'new secret after context eviction leaked into the PB log'
+    assert secret not in json.dumps(diagnostic), 'operator JSON leaked a new secret after context eviction'
+    assert secret not in Redactor(None).text(json.dumps(diagnostic))
+    assert diagnostic['stderr_tail'] == 'stderr withheld: redaction context lost'

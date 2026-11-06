@@ -76,6 +76,7 @@ with tempfile.TemporaryDirectory() as directory:
         with Supervised(command, None, ()) as process:
             assert list(process.records()) == []
             records.append(process.incomplete().operator_json())
+later_records = []
 for kind in ('ini', 'csv', 'private-key'):
     secret = 'k' * 64 if kind == 'private-key' else 'zE9!pR4#cV7$'
     if kind == 'ini':
@@ -95,6 +96,18 @@ for kind in ('ini', 'csv', 'private-key'):
         assert len(chunk) <= MAX_STDERR_BYTES
         process.capture_stderr(chunk)
     records.append(process.failure(ExecutionOutcome.SETUP_FAILURE, 'container_start', 'incomplete_report').operator_json())
+    advance = {'ini': b'\n', 'csv': b'\nother,x',
+               'private-key': b'\n' + b'A' * 64 + b'\n'}[kind]
+    chunks = (first, advance, ('\n' + value + '\n' + cause + '\n').encode(), b'\n')
+    from tl3_harness import supervision
+    whole = b''.join(chunks).decode()
+    assert secret not in supervision._redactor.window(whole, 0, len(whole))
+    process = Supervised([], None, ())
+    for chunk in chunks:
+        assert len(chunk) <= MAX_STDERR_BYTES
+        process.capture_stderr(chunk)
+    later_records.append(process.failure(ExecutionOutcome.SETUP_FAILURE, 'container_start', 'incomplete_report').operator_json())
+records.extend(later_records)
 print(json.dumps(records))
 "#;
     let output = redaction_support::python_command()
@@ -107,7 +120,7 @@ print(json.dumps(records))
         String::from_utf8_lossy(&output.stderr)
     );
     let diagnostics: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(diagnostics.len(), 7);
+    assert_eq!(diagnostics.len(), 10);
     let mut db = support::Database::start();
     for (index, diagnostic) in diagnostics
         .into_iter()
@@ -193,3 +206,8 @@ boundary!(raw_boundary, 3);
 boundary!(raw_section_boundary, 4);
 boundary!(raw_csv_boundary, 5);
 boundary!(raw_private_key_boundary, 6);
+
+// #826 review3: each secret first arrives after its governing context is evicted.
+boundary!(new_ini_after_eviction, 7);
+boundary!(new_csv_after_eviction, 8);
+boundary!(new_key_after_eviction, 9);
