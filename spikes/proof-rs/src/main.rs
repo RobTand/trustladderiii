@@ -1101,7 +1101,11 @@ fn assemble(input: &Value, reduced: bool) -> R<(Value, Tree)> {
         }
         let mut support_required = Set::new();
         for item in requested.iter().filter(|s| support.contains(s)) {
-            let src = source_unit(&new, item, false)?.unwrap().0;
+            let src = match source_unit(&new, item, false) {
+                Ok(Some((source,_))) => source,
+                Ok(None) => unreachable!(),
+                Err(error) => return Err(collected.take().unwrap_or(error)),
+            };
             if !reduced {
                 if let Err(e) = validate_support(
                     &src,
