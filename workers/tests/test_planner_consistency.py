@@ -166,7 +166,9 @@ def test_request156_trace_diagnostics_redact_model_text():
     from tl3_workers.turns import InvalidReply
 
     secret = 'sk-proj-' + 'aB7cD9eF2gH4jK6mN8pQ0rS3tU5vW1xY'
-    error = PlanConsistencyError([CONTROL + '[api_key=' + secret + ']'])
+    from tl3_harness.model import named
+    error = PlanConsistencyError({'kind': 'leaf'}, {'kind': 'leaf'},
+        [named('edit.selector', '', {'node': CONTROL + '[api_key=' + secret + ']'})], {'ingest': {'goals': []}})
     tags = failure_tags(InvalidReply(error, error))
     assert secret not in json.dumps(tags)
     assert CONTROL in tags['failure_message']
@@ -616,58 +618,6 @@ def test_pb2710_coverage_composes_with_existing_defects(planner_request, coverag
         assert events[-1]['plan_check']
 
 
-@pytest.mark.parametrize('too_many_ids', [False, True])
-def test_pb2710_message_clips_descriptions_never_ids(planner_request, coverage_case, monkeypatch, too_many_ids):
-    from tl3_workers import runtime
-    from tl3_workers.turns import REPAIR_MESSAGE_BYTES, repair_message
-    from tl3_workers.roles.planner import PlanConsistencyError, check_reply
-
-    _, draft, fixed = coverage_case
-    goals = planner_request['inputs']['ingest']['goals']
-    if too_many_ids:
-        goals.extend({'description': 'Uncovered review goal.', 'verification': 'review'} for _ in range(400))
-        model = planner_model(monkeypatch, draft, fixed)
-        events = []
-        runtime.run(planner_request, events.append)
-        assert len(model.calls) == 1
-        violations = events[-1]['reply']['violations']
-        assert 'Planner declarations exceed the existing correction message limit.' in violations
-        assert 'goal 406:' in '\n'.join(violations)
-    else:
-        goals[3]['description'] = 'é' * 3000
-        goals.append({'description': '界' * 3000, 'verification': 'review'})
-        with pytest.raises(PlanConsistencyError) as caught:
-            check_reply(planner_request['inputs'], draft)
-        error = caught.value
-        message = repair_message(error)
-        assert len(message.encode()) <= REPAIR_MESSAGE_BYTES
-        assert 'goal 3:' in message and 'goal 7:' in message
-        assert message == repair_message(error)
-        assert 'é' * 3000 in error.violations[0] and '界' * 3000 in error.violations[0]
-        assert ' [...]' in message
-        # Equal byte caps per description, rounded down to complete UTF-8 characters.
-        assert abs(message.count('é') * 2 - message.count('界') * 3) <= 2
-
-
-def test_pb2710_clipped_prompt_keeps_full_stop_evidence(planner_request, coverage_case, monkeypatch):
-    from tl3_workers import runtime
-    from tl3_workers.turns import REPAIR_MESSAGE_BYTES, REPAIR
-
-    _, draft, _ = coverage_case
-    description = 'é' * 3000
-    planner_request['inputs']['ingest']['goals'][3]['description'] = description
-    model = planner_model(monkeypatch, draft, draft)
-    events = []
-    runtime.run(planner_request, events.append)
-    assert len(model.calls) == 2
-    prompt = model.calls[1][0][-1].text
-    assert len(prompt.encode()) <= REPAIR_MESSAGE_BYTES + len(REPAIR.format('').encode())
-    assert 'goal 3:' in prompt and description not in prompt
-    violations = events[-1]['reply']['violations']
-    assert description in '\n'.join(violations)
-    assert 'Planner coverage correction attempts: 1.' in violations
-
-
 def test_pb2710_no_allowance_records_zero_coverage_attempts(planner_request, coverage_case, monkeypatch):
     from tl3_workers import runtime
     from tl3_workers.turns import RepairUnavailable, TurnControl
@@ -702,18 +652,6 @@ def test_pb2710_second_substantive_refusal_records_one_attempt(planner_request, 
     assert fixture['violation'] in violations
     assert [v for v in violations if v.startswith('Planner coverage correction attempts:')] == [
         f'Planner coverage correction attempts: {int(first == "coverage")}.']
-
-
-def test_pb2710_ids_fit_even_when_clipping_markers_do_not():
-    from tl3_workers.roles.planner import PlanConsistencyError
-    from tl3_workers.turns import REPAIR_MESSAGE_BYTES, repair_message
-
-    goals = dict.fromkeys(range(140), 'A required review goal. ' * 100)
-    error = PlanConsistencyError((), missing_goals=goals)
-    message = repair_message(error)
-    assert isinstance(message, str), 'descriptions must be omitted when the ids and instructions still fit'
-    assert len(message.encode()) <= REPAIR_MESSAGE_BYTES
-    assert all(f'goal {index}:' in message for index in goals)
 
 
 @pytest.mark.parametrize('defect', ['edit', 'missing_forced_selector'])

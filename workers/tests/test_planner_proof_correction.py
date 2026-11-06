@@ -37,7 +37,7 @@ def test_proof_omissions_get_one_tool_free_correction(planner_request, proof_pla
     assert len(model.calls) == 2
     history, tools = model.calls[-1]
     assert not tools and 'Tools are unavailable' in history[-1].text
-    assert 'proof' in history[-1].text and 'check-1' in history[-1].text
+    assert '/checks/0' in history[-1].text
     assert bool(events[-1]['reply']['violations']) == (missing in {'proof', 'red_message'})
     if missing in {'proof', 'red_message'}:
         assert any(item['rule'] == 'guard.fields_changed' for item in events[-1]['plan_check']['objections'])

@@ -26,13 +26,13 @@ from tl3_workers.evidence import contract_violations, forcing_capabilities, forc
 from tl3_workers.contracts import model_facing, read_json, read_reply, reply_errors, schema, schema_violations, validate
 from tl3_workers.roles import ROLES
 from tl3_workers.roles.audit import ingest_reply_contract
-from tl3_workers.roles.planner import EXPLORATION_DECLARATION, PlanConsistencyError, planner_schema_reply
+from tl3_workers.roles.planner import EXPLORATION_DECLARATION
 from tl3_workers.forcing_rehearsal import ForcingRehearsals
 from tl3_workers.tools import Worktree, build_tools
 from tl3_workers.memory import Summary, current
 from tl3_workers.recall import redacted_memories
 from tl3_workers.exploration import ExplorationMiddleware
-from tl3_workers.turns import InvalidReply, TurnControl, Unrepairable, repaired
+from tl3_workers.turns import TurnControl, repaired
 from tl3_workers.session import is_unaccepted_session
 from tl3_workers.prompt_render import render as render_prompt, selection as prompt_renderer
 
@@ -299,6 +299,7 @@ def run(request, emit: Callable[[dict], None]):
 def _run(request, emit):
     role = ROLES[request["role"]]
     model = create_model(request)
+    plan_check = None
     if request["inputs"].get("memories"):
         request = {**request, "inputs": {**request["inputs"],
                                          "memories": redacted_memories(request["inputs"]["memories"])}}
@@ -334,92 +335,29 @@ def _run(request, emit):
                     'candidates': ledger.candidates, 'pending': ledger.active,
                     'remaining_candidates': 8 - ledger.attempts}}
             history = [initial_message(request, model_inputs)]
-            draft_error = None
-            latest_error = None
-            latest_reply = None
-            candidate = None
-            origin_call = None
-            planner_checks = 0
             plan_check = None
-
-            def checked(text):
-                nonlocal draft_error, latest_error, latest_reply, candidate, origin_call, planner_checks
-                planner_checks += 1
-                if ledger is not None:
-                    ledger.raise_infrastructure()
-                    if ledger.failure:
-                        return refused_final(ledger.failure)
-                captured = []
-                try:
-                    candidate = read_reply(text)
-                    result = _checked(role, request['inputs'], deepcopy(candidate), worktree=worktree,
-                                      plan_errors=captured)
-                except Unrepairable:
-                    raise
-                except (ValueError, ValidationError) as error:
-                    if ledger is not None:
-                        rejected = next((item for item in reversed(ledger.candidates) if item['status'] == 'refused'), None)
-                        if rejected is not None:
-                            return refused_final(rejected)
-                    if isinstance(error, PlanConsistencyError):
-                        latest_error = error
-                        latest_reply = error.completed_reply
-                        if draft_error is None:
-                            draft_error, origin_call = error, planner_checks
-                    raise
-                if captured:
-                    latest_error = captured[-1]
-                    if draft_error is None:
-                        draft_error, origin_call = latest_error, planner_checks
-                else:
-                    latest_error = None
-                latest_reply = result
-                return result
-
-            def refused_final(failure):
-                nonlocal draft_error, latest_error, latest_reply, candidate, origin_call
-                candidate = {'kind': 'cant_meet', 'files': [], 'evidence_contract': [],
-                             'report': failure['message']}
-                captured = []
-                latest_reply = _checked(role, request['inputs'], deepcopy(candidate), worktree=worktree,
-                                        plan_errors=captured)
-                latest_error = captured[-1]
-                if draft_error is None:
-                    draft_error, origin_call = latest_error, planner_checks
-                return latest_reply
-
-            failed = None
-            try:
-                reply = repaired(control, history, lambda: _run_agent(agent, history, emit), checked)
-            except (PlanConsistencyError, InvalidReply) as error:
-                if role.name != 'planner' or draft_error is None:
-                    raise
-                failed = error
-                reply = latest_reply
-            if role.name == 'planner' and draft_error is not None:
-                from tl3_workers.roles.planner import terminal
-                attempted = origin_call == 1 and control.repair_attempts == 1
-                malformed = failed is not None and isinstance(failed, InvalidReply) and not isinstance(failed.errors[-1], PlanConsistencyError)
-                guards = draft_error.contract.check(candidate) if attempted and not malformed else []
-                if latest_error is not None or guards or malformed or reply['kind'] in {'cant_meet', 'split'}:
-                    unavailable = (draft_error.unavailable_reason or control.repair_unavailable
-                                   or 'format_allowance_consumed')
-                    reply, plan_check = terminal(draft_error, latest_error, reply, candidate,
-                        attempted=attempted, unavailable=unavailable, malformed=malformed)
+            ask = lambda: _run_agent(agent, history, emit)
+            if role.reply_contract is not None:
+                contract = role.reply_contract(request['inputs'], worktree)
+                reply = contract.run(control, history, ask)
+                plan_check = contract.provenance
+            else:
+                reply = repaired(control, history, ask, lambda text: _checked(
+                    role, request['inputs'], read_reply(text), worktree=worktree))
         else:
             reply = role.run(model, request, worktree, emit)
             if not role.validates_reply:
                 _checked(role, request["inputs"], reply)
-    if role.name == "planner" and plan_check is not None:
+    if plan_check is not None:
         validate("plan-check-provenance", plan_check)
     emit({"event": "reply", "role": role.name, "reply": reply,
-          **({"plan_check": plan_check} if role.name == "planner" and plan_check is not None else {})})
+          **({"plan_check": plan_check} if plan_check is not None else {})})
     return reply
 
 
 def _checked(role, inputs, reply, *, worktree=None, plan_errors=None):
-    if role.name == 'planner':
-        validate(role.reply_schema, planner_schema_reply(reply))
+    if role.reply_contract is not None:
+        return role.reply_contract(inputs, worktree).check(reply, plan_errors=plan_errors)
     else:
         errors = reply_errors(role.reply_schema, reply)
         if errors:
@@ -430,10 +368,7 @@ def _checked(role, inputs, reply, *, worktree=None, plan_errors=None):
                 first.rule_violations += contract_violations(inputs, reply, role=role.name)
             raise first
     if role.check_reply is not None:
-        if role.name == 'planner':
-            role.check_reply(inputs, reply, rehearsals=getattr(worktree, 'forcing_rehearsals', None), plan_errors=plan_errors)
-        else:
-            role.check_reply(inputs, reply)
+        role.check_reply(inputs, reply)
     return reply
 
 
