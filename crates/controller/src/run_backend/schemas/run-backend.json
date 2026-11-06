@@ -472,6 +472,22 @@
         {
           "type": "object",
           "properties": {
+            "bounds": {
+              "$ref": "#/$defs/OutputBounds"
+            },
+            "op": {
+              "type": "string",
+              "const": "output_bounds"
+            }
+          },
+          "required": [
+            "op",
+            "bounds"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
             "launch": {
               "$ref": "#/$defs/ContainerLaunchIntent"
             },
@@ -853,6 +869,17 @@
             "$ref": "#/$defs/RuntimeBindingInput"
           }
         },
+        "stderr": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BlobRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "stdout": {
           "$ref": "#/$defs/BlobRef"
         }
@@ -865,6 +892,23 @@
     },
     "Command": {
       "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "output_bounds"
+            },
+            "suite": {
+              "$ref": "#/$defs/Suite"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "suite"
+          ]
+        },
         {
           "type": "object",
           "properties": {
@@ -2098,6 +2142,9 @@
           "format": "uint32",
           "minimum": 1
         },
+        "output_bounds": {
+          "$ref": "#/$defs/OutputBounds"
+        },
         "output_dir": {
           "type": "string"
         },
@@ -2142,7 +2189,8 @@
         "native_threads",
         "runtime",
         "runtime_identity",
-        "placement"
+        "placement",
+        "output_bounds"
       ]
     },
     "LaunchPlacement": {
@@ -2579,6 +2627,69 @@
         "missing",
         "uncollected",
         "no-report"
+      ]
+    },
+    "OutputBounds": {
+      "description": "Scalar transport limits. Stdout and stderr have independent accounting.",
+      "type": "object",
+      "properties": {
+        "artifact_file_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "artifact_files": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "cli_envelope_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "cli_result_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "decoded_artifact_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "frame_overhead_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "payload_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "stderr_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "stdout_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "payload_bytes",
+        "decoded_artifact_bytes",
+        "artifact_file_bytes",
+        "artifact_files",
+        "frame_overhead_bytes",
+        "stdout_bytes",
+        "stderr_bytes",
+        "cli_envelope_bytes",
+        "cli_result_bytes"
       ]
     },
     "OwnedScratch": {
@@ -3578,6 +3689,17 @@
         },
         "schema": {
           "type": "string"
+        },
+        "stderr": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BlobRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "stdout": {
           "anyOf": [

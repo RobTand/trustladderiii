@@ -6,6 +6,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    OutputBounds { suite: Suite },
     BeginContainerLaunch {
         owner: String,
         correlation: String,
@@ -124,6 +125,7 @@ pub enum FrameBody {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum CliResult {
+    OutputBounds { bounds: OutputBounds },
     BeginContainerLaunch {
         launch: Box<ContainerLaunchIntent>,
     },
@@ -236,6 +238,10 @@ pub fn main() -> i32 {
         }
         let command: Command = serde_json::from_slice(&line)
             .map_err(|_| BackendError::invalid("command does not match generated Rust schema"))?;
+        if let Command::OutputBounds { suite } = &command {
+            writer.frame(FrameBody::Result { result: Box::new(CliResult::OutputBounds { bounds: output_bounds(suite) }) })?;
+            return Ok(());
+        }
         if args.len() != 2 || args[0] != "--config" {
             return Err(BackendError::invalid(
                 "use --config FILE with explicit provisioned Options JSON",
@@ -245,6 +251,7 @@ pub fn main() -> i32 {
             serde_json::from_slice(&durable::read(PathBuf::from(&args[1]).as_path())?)?;
         let backend = Flux::new(options)?;
         let result = match command {
+            Command::OutputBounds { suite } => CliResult::OutputBounds { bounds: output_bounds(&suite) },
             Command::BeginContainerLaunch {
                 owner,
                 correlation,

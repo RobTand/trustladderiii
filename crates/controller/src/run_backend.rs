@@ -152,6 +152,7 @@ pub struct LaunchContext {
     pub runtime: ExecutionRuntime,
     pub runtime_identity: RuntimeIdentity,
     pub placement: LaunchPlacement,
+    pub output_bounds: OutputBounds,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -516,6 +517,8 @@ pub struct RunnerReport {
     pub runtime_bindings: Vec<RuntimeBindingInput>,
     pub cleanup: Option<BlobRef>,
     pub stdout: Option<BlobRef>,
+    #[serde(default)]
+    pub stderr: Option<BlobRef>,
     pub worker_payload: Option<WorkerPayload>,
 }
 
@@ -826,6 +829,8 @@ pub struct RuntimeQualification {
 pub struct CollectorInput {
     pub run: BackendId,
     pub stdout: BlobRef,
+    #[serde(default)]
+    pub stderr: Option<BlobRef>,
     pub runtime_binding: Option<RuntimeBindingInput>,
     #[serde(default)]
     pub runtime_bindings: Vec<RuntimeBindingInput>,
@@ -1113,4 +1118,30 @@ pub struct Liveness {
     pub terminal: Option<Terminal>,
     pub evidence: Option<BlobRef>,
     pub reason: String,
+}
+
+/// Scalar transport limits. Stdout and stderr have independent accounting.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct OutputBounds {
+    pub payload_bytes: usize,
+    pub decoded_artifact_bytes: usize,
+    pub artifact_file_bytes: usize,
+    pub artifact_files: usize,
+    pub frame_overhead_bytes: usize,
+    pub stdout_bytes: usize,
+    pub stderr_bytes: usize,
+    pub cli_envelope_bytes: usize,
+    pub cli_result_bytes: usize,
+}
+
+pub fn output_bounds(suite: &Suite) -> OutputBounds {
+    let (payload, stdout, overhead, decoded) = match suite {
+        Suite::DaytimeChecks { .. } => (durable::MAX_BYTES, durable::MAX_BYTES + 1024 * 1024 + b"TL3_CHECKS \n".len(), b"TL3_CHECKS \n".len(), 0),
+        Suite::WorkerTests { .. } => (WORKER_TEST_STDOUT_BYTES, WORKER_TEST_STDOUT_BYTES, b"TL3_TEST_SUMMARY \n".len(), 0),
+        Suite::Generator { .. } => (GENERATOR_ARTIFACT_BYTES, GENERATOR_STDOUT_BYTES, b"TL3_GENERATOR_ARTIFACT \n".len(), GENERATOR_OUTPUT_BYTES),
+        Suite::Full { .. } | Suite::SelectedCases { .. } => (durable::MAX_BYTES, durable::MAX_BYTES, 0, 0),
+    };
+    OutputBounds { payload_bytes:payload, decoded_artifact_bytes:decoded, artifact_file_bytes:if decoded>0 {16*1024*1024} else {0}, artifact_files:if decoded>0 {128} else {0}, frame_overhead_bytes:overhead,
+        stdout_bytes:stdout, stderr_bytes:1024*1024, cli_envelope_bytes:64*1024, cli_result_bytes:payload+64*1024 }
 }

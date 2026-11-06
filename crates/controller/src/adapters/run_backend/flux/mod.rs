@@ -576,7 +576,9 @@ impl RunBackend for Flux {
                 "native job does not match retained dispatch",
             ));
         }
+        let output_bounds = output_bounds(&record.request.suite);
         Ok(LaunchContext {
+            output_bounds,
             schema: LaunchSchema::V1,
             run: BackendId { backend: BackendTag::Flux, instance: record.intent.instance.clone(), uri: record.intent.uri.clone(), job: job.into() },
             owner: record.intent.owner, correlation: record.intent.correlation, request_digest: record.intent.request_digest,

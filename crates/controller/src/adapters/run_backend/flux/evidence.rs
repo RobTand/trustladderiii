@@ -232,7 +232,7 @@ fn sanitized_json(value: &mut serde_json::Value, depth: usize) -> Result<()> {
     sanitized_json_using(value, depth, safe)
 }
 
-fn sanitized_json_using(
+pub(super) fn sanitized_json_using(
     value: &mut serde_json::Value,
     depth: usize,
     text: fn(&str) -> Result<String>,
@@ -267,6 +267,7 @@ fn sanitized_json_using(
 }
 
 fn daytime_payload(bytes: &[u8]) -> Result<crate::contracts::report::CheckReport> {
+    if bytes.len() > MAX_BYTES { return Err(BackendError::invalid("daytime payload exceeds protocol bound")); }
     let report = serde_json::from_slice(bytes)?;
     let value: serde_json::Value = serde_json::from_slice(bytes)?;
     let mut sanitized = value.clone();
@@ -303,10 +304,8 @@ impl Flux {
         }
         if input.run.instance != record.intent.instance
             || input.run.uri != record.intent.uri
-            || record
-                .binding
-                .as_ref()
-                .is_some_and(|binding| binding.id != input.run)
+            || !record.dispatched
+            || record.binding.as_ref().is_none_or(|binding| binding.id != input.run)
         {
             return Err(BackendError::invalid(
                 "collector run differs from retained dispatch",
@@ -317,7 +316,9 @@ impl Flux {
                 "TL3_CHECKS collector is only for the daytime protocol; full-run rollup is separate",
             ));
         }
-        let raw = checked_blob(&input.stdout, &record.intent.output_dir)?;
+        let bounds = output_bounds(&record.request.suite);
+        let raw = checked_blob_limit(&input.stdout, &record.intent.output_dir, bounds.stdout_bytes)?;
+        if let Some(stderr) = &input.stderr { checked_blob_limit(stderr, &record.intent.output_dir, bounds.stderr_bytes)?; }
         let mut frames = raw
             .split(|byte| *byte == b'\n')
             .filter_map(|line| line.strip_prefix(b"TL3_CHECKS "));
@@ -329,6 +330,7 @@ impl Flux {
                 "stdout has duplicate or empty TL3_CHECKS frames",
             ));
         }
+        if payload.len() > bounds.payload_bytes { return Err(BackendError::invalid("TL3_CHECKS payload exceeds protocol byte bound")); }
         daytime_payload(payload)?;
         let out = &record.intent.output_dir;
         let payload = blob(&out.join("retained-payload.json"), payload)?;
@@ -362,6 +364,7 @@ impl Flux {
             runtime_bindings: input.runtime_bindings.clone(),
             cleanup: input.cleanup.clone(),
             stdout: Some(input.stdout.clone()),
+            stderr: input.stderr.clone(),
             worker_payload: None,
         };
         let report = blob(&out.join("report.json"), &serde_json::to_vec(&report)?)?;
@@ -451,7 +454,9 @@ impl Flux {
             for name in ["stdout", "stderr", "submit.stderr", "submit-status.json"] {
                 let path = out.join(name);
                 if path.exists() {
-                    let bytes = read(&path)?;
+                    let bounds = output_bounds(&record.request.suite);
+                    let limit = match name { "stdout" => bounds.stdout_bytes, "stderr" => bounds.stderr_bytes, _ => MAX_BYTES };
+                    let bytes = read_limit(&path, limit)?;
                     evidence.push(blob(
                         &out.join(format!("retained-{name}")),
                         safe(&String::from_utf8_lossy(&bytes))?.as_bytes(),
@@ -467,7 +472,7 @@ impl Flux {
                         "trusted report identity/coverage invalid",
                     ));
                 }
-                evidence.push(retain_json(out, "retained-report.json", &raw)?);
+                evidence.push(blob(&out.join("retained-report.json"), &raw)?);
                 if let Some(payload) = &report.payload {
                     let bytes = checked_blob(payload, out)?;
                     if matches!(report.suite, Suite::DaytimeChecks { .. }) {
@@ -523,7 +528,7 @@ impl Flux {
         let record = self.journal.load(owner)?;
         let invalid = || BackendError {
             code: ErrorCode::EvidenceInvalid,
-            message: "terminal has no verified daytime payload for this durable owner".into(),
+            message: "terminal has no verified payload for this durable owner".into(),
         };
         if record.terminal.as_ref() != Some(terminal)
             || !matches!(terminal.ending, Ending::Passed | Ending::Failed)
@@ -600,6 +605,9 @@ impl Flux {
         report: &RunnerReport,
     ) -> Result<bool> {
         validate::trusted_artifacts(&record.request)?;
+        let bounds = output_bounds(&record.request.suite);
+        if let Some(stdout) = &report.stdout { checked_blob_limit(stdout, &record.intent.output_dir, bounds.stdout_bytes)?; }
+        if let Some(stderr) = &report.stderr { checked_blob_limit(stderr, &record.intent.output_dir, bounds.stderr_bytes)?; }
         if report.schema != "tl3.runner_report.v1"
             || report.run != binding.id
             || report.request_digest != record.intent.request_digest

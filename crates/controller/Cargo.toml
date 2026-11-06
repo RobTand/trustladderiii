@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+base64 = "0.22"
 libc = "0.2"
 loom = { version = "0.7", optional = true }
 socket2 = "0.6"
