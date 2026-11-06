@@ -65,6 +65,7 @@ impl From<serde_json::Error> for BackendError {
 
 pub fn token(value: &str) -> bool {
     !value.is_empty()
+        && !matches!(value, "." | "..")
         && value.len() <= 128
         && value
             .bytes()

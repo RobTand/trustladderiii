@@ -50,6 +50,8 @@ fn cli_schema_is_generated_from_rust_and_describes_all_operations() {
 
 #[test]
 fn malformed_requests_have_a_versioned_bounded_error_frame() {
+    assert!(!api::token("."));
+    assert!(!api::token(".."));
     let frames = cli(&json!({"op":"attach", "backend":"prismabuild", "key":"pb-old-key"}));
     assert_eq!(frames.len(), 1);
     assert_eq!(frames[0]["schema"], "tl3.run_backend.frame.v1");
