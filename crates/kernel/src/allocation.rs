@@ -180,7 +180,18 @@ kernel_fn! {
     pub(super) fn close_node(m: &mut Node, i: usize, outcome: Outcome, out: &mut Outbox) -> (result: ()) [
     requires old(m).credit.merge_credited || old(m).credit.earned < u64::MAX,
         old(out).len + 2 <= OUTBOX,
-    ensures final(m).phase == Phase::Closed(outcome), final(m).pos == 0,
+    ensures final(out).len == old(out).len + if outcome == Outcome::Replaced { 2usize } else { 1usize },
+        final(out).items@ == if outcome == Outcome::Replaced {
+            old(out).items@.update(old(out).len as int,
+                Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Summary(outcome) }))
+                .update(old(out).len as int + 1,
+                    Some(Out::Notice { node: NodeId(i as u64), notice: Notice::FileReplacement }))
+        } else {
+            old(out).items@.update(old(out).len as int,
+                Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Summary(outcome) }))
+        },
+        (retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out))),
+        final(m).phase == Phase::Closed(outcome), final(m).pos == 0,
         *final(m) == (Node { phase: Phase::Closed(outcome), pos: 0, ticket: None,
             credit: Credit { earned: final(m).credit.earned,
                 merge_credited: final(m).credit.merge_credited, ..old(m).credit }, ..*old(m) }),
@@ -212,7 +223,11 @@ pub(super) fn ask_rob(w: &mut World, i: usize, kind: QKind, cont: Cont, cost: u8
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(w).next_question < u64::MAX,
         old(w).nodes@[i as int].generation < u64::MAX, old(out).len < OUTBOX,
-    ensures final(w).next_question as int == old(w).next_question as int + 1,
+    ensures final(out).items@ == old(out).items@.update(old(out).len as int,
+            Some(Out::Notice { node: NodeId(i as u64),
+                notice: Notice::Ask { question: old(w).next_question } })),
+        (retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out))),
+        final(w).next_question as int == old(w).next_question as int + 1,
         final(w).next_ticket == old(w).next_ticket,
         final(w).nodes@.len() == old(w).nodes@.len(),
         forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
