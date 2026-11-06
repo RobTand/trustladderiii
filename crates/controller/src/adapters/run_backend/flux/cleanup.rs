@@ -26,8 +26,7 @@ pub(super) fn ownership(record: &Record, owned: &RuntimeOwnership) -> Result<()>
             match (mode, &container.scope) {
                 (ContainerMode::InJob, None) => {}
                 (ContainerMode::OwnScope, Some(scope)) => {
-                    let prefix = format!("tl3-{}-{}-", record.intent.correlation, owned.run.job);
-                    if !scope.unit.starts_with(&prefix) || !scope.unit.ends_with(".scope") || !token(&scope.unit)
+                    if !scope.unit.ends_with(".scope") || !token(&scope.unit)
                         || !hex(&scope.invocation_id, 32) || !absolute(Path::new(&scope.cgroup))
                         || !scope.cgroup.starts_with("/user.slice/user-1000.slice/user@1000.service/")
                         || !scope.cgroup.ends_with(&format!("/{}", scope.unit)) {

@@ -116,7 +116,7 @@ impl RunBackend for Flux {
                 }
                 return Ok((record, false));
             }
-            let record = Record { request, intent, dispatched: false, binding: None, cancel_requested: false, events: vec![], terminal: None, runtime_ownership: None, cleanup_evidence: None, jobspec: None };
+            let record = Record { request, intent, dispatched: false, binding: None, cancel_requested: false, events: vec![], terminal: None, runtime_ownership: None, cleanup_evidence: None, jobspec: None, allocation_grant: None };
             save(dir, &record)?;
             Ok((record, true))
         })?;
@@ -219,6 +219,22 @@ impl RunBackend for Flux {
         })
     }
 
+    fn validate_allocation(&self, owner: &Owner, facts: &AllocationInput) -> Result<CpuGrant> {
+        let record = self.journal.load(owner)?;
+        self.instance(&record)?;
+        let grant = evidence::allocation_grant(&record, facts)?;
+        self.journal.transaction(owner, |dir, current| {
+            let mut current = current.ok_or_else(|| BackendError::unknown("intent disappeared"))?;
+            if current.cancel_requested || current.terminal.is_some() || current.binding.as_ref().is_some_and(|binding| binding.id != grant.run)
+                || current.allocation_grant.as_ref().is_some_and(|previous| previous != &grant) {
+                return Err(BackendError::unknown("allocation changed or execution held"));
+            }
+            current.allocation_grant = Some(grant.clone());
+            save(dir, &current)
+        })?;
+        Ok(grant)
+    }
+
     fn cleanup_runtime(&self, owner: &Owner) -> Result<CleanupResult> { self.run_cleanup(owner) }
 
     fn daytime_payload(&self, owner: &Owner, terminal: &Terminal) -> Result<crate::contracts::report::CheckReport> {
@@ -238,8 +254,11 @@ impl RunBackend for Flux {
             scratch: OwnedScratch { approved_root: record.request.scratch_root.clone(), leaf: record.request.scratch_root.join(job) },
             output_dir: record.intent.output_dir.clone(),
             progress: ProgressPolicy { journal: record.intent.output_dir.join("progress.json"), no_progress_seconds: record.request.no_progress_seconds },
-            native_threads: record.request.reservation.native_threads, runtime: record.request.runtime.runtime,
-            placement: LaunchPlacement::Unqualified { reason: "collect retained native R, topology and host/container facts; validate_runtime_binding before accepting evidence".into() },
+            native_threads: record.request.reservation.native_threads, runtime: record.request.runtime.runtime.clone(), runtime_identity: record.request.runtime,
+            placement: match record.allocation_grant {
+                Some(grant) if grant.run.job == job => LaunchPlacement::Observed { allocation: grant.allocation, topology: grant.topology, host: grant.host, rank: grant.rank, os_pus: grant.os_pus },
+                _ => LaunchPlacement::Unqualified { reason: "collect retained native R/topology/host facts and call validate_allocation before launch".into() },
+            },
         })
     }
 }

@@ -100,13 +100,14 @@ pub struct LaunchContext {
     pub progress: ProgressPolicy,
     pub native_threads: NonZeroU32,
     pub runtime: ExecutionRuntime,
+    pub runtime_identity: RuntimeIdentity,
     pub placement: LaunchPlacement,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum LaunchPlacement {
-    Observed { allocation: BlobRef, topology: BlobRef, host: String, rank: u32 },
+    Observed { allocation: BlobRef, topology: BlobRef, host: String, rank: u32, os_pus: Vec<u32> },
     Unqualified { reason: String },
 }
 
@@ -478,6 +479,7 @@ pub trait RunBackend {
     fn probe(&self, reservation: &Reservation, placement: &Placement) -> Result<Probe>;
     fn launch_context(&self, owner: &Owner, job: &str) -> Result<LaunchContext>;
     fn retain_runtime(&self, owner: &Owner, ownership: RuntimeOwnership) -> Result<()>;
+    fn validate_allocation(&self, owner: &Owner, facts: &AllocationInput) -> Result<CpuGrant>;
     fn cleanup_runtime(&self, owner: &Owner) -> Result<CleanupResult>;
     fn daytime_payload(&self, owner: &Owner, terminal: &Terminal) -> Result<crate::contracts::report::CheckReport>;
 }
@@ -549,6 +551,29 @@ pub struct ProcessPlacement {
     pub host: String,
     pub allowed_cpus: String,
     pub cgroup: String,
+}
+
+/// Before-container allocation facts. No container or cgroup qualification is inferred.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AllocationInput {
+    pub run: BackendId,
+    pub request_digest: String,
+    pub allocation: BlobRef,
+    pub topology: BlobRef,
+    pub host: ProcessPlacement,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CpuGrant {
+    pub run: BackendId,
+    pub request_digest: String,
+    pub host: String,
+    pub rank: u32,
+    pub os_pus: Vec<u32>,
+    pub allocation: BlobRef,
+    pub topology: BlobRef,
 }
 
 /// Raw facts collected outside the test runner's stdout. Rust interprets them.

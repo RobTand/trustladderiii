@@ -15,6 +15,7 @@ pub enum Command {
     ValidateRuntimeBinding { owner: String, correlation: String, facts: Box<RuntimeBindingInput> },
     CollectRunner { owner: String, correlation: String, facts: Box<CollectorInput> },
     DaytimePayload { owner: String, correlation: String, terminal: Terminal },
+    ValidateAllocation { owner: String, correlation: String, facts: Box<AllocationInput> },
     RetainRuntime { owner: String, correlation: String, ownership: Box<RuntimeOwnership> },
     RetainCleanup { owner: String, correlation: String, evidence: BlobRef },
     CleanupRuntime { owner: String, correlation: String },
@@ -52,6 +53,7 @@ pub enum CliResult {
     LaunchContext { context: LaunchContext },
     ValidateRuntimeBinding { qualification: RuntimeQualification },
     CollectRunner { report: BlobRef, payload: BlobRef },
+    ValidateAllocation { grant: CpuGrant },
     RetainRuntime,
     RetainCleanup { cleanup: CleanupResult },
     CleanupRuntime { cleanup: CleanupResult },
@@ -117,6 +119,7 @@ pub fn main() -> i32 {
                 CliResult::CollectRunner { report, payload }
             }
             Command::DaytimePayload { owner, correlation, terminal } => CliResult::DaytimePayload { report: backend.daytime_payload(&Owner { owner, correlation }, &terminal)? },
+            Command::ValidateAllocation { owner, correlation, facts } => CliResult::ValidateAllocation { grant: backend.validate_allocation(&Owner { owner, correlation }, &facts)? },
             Command::RetainRuntime { owner, correlation, ownership } => { backend.retain_runtime(&Owner { owner, correlation }, *ownership)?; CliResult::RetainRuntime }
             Command::RetainCleanup { owner, correlation, evidence } => CliResult::RetainCleanup { cleanup: backend.retain_cleanup(&Owner { owner, correlation }, &evidence)? },
             Command::CleanupRuntime { owner, correlation } => CliResult::CleanupRuntime { cleanup: backend.cleanup_runtime(&Owner { owner, correlation })? },

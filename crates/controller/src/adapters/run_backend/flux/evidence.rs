@@ -5,15 +5,15 @@ fn unqualified(reason: &str) -> RuntimeQualification {
     RuntimeQualification { qualified: false, reason: reason.into(), evidence: vec![] }
 }
 
-pub(super) fn runtime_binding(record: &Record, facts: &RuntimeBindingInput) -> Result<RuntimeQualification> {
-    let Some(binding) = &record.binding else { return Ok(unqualified("backend ID not yet durably bound")); };
-    if facts.run != binding.id || facts.request_digest != record.intent.request_digest {
-        return Ok(unqualified("runtime facts do not match retained backend identity"));
+pub(super) fn allocation_grant(record: &Record, facts: &AllocationInput) -> Result<CpuGrant> {
+    facts.run.validate()?;
+    if facts.run.instance != record.intent.instance || facts.run.uri != record.intent.uri || facts.request_digest != record.intent.request_digest
+        || record.binding.as_ref().is_some_and(|binding| binding.id != facts.run) || !record.dispatched {
+        return Err(BackendError::invalid("allocation differs from retained dispatch"));
     }
-    let checked = (|| -> Result<()> {
         let r: resources::ResourceSet = serde_json::from_slice(&checked_blob(&facts.allocation, &record.intent.output_dir)?)?;
         let topology: TopologyMapping = serde_json::from_slice(&checked_blob(&facts.topology, &record.intent.output_dir)?)?;
-        if r.version != 1 || topology.run != binding.id || topology.request_digest != record.intent.request_digest
+        if r.version != 1 || topology.run != facts.run || topology.request_digest != record.intent.request_digest
             || topology.ranks.len() > 4096 || facts.host.host.len() > 256 || !token(&facts.host.host) {
             return Err(BackendError::invalid("runtime allocation/topology identity mismatch"));
         }
@@ -41,6 +41,18 @@ pub(super) fn runtime_binding(record: &Record, facts: &RuntimeBindingInput) -> R
             return Err(BackendError::invalid("host CPU affinity does not match mapped native grant"));
         }
         if facts.host.host != "dl380g10" || facts.host.rank != 0 { return Err(BackendError::invalid("runtime host differs from first-cut placement")); }
+    Ok(CpuGrant { run: facts.run.clone(), request_digest: facts.request_digest.clone(), host: facts.host.host.clone(), rank: facts.host.rank,
+        os_pus: pus.into_iter().collect(), allocation: facts.allocation.clone(), topology: facts.topology.clone() })
+}
+
+pub(super) fn runtime_binding(record: &Record, facts: &RuntimeBindingInput) -> Result<RuntimeQualification> {
+    let Some(binding) = &record.binding else { return Ok(unqualified("backend ID not yet durably bound")); };
+    if facts.run != binding.id || facts.request_digest != record.intent.request_digest {
+        return Ok(unqualified("runtime facts do not match retained backend identity"));
+    }
+    let checked = (|| -> Result<()> {
+        let grant = allocation_grant(record, &AllocationInput { run: facts.run.clone(), request_digest: facts.request_digest.clone(), allocation: facts.allocation.clone(), topology: facts.topology.clone(), host: facts.host.clone() })?;
+        let pus: BTreeSet<_> = grant.os_pus.into_iter().collect();
         let cgroup = cgroup_path(&facts.host.cgroup)?;
         if let ExecutionRuntime::RootlessPodman { mode, memory_limit_bytes, .. } = record.request.runtime.runtime {
             let container = facts.container.as_ref().ok_or_else(|| BackendError::invalid("inside-container affinity/cgroup evidence missing"))?;
@@ -56,10 +68,9 @@ pub(super) fn runtime_binding(record: &Record, facts: &RuntimeBindingInput) -> R
                 }
                 ContainerMode::OwnScope => {
                     let scope = facts.container_scope.as_ref().ok_or_else(|| BackendError::invalid("own_scope unit/cpuset/memory evidence missing"))?;
-                    let prefix = format!("tl3-{}-{}", record.intent.correlation, binding.id.job);
                     let owned = record.runtime_ownership.as_ref().and_then(|ownership| ownership.container.as_ref()).ok_or_else(|| BackendError::invalid("container ownership not retained"))?;
                     let retained_scope = owned.scope.as_ref().ok_or_else(|| BackendError::invalid("scope ownership not retained"))?;
-                    if scope.container_id != owned.id || retained_scope.unit != scope.unit || retained_scope.invocation_id != scope.invocation_id || retained_scope.cgroup != child || !scope.unit.starts_with(&prefix) || !scope.unit.ends_with(".scope") || !token(&scope.unit)
+                    if scope.container_id != owned.id || retained_scope.unit != scope.unit || retained_scope.invocation_id != scope.invocation_id || retained_scope.cgroup != child || !scope.unit.ends_with(".scope") || !token(&scope.unit)
                         || !hex(&scope.invocation_id, 32) || cgroup_path(&scope.cgroup)? != child || child == cgroup
                         || resources::idset(&scope.cpuset_effective)? != pus
                         || scope.memory_max != memory_limit_bytes.map(|bytes| bytes.get()) || scope.memory_swap_max != Some(0) {

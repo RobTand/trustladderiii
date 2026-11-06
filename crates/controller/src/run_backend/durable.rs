@@ -21,6 +21,8 @@ pub struct Record {
     pub cleanup_evidence: Option<BlobRef>,
     #[serde(default)]
     pub jobspec: Option<BlobRef>,
+    #[serde(default)]
+    pub allocation_grant: Option<CpuGrant>,
 }
 
 #[derive(Clone)]
