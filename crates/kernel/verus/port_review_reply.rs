@@ -42,17 +42,21 @@ pub(super) open spec fn ended(n: Node) -> Node {
     Node { run_failures: 0, run_incidents: 0, ..port_review_retry::abandoned(n) }
 }
 
-/// #806 slice 1: the review and rebase replies whose exact updates W2 owns.
+/// #806 review, rebase and checks replies whose exact updates W2 owns.
 #[verifier::inline]
 pub(super) open spec fn selected(reply: Reply) -> bool {
     matches!(reply, Reply::Approved { .. } | Reply::ChangesRequested | Reply::ReviewerOutOfRoom
-        | Reply::RebaseClean { .. } | Reply::RebaseNeedsChanges | Reply::RunFailed)
+        | Reply::RebaseClean { .. } | Reply::RebaseNeedsChanges | Reply::RunFailed
+        | Reply::ChecksDone { .. })
 }
 
 /// State-table accepted review/rebase rows: exact real handler result.
 #[verifier::opaque]
 pub(super) open spec fn transition(n: Node, fail_fast: bool, id: u64, reply: Reply) -> (Node, u64) {
     match reply {
+        Reply::ChecksDone { pass, in_footprint, .. } => if pass && in_footprint {
+            (retirement::phased(Node { checked: n.head, ..n }, Phase::Reviewing), id)
+        } else { port_review_retry::round(n, fail_fast, id, ReviewStop::ChecksFailed) },
         Reply::Approved { head } => (retirement::phased(Node { approved: Some(head), ..n }, Phase::Publishing), id),
         Reply::ChangesRequested => port_review_retry::round(n, fail_fast, id, ReviewStop::ChangesRequested),
         Reply::ReviewerOutOfRoom => if n.review_restarted {
@@ -68,14 +72,32 @@ pub(super) open spec fn transition(n: Node, fail_fast: bool, id: u64, reply: Rep
     }
 }
 
-/// #806: accepted-handler relation; worker-family clauses are supplied by W1.
+/// #806: W2-selected handler relation, independent of worker-family clauses.
+#[verifier::inline]
+pub(super) open spec fn review_transition_post(before: World, after: World, i: int, source: Node,
+    reply: Reply, out_before: Outbox, out_after: Outbox) -> bool {
+    selected(reply) ==> after.nodes@[i] == transition(source, before.fail_fast, before.next_question, reply).0
+        && after.next_question == transition(source, before.fail_fast, before.next_question, reply).1
+        && after.file_sets@ == before.file_sets@
+        && (retirement::notices_only(out_before) ==> retirement::notices_only(out_after))
+        && (before.fail_fast && match reply {
+            Reply::ChangesRequested => source.round != 0,
+            Reply::ReviewerOutOfRoom => source.review_restarted,
+            Reply::ChecksDone { pass, in_footprint, .. } => !(pass && in_footprint) && source.round != 0,
+            _ => false,
+        } ==> out_after.len == out_before.len)
+        && (match reply {
+            Reply::ChecksDone { pass: true, in_footprint: true, .. } => out_after == out_before,
+            _ => true,
+        })
+}
+
+
+/// #806: combined accepted-handler relation; W1 adds its unconditional worker conjunct here.
 #[verifier::opaque]
 pub(super) open spec fn transition_post(before: World, after: World, i: int, source: Node,
     reply: Reply, out_before: Outbox, out_after: Outbox) -> bool {
-    (selected(reply) ==> after.nodes@[i] == transition(source, before.fail_fast, before.next_question, reply).0
-        && after.next_question == transition(source, before.fail_fast, before.next_question, reply).1
-        && after.file_sets@ == before.file_sets@
-        && (retirement::notices_only(out_before) ==> retirement::notices_only(out_after)))
+    review_transition_post(before, after, i, source, reply, out_before, out_after)
         && port_replies_contracts::transition_post(before, after, i, source, reply, out_before, out_after)
 }
 

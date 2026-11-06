@@ -48,8 +48,8 @@ pub(super) proof fn rejected(before: World, after: World, i: int, generation: u6
 pub(super) proof fn unselected(before: World, after: World, i: int, source: Node,
     reply: Reply, out_before: Outbox, out_after: Outbox)
     requires !selected(reply),
-    ensures transition_post(before, after, i, source, reply, out_before, out_after),
-{ reveal(transition_post); }
+    ensures review_transition_post(before, after, i, source, reply, out_before, out_after),
+{}
 
 /// State-table accepted rows: compose end_operation before the selected handler.
 pub(super) proof fn accepted(before: World, middle: World, after: World, i: int,

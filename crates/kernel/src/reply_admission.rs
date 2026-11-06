@@ -107,20 +107,17 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
                     && final(w).next_question == old(w).next_question
                     && *final(out) == *old(out)
             }),
-] {
+] hide [successful_reply_input, node_checked, current_item, settle_shape, arithmetic_consistent, node_headroom] {
     kernel_snapshot! { before_reply = *w }
     kernel_snapshot! { before_outputs = *out }
+    kernel_proof! {
+        port_review_dispatch::progress_admitted(*w, w.nodes@[i as int], generation, reply);
+    }
     let n = &w.nodes[i];
     if n.phase.is_stopping() {
         // The run or job ended on its own, so teardown needn't stop it.
         let m = &mut w.nodes[i];
-        if m.run == Some(generation) {
-            m.run = None;
-            m.pool = false;
-        }
-        if m.job == Some(generation) {
-            m.job = None;
-        }
+        release_stopping_reply(m, generation);
         kernel_proof! { footprint::valid_under_table_growth(before_reply@, *w, w.nodes@[i as int].footprint); }
         kernel_proof! {
             progress_gate_contracts::table_order_frame(before_reply@, *w);
@@ -148,13 +145,6 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         return; // stale
     }
     // A reply that breaks its schema or names the wrong commit counts as a failed run.
-    kernel_proof! {
-        if successful_reply_input(*n, reply) {
-            if let Reply::PlanLeaf { footprint, .. } = reply {
-                if footprint::footprint_empty(n.footprint) { footprint::inline_is_valid(*w, 1); }
-            }
-        }
-    }
     if !accepts(w, n, &reply) {
         run_failed(w, i, out);
         kernel_proof! { footprint::valid_under_table_growth(before_reply@, *w, w.nodes@[i as int].footprint); }
@@ -231,7 +221,7 @@ fn admitted_reply(w: &mut World, i: usize, _generation: u64, reply: Reply,
                     && final(w).next_question == old(w).next_question
                     && *final(out) == *old(out)
             }),
-] proof [reveal(port_review_reply::accepted_reply);] {
+] proof [reveal(port_review_reply::accepted_reply); reveal(port_review_reply::transition_post);] {
     kernel_snapshot! { before_reply = *w }
     kernel_snapshot! { before_outputs = *out }
     end_operation(&mut w.nodes[i]);
@@ -428,6 +418,24 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
         Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet => reply_plan(w, i, reply, out),
         Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit => reply_plan_check(w, i, reply, out),
         _ => reply_work(w, i, reply, out),
+    }
+}
+}
+
+#[cfg(all(test, not(verus_keep_ghost)))]
+pub(super) mod stopping_reference;
+
+kernel_fn! {
+/// Q30 / #806: release the matching stopping run/job; statements moved verbatim.
+fn release_stopping_reply(m: &mut Node, generation: u64) -> (result: ()) [
+    ensures *final(m) == port_review_reply::stopping_reply(*old(m), generation),
+] {
+    if m.run == Some(generation) {
+        m.run = None;
+        m.pool = false;
+    }
+    if m.job == Some(generation) {
+        m.job = None;
     }
 }
 }
