@@ -262,15 +262,25 @@ impl Source {
                         self.tool_errors.remove(&key);
                         continue;
                     }
-                    for observation in &completion.observations {
-                        sender
-                            .send(Input::Observation {
+                    let inputs = if completion.failure_class.is_some() {
+                        vec![Input::Completion {
+                            key: job.delivery.key.clone(),
+                            completion: Box::new(completion.clone()),
+                        }]
+                    } else {
+                        completion
+                            .observations
+                            .iter()
+                            .map(|observation| Input::Observation {
                                 key: observation_key(&key, observation),
                                 observation: observation.clone(),
                             })
-                            .map_err(|_| {
-                                crate::Error::Invalid("PrismaBuild ingress receiver closed")
-                            })?;
+                            .collect()
+                    };
+                    for input in inputs {
+                        sender.send(input).map_err(|_| {
+                            crate::Error::Invalid("PrismaBuild ingress receiver closed")
+                        })?;
                     }
                     // Retain the completion for controller watches if it crashes before consuming Input.
                     write(&self.done(job), &completion)?;

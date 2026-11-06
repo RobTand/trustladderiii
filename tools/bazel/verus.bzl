@@ -1,6 +1,7 @@
 """Small required Verus proofs with declared source, spec and toolchain inputs."""
 
 load("//tools/bazel:verus_toolchain.bzl", "VerusToolchainInfo")
+load("@rules_python//python:defs.bzl", "py_binary")
 
 def _verus_test_impl(ctx):
     if ctx.attr.expected_obligations <= 0:
@@ -213,6 +214,25 @@ def verus_proofs():
             )
 
     if native.package_name() == "crates/controller":
+        # #830: direct delivery, full SHA pins, approval, known merge and write order.
+        py_binary(
+            name = "direct_merge_resources",
+            srcs = ["proofs/direct_merge_resources.py"],
+            main = "proofs/direct_merge_resources.py",
+            visibility = ["//visibility:public"],
+        )
+        verus_test(
+            name = "verus_direct_merge",
+            src = "proofs/direct_merge.rs",
+            srcs = ["src/adapters/direct_merge/decide.rs"],
+            expected_obligations = 10,
+            tags = ["rust", "verus"],
+            size = "small",
+            timeout = "short",
+            target_compatible_with = ["@platforms//cpu:x86_64"],
+            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
+            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
+        )
         native.exports_files(["src/kernel_boundary.rs"])
         verus_test(
             name = "verus_quota_wake",

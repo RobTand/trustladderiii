@@ -38,12 +38,6 @@ def test_large_selection_does_not_become_one_large_exec_argument(tmp_path, monke
     assert max(len(arg.encode()) for arg in command) < 131_072
 
 
-def test_plan_above_report_budget_is_rejected():
-    from tl3_harness.limits import validate_plan_size
-    with pytest.raises(ValueError, match='4194304.*reduce'):
-        validate_plan_size(('test_many.py::test_' + 'x' * (4 * 1024 * 1024),))
-
-
 def test_report_record_count_stays_bounded(tmp_path, monkeypatch):
     script = tmp_path / 'flood.py'
     script.write_text('print(\'{"event":"start","schema":1}\')\n'

@@ -139,6 +139,9 @@ pub fn apply(controller: &mut Controller, input: Input) -> Result<()> {
             controller.intake_proposed(issue, Some(proposed))?;
         }
         Input::AdoptionClarification(question) => controller.queue_adoption_question(question)?,
+        Input::Completion { key, completion } => {
+            controller.observe_completion(&key, *completion)?
+        }
         Input::Observation { key, observation } => controller.observe(&key, observation)?,
     }
     Ok(())
