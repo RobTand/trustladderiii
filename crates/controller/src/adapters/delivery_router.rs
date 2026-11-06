@@ -145,6 +145,20 @@ impl<Q: Executor, D: Executor> Executor for Router<Q, D> {
     fn stop_stalled(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.selected(&delivery.repository).stop_stalled(delivery)
     }
+    fn dispatch_evidence(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<(crate::dispatch_liveness::ProcessEvidence, bool)> {
+        self.selected(&delivery.repository)
+            .dispatch_evidence(delivery)
+    }
+    fn contract_evidence(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<crate::dispatch_liveness::decision::ContractEvidence> {
+        self.selected(&delivery.repository)
+            .contract_evidence(delivery)
+    }
     fn recover_deliveries(&mut self, after: u64, since_ms: u64) -> Result<Option<u64>> {
         self.queue.recover_deliveries(after, since_ms)
     }

@@ -150,6 +150,18 @@ impl Executor for Spy {
     fn stop_stalled(&mut self, delivery: &Delivery) -> Result<Completion> {
         self.hit("stop_stalled", delivery.key.clone())
     }
+    fn dispatch_evidence(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<(tl3_controller::dispatch_liveness::ProcessEvidence, bool)> {
+        self.hit("dispatch_evidence", delivery.key.clone())
+    }
+    fn contract_evidence(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<tl3_controller::dispatch_liveness::decision::ContractEvidence> {
+        self.hit("contract_evidence", delivery.key.clone())
+    }
     fn recover_deliveries(&mut self, after: u64, since_ms: u64) -> Result<Option<u64>> {
         self.hit("recover_deliveries", format!("{after}:{since_ms}"))
     }
@@ -481,6 +493,8 @@ fn assert_delivery_methods(
     assert!(router.quota_resume_ms(d, 0, 0).is_err());
     assert!(router.quota_candidates(d).is_err());
     assert!(router.stop_stalled(d).is_err());
+    assert!(router.dispatch_evidence(d).is_err());
+    assert!(router.contract_evidence(d).is_err());
     assert!(router.watch_wait(d, None).is_err());
     assert!(router.retire_delivery(d).is_err());
     assert_eq!(
@@ -497,6 +511,8 @@ fn assert_delivery_methods(
             "quota_resume_ms",
             "quota_candidates",
             "stop_stalled",
+            "dispatch_evidence",
+            "contract_evidence",
             "watch_wait",
             "retire_delivery"
         ]

@@ -469,6 +469,22 @@ pub trait Executor {
             "adapter cannot read merge prerequisites",
         ))
     }
+    /// #817: read identity/termination evidence without executing or reconciling.
+    /// Pending alone cannot certify a live process.
+    fn dispatch_evidence(
+        &mut self,
+        _delivery: &Delivery,
+    ) -> Result<(crate::dispatch_liveness::ProcessEvidence, bool)> {
+        Ok((crate::dispatch_liveness::ProcessEvidence::Unknown, false))
+    }
+    /// #817: read adapter-owned delivery evidence without I/O mutations or a
+    /// new upstream request. Missing evidence leaves the durable retry in charge.
+    fn contract_evidence(
+        &mut self,
+        _delivery: &Delivery,
+    ) -> Result<crate::dispatch_liveness::decision::ContractEvidence> {
+        Ok(crate::dispatch_liveness::decision::ContractEvidence::Absent)
+    }
     /// #839: the same prerequisite read also preserves the upstream closure reason.
     fn prerequisite_detail(
         &mut self,
