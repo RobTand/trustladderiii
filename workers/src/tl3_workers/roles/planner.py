@@ -87,7 +87,7 @@ CONSTRAINTS = {
     'EDIT_FILE': 'Add only the named file of an already-observed necessary base-test edit.',
     'EDIT_DROP': 'Drop only the named absent-base edit already covered by an unchanged demonstrating check.',
     'FROZEN': 'Remove only named edited nodes from frozen checks; retain kind and independent controls.',
-    'EVIDENCE_EMPTY': 'Add only missing evidence_contract as []; inherited requirements remain code-owned.',
+    'EVIDENCE_EMPTY': 'Add only the missing key as evidence_contract: []. Code supplies the inherited source requirements; list none.',
     'METHOD_REPLACE': 'Replace only named method choices with supplied capabilities; freeze source requirements.',
     'MEMORY_DROP': 'Remove only named unsupplied memory ids; retain all other citations.',
     'FLAG_DROP': 'Remove only named uncited flags.',
@@ -100,6 +100,14 @@ CONSTRAINTS = {
     'FILE_PATH': 'Replace only a named spelling with its unique confined relative path.',
     'SPLIT_REASON': 'Replace only the invalid split reason with an already-true permitted reason.',
 }
+# These diagnostics ask for an edit their footprint's guard rejects, so the repair
+# line gives the footprint instruction and the named items only (#1574).
+FOOTPRINT_ONLY = frozenset({
+    'evidence.contract_missing',  # asks for requirements; EVIDENCE_EMPTY accepts only []
+    # "Leave it out": no leaf guard removes a declared file; FILE_PATH accepts only the canonical spelling.
+    'path.unusable', 'path.not_regular', 'path.binary', 'path.encoding', 'path.hard_cap', 'path.noncanonical',
+    'size.report', 'size.result',  # "reduce the selected tests": SPLIT preserves every check
+})
 
 
 def message(objections):
@@ -120,7 +128,7 @@ def message(objections):
             continue
         fixed.append(item.rule + ' ' + '; '.join(identities(item.items)) + ': '
                      + CONSTRAINTS.get(operation, CONSTRAINTS['NONE']))
-        descriptions.append(item.items.get('description', str(item)))
+        descriptions.append('' if item.rule in FOOTPRINT_ONLY else item.items.get('description', str(item)))
     def render(texts):
         return prefix + '\n'.join(line + (' ' + text if text else '') for line, text in zip(fixed, texts))
     full = render(descriptions)
