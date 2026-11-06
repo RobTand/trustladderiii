@@ -235,6 +235,37 @@ fn known_missing_red_match_is_a_judge_disagreement() {
 }
 
 #[test]
+fn red_classes_must_agree_with_the_observed_base() {
+    let (mut job, mut report) = fixture("assertion", "passed", true, false);
+    let declaration = json!({"subjects": [], "observer_support": [], "red_message": "expected"});
+    job.run.plan[0].kind = Kind::Demonstrating;
+    job.run.plan[0].proof = Some(serde_json::from_value(declaration.clone()).unwrap());
+    report["results"][0]["kind"] = json!("demonstrating");
+    report["results"][0]["proof"] = json!({"rule": "subject-observer-v1", "mode": "head-observer",
+        "declaration": declaration, "subjects": {}, "support_sha256": {},
+        "observer_sha256": {"tests/test_x.py::test_x": "c".repeat(64)},
+        "source_base_tree_sha256": "d".repeat(64), "base_tree_sha256": "d".repeat(64),
+        "head_tree_sha256": "e".repeat(64), "red_message_matches": {}});
+    report["results"][0]["proof"]["red_message_matches"] =
+        json!({"tests/test_x.py::test_x": "message"});
+    assert!(evaluate(&job, &report).1);
+    report["results"][0]["proof"]["red_classes"] =
+        json!({"tests/test_x.py::test_x": "assertion"});
+    assert!(evaluate(&job, &report).1);
+    for class in ["added-name", "symptom"] {
+        report["results"][0]["proof"]["red_classes"] =
+            json!({"tests/test_x.py::test_x": class});
+        assert_eq!(evaluate(&job, &report).4, Some(HARNESS));
+    }
+    report["results"][0]["tests"][0]["base"] = json!("added-name");
+    report["results"][0]["proof"]["red_classes"] =
+        json!({"tests/test_x.py::test_x": "added-name"});
+    assert!(evaluate(&job, &report).1);
+    report["results"][0]["proof"]["red_classes"] = json!({"unknown": "added-name"});
+    assert_eq!(evaluate(&job, &report).4, Some(HARNESS));
+}
+
+#[test]
 fn retained_boundary_requires_positive_proof_identity() {
     let (mut job, mut report) = fixture("added-name", "passed", true, false);
     job.run.plan[0].kind = Kind::Demonstrating;
