@@ -31,9 +31,17 @@
       },
       "completed_at": "2026-11-05T18:31:24Z",
       "conclusion": "failure",
+      "details_url": "https://github.com/RobTand/tessera/actions/runs/42084791898/job/127447644219",
       "head_sha": "820d3c3ee85a3b761eb224da6ac514dbf18752a9",
       "id": 127447644219,
       "name": "pr-gate",
+      "output": {
+        "annotations_count": 2,
+        "annotations_url": "https://api.github.com/repos/RobTand/tessera/check-runs/127447644219/annotations",
+        "summary": null,
+        "text": null,
+        "title": null
+      },
       "status": "completed"
     },
     {
@@ -67,9 +75,17 @@
       },
       "completed_at": "2026-11-05T18:31:15Z",
       "conclusion": "failure",
+      "details_url": "https://github.com/RobTand/tessera/actions/runs/42084791898/job/127446883085",
       "head_sha": "820d3c3ee85a3b761eb224da6ac514dbf18752a9",
       "id": 127446883085,
       "name": "Bazel",
+      "output": {
+        "annotations_count": 4,
+        "annotations_url": "https://api.github.com/repos/RobTand/tessera/check-runs/127446883085/annotations",
+        "summary": null,
+        "text": null,
+        "title": null
+      },
       "status": "completed"
     },
     {
@@ -79,9 +95,17 @@
       },
       "completed_at": "2026-11-05T18:38:26Z",
       "conclusion": "failure",
+      "details_url": "https://github.com/RobTand/tessera/actions/runs/42084791441/job/127446882423",
       "head_sha": "820d3c3ee85a3b761eb224da6ac514dbf18752a9",
       "id": 127446882423,
       "name": "pure",
+      "output": {
+        "annotations_count": 2,
+        "annotations_url": "https://api.github.com/repos/RobTand/tessera/check-runs/127446882423/annotations",
+        "summary": null,
+        "text": null,
+        "title": null
+      },
       "status": "completed"
     },
     {
@@ -91,9 +115,17 @@
       },
       "completed_at": "2026-11-05T18:30:03Z",
       "conclusion": "success",
+      "details_url": "https://github.com/RobTand/tessera/actions/runs/42084791441/job/127446881819",
       "head_sha": "820d3c3ee85a3b761eb224da6ac514dbf18752a9",
       "id": 127446881819,
       "name": "branch rule",
+      "output": {
+        "annotations_count": 1,
+        "annotations_url": "https://api.github.com/repos/RobTand/tessera/check-runs/127446881819/annotations",
+        "summary": null,
+        "text": null,
+        "title": null
+      },
       "status": "completed"
     },
     {
@@ -103,9 +135,17 @@
       },
       "completed_at": "2026-11-05T18:41:47Z",
       "conclusion": "neutral",
+      "details_url": "https://dashboard.mergify.com/orgs/RobTand/repos/tessera/queues/status?branch=master&pull=1639",
       "head_sha": "820d3c3ee85a3b761eb224da6ac514dbf18752a9",
       "id": 127446875242,
       "name": "Mergify Merge Queue",
+      "output": {
+        "annotations_count": 0,
+        "annotations_url": "https://api.github.com/repos/RobTand/tessera/check-runs/127446875242/annotations",
+        "summary": "### Queue entry conditions\n\n- [ ] `scopes-available` [waiting for pull request scopes to be reported]\n- [X] `-closed` [\ud83d\udccc queue requirement]\n- [X] `-conflict` [\ud83d\udccc queue requirement]\n- [X] `-draft` [\ud83d\udccc queue requirement]\n- [X] any of [\ud83d\udccc queue -> configuration change requirements]:\n  - [X] `-mergify-configuration-changed`\n  - [ ] `check-success = @mergify/Configuration changed`\n  - [ ] `check-success = @mergify/Configuration has been deleted`\n- [X] any of [\ud83d\udccc queue requirement]:\n  - [X] `check-neutral = @mergify/Mergify Merge Protections`\n  - [ ] `check-skipped = @mergify/Mergify Merge Protections`\n  - [ ] `check-success = @mergify/Mergify Merge Protections`\n- [X] any of [\ud83d\udd00 queue conditions]:\n  - [X] all of [\ud83d\udccc queue conditions of queue rule `default`]:\n    - [X] `-draft`\n    - [X] `base = master`\n    - [X] [`github-review-approved`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-review-approved) [\ud83d\udee1 GitHub branch protection]\n    - [X] any of:\n      - [X] all of:\n        - [X] `check-success = @tl3-robtand/TL3 approval`\n        - [X] `check-success = branch rule`\n        - [X] `label = tl3-queue`\n      - [ ] all of:\n        - [ ] `check-success = pr-gate`\n        - [ ] `label = queue`\n        - [X] `check-success = branch rule`\n    - [X] any of [\ud83d\udee1 GitHub branch protection]:\n      - [X] `check-success = branch rule`\n      - [ ] `check-neutral = branch rule`\n      - [ ] `check-skipped = branch rule`\n  - [ ] all of [\ud83d\udccc queue conditions of queue rule `release`]:\n    - [ ] `check-success = pr-gate`\n    - [ ] `label = queue`\n    - [ ] `label = release`\n    - [X] `-draft`\n    - [X] `base = master`\n    - [X] `check-success = branch rule`\n    - [X] [`github-review-approved`](https://docs.mergify.com/configuration/conditions/#pull-request-attributes-github-review-approved) [\ud83d\udee1 GitHub branch protection]\n    - [X] any of [\ud83d\udee1 GitHub branch protection]:\n      - [X] `check-success = branch rule`\n      - [ ] `check-neutral = branch rule`\n      - [ ] `check-skipped = branch rule`\n\n---\nYou can queue this pull request now with `@Mergifyio queue`: it will enter the merge queue once these conditions match.\n\n<span itemprop=\"mergify.v1.eyJ2ZXJzaW9uIjoxLCJzdGF0ZSI6IndhaXRpbmciLCJxdWV1ZV9ydWxlX25hbWUiOm51bGwsInF1ZXVlZF9hdCI6bnVsbCwiZXN0aW1hdGVkX3RpbWVfb2ZfbWVyZ2UiOm51bGwsInNwZWN1bGF0aXZlX2NoZWNrX3ByIjpudWxsLCJyZXF1aXJlZF9jb25kaXRpb25zIjpbeyJkZXNjcmlwdGlvbiI6InNjb3Blcy1hdmFpbGFibGUiLCJtYXRjaCI6ZmFsc2UsInN1YmNvbmRpdGlvbnMiOltdLCJub3RlIjoid2FpdGluZyBmb3IgcHVsbCByZXF1ZXN0IHNjb3BlcyB0byBiZSByZXBvcnRlZCJ9LHsiZGVzY3JpcHRpb24iOiItY2xvc2VkIiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOltdLCJub3RlIjoiXHVkODNkXHVkY2NjIHF1ZXVlIHJlcXVpcmVtZW50In0seyJkZXNjcmlwdGlvbiI6Ii1jb25mbGljdCIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbXSwibm90ZSI6Ilx1ZDgzZFx1ZGNjYyBxdWV1ZSByZXF1aXJlbWVudCJ9LHsiZGVzY3JpcHRpb24iOiItZHJhZnQiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W10sIm5vdGUiOiJcdWQ4M2RcdWRjY2MgcXVldWUgcmVxdWlyZW1lbnQifSx7ImRlc2NyaXB0aW9uIjoiYW55IG9mIiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOlt7ImRlc2NyaXB0aW9uIjoiLW1lcmdpZnktY29uZmlndXJhdGlvbi1jaGFuZ2VkIiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOltdfSx7ImRlc2NyaXB0aW9uIjoiY2hlY2stc3VjY2VzcyA9IEBtZXJnaWZ5L0NvbmZpZ3VyYXRpb24gY2hhbmdlZCIsIm1hdGNoIjpmYWxzZSwic3ViY29uZGl0aW9ucyI6W119LHsiZGVzY3JpcHRpb24iOiJjaGVjay1zdWNjZXNzID0gQG1lcmdpZnkvQ29uZmlndXJhdGlvbiBoYXMgYmVlbiBkZWxldGVkIiwibWF0Y2giOmZhbHNlLCJzdWJjb25kaXRpb25zIjpbXX1dLCJub3RlIjoiXHVkODNkXHVkY2NjIHF1ZXVlIC0-IGNvbmZpZ3VyYXRpb24gY2hhbmdlIHJlcXVpcmVtZW50cyJ9LHsiZGVzY3JpcHRpb24iOiJhbnkgb2YiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W3siZGVzY3JpcHRpb24iOiJjaGVjay1uZXV0cmFsID0gQG1lcmdpZnkvTWVyZ2lmeSBNZXJnZSBQcm90ZWN0aW9ucyIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbXX0seyJkZXNjcmlwdGlvbiI6ImNoZWNrLXNraXBwZWQgPSBAbWVyZ2lmeS9NZXJnaWZ5IE1lcmdlIFByb3RlY3Rpb25zIiwibWF0Y2giOmZhbHNlLCJzdWJjb25kaXRpb25zIjpbXX0seyJkZXNjcmlwdGlvbiI6ImNoZWNrLXN1Y2Nlc3MgPSBAbWVyZ2lmeS9NZXJnaWZ5IE1lcmdlIFByb3RlY3Rpb25zIiwibWF0Y2giOmZhbHNlLCJzdWJjb25kaXRpb25zIjpbXX1dLCJub3RlIjoiXHVkODNkXHVkY2NjIHF1ZXVlIHJlcXVpcmVtZW50In0seyJkZXNjcmlwdGlvbiI6ImFueSBvZiIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbeyJkZXNjcmlwdGlvbiI6ImFsbCBvZiIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbeyJkZXNjcmlwdGlvbiI6Ii1kcmFmdCIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbXX0seyJkZXNjcmlwdGlvbiI6ImJhc2UgPSBtYXN0ZXIiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W119LHsiZGVzY3JpcHRpb24iOiJnaXRodWItcmV2aWV3LWFwcHJvdmVkIiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOltdLCJub3RlIjoiXHVkODNkXHVkZWUxIEdpdEh1YiBicmFuY2ggcHJvdGVjdGlvbiJ9LHsiZGVzY3JpcHRpb24iOiJhbnkgb2YiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W3siZGVzY3JpcHRpb24iOiJhbGwgb2YiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W3siZGVzY3JpcHRpb24iOiJjaGVjay1zdWNjZXNzID0gQHRsMy1yb2J0YW5kL1RMMyBhcHByb3ZhbCIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbXX0seyJkZXNjcmlwdGlvbiI6ImNoZWNrLXN1Y2Nlc3MgPSBicmFuY2ggcnVsZSIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbXX0seyJkZXNjcmlwdGlvbiI6ImxhYmVsID0gdGwzLXF1ZXVlIiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOltdfV19LHsiZGVzY3JpcHRpb24iOiJhbGwgb2YiLCJtYXRjaCI6ZmFsc2UsInN1YmNvbmRpdGlvbnMiOlt7ImRlc2NyaXB0aW9uIjoiY2hlY2stc3VjY2VzcyA9IHByLWdhdGUiLCJtYXRjaCI6ZmFsc2UsInN1YmNvbmRpdGlvbnMiOltdfSx7ImRlc2NyaXB0aW9uIjoibGFiZWwgPSBxdWV1ZSIsIm1hdGNoIjpmYWxzZSwic3ViY29uZGl0aW9ucyI6W119LHsiZGVzY3JpcHRpb24iOiJjaGVjay1zdWNjZXNzID0gYnJhbmNoIHJ1bGUiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W119XX1dfSx7ImRlc2NyaXB0aW9uIjoiYW55IG9mIiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOlt7ImRlc2NyaXB0aW9uIjoiY2hlY2stc3VjY2VzcyA9IGJyYW5jaCBydWxlIiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOltdfSx7ImRlc2NyaXB0aW9uIjoiY2hlY2stbmV1dHJhbCA9IGJyYW5jaCBydWxlIiwibWF0Y2giOmZhbHNlLCJzdWJjb25kaXRpb25zIjpbXX0seyJkZXNjcmlwdGlvbiI6ImNoZWNrLXNraXBwZWQgPSBicmFuY2ggcnVsZSIsIm1hdGNoIjpmYWxzZSwic3ViY29uZGl0aW9ucyI6W119XSwibm90ZSI6Ilx1ZDgzZFx1ZGVlMSBHaXRIdWIgYnJhbmNoIHByb3RlY3Rpb24ifV0sIm5vdGUiOiJcdWQ4M2RcdWRjY2MgcXVldWUgY29uZGl0aW9ucyBvZiBxdWV1ZSBydWxlIGBkZWZhdWx0YCJ9LHsiZGVzY3JpcHRpb24iOiJhbGwgb2YiLCJtYXRjaCI6ZmFsc2UsInN1YmNvbmRpdGlvbnMiOlt7ImRlc2NyaXB0aW9uIjoiY2hlY2stc3VjY2VzcyA9IHByLWdhdGUiLCJtYXRjaCI6ZmFsc2UsInN1YmNvbmRpdGlvbnMiOltdfSx7ImRlc2NyaXB0aW9uIjoibGFiZWwgPSBxdWV1ZSIsIm1hdGNoIjpmYWxzZSwic3ViY29uZGl0aW9ucyI6W119LHsiZGVzY3JpcHRpb24iOiJsYWJlbCA9IHJlbGVhc2UiLCJtYXRjaCI6ZmFsc2UsInN1YmNvbmRpdGlvbnMiOltdfSx7ImRlc2NyaXB0aW9uIjoiLWRyYWZ0IiwibWF0Y2giOnRydWUsInN1YmNvbmRpdGlvbnMiOltdfSx7ImRlc2NyaXB0aW9uIjoiYmFzZSA9IG1hc3RlciIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbXX0seyJkZXNjcmlwdGlvbiI6ImNoZWNrLXN1Y2Nlc3MgPSBicmFuY2ggcnVsZSIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbXX0seyJkZXNjcmlwdGlvbiI6ImdpdGh1Yi1yZXZpZXctYXBwcm92ZWQiLCJtYXRjaCI6dHJ1ZSwic3ViY29uZGl0aW9ucyI6W10sIm5vdGUiOiJcdWQ4M2RcdWRlZTEgR2l0SHViIGJyYW5jaCBwcm90ZWN0aW9uIn0seyJkZXNjcmlwdGlvbiI6ImFueSBvZiIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbeyJkZXNjcmlwdGlvbiI6ImNoZWNrLXN1Y2Nlc3MgPSBicmFuY2ggcnVsZSIsIm1hdGNoIjp0cnVlLCJzdWJjb25kaXRpb25zIjpbXX0seyJkZXNjcmlwdGlvbiI6ImNoZWNrLW5ldXRyYWwgPSBicmFuY2ggcnVsZSIsIm1hdGNoIjpmYWxzZSwic3ViY29uZGl0aW9ucyI6W119LHsiZGVzY3JpcHRpb24iOiJjaGVjay1za2lwcGVkID0gYnJhbmNoIHJ1bGUiLCJtYXRjaCI6ZmFsc2UsInN1YmNvbmRpdGlvbnMiOltdfV0sIm5vdGUiOiJcdWQ4M2RcdWRlZTEgR2l0SHViIGJyYW5jaCBwcm90ZWN0aW9uIn1dLCJub3RlIjoiXHVkODNkXHVkY2NjIHF1ZXVlIGNvbmRpdGlvbnMgb2YgcXVldWUgcnVsZSBgcmVsZWFzZWAifV0sIm5vdGUiOiJcdWQ4M2RcdWRkMDAgcXVldWUgY29uZGl0aW9ucyJ9XX0\"></span>",
+        "text": null,
+        "title": "Waiting for queue conditions to match"
+      },
       "status": "completed"
     },
     {
@@ -139,9 +179,17 @@
       },
       "completed_at": "2026-11-05T18:29:46Z",
       "conclusion": "success",
+      "details_url": "https://github.com/RobTand/trustladderiii",
       "head_sha": "820d3c3ee85a3b761eb224da6ac514dbf18752a9",
       "id": 127446798521,
       "name": "TL3 approval",
+      "output": {
+        "annotations_count": 0,
+        "annotations_url": "https://api.github.com/repos/RobTand/tessera/check-runs/127446798521/annotations",
+        "summary": "This head passed TL3's required checks and independent review.",
+        "text": "",
+        "title": "TL3 approval"
+      },
       "status": "completed"
     }
   ],
