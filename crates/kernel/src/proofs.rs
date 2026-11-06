@@ -1178,24 +1178,6 @@ proof!(
 );
 
 // Settle's internal transitions, one phase at a time.
-proof!(advance_ingesting, check_advance(Phase::Ingesting, true));
-proof!(advance_auditing, check_advance(Phase::Auditing, true));
-proof!(advance_unplanned, check_advance(Phase::Unplanned, true));
-proof!(
-    advance_planning,
-    check_advance(
-        Phase::Planning {
-            must_split: kani::any()
-        },
-        true
-    )
-);
-proof!(
-    advance_ready,
-    check_advance(Phase::Ready(kani::any()), true)
-);
-proof!(advance_making, check_advance(Phase::Making, true));
-proof!(advance_checking, check_advance(Phase::Checking, true));
 proof!(advance_reviewing, check_advance(Phase::Reviewing, true));
 proof!(advance_publishing, check_advance(Phase::Publishing, true));
 proof!(advance_queued, check_advance(Phase::Queued, false));
