@@ -48,13 +48,18 @@ For assertion RED, use red_message (the exact call assertion message required
 on base).
 For a demonstrating check, accept these base failures: an assertion failure,
 a missing name that the leaf adds, or the explicitly declared symptom.
-red_message applies only to assertion RED. Accept a missing-name or
-declared-symptom RED
-without red_message when the proof receipt shows the failure.
+A forced check accepts only an assertion failure or its declared symptom.
+A missing name never counts for a forced check.
+A reproducing check accepts only an assertion failure or a missing name that
+the round adds.
+red_message applies only to assertion RED.
+Accept a missing-name or declared-symptom RED without red_message when the
+proof receipt shows the failure.
 For a declared symptom, check the exact exception class, exact test node, and
 call or setup phase. The plan declares these before the run. The exception must
 come from the original test's own code or fixture. An unrelated setup error,
-import failure, infrastructure failure, missing report, or outer hang never counts.
+import failure, infrastructure failure, missing report, or outer hang never
+counts.
 Module-level imports needed by observers are carried
 automatically when their bindings are absent from base. New fixtures and helper
 dependencies belong in observer_support. A missing dependency refusal names its
