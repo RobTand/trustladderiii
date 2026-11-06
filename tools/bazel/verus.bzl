@@ -618,6 +618,8 @@ def verus_proofs():
             "kernel::ranks::advance_enabled": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::ranks::advance_pre": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::ranks::advance_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_review_output::selected_head": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::port_review_output::effect_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_review_retry::funded": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_review_retry::paid": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::port_review_retry::asked": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
