@@ -50,7 +50,7 @@ class ExecutionOutcome(StrEnum):
     UNKNOWN_INCOMPLETE = 'unknown_incomplete'
 
 
-@dataclass(frozen=True)
+@dataclass
 class ExecutionFailure(Exception):
     outcome: ExecutionOutcome
     phase: str
@@ -108,6 +108,7 @@ class Supervised:
         self.runtime = None
         self.cleanup_confirmed = False
         self.evidence = None
+        self.process_handles = []
         self.evidence_buffer = b''
         self.pending_input = None
         self.stderr_tail = b''
@@ -159,8 +160,11 @@ class Supervised:
                     self.capture_diagnostic(line + b'\n')
                 if observed:
                     try:
+                        self.process_handles = runtime.capture_processes(self.runtime, self.container, self.evidence,
+                                                                         self.allowance or 30)
                         runtime.validate_runtime_binding(self.evidence)
-                    except (RuntimeError, OSError, ValueError) as error:
+                    except (RuntimeError, OSError, ValueError, KeyError, TypeError, AttributeError,
+                            subprocess.SubprocessError) as error:
                         raise self.failure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'runtime',
                                            'runtime_binding_unqualified') from error
                     self.pending_input = memoryview(b'\x01' + self.selection.read())
@@ -283,8 +287,13 @@ class Supervised:
                                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                             stderr=subprocess.DEVNULL, timeout=self.cleanup_seconds, check=False)
                     self.cleanup_confirmed = absent.returncode == 1
+                    if self.evidence is not None:
+                        self.cleanup_confirmed = self.cleanup_confirmed and runtime.processes_stopped(
+                            self.process_handles, self.cleanup_seconds)
             except (OSError, subprocess.TimeoutExpired):
                 pass
+            for handle in self.process_handles:
+                os.close(handle)
             if self.cleanup_confirmed:
                 runtime.container_stopped(self.container, self.command)
             if self.evidence is not None:

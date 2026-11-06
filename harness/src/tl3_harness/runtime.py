@@ -22,7 +22,7 @@ def podman_command(tree, image, scratch, threads, *, executable='podman', harnes
     return [
         str(executable), 'run', '--cgroups=disabled', '--network=none', '--read-only', '--read-only-tmpfs=false', '--init',
         '--userns=keep-id', '--interactive', '--rm', '--pull=never', '--cap-drop=ALL',
-        '--security-opt=no-new-privileges', '--pids-limit=128', '--ipc=private', '--workdir=/checkout',
+        '--security-opt=no-new-privileges', '--pids-limit=128', '--ipc=private', '--pid=private', '--workdir=/checkout',
         '--mount', f'type=bind,src={tree},dst=/checkout,readonly',
         '--mount', f'type=bind,src={harness},dst=/harness,readonly',
         '--mount', f'type=bind,src={scratch},dst=/tmp',
@@ -36,17 +36,22 @@ def evidence_sink(container):
     context = launch_context()
     if context is None:
         return None
-    return Evidence(context['output_dir'], container)
+    return Evidence(context['output_dir'], container, context=context)
 
 
 class Evidence:
     """Keep runtime observations separate from the runner's stdout journal."""
 
-    def __init__(self, output, container):
+    def __init__(self, output, container, *, context=None):
         self.path = Path(output) / f'{container}.runtime.jsonl'
         self.container_seen = False
         self.container = container
-        self.record('host', self.host_snapshot())
+        self.context = context
+        self.host_facts = self.host_snapshot()
+        self.container_facts = None
+        self.record('host', self.host_facts)
+        if context is not None:
+            self.record('launch', {'context': context, 'container_name': container})
 
     @staticmethod
     def host_snapshot():
@@ -72,12 +77,35 @@ class Evidence:
                 or not all(isinstance(facts[key], str) for key in ('Cpus_allowed_list', 'cgroup'))):
             raise ValueError('invalid runtime evidence')
         self.record('container', facts)
+        self.container_facts = facts
         self.container_seen = True
         return True
 
 
+def backend_request(command):
+    raise RuntimeError('Flux requires the generated CLI/bootstrap consumer')
+
+
 def validate_runtime_binding(evidence):
-    raise RuntimeError('Flux runtime binding requires the generated Rust validation operation')
+    context = evidence.context
+    placement = context['placement']
+    if placement['kind'] == 'unqualified':
+        raise RuntimeError(placement['reason'])
+
+    def process(facts):
+        return {'rank': placement['rank'], 'host': placement['host'],
+                'allowed_cpus': facts['Cpus_allowed_list'], 'cgroup': facts['cgroup']}
+
+    result = backend_request({
+        'op': 'validate_runtime_binding', 'owner': context['owner'], 'correlation': context['correlation'],
+        'facts': {'run': context['run'], 'request_digest': context['request_digest'],
+                  'allocation': placement['allocation'], 'topology': placement['topology'],
+                  'host': process(evidence.host_facts), 'container': process(evidence.container_facts)},
+    })
+    qualification = result['qualification']
+    evidence.record('qualification', qualification)
+    if not qualification['qualified']:
+        raise RuntimeError(qualification['reason'])
 
 
 _uncertain_containers = set()
@@ -87,7 +115,7 @@ def cache_owner():
     context = launch_context()
     if context is not None:
         run = context['run']
-        return run['backend'], run['instance'], run['job']
+        return run['backend'], run['uri'], run['instance'], run['job']
     return ('prismabuild', os.environ.get('PRISMABUILD_QUEUE_ROOT', ''),
             os.environ['PRISMABUILD_CONTAINER_OWNER'])
 
@@ -156,3 +184,43 @@ def container_stopped(name, command):
                 path = Path(mount[len('type=bind,src='):-len(',dst=/tmp')])
                 if path in _owned:
                     release_directory(path)
+
+
+def capture_processes(executable, container, evidence, timeout):
+    """Hold kernel process identities while the trusted container wrapper is gated."""
+    import subprocess
+
+    template = '{"Id":{{json .Id}},"Pid":{{.State.Pid}},"ConmonPid":{{.State.ConmonPid}}}'
+    inspected = subprocess.run([executable, 'container', 'inspect', '--format', template, container],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                               timeout=timeout, check=True)
+    metadata = json.loads(inspected.stdout)
+    handles = []
+    try:
+        for name in ('Pid', 'ConmonPid'):
+            handles.append(os.pidfd_open(metadata[name]))
+        evidence.record('container_processes', metadata)
+        return handles
+    except BaseException:
+        for handle in handles:
+            os.close(handle)
+        raise
+
+
+def processes_stopped(handles, timeout):
+    import selectors
+    import time
+
+    if not handles:
+        return False
+    deadline = time.monotonic() + timeout
+    with selectors.DefaultSelector() as ready:
+        for handle in handles:
+            ready.register(handle, selectors.EVENT_READ)
+        while ready.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            for key, _ in ready.select(remaining):
+                ready.unregister(key.fd)
+    return True
