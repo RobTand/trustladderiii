@@ -125,6 +125,10 @@ pub(super) fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
                 && !final(m).waiting_incident && !final(m).incident_needs_rob,
 ] proof [reveal(retirement::stopped);] {
     kernel_snapshot! { before = *m }
+    kernel_proof! {
+        allocation_stopping_lemmas::stopping_frame(before@, retirement::stopped(before@, outcome), outcome);
+        allocation_stopping_lemmas::stopping_progress(before@, retirement::stopped(before@, outcome), outcome);
+    }
     match m.phase {
         Phase::Closed(_) => {}
         Phase::Stopping(_) => {
@@ -138,10 +142,6 @@ pub(super) fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
             m.incident_needs_rob = false;
             set_phase(m, Phase::Stopping(outcome));
         }
-    }
-    kernel_proof! {
-        allocation_stopping_lemmas::stopping_frame(before@, *m, outcome);
-        allocation_stopping_lemmas::stopping_progress(before@, *m, outcome);
     }
 }
 }

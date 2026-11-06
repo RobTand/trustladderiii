@@ -3,6 +3,7 @@ use super::*;
 
 kernel_fn! {
 /// Failed-run rows / #771: a retry and incident allocate at most two generations.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         old(w).nodes@[i as int].generation as int + 2 <= u64::MAX as int,
@@ -43,17 +44,19 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         m.run_failures = 0;
         m.run_incidents = (m.run_incidents + 1).min(2);
         let needs_rob = m.run_incidents >= 2;
-        raise_incident(w, i, needs_rob, out);
         kernel_proof! {
-            assert(w.nodes@[i as int] == port_review_retry::failed_run(failed_before@)) by {
-                reveal(port_review_retry::failed_run); reveal(port_review_retry::abandoned);
+            assert(retirement::incident(*m, needs_rob) == port_review_retry::failed_run(failed_before@)) by {
+                reveal(port_review_retry::abandoned);
+                port_review_failure::incident(failed_before@, *m, needs_rob);
             }
         }
+        raise_incident(w, i, needs_rob, out);
     }
     kernel_proof! {
         if failed_before@.run_failures == 0 {
             assert(w.nodes@[i as int] == port_review_retry::failed_run(failed_before@)) by {
-                reveal(port_review_retry::failed_run); reveal(port_review_retry::abandoned);
+                reveal(port_review_retry::abandoned);
+                port_review_failure::restarted(failed_before@, w.nodes@[i as int]);
             }
         }
     }
@@ -88,7 +91,9 @@ pub(super) fn failed_round(w: &mut World, i: usize, step: ReviewStop,
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
-    ensures final(w).nodes@[i as int] == port_review_retry::round(old(w).nodes@[i as int],
+    ensures (old(w).fail_fast && old(w).nodes@[i as int].round != 0
+            ==> final(out).len == old(out).len),
+        final(w).nodes@[i as int] == port_review_retry::round(old(w).nodes@[i as int],
             old(w).fail_fast, old(w).next_question, step).0,
         final(w).next_question == port_review_retry::round(old(w).nodes@[i as int],
             old(w).fail_fast, old(w).next_question, step).1,
@@ -246,11 +251,19 @@ pub(super) fn out_of_room(w: &mut World, i: usize, step: ReviewStop,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(port_review_retry::room); reveal(retry_bounds);] {
+] hide [settle_shape] proof [reveal(retry_bounds);] {
+    kernel_snapshot! { room_question_id = w.next_question }
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
+    kernel_snapshot! { room_node = *m }
     if fail_fast {
         stop_for_review(m, step);
+        kernel_proof! {
+            assert((*m, w.next_question) == port_review_retry::room(room_node@, fail_fast, room_question_id@, step)) by {
+                port_review_retry_lemmas::room_stop(room_node@, *m, room_question_id@, w.next_question, step);
+            }
+            port_review_retry_lemmas::room_shape(room_node@, *m, fail_fast, room_question_id@, w.next_question, step);
+        }
         return;
     }
     m.holds = false;
@@ -258,6 +271,12 @@ pub(super) fn out_of_room(w: &mut World, i: usize, step: ReviewStop,
         m.credit.spend(1);
         m.plan_retries = 0;
         set_phase(m, Phase::Planning { must_split: true });
+        kernel_proof! {
+            assert((*m, w.next_question) == port_review_retry::room(room_node@, fail_fast, room_question_id@, step)) by {
+                reveal(port_review_retry_lemmas::room_paid_frame);
+                port_review_retry_lemmas::room_paid(room_node@, *m, room_question_id@, w.next_question, step);
+            }
+        }
     } else {
         ask_rob(
             w,
@@ -267,6 +286,15 @@ pub(super) fn out_of_room(w: &mut World, i: usize, step: ReviewStop,
             1,
             out,
         );
+        kernel_proof! {
+            assert((w.nodes@[i as int], w.next_question) == port_review_retry::room(room_node@, fail_fast, room_question_id@, step)) by {
+                reveal(port_review_retry_lemmas::room_question_frame);
+                port_review_retry_lemmas::room_question(room_node@, w.nodes@[i as int], room_question_id@, w.next_question, step);
+            }
+        }
+    }
+    kernel_proof! {
+        port_review_retry_lemmas::room_shape(room_node@, w.nodes@[i as int], fail_fast, room_question_id@, w.next_question, step);
     }
 }
 }
@@ -325,6 +353,19 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
     kernel_snapshot! { recheck_question = w.next_question }
     let m = &mut w.nodes[i];
     kernel_snapshot! { recheck_node = *m }
+    kernel_proof! {
+        assert((settle_shape(recheck_node@) ==> settle_shape(port_review_retry::rechecked(recheck_node@, target, recheck_question@).0))
+            && (ordinary_await(recheck_node@) && recheck_node@.phase == Phase::Rebasing && target == Phase::Checking
+                ==> distance(port_review_retry::rechecked(recheck_node@, target, recheck_question@).0) < distance(recheck_node@))) by {
+            reveal(port_review_retry::recheck_post);
+            port_review_retry_lemmas::recheck_shape(recheck_node@,
+                port_review_retry::rechecked(recheck_node@, target, recheck_question@).0,
+                target, recheck_question@, port_review_retry::rechecked(recheck_node@, target, recheck_question@).1);
+            port_review_retry_lemmas::recheck_progress(recheck_node@,
+                port_review_retry::rechecked(recheck_node@, target, recheck_question@).0,
+                target, recheck_question@, port_review_retry::rechecked(recheck_node@, target, recheck_question@).1);
+        }
+    }
     m.rechecks = m.rechecks.saturating_add(1);
     let free = m.rechecks <= FREE_RECHECKS;
     if free || m.credit.can_spend(1) {
@@ -363,8 +404,7 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
         }
     }
     kernel_proof! {
-        port_review_retry_lemmas::recheck_shape(recheck_node@, w.nodes@[i as int], target, recheck_question@, w.next_question);
-        port_review_retry_lemmas::recheck_progress(recheck_node@, w.nodes@[i as int], target, recheck_question@, w.next_question);
+        reveal(port_review_retry::recheck_post);
     }
 
 

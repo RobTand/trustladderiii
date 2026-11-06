@@ -166,4 +166,52 @@ pub(super) proof fn recheck_progress(n: Node, after: Node, target: Phase, id: u6
     reveal(recheck_post); reveal(rechecked);
     reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);
 }
+/// Q54 exhaustion: fold the exact stopped node without unfolding room in the handler.
+pub(super) proof fn room_stop(n: Node, after: Node, id: u64, next: u64, step: ReviewStop)
+    requires after == review_stopped(n, step), next == id,
+    ensures (after, next) == room(n, true, id, step),
+{ reveal(room); }
+
+/// #806 exhaustion: unchanged fields of the room_paid branch.
+#[verifier::opaque]
+pub(super) open spec fn room_paid_frame(n: Node) -> ((RepoId, Footprint, u64, Option<u64>, Option<u64>, bool, bool, u64,), (Option<Question>, u8, u8, bool, u8, Option<EarlyEnd>, u8, u8,), (u8, u8, bool, bool, Option<HeadId>, bool, Option<HeadId>, Option<HeadId>,), (Option<HeadId>, Option<HeadId>, bool, bool, bool, u8, bool, Priority,), (Option<ReviewStop>, bool, Option<u64>,),) { ((n.repo, n.footprint, n.next_seq, n.run, n.job, n.pool, n.paused, n.last_cmd,), (n.question, n.attempt, n.round, n.replanned, n.audit_rounds, n.early_end, n.run_failures, n.run_incidents,), (n.fx_failures, n.fx_incidents, n.waiting_incident, n.incident_needs_rob, n.proposed, n.adopted, n.head, n.checked,), (n.approved, n.merged, n.pr_open, n.had_pr, n.worktree, n.rechecks, n.review_restarted, n.priority,), (n.review_stop, n.planning_started, n.waiting_prerequisite,),) }
+
+/// #806 exhaustion: fold scalar changes and the unchanged frame into room.
+pub(super) proof fn room_paid(n: Node, after: Node, id: u64, next: u64, step: ReviewStop)
+    requires funded(n), next == id,
+        room_paid_frame(after) == room_paid_frame(n),
+        after.generation == ((n.generation + 1) as u64),
+        after.pos == (0),
+        after.ticket == (None),
+        after.effect == (match n.effect { Some(e) => Some(InFlight { cancelling: true, ..e }), None => None }),
+        after.holds == (false),
+        after.phase == (Phase::Planning { must_split: true }),
+        after.plan_retries == (0),
+        after.credit == (Credit { spent: (n.credit.spent + 1) as u64, ..n.credit }),
+    ensures (after, next) == room(n, false, id, step),
+{ reveal(room_paid_frame); reveal(room); }
+
+/// #806 exhaustion: unchanged fields of the room_question branch.
+#[verifier::opaque]
+pub(super) open spec fn room_question_frame(n: Node) -> ((RepoId, Footprint, u64, Option<u64>, Option<u64>, bool, bool, u64,), (u8, u8, bool, u8, u8, Option<EarlyEnd>, u8, u8,), (u8, u8, bool, bool, Option<HeadId>, bool, Option<HeadId>, Option<HeadId>,), (Option<HeadId>, Option<HeadId>, bool, bool, bool, u8, bool, Credit,), (Priority, Option<ReviewStop>, bool, Option<u64>,),) { ((n.repo, n.footprint, n.next_seq, n.run, n.job, n.pool, n.paused, n.last_cmd,), (n.attempt, n.round, n.replanned, n.plan_retries, n.audit_rounds, n.early_end, n.run_failures, n.run_incidents,), (n.fx_failures, n.fx_incidents, n.waiting_incident, n.incident_needs_rob, n.proposed, n.adopted, n.head, n.checked,), (n.approved, n.merged, n.pr_open, n.had_pr, n.worktree, n.rechecks, n.review_restarted, n.credit,), (n.priority, n.review_stop, n.planning_started, n.waiting_prerequisite,),) }
+
+/// #806 exhaustion: fold scalar changes and the unchanged frame into room.
+pub(super) proof fn room_question(n: Node, after: Node, id: u64, next: u64, step: ReviewStop)
+    requires !funded(n), next == (id + 1) as u64,
+        room_question_frame(after) == room_question_frame(n),
+        after.generation == ((n.generation + 1) as u64),
+        after.pos == (0),
+        after.ticket == (None),
+        after.effect == (match n.effect { Some(e) => Some(InFlight { cancelling: true, ..e }), None => None }),
+        after.holds == (false),
+        after.phase == (Phase::AwaitingRob),
+        after.question == (Some(Question { id, kind: QKind::OutOfCredit, cont: Cont::Planning { must_split: true }, cost: 1, clarified: false })),
+    ensures (after, next) == room(n, false, id, step),
+{ reveal(room_question_frame); reveal(room); }
+/// #771 exhaustion rows: separate settle-shape preservation from exact-node reconstruction.
+pub(super) proof fn room_shape(n: Node, after: Node, fail_fast: bool, id: u64, next: u64, step: ReviewStop)
+    requires (after, next) == room(n, fail_fast, id, step),
+    ensures settle_shape(n) ==> settle_shape(after),
+{ reveal(room); reveal(retirement::stopped); }
+
 }
