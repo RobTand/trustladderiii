@@ -91,10 +91,42 @@ _ROUTE_CLAUSES = {
 }
 
 
-def _route_dimension(dimension, value, *, context=False):
-    return any(re.fullmatch(pattern, value.lower()) for category in _ROUTE_CLAUSES.values()
+def _route_dimension(dimension, value, *, context=False, categories=None):
+    return any(re.fullmatch(pattern, value.lower()) for name, category in _ROUTE_CLAUSES.items()
+               if categories is None or name in categories
                for pattern in (*category.get(dimension, ()),
                                *(category.get('context_artifacts', ()) if context and dimension == 'artifacts' else ())))
+
+
+def _route_categories(text):
+    if not isinstance(text, str):
+        return ()
+    clauses = []
+    for clause in re.split(r'[.;]\s*', text.lower()):
+        remaining = clause.strip()
+        if not remaining:
+            continue
+        categories = set()
+        while remaining:
+            matches = [(match.end(), name) for name, category in _ROUTE_CLAUSES.items()
+                       for pattern in category['clauses']
+                       if (match := re.match(pattern, remaining))]
+            if not matches:
+                categories = None
+                break
+            end, name = max(matches)
+            categories.add(name)
+            remaining = remaining[end:]
+            if remaining == ' as source requirements':
+                remaining = ''
+            if remaining:
+                separator = re.match(r'(?:, (?:and )?| and | with | at )', remaining)
+                if separator is None or separator.end() == len(remaining):
+                    categories = None
+                    break
+                remaining = remaining[separator.end():]
+        clauses.append(categories)
+    return clauses
 
 
 def _route_only(text, entry=None, inputs=None):
@@ -112,13 +144,8 @@ def _route_only(text, entry=None, inputs=None):
         if any(not _route_dimension(dimension, value, context=True)
                for dimension in ('runner_features', 'artifacts') for value in entry.get(dimension, [])):
             return False
-    clauses = [part.strip() for part in re.split(r'[.;]\s*', text.lower()) if part.strip()]
-    phrase = '(?:' + '|'.join(pattern for category in _ROUTE_CLAUSES.values()
-                             for pattern in category['clauses']) + ')'
-    # Only known phrases can compose. Unknown tails, including verification duties,
-    # make the complete entry mandatory even if its first phrase specifies a route.
-    pattern = phrase + r'(?:(?:, (?:and )?| and | with | at )' + phrase + r')*(?: as source requirements)?'
-    return bool(clauses) and all(re.fullmatch(pattern, clause) for clause in clauses)
+    clauses = _route_categories(text)
+    return bool(clauses) and all(clauses)
 
 
 def _route_context(facts):
@@ -384,6 +411,9 @@ def preflight(inputs, reply, *, planning=False, objections=None):
             if method in ('helper_target_observer', 'helper_target_observer.setup_function'):
                 errors.append(named('evidence.removed_method', f'Unsupported evidence requirement: {requirement["requirement"]} '
                               f'(removed proof encoding {method}; source obligation retained).', dict(requirement=requirement, method=method)))
+        # A familiar field name alone cannot turn an unknown substantive duty into
+        # reporting context. Only categories present in complete known clauses apply.
+        administrative = set().union(*(part for part in _route_categories(requirement['requirement']) if part))
         candidates = []
         for capability in inputs['tool_capabilities']:
             missing = [f'{key}={requirement[key]}' for key in ('tool', 'executor')
@@ -394,7 +424,7 @@ def preflight(inputs, reply, *, planning=False, objections=None):
                 missing.extend(f'{key}={value}' for value in requirement[key]
                                if value not in capability[key]
                                and not (not requirement['methods'] and not requirement['protected_files']
-                                        and _route_dimension(key, value)))
+                                        and _route_dimension(key, value, categories=administrative)))
             candidates.append(missing)
         if not candidates or all(candidates):
             missing = min(candidates, key=len) if candidates else [
