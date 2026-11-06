@@ -1,6 +1,7 @@
 """Offline cancel contract tests. Every request goes through the real HTTP client."""
 import contextlib
 import copy
+import http.client
 import importlib.util
 import io
 import json
@@ -16,6 +17,20 @@ IID = '10000000-0000-4000-8000-000000000001'
 SHA = 'a' * 40
 REPO = 'https://github.com/RobTand/trustladderiii'
 KEY = 'offline-only-cancel-sentinel'
+
+
+class ReadFailure:
+    def __init__(self, error):
+        self.error = error
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self):
+        raise self.error
 
 
 def invocation(**fields):
@@ -56,6 +71,8 @@ class CancelTests(unittest.TestCase):
                 self.assertEqual(calls[-1][1], {'invocation_id': IID})
             if isinstance(response, Exception):
                 raise response
+            if isinstance(response, ReadFailure):
+                return response
             return io.BytesIO(response if isinstance(response, bytes) else json.dumps(response).encode())
         out, err = io.StringIO(), io.StringIO()
         with patch.object(Path, 'read_text', return_value=KEY) as key_read, \
@@ -190,6 +207,34 @@ class CancelTests(unittest.TestCase):
             code, out, _, _, _ = self.run_cli(prefix + [('GetInvocation', response)])
             self.assertEqual(code, 2)
             self.assertIn('unconfirmed', out)
+
+    def test_response_read_failures_before_mutation_are_refused(self):
+        for error in (ConnectionResetError(KEY), http.client.IncompleteRead(KEY.encode(), 100)):
+            for prefix, method in (([], 'GetInvocation'), (observed()[:1], 'GetExecution'),
+                                   (observed(), 'GetInvocation'),
+                                   (observed() + observed()[:1], 'GetExecution')):
+                with self.subTest(error=type(error).__name__, reads=len(prefix)):
+                    code, out, err, calls, _ = self.run_cli(prefix + [(method, ReadFailure(error))])
+                    self.assertEqual(code, 1)
+                    self.assertEqual(json.loads(out.splitlines()[-1]), {
+                        'phase': 'terminal', 'outcome': 'refused', 'cancellation_attempted': False})
+                    self.assertFalse(any(method == 'CancelExecutions' for method, _ in calls))
+                    self.assertNotIn('Traceback', err)
+
+    def test_response_read_failures_after_attempt_are_unconfirmed(self):
+        for error in (ConnectionResetError(KEY), http.client.IncompleteRead(KEY.encode(), 100)):
+            for suffix, method in (([], 'CancelExecutions'),
+                                   ([('CancelExecutions', {})], 'GetInvocation'),
+                                   ([('CancelExecutions', {})] + observed()[:1], 'GetExecution')):
+                with self.subTest(error=type(error).__name__, reads=len(suffix)):
+                    code, out, err, calls, _ = self.run_cli(
+                        observed() + observed() + suffix + [(method, ReadFailure(error))])
+                    self.assertEqual(code, 2)
+                    self.assertEqual(json.loads(out.splitlines()[-1]), {
+                        'phase': 'terminal', 'outcome': 'unconfirmed', 'cancellation_attempted': True})
+                    self.assertEqual(sum(method == 'CancelExecutions' for method, _ in calls), 1)
+                    self.assertIn('do not blindly retry', err)
+                    self.assertNotIn('Traceback', err)
 
     def test_duplicate_json_fields_are_ambiguous(self):
         data = json.dumps(invocation()).encode()

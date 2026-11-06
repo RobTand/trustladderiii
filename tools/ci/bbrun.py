@@ -39,6 +39,7 @@ import argparse
 import base64
 import gzip
 import hashlib
+import http.client
 import inspect
 import json
 import os
@@ -827,7 +828,7 @@ def cancel(client, args):
                 emit('after', **after)
         emit('terminal', outcome=outcome or 'unconfirmed', cancellation_attempted=attempted)
         return 2 if outcome in (None, 'terminal_unknown') else 0
-    except RemoteError:
+    except (RemoteError, OSError, ValueError, http.client.HTTPException):
         # The transport already discards raw errors. Fixed diagnostics also keep
         # remote ownership and acknowledgement strings out of evidence entirely.
         emit('terminal', outcome='unconfirmed' if attempted else 'refused',
