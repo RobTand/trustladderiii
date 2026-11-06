@@ -62,7 +62,10 @@ def test_total_line_and_encoding_bounds(tmp_path, monkeypatch, payload):
     source = f'import os; os.write(2, open({str(path)!r}, "rb").read()); os._exit(125)'
     result, diagnostic = observe(tmp_path, monkeypatch, source)
     tail = diagnostic.get('stderr_tail', '')
-    assert tail.endswith('last diagnostic\n'), 'the newest stderr must survive clipping'
+    if len(payload) > supervision.MAX_STDERR_BYTES:
+        assert tail == supervision.STDERR_WITHHELD
+    else:
+        assert tail.endswith('last diagnostic\n'), 'bounded stderr must retain its cause'
     assert len(tail.encode('utf-8')) <= 16_384
     assert len(tail) <= 1024
     assert all(len(line) <= 512 for line in tail.split('\n'))
@@ -90,9 +93,8 @@ os._exit(125)
             _, peak = tracemalloc.get_traced_memory()
         assert records == 128, 'stderr must not block stdout'
         assert len(retained) <= 16_384
-        assert len(process.stderr_redacted.encode('utf-8')) <= 16_384
-        assert len(process.stderr_redacted) == len(retained.decode('utf-8'))
-        assert failure.operator_json().get('stderr_tail', '').endswith('last diagnostic\n')
+        assert retained == b''
+        assert failure.operator_json()['stderr_tail'] == supervision.STDERR_WITHHELD
         assert peak < 1_048_576, f'8 MiB of stderr grew host Python memory to {peak} bytes'
     finally:
         tracemalloc.stop()
@@ -129,13 +131,13 @@ def test_stderr_activity_does_not_extend_progress_allowance(tmp_path, monkeypatc
     result, diagnostic = observe(tmp_path, monkeypatch, "import os\nwhile True: os.write(2, b'no progress\\n' * 1024)")
     assert result['execution']['outcome'] == 'unknown_incomplete'
     assert result['execution']['termination_reason'] == 'no_progress'
-    assert 'no progress' in diagnostic.get('stderr_tail', '')
+    assert diagnostic['stderr_tail'] == supervision.STDERR_WITHHELD
 
 
 def test_stdout_eof_still_drains_stderr(tmp_path, monkeypatch):
     result, diagnostic = observe(tmp_path, monkeypatch,
                      f"import os; os.close(1); os.write(2, b'x' * 262144 + b'\\n{CAUSE}'); os._exit(1)")
-    assert diagnostic.get('stderr_tail', '').endswith(CAUSE)
+    assert diagnostic['stderr_tail'] == supervision.STDERR_WITHHELD
 
 
 def test_repeated_failures_fit_the_existing_result_log_headroom(tmp_path, monkeypatch, capsys):
@@ -147,3 +149,19 @@ def test_repeated_failures_fit_the_existing_result_log_headroom(tmp_path, monkey
     logged = capsys.readouterr().out
     assert logged.startswith('TL3_EXECUTION_FAILURE ')
     assert len(logged.encode()) <= 16_384
+
+
+@pytest.mark.parametrize('size', [16_383, 16_384, 16_385])
+def test_context_bound_withholds_permanently_after_overflow(size):
+    """#826 review3: a lost context can never be followed by a published suffix."""
+    process = Supervised([], None, ())
+    payload = b'.' * (size - len(CAUSE)) + CAUSE.encode()
+    process.capture_stderr(payload)
+    if size <= supervision.MAX_STDERR_BYTES:
+        assert process.incomplete().operator_json()['stderr_tail'].endswith(CAUSE)
+    else:
+        assert process.incomplete().operator_json()['stderr_tail'] == supervision.STDERR_WITHHELD
+    process.capture_stderr(b'x' * supervision.MAX_STDERR_BYTES)
+    process.capture_stderr(CAUSE.encode())
+    assert process.incomplete().operator_json()['stderr_tail'] == supervision.STDERR_WITHHELD
+    assert process.stderr_tail == b''

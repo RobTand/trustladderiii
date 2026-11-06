@@ -693,7 +693,7 @@ def test_stderr_raw_boundary_keeps_section_context_before_redaction(context_kind
         assert secret not in output, 'later raw cut re-exposed a redacted secret in the PB log'
         assert secret not in json.dumps(diagnostic), 'later raw cut replaced redaction with a secret'
         assert secret not in Redactor(None).text(json.dumps(diagnostic))
-        assert 'container shim refused' in diagnostic['stderr_tail']
+        assert diagnostic['stderr_tail'] == 'stderr withheld: redaction context lost'
 
 
 @pytest.mark.parametrize('context_kind', ['ini', 'csv', 'private-key'])

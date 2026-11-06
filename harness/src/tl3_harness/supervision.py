@@ -15,6 +15,7 @@ from .redaction import Redactor
 
 
 MAX_STDERR_BYTES = 16_384
+STDERR_WITHHELD = 'stderr withheld: redaction context lost'
 MAX_STDERR_CHARS = 1024
 MAX_STDERR_LINE_CHARS = 512
 FAILURE_PREFIX = 'TL3_EXECUTION_FAILURE '
@@ -24,11 +25,9 @@ _stderr_log_bytes = 0
 _redactor = Redactor(None)
 
 
-def safe_stderr(text, *, incomplete=False):
+def safe_stderr(text):
     # Match on all retained context, before sanitizing or removing any characters.
     text = _redactor.window(text, 0, len(text))
-    if incomplete:
-        text = text.partition('\n')[2]
     text = ''.join(c if c == '\n' or c.isprintable() else '?' for c in text)
     return '\n'.join(line[-MAX_STDERR_LINE_CHARS:] for line in text.split('\n'))[-MAX_STDERR_CHARS:]
 
@@ -105,9 +104,8 @@ class Supervised:
         self.exit_code = None
         self.container = None
         self.stderr_tail = b''
-        self.stderr_redacted = ''
         self.stderr_diagnostic = ''
-        self.stderr_boundary = False
+        self.stderr_withheld = False
         command = list(command)
         if command[:2] == ['docker', 'run']:
             self.container = 'tl3-test-' + uuid.uuid4().hex
@@ -131,26 +129,17 @@ class Supervised:
         return ExecutionFailure(outcome, phase, reason, stderr_tail=self.stderr_diagnostic)
 
     def capture_stderr(self, chunk):
-        incoming = chunk.decode('utf-8', errors='replace')
-        context = self.stderr_tail.decode('utf-8') + incoming
-        redacted = self.stderr_redacted + incoming
-        # Keep one character per input character: new matches can hide more,
-        # but cannot recover previously hidden text when its header is cut away.
-        parts, position = [], 0
-        for first, last in _redactor.spans(context):
-            parts.extend((redacted[position:first], '?' * (last - first)))
-            position = last
-        redacted = ''.join(parts) + redacted[position:]
-        self.stderr_diagnostic = safe_stderr(redacted, incomplete=self.stderr_boundary)
-        if self.stderr_boundary and not self.stderr_diagnostic:
-            self.stderr_diagnostic = '[stderr omitted: incomplete capture boundary]'
-        # Trim both views at the same character boundary; retain valid UTF-8 only.
-        encoded = context.encode('utf-8')
-        retained = encoded[-MAX_STDERR_BYTES:].decode('utf-8', errors='ignore')
-        cut = len(context) - len(retained)
-        self.stderr_boundary = self.stderr_boundary or cut > 0
-        self.stderr_tail = retained.encode('utf-8')
-        self.stderr_redacted = redacted[cut:]
+        if self.stderr_withheld:
+            return
+        # #826: never forget matching context while publishing subsequent bytes.
+        # Withhold on every cut rather than duplicate the shared policy's scopes.
+        if len(self.stderr_tail) + len(chunk) > MAX_STDERR_BYTES:
+            self.stderr_tail = b''
+            self.stderr_withheld = True
+            self.stderr_diagnostic = STDERR_WITHHELD
+            return
+        self.stderr_tail += chunk
+        self.stderr_diagnostic = safe_stderr(self.stderr_tail.decode('utf-8', errors='replace'))
 
     def records(self):
         deadline = time.monotonic() + self.allowance

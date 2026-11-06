@@ -175,7 +175,12 @@ print(json.dumps(records))
             .collect();
         assert_eq!(incidents.len(), 1);
         let summary = incidents[0]["summary"].as_str().unwrap();
-        assert!(summary.contains("pid limit reached"), "{summary}");
+        let expected = if index < 3 {
+            "pid limit reached"
+        } else {
+            "stderr withheld: redaction context lost"
+        };
+        assert!(summary.contains(expected), "{summary}");
         assert!(summary.contains(KEY), "{summary}");
         for secret in [
             "ghp_abcdefghijklmnopqrstuvwxyz1234567890",
