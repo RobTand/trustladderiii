@@ -156,29 +156,32 @@ fn reply_audit_disagrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: 
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
-    kernel_snapshot! { audit_world = *w }
-    kernel_snapshot! { audit_out = *out }
-    kernel_snapshot! { before_audit = w.nodes@[i as int] }
-    let m = &mut w.nodes[i];
+    audit_disagreement_node(&mut w.nodes[i]);
+    kernel_proof! { reveal(reply_bounds); }
+}
+}
+
+kernel_fn! {
+/// Audit disagreement: isolate the verbatim node update from mutable world frames.
+fn audit_disagreement_node(m: &mut Node) -> (result: ()) [
+    requires old(m).generation < u64::MAX,
+    ensures ingest_facts::audit_post(*old(m), *final(m)),
+        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+        (settle_shape(*old(m)) ==> settle_shape(*final(m))),
+        final(m).generation as int <= old(m).generation as int + 1,
+        final(m).next_seq == old(m).next_seq, final(m).last_cmd == old(m).last_cmd,
+        final(m).credit == old(m).credit,
+] {
+    kernel_snapshot! { before_audit = *m }
     increment_audit(m);
     if m.audit_rounds < 2 {
         // Ingest revises once with the audit's objections.
         set_phase(m, Phase::Ingesting);
-        kernel_proof! {
-            assert(reply_bounds(audit_world@, *w, i as int, audit_out@.len, out.len)) by {
-                reveal(reply_bounds);
-            }
-        }
-        kernel_proof! { ingest_facts::audit_first(before_audit@, w.nodes@[i as int]); }
+        kernel_proof! { ingest_facts::audit_first(before_audit@, *m); }
     } else {
         // Intake cannot split. The one repair is spent.
         stop_for_review(m, ReviewStop::AuditDisagreement);
-        kernel_proof! {
-            assert(reply_bounds(audit_world@, *w, i as int, audit_out@.len, out.len)) by {
-                reveal(reply_bounds);
-            }
-        }
-        kernel_proof! { ingest_facts::audit_spent(before_audit@, w.nodes@[i as int]); }
+        kernel_proof! { ingest_facts::audit_spent(before_audit@, *m); }
     }
 }
 }

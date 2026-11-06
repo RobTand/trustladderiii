@@ -18,8 +18,8 @@ import remote_gate  # noqa: E402
 CASES = {
     'audit_disagreement_asks': (
         'crates/kernel/src/ingest.rs',
-        'stop_for_review(m, ReviewStop::AuditDisagreement);',
-        'ask_rob(w, i, QKind::AuditDisagreement, Cont::Unplanned, 0, out);',
+        'audit_disagreement_node(&mut w.nodes[i]);',
+        'audit_disagreement_node(&mut w.nodes[i]);\n    if w.nodes[i].audit_rounds >= 2 { ask_rob(w, i, QKind::AuditDisagreement, Cont::Unplanned, 0, out); }',
         '//crates/kernel:verus_ingest_reply_audit_disagrees'),
     'plan_check_rejected_asks': (
         'crates/kernel/src/plan_check.rs',
@@ -327,26 +327,26 @@ CASES = {
     ),
     't860_second_asks': (
         'crates/kernel/src/ingest.rs',
-        'stop_for_review(m, ReviewStop::AuditDisagreement);',
-        'ask_rob(w, i, QKind::AuditDisagreement, Cont::Unplanned, 0, out);',
+        'audit_disagreement_node(&mut w.nodes[i]);',
+        'audit_disagreement_node(&mut w.nodes[i]);\n    if w.nodes[i].audit_rounds >= 2 { ask_rob(w, i, QKind::AuditDisagreement, Cont::Unplanned, 0, out); }',
         '//crates/kernel:verus_ingest_reply_audit_disagrees',
     ),
     't860_second_drops_stop': (
         'crates/kernel/src/ingest.rs',
         'stop_for_review(m, ReviewStop::AuditDisagreement);',
         'set_phase(m, Phase::Unplanned);',
-        '//crates/kernel:verus_ingest_reply_audit_disagrees',
+        '//crates/kernel:verus_ingest_audit_disagreement_node',
     ),
     't860_first_stops': (
         'crates/kernel/src/ingest.rs',
         'if m.audit_rounds < 2 {',
         'if false {',
-        '//crates/kernel:verus_ingest_reply_audit_disagrees',
+        '//crates/kernel:verus_ingest_audit_disagreement_node',
     ),
     't860_outputs': (
         'crates/kernel/src/ingest.rs',
-        'increment_audit(m);',
-        'increment_audit(m);\n            emit_node(m, i, EffectKind::PrepareWorktree, out);',
+        'audit_disagreement_node(&mut w.nodes[i]);',
+        'audit_disagreement_node(&mut w.nodes[i]);\n    emit_node(&mut w.nodes[i], i, EffectKind::PrepareWorktree, out);',
         '//crates/kernel:verus_ingest_reply_audit_disagrees',
     ),
     't860_complete_checker': (
@@ -409,6 +409,10 @@ CASES = {
         '    if reply == Reply::AuditDisagrees && w.nodes[i].phase.is_closed() {\n        w.nodes[i].phase = Phase::Ingesting;\n    }\n    let n = &w.nodes[i];\n    if n.phase.is_stopping() {',
         '//crates/kernel:verus_reply_admission_on_reply',
     ),
+    'reply_audit_duplicate_increment': ('crates/kernel/src/ingest.rs',
+                                        '    increment_audit(m);',
+                                        '    increment_audit(m);\n    increment_audit(m);',
+                                        '//crates/kernel:lib_test_tl3_kernel'),
     'reply_audit_agrees': ('crates/kernel/src/ingest.rs',
                            'notice(out, i, Notice::MeasuresPosted);',
                            'notice(out, i, Notice::MeasuresPosted);\n            w.nodes[i].repo = RepoId(0);',

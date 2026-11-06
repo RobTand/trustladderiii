@@ -934,6 +934,7 @@ def verus_proofs():
             "ingest_reply_ingest": ("kernel::ingest#reply_ingest", 1),
             "ingest_reply_audit_agrees": ("kernel::ingest#reply_audit_agrees", 1),
             "ingest_reply_audit_disagrees": ("kernel::ingest#reply_audit_disagrees", 1),
+            "ingest_audit_disagreement_node": ("kernel::ingest#audit_disagreement_node", 1),
             "ingest_increment_audit": ("kernel::ingest#increment_audit", 1),
             "ingest_facts_output_bound": ("kernel::ingest_facts#output_bound", 1),
             "ingest_facts_audit_first": ("kernel::ingest_facts#audit_first", 1),
