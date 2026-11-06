@@ -236,9 +236,11 @@ impl Source {
             };
             match record {
                 Ok(record) if !record.is_live() => {
-                    // #859: retry on existing record rescans even when the bell is down.
+                    // #859: healthy news may be the only notification after bell recovery.
+                    // Back off only on outage rescans so recovery cannot strand a retry.
                     if let Some(retry) = self.tool_errors.get_mut(&key)
                         && retry.remaining > 0
+                        && !changes.bell_available
                     {
                         retry.remaining -= 1;
                         continue;
