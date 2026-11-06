@@ -78,7 +78,7 @@ pub fn failed_round(cause: Attribution) -> bool {
         seen_before ==> !out,
 ))]
 pub fn retry_failure(dispatched: bool, seen_before: bool) -> bool {
-    dispatched && !seen_before
+    !seen_before
 }
 
 /// #854b / Q50: a batch must cover the entire identified failure set; only a
