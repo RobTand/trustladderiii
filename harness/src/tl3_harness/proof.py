@@ -263,18 +263,36 @@ def observer_context_imports(tree, module, subjects):
     return allowed
 
 
+# #867: each support rule and its refusal message share one constant, so the
+# message always lists exactly what the rule allows or refuses.
+PURE_SUPPORT_BUILTINS = frozenset({
+    'abs', 'all', 'any', 'bool', 'bytes', 'enumerate', 'float', 'frozenset',
+    'int', 'len', 'max', 'min', 'range', 'repr', 'reversed', 'round',
+    'sorted', 'str', 'sum', 'tuple', 'zip'})
+NAMESPACE_API_NAMES = frozenset({
+    'globals', 'locals', 'vars', 'eval', 'exec', 'compile', '__import__',
+    'getattr', 'setattr', 'delattr', '__builtins__', 'attrgetter', 'methodcaller'})
+NAMESPACE_API_ATTRIBUTES = frozenset({
+    '__dict__', '__globals__', '__builtins__', '__getattribute__',
+    '__setattr__', '__delattr__', 'f_globals', 'f_locals', 'gi_frame',
+    'cr_frame', 'tb_frame', '_getframe', 'currentframe', 'modules', 'attrgetter', 'methodcaller'})
+NAMESPACE_API_MODULES = frozenset({'builtins', 'sys', 'inspect', 'importlib', '__main__'})
+REFLECTIVE_SUPPORT_ATTRIBUTES = frozenset({'format', 'format_map', 'Formatter', 'TestCase', 'main'})
+OBSERVER_REPAIR = 'move this into the observer test body'
+
+
+def listed(names):
+    return ', '.join(sorted(names))
+
+
 def validate_namespace_apis(tree, module, allowed=()):
     """Reject indirect writes as well as syntactic binding targets."""
-    names = {'globals', 'locals', 'vars', 'eval', 'exec', 'compile', '__import__',
-             'getattr', 'setattr', 'delattr', '__builtins__', 'attrgetter', 'methodcaller'}
-    attributes = {'__dict__', '__globals__', '__builtins__', '__getattribute__',
-                  '__setattr__', '__delattr__', 'f_globals', 'f_locals', 'gi_frame',
-                  'cr_frame', 'tb_frame', '_getframe', 'currentframe', 'modules', 'attrgetter', 'methodcaller'}
-    modules = {'builtins', 'sys', 'inspect', 'importlib', '__main__'}
+    names, attributes, modules = NAMESPACE_API_NAMES, NAMESPACE_API_ATTRIBUTES, NAMESPACE_API_MODULES
     nodes = list(ast.walk(tree))
     for node in nodes:
         if isinstance(node, ast.ImportFrom) and any(alias.name == '*' for alias in node.names):
-            raise ProofRefusal('wildcard import in support can rebind base bindings', module, node.module or '.')
+            raise ProofRefusal('wildcard import in support can rebind base bindings; import each needed name '
+                               f'explicitly, or {OBSERVER_REPAIR}', module, node.module or '.')
         symbol = None
         if isinstance(node, ast.Name) and node.id in names:
             symbol = node.id
@@ -286,14 +304,14 @@ def validate_namespace_apis(tree, module, allowed=()):
             imported = [node.module or ''] if isinstance(node, ast.ImportFrom) else [alias.name for alias in node.names]
             symbol = next((name for name in imported if name.split('.')[0] in modules), None)
         if symbol:
-            raise ProofRefusal('dynamic namespace API in support can rebind base subjects', module, symbol)
+            raise ProofRefusal(f'dynamic namespace API in support can rebind base subjects; support cannot use '
+                               f'{listed(NAMESPACE_API_NAMES)}, the attributes {listed(NAMESPACE_API_ATTRIBUTES)} '
+                               f'or the modules {listed(NAMESPACE_API_MODULES)}; {OBSERVER_REPAIR}', module, symbol)
 
 
 def validate_support_calls(tree, module, allowed, context):
     """#645: support cannot invoke imported objects, aliases or field evaluators."""
-    pure = {'abs', 'all', 'any', 'bool', 'bytes', 'enumerate', 'float', 'frozenset',
-            'int', 'len', 'max', 'min', 'range', 'repr', 'reversed', 'round',
-            'sorted', 'str', 'sum', 'tuple', 'zip'} - set().union(*(binding_names(source) for source in context))
+    pure = set(PURE_SUPPORT_BUILTINS) - set().union(*(binding_names(source) for source in context))
     functions = {node.name for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
                  and binding_statements(tree, node.name) == [node]
                  and node.name not in binding_names(ast.unparse(ast.Module(body=node.body, type_ignores=[])))
@@ -312,17 +330,38 @@ def validate_support_calls(tree, module, allowed, context):
         if id(node) in allowed:
             continue
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.decorator_list:
-            raise ProofRefusal('support decorators can call imported or base objects; move setup into the observer', module)
+            raise ProofRefusal(f'support definitions cannot have a decorator (@{ast.unparse(node.decorator_list[0])} '
+                               'runs code when the module loads; this includes @pytest.fixture); define the setup '
+                               'inside the observer test body, or as a plain undecorated support function that '
+                               'the observer calls', module, node.name)
         if isinstance(node, ast.ClassDef) and (node.bases or node.keywords):
-            raise ProofRefusal('support class construction can call imported or base objects', module, node.name)
+            raise ProofRefusal('support classes cannot have a base class or class keywords, because creating '
+                               'the class runs inherited code; use a plain class without bases, or '
+                               f'{OBSERVER_REPAIR}', module, node.name)
         if isinstance(node, (ast.With, ast.AsyncWith)) and any(id(item.context_expr) not in allowed for item in node.items):
-            raise ProofRefusal('support context managers can rebind existing objects; use authenticated scoped sys.argv setup', module)
+            raise ProofRefusal('support context managers can rebind existing objects; the only with statement '
+                               'allowed in support is the scoped sys.argv setup '
+                               'with mock.patch.object(sys, "argv", ...) from unittest.mock; move the with block '
+                               'into the observer test body', module)
         if isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name) and (node.func.id in functions or pure_value(node)):
                 continue
-            raise ProofRefusal('support cannot rebind or mutate existing objects; calls must use an unshadowed pure builtin '
-                               'or a function defined in support; move setup into the observer or use a supported loader',
-                               module, ast.unparse(node.func))
+            callee = ast.unparse(node.func)
+            if isinstance(node.func, ast.Name) and node.func.id in PURE_SUPPORT_BUILTINS:
+                why = (f'{callee} is shadowed in this module' if node.func.id not in pure else
+                       f'{callee} is allowed only with literal arguments and no keywords, because other '
+                       'values can run their own code')
+            elif isinstance(node.func, ast.Name):
+                why = (f'{callee} is not one of the allowed builtins or a function defined in this support; '
+                       'builtins such as hasattr, isinstance and getattr can run code from other objects '
+                       '(for example through __getattr__ or __instancecheck__)')
+            else:
+                why = f'{callee} calls a method on another object, which can run its code or change it'
+            raise ProofRefusal('support cannot rebind or mutate existing objects; support may call only functions '
+                               'defined in this support and these allowed builtins, with literal arguments: '
+                               f'{listed(PURE_SUPPORT_BUILTINS)}; {why}; move this check into the observer test '
+                               'body, or into a support function that calls only the allowed builtins',
+                               module, callee)
         # Percent templates can dispatch to arbitrary mapping/operand methods.
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
             try:
@@ -332,9 +371,12 @@ def validate_support_calls(tree, module, allowed, context):
             except (ValueError, TypeError, SyntaxError):
                 safe = False
             if not safe or '__' in str(node.left.value):
-                raise ProofRefusal('support format templates require literal operands without reflective fields', module)
-        if isinstance(node, ast.Attribute) and node.attr in {'format', 'format_map', 'Formatter', 'TestCase', 'main'}:
-            raise ProofRefusal('reflective or imported attribute access is unsupported in support', module, node.attr)
+                raise ProofRefusal('support % formatting requires a literal string template without __ and literal '
+                               'operands; use an f-string over local values in the observer test body', module)
+        if isinstance(node, ast.Attribute) and node.attr in REFLECTIVE_SUPPORT_ATTRIBUTES:
+            raise ProofRefusal('reflective or imported attribute access is unsupported in support; support cannot '
+                               f'use {listed(REFLECTIVE_SUPPORT_ATTRIBUTES)}; use an f-string, or {OBSERVER_REPAIR}',
+                               module, node.attr)
 
 
 def validate_support(source, module, *, observer_context=False, subjects=(), context=()):
@@ -350,7 +392,8 @@ def validate_support(source, module, *, observer_context=False, subjects=(), con
             while isinstance(root, (ast.Attribute, ast.Subscript)):
                 root = root.value
             symbol = root.id if isinstance(root, ast.Name) else ast.unparse(root)
-            raise ProofRefusal('support may bind only brand-new plain names, never members or subscripts', module, symbol)
+            raise ProofRefusal('support may bind only brand-new plain names, never members or subscripts; build '
+                               f'the value and bind it to a new name, or {OBSERVER_REPAIR}', module, symbol)
 
 
 def conftest_subjects(base, head, plan):
