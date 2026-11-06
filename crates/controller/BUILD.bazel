@@ -27,6 +27,7 @@ tl3_crate(
     ],
     examples = {
         "checker-vectors": "examples/checker-vectors.rs",
+        "contract-schemas": "examples/contract-schemas.rs",
         "p5-vectors": "examples/p5-vectors.rs",
         "pb_trial": "examples/pb_trial.rs",
         "tl3-deploy": "//deploy/dl380g10:helper.rs",

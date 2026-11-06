@@ -182,3 +182,17 @@ fn schema_membership_is_an_explicit_adapter_and_callbacks_stay_off_wire() {
     assert!(serde_json::from_value::<Role>(json!("unresolved")).is_err());
     assert!(serde_json::from_value::<Name>(json!({"kind":"symbol","value":"backend[test]"})).is_err());
 }
+
+#[test]
+fn unicode_source_identifiers_reject_backend_ids_and_invalid_starts() {
+    for path in ["tests/test_api.py","src/lib.rs"] {
+        for name in ["test_é","_private","Δοκιμή","cafe\u{301}","module.test_名"] {
+            let subject=Name {kind:NameKind::Symbol,value:format!("{path}::{name}")};
+            subject.validate().unwrap();
+            assert_eq!(serde_json::from_value::<Name>(serde_json::to_value(&subject).unwrap()).unwrap(),subject);
+        }
+        for name in ["2start","\u{301}start","test²","a.7bad","case[0]","", "name::other"] {
+            assert!(Name {kind:NameKind::Symbol,value:format!("{path}::{name}")}.validate().is_err(),"{name}");
+        }
+    }
+}

@@ -7,4 +7,5 @@ tl3_crate(
     package = "tl3-contracts",
     crate = "tl3_contracts",
     bins = ["tl3-contracts-schemas"],
+    examples = {"role-vectors": "examples/role-vectors.rs"},
 )

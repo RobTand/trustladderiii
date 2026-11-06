@@ -153,8 +153,8 @@ pub mod render;
 pub mod decision_context;
 
 pub mod request;
+pub mod role_contract;
 pub mod roles;
 pub mod rules;
-pub mod role_contract;
 
 pub mod plan_check;

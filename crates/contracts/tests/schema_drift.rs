@@ -42,10 +42,22 @@ const COMMITTED: &[(&str, &str)] = &[
         "workers/src/tl3_workers/schemas/writer-reply.json",
         include_str!("../../../workers/src/tl3_workers/schemas/writer-reply.json"),
     ),
-    ("workers/src/tl3_workers/schemas/audit-reply.json", include_str!("../../../workers/src/tl3_workers/schemas/audit-reply.json")),
-    ("workers/src/tl3_workers/schemas/planner-reply.json", include_str!("../../../workers/src/tl3_workers/schemas/planner-reply.json")),
-    ("workers/src/tl3_workers/schemas/reviewer-reply.json", include_str!("../../../workers/src/tl3_workers/schemas/reviewer-reply.json")),
-    ("workers/src/tl3_workers/schemas/postmortem-reply.json", include_str!("../../../workers/src/tl3_workers/schemas/postmortem-reply.json")),
+    (
+        "workers/src/tl3_workers/schemas/audit-reply.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/audit-reply.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/planner-reply.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/planner-reply.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/reviewer-reply.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/reviewer-reply.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/postmortem-reply.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/postmortem-reply.json"),
+    ),
     (
         "workers/src/tl3_workers/schemas/reviewer-input.json",
         include_str!("../../../workers/src/tl3_workers/schemas/reviewer-input.json"),
@@ -78,8 +90,14 @@ const COMMITTED: &[(&str, &str)] = &[
         "workers/src/tl3_workers/schemas/plan-check-provenance.json",
         include_str!("../../../workers/src/tl3_workers/schemas/plan-check-provenance.json"),
     ),
-    ("crates/contracts/schema/violation.json", include_str!("../schema/violation.json")),
-    ("crates/contracts/ROLE_API.md", include_str!("../ROLE_API.md")),
+    (
+        "crates/contracts/schema/violation.json",
+        include_str!("../schema/violation.json"),
+    ),
+    (
+        "crates/contracts/ROLE_API.md",
+        include_str!("../ROLE_API.md"),
+    ),
 ];
 
 #[test]

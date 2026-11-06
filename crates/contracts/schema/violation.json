@@ -1,1 +1,351 @@
-{}
+{
+  "$defs": {
+    "Allowed": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "finite",
+              "type": "string"
+            },
+            "values": {
+              "items": true,
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "values"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "keyword": {
+              "$ref": "#/$defs/SchemaKeyword"
+            },
+            "kind": {
+              "const": "schema",
+              "type": "string"
+            },
+            "value": true
+          },
+          "required": [
+            "kind",
+            "keyword",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AttributionMethod": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "failing_targets": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            "failing_targets_truncated": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "outside_selection",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "failing_targets"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "failed_prefix_head": {
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+              "type": "string"
+            },
+            "kind": {
+              "const": "prefix_bisection",
+              "type": "string"
+            },
+            "passed_prefix_head": {
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "passed_prefix_head",
+            "failed_prefix_head"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "EditOp": {
+      "enum": [
+        "add",
+        "replace",
+        "remove"
+      ],
+      "type": "string"
+    },
+    "Evidence": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "excerpt": {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            "kind": {
+              "const": "test_failure",
+              "type": "string"
+            },
+            "log_ref": {
+              "type": "string"
+            },
+            "receipt": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            },
+            "test": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "target",
+            "test",
+            "excerpt",
+            "log_ref",
+            "receipt"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "batch_head": {
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+              "type": "string"
+            },
+            "kind": {
+              "const": "attribution",
+              "type": "string"
+            },
+            "member": {
+              "type": "string"
+            },
+            "member_head": {
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+              "type": "string"
+            },
+            "method": {
+              "$ref": "#/$defs/AttributionMethod"
+            }
+          },
+          "required": [
+            "kind",
+            "batch_head",
+            "member",
+            "member_head",
+            "method"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "FieldPointer": {
+      "type": "string"
+    },
+    "Name": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/NameKind"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "type": "object"
+    },
+    "NameKind": {
+      "enum": [
+        "field",
+        "path",
+        "symbol"
+      ],
+      "type": "string"
+    },
+    "Repair": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "allowed": {
+              "$ref": "#/$defs/Allowed"
+            },
+            "kind": {
+              "const": "edit",
+              "type": "string"
+            },
+            "op": {
+              "$ref": "#/$defs/EditOp"
+            },
+            "pointer": {
+              "$ref": "#/$defs/FieldPointer"
+            }
+          },
+          "required": [
+            "kind",
+            "pointer",
+            "op",
+            "allowed"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "cant_meet",
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "instruction": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "source_edit",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "path",
+            "instruction"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Role": {
+      "enum": [
+        "ingest",
+        "audit",
+        "planner",
+        "maker",
+        "reviewer",
+        "classifier",
+        "writer",
+        "postmortem"
+      ],
+      "type": "string"
+    },
+    "SchemaKeyword": {
+      "enum": [
+        "schema",
+        "const",
+        "enum",
+        "type",
+        "pattern",
+        "minimum",
+        "maximum",
+        "minLength",
+        "maxLength",
+        "minItems",
+        "maxItems",
+        "required",
+        "additionalProperties"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "allowed": {
+      "$ref": "#/$defs/Allowed"
+    },
+    "bad_value": true,
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/Evidence"
+      },
+      "maxItems": 16,
+      "type": "array"
+    },
+    "evidence_truncated": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "gating": {
+      "type": "boolean"
+    },
+    "names": {
+      "items": {
+        "$ref": "#/$defs/Name"
+      },
+      "type": "array"
+    },
+    "repair": {
+      "$ref": "#/$defs/Repair"
+    },
+    "role": {
+      "$ref": "#/$defs/Role"
+    },
+    "rule_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "rule_id",
+    "role",
+    "names",
+    "bad_value",
+    "allowed",
+    "repair",
+    "gating"
+  ],
+  "title": "Violation",
+  "type": "object"
+}

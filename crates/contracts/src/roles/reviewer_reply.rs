@@ -41,7 +41,10 @@ pub struct BlockingFinding {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
 #[schemars(transform = reply_constant_schema)]
-pub enum ReviewerReplyApproveVerdict { #[serde(rename = "approve")] Value }
+pub enum ReviewerReplyApproveVerdict {
+    #[serde(rename = "approve")]
+    Value,
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -56,7 +59,10 @@ pub struct ReviewerReplyApprove {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
 #[schemars(transform = reply_constant_schema)]
-pub enum ReviewerReplyChangesVerdict { #[serde(rename = "changes")] Value }
+pub enum ReviewerReplyChangesVerdict {
+    #[serde(rename = "changes")]
+    Value,
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -70,7 +76,10 @@ pub struct ReviewerReplyChanges {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
 #[schemars(transform = reply_constant_schema)]
-pub enum ReviewerReplyOutOfRoomVerdict { #[serde(rename = "out_of_room")] Value }
+pub enum ReviewerReplyOutOfRoomVerdict {
+    #[serde(rename = "out_of_room")]
+    Value,
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -91,8 +100,8 @@ pub enum ReviewerReply {
 
 pub fn schema_value() -> serde_json::Value {
     reply_schema_value::<ReviewerReply>("reviewer", |g| {
-    g.subschema_for::<Finding>();
-    g.subschema_for::<BlockingFinding>();
+        g.subschema_for::<Finding>();
+        g.subschema_for::<BlockingFinding>();
     })
 }
 
@@ -102,44 +111,88 @@ pub fn schema_text() -> String {
         TypeOrder::of::<BlockingFinding>(BLOCKING_FINDING_ORDER),
     ];
     let shared = [
-        TypeUse { pointer: "/$defs/finding", order: &types[0] },
-        TypeUse { pointer: "/$defs/blocking_finding", order: &types[1] },
+        TypeUse {
+            pointer: "/$defs/finding",
+            order: &types[0],
+        },
+        TypeUse {
+            pointer: "/$defs/blocking_finding",
+            order: &types[1],
+        },
     ];
-    crate::render::render("reviewer-reply.json", &schema_value(), &Layout { inline: ROOT_ORDER, shared: &shared }).expect("published reply schema order is exhaustive")
+    crate::render::render(
+        "reviewer-reply.json",
+        &schema_value(),
+        &Layout {
+            inline: ROOT_ORDER,
+            shared: &shared,
+        },
+    )
+    .expect("published reply schema order is exhaustive")
 }
 
 pub const ROOT_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     ("", &["$schema", "$id", "oneOf", "$defs"]),
-    ("/oneOf/0", &["type", "properties", "required", "additionalProperties"]),
-    ("/oneOf/0/properties", &["verdict", "head_sha", "blocking_findings", "findings"]),
+    (
+        "/oneOf/0",
+        &["type", "properties", "required", "additionalProperties"],
+    ),
+    (
+        "/oneOf/0/properties",
+        &["verdict", "head_sha", "blocking_findings", "findings"],
+    ),
     ("/oneOf/0/properties/verdict", &["const"]),
     ("/oneOf/0/properties/head_sha", &["type", "pattern"]),
-    ("/oneOf/0/properties/blocking_findings", &["type", "items", "maxItems"]),
+    (
+        "/oneOf/0/properties/blocking_findings",
+        &["type", "items", "maxItems"],
+    ),
     ("/oneOf/0/properties/blocking_findings/items", &["$ref"]),
     ("/oneOf/0/properties/findings", &["type", "items"]),
     ("/oneOf/0/properties/findings/items", &["$ref"]),
-    ("/oneOf/1", &["type", "properties", "required", "additionalProperties"]),
-    ("/oneOf/1/properties", &["verdict", "blocking_findings", "findings"]),
+    (
+        "/oneOf/1",
+        &["type", "properties", "required", "additionalProperties"],
+    ),
+    (
+        "/oneOf/1/properties",
+        &["verdict", "blocking_findings", "findings"],
+    ),
     ("/oneOf/1/properties/verdict", &["const"]),
-    ("/oneOf/1/properties/blocking_findings", &["type", "items", "minItems", "maxItems"]),
+    (
+        "/oneOf/1/properties/blocking_findings",
+        &["type", "items", "minItems", "maxItems"],
+    ),
     ("/oneOf/1/properties/blocking_findings/items", &["$ref"]),
     ("/oneOf/1/properties/findings", &["type", "items"]),
     ("/oneOf/1/properties/findings/items", &["$ref"]),
-    ("/oneOf/2", &["type", "properties", "required", "additionalProperties"]),
+    (
+        "/oneOf/2",
+        &["type", "properties", "required", "additionalProperties"],
+    ),
     ("/oneOf/2/properties", &["verdict"]),
     ("/oneOf/2/properties/verdict", &["const"]),
     ("/$defs", &["finding", "blocking_finding"]),
 ];
 pub const FINDING_ORDER: &[crate::render::ObjectOrder<'static>] = &[
-    ("", &["type", "properties", "required", "additionalProperties"]),
+    (
+        "",
+        &["type", "properties", "required", "additionalProperties"],
+    ),
     ("/properties", &["problem", "evidence"]),
     ("/properties/problem", &["type", "minLength"]),
     ("/properties/evidence", &["type", "minLength"]),
 ];
 pub const BLOCKING_FINDING_ORDER: &[crate::render::ObjectOrder<'static>] = &[
-    ("", &["type", "properties", "required", "additionalProperties"]),
+    (
+        "",
+        &["type", "properties", "required", "additionalProperties"],
+    ),
     ("/properties", &["citation", "problem", "evidence"]),
-    ("/properties/citation", &["type", "properties", "required", "additionalProperties"]),
+    (
+        "/properties/citation",
+        &["type", "properties", "required", "additionalProperties"],
+    ),
     ("/properties/citation/properties", &["kind", "id"]),
     ("/properties/citation/properties/kind", &["enum"]),
     ("/properties/citation/properties/id", &["type", "minLength"]),
