@@ -16,6 +16,10 @@ import remote_gate  # noqa: E402
 
 
 CASES = {
+    'report_ci_failed_runtime': ('crates/kernel/src/facts.rs',
+        'failed_round(w, i, ReviewStop::CiFailed, out, report);',
+        'failed_round(w, i, ReviewStop::CiFailed, out, &mut Report::new());',
+        '//crates/kernel:test_step_report'),
     'audit_disagreement_asks': (
         'crates/kernel/src/ingest.rs',
         'stop_for_review(m, ReviewStop::AuditDisagreement);',
@@ -264,7 +268,7 @@ CASES = {
                                          '//crates/kernel:verus_facts_transition'),
     'facts_ci_failed_dispatch': ('crates/kernel/src/facts.rs',
                                  'ci_infrastructure(w, i, out);',
-                                 'failed_round(w, i, ReviewStop::CiFailed, out);',
+                                 'failed_round(w, i, ReviewStop::CiFailed, out, report);',
                                  '//crates/kernel:verus_facts_ci_failed'),
     'kernel_cont_rank_stop': ('crates/kernel/src/lib.rs',
                               'Cont::Stop(_) | Cont::Nowhere => 2,',
@@ -321,8 +325,8 @@ CASES = {
     ),
     't860_admitted_duplicate': (
         'crates/kernel/src/reply_admission.rs',
-        '            reply_transition(w, i, reply, out);',
-        '            reply_transition(w, i, reply, out);\n            reply_transition(w, i, reply, out);',
+        '            reply_transition(w, i, reply, out, report);',
+        '            reply_transition(w, i, reply, out, report);\n            reply_transition(w, i, reply, out, report);',
         '//crates/kernel:lib_test_tl3_kernel',
     ),
     't860_second_asks': (
@@ -399,8 +403,8 @@ CASES = {
     ),
     't860_rejected': (
         'crates/kernel/src/reply_admission.rs',
-        '        on_rejected_reply(w, i, generation, reply, out);',
-        '        if reply != Reply::AuditDisagrees { on_rejected_reply(w, i, generation, reply, out); }',
+        '        on_rejected_reply(w, i, generation, reply, out, report);',
+        '        if reply != Reply::AuditDisagrees { on_rejected_reply(w, i, generation, reply, out, report); }',
         '//crates/kernel:verus_reply_admission_on_reply',
     ),
     't860_closed': (

@@ -156,7 +156,21 @@ fn ci_failure_reports_only_a_work_failure() {
     infra.fact(Fact::CiFailed { infra: true });
     assert!(infra.report.entries.is_empty());
     run.fact(Fact::CiFailed { infra: false });
-    run.failed(FailedRoundCause::CiFailed);
+    assert_eq!(run.report.entries, vec![ReportEntry::FailedRound {
+        node: NodeId(0), cause: FailedRoundCause::CiFailed,
+    }]);
+}
+
+#[test]
+fn ci_failure_outside_the_failed_round_phases_has_no_entry() {
+    let mut run = Run::new();
+    run.making();
+    for infra in [false, true] {
+        let before = run.world.clone();
+        run.fact(Fact::CiFailed { infra });
+        assert_eq!(run.world, before);
+        assert!(run.report.entries.is_empty());
+    }
 }
 
 #[test]
