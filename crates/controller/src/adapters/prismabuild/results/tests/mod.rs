@@ -332,7 +332,7 @@ proptest! {
         let (mut old, old_calls) = recorded_io::run(opens.clone(), schedule.clone(),
             || normalized_before(before::run(make_ending(), &job)));
         let (pinned, pinned_calls) = recorded_io::run(opens.clone(), schedule.clone(),
-            || normalized_before(current::run(make_ending(), &job)));
+            || normalized(current::run(make_ending(), &job)));
         let (new, new_calls) = recorded_io::run(opens, schedule,
             || normalized(evidence(make_ending(), &job)));
         prop_assert_eq!(&pinned_calls, &new_calls);
