@@ -185,6 +185,7 @@ impl Controller {
         commit: &mut Commit,
     ) -> Result<bool> {
         let incoming_identity = fact.identity();
+        let fact_repository = fact.repository.clone();
         let Evidence::CiFailed {
             head,
             head_check,
@@ -241,13 +242,14 @@ impl Controller {
         });
         let healthy_base = !context.base.is_empty()
             && context.members == [fact.number]
-            && snapshot.rows.iter().any(|row| {
-                row.table == "queue_gates"
-                    && row.value["repository"] == json!(fact.repository)
-                    && row.value["evidence"]["Gate"]["successful"] == true
-                    && row.value["evidence"]["Gate"]["context"]["base"] == context.base
-                    && row.value["evidence"]["Gate"]["context"]["branch"] == context.branch
-            });
+            && snapshot.rows.iter().filter(|row| row.table == "queue_gates")
+                .filter_map(|row| serde_json::from_value::<QueueFact>(row.value.clone()).ok())
+                .any(|fact| match &fact.evidence {
+                    Evidence::Gate(gate) => fact.repository == fact_repository
+                        && gate.context.base == context.base && gate.context.branch == context.branch
+                        && gate.healthy_for(&details.reporters, details.reporters_complete),
+                    _ => false,
+                });
         let kind = decision::attribute(
             *head_check || !details.failed_tests.is_empty() || healthy_base,
             matched.is_some(),
