@@ -51,6 +51,33 @@ fn evaluate(job: &Job, report: &Value) -> CheckEvidence {
     evidence_with_read(ending(&raw), job, |_| Ok(raw.clone())).unwrap()
 }
 
+/// FX / Q51: transport success requires a matching, semantically judged daytime report.
+#[test]
+fn backend_neutral_payload_keeps_identity_and_semantic_guards() {
+    let (job, mut report) = fixture("passed", "passed", true, false);
+    let context = ReportContext {
+        delivery: &job.delivery,
+        run: &job.run,
+        selected_tests: None,
+        always_tests: &[],
+    };
+    let accepted = judge_payload(&raw(&report), &context, true).unwrap();
+    assert!(accepted.0 && accepted.1);
+    assert!(!judge_payload(b"", &context, true).unwrap().1);
+    assert!(!judge_payload(&raw(&report), &context, false).unwrap().1);
+    for field in ["effect_key", "base", "head", "reviewed"] {
+        let mut wrong = report.clone();
+        wrong[field] = if field == "effect_key" { "another-effect".into() } else { "c".repeat(40).into() };
+        let rejected = judge_payload(&raw(&wrong), &context, true).unwrap();
+        assert!(!rejected.0 && !rejected.1, "accepted wrong {field}");
+    }
+    // A producer's claimed pass cannot override represented failing phase facts.
+    report["results"][0]["tests"][0]["head"] = "assertion".into();
+    let rejected = judge_payload(&raw(&report), &context, true).unwrap();
+    assert!(!rejected.0 && !rejected.1);
+    assert_eq!(rejected.4, JUDGE_MISMATCH_CLASS);
+}
+
 /// #822: use real producer output after late parse rejection and selected retries.
 #[test]
 fn producer_overrides_preserve_retained_phases() {
