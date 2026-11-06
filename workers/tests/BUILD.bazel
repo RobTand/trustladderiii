@@ -638,6 +638,7 @@ tl3_py_test(
     deps = [
         ":conftest",
         ":planner_fixtures",
+        ":worker_process",
         "//workers/src",
         "@tl3_pip//pytest",
     ],
@@ -956,6 +957,7 @@ tl3_py_test(
     deps = [
         ":conftest",
         ":planner_fixtures",
+        ":worker_process",
         "//workers/src",
         "@tl3_pip//langchain_core",
         "@tl3_pip//pytest",
