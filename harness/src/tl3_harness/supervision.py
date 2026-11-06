@@ -105,6 +105,7 @@ class Supervised:
         self.exit_code = None
         self.container = None
         self.stderr_tail = b''
+        self.stderr_redacted = ''
         self.stderr_diagnostic = ''
         self.stderr_boundary = False
         command = list(command)
@@ -130,20 +131,26 @@ class Supervised:
         return ExecutionFailure(outcome, phase, reason, stderr_tail=self.stderr_diagnostic)
 
     def capture_stderr(self, chunk):
-        context = self.stderr_tail + chunk
-        text = context.decode('utf-8', errors='replace')
-        if len(context) > MAX_STDERR_BYTES:
-            # Commit redaction before losing context: later captures must never
-            # reconstruct a recognized secret from retained unredacted bytes.
-            text = _redactor.window(text, 0, len(text))
-            context = text.encode('utf-8')
-        self.stderr_diagnostic = safe_stderr(text, incomplete=self.stderr_boundary)
+        incoming = chunk.decode('utf-8', errors='replace')
+        context = self.stderr_tail.decode('utf-8') + incoming
+        redacted = self.stderr_redacted + incoming
+        # Keep one character per input character: new matches can hide more,
+        # but cannot recover previously hidden text when its header is cut away.
+        parts, position = [], 0
+        for first, last in _redactor.spans(context):
+            parts.extend((redacted[position:first], '?' * (last - first)))
+            position = last
+        redacted = ''.join(parts) + redacted[position:]
+        self.stderr_diagnostic = safe_stderr(redacted, incomplete=self.stderr_boundary)
         if self.stderr_boundary and not self.stderr_diagnostic:
             self.stderr_diagnostic = '[stderr omitted: incomplete capture boundary]'
-        # An uncut buffer keeps the full context needed by subsequent split writes.
-        if len(context) > MAX_STDERR_BYTES:
-            self.stderr_boundary = True
-        self.stderr_tail = context[-MAX_STDERR_BYTES:]
+        # Trim both views at the same character boundary; retain valid UTF-8 only.
+        encoded = context.encode('utf-8')
+        retained = encoded[-MAX_STDERR_BYTES:].decode('utf-8', errors='ignore')
+        cut = len(context) - len(retained)
+        self.stderr_boundary = self.stderr_boundary or cut > 0
+        self.stderr_tail = retained.encode('utf-8')
+        self.stderr_redacted = redacted[cut:]
 
     def records(self):
         deadline = time.monotonic() + self.allowance
