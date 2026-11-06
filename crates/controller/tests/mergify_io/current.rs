@@ -1,3 +1,5 @@
+/// The queue read a Pending completion decided on (4g / #864).
+type ObservedQueue = Option<(tl3_mergify::Observation, Vec<Observation>)>;
 use tl3_mergify::decide::route;
 use tl3_mergify::decide::{heal as heal_core, plan as execute_core};
 use super::*;
@@ -224,10 +226,7 @@ impl Adapter {
         &self,
         delivery: &Delivery,
         snapshot: Option<&Snapshot>,
-    ) -> Result<(
-        Reconciliation,
-        Option<(tl3_mergify::Observation, Vec<Observation>)>,
-    )> {
+    ) -> Result<(Reconciliation, ObservedQueue)> {
         let mut baseline = self.baseline(delivery)?;
         let mut core = lifecycle::EnqueueState {
             intent: baseline.as_ref().map(|attempt| lifecycle::Intent {
