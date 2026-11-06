@@ -281,9 +281,10 @@ pub type Feedbackitem = Validated<FeedbackitemFields, FeedbackIdentity>;
 pub struct TestsFields {
     pub image: ImageDigest,
     #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
-    #[schemars(extend("minLength" = 1))]
+    #[schemars(with = "AbsolutePath", extend("minLength" = 1))]
     pub tools_path: Option<AbsolutePath>,
     #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "WorkerExecution")]
     pub execution: Option<WorkerExecution>,
     #[serde(
         default,
@@ -714,7 +715,7 @@ impl SchemaOrder for Tests {
         TypeOrder::of::<Self>(&[
             (
                 "",
-                &["type", "properties", "required", "additionalProperties"],
+                &["type", "properties", "required", "additionalProperties", "oneOf"],
             ),
             (
                 "/properties",

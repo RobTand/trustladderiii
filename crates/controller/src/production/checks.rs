@@ -6,13 +6,16 @@ use tl3_prismabuild::{Demand, Options, PrismaBuild, Tool};
 /// Preserve the controller routing tag while selecting its observation source.
 pub enum CheckSource {
     PrismaBuild(adapters::prismabuild::Source),
-    Flux(adapters::backend_watch::Source),
+    Flux { daytime: adapters::backend_watch::Source, workers: adapters::backend_watch::Source },
 }
-impl crate::ingress::Source for CheckSource {
-    fn run(self, sender: crate::sync::mpsc::Sender<crate::cli::Input>) -> Result<()> {
+impl CheckSource {
+    pub fn register(self, sources: &mut crate::ingress::Sources) {
         match self {
-            Self::PrismaBuild(source) => crate::ingress::Source::run(source, sender),
-            Self::Flux(source) => crate::ingress::Source::run(source, sender),
+            Self::PrismaBuild(source) => sources.register(source),
+            Self::Flux { daytime, workers } => {
+                sources.register(daytime);
+                sources.register(workers);
+            }
         }
     }
 }
@@ -32,10 +35,11 @@ pub fn register_execution(
         let options = provision_flux_options(flux, ownership)?;
         let backend = std::sync::Arc::new(adapters::run_backend::flux::Flux::new(options.clone())
             .map_err(|error| Error::Adapter(Box::new(error)))?);
-        let mut adapter = adapters::flux_checks::Adapter::new(backend, options, &records.join("flux-checks"), preparation, ownership)?;
+        let (waits, workers) = adapters::workers::execution::Waits::new(backend.clone(), options.clone(), &records.join("worker-waits"))?;
+        let mut adapter = adapters::flux_checks::Adapter::new(backend, options, &records.join("flux-checks"), preparation, ownership)?.with_worker_waits(waits);
         let source = adapter.source()?;
         registry.register(crate::executor::Upstream::PrismaBuild, adapter);
-        return Ok(CheckSource::Flux(source));
+        return Ok(CheckSource::Flux { daytime: source, workers });
     }
     let tools = &config.prismabuild.tools_dir;
     let tool = Tool {

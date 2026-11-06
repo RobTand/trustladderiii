@@ -300,7 +300,7 @@ fn selected_flux_constructs_real_adapter_and_source_without_pb_or_native_launch(
     let mut registry = tl3_controller::executor::Registry::default();
     let source = production::register_execution(&config, &root.path().join("records"), &mut registry, &mut ownership)
         .unwrap_or_else(|error| panic!("selected Flux production composition failed: {error}"));
-    assert!(matches!(source, production::CheckSource::Flux(_)));
+    assert!(matches!(source, production::CheckSource::Flux { .. }));
     assert_eq!(registry.registered_types().get(&Upstream::PrismaBuild), Some(&"tl3_controller::adapters::flux_checks::Adapter"));
     assert!(!root.path().join("records/prismabuild").exists());
     drop((source, registry, ownership));

@@ -70,6 +70,7 @@ impl Shared {
 pub struct Waits {
     shared: Arc<Shared>,
     watcher: backend_watch::Handle,
+    subscriptions: BTreeMap<String, backend::Owner>,
 }
 
 impl Waits {
@@ -89,7 +90,7 @@ impl Waits {
         let progress = shared.clone();
         let (watcher, source) = backend_watch::Source::new(backend, recovered,
             Arc::new(move |owner, observation| finishing.retain_observation(owner, observation)));
-        Ok((Self { shared, watcher }, source.with_progress(Arc::new(move |owner, event| progress.retain_progress(owner, event)))))
+        Ok((Self { shared, watcher, subscriptions: BTreeMap::new() }, source.with_progress(Arc::new(move |owner, event| progress.retain_progress(owner, event)))))
     }
 
     /// Persist before dispatch. Unknown acceptance retains the same reference and inputs.
@@ -108,14 +109,26 @@ impl Waits {
 
 impl WorkerWaits for Waits {
     fn watch_wait(&mut self, delivery: &Delivery, wait: Option<&tl3_store::ExternalWait>) -> Result<()> {
-        let Some(wait) = wait else { return Ok(()); };
+        let Some(wait) = wait else {
+            if let Some(owner) = self.subscriptions.get(&delivery.key) {
+                self.watcher.unwatch(owner.clone())?;
+                self.subscriptions.remove(&delivery.key);
+            }
+            return Ok(());
+        };
         if wait.upstream != "flux" { return Err(Error::Invalid("selected Flux cannot reinterpret a PB worker wait")); }
         let retained = self.shared.load(&wait.key)?;
         let (_, _, profile) = self.shared.owned(&retained.owner)?;
         if serde_json::to_vec(&profile.delivery)? != serde_json::to_vec(delivery)? {
             return Err(Error::Invalid("worker wait belongs to another delivery attempt"));
         }
-        self.watcher.watch(retained.owner)
+        if let Some(previous) = self.subscriptions.get(&delivery.key)
+            && *previous != retained.owner {
+            self.watcher.unwatch(previous.clone())?;
+        }
+        self.watcher.watch(retained.owner.clone())?;
+        self.subscriptions.insert(delivery.key.clone(), retained.owner);
+        Ok(())
     }
 
     fn wait_record(&mut self, key: &str, checkout: &Path) -> Result<WaitRecord> {

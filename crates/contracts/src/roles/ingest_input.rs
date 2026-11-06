@@ -103,6 +103,7 @@ pub struct PublicationBranch {
 /// Direct struct serialization follows declaration order and differs from those bytes.
 pub struct IngestInput {
     #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "TestsRef")]
     pub tests: Option<crate::roles::maker_input::Tests>,
     #[schemars(with = "IssueRef")]
     pub issue: Issue,
@@ -175,6 +176,7 @@ schema_ref!(IssueRef, "#/$defs/issue");
 schema_ref!(RepoRef, "#/$defs/repo");
 schema_ref!(PublicationBranchRef, "#/$defs/publication_branch");
 schema_ref!(DecisionContextRef, "decision-context.json");
+schema_ref!(TestsRef, "maker-input.json#/properties/tests");
 schema_ref!(
     ToolCapabilityRef,
     "ingest-reply.json#/$defs/tool_capability"
@@ -222,6 +224,7 @@ impl SchemaOrder for IngestInput {
                     "decision_context",
                     "tool_capabilities",
                     "publication_branch",
+                    "tests",
                 ],
             ),
             ("/properties/audit_objections", &["type", "items"]),
