@@ -213,7 +213,7 @@ def verus_proofs():
             )
 
     if native.package_name() == "crates/controller":
-        native.exports_files(["src/kernel_boundary.rs"])
+        native.exports_files(["src/kernel_boundary.rs", "src/dispatch_liveness/decision.rs", "src/dispatch_liveness/model.rs"])
         verus_test(
             name = "verus_quota_wake",
             src = "proofs/quota_wake.rs",
@@ -621,6 +621,7 @@ def verus_proofs():
         }
         groups = {
             "kernel_clones": ("kernel#*::clone", 33),
+            "queries_wait_clone": ("kernel::queries#Wait::clone", 1),
             "kernel_credit_added_step_budget": ("kernel#CREDIT_ADDED_STEP_BUDGET", 1),
             "kernel_credit_earned_step_budget": ("kernel#CREDIT_EARNED_STEP_BUDGET", 1),
             "kernel_credit_spent_step_budget": ("kernel#CREDIT_SPENT_STEP_BUDGET", 1),
@@ -823,6 +824,9 @@ def verus_proofs():
             "progress_unplanned_admission": ("kernel::progress_unplanned_admission", 1),
             "progress_unplanned_waiting": ("kernel::progress_unplanned_waiting", 1),
             "progress_unplanned_witness": ("kernel::progress_unplanned_witness", 3),
+            "dispatch_classifier": ("decision", 17),
+            "dispatch_model": ("model", 1),
+            "dispatch_liveness": ("kernel::controller_dispatch::dispatch_theorems", 13),
             "allocation_stopping_active_distance": ("kernel::allocation_stopping_lemmas#active_distance_lower", 1),
             "allocation_stopping_distance": ("kernel::allocation_stopping_lemmas#stopping_distance", 1),
             "allocation_stopping_progress": ("kernel::allocation_stopping_lemmas#stopping_progress", 1),
@@ -850,7 +854,11 @@ def verus_proofs():
             verus_test(
                 name = "verus_" + name,
                 src = "verus/progress.rs",
-                srcs = native.glob(["src/**/*.rs"], exclude = ["src/proofs.rs"]) + ["//crates/controller:src/kernel_boundary.rs"],
+                srcs = native.glob(["src/**/*.rs"], exclude = ["src/proofs.rs"]) + [
+                    "//crates/controller:src/kernel_boundary.rs",
+                    "//crates/controller:src/dispatch_liveness/decision.rs",
+                    "//crates/controller:src/dispatch_liveness/model.rs",
+                ],
                 expected_obligations = count,
                 module = module,
                 specs = native.glob(["verus/*.rs"]),

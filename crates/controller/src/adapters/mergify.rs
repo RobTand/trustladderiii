@@ -25,6 +25,13 @@ impl Fake {
     }
 }
 impl Executor for Fake {
+    fn contract_evidence(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<crate::dispatch_liveness::decision::ContractEvidence> {
+        self.records.contract_evidence(delivery)
+    }
+
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         let node = delivery.node();
         if delivery.pull_request.is_none() {
@@ -991,6 +998,21 @@ impl Adapter {
     }
 }
 impl Executor for Adapter {
+    fn contract_evidence(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<crate::dispatch_liveness::decision::ContractEvidence> {
+        use crate::dispatch_liveness::decision::ContractEvidence;
+        if self.records.contract_evidence(delivery)? == ContractEvidence::Ending {
+            return Ok(ContractEvidence::Ending);
+        }
+        Ok(if self.baseline(delivery)?.is_some() {
+            ContractEvidence::RecordedIntent
+        } else {
+            ContractEvidence::Absent
+        })
+    }
+
     fn app_login(&self, installation: u64) -> Option<String> {
         self.clients
             .get(&installation)

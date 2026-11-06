@@ -17,6 +17,13 @@ impl Fake {
     }
 }
 impl Executor for Fake {
+    fn contract_evidence(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<crate::dispatch_liveness::decision::ContractEvidence> {
+        self.0.contract_evidence(delivery)
+    }
+
     fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
         let node = delivery.node();
         let observations = match delivery.output {
@@ -663,6 +670,38 @@ impl Adapter {
 }
 
 impl Executor for Adapter {
+    fn contract_evidence(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<crate::dispatch_liveness::decision::ContractEvidence> {
+        use crate::dispatch_liveness::decision::ContractEvidence;
+        // WithdrawJob has no dispatch binding of its own; its allowance remains
+        // a retry until cancellation reconciliation records an acknowledgement.
+        if !matches!(
+            delivery.output,
+            Out::Effect {
+                kind: EffectKind::SubmitChecks,
+                ..
+            }
+        ) {
+            return Ok(ContractEvidence::Absent);
+        }
+        Ok(match self.job(delivery)? {
+            Some(job)
+                if job.delivery.key == delivery.key
+                    && job.delivery.generation == delivery.generation
+                    && job.delivery.job_generation == delivery.job_generation
+                    && job.delivery.head_sha == delivery.head_sha
+                    && serde_json::to_value(job.delivery.output)?
+                        == serde_json::to_value(delivery.output)?
+                    && job.delivery.repository == delivery.repository =>
+            {
+                ContractEvidence::ActionBound
+            }
+            _ => ContractEvidence::Absent,
+        })
+    }
+
     fn watch_wait(
         &mut self,
         delivery: &Delivery,

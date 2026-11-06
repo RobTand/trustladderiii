@@ -22,7 +22,7 @@ pub mod clock;
 pub mod console;
 pub use tl3_contracts as contracts;
 mod decisions;
-mod dispatch_liveness;
+pub mod dispatch_liveness;
 pub mod evidence;
 pub mod executor;
 mod github_messages;
@@ -326,6 +326,7 @@ struct Request {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Boundary {
     WorkerWait,
+    WorkerWaitHeadroom,
     BeforeDispatch,
     AfterDispatch,
     BeforeReconcile,
@@ -2907,6 +2908,12 @@ impl Controller {
                 && failure.memory_version.is_some()
             {
                 failure.memory_version = Some(self.store.memory_feed_version()?);
+            }
+            if incident.open && incident.signature.class == input_errors::COUNTER_HEADROOM {
+                commit.rows.push(RowChange::Delete {
+                    table: dispatch_liveness::PARKED.into(),
+                    id: "headroom".into(),
+                });
             }
             if incident.open && incident.signature.class == postmortems::PAUSED {
                 self.reset_postmortem_pause(snapshot, commit);

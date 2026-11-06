@@ -7,6 +7,10 @@ pub use kernel::*;
 extern crate self as tl3_kernel;
 #[path = "../../controller/src/kernel_boundary.rs"]
 mod controller_boundary;
+#[path = "../../controller/src/dispatch_liveness/decision.rs"]
+mod decision;
+#[path = "../../controller/src/dispatch_liveness/model.rs"]
+mod model;
 
 verus! {
 /// State-table "Counter headroom": a fresh command ID has room for one increment.

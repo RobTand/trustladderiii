@@ -6,6 +6,8 @@ pub use writer::{FakeWriter, Writer};
 
 #[cfg(test)]
 mod contract_vector_tests;
+#[cfg(test)]
+mod dispatch_conformance_tests;
 mod evidence;
 mod facts;
 mod fake;
@@ -1456,6 +1458,29 @@ impl Executor for Supervisor {
         }
     }
 
+    fn dispatch_evidence(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<(crate::dispatch_liveness::ProcessEvidence, bool)> {
+        use crate::dispatch_liveness::ProcessEvidence;
+        let Some((_, attempt)) = latest(&self.root(&delivery.key))? else {
+            return Ok((ProcessEvidence::Unknown, false));
+        };
+        let live = alive(&attempt.join("claim.json"))? || alive(&attempt.join("process.json"))?;
+        if live {
+            return Ok((ProcessEvidence::Live, false));
+        }
+        let claimed = read(&attempt.join("claim.json"))?.is_some_and(|c| c["cancelled"] != true);
+        Ok((
+            if claimed {
+                ProcessEvidence::Ended
+            } else {
+                ProcessEvidence::Unknown
+            },
+            read(&attempt.join("exit.json"))?.is_some(),
+        ))
+    }
+
     fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
         match delivery.output {
             Out::Effect {
@@ -1477,10 +1502,11 @@ impl Executor for Supervisor {
 
 impl Supervisor {
     fn reconcile_run(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
-        if let found @ Reconciliation::Found(_) =
+        if let Reconciliation::Found(completion) =
             super::record::Records::new(&self.records_root).reconcile(delivery)?
+            && !completion.observations.is_empty()
         {
-            return Ok(found);
+            return Ok(Reconciliation::Found(completion));
         }
 
         let result = match latest(&self.root(&delivery.key))? {
@@ -1565,6 +1591,21 @@ pub(super) fn latest(root: &Path) -> Result<Option<(i64, PathBuf)>> {
     Ok(latest)
 }
 
+/// Q7: durable process loss is an infrastructure failure, never a reply parsed
+/// from stdout without its exit record. Existing RunFailed accounting retries
+/// once, then raises the ordinary incident on the second failure.
+pub(super) fn lost_worker(delivery: &Delivery) -> Completion {
+    if delivery.job_table().is_some() {
+        return failed_with(delivery, "lost_worker");
+    }
+    Completion::confirmed(vec![Observation::WorkerFailed {
+        node: delivery.node(),
+        generation: delivery.generation,
+        failure_class: "LostWorker".into(),
+        failure_message: "worker process ended without an authoritative ending".into(),
+    }])
+}
+
 pub(crate) fn failed(delivery: &Delivery) -> Completion {
     failed_with(delivery, "worker_failed")
 }
@@ -1598,9 +1639,28 @@ fn inspect_recorded(
     delivery: &Delivery,
     store: &mut Store,
 ) -> Result<Reconciliation> {
+    let claimed = read(&attempt.join("claim.json"))?.is_some_and(|c| c["cancelled"] != true);
     let result = inspect(attempt, delivery)?;
     if !matches!(result, Reconciliation::Pending) {
         facts::record(store, &delivery.key, attempt)?;
+    }
+    let action = crate::dispatch_liveness::decision::supervisor_ending(
+        claimed,
+        matches!(&result, Reconciliation::Absent),
+    );
+    if action == crate::dispatch_liveness::decision::Repair::LostWorker {
+        // Q53 / #828: the completed quota attempt already has its retry.
+        if crate::looks::quota_waiting(&store.load()?, &delivery.key, 0)? {
+            return Ok(result);
+        }
+        // Fence a delayed ending against a newer attempt under the same key.
+        let root = attempt
+            .parent()
+            .ok_or(Error::Invalid("worker attempt has no root"))?;
+        if latest(root)?.is_some_and(|(_, current)| current == attempt) {
+            return Ok(Reconciliation::Found(Box::new(lost_worker(delivery))));
+        }
+        return Ok(Reconciliation::Pending);
     }
     Ok(result)
 }
