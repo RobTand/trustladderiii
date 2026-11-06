@@ -266,3 +266,20 @@ def test_maker_coverage_repair_owns_overlapping_status_diagnostics(review_fix):
     assert violations[0].repair.pointer.value == '/self_check'
     assert permits(violations, before, good, role='maker')
     maker._check_reply(inputs, good)
+
+
+def test_finding_coverage_repair_cannot_invent_an_assertion_message(review_fix):
+    from copy import deepcopy
+    from tl3_workers.rules import permits
+
+    inputs, good = review_fix
+    before = deepcopy(good)
+    before['reproductions'] = []
+    with pytest.raises(ValueError) as raised:
+        maker._check_reply(inputs, before)
+    assert not permits(raised.value.rule_violations, before, good, role='maker')
+    after = deepcopy(before)
+    after['reproductions'] = [{'finding_id': item['id'], 'reason': 'No source-supported test assertion is supplied.'}
+                              for item in inputs['current_review_findings']]
+    assert permits(raised.value.rule_violations, before, after, role='maker')
+    maker._check_reply(inputs, after)

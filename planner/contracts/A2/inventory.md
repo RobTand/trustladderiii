@@ -64,3 +64,18 @@ Coverage-array errors incorporate all stage predicates into one replacement
 constraint before per-entry statuses run. This prevents two diagnostics granting
 incompatible edits to an array that changes length or identities. Independent
 status/finding errors retain their old ordering and are collected together.
+
+## Candidate preparation and inherited integration
+
+The first remote preparation at 7624d61fd23f7dcff59731670a555abb4f672264
+completed BUILD generation and found one new test's missing json import in lint.
+The generated dependency on tl3_harness was retrieved and applied, and the import
+was corrected. No test verdict is claimed for that preparation.
+One earlier submission used a mistyped SHA and failed repository setup; it is
+retained separately as a setup failure, never as RED.
+
+Sampled/merged origin/rust-fv 349b85e710 before qualification. This includes
+landed EP d3b9eb126, A0c, A1, F2 and harness R1. Supplied EP history and the red
+commit remain ancestors. Only the A2 diff against actual origin is owned here;
+inherited Rust/Cargo work does not make A2 clippy applicable. No A2 Rust/Cargo
+or controller production source edit exists. No *_io pin edits are needed.
