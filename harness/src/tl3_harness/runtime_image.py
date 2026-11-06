@@ -56,39 +56,68 @@ def preflight_profile(map_path, profile, *, host, platform, podman, environment,
     return resolved
 
 
-def prepare_runtime_profile(destination, *, host_interpreter, container_interpreter, podman, systemctl,
-                            mode, memory_limit_bytes, image_map, profile, host, platform, environment,
-                            producer_commit, mode_observations=None, timeout=10):
-    """Prepare artifact inputs for Rust's generated RuntimeIdentity, not a mirror.
+def prepare_runtime_profile(destination, *, host_interpreter, container_interpreter, podman, systemctl, mode, image_map, profile,
+                            host, platform, environment, producer_commit, prerequisites, timeout=10):
+    """Emit raw PrepareBundleInput for Rust's sole manifest/preflight publisher.
 
-    Execute only on the admitted named host, with ops-provided executable paths.
-    Image observations are read-only. Missing mode observations confer no runtime
-    capability; Rust must refuse qualification until its evidence is supplied.
+    Staging runs on the admitted named host. No image mutation, RuntimeIdentity,
+    final manifest or final publication is implemented in Python.
     """
     from .runtime import stage_host_runtime
 
-    for executable in (host_interpreter, container_interpreter, podman, systemctl):
-        if not Path(executable).is_absolute():
-            raise ValueError('prepared profile executable paths must be explicit and absolute')
     observations = preflight_profile(image_map, profile, host=host, platform=platform, podman=podman,
                                      environment=environment, timeout=timeout)
-    mode_reference = None
-    if mode_observations is not None:
-        path = Path(mode_observations).resolve(strict=True)
-        with path.open('rb') as source:
-            raw = source.read(4 * 1024 * 1024 + 1)
-        if len(raw) > 4 * 1024 * 1024:
-            raise ValueError('mode observations exceed byte bound')
-        mode_reference = {'path': str(path), 'sha256': hashlib.sha256(raw).hexdigest(), 'bytes': len(raw)}
-    prepared = {'host_interpreter': host_interpreter, 'container_interpreter': container_interpreter,
-                'podman': podman, 'systemctl': systemctl, 'container_mode': mode,
-                'memory_limit_bytes': memory_limit_bytes, 'scratch_root': '/var/tmp/flux-vanilla',
-                'host': host, 'platform': platform,
-                'access_environment': {key: environment[key] for key in ('HOME', 'XDG_RUNTIME_DIR')},
-                'image_observations': observations, 'mode_observations': mode_reference}
-    executable, _, _ = stage_host_runtime(destination, interpreter=host_interpreter, producer_commit=producer_commit,
-                                         _prepared_profile=prepared)
-    return executable.parent / 'prepared-profile.json'
+    root = Path(destination).resolve()
+    root.mkdir(mode=0o700)
+    executable, inventory, trusted = stage_host_runtime(
+        root / 'code', interpreter=host_interpreter, producer_commit=producer_commit,
+        podman=podman, systemctl=systemctl)
+
+    def write(path, value):
+        with path.open('x') as target:
+            path.chmod(0o600)
+            json.dump(value, target, sort_keys=True)
+            target.write('\n')
+            target.flush()
+            os.fsync(target.fileno())
+
+    inspection = root / 'image-inspect.json'
+    write(inspection, observations['store'])
+    source_root = executable.parent
+    command = {'op': 'prepare_runtime_bundle', 'input': {
+        'source_root': str(source_root), 'code_inventory': str(inventory.relative_to(source_root)),
+        'collector': str(executable.relative_to(source_root)), 'cleanup': 'host-cleanup',
+        'trusted_root': str(trusted.relative_to(source_root)), 'producer_commit': producer_commit,
+        'container_interpreter': container_interpreter,
+        'image_inventory': observations['map']['path'], 'image_inspect': str(inspection),
+        'profile': profile, 'mode': mode, 'prerequisites': prerequisites,
+    }}
+    entry = root / 'prepare-bundle-command.json'
+    write(entry, command)
+    # Provenance is an observation outside source_root, never an unlisted import.
+    write(root / 'image-provenance.json', observations['map'])
+    return entry
+
+
+def producer_main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Stage raw inputs for the Rust runtime bundle producer')
+    for option in ('destination', 'host-interpreter', 'container-interpreter', 'podman', 'systemctl', 'mode',
+                   'image-map', 'profile', 'host', 'platform', 'producer-commit', 'mode-prerequisites'):
+        parser.add_argument('--' + option, required=True)
+    args = parser.parse_args()
+    with Path(args.mode_prerequisites).open('rb') as source:
+        raw = source.read(65537)
+    if len(raw) > 65536:
+        raise ValueError('mode prerequisite observations exceed byte bound')
+    entry = prepare_runtime_profile(
+        args.destination, host_interpreter=args.host_interpreter, container_interpreter=args.container_interpreter,
+        podman=args.podman, systemctl=args.systemctl, mode=args.mode, image_map=args.image_map,
+        profile=args.profile, host=args.host, platform=args.platform, producer_commit=args.producer_commit,
+        prerequisites=json.loads(raw),
+        environment={'HOME': '/home/rob', 'XDG_RUNTIME_DIR': '/run/user/1000', 'PATH': '/usr/bin:/bin'})
+    print(entry)
 
 
 def _stop(child, timeout):

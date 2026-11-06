@@ -233,135 +233,62 @@ def collector_main():
     raise SystemExit(code if code >= 0 else 128 - code)
 
 
-def stage_host_runtime(destination, *, interpreter, producer_commit, _prepared_profile=None):
-    """Construct immutable collector inputs; run only through authorized generation.
-
-    The returned executable/manifest paths are hashed by the Rust request builder.
-    This artifact manifest records bytes, not a second RuntimeIdentity schema.
-    """
-    import ctypes
-    import errno
+def stage_host_runtime(destination, *, interpreter, producer_commit, podman, systemctl):
+    """Stage only raw inputs to Rust prepared::prepare_bundle; never seal/publish."""
     import hashlib
     import re
-    import shutil
 
-    if (not Path(interpreter).is_absolute() or any(char.isspace() for char in interpreter)
+    if (any(not Path(value).is_absolute() or any(char.isspace() for char in value)
+            for value in (interpreter, podman, systemctl))
             or not re.fullmatch(r'[0-9a-f]{40}', producer_commit)):
-        raise ValueError('explicit host interpreter and producer commit required')
-    namespace = Path(destination).resolve()
-    namespace.mkdir(mode=0o700, exist_ok=True)
-    info = namespace.lstat()
-    if info.st_uid != os.getuid() or info.st_mode & 0o777 != 0o700:
-        raise ValueError('artifact namespace must be owned and private')
-    root = Path(tempfile.mkdtemp(prefix='.staging-', dir=namespace))
-    identity = root.stat()
+        raise ValueError('explicit executable paths and producer commit required')
+    root = Path(destination).resolve()
+    root.mkdir(mode=0o700)
     package = root / 'lib' / 'tl3_harness'
     package.mkdir(parents=True, mode=0o700)
     package.parent.chmod(0o700)
 
-    def write(path, data, mode):
+    def write(path, data):
         with path.open('xb') as target:
             path.chmod(0o600)
             target.write(data)
             target.flush()
             os.fsync(target.fileno())
-        path.chmod(mode)
 
-    def blob(path):
-        data = path.read_bytes()
-        return {'path': str(path.relative_to(root)), 'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data),
-                'mode': f'{path.stat().st_mode & 0o777:04o}'}
-
-    def encoded(value):
-        return (json.dumps(value, sort_keys=True, separators=(',', ':')) + '\n').encode()
-
-    try:
-        files = []
-        for source in sorted(Path(__file__).resolve().parent.glob('*.py')):
-            target = package / source.name
-            write(target, source.read_bytes(), 0o400)
-            files.append(blob(target))
-        manifest = root / 'collector-manifest.json'
-        write(manifest, encoded({'owner': 'rob', 'producer_commit': producer_commit,
-                                 'interpreter': interpreter, 'files': files}), 0o400)
-        manifest_hash = hashlib.sha256(manifest.read_bytes()).hexdigest()
-        verifier = (
-            f'#!{interpreter} -I\n'
-            'from pathlib import Path\nimport sys, hashlib, json\n'
-            'sys.dont_write_bytecode = True\n'
-            'root = Path(__file__).resolve().parent\n'
-            'raw = (root / "collector-manifest.json").read_bytes()\n'
-            f'if hashlib.sha256(raw).hexdigest() != {manifest_hash!r}:\n'
-            '    raise SystemExit("trusted runtime manifest changed")\n'
-            'for entry in json.loads(raw)["files"]:\n'
-            '    path = (root / entry["path"]).resolve()\n'
-            '    if not path.is_relative_to(root):\n'
-            '        raise SystemExit("trusted runtime path changed")\n'
-            '    data = path.read_bytes()\n'
-            '    if (len(data) != entry["bytes"] or hashlib.sha256(data).hexdigest() != entry["sha256"]\n'
-            '            or path.stat().st_mode & 0o777 != int(entry["mode"], 8)):\n'
-            '        raise SystemExit("trusted runtime imported bytes changed")\n'
-            'sys.path.insert(0, str(root / "lib"))\n')
-        executable, cleanup = root / 'host-collector', root / 'host-cleanup'
-        for path, entry in ((executable, 'collector_main'), (cleanup, 'cleanup_main')):
-            write(path, (verifier + f'from tl3_harness.runtime import {entry}\n{entry}()\n').encode(), 0o500)
-        if _prepared_profile is not None:
-            prepared = dict(_prepared_profile)
-            prepared['trusted_root'] = str(package.relative_to(root))
-            prepared['artifacts'] = {role: blob(path) for role, path in (
-                ('collector', executable), ('cleanup', cleanup), ('manifest', manifest))}
-            write(root / 'prepared-profile.json', encoded(prepared), 0o400)
-        inventory = [blob(path) for path in sorted(root.rglob('*')) if path.is_file()]
-        outer = encoded({'owner': 'rob', 'producer_commit': producer_commit, 'files': inventory,
-                         'directories': [{'path': '.', 'mode': '0500'}, {'path': 'lib', 'mode': '0500'},
-                                         {'path': 'lib/tl3_harness', 'mode': '0500'}]})
-        write(root / 'bundle-manifest.json', outer, 0o400)
-        final = namespace / hashlib.sha256(outer).hexdigest()
-        for directory in (package, package.parent, root):
-            directory.chmod(0o500)
-            descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                os.fsync(descriptor)
-            finally:
-                os.close(descriptor)
-        libc = ctypes.CDLL(None, use_errno=True)
-        rename = libc.renameat2
-        rename.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
-        rename.restype = ctypes.c_int
-        if rename(-100, os.fsencode(root), -100, os.fsencode(final), 1) != 0:
-            code = ctypes.get_errno()
-            if code != errno.EEXIST:
-                raise OSError(code, 'atomic no-replace artifact publication failed')
-            if (final / 'bundle-manifest.json').read_bytes() != outer:
-                raise RuntimeError('existing content-addressed artifact manifest differs')
-            for directory in (final, final / 'lib', final / 'lib' / 'tl3_harness'):
-                info = directory.lstat()
-                if not stat.S_ISDIR(info.st_mode) or info.st_mode & 0o777 != 0o500:
-                    raise RuntimeError('existing content-addressed artifact directory mode differs')
-            for entry in inventory:
-                path = final / entry['path']
-                data = path.read_bytes()
-                if (not stat.S_ISREG(path.lstat().st_mode)
-                        or hashlib.sha256(data).hexdigest() != entry['sha256'] or len(data) != entry['bytes']
-                        or path.stat().st_mode & 0o777 != int(entry['mode'], 8)):
-                    raise RuntimeError('existing content-addressed artifact bytes/mode differ')
-        descriptor = os.open(namespace, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-        return final / 'host-collector', final / 'collector-manifest.json', final / 'lib' / 'tl3_harness'
-    finally:
-        # Only discard this invocation's fresh unpublished staging inode.
-        try:
-            current = root.lstat()
-        except FileNotFoundError:
-            pass
-        else:
-            if (current.st_dev, current.st_ino) == (identity.st_dev, identity.st_ino):
-                for directory in (root, root / 'lib', package):
-                    directory.chmod(0o700)
-                shutil.rmtree(root)
+    files = []
+    for source in sorted(Path(__file__).resolve().parent.glob('*.py')):
+        data = source.read_bytes()
+        target = package / source.name
+        write(target, data)
+        files.append({'path': str(target.relative_to(root)), 'sha256': hashlib.sha256(data).hexdigest(),
+                      'bytes': len(data)})
+    manifest = root / 'collector-manifest.json'
+    # CodeInventory/CodeFile are the published Rust source shape. No Python types/schema.
+    raw = (json.dumps({'interpreter': interpreter, 'files': files}, sort_keys=True) + '\n').encode()
+    write(manifest, raw)
+    manifest_hash = hashlib.sha256(raw).hexdigest()
+    verifier = (
+        f'#!{interpreter} -I\n'
+        'from pathlib import Path\nimport sys, hashlib, json\n'
+        'sys.dont_write_bytecode = True\n'
+        'root = Path(__file__).resolve().parent\n'
+        'raw = (root / "collector-manifest.json").read_bytes()\n'
+        f'if hashlib.sha256(raw).hexdigest() != {manifest_hash!r}:\n'
+        '    raise SystemExit("trusted runtime manifest changed")\n'
+        'for entry in json.loads(raw)["files"]:\n'
+        '    path = (root / entry["path"]).resolve()\n'
+        '    if not path.is_relative_to(root):\n'
+        '        raise SystemExit("trusted runtime path changed")\n'
+        '    data = path.read_bytes()\n'
+        '    if len(data) != entry["bytes"] or hashlib.sha256(data).hexdigest() != entry["sha256"]:\n'
+        '        raise SystemExit("trusted runtime imported bytes changed")\n'
+        'sys.path.insert(0, str(root / "lib"))\n')
+    executable, cleanup = root / 'host-collector', root / 'host-cleanup'
+    write(executable, (verifier + 'from tl3_harness.runtime import collector_main\ncollector_main()\n').encode())
+    cleanup_args = ['--podman', podman, '--systemctl', systemctl]
+    write(cleanup, (verifier + f'sys.argv[1:1] = {cleanup_args!r}\n'
+                    'from tl3_harness.runtime import cleanup_main\ncleanup_main()\n').encode())
+    return executable, manifest, package
 
 
 def validate_runtime_binding(evidence):

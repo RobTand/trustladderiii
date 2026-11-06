@@ -174,7 +174,8 @@ def test_raw_profile_emits_exact_rust_prepare_command_without_final_schema(store
                         {'profile': entry, 'map': {'path': str(path), 'sha256': digest, 'bytes': path.stat().st_size}, 'store': actual})
     prerequisites = {'no_cgroups_supported': False, 'init_available': False, 'user_scope_supported': False}
     config = runtime_image.prepare_runtime_profile(
-        root / 'prepared', host_interpreter=sys.executable, podman=executable, systemctl='/explicit/systemctl',
+        root / 'prepared', host_interpreter=sys.executable, container_interpreter='/image/python',
+        podman=executable, systemctl='/explicit/systemctl',
         mode='own_scope', image_map=path, profile='sandbox', host='dl380g10', platform='linux/amd64',
         environment={'HOME': str(root), 'XDG_RUNTIME_DIR': str(root)}, producer_commit='a' * 40,
         prerequisites=prerequisites)
@@ -182,6 +183,7 @@ def test_raw_profile_emits_exact_rust_prepare_command_without_final_schema(store
     assert command['op'] == 'prepare_runtime_bundle'
     inputs = command['input']
     assert inputs['image_inventory'] == str(path)
+    assert inputs['container_interpreter'] == '/image/python'
     assert json.loads(Path(inputs['image_inspect']).read_bytes()) == actual
     assert inputs['prerequisites'] == prerequisites and inputs['mode'] == 'own_scope'
     code_root = Path(inputs['source_root'])
