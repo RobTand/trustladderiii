@@ -123,6 +123,12 @@ impl WaitBinding {
             }
         }
         let retained = durable::Journal::new(options.journal_root.clone()).map_err(backend_error)?.load(&self.owner).map_err(backend_error)?;
+        if let Some(binding) = &retained.binding {
+            binding.id.validate().map_err(backend_error)?;
+            if binding.intent != self.intent || binding.id.uri != self.intent.uri || binding.id.instance != self.intent.instance {
+                return Err(Error::Invalid("durable worker native binding changed"));
+            }
+        }
         if retained.intent != self.intent || retained.request.tree != self.input
             || !matches!(retained.request.suite, backend::Suite::WorkerTests { .. } | backend::Suite::Generator { .. })
             || retained.intent.request_digest != durable::digest(&serde_json::to_vec(&retained.request)?)
@@ -190,6 +196,11 @@ mod tests {
         assert!(wait.validate("fABC", &repo.path, &options).is_err());
         let mut repeated = wait.clone(); repeated.call = "3".repeat(64);
         assert_ne!(wait.key().unwrap(), repeated.key().unwrap(), "intentional repeats need separate references");
+        record.binding = Some(backend::RunBinding { intent: wait.intent.clone(), id: backend::BackendId {
+            backend: backend::BackendTag::Flux, uri: options.uri.clone(), instance: "another-generation".into(), job: "fABC".into() } });
+        journal.transaction(&wait.owner, |dir, _| durable::save(dir, &record)).unwrap();
+        assert!(wait.validate(&key, &repo.path, &options).is_err());
+        record.binding = None;
         record.request.suite = backend::Suite::Full { membership_digest: "4".repeat(64) };
         journal.transaction(&wait.owner, |dir, _| durable::save(dir, &record)).unwrap();
         assert!(wait.validate(&key, &repo.path, &options).is_err());
