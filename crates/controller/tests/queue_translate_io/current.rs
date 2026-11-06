@@ -265,21 +265,41 @@ impl Shell<'_> {
                 };
                 if let Some(outcome) = fact.evidence.outcome() {
                     return self.translate_with_receipt(
-                        snapshot, world, Observation::Outcome { node, outcome, receipt: None }, commit,
+                        snapshot,
+                        world,
+                        Observation::Outcome {
+                            node,
+                            outcome,
+                            receipt: None,
+                        },
+                        commit,
                         Some(put("queue_facts", identity, value)),
                     );
                 }
                 let fact = match kernel {
                     KernelFact::PrDequeuedByPerson => Fact::PrDequeuedByPerson,
-                    _ => return Err(Error::Invalid("queue evidence routed to another kernel fact")),
+                    _ => {
+                        return Err(Error::Invalid(
+                            "queue evidence routed to another kernel fact",
+                        ));
+                    }
                 };
                 commit.rows.push(put("queue_facts", identity, value));
                 Event::Fact { node, fact }
             }
-            Observation::Outcome { node, outcome, receipt } => {
-                if receipt.as_ref().is_some_and(|id| snapshot.rows.iter().any(|row| {
-                    matches!(row.table.as_str(), "delivery_outcomes" | "queue_facts") && row.id == *id
-                })) { return Ok(None); }
+            Observation::Outcome {
+                node,
+                outcome,
+                receipt,
+            } => {
+                if receipt.as_ref().is_some_and(|id| {
+                    snapshot.rows.iter().any(|row| {
+                        matches!(row.table.as_str(), "delivery_outcomes" | "queue_facts")
+                            && row.id == *id
+                    })
+                }) {
+                    return Ok(None);
+                }
                 let recorded = json!({"node": node, "outcome": &outcome});
                 use outcome::Outcome;
                 let current = &world.nodes[node.0 as usize];
@@ -290,21 +310,25 @@ impl Shell<'_> {
                     return Ok(None);
                 }
                 let fact = match outcome {
-                    Outcome::Merged { head, checks_passed } => Fact::PrMerged {
-                        head: self.head(node, &head)?, checks_passed,
+                    Outcome::Merged {
+                        head,
+                        checks_passed,
+                    } => Fact::PrMerged {
+                        head: self.head(node, &head)?,
+                        checks_passed,
                     },
                     Outcome::CiFailed { head, infra, .. } => {
                         if commit_sha(snapshot, current.head) != Some(head.as_str()) {
                             return Ok(None);
                         }
                         Fact::CiFailed { infra }
-                    },
+                    }
                     Outcome::Conflict { head } => {
                         if commit_sha(snapshot, current.head) != Some(head.as_str()) {
                             return Ok(None);
                         }
                         Fact::Conflict
-                    },
+                    }
                     Outcome::ClosedByPerson => Fact::PrClosedByPerson,
                     Outcome::PushByOther { head } => {
                         let commits: Vec<_> = snapshot
@@ -315,9 +339,11 @@ impl Shell<'_> {
                                 id: item.id,
                             })
                             .collect();
-                        let previous_sha =
-                            tl3_controller_core::translate::previous_commit(&commits, current.head.map(|head| head.0 as i64))
-                                .map(|index| snapshot.interned[index].value.as_str());
+                        let previous_sha = tl3_controller_core::translate::previous_commit(
+                            &commits,
+                            current.head.map(|head| head.0 as i64),
+                        )
+                        .map(|index| snapshot.interned[index].value.as_str());
                         let carried = tl3_controller_core::translate::carry_plan(
                             node.0,
                             &head,
@@ -330,14 +356,18 @@ impl Shell<'_> {
                                 json!(carried.plan),
                             ));
                         }
-                        Fact::PushByOther { head: self.head(node, &head)? }
-                    },
+                        Fact::PushByOther {
+                            head: self.head(node, &head)?,
+                        }
+                    }
                 };
                 if let Some(receipt) = receipt {
-                    commit.rows.push(put("delivery_outcomes", receipt, recorded));
+                    commit
+                        .rows
+                        .push(put("delivery_outcomes", receipt, recorded));
                 }
                 Event::Fact { node, fact }
-            },
+            }
 
         };
         if let Some(receipt) = queue_receipt { commit.rows.push(receipt); }

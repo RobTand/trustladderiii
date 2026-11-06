@@ -405,7 +405,7 @@ fn arm(source: &str) -> &str {
         .unwrap();
     let end = source[start..]
         .find("            Observation::GitHubComment {")
-        .or_else(|| source[start..].find("            Observation::Outcome { node, outcome, receipt } => {"))
+        .or_else(|| source[start..].find("            Observation::Outcome {"))
         .map(|at| start + at)
         .unwrap_or_else(|| source[start..].find("\n        };\n").unwrap() + start + 1);
     &source[start..end]
