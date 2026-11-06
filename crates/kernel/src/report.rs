@@ -160,7 +160,7 @@ pub(super) closed spec fn fact_failure(phase: Phase, current: Option<Item>, fact
     match fact { Fact::CiFailed { infra } => ci_failure(phase, current, infra), _ => None }
 }
 #[verifier::opaque]
-pub(super) closed spec fn reply_kind(reply: Reply) -> ReplyKind {
+pub closed spec fn reply_kind(reply: Reply) -> ReplyKind {
 match reply {
             Reply::IngestDone { .. } => ReplyKind::IngestDone,
             Reply::IngestEarlyEnd(_) => ReplyKind::IngestEarlyEnd,

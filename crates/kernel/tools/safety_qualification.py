@@ -19,7 +19,7 @@ CASES = {
     'report_ci_failed_runtime': ('crates/kernel/src/facts.rs',
         'failed_round(w, i, ReviewStop::CiFailed, out, report);',
         'failed_round(w, i, ReviewStop::CiFailed, out, &mut Report::new());',
-        '//crates/kernel:test_step_report'),
+        '//crates/kernel:test_test_step_report'),
     'audit_disagreement_asks': (
         'crates/kernel/src/ingest.rs',
         'stop_for_review(m, ReviewStop::AuditDisagreement);',
