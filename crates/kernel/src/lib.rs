@@ -2359,6 +2359,9 @@ mod port_review_admission;
 #[cfg(all(test, not(verus_keep_ghost)))]
 mod reply_equivalence;
 
+#[cfg(all(test, not(verus_keep_ghost)))]
+mod facts_equivalence;
+
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_advance_step_frames.rs"]
 mod port_advance_step_frames;

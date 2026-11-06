@@ -169,8 +169,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
     kernel_snapshot! { before_transition = *w }
     kernel_snapshot! { before_out = *out }
     kernel_proof! {
-        if matches!(fact, Fact::Priority(_) | Fact::PrClosedByPerson
-            | Fact::Conflict | Fact::UpstreamStalled) {
+        if matches!(fact, Fact::Priority(_) | Fact::Conflict) {
             retirement_handler_lemmas::inline_frame(before_transition@.nodes@[i as int], fact);
         }
     }
@@ -195,18 +194,58 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             }
             kernel_proof! { assert(facts_transition_lemmas::post(before_transition@, *w, i, fact, before_out@, *out)) by { reveal(facts_transition_lemmas::post); } }
         }
-        Fact::PrClosedByPerson => {
+        Fact::PrClosedByPerson => fact_pr_closed(w, i, out),
+        Fact::PrDequeuedByPerson => fact_pr_dequeued(w, i, out),
+        Fact::PushByOther { head } => fact_push_by_other(w, i, head, out),
+        Fact::CiFailed { infra } => fact_ci_failed(w, i, infra, out),
+        Fact::Conflict => {
+            let m = &mut w.nodes[i];
+            if matches!(m.phase, Phase::Publishing | Phase::Queued) {
+                set_phase(m, Phase::Rebasing);
+            }
+            kernel_proof! {
+                assert(*m == retirement::fact_node(before_transition@.nodes@[i as int],
+                    Fact::Conflict)) by { reveal(retirement::fact_node); };
+            }
+            kernel_proof! { assert(facts_transition_lemmas::post(before_transition@, *w, i, fact, before_out@, *out)) by { reveal(facts_transition_lemmas::post); } }
+        }
+        Fact::UpstreamStalled => fact_upstream_stalled(w, i, out),
+        Fact::IncidentCleared { by_rob } => fact_incident_cleared(w, i, by_rob, out),
+    }
+
+    kernel_proof! {
+        facts_transition_lemmas::unfold(before_transition@, *w, i, fact, before_out@, *out);
+    }
+}
+}
+
+kernel_fn! {
+/// Fact rows / #806: verbatim PrClosedByPerson dispatch arm under the standing refactor rule.
+/// Its exact result is the opaque fact_transition bundle, proved in this small query.
+#[allow(clippy::collapsible_if)]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn fact_pr_closed(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures facts_transition_lemmas::post(*old(w), *final(w), i, Fact::PrClosedByPerson, *old(out), *final(out)),
+] hide [current_item, items, settle_shape] {
+    kernel_snapshot! { before_transition = *w }
+    kernel_snapshot! { before_out = *out }
+    kernel_proof! {
+        retirement_handler_lemmas::inline_frame(before_transition@.nodes@[i as int], Fact::PrClosedByPerson);
+    }
             let m = &mut w.nodes[i];
             if !m.pr_open {
                 kernel_proof! {
                     assert(*m == retirement::fact_node(
-                        before_transition@.nodes@[i as int], fact)) by {
+                        before_transition@.nodes@[i as int], Fact::PrClosedByPerson)) by {
                         reveal(retirement::fact_node);
                     }
                 }
                 kernel_proof! {
-                    assert(facts_transition_lemmas::post(before_transition@, *w, i, fact, before_out@, *out)) by { reveal(facts_transition_lemmas::post); }
-                    facts_transition_lemmas::unfold(before_transition@, *w, i, fact, before_out@, *out);
+                    assert(facts_transition_lemmas::post(before_transition@, *w, i, Fact::PrClosedByPerson, before_out@, *out)) by { reveal(facts_transition_lemmas::post); }
                 }
                 return;
             }
@@ -217,26 +256,55 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             }
             kernel_proof! {
                 assert(w.nodes@[i as int] == retirement::fact_node(
-                    before_transition@.nodes@[i as int], fact)) by {
+                    before_transition@.nodes@[i as int], Fact::PrClosedByPerson)) by {
                     reveal(retirement::fact_node);
                 }
             }
-            kernel_proof! { assert(facts_transition_lemmas::post(before_transition@, *w, i, fact, before_out@, *out)) by { reveal(facts_transition_lemmas::post); } }
-        }
-        Fact::PrDequeuedByPerson => {
+            kernel_proof! { assert(facts_transition_lemmas::post(before_transition@, *w, i, Fact::PrClosedByPerson, before_out@, *out)) by { reveal(facts_transition_lemmas::post); } }
+}
+}
+
+kernel_fn! {
+/// Fact rows / #806: verbatim PrDequeuedByPerson dispatch arm under the standing refactor rule.
+/// Its exact result is the opaque fact_transition bundle, proved in this small query.
+#[allow(clippy::collapsible_if)]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn fact_pr_dequeued(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures facts_transition_lemmas::post(*old(w), *final(w), i, Fact::PrDequeuedByPerson, *old(out), *final(out)),
+] hide [current_item, items, settle_shape] {
+    kernel_snapshot! { before_transition = *w }
+    kernel_snapshot! { before_out = *out }
             pr_dequeued(w, i, out);
             kernel_proof! {
                 facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out);
-                assert(facts_transition_lemmas::post(before_transition@, *w, i, fact, before_out@, *out)) by { reveal(facts_transition_lemmas::post); }
+                assert(facts_transition_lemmas::post(before_transition@, *w, i, Fact::PrDequeuedByPerson, before_out@, *out)) by { reveal(facts_transition_lemmas::post); }
             }
-        }
-        Fact::PushByOther { head } => {
+}
+}
+
+kernel_fn! {
+/// Fact rows / #806: verbatim PushByOther dispatch arm under the standing refactor rule.
+/// Its exact result is the opaque fact_transition bundle, proved in this small query.
+#[allow(clippy::collapsible_if)]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn fact_push_by_other(w: &mut World, i: usize, head: HeadId, out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures facts_transition_lemmas::post(*old(w), *final(w), i, Fact::PushByOther { head }, *old(out), *final(out)),
+] hide [current_item, items, settle_shape] {
+    kernel_snapshot! { before_transition = *w }
+    kernel_snapshot! { before_out = *out }
             let m = &w.nodes[i];
             if !m.had_pr {
-                kernel_proof! { retirement_runtime::retry_noop(before_transition@.nodes@[i as int], fact, w.fail_fast, w.next_question); }
+                kernel_proof! { retirement_runtime::retry_noop(before_transition@.nodes@[i as int], Fact::PushByOther { head }, w.fail_fast, w.next_question); }
                 kernel_proof! {
-                    assert(facts_transition_lemmas::post(before_transition@, *w, i, fact, before_out@, *out)) by { reveal(facts_transition_lemmas::post); }
-                    facts_transition_lemmas::unfold(before_transition@, *w, i, fact, before_out@, *out);
+                    assert(facts_transition_lemmas::post(before_transition@, *w, i, Fact::PushByOther { head }, before_out@, *out)) by { reveal(facts_transition_lemmas::post); }
                 }
                 return;
             }
@@ -266,38 +334,59 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 }
             }
             kernel_proof! {
-                if !published { retirement_runtime::retry_noop(before_transition@.nodes@[i as int], fact, w.fail_fast, w.next_question); }
+                if !published { retirement_runtime::retry_noop(before_transition@.nodes@[i as int], Fact::PushByOther { head }, w.fail_fast, w.next_question); }
             }
-            kernel_proof! { assert(facts_transition_lemmas::post(before_transition@, *w, i, fact, before_out@, *out)) by { reveal(facts_transition_lemmas::post); } }
-        }
-        Fact::CiFailed { infra } => {
+            kernel_proof! { assert(facts_transition_lemmas::post(before_transition@, *w, i, Fact::PushByOther { head }, before_out@, *out)) by { reveal(facts_transition_lemmas::post); } }
+}
+}
+
+kernel_fn! {
+/// Fact rows / #806: verbatim CiFailed dispatch arm under the standing refactor rule.
+/// Its exact result is the opaque fact_transition bundle, proved in this small query.
+#[allow(clippy::collapsible_if)]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn fact_ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures facts_transition_lemmas::post(*old(w), *final(w), i, Fact::CiFailed { infra }, *old(out), *final(out)),
+] hide [current_item, items, settle_shape] {
+    kernel_snapshot! { before_transition = *w }
+    kernel_snapshot! { before_out = *out }
             ci_failed(w, i, infra, out);
             kernel_proof! {
                 retirement_runtime::ci_retirement(before_transition@.nodes@[i as int],
                     w.nodes@[i as int], infra, before_transition@.fail_fast,
                     before_transition@.next_question, w.next_question);
                 facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out);
-                assert(facts_transition_lemmas::post(before_transition@, *w, i, fact, before_out@, *out)) by { reveal(facts_transition_lemmas::post); }
+                assert(facts_transition_lemmas::post(before_transition@, *w, i, Fact::CiFailed { infra }, before_out@, *out)) by { reveal(facts_transition_lemmas::post); }
             }
-        }
-        Fact::Conflict => {
-            let m = &mut w.nodes[i];
-            if matches!(m.phase, Phase::Publishing | Phase::Queued) {
-                set_phase(m, Phase::Rebasing);
-            }
-            kernel_proof! {
-                assert(*m == retirement::fact_node(before_transition@.nodes@[i as int],
-                    Fact::Conflict)) by { reveal(retirement::fact_node); };
-            }
-            kernel_proof! { assert(facts_transition_lemmas::post(before_transition@, *w, i, fact, before_out@, *out)) by { reveal(facts_transition_lemmas::post); } }
-        }
-        Fact::UpstreamStalled => {
+}
+}
+
+kernel_fn! {
+/// Fact rows / #806: verbatim UpstreamStalled dispatch arm under the standing refactor rule.
+/// Its exact result is the opaque fact_transition bundle, proved in this small query.
+#[allow(clippy::collapsible_if)]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn fact_upstream_stalled(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures facts_transition_lemmas::post(*old(w), *final(w), i, Fact::UpstreamStalled, *old(out), *final(out)),
+] hide [current_item, items, settle_shape] {
+    kernel_snapshot! { before_transition = *w }
+    kernel_snapshot! { before_out = *out }
+    kernel_proof! {
+        retirement_handler_lemmas::inline_frame(before_transition@.nodes@[i as int], Fact::UpstreamStalled);
+    }
             let m = &mut w.nodes[i];
             if m.phase != Phase::Queued || m.waiting_incident {
                 kernel_proof! { retirement_runtime::upstream_noop(before_transition@.nodes@[i as int]); }
                 kernel_proof! {
-                    assert(facts_transition_lemmas::post(before_transition@, *w, i, fact, before_out@, *out)) by { reveal(facts_transition_lemmas::post); }
-                    facts_transition_lemmas::unfold(before_transition@, *w, i, fact, before_out@, *out);
+                    assert(facts_transition_lemmas::post(before_transition@, *w, i, Fact::UpstreamStalled, before_out@, *out)) by { reveal(facts_transition_lemmas::post); }
                 }
                 return;
             }
@@ -305,20 +394,29 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             let needs_rob = m.run_incidents >= 2;
             raise_incident(w, i, needs_rob, out);
             kernel_proof! { retirement_runtime::upstream_result(before_transition@.nodes@[i as int]); }
-            kernel_proof! { assert(facts_transition_lemmas::post(before_transition@, *w, i, fact, before_out@, *out)) by { reveal(facts_transition_lemmas::post); } }
-        }
-        Fact::IncidentCleared { by_rob } => {
+            kernel_proof! { assert(facts_transition_lemmas::post(before_transition@, *w, i, Fact::UpstreamStalled, before_out@, *out)) by { reveal(facts_transition_lemmas::post); } }
+}
+}
+
+kernel_fn! {
+/// Fact rows / #806: verbatim IncidentCleared dispatch arm under the standing refactor rule.
+/// Its exact result is the opaque fact_transition bundle, proved in this small query.
+#[allow(clippy::collapsible_if)]
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn fact_incident_cleared(w: &mut World, i: usize, by_rob: bool, out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures facts_transition_lemmas::post(*old(w), *final(w), i, Fact::IncidentCleared { by_rob }, *old(out), *final(out)),
+] hide [current_item, items, settle_shape] {
+    kernel_snapshot! { before_transition = *w }
+    kernel_snapshot! { before_out = *out }
             incident_cleared(w, i, by_rob, out);
             kernel_proof! {
                 facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out);
-                assert(facts_transition_lemmas::post(before_transition@, *w, i, fact, before_out@, *out)) by { reveal(facts_transition_lemmas::post); }
+                assert(facts_transition_lemmas::post(before_transition@, *w, i, Fact::IncidentCleared { by_rob }, before_out@, *out)) by { reveal(facts_transition_lemmas::post); }
             }
-        }
-    }
-
-    kernel_proof! {
-        facts_transition_lemmas::unfold(before_transition@, *w, i, fact, before_out@, *out);
-    }
 }
 }
 

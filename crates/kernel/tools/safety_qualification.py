@@ -16,8 +16,8 @@ import remote_gate  # noqa: E402
 
 
 CASES = {
-    'retire_upstream_stalled': ('crates/kernel/src/facts.rs', '            m.run_incidents = (m.run_incidents + 1).min(2);', '            m.run_incidents = m.run_incidents.min(2);', '//crates/kernel:verus_facts_transition'),
-    'retire_outside_push': ('crates/kernel/src/facts.rs', 'update_recheck_head(&mut w.nodes[i], head);', 'let _ = head;', '//crates/kernel:verus_facts_transition'),
+    'retire_upstream_stalled': ('crates/kernel/src/facts.rs', '            m.run_incidents = (m.run_incidents + 1).min(2);', '            m.run_incidents = m.run_incidents.min(2);', '//crates/kernel:verus_facts_transition_upstream_stalled'),
+    'retire_outside_push': ('crates/kernel/src/facts.rs', 'update_recheck_head(&mut w.nodes[i], head);', 'let _ = head;', '//crates/kernel:verus_facts_transition_push_by_other'),
     'retire_ci_failed': ('crates/kernel/src/facts.rs', '        failed_round(w, i, ReviewStop::CiFailed, out);', '        failed_round(w, i, ReviewStop::ChecksFailed, out);', '//crates/kernel:verus_facts_ci_failed'),
     'retire_publishing_ci_tests': ('crates/kernel/src/facts.rs', '    let before_enqueue =\n        m.phase == Phase::Publishing && m.current() == Some(Item::Do(EffectKind::Enqueue));', '    let before_enqueue = false;', '//crates/kernel:verus_facts_ci_failed'),
     'retire_new_request': ('crates/kernel/src/events.rs', 'Event::NewRequest { repo, priority } => {\n            if match repo.index() { Some(r) => r < w.gates.len(), None => false } {\n                let mut node = Node::new(repo);\n                node.priority = priority;', 'Event::NewRequest { repo, priority } => {\n            if match repo.index() { Some(r) => r < w.gates.len(), None => false } {\n                let mut node = Node::new(repo);\n                node.priority = Priority::Unranked;', '//crates/kernel:verus_events'),
@@ -58,7 +58,7 @@ CASES = {
     'retire_pr_closed': ('crates/kernel/src/facts.rs',
                          'm.pr_open = false;\n            if !m.phase.is_stopping()',
                          'let _ = m.pr_open;\n            if !m.phase.is_stopping()',
-                         '//crates/kernel:verus_facts_transition'),
+                         '//crates/kernel:verus_facts_transition_pr_closed'),
     'retire_conflict': ('crates/kernel/src/facts.rs',
                         'set_phase(m, Phase::Rebasing);', 'let _ = m;',
                         '//crates/kernel:verus_facts_transition'),
