@@ -1000,3 +1000,103 @@ def test_t842_class_literal_support_cannot_hide_writes_in_one_compound_statement
                       'red_message': 'bug'}}
     with pytest.raises(model.ProofRefusal):
         assemble_t842_case(tmp_path, case)
+
+
+def test_t842_r2_review_probes(repository):
+    import textwrap
+
+    header = '''from pathlib import Path
+import sys
+import unittest
+from unittest import mock
+from string import Formatter
+from types import SimpleNamespace
+
+def load_subject():
+    import importlib.util
+    path = Path(__file__).resolve().parents[1] / "app.py"
+    spec = importlib.util.spec_from_file_location("subject", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+'''
+    probes = {
+        'patch-declared-subject': '''
+            def replacement():
+                return int("# head" in (Path(__file__).parents[1] / "app.py").read_text())
+
+            def test_observer():
+                subject = load_subject()
+                with mock.patch.object(subject, "value", replacement), mock.patch.object(sys, "argv", []):
+                    assert subject.value() == 1, "bug"
+        ''',
+        'alias-method-mutation': '''
+            subject = load_subject()
+            alias = subject.STATE
+            alias.update(expected=int("# head" in (Path(__file__).parents[1] / "app.py").read_text()))
+
+            def test_observer():
+                with mock.patch.object(sys, "argv", []):
+                    assert subject.value() == 1, "bug"
+        ''',
+        'formatter-sys-modules': '''
+            modules = Formatter().get_field("0.__init__.__globals__[sys].modules", (unittest.TestCase,), {})[0]
+            fixed = "# head" in (Path(__file__).parents[1] / "app.py").read_text()
+            modules.update({"app": SimpleNamespace(value=lambda: int(fixed))})
+
+            def test_observer():
+                with mock.patch.object(sys, "argv", []):
+                    import app
+                    assert app.value() == 1, "bug"
+        ''',
+    }
+    accepted = []
+    for name, probe in probes.items():
+        path = repository[0] / 'tests/test_observer.py'
+        if path.exists():
+            path.unlink()
+        subject = 'STATE = {"expected": 1}\n\ndef value():\n    # base\n    return STATE["expected"]\n'
+        before = {'app.py': subject}
+        after = {'app.py': subject.replace('# base', '# head'),
+                 'tests/test_observer.py': header + '\n' + textwrap.dedent(probe)}
+        check = Check(name, Kind.DEMONSTRATING, ('tests/test_observer.py::test_observer',),
+                      proof=model.Proof(('app.py::value',), ('tests/test_observer.py',), 'bug'))
+        results, _, _ = round_result(repository, before, after, check)
+        print('R2_PROBE', name, results, flush=True)
+        if results[0].verdict == Verdict.PASS:
+            assert (results[0].tests[0].base, results[0].tests[0].head) == (Outcome.ASSERTION, Outcome.PASSED)
+            accepted.append(name)
+    assert not accepted, 'Forged proofs accepted for unchanged subject behavior: ' + ', '.join(accepted)
+@pytest.mark.parametrize('shape', ['partial-constructor', 'formatter-without-loader'])
+def test_t842_r2_main_siblings(repository, shape):
+    path = 'tests/test_observer.py'
+    subject = 'def value():\n    # base\n    return 1\n'
+    before = {'app.py': subject, path: 'def test_control(): pass\n'}
+    if shape == 'partial-constructor':
+        source = '_DATA = dict(expected=0)\n_DATA.update(expected=1)\n'
+        source += 'def test_observer():\n    import app\n    assert app.value() == _DATA["expected"], "bug"\n'
+        support = (path + '::_DATA',)
+    else:
+        before.pop(path)
+        source = '''import unittest
+from string import Formatter
+from pathlib import Path
+from types import SimpleNamespace
+modules = Formatter().get_field("0.__init__.__globals__[sys].modules", (unittest.TestCase,), {})[0]
+fixed = "# head" in (Path(__file__).parents[1] / "app.py").read_text()
+modules.update({"app": SimpleNamespace(value=lambda: int(fixed))})
+def test_observer():
+    import app
+    assert app.value() == 1, "bug"
+'''
+        support = (path,)
+    after = {'app.py': subject.replace('# base', '# head'), path: source}
+    check = Check(shape, Kind.DEMONSTRATING, (path + '::test_observer',),
+                  proof=model.Proof(('app.py::value',), support, 'bug'))
+    results, _, _ = round_result(repository, before, after, check)
+    print('R2_MAIN_SIBLING', shape, results, flush=True)
+    if results[0].verdict == Verdict.PASS:
+        assert (results[0].tests[0].base, results[0].tests[0].head) == (Outcome.ASSERTION, Outcome.PASSED)
+    assert results[0].verdict == Verdict.FAIL, results
+    assert results[0].tests[0].base == Outcome.UNCOLLECTED
+    assert 'Proof assembly refused' in results[0].tests[0].message
