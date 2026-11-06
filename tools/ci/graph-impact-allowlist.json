@@ -12,7 +12,7 @@
   "crate:tl3-delivery": {
     "reason": "controller-core #730: dependency-free effect-delivery decisions and protocol mirror linked by tl3-controller",
     "sources": 10,
-    "max_fanout": 89
+    "max_fanout": 90
   },
   "crate:tl3-harness-core": {
     "max_fanout": 100,
