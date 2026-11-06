@@ -15,8 +15,8 @@ pub open spec fn stale(old: EnqueueState, event: QueueEvent) -> bool {
 
 /// #751 K-stale-head and #608 fresh head validation before mutation.
 /// Q41 state-machine.md:132 binds approval to the exact commit;
-/// state-table.md:667 requires a changed Publishing/Queued head to be retested.
-/// Publishing/Queued context: state-table.md:526,570. #760 preserves gates.
+/// state-table.md:698 requires a changed Publishing/Queued head to be retested.
+/// Publishing/Queued context: state-table.md:557,601. #760 preserves gates.
 /// Prior refusal and pending-read precedence are preserved existing behaviour
 /// (no rule): stale inputs cannot erase a terminal refusal.
 /// Full event/state domains; quantifies the actual Vec without a slot bound.

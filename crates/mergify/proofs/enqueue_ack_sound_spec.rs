@@ -31,8 +31,8 @@ pub open spec fn expected(old: EnqueueState, read: QueueRead) -> Effect {
         Some(issue) => outcome(old.intent, read.queue, issue) } }
 }
 
-/// #751 K-ack-sound; docs/state-table.md:526-535 Publishing confirms step 4
-/// before Queued (:570). Current-head authority: Q41, state-machine.md:132;
+/// #751 K-ack-sound; docs/state-table.md:557-566 Publishing confirms step 4
+/// before Queued (:601). Current-head authority: Q41, state-machine.md:132;
 /// #608 requires fresh exact-head checks and retained refusal handling.
 /// #760 preserves separate recovery samples. The exact oracle, conflict
 /// completion and receipt encoding are preserved existing behaviour (no rule).

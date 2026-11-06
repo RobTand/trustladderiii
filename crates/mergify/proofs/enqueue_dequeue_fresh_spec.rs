@@ -5,7 +5,7 @@ use vstd::prelude::*;
 verus! {
 /// #608 retains prior-dequeue history rather than trusting current labels;
 /// #751 enqueue_dequeue_fresh, preserved by the #760 lifecycle extraction.
-/// Context: Publishing/Queued, docs/state-table.md:526,570,574,667,669.
+/// Context: Publishing/Queued, docs/state-table.md:557,601,605,698,700.
 /// Timestamp/ID freshness and equality boundaries are preserved existing
 /// behaviour (no rule); these rows do not specify the comparison encoding.
 /// Time derives Ord over (secs: i64, nanos: u32), in that field order.
