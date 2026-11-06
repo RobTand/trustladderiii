@@ -321,7 +321,8 @@ fn scope_trims_export_exact_records_summary_and_read_only() {
     let mut update = Commit::new("fixture:latest-trim", json!({}), &store.load().unwrap());
     update.rows.push(RowChange::Put { table:"scope_trims".into(), id:"0".into(), value:json!({"head":"ddd","removed_paths":[]}) });
     store.commit(&update).unwrap();
-    store.commit(&Commit::new("fixture:later", json!({}), &store.load().unwrap())).unwrap();
+    let later = Commit::new("fixture:later", json!({}), &store.load().unwrap());
+    store.commit(&later).unwrap();
     let before = store.load().unwrap();
     let mut reader = Reader::open(&settings).unwrap();
     let times: Vec<String> = reader.transaction().unwrap().query(
