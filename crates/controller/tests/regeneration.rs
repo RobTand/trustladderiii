@@ -753,7 +753,9 @@ fn queued(f: &mut Controlled, indices: &[usize]) {
         }
         assert!(
             f.c.drive_once().unwrap(),
-            "publication stopped before queue admission"
+            "publication stopped before queue admission: nodes={:?}, snapshot={:?}",
+            f.c.world().unwrap().nodes,
+            f.c.snapshot().unwrap()
         );
     }
     panic!("publication did not reach the held queue");

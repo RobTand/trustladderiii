@@ -157,3 +157,16 @@ filegroup(
     srcs = ["tl3_workers/forecast.py"],
     visibility = ["//visibility:public"],
 )
+
+py_binary(
+    name = "pb_generators",
+    srcs = ["tl3_workers/pb_generators.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":src",
+        "//harness/src/tl3_harness",
+        "@tl3_pip//jsonschema",
+        "@tl3_pip//numpy",
+        "@tl3_pip//pandas",
+    ],
+)
