@@ -192,6 +192,9 @@ _CONTROLLER_TEST_SOURCES = {
     "tests/writer_references.rs": ["tests/writer_reference_model.py"],
 }
 
+# CC-E: intentional closed-node recovery red, isolated from protocol integration.
+_CONTROLLER_TEST_SOURCES["tests/delivery_conformance.rs"] = ["tests/support/controller_restart.rs"]
+
 def tl3_rust_test(name, binary_id, gate_args, **kwargs):
     package = native.package_name()
     controller = package == "crates/controller"
