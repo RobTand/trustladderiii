@@ -397,9 +397,12 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
     let before_enqueue =
         m.phase == Phase::Publishing && m.current() == Some(Item::Do(EffectKind::Enqueue));
     if m.phase != Phase::Queued && !before_enqueue {
-        kernel_proof! { reveal(retirement::fact_node);
+        kernel_proof! {
+            assert(infra ==> *m == retirement::fact_node(before_ci@, Fact::CiFailed { infra })) by {
+                reveal(retirement::fact_node);
+            }
             retirement_runtime::retry_noop(ci_world@.nodes@[i as int], Fact::CiFailed { infra }, w.fail_fast, w.next_question);
-            reveal(retirement::fact_frame);
+            retirement_runtime::noop_frame(ci_world@, i, ci_out@);
             retirement_runtime::ci_forward(ci_world@.nodes@[i as int], *m, infra,
                 ci_world@.fail_fast, ci_world@.next_question, w.next_question);
         }

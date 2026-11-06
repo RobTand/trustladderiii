@@ -85,13 +85,14 @@ pub(super) proof fn ci_frame(before: World, prepared: World, after: World, i: us
     ensures retirement::fact_frame(before, after, i, ob, oa),
 { reveal(retirement::fact_frame); }
 /// #806: an ignored CI fact preserves the complete world and output frame.
-pub(super) proof fn noop_frame(w: World, after: World, i: usize, out: Outbox)
-    requires i < w.nodes@.len(), after.nodes@ == w.nodes@,
-        after.gates@ == w.gates@, after.file_sets@ == w.file_sets@,
-        after.dependencies@ == w.dependencies@, after.next_ticket == w.next_ticket,
-        after.next_question == w.next_question, after.fail_fast == w.fail_fast,
-        after.pool_capacity == w.pool_capacity,
-    ensures retirement::fact_frame(w, after, i, out, out),
+pub(super) proof fn noop_frame(w: World, i: usize, out: Outbox)
+    requires i < w.nodes@.len(),
+    ensures forall|after: World| after.nodes@ == w.nodes@
+        && after.gates@ == w.gates@ && after.file_sets@ == w.file_sets@
+        && after.dependencies@ == w.dependencies@ && after.next_ticket == w.next_ticket
+        && after.next_question == w.next_question && after.fail_fast == w.fail_fast
+        && after.pool_capacity == w.pool_capacity
+        ==> #[trigger] retirement::fact_frame(w, after, i, out, out),
 { reveal(retirement::fact_frame); }
 
 /// Q50 / Q54 / #806: the exact CI source and W2 failed-round tuple, for arbitrary flags.
