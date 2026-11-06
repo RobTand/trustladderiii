@@ -703,8 +703,12 @@ impl Adapter {
                                 ingress_highwater(&self.store)?,
                                 consumed,
                             ))
+                        } else if attempted {
+                            // Normalize legacy Merge intents too: Some(0) remembers
+                            // the attempt even when no old ingress watermark exists.
+                            Some(consumed)
                         } else {
-                            previous.as_ref().and_then(|i| i.consumed_through)
+                            None
                         };
                         let attempt = previous.map_or(Ok(1), |intent| {
                             intent
