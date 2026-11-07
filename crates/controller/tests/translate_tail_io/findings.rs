@@ -15,7 +15,7 @@ pub struct CiFailure {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct QueueCiEvidence {
+pub struct CiEvidence {
     #[serde(default)]
     pub checks: Vec<CiFailure>,
     #[serde(default)]

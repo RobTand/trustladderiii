@@ -2853,7 +2853,7 @@ impl Controller {
                     .to_owned(),
                     infra,
                     failed_tests: vec![],
-                    evidence: findings::QueueCiEvidence {
+                    evidence: findings::CiEvidence {
                         checks,
                         ..Default::default()
                     },

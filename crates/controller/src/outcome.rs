@@ -1,5 +1,5 @@
 //! PR outcomes shared by delivery adapters and simulation.
-use crate::findings::{FailedTest, QueueCiEvidence};
+use crate::findings::{FailedTest, CiEvidence};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -12,7 +12,7 @@ pub enum Outcome {
         head: String,
         infra: bool,
         failed_tests: Vec<FailedTest>,
-        evidence: QueueCiEvidence,
+        evidence: CiEvidence,
     },
     Conflict {
         head: String,

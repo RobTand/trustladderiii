@@ -31,7 +31,7 @@ pub struct CiFailure {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct QueueCiEvidence {
+pub struct CiEvidence {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cause: Option<Box<crate::queue_cause::CauseEvidence>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

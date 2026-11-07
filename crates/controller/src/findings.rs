@@ -31,7 +31,7 @@ pub struct CiFailure {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct QueueCiEvidence {
+pub struct CiEvidence {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cause: Option<Box<CauseEvidence>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -465,7 +465,7 @@ fn safe(text: &str, cap: usize) -> String {
     clipped(&crate::memory::redact_text(&terminal_text(text)), cap)
 }
 
-pub(crate) fn bounded_ci_evidence(mut details: QueueCiEvidence) -> QueueCiEvidence {
+pub(crate) fn bounded_ci_evidence(mut details: CiEvidence) -> CiEvidence {
     details.complete &=
         details.checks.len() <= 20 && details.failed_tests.len() <= MAX_FAILED_TESTS;
     details.checks.truncate(20);

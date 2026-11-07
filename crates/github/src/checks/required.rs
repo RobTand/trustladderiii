@@ -1,5 +1,6 @@
 //! Required-check evaluation and workflow rerun decisions (ctrl-core C1).
 //! The shell retains sorted keys, upstream payloads and every I/O boundary.
+use super::Status;
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
@@ -400,7 +401,7 @@ pub enum RequiredState {
     },
 ))]
 pub fn required_check(check: super::CheckView, runner_failure: bool) -> RequiredState {
-    use super::{App, Conclusion, Status};
+    use super::{App, Conclusion};
     if check.status != Status::Completed
         || matches!(
             check.conclusion,

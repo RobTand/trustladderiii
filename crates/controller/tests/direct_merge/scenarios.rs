@@ -968,7 +968,7 @@ fn fake_and_production_ci_outcomes_have_identical_findings() {
             else { Observation::Outcome { node:NodeId(0), receipt:Some("owner/sandbox/3/100/head-ci:1001".into()),
                 outcome:tl3_controller::outcome::Outcome::CiFailed {
                     head:delivery.head_sha.clone().unwrap(), infra, failed_tests:vec![],
-                    evidence:tl3_controller::findings::QueueCiEvidence {checks, ..Default::default()}
+                    evidence:tl3_controller::findings::CiEvidence {checks, ..Default::default()}
                 } } };
             controller.observe("same-ci-outcome", observation).unwrap();
             assert!(controller.drive_once().unwrap());
@@ -1130,4 +1130,107 @@ fn current_direct_receipts_deduplicate_after_restart() {
         controller.look_key(&delivery.key).unwrap();
         assert_eq!(r1_kernel_facts(&settings), before);
     }
+}
+
+#[test]
+fn changed_head_after_durable_intent_process_crash_never_replays_put() {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    const CHILD: &str = "TD_DIRECT_STALE_CRASH_CHILD";
+    if let Some(path) = std::env::var_os(CHILD) {
+        let input: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let settings: tl3_config::Store = serde_json::from_value(input["settings"].clone()).unwrap();
+        let root = std::path::PathBuf::from(input["root"].as_str().unwrap());
+        let clients = BTreeMap::from([(3, client(input["uri"].as_str().unwrap()))]);
+        let wakes = direct_merge::Wakes::default();
+        let adapter = direct_merge::Adapter::new(clients.clone(), 0, &root.join("direct"), settings.clone()).unwrap()
+            .with_wakes(wakes.clone())
+            .with_write_boundary(|boundary| {
+                if boundary == (direct_merge::WriteBoundary {write:direct_merge::Write::Intent, after:true}) {
+                    println!("TD_INTENT_DURABLE");
+                    std::io::stdout().flush().unwrap();
+                    let mut line = String::new();
+                    std::io::stdin().read_line(&mut line).unwrap();
+                    panic!("parent must terminate the process before any destructor or PUT");
+                }
+            });
+        let mut registry = adapters::simulation(&root).unwrap();
+        registry.register(Upstream::Delivery, adapter);
+        let mut controller = Controller::open(Store::open(&settings).unwrap(), registry, bootstrap()).unwrap();
+        controller.register_github_translator("delivery", direct_merge::Translator::new(clients).unwrap().with_wakes(wakes));
+        println!("TD_RECOVERY_READY");
+        std::io::stdout().flush().unwrap();
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line).unwrap();
+        drain(&mut controller);
+        panic!("authenticated wake must reach the durable intent boundary");
+    }
+    let mut database = support::Database::start();
+    let settings = database.create("direct_changed_head_process_crash");
+    let mut fixture = DirectFixture::new();
+    fixture.check(None);
+    let (mut controller, delivery) = fixture.start(&settings);
+    drain(&mut controller);
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::AwaitingDelivery);
+    drop(controller);
+    let control = fixture.root.path().join("crash-input.json");
+    std::fs::write(&control, serde_json::to_vec(&json!({
+        "settings":{"host":settings.host,"port":settings.port,"database":settings.database,"user":settings.user,
+            "password_file":settings.password_file,"connect_timeout_secs":settings.connect_timeout_secs},
+        "root":fixture.root.path(), "uri":fixture.api.server.uri()
+    })).unwrap()).unwrap();
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "changed_head_after_durable_intent_process_crash_never_replays_put", "--nocapture"])
+        .env(CHILD, &control)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn().unwrap();
+    let mut output = BufReader::new(child.stdout.take().unwrap());
+    fn reached(output: &mut impl BufRead, marker: &str) {
+        loop {
+            let mut line = String::new();
+            assert_ne!(output.read_line(&mut line).unwrap(), 0, "child exited before {marker}");
+            if line.trim() == marker { break; }
+        }
+    }
+    reached(&mut output, "TD_RECOVERY_READY");
+    fixture.check(Some("success"));
+    store_direct_check_event(&fixture, &settings, "post-child-start-success");
+    child.stdin.as_mut().unwrap().write_all(b"go\n").unwrap();
+    reached(&mut output, "TD_INTENT_DURABLE");
+    fixture.direct.lock().unwrap().moved = true;
+    child.kill().unwrap();
+    assert!(!child.wait().unwrap().success(), "the boundary must terminate a real process");
+    let intent_path = direct_intent_path(&fixture);
+    let intent_bytes = std::fs::read(&intent_path).unwrap();
+    let intent: Value = serde_json::from_slice(&intent_bytes).unwrap();
+    assert_eq!(intent["head"], json!(delivery.head_sha));
+    assert!(matches!(intent["action"].as_str(), Some("Merge" | "Annotate")));
+    // Even annotation must retain the consumed ingress fence from the accepted wait.
+    let accepted: Vec<Value> = std::fs::read_dir(fixture.root.path().join("direct")).unwrap()
+        .map(|entry|entry.unwrap().path()).filter(|path|path.extension().is_some_and(|ext|ext == "accepted"))
+        .map(|path|serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()).collect();
+    assert_eq!(accepted.len(), 1);
+    assert_eq!(accepted[0]["key"], delivery.key);
+    assert_eq!(accepted[0]["head"], json!(delivery.head_sha));
+    assert_eq!(accepted[0]["generation"], delivery.generation);
+    assert!(accepted[0]["waiting_through"].is_u64());
+    let epoch: i64 = serde_json::from_slice(&std::fs::read(fixture.root.path().join("direct/epoch.fence")).unwrap()).unwrap();
+    assert_eq!(epoch, delivery.epoch);
+    assert!(fixture.direct.lock().unwrap().puts.is_empty());
+    fixture.wakes = direct_merge::Wakes::default();
+    let mut recovered = fixture.open(&settings);
+    ingress::drain(&mut recovered).unwrap();
+    for _ in 0..12 {
+        if matches!(recovered.world().unwrap().nodes[0].phase, Phase::Checking | Phase::Ready(tl3_kernel::Resume::Checking)) { break; }
+        recovered.drive_once().unwrap();
+    }
+    let world = recovered.world().unwrap();
+    world.check().unwrap();
+    assert!(matches!(world.nodes[0].phase, Phase::Checking | Phase::Ready(tl3_kernel::Resume::Checking)));
+    assert!(world.nodes[0].rechecks > 0);
+    assert_eq!(fixture.direct.lock().unwrap().successes, 0);
+    assert!(fixture.direct.lock().unwrap().puts.is_empty(), "changed-head crash recovery cannot replay a stale PUT");
+    let before = r1_kernel_facts(&settings);
+    recovered.look_key(&delivery.key).unwrap();
+    assert_eq!(r1_kernel_facts(&settings), before, "retired delivery cannot revive the old attempt");
+    assert!(fixture.direct.lock().unwrap().puts.is_empty());
 }

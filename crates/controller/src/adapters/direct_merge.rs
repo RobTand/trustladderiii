@@ -46,7 +46,7 @@ fn head_failure(
             head: head.to_owned(),
             infra,
             failed_tests: vec![],
-            evidence: crate::findings::QueueCiEvidence {
+            evidence: crate::findings::CiEvidence {
                 cause: Some(Box::new(cause)),
                 ..Default::default()
             },
@@ -63,7 +63,6 @@ struct Intent {
     attempt: u64,
     action: String,
     method: MergeMethod,
-    #[serde(default)]
     consumed_through: Option<u64>,
 }
 #[derive(Serialize, Deserialize)]
@@ -785,8 +784,7 @@ impl Adapter {
                                 consumed,
                             ))
                         } else if attempted {
-                            // Normalize legacy Merge intents too: Some(0) remembers
-                            // the attempt even when no old ingress watermark exists.
+                            // Annotation preserves the consumed authorization fence.
                             Some(consumed)
                         } else {
                             None

@@ -1184,9 +1184,6 @@ impl crate::Controller {
                     }
                 }
                 _ => {}
-                    }
-                }
-                _ => {}
             }
         }
         // The phase that ends at close is open-ended here, so it is left out and
