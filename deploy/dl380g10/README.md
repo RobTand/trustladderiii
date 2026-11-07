@@ -1,6 +1,7 @@
 # Deploy TL3 on dl380g10
 
-Use [GO-LIVE.md](GO-LIVE.md) for production startup, release builds and rollback.
+Use [FRESH-INIT.md](FRESH-INIT.md) for qualified fresh-state deployment.
+Use [GO-LIVE.md](GO-LIVE.md) for initial production setup and reception checks.
 The default deployment reuses TL2's external tunnel at
 `tl2-hooks.prismaquant.org`, forwarding to `127.0.0.1:8742`. It requires no TL3
 Cloudflare token or connector. Use `install --managed-tunnel` only when TL3
@@ -58,10 +59,9 @@ The nonsecret `app-state.json` records the installation and issue numbers for
 config generation. The operations repo is
 not added to the served repositories. Pinning is an optional UI step for Rob.
 
-The installer merges missing deployment fields into an existing config. It keeps
-operator model names, efforts, budgets, the harness image, and all existing
-values. Every rewrite first saves `tl3.toml.TIMESTAMP.bak` at mode 0600. A rerun
-with no missing fields leaves the config untouched.
+Existing configuration must contain the current deployment inputs. Installation
+keeps it byte for byte and refuses missing fields or a legacy mutable runtime
+path. Prepare and validate operator configuration explicitly before deployment.
 
 `models.toml` in this directory holds the Q22 model choices as data. New installs
 use it. To apply those defaults deliberately to an existing deployment, run
@@ -83,7 +83,7 @@ labelled per model line (`claude-sonnet`, `claude-opus`), so
 Q22 still forces a different model to review: Sonnet makers get Opus 5.5 review,
 and the Opus maker gets Sonnet 5.5 review. The planner uses Opus 5.5, then
 Sonnet 5.5, both at `high` effort and 32,000 output tokens. The rebaser, ingest, audit, comment classification and writer use Sonnet
-5.5. The writer field is optional for older configs and defaults to ingest.
+5.5. The deployment config supplies the writer role explicitly.
 `crates/config/tests/config.rs` validates these defaults, so a ladder that
 breaks Q22 fails CI. For a new config, `--primary` renames Sonnet 5.5 and
 `--alternate` renames Opus 5.5 in every role.
@@ -134,17 +134,8 @@ that release. A redeploy of the same code reuses its release untouched.
 `workers.python` names `current/workers/.venv/bin/python`. The controller
 resolves the link when it launches a run and records the result in the
 attempt's `launch.json`, so a running worker keeps its own release's code
-across later deploys (#372). Each install keeps the current release, the one
-before it and every release a live run uses, and removes the rest. A redeploy
-of the same code keeps the earlier `previous`. The pre-#372 `app/` directory
-stays through the install that introduces releases, because the tl3d running
-during it still launches from `app/`. A later install removes it once no live
-run, `tl3.toml` or running tl3d uses it, and says which one kept it otherwise.
-A tl3d that is starting or running without a readable runtime config keeps it
-too. Installs from
-before #372 migrate the deploy-owned `app/` Python path in `tl3.toml`; an
-operator's own path is kept. If that line can't be rewritten, the install stops
-with an error before anything restarts. It downloads o200k_base in a new empty directory,
+across later deploys (#372). Each install keeps the current release and every
+release a live run uses. It downloads o200k_base in a new empty directory,
 checks SHA-256 `446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d`,
 and installs it under the URL's SHA-1 cache key in `~/.local/share/tl3/tiktoken`.
 The controller unit exports that directory as `TIKTOKEN_CACHE_DIR`.
@@ -220,12 +211,6 @@ under the usual retry rules. Stop, Restart, pause and cancel still stop single
 runs; stopping one kills its whole scope, so no process the worker started
 outlives it.
 
-Rolling back below #372 needs the config backup. An older tl3d rejects
-`workers.launcher` (`deny_unknown_fields`), and an older installer copies the
-workers into `app/` while `workers.python` names `current/`. Stop tl3d, restore
-the `tl3.toml.*.bak` the first #372 install wrote, then install the older
-release. Runs started under #372 keep running from their release until they
-end.
 Postgres starts before the controller and status.
 Each service restarts on failure. Postgres uses a fast, orderly shutdown.
 Status binds `192.168.1.107:8033` on `bond0`, never a wildcard. Change the explicit
