@@ -39,7 +39,8 @@ def test_selected_flux_rehearsal_retains_backend_in_contract(rehearsal):
     assert restored.active['inflight']['backend'] == 'flux'
 
 
-def test_selected_flux_maker_reaches_activation_hold_without_pb_transport(rehearsal, monkeypatch):
+@pytest.mark.parametrize('rehearsal_call', [False, True])
+def test_selected_flux_maker_reaches_activation_hold_without_pb_transport(rehearsal, monkeypatch, rehearsal_call):
     from tl3_workers import pb_tests
     ledger, _, _, calls = rehearsal
     ledger.worktree.test_settings = pb_tests.TestSettings(
@@ -54,7 +55,12 @@ def test_selected_flux_maker_reaches_activation_hold_without_pb_transport(rehear
         raise ExecutionFailure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'admission', 'runtime_activation_held')
     monkeypatch.setattr(flux_execution, 'activation', held)
     monkeypatch.setattr(pb_tests, 'bounded', lambda value, **kwargs: value)
-    result = pb_tests.make_test_tool(ledger.worktree)([NODE])
+    if rehearsal_call:
+        observed = ledger.run([NODE], reachable())
+        assert observed['status'] == 'infrastructure_error'
+        result = observed['unforced']
+    else:
+        result = pb_tests.make_test_tool(ledger.worktree)([NODE])
     assert result['status'] == 'infrastructure_error'
     assert result['execution']['termination_reason'] == 'runtime_activation_held'
     assert not calls

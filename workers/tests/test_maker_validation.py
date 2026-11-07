@@ -305,7 +305,7 @@ def test_fix_round_inputs_and_test_settings_reach_their_destinations(tmp_path, m
     monkeypatch.setattr(runtime, "create_model", lambda request: fake)
     events = []
     runtime.run(maker_request, events.append)
-    assert settings == [inputs["tests"]]
+    assert settings == [{"execution": None, **inputs["tests"]}]
     # The PrismaBuild look ties a declared wait to this checkout's history.
     assert checkouts == [Path(maker_request["worktree"])]
     assert json.loads(observed[0][1].text) == {key: value for key, value in inputs.items() if key != "footprint"}

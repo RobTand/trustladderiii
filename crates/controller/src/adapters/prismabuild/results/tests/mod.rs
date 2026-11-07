@@ -89,6 +89,24 @@ impl crate::run_backend::RunBackend for DaytimePayload {
     fn validate_allocation(&self, _: &crate::run_backend::Owner, _: &crate::run_backend::AllocationInput) -> crate::run_backend::Result<crate::run_backend::CpuGrant> { unreachable!() }
     fn worker_payload(&self, _: &crate::run_backend::Owner, _: &crate::run_backend::Terminal) -> crate::run_backend::Result<crate::run_backend::WorkerPayload> { unreachable!() }
     fn launch_context(&self, _: &crate::run_backend::Owner, _: &str) -> crate::run_backend::Result<crate::run_backend::LaunchContext> { unreachable!() }
+    fn begin_container_launch(
+        &self,
+        _: &crate::run_backend::Owner,
+        _: &crate::run_backend::RuntimeOwnership,
+    ) -> crate::run_backend::Result<crate::run_backend::ContainerLaunchIntent> {
+        Err(crate::run_backend::BackendError::invalid(
+            "daytime payload fixture refuses container launch",
+        ))
+    }
+    fn bind_container_launch(
+        &self,
+        _: &crate::run_backend::Owner,
+        _: crate::run_backend::RuntimeOwnership,
+    ) -> crate::run_backend::Result<crate::run_backend::ContainerLaunchBinding> {
+        Err(crate::run_backend::BackendError::invalid(
+            "daytime payload fixture refuses container binding",
+        ))
+    }
     fn retain_runtime(&self, _: &crate::run_backend::Owner, _: crate::run_backend::RuntimeOwnership) -> crate::run_backend::Result<()> { unreachable!() }
     fn cleanup_runtime(&self, _: &crate::run_backend::Owner) -> crate::run_backend::Result<crate::run_backend::CleanupResult> { unreachable!() }
     fn daytime_payload(&self, _: &crate::run_backend::Owner, _: &crate::run_backend::Terminal) -> crate::run_backend::Result<Report> {

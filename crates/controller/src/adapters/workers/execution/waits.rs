@@ -150,7 +150,9 @@ impl Waits {
                 .map_err(backend_error)?
                 .transaction(&wait.owner, |_, record| Ok(record.is_some()))
                 .map_err(backend_error)?;
-            if !submitted { continue; }
+            if !submitted {
+                continue;
+            }
             let (_, _, profile) = shared.owned(&wait.owner)?;
             subscriptions
                 .entry(durable::digest(&serde_json::to_vec(&profile.delivery)?))

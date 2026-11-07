@@ -515,7 +515,7 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                 if isinstance(reattach, dict) and reattach.get('backend', 'prismabuild') != settings.backend:
                     raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "reattachment", "checkpoint_backend_changed")
                 if settings.backend != 'flux':
-                    reattachments.pop(base, None)
+                    reattach = reattachments.pop(base, None)
                 if (isinstance(reattach, dict) and (settings.backend == 'flux' or getattr(worktree, "pb_strict_reattach", False))
                         and (reattach.get("identity") != identity or reattach.get("tree") != tree)):
                     key = reattach.get("key")

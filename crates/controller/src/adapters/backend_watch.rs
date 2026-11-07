@@ -386,6 +386,20 @@ mod detach_tests {
         fn launch_context(&self, _: &Owner, _: &str) -> crate::run_backend::Result<LaunchContext> {
             panic!("no launch")
         }
+        fn begin_container_launch(
+            &self,
+            _: &Owner,
+            _: &RuntimeOwnership,
+        ) -> crate::run_backend::Result<ContainerLaunchIntent> {
+            panic!("no container launch")
+        }
+        fn bind_container_launch(
+            &self,
+            _: &Owner,
+            _: RuntimeOwnership,
+        ) -> crate::run_backend::Result<ContainerLaunchBinding> {
+            panic!("no container binding")
+        }
         fn retain_runtime(&self, _: &Owner, _: RuntimeOwnership) -> crate::run_backend::Result<()> {
             panic!("no runtime mutation")
         }
