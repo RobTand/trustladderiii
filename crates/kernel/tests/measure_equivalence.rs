@@ -49,7 +49,7 @@ fn index_measure_matches_the_original_iterator_over_generated_worlds() {
                     priority: Priority::Unranked,
                 },
             )
-            .0;
+            .world;
         }
         for i in 0..world.nodes.len() {
             for (status_index, &status) in statuses.iter().enumerate() {
@@ -67,7 +67,7 @@ fn index_measure_matches_the_original_iterator_over_generated_worlds() {
                         },
                     },
                 )
-                .0;
+                .world;
             }
         }
         assert_eq!(world.dependencies().len(), 3 * world.nodes.len());
@@ -106,7 +106,7 @@ fn roots() -> World {
                 priority: Priority::Unranked,
             },
         )
-        .0;
+        .world;
     }
     w
 }
@@ -126,7 +126,7 @@ fn dependency(w: World, owner: u64, request: Option<NodeId>, status: DependencyS
             },
         },
     )
-    .0
+    .world
 }
 
 /// #806 review r1: retain rejected cycle declarations in diagnostic comparisons.

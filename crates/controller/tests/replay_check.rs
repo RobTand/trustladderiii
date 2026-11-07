@@ -10,7 +10,7 @@ fn fixture() -> (EventRecord, World) {
         repo: RepoId(0),
         priority: Priority::Unranked,
     };
-    let (after, _) = tl3_kernel::step(before.clone(), event);
+    let tl3_kernel::StepResult { world: after, .. } = tl3_kernel::step(before.clone(), event);
     let replay = ReplayRecord {
         before: before.clone(),
         steps: vec![StepRecord {
@@ -105,7 +105,7 @@ fn measure_invariant_cost_per_step() {
                     priority: Priority::Unranked,
                 },
             )
-            .0;
+            .world;
         }
         let iterations = 200;
         let start = Instant::now();

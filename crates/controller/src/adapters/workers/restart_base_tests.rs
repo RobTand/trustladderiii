@@ -317,7 +317,7 @@ fn prerequisite_release_refreshes_main_once_for_the_planning_generation() {
         World,
     };
     fn send(world: &mut World, event: Event) {
-        *world = tl3_kernel::step(world.clone(), event).0;
+        *world = tl3_kernel::step(world.clone(), event).world;
         assert!(world.valid());
     }
     fn confirm(world: &mut World) {

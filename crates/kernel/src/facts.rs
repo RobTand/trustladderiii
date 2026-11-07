@@ -5,7 +5,7 @@ kernel_fn! {
 /// Fact rows / #771: compose declaration updates, merge credit and the remaining
 /// fact handlers. No fact assigns a command ID, effect sequence or ticket.
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
-pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> (result: ()) [
+pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox, report: &mut Report) -> (result: ()) [
     requires i < old(w).nodes@.len(), i <= u64::MAX as int,
         old(out).len + 4 <= OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
@@ -60,10 +60,13 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> 
             && match fact { Fact::Dependency { target, .. } =>
                 dependencies::delivery_changed(*old(w), *final(w), i as int, target), _ => false }),
 ] proof [reveal(dependencies::dependency_frame);] {
+
     kernel_snapshot! { before_fact = *w }
+    let before_phase = w.nodes[i].phase;
     kernel_proof! {
         if fact_progress_input(*w, i as int, fact) { fact_witness_premises(*w, i as int, fact); }
     }
+    let ci = report::ci_failure_cause(w.nodes[i].phase, w.nodes[i].current(), fact);
     match fact {
         Fact::DependencyRemove { kind, number } => w.remove_dependency(i, kind, number),
         Fact::Dependency { target, status } => w.dependency_fact(i, target, status, out),
@@ -73,6 +76,7 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> 
         } => pr_merged(w, i, head, checks_passed, out),
         _ => fact_transition(w, i, fact, out),
     }
+
     kernel_proof! {
         if fact_progress_input(before_fact@, i as int, fact) {
             if !(fact is Dependency) {
@@ -82,6 +86,8 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox) -> 
             }
         }
     }
+    report::record_fact(report, NodeId(i as u64), before_phase, w.nodes[i].phase, fact, ci);
+
 }
 }
 
@@ -367,7 +373,7 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
     kernel_snapshot! { prepared_ci = *w }
     kernel_snapshot! { prepared_out = *out }
     if !infra {
-        failed_round(w, i, ReviewStop::CiFailed, out);
+        failed_round_unreported(w, i, ReviewStop::CiFailed, out);
         kernel_proof! {
             facts_ci_failed_lemmas::retry_frame(prepared_ci@, *w, i, prepared_out@, *out);
         }
@@ -442,16 +448,55 @@ fn infrastructure_retry(m: &mut Node) -> (result: Option<bool>) [
     requires node_headroom(*old(m)), arithmetic_consistent(*old(m)),
     ensures (*final(m), result) == retirement::infrastructure_retry(*old(m)),
         final(m).generation as int <= old(m).generation as int + 1,
-] proof [reveal(retirement::infrastructure_retry);] {
+] {
+    kernel_snapshot! { before_retry = *m }
     m.run_failures += 1;
     if m.run_failures < 2 {
         set_phase(m, Phase::Publishing); // enqueue again
+        kernel_proof! {
+            assert((*m, None::<bool>) == retirement::infrastructure_retry(before_retry@)) by {
+                reveal(retirement::infrastructure_retry);
+            }
+        }
         None
     } else {
         m.run_failures = 0;
         m.run_incidents = (m.run_incidents + 1).min(2);
+        kernel_proof! {
+            assert(m.run_incidents == if before_retry@.run_incidents < 2 {
+                (before_retry@.run_incidents + 1) as u8
+            } else { 2u8 }) by {
+                if before_retry@.run_incidents < 2 {
+                    assert(m.run_incidents == before_retry@.run_incidents + 1);
+                } else {
+                    assert(m.run_incidents == 2);
+                }
+            }
+        }
         let needs_rob = m.run_incidents >= 2;
+        kernel_proof! {
+            assert((*m, Some(needs_rob)) == retirement::infrastructure_retry(before_retry@)) by {
+                reveal(retirement::infrastructure_retry);
+            }
+        }
         Some(needs_rob)
     }
+}
+}
+
+kernel_fn! {
+/// Forward the retry state contract while discarding its local report.
+fn failed_round_unreported(w: &mut World, i: usize, step: ReviewStop,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
+    ensures final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+] {
+    let mut unused_report = Report::new();
+    failed_round(w, i, step, out, &mut unused_report);
 }
 }

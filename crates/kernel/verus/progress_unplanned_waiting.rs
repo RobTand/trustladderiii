@@ -38,7 +38,7 @@ pub(super) fn verify_waiting(mut world: World, blocker: usize) -> (result: (Worl
     assert(!delivered);
     let mut out = Outbox::new();
     proof { reveal(empty_outbox); }
-    let moved = advance(&mut world, 0, &mut out);
+    let moved = advance(&mut world, 0, &mut out, &mut Report::new());
     assert(!moved);
     proof {
         reveal(advance_post); reveal(unchanged);

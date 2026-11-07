@@ -626,28 +626,36 @@ pub(super) open spec fn advance_post(before: Node, after: Node,
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
     fn advance_blocked(node: &mut Node, _next_ticket: &mut u64,
-        _context: AdvanceContext, _out: &mut Outbox) -> (result: bool) [
+        _context: AdvanceContext, _out: &mut Outbox, _report: &mut Report) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(_out).len),
             old(node).phase is Closed || old(node).waiting_incident || old(node).effect.is_some(),
-        ensures (!result ==> final(_out).len == old(_out).len),
+        ensures report::no_new_stop(old(node).phase, final(node).phase,
+                old(_report).entries@, final(_report).entries@),
+            (!result ==> final(_out).len == old(_out).len),
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), _context),
     ] proof [reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { before_phase = node.phase }
         let n = *node;
         if n.phase.is_closed() {
+            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
             return false;
         }
         if n.waiting_incident {
             if n.ticket.is_some() {
                 node.ticket = None;
+                kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
                 return true;
             }
+            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
             return false;
         }
         if n.effect.is_some() {
+            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
             return false; // one effect in flight at a time
         }
+        kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
         false
     }
 }
@@ -655,25 +663,33 @@ kernel_fn! {
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
     fn advance_finished(node: &mut Node, _next_ticket: &mut u64,
-        context: AdvanceContext, out: &mut Outbox) -> (result: bool) [
+        context: AdvanceContext, out: &mut Outbox, _report: &mut Report) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)).is_none(),
-        ensures (!result ==> final(out).len == old(out).len),
+        ensures report::no_new_stop(old(node).phase, final(node).phase,
+                old(_report).entries@, final(_report).entries@),
+            (!result ==> final(out).len == old(out).len),
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
     ] proof [reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { before_phase = node.phase }
         let n = *node;
         match n.phase {
             Phase::Publishing => {
                 set_phase(node, Phase::Queued);
+                kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
                 true
             }
             Phase::Stopping(outcome) if n.question.is_none() => {
                 close_node(node, context.node, outcome, out);
+                kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
                 true
             }
-            _ => false,
+            _ => {
+                kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+                false
+            },
         }
     }
 }
@@ -681,19 +697,25 @@ kernel_fn! {
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
     fn advance_do(node: &mut Node, _next_ticket: &mut u64,
-        context: AdvanceContext, out: &mut Outbox, kind: EffectKind) -> (result: bool) [
+        context: AdvanceContext, out: &mut Outbox, _report: &mut Report, kind: EffectKind) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Do(kind)),
-        ensures (!result ==> final(out).len == old(out).len),
+        ensures report::no_new_stop(old(node).phase, final(node).phase,
+                old(_report).entries@, final(_report).entries@),
+            (!result ==> final(out).len == old(out).len),
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
     ] proof [reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { before_phase = node.phase }
         let n = *node;
         if n.paused {
-            return pause_node(node);
+            let paused = pause_node(node);
+            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+            return paused;
         }
         emit_node(node, context.node, kind, out);
+        kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
         true
     }
 }
@@ -701,20 +723,26 @@ kernel_fn! {
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
     fn advance_start(node: &mut Node, next_ticket: &mut u64,
-        context: AdvanceContext, out: &mut Outbox, role: Role) -> (result: bool) [
+        context: AdvanceContext, out: &mut Outbox, _report: &mut Report, role: Role) -> (result: bool) [
         requires advance_pre(*old(node), *old(next_ticket), old(out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Start(role)),
-        ensures (!result ==> final(out).len == old(out).len),
+        ensures report::no_new_stop(old(node).phase, final(node).phase,
+                old(_report).entries@, final(_report).entries@),
+            (!result ==> final(out).len == old(out).len),
             advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
             result == advance_enabled(*old(node), context),
     ] proof [reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { before_phase = node.phase }
         let n = *node;
         if n.paused {
-            return pause_node(node);
+            let paused = pause_node(node);
+            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+            return paused;
         }
         if n.ticket.is_none() {
             take_ticket_node(node, next_ticket);
+            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
             return true;
         }
         if context.pool {
@@ -724,8 +752,10 @@ kernel_fn! {
             m.run = Some(m.generation);
             m.pos += 1;
             emit_node(node, context.node, EffectKind::StartRun(role), out);
+            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
             return true;
         }
+        kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
         false
     }
 }
@@ -733,22 +763,28 @@ kernel_fn! {
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
     fn advance_checks(node: &mut Node, _next_ticket: &mut u64,
-        context: AdvanceContext, out: &mut Outbox) -> (result: bool) [
+        context: AdvanceContext, out: &mut Outbox, _report: &mut Report) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::StartChecks),
-        ensures (!result ==> final(out).len == old(out).len),
+        ensures report::no_new_stop(old(node).phase, final(node).phase,
+                old(_report).entries@, final(_report).entries@),
+            (!result ==> final(out).len == old(out).len),
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
     ] proof [reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { before_phase = node.phase }
         let n = *node;
         if n.paused {
-            return pause_node(node);
+            let paused = pause_node(node);
+            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+            return paused;
         }
         let m = &mut *node;
         m.job = Some(m.generation);
         m.pos += 1;
         emit_node(node, context.node, EffectKind::SubmitChecks, out);
+        kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
         true
     }
 }
@@ -756,22 +792,28 @@ kernel_fn! {
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
     fn advance_rebase(node: &mut Node, _next_ticket: &mut u64,
-        context: AdvanceContext, out: &mut Outbox) -> (result: bool) [
+        context: AdvanceContext, out: &mut Outbox, _report: &mut Report) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::StartRebase),
-        ensures (!result ==> final(out).len == old(out).len),
+        ensures report::no_new_stop(old(node).phase, final(node).phase,
+                old(_report).entries@, final(_report).entries@),
+            (!result ==> final(out).len == old(out).len),
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
     ] proof [reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { before_phase = node.phase }
         let n = *node;
         if n.paused {
-            return pause_node(node);
+            let paused = pause_node(node);
+            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+            return paused;
         }
         let m = &mut *node;
         m.run = Some(m.generation);
         m.pos += 1;
         emit_node(node, context.node, EffectKind::StartRebase, out);
+        kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
         true
     }
 }
@@ -779,23 +821,28 @@ kernel_fn! {
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
     fn advance_admit(node: &mut Node, _next_ticket: &mut u64,
-        context: AdvanceContext, _out: &mut Outbox) -> (result: bool) [
+        context: AdvanceContext, _out: &mut Outbox, _report: &mut Report) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(_out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Admit),
-        ensures (!result ==> final(_out).len == old(_out).len),
+        ensures report::no_new_stop(old(node).phase, final(node).phase,
+                old(_report).entries@, final(_report).entries@),
+            (!result ==> final(_out).len == old(_out).len),
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
             result ==> final(node).phase == (Phase::Planning { must_split: false }),
     ] proof [reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { before_phase = node.phase }
         let n = *node;
         if n.paused || !context.admit {
+            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
             return false;
         }
         let m = &mut *node;
         m.credit.withheld = false;
         m.planning_started = true;
         set_phase(m, Phase::Planning { must_split: false });
+        kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
         true
     }
 }
@@ -803,35 +850,44 @@ kernel_fn! {
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
     fn advance_slot(node: &mut Node, next_ticket: &mut u64,
-        context: AdvanceContext, _out: &mut Outbox) -> (result: bool) [
+        context: AdvanceContext, _out: &mut Outbox, _report: &mut Report) -> (result: bool) [
         requires advance_pre(*old(node), *old(next_ticket), old(_out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Slot),
-        ensures (!result ==> final(_out).len == old(_out).len),
+        ensures report::no_new_stop(old(node).phase, final(node).phase,
+                old(_report).entries@, final(_report).entries@),
+            (!result ==> final(_out).len == old(_out).len),
             advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
             result == advance_enabled(*old(node), context),
     ] proof [reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { before_phase = node.phase }
         let n = *node;
         let Phase::Ready(r) = n.phase else {
+            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
             return false;
         };
         if n.paused {
             if n.ticket.is_some() {
                 node.ticket = None;
+                kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
                 return true;
             }
+            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
             return false;
         }
         if n.ticket.is_none() {
             take_ticket_node(node, next_ticket);
+            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
             return true;
         }
         if context.slot {
             let m = &mut *node;
             m.holds = true;
             set_phase(m, r.phase());
+            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
             return true;
         }
+        kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
         false
     }
 }
@@ -839,17 +895,21 @@ kernel_fn! {
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
     fn advance_release(node: &mut Node, _next_ticket: &mut u64,
-        _context: AdvanceContext, _out: &mut Outbox) -> (result: bool) [
+        _context: AdvanceContext, _out: &mut Outbox, _report: &mut Report) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(_out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Release),
-        ensures (!result ==> final(_out).len == old(_out).len),
+        ensures report::no_new_stop(old(node).phase, final(node).phase,
+                old(_report).entries@, final(_report).entries@),
+            (!result ==> final(_out).len == old(_out).len),
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), _context),
     ] proof [reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { before_phase = node.phase }
         let m = &mut *node;
         m.holds = false;
         m.pos += 1;
+        kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
         true
     }
 }
@@ -858,7 +918,7 @@ kernel_fn! {
     /// Stopping: private verbatim absent-resource branch.
     #[allow(clippy::needless_return)] // Preserve the original block's return.
     fn advance_teardown_missing(node: &mut Node, _next_ticket: &mut u64,
-        _context: AdvanceContext, _out: &mut Outbox, kind: EffectKind) -> (result: bool) [
+        _context: AdvanceContext, _out: &mut Outbox, _report: &mut Report, kind: EffectKind) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(_out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none()
                 && current_item(*old(node)) == Some(Item::Teardown(kind)) && old(node).question.is_none(),
@@ -869,7 +929,9 @@ kernel_fn! {
                 EffectKind::RemoveWorktree => !old(node).worktree,
                 _ => false,
             },
-        ensures (!result ==> final(_out).len == old(_out).len),
+        ensures report::no_new_stop(old(node).phase, final(node).phase,
+                old(_report).entries@, final(_report).entries@),
+            (!result ==> final(_out).len == old(_out).len),
             advance_post(*old(node), *final(node),
                 *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), _context),
@@ -881,11 +943,13 @@ kernel_fn! {
         assert(pending_rank(n) == 0 && pending_rank(after) == 0);
         teardown_facts::absent(n, *_next_ticket, _context, kind);
     ] {
+        kernel_snapshot! { before_phase = node.phase }
         let m = &mut *node;
         if kind == EffectKind::StopRun {
             m.pool = false;
         }
         m.pos += 1;
+        kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
         return true;
     }
 }
@@ -893,7 +957,7 @@ kernel_fn! {
 kernel_fn! {
     /// Stopping: private verbatim cleanup-emission branch.
     fn advance_teardown_emitting(node: &mut Node, _next_ticket: &mut u64,
-        context: AdvanceContext, out: &mut Outbox, kind: EffectKind) -> (result: bool) [
+        context: AdvanceContext, out: &mut Outbox, _report: &mut Report, kind: EffectKind) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none()
                 && current_item(*old(node)) == Some(Item::Teardown(kind)) && old(node).question.is_none(),
@@ -904,12 +968,16 @@ kernel_fn! {
                 EffectKind::RemoveWorktree => !old(node).worktree,
                 _ => false,
             }),
-        ensures (!result ==> final(out).len == old(out).len),
+        ensures report::no_new_stop(old(node).phase, final(node).phase,
+                old(_report).entries@, final(_report).entries@),
+            (!result ==> final(out).len == old(out).len),
             advance_post(*old(node), *final(node),
                 *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
 ] proof [reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { before_phase = node.phase }
         emit_node(node, context.node, kind, out);
+        kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
         true
     }
 }
@@ -919,16 +987,20 @@ kernel_fn! {
     #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
     #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
     fn advance_teardown(node: &mut Node, _next_ticket: &mut u64,
-        context: AdvanceContext, out: &mut Outbox, kind: EffectKind) -> (result: bool) [
+        context: AdvanceContext, out: &mut Outbox, _report: &mut Report, kind: EffectKind) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(out).len),
             !(old(node).phase is Closed) && !old(node).waiting_incident && old(node).effect.is_none() && current_item(*old(node)) == Some(Item::Teardown(kind)),
-        ensures (!result ==> final(out).len == old(out).len),
+        ensures report::no_new_stop(old(node).phase, final(node).phase,
+                old(_report).entries@, final(_report).entries@),
+            (!result ==> final(out).len == old(out).len),
             advance_post(*old(node), *final(node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
     ] proof [reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { before_phase = node.phase }
         let n = *node;
         if n.question.is_some() {
+            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
             return false; // waiting for Rob
         }
         kernel_proof! { assert(n.phase is Stopping); }
@@ -940,23 +1012,27 @@ kernel_fn! {
             _ => false,
         };
         if gone {
-            return advance_teardown_missing(node, _next_ticket, context, out, kind);
+            return advance_teardown_missing(node, _next_ticket, context, out, _report, kind);
         }
-        advance_teardown_emitting(node, _next_ticket, context, out, kind)
+        advance_teardown_emitting(node, _next_ticket, context, out, _report, kind)
     }
 }
 
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
     fn advance_idle(_node: &mut Node, _next_ticket: &mut u64,
-        _context: AdvanceContext, _out: &mut Outbox) -> (result: bool) [
+        _context: AdvanceContext, _out: &mut Outbox, _report: &mut Report) -> (result: bool) [
         requires advance_pre(*old(_node), *old(_next_ticket), old(_out).len),
             !(old(_node).phase is Closed) && !old(_node).waiting_incident && old(_node).effect.is_none() && matches!(current_item(*old(_node)), Some(Item::Await | Item::Merge | Item::Answer)),
-        ensures (!result ==> final(_out).len == old(_out).len),
+        ensures report::no_new_stop(old(_node).phase, final(_node).phase,
+                old(_report).entries@, final(_report).entries@),
+            (!result ==> final(_out).len == old(_out).len),
             advance_post(*old(_node), *final(_node),
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(_node), _context),
     ] proof [reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { before_phase = _node.phase }
+        kernel_proof! { report::lemmas::quiet(before_phase@, _node.phase, _report.entries@); }
         false
     }
 }
@@ -964,9 +1040,11 @@ kernel_fn! {
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
     pub(super) fn advance_node(node: &mut Node, next_ticket: &mut u64,
-        context: AdvanceContext, out: &mut Outbox) -> (result: bool) [
+        context: AdvanceContext, out: &mut Outbox, report: &mut Report) -> (result: bool) [
         requires advance_pre(*old(node), *old(next_ticket), old(out).len),
-        ensures (!result ==> final(out).len == old(out).len),
+        ensures report::no_new_stop(old(node).phase, final(node).phase,
+                old(report).entries@, final(report).entries@),
+            (!result ==> final(out).len == old(out).len),
             advance_post(*old(node), *final(node),
             *old(next_ticket), *final(next_ticket), result),
             result == advance_enabled(*old(node), context),
@@ -975,21 +1053,21 @@ kernel_fn! {
     ] {
         let n = *node;
         if n.phase.is_closed() || n.waiting_incident || n.effect.is_some() {
-            return advance_blocked(node, next_ticket, context, out);
+            return advance_blocked(node, next_ticket, context, out, report);
         }
         let Some(item) = n.current() else {
-            return advance_finished(node, next_ticket, context, out);
+            return advance_finished(node, next_ticket, context, out, report);
         };
         match item {
-            Item::Do(kind) => advance_do(node, next_ticket, context, out, kind),
-            Item::Start(role) => advance_start(node, next_ticket, context, out, role),
-            Item::StartChecks => advance_checks(node, next_ticket, context, out),
-            Item::StartRebase => advance_rebase(node, next_ticket, context, out),
-            Item::Await | Item::Merge | Item::Answer => advance_idle(node, next_ticket, context, out),
-            Item::Admit => advance_admit(node, next_ticket, context, out),
-            Item::Slot => advance_slot(node, next_ticket, context, out),
-            Item::Release => advance_release(node, next_ticket, context, out),
-            Item::Teardown(kind) => advance_teardown(node, next_ticket, context, out, kind),
+            Item::Do(kind) => advance_do(node, next_ticket, context, out, report, kind),
+            Item::Start(role) => advance_start(node, next_ticket, context, out, report, role),
+            Item::StartChecks => advance_checks(node, next_ticket, context, out, report),
+            Item::StartRebase => advance_rebase(node, next_ticket, context, out, report),
+            Item::Await | Item::Merge | Item::Answer => advance_idle(node, next_ticket, context, out, report),
+            Item::Admit => advance_admit(node, next_ticket, context, out, report),
+            Item::Slot => advance_slot(node, next_ticket, context, out, report),
+            Item::Release => advance_release(node, next_ticket, context, out, report),
+            Item::Teardown(kind) => advance_teardown(node, next_ticket, context, out, report, kind),
         }
     }
 }

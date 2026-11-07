@@ -114,7 +114,8 @@ pub fn check_record(
         check_world(&world).map_err(|rule| fail(&format!("invariant {rule}")))?;
     }
     for step in replay.steps {
-        let (next, _) = tl3_kernel::step(step.input.clone(), step.event);
+        let tl3_kernel::StepResult { world: next, .. } =
+            tl3_kernel::step(step.input.clone(), step.event);
         check_world(&next).map_err(|rule| fail(&format!("invariant {rule}")))?;
         if next != step.after {
             return Err(fail("step snapshot diverged"));

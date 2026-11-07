@@ -266,8 +266,14 @@ fn compare(n: Node, ticket: u64, c: AdvanceContext, out: Outbox, kind: EffectKin
         &mut expected_out,
         kind,
     );
-    let actual_result =
-        super::advance_teardown(&mut actual, &mut actual_ticket, c, &mut actual_out, kind);
+    let actual_result = super::advance_teardown(
+        &mut actual,
+        &mut actual_ticket,
+        c,
+        &mut actual_out,
+        &mut Report::new(),
+        kind,
+    );
     assert_eq!(actual_result, expected_result, "result differs");
     assert_eq!(actual, expected, "node differs");
     assert_eq!(actual_ticket, expected_ticket, "ticket differs");
