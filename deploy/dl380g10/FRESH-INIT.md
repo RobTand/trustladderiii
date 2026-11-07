@@ -17,7 +17,11 @@ captain evidence at that exact head, including Verus and kernel tests. Both requ
 one authenticated nightly whose artifact proves the exact deployment head.
 Missing, unknown or mismatched evidence refuses. The helper uses
 `/home/rob/tmp/tl3-build/dev_evidence.py`; it does not accept local verdict receipts
-as qualification. Qualification and its network children run under a deadline.
+as qualification. Qualification and its network children run under a deadline before any stop.
+The captain evidence directory is fixed; no caller override is accepted.
+The first caller qualification is read-only Git/evidence inspection on the coordinator,
+not a test or build. The same qualification runs inside the admitted exact-source
+clone before any outage, so missing history or evidence refuses before stop.
 Runtime manifests must match their content addresses and private inventory
 hashes; missing, changed, writable or unlisted runtime modules refuse before the outage.
 The nightly lookup conservatively refuses if the authoritative helper selects a
@@ -73,24 +77,43 @@ The helper performs this sequence:
 
 1. Authenticate qualification, validate the exact prepared release and unchanged
    config, and verify the state inventory and runtime manifest identities.
-2. Stop tl3d, prove `inactive`, stop Postgres, and prove both exactly `inactive`.
+2. Validate the absent backup destination, private parent and all non-DB source
+   hygiene before stopping. Size the exact file inventory against the bounded
+   action budget. Stop tl3d, prove `inactive`, explicitly stop and prove
+   MLflow/status/console inactive, then stop Postgres and prove it inactive.
 3. Copy the complete cluster including WAL and declared tablespaces, controller
    journals, attempts and private config. Hash every file and record ownership,
-   modes, directories and scope. Verify both original and copied inventories,
+   modes, directories and scope. Verify the copied inventory against the original pre-copy hashes,
    then flush the copy before any reset. Undeclared symlinks and special files refuse.
 4. Empty only the manifest's supported adapter directories. Keep the cold copy
-   as diagnostic evidence. Install the selected release binaries byte for byte.
-5. Start Postgres and check readiness. The SQL helper reauthenticates qualification
-   and revalidates the cold copy and unchanged config. It refuses live TL3 database
+   as diagnostic evidence. Install each selected release binary from one hash-checked buffer, then verify
+   the installed checksums before executing any selected binary.
+5. Start Postgres and check readiness. The SQL helper revalidates the cold copy and unchanged config without network
+   calls. A one-use, expiring capability crosses only private orchestrator pipes;
+   the saved context contains only its digest. Archived context alone cannot
+   authorize a reset. Atomic consumption precedes SQL mutation, and Postgres
+   system identity must match the cold copy. It refuses live TL3 database
    sessions, drops only the constant identifier `tl3`, recreates it, initializes
    this revision's complete schema on the empty database, and verifies the reader.
 6. Start selected tl3d, verify its schema and webhook HTTP response, then explicitly
    start MLflow, status and console. Require active units and 90 seconds of stable
-   tl3d readiness with zero restarts.
+   readiness of all four client units with zero restarts.
+
+The canonical PB actions have a 7200-second deadline, with the exact-source child
+bounded at 7100 seconds. Preflight estimates inventory transfer cost conservatively
+at 20 MiB/s with eight I/O passes plus 1800 seconds overhead; it refuses a predicted
+budget above 6900 seconds before any stop. This is a sizing bound, not a measured
+live cold-copy timing claim. The data root is read for its initial hash, copy
+verification and SQL-boundary copy verification, without rehashing it at file reset.
+Actual fleet/cold-copy timing still requires deployment acceptance.
 
 All subprocesses have deadlines. A failure leaves the diagnostic backup intact
 and does not restart an earlier binary or import old state. Stop dispatch and
-diagnose before choosing another qualified build. Full board/stream, prompt,
+diagnose before choosing another qualified build. A refusal or interruption after
+stopping services leaves them down, possibly with emptied file journals. The
+one-use capability cannot be replayed. Re-run the complete fresh-init flow with
+a NEW backup destination and current qualified inputs; retain the original
+backup and partial-attempt evidence. Never resume an isolated DROP step. Full board/stream, prompt,
 executor identity and external-work acceptance remain the deployment operator's
 post-deploy qualification; these fixture tests do not prove live behavior.
 
@@ -111,4 +134,13 @@ The source contract is recorded at
 SHA-256 `420ee06aa5cb1fd257e746409e05fe101a432059a013aaee06e40b5ba7be33e1`.
 Reconcile it against the chosen integrated FX head before deployment.
 
-The canonical caller runs each admitted action through `exact-source.py`. PrismaBuild seals a child snapshot with a tracked closure stamp; the launcher makes a private temporary clone and checks out the selected qualified commit. Build and deployment retain their strict clean-tree checks. The snapshot itself remains unchanged.
+The canonical caller runs each admitted action through `exact-source.py`. PrismaBuild seals a child snapshot with a tracked closure stamp; the launcher makes a private temporary clone on the PB workspace volume and checks out the selected
+qualified commit. It strips inherited GIT_* repository overrides and verifies
+complete history, the selected tree, and parent ancestry before executing.
+Cargo output is explicitly on the configured workspace volume, not TMPDIR.
+Release output is staged privately and atomically published only when complete;
+a failed build/copy does not publish a retry-wedging directory. Build and deployment retain their strict clean-tree checks. The snapshot itself remains unchanged.
+
+The current matching-nightly policy remains mandatory while Kani exists. Its
+authoritative gate and nightly definition must change together in the Kani
+retirement unit. This tooling does not anticipate or bypass that policy change.

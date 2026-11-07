@@ -21,18 +21,79 @@ spec.loader.exec_module(deploy)
 
 
 class ExactSourceTests(unittest.TestCase):
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory(prefix="tl3-exact-source-fixture-")
+        self.addCleanup(self.scratch.cleanup)
+        self.source = Path(self.scratch.name) / "repo"
+        self.source.mkdir()
+        self.environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        self.git("init", "--quiet")
+        self.git("commit", "--quiet", "--allow-empty", "-m", "fixture base")
+        launcher = self.source / "deploy/dl380g10/exact-source.py"
+        launcher.parent.mkdir(parents=True)
+        launcher.write_bytes(Path(__file__).with_name("exact-source.py").read_bytes())
+        self.git("add", ".")
+        self.git("commit", "--quiet", "-m", "selected source")
+        self.head = self.git("rev-parse", "HEAD").decode().strip()
+        # Model PB's tracked child stamp without requiring the test's checkout
+        # or Bazel runfiles to contain Git history.
+        (self.source / "pb-fixture-stamp").write_text("synthetic PB child stamp\n")
+        self.git("add", ".")
+        self.git("commit", "--quiet", "-m", "PB snapshot fixture")
+        self.launcher = launcher
+
+    def git(self, *args):
+        return subprocess.check_output(["git", "-c", "user.name=Deployment fixture",
+                                       "-c", "user.email=fixture@example.invalid",
+                                       "-c", "commit.gpgsign=false", *args], cwd=self.source,
+                                      env=self.environment, stderr=subprocess.PIPE, timeout=15)
+
     def test_pb_snapshot_executes_exact_selected_source(self):
-        source = Path(__file__).resolve().parents[2]
-        # PB seals a child commit with its own tracked stamp. Execute its parent.
-        head = subprocess.check_output(["git", "rev-parse", "HEAD^"], cwd=source, timeout=15).decode().strip()
         result = subprocess.run([
-            "python3", "-I", str(source / "deploy/dl380g10/exact-source.py"), head,
+            "python3", "-I", str(self.launcher), self.head,
             "python3", "-c",
-            "import subprocess,sys; "
+            "import subprocess,sys; from pathlib import Path; "
             "assert subprocess.check_output(['git','rev-parse','HEAD']).decode().strip()==sys.argv[1]; "
-            "assert not subprocess.check_output(['git','status','--porcelain'])", head,
-        ], cwd=source, capture_output=True, timeout=90)
+            "assert not subprocess.check_output(['git','status','--porcelain']); "
+            "assert not Path('pb-fixture-stamp').exists()", self.head,
+        ], env=self.environment, cwd=self.source, capture_output=True, timeout=90)
         self.assertEqual(result.returncode, 0, result.stderr.decode())
+
+    def test_review_exact_source_ignores_inherited_git_repository_overrides(self):
+        environment = self.environment | {"GIT_DIR": "/nonexistent/deploy-git-override", "GIT_WORK_TREE": "/nonexistent"}
+        result = subprocess.run(["python3", "-I", str(self.launcher), self.head,
+                                 "git", "merge-base", "--is-ancestor", self.head + "^", self.head],
+                                env=environment, capture_output=True, timeout=90)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+
+
+class ReleasePublicationTests(unittest.TestCase):
+    def test_failed_copy_does_not_publish_or_wedge_release_retry(self):
+        script = Path(__file__).with_name("build-release.sh").resolve()
+        with tempfile.TemporaryDirectory(prefix="tl3-build-publication-") as temporary:
+            root = Path(temporary)
+            tools = root / "tools"
+            tools.mkdir()
+            git = tools / "git"
+            git.write_text("#!/bin/sh\ncase \"$*\" in *status*) exit 0;; *rev-parse*) echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;; esac\n")
+            cargo = tools / "cargo"
+            cargo.write_text("#!/bin/sh\nmkdir -p \"$CARGO_TARGET_DIR/release/examples\"\n"
+                             "for name in tl3 tl3d tl3-worker-supervisor; do printf binary > \"$CARGO_TARGET_DIR/release/$name\"; done\n"
+                             "if [ \"$TL3_TEST_SKIP_HELPER\" = 0 ]; then printf helper > \"$CARGO_TARGET_DIR/release/examples/tl3-deploy\"; fi\n")
+            git.chmod(0o700)
+            cargo.chmod(0o700)
+            output = root / "release"
+            environment = os.environ | {"PATH": str(tools) + os.pathsep + os.environ["PATH"],
+                                         "CARGO_TARGET_DIR": str(root / "target"), "TL3_TEST_SKIP_HELPER": "1"}
+            first = subprocess.run(["bash", str(script), str(output), "a" * 40], env=environment,
+                                   capture_output=True, timeout=30)
+            self.assertNotEqual(first.returncode, 0)
+            self.assertFalse(output.exists(), first.stderr.decode())
+            environment["TL3_TEST_SKIP_HELPER"] = "0"
+            second = subprocess.run(["bash", str(script), str(output), "a" * 40], env=environment,
+                                    capture_output=True, timeout=30)
+            self.assertEqual(second.returncode, 0, second.stderr.decode())
+            self.assertEqual(json.loads((output / "SOURCE.json").read_text())["head"], "a" * 40)
 
 
 class FreshInitTests(unittest.TestCase):
@@ -144,8 +205,10 @@ class FreshInitTests(unittest.TestCase):
         args.binaries.mkdir(mode=0o700)
         for name in deploy.RELEASE_BINARIES:
             (args.binaries / name).write_bytes(b"selected binary")
-        for name in ("SOURCE.json", "SHA256SUMS"):
-            (args.binaries / name).write_bytes(b"fixture provenance")
+        hashes = {name: hashlib.sha256(b"selected binary").hexdigest() for name in deploy.RELEASE_BINARIES}
+        deploy.write_file(args.binaries / "SOURCE.json", json.dumps({"head": args.head, "binaries": hashes}).encode())
+        deploy.write_file(args.binaries / "SHA256SUMS", ''.join(
+            f"{hashes[name]}  {name}\n" for name in deploy.RELEASE_BINARIES).encode())
         deploy.write_file(args.state_manifest, b"fixture scope")
         deploy.write_file(self.config / "tl3.toml", b'[github]\nwebhook_listen="127.0.0.1:8742"\n')
         self.states.update({unit: "active" for unit in
@@ -161,15 +224,19 @@ class FreshInitTests(unittest.TestCase):
                 self.states[argv[3]] = "active"
             if "fresh-database" in argv:
                 self.assertEqual(self.states["tl3d.service"], "inactive")
+                for unit in ("tl3-mlflow.service", "tl3-status.service", "tl3-console.service"):
+                    self.assertEqual(self.states[unit], "inactive")
                 self.assertEqual((self.backup / "data/pg_wal/segment").read_bytes(), b"diagnostic WAL")
             return original(command, **kwargs)
 
         with patch.object(deploy, "fresh_scope", return_value=(self.sources, ("world", "journal"), self.config / "tl3.toml")), \
              patch.object(deploy, "run", side_effect=transport), \
-             patch.object(deploy, "listener_ready", return_value=True), patch.object(deploy.time, "sleep"):
+             patch.object(deploy, "listener_ready", return_value=True), \
+             patch.object(deploy, "cold_cluster_identity", return_value="123456"), patch.object(deploy.time, "sleep"):
             deploy.fresh_init(args)
         stops = [call[-1] for call in self.calls if call[:3] == ["systemctl", "--user", "stop"]]
-        self.assertEqual(stops, ["tl3d.service", "tl3-postgres.service"])
+        self.assertEqual(stops, ["tl3d.service", "tl3-mlflow.service", "tl3-status.service",
+                                 "tl3-console.service", "tl3-postgres.service"])
         starts = [call[-1] for call in self.calls if call[:3] == ["systemctl", "--user", "start"]]
         self.assertEqual(starts, ["tl3-postgres.service", "tl3d.service", "tl3-mlflow.service",
                                   "tl3-status.service", "tl3-console.service"])
@@ -323,6 +390,97 @@ class FreshInitTests(unittest.TestCase):
         (bundle / "unlisted.py").write_text("unexpected")
         with self.assertRaisesRegex(RuntimeError, "unlisted"):
             deploy.verify_runtime_files(bundle, manifest)
+
+
+    def test_review_bad_backup_parent_refuses_before_service_stop(self):
+        args, _, _ = self.scope_fixture()
+        args.lane = "release"
+        args.evidence = self.home
+        args.backup.parent.mkdir(mode=0o775)
+        args.backup.parent.chmod(0o775)
+        with patch.object(deploy, "verify_runtime_inputs"):
+            with self.assertRaises(RuntimeError):
+                deploy.fresh_init(args)
+        self.assertFalse(any(call[:3] == ["systemctl", "--user", "stop"] for call in self.calls))
+
+    def test_review_source_symlink_refuses_before_service_stop(self):
+        args, _, _ = self.scope_fixture()
+        args.lane = "release"
+        args.evidence = self.home
+        (self.config / "unexpected-link").symlink_to(self.home)
+        with patch.object(deploy, "verify_runtime_inputs"):
+            with self.assertRaises(RuntimeError):
+                deploy.fresh_init(args)
+        self.assertFalse(any(call[:3] == ["systemctl", "--user", "stop"] for call in self.calls))
+
+    def test_review_reset_does_not_rehash_unchanged_postgres_cluster(self):
+        original = deploy.tree_manifest
+        reads = []
+        def inventory(path, *args, **kwargs):
+            if path == self.cluster:
+                reads.append(path)
+            return original(path, *args, **kwargs)
+        with patch.object(deploy, "tree_manifest", side_effect=inventory):
+            deploy.cold_backup(self.sources, self.backup)
+            deploy.reset_file_state(self.sources, self.backup, ("world", "journal"))
+        self.assertLessEqual(len(reads), 1)
+
+    def test_review_archived_context_cannot_authorize_drop_or_call_network_gate(self):
+        deploy.cold_backup(self.sources, self.backup)
+        for name in ("world", "journal"):
+            for path in self.sources[name].iterdir():
+                path.unlink()
+        context = self.backup / "reset-context.json"
+        fields = {"home": str(self.home), "head": "a" * 40, "lane": "release",
+                  "evidence": str(self.home), "binaries": str(self.home / "binaries"),
+                  "state_manifest": str(self.home / "state.json"), "backup": str(self.backup)}
+        deploy.write_file(context, json.dumps(fields).encode())
+        self.states["tl3-postgres.service"] = "active"
+        with patch.object(deploy, "fresh_scope", return_value=(self.sources, (),
+                                                               self.config / "tl3.toml")):
+            with self.assertRaises(RuntimeError):
+                deploy.authorize_fresh_database(context, self.config / "tl3.toml")
+        self.assertFalse(any("qualify-fresh" in call for call in self.calls))
+
+
+    def test_review_authorization_is_single_use_and_offline(self):
+        deploy.cold_backup(self.sources, self.backup)
+        context = self.backup / "reset-context.json"
+        capability = b"e" * 64
+        fields = {"home": str(self.home), "head": "a" * 40, "lane": "release",
+                  "binaries": str(self.home / "binaries"), "state_manifest": str(self.home / "state.json"),
+                  "backup": str(self.backup), "capability_sha256": hashlib.sha256(capability).hexdigest(),
+                  "expires_monotonic": time.monotonic() + 500, "system_identifier": "12345"}
+        deploy.write_file(context, json.dumps(fields).encode())
+        self.states.update({unit: "inactive" for unit in
+                            ("tl3d.service", "tl3-mlflow.service", "tl3-status.service", "tl3-console.service")})
+        self.states["tl3-postgres.service"] = "active"
+        with patch.object(deploy, "fresh_scope", return_value=(self.sources, (), self.config / "tl3.toml")):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                deploy.authorize_fresh_database(context, self.config / "tl3.toml", capability)
+            self.assertEqual(json.loads(output.getvalue()), {"system_identifier": "12345"})
+            with self.assertRaisesRegex(RuntimeError, "consumed"):
+                deploy.authorize_fresh_database(context, self.config / "tl3.toml", capability)
+        self.assertFalse(any("qualify-fresh" in call for call in self.calls))
+        self.assertNotIn(capability.decode(), context.read_text())
+
+    def test_review_stability_detects_dependent_crash(self):
+        self.states.update({unit: "active" for unit in
+                            ("tl3d.service", "tl3-mlflow.service", "tl3-status.service", "tl3-console.service")})
+        def crash(*unused):
+            self.states["tl3-console.service"] = "failed"
+        with patch.object(deploy.time, "sleep", side_effect=crash), \
+             patch.object(deploy, "listener_ready", return_value=True):
+            with self.assertRaisesRegex(RuntimeError, "console|stability"):
+                deploy.verify_stability("127.0.0.1:8742")
+
+    def test_review_binary_install_refuses_changed_source_bytes(self):
+        args, _, _ = self.scope_fixture()
+        (args.binaries / "tl3-deploy").write_bytes(b"changed after selection")
+        with self.assertRaisesRegex(RuntimeError, "hash|binary|release"):
+            deploy.install_selected_binaries(args.binaries, self.root)
+        self.assertFalse((self.root / "bin/tl3-deploy").exists())
 
 
 class DeployTests(unittest.TestCase):
@@ -570,7 +728,7 @@ class DeployTests(unittest.TestCase):
     def test_check_requires_every_release_binary_in_the_manifest(self):
         def drop(directory):
             sums = (directory / "SHA256SUMS").read_text().splitlines(keepends=True)
-            (directory / "SHA256SUMS").write_text("".join(l for l in sums if not l.rstrip().endswith(" tl3d")))
+            (directory / "SHA256SUMS").write_text("".join(line for line in sums if not line.rstrip().endswith(" tl3d")))
         result, output = self.checked_bundle(drop)
         self.assertGreaterEqual(result, 1, output)
         self.assertIn("MISSING bin/tl3d", output)

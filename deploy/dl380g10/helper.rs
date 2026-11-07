@@ -57,9 +57,16 @@ fn run() -> Result<()> {
             let [context] = rest else {
                 return Err("fresh database requires the verified cold-backup context".into());
             };
-            let authorization = std::process::Command::new("timeout")
+            use std::io::Read;
+            use std::process::Stdio;
+            let mut capability = Vec::new();
+            std::io::stdin().take(65).read_to_end(&mut capability)?;
+            if capability.len() != 65 || capability[64] != b'\n' {
+                return Err("fresh database needs the live orchestrator capability".into());
+            }
+            let mut authorization = std::process::Command::new("timeout")
                 .args([
-                    "650s",
+                    "3300s",
                     "python3",
                     "-I",
                     "deploy/dl380g10/deploy.py",
@@ -69,15 +76,28 @@ fn run() -> Result<()> {
                     "--database-config",
                     path,
                 ])
-                .output()
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
                 .map_err(|_| "fresh database authorization unavailable")?;
-            if !authorization.status.success() {
+            authorization
+                .stdin
+                .take()
+                .ok_or("authorization pipe missing")?
+                .write_all(&capability)?;
+            let result = authorization.wait_with_output()?;
+            if !result.status.success() {
                 return Err(
-                    "fresh database requires authenticated qualification and verified cold backup"
-                        .into(),
+                    "fresh database requires current qualification and verified cold backup".into(),
                 );
             }
-            fresh_database(&tl3_config::Config::load_status(path)?)?;
+            let identity: Value = serde_json::from_slice(&result.stdout)
+                .map_err(|_| "cold cluster identity unavailable")?;
+            let identifier = identity["system_identifier"]
+                .as_str()
+                .ok_or("cold cluster identity unavailable")?;
+            fresh_database(&tl3_config::Config::load_status(path)?, identifier)?;
         }
         "console-role" => console_role(&tl3_config::Config::load_status(path)?)?,
         "store-check" => {
@@ -136,28 +156,35 @@ fn database(config: &tl3_config::Config) -> Result<()> {
     Ok(())
 }
 
-fn fresh_database(config: &tl3_config::Config) -> Result<()> {
+fn fresh_database(config: &tl3_config::Config, identifier: &str) -> Result<()> {
     // This primitive is called only after deploy.py's authenticated gate and
     // verified cold copy. Check the controller again at the SQL boundary.
-    let stopped = std::process::Command::new("timeout")
-        .args([
-            "15s",
-            "systemctl",
-            "--user",
-            "show",
-            "tl3d.service",
-            "--property=ActiveState",
-            "--value",
-        ])
-        .output()
-        .map_err(|_| "cannot prove tl3d stopped")?;
-    if !stopped.status.success() || stopped.stdout != b"inactive\n" {
-        return Err("fresh database requires exactly stopped tl3d".into());
+    for unit in [
+        "tl3d.service",
+        "tl3-mlflow.service",
+        "tl3-status.service",
+        "tl3-console.service",
+    ] {
+        let stopped = std::process::Command::new("timeout")
+            .args([
+                "15s",
+                "systemctl",
+                "--user",
+                "show",
+                unit,
+                "--property=ActiveState",
+                "--value",
+            ])
+            .output()
+            .map_err(|_| "cannot prove database clients stopped")?;
+        if !stopped.status.success() || stopped.stdout != b"inactive\n" {
+            return Err("fresh database requires exactly stopped TL3 clients".into());
+        }
     }
-    recreate_tl3_database(config)
+    recreate_tl3_database(config, identifier)
 }
 
-fn recreate_tl3_database(config: &tl3_config::Config) -> Result<()> {
+fn recreate_tl3_database(config: &tl3_config::Config, identifier: &str) -> Result<()> {
     let settings = &config.store;
     if settings.database != "tl3" || settings.user != "tl3" {
         return Err("fresh database resets only database and user tl3".into());
@@ -176,6 +203,15 @@ fn recreate_tl3_database(config: &tl3_config::Config) -> Result<()> {
     let mut client = options
         .connect(postgres::NoTls)
         .map_err(|_| "database connection failed")?;
+    let actual: String = client
+        .query_one(
+            "SELECT system_identifier::text FROM pg_control_system()",
+            &[],
+        )?
+        .get(0);
+    if actual != identifier {
+        return Err("running cluster differs from the verified cold backup".into());
+    }
     client.batch_execute("SET statement_timeout = '15s'; SET lock_timeout = '5s'")?;
     if client
         .query_one(
@@ -773,8 +809,16 @@ mod database_tests {
         let mut old = connect("tl3");
         old.batch_execute("CREATE TABLE old_tl3(value integer)")
             .unwrap();
+        let identifier: String = admin
+            .query_one(
+                "SELECT system_identifier::text FROM pg_control_system()",
+                &[],
+            )
+            .unwrap()
+            .get(0);
+        assert!(recreate_tl3_database(&config, "wrong-cluster").is_err());
         assert!(
-            recreate_tl3_database(&config).is_err(),
+            recreate_tl3_database(&config, &identifier).is_err(),
             "a live TL3 session must refuse before DROP"
         );
         assert!(
@@ -797,7 +841,7 @@ mod database_tests {
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-        recreate_tl3_database(&config).unwrap();
+        recreate_tl3_database(&config, &identifier).unwrap();
         tl3_store::Reader::open(&config.store).unwrap();
         assert!(
             !connect("tl3")
@@ -822,7 +866,7 @@ mod database_tests {
         for name in ["mlflow", "postgres", "tl3; DROP DATABASE mlflow"] {
             let mut wrong = config.clone();
             wrong.store.database = name.into();
-            assert!(recreate_tl3_database(&wrong).is_err());
+            assert!(recreate_tl3_database(&wrong, &identifier).is_err());
         }
     }
 

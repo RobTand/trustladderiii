@@ -305,10 +305,13 @@ def toml_value(value):
 def run(command, **kwargs):
     # Commands never carry secret values. Suppress output on failure as well.
     timeout = kwargs.pop("timeout", 300)
+    input_bytes = kwargs.pop("input", None)
+    if input_bytes is not None:
+        kwargs["stdin"] = subprocess.PIPE
     with subprocess.Popen([str(part) for part in command], stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, start_new_session=True, **kwargs) as child:
         try:
-            output, _ = child.communicate(timeout=timeout)
+            output, _ = child.communicate(input=input_bytes, timeout=timeout)
         except subprocess.TimeoutExpired:
             os.killpg(child.pid, signal.SIGKILL)
             child.communicate(timeout=5)
@@ -373,20 +376,46 @@ def backup_links(sources):
             for name, path in sources.items() if name.startswith("tablespace-")}
 
 
+DEPENDENT_UNITS = ("tl3-mlflow.service", "tl3-status.service", "tl3-console.service")
+CLIENT_UNITS = ("tl3d.service", *DEPENDENT_UNITS)
+EVIDENCE_ROOT = Path("/home/rob/tmp/tl3-build/rust-fv/captain/evidence")
+
+
+def validate_backup_destination(backup):
+    if not backup.is_absolute() or backup.exists() or backup.is_symlink():
+        raise RuntimeError("backup destination must be a new absolute private directory")
+    if any(parent.is_symlink() for parent in backup.parents):
+        raise RuntimeError("backup destination has a symlink ancestor")
+    backup.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    owned_directory(backup.parent)
+
+
+def preflight_backup(sources, backup):
+    validate_backup_destination(backup)
+    # Non-database roots can be validated while services still run. The cold
+    # boundary repeats these checks after stop; no live database bytes are read.
+    for name, path in sources.items():
+        if name != "data" and not name.startswith("tablespace-"):
+            tree_manifest(path)
+    total = sum(item.lstat().st_size for path in sources.values()
+                for item in path.rglob("*") if stat.S_ISREG(item.lstat().st_mode))
+    # Conservative transfer budget, not a measured throughput claim. At most
+    # three complete cluster hashes plus copy/fsync; no full source rehash at reset.
+    estimated = 1800 + total * 8 / (20 * 1024 * 1024)
+    if estimated > 6900:
+        raise RuntimeError("backup inventory exceeds the admitted 7200s action budget; resize before outage")
+    print(f"Backup preflight: {total} bytes; budget estimate {estimated:.0f}s of 6900s")
+
+
 def cold_backup(sources, backup):
     require_stopped()
-    if backup.exists() or backup.is_symlink():
-        raise RuntimeError("backup destination already exists; select a new private directory")
+    validate_backup_destination(backup)
     links = backup_links(sources)
     before = {name: tree_manifest(path, links) for name, path in sources.items()}
     if not (sources["data"] / "PG_VERSION").is_file() or not (sources["data"] / "pg_wal").is_dir():
         raise RuntimeError("backup requires a complete existing Postgres cluster including WAL")
     if (sources["data"] / "postmaster.pid").exists():
         raise RuntimeError("backup cluster still has postmaster.pid; stopped state is not proven")
-    if any(parent.is_symlink() for parent in backup.parents):
-        raise RuntimeError("backup destination has a symlink ancestor")
-    backup.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    owned_directory(backup.parent)
     backup.mkdir(mode=0o700)
     for name, path in sources.items():
         if not re.fullmatch(r"[a-z][a-z0-9-]*", name):
@@ -400,7 +429,7 @@ def cold_backup(sources, backup):
     write_file(backup / "manifest.json", json.dumps({"schema": "tl3.cold-backup.v1",
                "sources": {name: str(path) for name, path in sources.items()}, "trees": before,
                "stopped": ["tl3d.service", "tl3-postgres.service"]}, sort_keys=True).encode())
-    verify_cold_backup(sources, backup)
+    verify_cold_backup(sources, backup, compare_sources=False)
     # Flush the diagnostic copy before making its verified marker durable.
     for item in backup.rglob("*"):
         if item.is_symlink():
@@ -413,7 +442,7 @@ def cold_backup(sources, backup):
     sync_directory(backup)
 
 
-def verify_cold_backup(sources, backup, compare_sources=True):
+def verify_cold_backup(sources, backup, compare_sources=True, names=None):
     if compare_sources:
         require_stopped()
     try:
@@ -424,15 +453,19 @@ def verify_cold_backup(sources, backup, compare_sources=True):
         if manifest.get("schema") != "tl3.cold-backup.v1" or manifest.get("sources") != {
                 name: str(path) for name, path in sources.items()}:
             raise RuntimeError("backup source scope mismatch")
+        selected = set(sources) if names is None else set(names)
+        if not selected <= sources.keys():
+            raise RuntimeError("backup verification scope mismatch")
         for roots in (sources, copies) if compare_sources else (copies,):
-            if {name: tree_manifest(path, backup_links(roots)) for name, path in roots.items()} != manifest["trees"]:
+            if {name: tree_manifest(roots[name], backup_links(roots)) for name in selected} != {
+                    name: manifest["trees"][name] for name in selected}:
                 raise RuntimeError("backup incomplete or mismatched")
     except (OSError, ValueError, KeyError) as error:
         raise RuntimeError("backup missing, incomplete or unreadable") from error
 
 
 def reset_file_state(sources, backup, reset):
-    verify_cold_backup(sources, backup)
+    verify_cold_backup(sources, backup, names={Path(name).parts[0] for name in reset})
     targets = []
     for name in reset:
         parts = Path(name).parts
@@ -467,7 +500,7 @@ def check_fresh_qualification(gate, args):
                 raise RuntimeError("release requires authenticated exact-head full CI and kernel inventory")
         else:
             bb = gate.BuildBuddy()
-            _, groups = gate.verify_evidence(str(SOURCE), bb, args.head, args.evidence / f"{args.head}.json")
+            _, groups = gate.verify_evidence(str(SOURCE), bb, args.head, EVIDENCE_ROOT / f"{args.head}.json")
             if gate.verus_and_kernel_tests(str(SOURCE), bb, args.head, groups):
                 raise RuntimeError("exact-head qualification lacks required proof/test coverage")
         proof = gate.nightly_proof(str(SOURCE), gate.fingerprint(str(SOURCE), args.head))
@@ -648,8 +681,9 @@ def listener_ready(address):
 def fresh_init(args):
     # Qualification runs in a bounded child, including the authoritative helper's I/O.
     run([sys.executable, "-I", HERE / "deploy.py", "qualify-fresh", "--head", args.head,
-         "--lane", args.lane, "--evidence", args.evidence], timeout=600)
+         "--lane", args.lane], timeout=600)
     sources, reset, config = fresh_scope(args)
+    preflight_backup(sources, args.backup)
     helper = args.binaries / "tl3-deploy"
     run([helper, "validate", config], timeout=30)
     marker = config.parent / "production-ready"
@@ -661,21 +695,28 @@ def fresh_init(args):
             raise RuntimeError("selected release is incomplete")
     run(["systemctl", "--user", "stop", "tl3d.service"], timeout=150)
     require_stopped("tl3d.service")
+    for unit in DEPENDENT_UNITS:
+        run(["systemctl", "--user", "stop", unit], timeout=150)
+    require_stopped(*CLIENT_UNITS)
     run(["systemctl", "--user", "stop", "tl3-postgres.service"], timeout=150)
-    require_stopped()
+    require_stopped(*CLIENT_UNITS, "tl3-postgres.service")
     cold_backup(sources, args.backup)
     saved_scope = args.backup / "state-scope.json"
     write_file(saved_scope, args.state_manifest.read_bytes())
     args.state_manifest = saved_scope
     reset_file_state(sources, args.backup, reset)
     context = args.backup / "reset-context.json"
-    write_file(context, json.dumps({key: str(getattr(args, key)) for key in
-               ("home", "head", "lane", "evidence", "binaries", "state_manifest", "backup")}).encode())
+    # A token exists only in this orchestrator and private child pipes. An old
+    # backup/context alone cannot authorize DROP, even for the same cluster.
+    capability = secrets.token_hex(32).encode()
+    fields = {key: str(getattr(args, key)) for key in
+              ("home", "head", "lane", "binaries", "state_manifest", "backup")}
+    fields.update(capability_sha256=hashlib.sha256(capability).hexdigest(),
+                  expires_monotonic=time.monotonic() + 3600,
+                  system_identifier=cold_cluster_identity(args.home, args.backup))
+    write_file(context, json.dumps(fields).encode())
     root = paths(args.home)[0]
-    for binary in RELEASE_BINARIES:
-        write_file(root / "bin" / binary, (args.binaries / binary).read_bytes(), 0o700)
-    write_file(root / "bin/SHA256SUMS", (args.binaries / "SHA256SUMS").read_bytes())
-    write_file(root / "bin/SOURCE.json", (args.binaries / "SOURCE.json").read_bytes())
+    install_selected_binaries(args.binaries, root)
     write_file(root / "deploy/deploy.py", (HERE / "deploy.py").read_bytes())
     # Never auto-start an old release or restore old state after a failure.
     run(["systemctl", "--user", "start", "tl3-postgres.service"], timeout=150)
@@ -683,10 +724,12 @@ def fresh_init(args):
         raise RuntimeError("Postgres did not become active")
     _, _, postgres_bin = paths(args.home)
     run([postgres_bin / "bin/pg_isready", "-h", str(root / "postgres/socket"), "-p", "5543"], timeout=15)
-    require_stopped("tl3d.service")
-    run([root / "bin/tl3-deploy", "fresh-database", config, context], cwd=SOURCE, timeout=750)
+    require_stopped(*CLIENT_UNITS)
+    run([root / "bin/tl3-deploy", "fresh-database", config, context], cwd=SOURCE, timeout=3400,
+        input=capability + b"\n")
     run([root / "bin/tl3-deploy", "store-check", config], timeout=30)
-    run(["systemctl", "--user", "reset-failed", "tl3d.service"], timeout=15)
+    for unit in CLIENT_UNITS:
+        run(["systemctl", "--user", "reset-failed", unit], timeout=15)
     run(["systemctl", "--user", "start", "tl3d.service"], timeout=150)
     deadline = time.monotonic() + 120
     address = tomllib.loads(config.read_text())["github"]["webhook_listen"]
@@ -699,32 +742,70 @@ def fresh_init(args):
             raise RuntimeError("tl3d listener did not become ready")
         time.sleep(1)
     run([root / "bin/tl3-deploy", "store-check", config], timeout=30)
-    for unit in ("tl3-mlflow.service", "tl3-status.service", "tl3-console.service"):
+    for unit in DEPENDENT_UNITS:
         run(["systemctl", "--user", "start", unit], timeout=150)
         if unit_state(unit) != "active":
             raise RuntimeError(f"{unit} failed startup")
-    for _ in range(9):
-        time.sleep(10)
-        restarts = run(["systemctl", "--user", "show", "tl3d.service", "--property=NRestarts", "--value"], timeout=15)
-        if unit_state("tl3d.service") != "active" or restarts.strip() != b"0" or not listener_ready(address):
-            raise RuntimeError("selected tl3d failed bounded startup stability checks")
+    verify_stability(address)
     print("Fresh TL3 schema and listener ready; MLflow, status and console explicitly started")
 
 
-def authorize_fresh_database(context, database_config):
-    """SQL helper entry point: recheck the gate and copy, with Postgres now running."""
+def verify_stability(address):
+    for _ in range(9):
+        time.sleep(10)
+        for unit in CLIENT_UNITS:
+            restarts = run(["systemctl", "--user", "show", unit, "--property=NRestarts", "--value"], timeout=15)
+            if unit_state(unit) != "active" or restarts.strip() != b"0":
+                raise RuntimeError(f"{unit} failed bounded startup stability checks")
+        if not listener_ready(address):
+            raise RuntimeError("selected tl3d failed bounded startup stability checks")
+
+
+def install_selected_binaries(binaries, root):
+    selected = json.loads((binaries / "SOURCE.json").read_text())
+    contents = {name: (binaries / name).read_bytes() for name in RELEASE_BINARIES}
+    if selected.get("binaries") != {name: hashlib.sha256(data).hexdigest() for name, data in contents.items()}:
+        raise RuntimeError("selected release binary hashes changed before install")
+    for name, data in contents.items():
+        write_file(root / "bin" / name, data, 0o700)
+    write_file(root / "bin/SHA256SUMS", ''.join(
+        f"{selected['binaries'][name]}  {name}\n" for name in RELEASE_BINARIES).encode())
+    write_file(root / "bin/SOURCE.json", json.dumps(selected, sort_keys=True).encode())
+    if check_binaries(root):
+        raise RuntimeError("installed release binary verification failed")
+
+
+def cold_cluster_identity(home, backup):
+    _, _, pg = paths(home)
+    output = run([pg / "bin/pg_controldata", backup / "data"], timeout=30,
+                 env=os.environ | {"LC_ALL": "C"}).decode()
+    match = re.search(r"^Database system identifier:\s*([0-9]+)\s*$", output, re.MULTILINE)
+    if not match:
+        raise RuntimeError("cold backup has no verified Postgres system identifier")
+    return match[1]
+
+
+def authorize_fresh_database(context, database_config, capability=b""):
+    """Consume the current qualified orchestrator capability and recheck cold bytes."""
     private_file(context)
     fields = json.loads(context.read_text())
+    capability = capability.removesuffix(b"\n")
+    if (not re.fullmatch(rb"[0-9a-f]{64}", capability)
+            or hashlib.sha256(capability).hexdigest() != fields.pop("capability_sha256", None)
+            or not 0 < fields.pop("expires_monotonic", 0) - time.monotonic() <= 3600):
+        raise RuntimeError("database reset needs the current one-use orchestrator capability")
+    identifier = fields.pop("system_identifier", "")
+    if not re.fullmatch(r"[0-9]+", identifier):
+        raise RuntimeError("database reset lacks cold cluster identity")
     from argparse import Namespace
     args = Namespace(**fields)
-    for name in ("home", "evidence", "binaries", "state_manifest", "backup"):
+    for name in ("home", "binaries", "state_manifest", "backup"):
         setattr(args, name, Path(getattr(args, name)))
     if context != args.backup / "reset-context.json":
         raise RuntimeError("database reset context is outside its diagnostic backup")
-    run([sys.executable, "-I", HERE / "deploy.py", "qualify-fresh", "--head", args.head,
-         "--lane", args.lane, "--evidence", args.evidence], timeout=600)
+
     sources, reset, config = fresh_scope(args)
-    require_stopped("tl3d.service")
+    require_stopped(*CLIENT_UNITS)
     if unit_state("tl3-postgres.service") != "active":
         raise RuntimeError("database reset requires active, ready Postgres")
     verify_cold_backup(sources, args.backup, compare_sources=False)
@@ -737,6 +818,19 @@ def authorize_fresh_database(context, database_config):
             raise RuntimeError("file reset no longer matches the fresh-init boundary")
     if config != database_config:
         raise RuntimeError("database reset config scope mismatch")
+    # Atomic consumption happens before any SQL mutation. A failed/drop-unknown
+    # attempt needs a new orchestrated backup and token, never a context replay.
+    consumed = context.with_suffix(".consumed")
+    try:
+        fd = os.open(consumed, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        raise RuntimeError("database reset capability already consumed") from None
+    with os.fdopen(fd, "wb") as stream:
+        stream.write(b"one-use authorization consumed\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    sync_directory(consumed.parent)
+    print(json.dumps({"system_identifier": identifier}))
 
 
 def install(args):
@@ -1176,7 +1270,6 @@ def main():
     parser.add_argument("--service", choices=["database", "status", "controller"])
     parser.add_argument("--head", help="full chosen deployment commit")
     parser.add_argument("--lane", choices=["release", "dev"], default="release")
-    parser.add_argument("--evidence", type=Path, default=Path("/home/rob/tmp/tl3-build/rust-fv/captain/evidence"))
     parser.add_argument("--state-manifest", type=Path, help="private exact owned-state scope manifest")
     parser.add_argument("--backup", type=Path, help="new absolute private cold-backup destination")
     parser.add_argument("--context", type=Path)
@@ -1185,7 +1278,7 @@ def main():
     if args.command == "authorize-fresh-database":
         if not args.context or not args.database_config:
             parser.error("database authorization requires --context and --database-config")
-        authorize_fresh_database(args.context, args.database_config)
+        authorize_fresh_database(args.context, args.database_config, sys.stdin.buffer.read(65))
         return 0
     if args.command == "fresh-init":
         if not args.state_manifest or not args.backup or not args.backup.is_absolute():
