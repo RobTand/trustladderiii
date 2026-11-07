@@ -18,6 +18,8 @@ one authenticated nightly whose artifact proves the exact deployment head.
 Missing, unknown or mismatched evidence refuses. The helper uses
 `/home/rob/tmp/tl3-build/dev_evidence.py`; it does not accept local verdict receipts
 as qualification. Qualification and its network children run under a deadline.
+Runtime manifests must match their content addresses and private inventory
+hashes; missing, changed, writable or unlisted runtime modules refuse before the outage.
 The nightly lookup conservatively refuses if the authoritative helper selects a
 different commit with matching proof inputs. It never dispatches a nightly.
 

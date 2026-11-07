@@ -488,6 +488,38 @@ def verify_runtime_inputs(flux, plan):
                 or any(parent.is_symlink() for parent in manifest.parents)
                 or plan.get("runtime_manifests", {}).get(str(manifest)) != hashlib.sha256(manifest.read_bytes()).hexdigest()):
             raise RuntimeError("missing or mismatched immutable Flux runtime manifest")
+        if hashlib.sha256(manifest.read_bytes()).hexdigest() != bundle.name:
+            raise RuntimeError("runtime manifest content address mismatch")
+        verify_runtime_files(bundle, json.loads(manifest.read_text()))
+
+
+def verify_runtime_files(bundle, manifest):
+    """Check sealed input bytes; runtime qualification remains the authoritative FX gate."""
+    if manifest.get("schema") != "tl3.runtime_bundle.v1" or not manifest.get("files"):
+        raise RuntimeError("runtime file inventory is missing")
+    expected = {"manifest.json"}
+    for entry in manifest["files"]:
+        relative = Path(entry["path"])
+        if relative.is_absolute() or ".." in relative.parts or str(relative) in expected or not relative.parts:
+            raise RuntimeError("runtime file inventory path refused")
+        path = bundle / relative
+        if any(part.is_symlink() for part in (path, *path.parents)):
+            raise RuntimeError("runtime file inventory contains a symlink")
+        info = path.lstat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1
+                or stat.S_IMODE(info.st_mode) != entry["mode"] or info.st_mode & 0o222
+                or info.st_size != entry["bytes"]
+                or hashlib.sha256(path.read_bytes()).hexdigest() != entry["sha256"]):
+            raise RuntimeError("runtime file inventory bytes or metadata mismatch")
+        expected.add(str(relative))
+    actual = set()
+    for path in bundle.rglob("*"):
+        if path.is_symlink():
+            raise RuntimeError("runtime file inventory contains a symlink")
+        if path.is_file():
+            actual.add(str(path.relative_to(bundle)))
+    if actual != expected:
+        raise RuntimeError("runtime file inventory has missing or unlisted inputs")
 
 
 def fresh_scope(args):

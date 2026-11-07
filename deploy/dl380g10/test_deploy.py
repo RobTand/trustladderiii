@@ -285,6 +285,30 @@ class FreshInitTests(unittest.TestCase):
             deploy.fresh_scope(args)
         self.assertEqual(self.calls, [])
 
+    def test_runtime_input_inventory_refuses_missing_tampered_or_unlisted_modules(self):
+        bundle = self.home / "runtime"
+        bundle.mkdir(mode=0o700)
+        module = bundle / "runner.py"
+        module.write_bytes(b"sealed runtime")
+        module.chmod(0o400)
+        (bundle / "manifest.json").write_text("fixture")
+        manifest = {"schema": "tl3.runtime_bundle.v1", "files": [{"path": "runner.py", "mode": 0o400,
+                    "bytes": 14, "sha256": hashlib.sha256(b"sealed runtime").hexdigest()}]}
+        deploy.verify_runtime_files(bundle, manifest)
+        module.unlink()
+        with self.assertRaises(OSError):
+            deploy.verify_runtime_files(bundle, manifest)
+        module.write_bytes(b"tampered bytes")
+        module.chmod(0o400)
+        with self.assertRaisesRegex(RuntimeError, "mismatch"):
+            deploy.verify_runtime_files(bundle, manifest)
+        module.chmod(0o600)
+        module.write_bytes(b"sealed runtime")
+        module.chmod(0o400)
+        (bundle / "unlisted.py").write_text("unexpected")
+        with self.assertRaisesRegex(RuntimeError, "unlisted"):
+            deploy.verify_runtime_files(bundle, manifest)
+
 
 class DeployTests(unittest.TestCase):
     def setUp(self):
