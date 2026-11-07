@@ -1,7 +1,7 @@
 {
   "crate:tl3-contracts": {
     "max_fanout": 212,
-    "reason": "planner-contracts #730/#819: Rust-sourced wire contracts (tl3-contracts) linked by tl3-controller; schema generation adds contract sources + canonical action/refusal/planner contracts and tl3-action executable as Python runtime data (Rust-core migration slice1)",
+    "reason": "planner-contracts #730/#819: Rust-sourced wire contracts (tl3-contracts) linked by tl3-controller; schema generation adds contract sources",
     "sources": 29
   },
   "crate:tl3-controller-core": {
@@ -16,7 +16,7 @@
   },
   "crate:tl3-harness-core": {
     "max_fanout": 224,
-    "reason": "Wave B harness decision crate for #730 (#824). + tl3-action executable as Python runtime data (Rust-core migration slice1)",
+    "reason": "Wave B harness decision crate for #730 (#824).",
     "sources": 21
   }
 }
