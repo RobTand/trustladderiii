@@ -2104,10 +2104,12 @@ fn startup_capacity_change_refusal_preserves_world_repositories_and_effects() {
             .collect::<Vec<_>>()
     };
     // Reopening parks an acknowledged worker behind the counter halt.
-    assert!(!before
-        .rows
-        .iter()
-        .any(|row| row.table == crate::dispatch_liveness::QUEUED));
+    assert!(
+        !before
+            .rows
+            .iter()
+            .any(|row| row.table == crate::dispatch_liveness::QUEUED)
+    );
     let queued: Vec<_> = after
         .rows
         .iter()
