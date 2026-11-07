@@ -854,8 +854,6 @@ def verus_proofs():
             "kernel::ranks::advance_enabled": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::ranks::advance_pre": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::ranks::advance_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
-            "kernel::reply_equivalence::reference::run_failed_original": "Test-only exact baseline failed-run reference, executed by kernel library equivalence tests.",
-            "kernel::reply_equivalence::failed_run_saturation_matches_original": "Test-only failed-run saturation equivalence proptest, executed by kernel library tests.",
             "kernel::reply_equivalence::reference::on_reply": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
             "kernel::reply_equivalence::outcome": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
             "kernel::reply_equivalence::resume": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
