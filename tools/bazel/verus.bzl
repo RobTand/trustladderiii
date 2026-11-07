@@ -1026,6 +1026,7 @@ def verus_proofs():
             "facts_incident_cleared": ("kernel::facts#incident_cleared", 1),
             "facts_pr_dequeued": ("kernel::facts#pr_dequeued", 1),
             "facts_failed_round_unreported": ("kernel::facts#failed_round_unreported", 1),
+            "report_failed_round_value": ("kernel::report::lemmas#failed_round_value", 1),
             "report_ci_cause_value": ("kernel::report::lemmas#ci_cause_value", 1),
             "report_fact_record_result": ("kernel::report::lemmas#fact_record_result", 1),
             "report_bind_fact_cause": ("kernel::report::lemmas#bind_fact_cause", 1),

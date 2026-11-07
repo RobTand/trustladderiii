@@ -1644,7 +1644,7 @@ pub enum Broken {
 }
 
 // proof map start
-// proof gap: fact-path report proofs (facts stops + CiFailed), owner K3 #907
+// Fact stops and CiFailed reports: report::agrees, preserved by apply and step settlement.
 /// The proof-map entry that covers each event variant. The match is exhaustive, so
 /// a new variant without a proof doesn't compile, and a test checks that each
 /// named proof exists.
@@ -2018,11 +2018,11 @@ pub closed spec fn report_input(w: World, event: Event) -> report::ReportInput {
                 run: n.run, job: n.job, accepted: port_t860_contracts::admissible(w, n, reply) }
         }
         Event::Fact { node, .. } if node.0 < w.nodes@.len() => {
-                let n = w.nodes@[node.0 as int];
-                report::ReportInput { phase: n.phase, current: current_item(n),
-                    run: None, job: None, accepted: false }
-            }
-            _ => report::ReportInput { phase: Phase::Unplanned, current: None,
+            let n = w.nodes@[node.0 as int];
+            report::ReportInput { phase: n.phase, current: current_item(n),
+                run: None, job: None, accepted: false }
+        }
+        _ => report::ReportInput { phase: Phase::Unplanned, current: None,
             run: None, job: None, accepted: false },
     }
 }

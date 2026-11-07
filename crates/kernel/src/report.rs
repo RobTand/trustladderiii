@@ -460,7 +460,7 @@ pub(super) fn record_fact(report: &mut Report, node: NodeId, before: Phase, afte
     if matches!(fact, Fact::CiFailed { .. }) {
         if let Some(cause) = ci {
             report.record_failed_round(node, cause);
-            kernel_proof! { lemmas::read_failed_round(entries_before@, report.entries@, node, cause); }
+            kernel_proof! { lemmas::failed_round_value(entries_before@, report.entries@, node, cause); }
         }
     }
     kernel_snapshot! { entries_middle = report.entries@ }

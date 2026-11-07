@@ -246,17 +246,24 @@ pub(in super::super) proof fn ci_cause_value(phase: Phase, current: Option<Item>
     },
 { reveal(ci_cause); }
 
+/// Failed-round entries: expose the exact append without a proof precondition.
+pub(in super::super) proof fn failed_round_value(r0: Seq<ReportEntry>, r1: Seq<ReportEntry>,
+    node: NodeId, cause: FailedRoundCause)
+    ensures failed_round(r0, r1, node, cause)
+        == (r1 == r0.push(ReportEntry::FailedRound { node, cause })),
+{ reveal(failed_round); }
+
 /// Fact reporting: compose the real failed-round push and subsequent stop push.
 pub(in super::super) proof fn fact_record_result(r0: Seq<ReportEntry>, middle: Seq<ReportEntry>,
     r1: Seq<ReportEntry>, node: NodeId, before: Phase, after: Phase,
     fact: Fact, ci: Option<FailedRoundCause>)
-    requires middle == if fact is CiFailed {
+    ensures (middle == if fact is CiFailed {
             match ci { Some(cause) => r0.push(ReportEntry::FailedRound { node, cause }), None => r0 }
-        } else { r0 },
-        stop_cause(middle, r1, node, before, after,
+        } else { r0 })
+        && stop_cause(middle, r1, node, before, after,
             stop_kind(after, if fact is CiFailed { Some(ReviewStop::CiFailed) } else { None },
-                fact is PrClosedByPerson, false)),
-    ensures fact_record(r0, r1, node, before, after, fact, ci),
+                fact is PrClosedByPerson, false))
+        ==> fact_record(r0, r1, node, before, after, fact, ci),
 { reveal(fact_record); }
 
 /// Fact rows: bind the report contract to its sampled pre-state cause.
