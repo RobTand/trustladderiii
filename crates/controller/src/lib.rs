@@ -3460,7 +3460,7 @@ impl Controller {
                 return Ok(None);
             }
             Observation::Steering { node, command } => {
-                return self.command_event(snapshot, world, node, command, commit);
+                return self.command_event(snapshot, world, node, command, commit).map(|event| event.map(KernelInput::Event));
             }
             Observation::Kernel(event) => {
                 kernel_boundary::validate_raw_event(event).map_err(Error::Invalid)?

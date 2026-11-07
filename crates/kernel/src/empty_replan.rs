@@ -111,7 +111,8 @@ pub fn step_planner(mut world: World, mut budget: ReplanBudget, request: NodeId,
         (budget.request_version() == request && admitted(world, request, generation)
             && planner_result is EmptyAllowedReplan) ==>
                 empty_replan_transition(world, result.0, request, budget.consumed()),
-] proof [reveal(ReplanBudget::request_version); reveal(ReplanBudget::consumed); reveal(empty_replan_transition);] {
+] proof [reveal(ReplanBudget::request_version); reveal(ReplanBudget::consumed); reveal(empty_replan_transition);
+    reveal(admitted); reveal(world_headroom); world_checked_definition(world);] {
     if budget.request != request {
         return (world, budget, Vec::new());
     }
@@ -154,6 +155,7 @@ pub fn step_planner(mut world: World, mut budget: ReplanBudget, request: NodeId,
         return (world, budget, Vec::new());
     }
     let mut outbox = Outbox::new();
+    kernel_proof! { reveal(empty_outbox); assert(node_checked(world, world.nodes@[i as int])); }
     end_operation(&mut world.nodes[i]);
     reply_empty_replan(&mut world, i, &mut budget, &mut outbox);
     let mut out = Vec::new();
