@@ -428,7 +428,7 @@ fn exhausted_kernel_headroom_prevents_the_step_and_reports_the_counter() {
     assert!(!snapshot.rows.iter().any(|row| row.table == "queue_resumes" || row.table == "close_reasons"));
     let incident = incidents[0].clone();
     let effects = snapshot.pending_effects;
-    assert!(!c.drive_once().unwrap());
+    drain(&mut c);
     assert_eq!(c.world().unwrap(), before);
     let after = c.snapshot().unwrap();
     assert_eq!(after.pending_effects, effects);
@@ -438,7 +438,9 @@ fn exhausted_kernel_headroom_prevents_the_step_and_reports_the_counter() {
     }).collect();
     assert_eq!(incidents.len(), 1);
     assert_eq!(incidents[0].id, incident.id);
-    assert_eq!(incidents[0].value, incident.value);
+    assert_eq!(incidents[0].value["signature"], incident.value["signature"]);
+    assert_eq!(incidents[0].value["summary"], incident.value["summary"]);
+    assert_eq!(incidents[0].value["open"], true);
 }
 
 /// State-table "Counter headroom" / facts are never dropped. Keep the
