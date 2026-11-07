@@ -31,6 +31,12 @@ def main():
                     (output / ('trusted-stop-' + owned['execution'] + '.json')).write_text(json.dumps(facts))
             result = request(command, **kwargs)
             accepted = True
+            if command['op'] == 'begin_container_launch' and settings['mode'] == 'begin-response-lost':
+                state = root / 'journal' / os.environ['TL3_RUN_CORRELATION'] / 'state.json'
+                persisted = json.loads(state.read_text())
+                assert persisted['container_launches'], 'fault must follow a real durable Rust begin'
+                (output / 'begin-persisted-state.json').write_text(json.dumps(persisted))
+                raise RuntimeError('fixture dropped successful durable begin response')
             if command['op'] == 'observe_allocation' and settings['mode'] == 'changed-allocation':
                 native = json.loads((root / 'all.json').read_text())
                 native['execution']['changed'] = native['execution'].get('changed', 0) + 1
@@ -204,10 +210,17 @@ sys.exit(0)
         assert 'TL3_EXECUTION_FAILURE ' in raw, (output / 'host.stderr').read_text()
         failure = next(json.loads(line.split(' ', 1)[1]) for line in raw.splitlines()
                        if line.startswith('TL3_EXECUTION_FAILURE '))
-        assert failure['outcome'] == ('unknown_incomplete' if mode == 'binding-mismatch' else 'setup_failure')
+        assert failure['outcome'] == ('unknown_incomplete' if mode in ('binding-mismatch', 'begin-response-lost') else 'setup_failure')
         assert not failure['test_started'], failure
         assert 'infrastructure-failure' in raw, raw
-    assert not any(Path(settings['scratch']).iterdir()), 'owned run scratch retained'
+    if mode == 'begin-response-lost':
+        assert any(Path(settings['scratch']).iterdir()), 'ambiguous begin must retain scratch'
+        assert (output / 'begin-persisted-state.json').exists()
+        assert not (root / 'runtime-calls.jsonl').exists() or all(
+            json.loads(line)[0] != 'run' for line in (root / 'runtime-calls.jsonl').read_text().splitlines())
+        assert not (root / 'payload-started').exists()
+    else:
+        assert not Path(settings['scratch']).exists(), 'owned run scratch root retained'
     requests = [json.loads(line) for line in (output / 'requests-action.jsonl').read_text().splitlines()]
     operations = [item['op'] for item in requests if item['accepted']]
     launches = list(output.glob('*.runtime.jsonl'))
@@ -225,6 +238,10 @@ sys.exit(0)
         if mode == 'success':
             assert operations.index('bind_container_launch') < operations.index('validate_runtime_binding')
             assert (output / 'runtime-bindings.jsonl').stat().st_size
+    elif mode == 'begin-response-lost':
+        assert 'begin_container_launch' in operations
+        assert 'bind_container_launch' not in operations and 'payload_allowed' not in operations
+        assert not (output / 'runtime-bindings.jsonl').exists()
     else:
         assert 'begin_container_launch' not in operations
         assert not (root / 'runtime-calls.jsonl').exists(), 'runtime effect before allocation gate'
@@ -234,7 +251,8 @@ sys.exit(0)
         'mode': mode, 'seconds': elapsed, 'typed_refusal': mode != 'success',
         'allocation_before_durable_launch': True, 'no_payload_before_gates': True,
         'binding_and_qualification_exercised': mode == 'success',
-        'own_scratch_absent': True, 'collector_session_closed': True}))
+        'own_scratch_absent': not Path(settings['scratch']).exists(),
+        'uncertain_scratch_retained': mode == 'begin-response-lost', 'collector_session_closed': True}))
 
 
 if __name__ == '__main__':

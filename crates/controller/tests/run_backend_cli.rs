@@ -71,6 +71,7 @@ fn generated_action_consumes_native_grant_before_binding_and_payload() {
         "resource-mismatch",
         "changed-allocation",
         "binding-mismatch",
+        "begin-response-lost",
     ] {
         generated_action_case(case);
     }

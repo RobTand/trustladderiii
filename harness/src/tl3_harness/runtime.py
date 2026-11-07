@@ -69,6 +69,7 @@ class Evidence:
         self.path = Path(output) / f'{container}.runtime.jsonl'
         self.container_seen = False
         self.container = container
+        self.launch_requested = False
         self.context = context
         self.host_facts = self.host_snapshot()
         self.container_facts = None
@@ -708,6 +709,9 @@ def begin_container_launch(child, evidence):
                 'request_digest': context['request_digest'], 'host': placement['host'], 'rank': placement['rank'],
                 'launcher': {'pid': child.pid, 'start_ticks': observation['observed_start_ticks']},
                 'process_group': os.getpgid(child.pid), 'container': None}
+    # From this point Rust may persist intent/debt even if no reply reaches us.
+    evidence.launch_requested = True
+    container_pending(evidence.container)
     result = backend_request({'op': 'begin_container_launch', 'owner': context['owner'],
                               'correlation': context['correlation'], 'launcher': launcher})
     evidence.launch = result['launch']
@@ -841,12 +845,20 @@ def workspace(prefix):
             yield directory
         return
     from .scratch import private_directory, release_directory
+    identity = root.lstat()
     directory = private_directory(root, prefix=prefix)
     try:
         yield directory
     finally:
         if not _uncertain_containers:
             release_directory(directory)
+            current = root.lstat()
+            if (not stat.S_ISDIR(current.st_mode) or current.st_uid != os.getuid()
+                    or (current.st_dev, current.st_ino) != (identity.st_dev, identity.st_ino)):
+                raise RuntimeError('job scratch identity changed before cleanup')
+            # This outer workspace owns the job root; remove only an empty root.
+            if not any(root.iterdir()):
+                root.rmdir()
 
 
 def journal_path(path):

@@ -133,13 +133,7 @@ class Supervised:
                     runtime.prepare_allocation(self.evidence)
             except (OSError, RuntimeError, ValueError, StopIteration, KeyError, TypeError) as error:
                 # No command bytes have reached any runtime client.
-                runtime.container_stopped(self.container, self.command)
-                self.cleanup_confirmed = True
-                self.capture_diagnostic(str(error).encode(errors='replace'))
-                if self.evidence is not None:
-                    self.evidence.record('prelaunch_refusal', {'command_released': False,
-                        'launcher_started': False, 'cause': safe_stderr(str(error))})
-                raise self.failure(ExecutionOutcome.SETUP_FAILURE, phase, 'prelaunch_refused') from error
+                raise self.prelaunch_failure(error, phase, 'prelaunch_refused') from error
         durable = self.evidence is not None and self.evidence.context is not None
         launch_command = ([sys.executable, '-I', '-B', str(Path(runtime.__file__).with_name('runtime_launcher.py'))]
                           if durable else self.command)
@@ -147,10 +141,8 @@ class Supervised:
             self.child = subprocess.Popen(launch_command, stdin=subprocess.PIPE if self.evidence else self.selection,
                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
         except OSError as error:
-            runtime.container_stopped(self.container, self.command)
-            raise ExecutionFailure(ExecutionOutcome.SETUP_FAILURE, 'container_start', 'runtime_unavailable') from error
+            raise self.prelaunch_failure(error, 'container_start', 'runtime_unavailable') from error
         if durable:
-            released = False
             try:
                 intent = runtime.begin_container_launch(self.child, self.evidence)
                 self.container = intent['name']
@@ -161,7 +153,6 @@ class Supervised:
                     arg for key, value in intent['labels'].items() for arg in ('--label', key + '=' + value)]
                 runtime.container_pending(self.container)
                 # Begin returned only after Rust fsynced the intent and debt. No retry on failure.
-                released = True
                 self.child.stdin.write(json.dumps(self.command).encode() + b'\n')
                 self.child.stdin.flush()
             except BaseException as error:
@@ -174,21 +165,41 @@ class Supervised:
                 finally:
                     for pipe in (self.child.stdin, self.child.stdout, self.child.stderr):
                         pipe.close()
-                if not released:
-                    self.cleanup_confirmed = True
-                    runtime.container_stopped(self.container, self.command)
-                    self.evidence.record('prelaunch_refusal', {'command_released': False,
-                        'launcher_reaped': self.child.returncode is not None, 'cause': safe_stderr(str(error))})
-                if isinstance(error, (OSError, RuntimeError, ValueError)):
+                if not self.evidence.launch_requested:
+                    if isinstance(error, Exception):
+                        raise self.prelaunch_failure(error, 'container_start', 'launch_refused',
+                                                     launcher_started=True) from error
+                else:
                     self.capture_diagnostic(str(error).encode(errors='replace'))
-                    raise self.failure(ExecutionOutcome.UNKNOWN_INCOMPLETE if released else ExecutionOutcome.SETUP_FAILURE,
-                                       'container_start', 'launch_refused') from error
+                    try:
+                        self.evidence.record('launch_uncertain', {'launcher_reaped': self.child.returncode is not None,
+                                                                  'cause': safe_stderr(str(error))})
+                    except (OSError, RuntimeError, ValueError, KeyError, TypeError) as secondary:
+                        self.capture_diagnostic(('\nlaunch evidence: ' + str(secondary)).encode(errors='replace'))
+                    if isinstance(error, Exception):
+                        raise self.failure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'container_start', 'launch_refused') from error
                 raise
 
         if self.runtime and Path(self.runtime).name == 'podman' and not durable:
             runtime.container_pending(self.container)
 
         return self
+
+    def prelaunch_failure(self, error, phase, reason, *, launcher_started=False):
+        self.capture_diagnostic(str(error).encode(errors='replace'))
+        try:
+            runtime.container_stopped(self.container, self.command)
+            self.cleanup_confirmed = True
+        except (OSError, RuntimeError, ValueError, KeyError, TypeError) as secondary:
+            runtime.container_pending(self.container)
+            self.capture_diagnostic(('\nrefusal scratch cleanup: ' + str(secondary)).encode(errors='replace'))
+        if self.evidence is not None:
+            try:
+                self.evidence.record('prelaunch_refusal', {'command_released': False,
+                    'launcher_started': launcher_started, 'cause': safe_stderr(str(error))})
+            except (OSError, RuntimeError, ValueError, KeyError, TypeError) as secondary:
+                self.capture_diagnostic(('\nrefusal evidence: ' + str(secondary)).encode(errors='replace'))
+        return self.failure(ExecutionOutcome.SETUP_FAILURE, phase, reason)
 
     def incomplete(self):
         setup = not self.report_started and self.exit_code in (125, 126, 127)

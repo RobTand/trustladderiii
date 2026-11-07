@@ -961,6 +961,7 @@ def test_prelaunch_cancellation_never_executes_podman_and_reaps_gated_client(lau
                'placement': {'kind': 'observed', 'host': 'dl380g10', 'rank': 0}}
     monkeypatch.setattr(runtime, 'launch_context', lambda: context)
     monkeypatch.setattr(runtime, 'prepare_allocation', lambda evidence: None)
+    monkeypatch.setattr(runtime, '_uncertain_containers', set())
     launcher_pids = []
     def backend(request):
         assert request['op'] == 'begin_container_launch'
@@ -971,12 +972,138 @@ def test_prelaunch_cancellation_never_executes_podman_and_reaps_gated_client(lau
         with pytest.raises(ExecutionFailure) as failed:
             with Supervised([str(executable), 'run', 'fixture'], selection, ()):
                 pytest.fail('cancelled begin must never return an active launcher')
-        assert failed.value.outcome == ExecutionOutcome.SETUP_FAILURE
+        assert failed.value.outcome == ExecutionOutcome.UNKNOWN_INCOMPLETE
         assert 'cancellation' in failed.value.stderr_tail
     assert not calls.exists()
     assert len(launcher_pids) == 1
     with pytest.raises(ChildProcessError):
         os.waitpid(launcher_pids[0], os.WNOHANG)
+
+
+@pytest.mark.parametrize('fault', ['lost-response', 'missing-name', 'missing-labels', 'record-failed'])
+def test_begin_response_failure_retains_unknown_and_owned_scratch(launcher, monkeypatch, fault):
+    from tl3_harness import runtime, scratch
+
+    executable, calls = launcher
+    output = executable.parent / 'output'
+    output.mkdir()
+    root = executable.parent / 'scratch'
+    root.mkdir(mode=0o700)
+    context = {'run': {}, 'owner': 'owner', 'correlation': 'correlation', 'request_digest': 'f' * 64,
+               'scratch': {'leaf': str(root)}, 'output_dir': str(output),
+               'progress': {'no_progress_seconds': 10},
+               'placement': {'kind': 'observed', 'host': 'dl380g10', 'rank': 0}}
+    monkeypatch.setattr(runtime, 'launch_context', lambda: context)
+    monkeypatch.setattr(runtime, 'prepare_allocation', lambda evidence: None)
+    monkeypatch.setattr(runtime, '_uncertain_containers', set())
+    persisted = output / 'persisted-intent.json'
+    launch = {'name': 'tl3-durable-name', 'labels': {'tl3.execution': 'token'}}
+
+    def backend(request):
+        assert request['op'] == 'begin_container_launch'
+        persisted.write_text(json.dumps(request))
+        if fault == 'lost-response':
+            raise RuntimeError('response lost after durable begin')
+        return {'launch': {key: value for key, value in launch.items()
+                           if key != {'missing-name': 'name', 'missing-labels': 'labels'}.get(fault)}}
+
+    monkeypatch.setattr(runtime, 'backend_request', backend)
+    original_record = runtime.Evidence.record
+
+    def record(evidence, event, facts):
+        if fault == 'record-failed' and event == 'launch_intent':
+            raise OSError('evidence volume full after durable begin')
+        return original_record(evidence, event, facts)
+
+    monkeypatch.setattr(runtime.Evidence, 'record', record)
+    with runtime.workspace(prefix='tl3-checks-') as workspace:
+        temporary = scratch.private_directory(root)
+        command = [str(executable), 'run', '--mount', f'type=bind,src={temporary},dst=/tmp', 'fixture']
+        with calls.with_suffix('.stdin').open('w+b') as selection:
+            process = Supervised(command, selection, ())
+            with pytest.raises(ExecutionFailure) as failed:
+                process.__enter__()
+        assert failed.value.outcome == ExecutionOutcome.UNKNOWN_INCOMPLETE
+        assert failed.value.stderr_tail
+        assert not process.cleanup_confirmed
+        assert process.evidence.container in runtime._uncertain_containers
+        assert persisted.exists() and temporary.is_dir()
+        assert process.child.returncode is not None
+    assert Path(workspace).is_dir(), 'ambiguous begin must retain action-owned workspace'
+    assert temporary.is_dir()
+    assert not calls.exists(), 'gated launcher must receive no Podman command'
+
+
+@pytest.mark.parametrize('fault', ['container-stopped', 'evidence-record'])
+def test_refusal_secondary_failure_keeps_typed_cause(launcher, monkeypatch, fault):
+    from tl3_harness import runtime
+
+    executable, calls = launcher
+    output = executable.parent / 'output'
+    output.mkdir()
+    context = {'run': {}, 'output_dir': str(output), 'progress': {'no_progress_seconds': 10}}
+    monkeypatch.setattr(runtime, 'launch_context', lambda: context)
+    monkeypatch.setattr(runtime, '_uncertain_containers', set())
+
+    def refuse(evidence):
+        raise RuntimeError('original placement refusal')
+
+    monkeypatch.setattr(runtime, 'prepare_allocation', refuse)
+    if fault == 'container-stopped':
+        def stopped(*args):
+            raise RuntimeError('secondary scratch identity changed')
+        monkeypatch.setattr(runtime, 'container_stopped', stopped)
+    else:
+        original_record = runtime.Evidence.record
+        def record(evidence, event, facts):
+            if event == 'prelaunch_refusal':
+                raise OSError('secondary evidence volume full')
+            return original_record(evidence, event, facts)
+        monkeypatch.setattr(runtime.Evidence, 'record', record)
+    with calls.with_suffix('.stdin').open('w+b') as selection:
+        with pytest.raises(ExecutionFailure) as failed:
+            Supervised([str(executable), 'run', 'fixture'], selection, ()).__enter__()
+    assert failed.value.outcome == ExecutionOutcome.SETUP_FAILURE
+    assert 'original placement refusal' in failed.value.stderr_tail
+    assert 'secondary' in failed.value.stderr_tail
+    assert not calls.exists()
+
+
+def test_begin_local_observation_failure_is_no_effect_and_removes_job_root(launcher, monkeypatch):
+    from tl3_harness import runtime, scratch
+
+    executable, calls = launcher
+    output = executable.parent / 'output'
+    output.mkdir()
+    root = executable.parent / 'scratch'
+    root.mkdir(mode=0o700)
+    context = {'run': {}, 'owner': 'owner', 'correlation': 'correlation', 'request_digest': 'f' * 64,
+               'scratch': {'leaf': str(root)}, 'output_dir': str(output),
+               'progress': {'no_progress_seconds': 10},
+               'placement': {'kind': 'observed', 'host': 'dl380g10', 'rank': 0}}
+    monkeypatch.setattr(runtime, 'launch_context', lambda: context)
+    monkeypatch.setattr(runtime, 'prepare_allocation', lambda evidence: None)
+    monkeypatch.setattr(runtime, '_uncertain_containers', set())
+
+    def observe(*args):
+        raise OSError('local launcher observation unavailable')
+
+    monkeypatch.setattr(runtime, '_process_observation', observe)
+    monkeypatch.setattr(runtime, 'backend_request', lambda *args, **kwargs: pytest.fail('begin must not be dispatched'))
+    with runtime.workspace(prefix='tl3-checks-'):
+        temporary = scratch.private_directory(root)
+        command = [str(executable), 'run', '--mount', f'type=bind,src={temporary},dst=/tmp', 'fixture']
+        with calls.with_suffix('.stdin').open('w+b') as selection:
+            process = Supervised(command, selection, ())
+            with pytest.raises(ExecutionFailure) as failed:
+                process.__enter__()
+        assert failed.value.outcome == ExecutionOutcome.SETUP_FAILURE
+        assert 'local launcher observation unavailable' in failed.value.stderr_tail
+        assert process.cleanup_confirmed and not process.evidence.launch_requested
+        assert not runtime._uncertain_containers and not temporary.exists()
+        assert process.child.returncode is not None
+    assert not root.exists()
+    assert not calls.exists()
 
 
 @pytest.fixture
