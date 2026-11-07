@@ -49,7 +49,7 @@ pub(super) open spec fn reachable(w: World, from: NodeId, to: NodeId) -> bool {
 }
 
 #[verifier::opaque]
-pub(super) open spec fn acyclic(w: World) -> bool {
+pub closed spec fn acyclic(w: World) -> bool {
     forall|from: NodeId, to: NodeId| active_edge(w, from, to)
         ==> !reachable(w, to, from)
 }
