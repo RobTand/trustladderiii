@@ -4,6 +4,8 @@ import os
 import stat
 import tempfile
 import uuid
+import atexit
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -77,7 +79,7 @@ class Evidence:
     @staticmethod
     def host_snapshot():
         from .runtime_evidence import snapshot
-        return snapshot()
+        return {**snapshot(), 'hostname': os.uname().nodename}
 
     def record(self, event, facts):
         mode = 'x' if event == 'host' else 'a'
@@ -187,11 +189,55 @@ def _retain_backend_diagnostic(diagnostic):
         os.close(descriptor)
 
 
+_backend_session = None
+_backend_session_key = None
+_backend_request_id = 0
+_backend_lock = threading.RLock()
+
+
+def close_backend_session():
+    global _backend_session, _backend_session_key, _backend_request_id
+    process, _backend_session = _backend_session, None
+    key = _backend_session_key
+    _backend_session_key = None
+    _backend_request_id = 0
+    if process is not None:
+        try:
+            if key is not None and key[0] == os.getpid():
+                with _adopt_local_children():
+                    _stop_backend_cli(process, _DiagnosticStream(), _DiagnosticStream())
+        finally:
+            for pipe in (process.stdin, process.stdout, process.stderr):
+                pipe.close()
+
+
+atexit.register(close_backend_session)
+
+
+def _after_fork():
+    global _backend_lock
+    # The child closes its copies, never signals or waits for the parent's CLI.
+    close_backend_session()
+    _backend_lock = threading.RLock()
+
+
+os.register_at_fork(after_in_child=_after_fork)
+
+
 def backend_request(command, *, bounds=None):
+    # One action owns the session. Each Rust command still reloads its journal,
+    # validates Options and checks any required native generation/facts.
+    with _backend_lock, _adopt_local_children():
+        return _backend_request(command, bounds=bounds)
+
+
+def _backend_request(command, *, bounds=None):
     """Transport one command to FX1's Rust CLI; do not interpret its domain schema."""
     import selectors
     import subprocess
     import time
+
+    global _backend_session, _backend_session_key, _backend_request_id
 
     cleanup = command['op'] in ('cleanup_runtime', 'cancel')
     limits = backend_request({'op': 'cleanup_limits'})['limits'] if cleanup else None
@@ -216,12 +262,17 @@ def backend_request(command, *, bounds=None):
     sequence, received, executions = 0, 0, set()
     terminal = None
     parse_error = None
+    exited_at = None
+    stdout_closed = False
+    session = os.environ.get('TL3_RUN_BACKEND_SESSION') == '1'
+    request_id = None
 
     def accept(raw):
         nonlocal sequence, deadline, terminal
         frame = json.loads(raw)
         if (frame['schema'] != 'tl3.run_backend.frame.v1' or type(frame['sequence']) is not int
-                or frame['sequence'] != sequence or terminal is not None):
+                or frame['sequence'] != sequence or terminal is not None
+                or (session and (type(frame.get('request_id')) is not int or frame['request_id'] != request_id))):
             raise _BackendTransportError('invalid_frame', 'backend CLI returned an invalid frame sequence')
         sequence += 1
         if frame['kind'] == 'cleanup_progress':
@@ -246,10 +297,39 @@ def backend_request(command, *, bounds=None):
         else:
             raise _BackendTransportError('invalid_frame', 'backend CLI returned an unexpected frame')
     try:
-        process = subprocess.Popen(
-            [os.environ['TL3_RUN_BACKEND_CLI'], *([] if command['op'] in ('output_bounds', 'cleanup_limits') else
-             ['--config', os.environ['TL3_RUN_BACKEND_CONFIG']])],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        if session:
+            import hashlib
+
+            config = os.environ['TL3_RUN_BACKEND_CONFIG']
+            with Path(config).open('rb') as source:
+                raw_config = source.read(8 * 1024 * 1024 + 1)
+            if len(raw_config) > 8 * 1024 * 1024:
+                raise RuntimeError('backend session config exceeds byte bound')
+            key = (os.getpid(), os.environ['TL3_RUN_BACKEND_CLI'], config,
+                   hashlib.sha256(raw_config).digest(),
+                   tuple(os.environ.get(name) for name in ('TL3_RUN_OWNER', 'TL3_RUN_CORRELATION',
+                         'TL3_RUN_INSTANCE', 'TL3_RUN_REQUEST_DIGEST', 'FLUX_JOB_ID')),
+                   command.get('owner', os.environ.get('TL3_RUN_OWNER')),
+                   command.get('correlation', os.environ.get('TL3_RUN_CORRELATION')))
+            if _backend_session_key != key or (_backend_session is not None and _backend_session.poll() is not None):
+                close_backend_session()
+            if _backend_session is None:
+                _backend_session = subprocess.Popen(
+                    [key[1], '--session', '--config', key[2]], bufsize=0,
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+                _backend_session_key = key
+            process = _backend_session
+            _backend_request_id += 1
+            request_id = _backend_request_id
+            request = json.dumps({'request_id': request_id, 'command': command}).encode() + b'\n'
+            if len(request) > bound:
+                raise RuntimeError('backend session command exceeds transport bound')
+            pending = memoryview(request)
+        else:
+            process = subprocess.Popen(
+                [os.environ['TL3_RUN_BACKEND_CLI'], *([] if command['op'] in ('output_bounds', 'cleanup_limits') else
+                 ['--config', os.environ['TL3_RUN_BACKEND_CONFIG']])],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
         with selectors.DefaultSelector() as ready:
             os.set_blocking(process.stdin.fileno(), False)
             ready.register(process.stdin, selectors.EVENT_WRITE)
@@ -259,16 +339,30 @@ def backend_request(command, *, bounds=None):
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise _BackendTransportError('timeout', 'backend CLI transport timed out')
-                for key, _ in ready.select(remaining):
+                if process.poll() is not None:
+                    if exited_at is None:
+                        import signal
+
+                        exited_at = time.monotonic()
+                        try:
+                            os.killpg(process.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                    elif time.monotonic() - exited_at >= 1:
+                        raise _BackendTransportError('unclosed_pipes', 'backend CLI exited with unclosed descendant pipes')
+                for key, _ in ready.select(min(remaining, 0.05)):
                     if key.fileobj is process.stdin:
                         pending = pending[os.write(key.fd, pending[:65536]):]
                         if not pending:
                             ready.unregister(key.fileobj)
-                            process.stdin.close()
+                            if not session:
+                                process.stdin.close()
                     else:
                         chunk = os.read(key.fd, 65536)
                         if not chunk:
                             ready.unregister(key.fileobj)
+                            if key.fileobj is process.stdout:
+                                stdout_closed = True
                         stream = stdout_evidence if key.fileobj is process.stdout else stderr_evidence
                         stream.add(chunk)
                         if key.fileobj is process.stderr:
@@ -288,7 +382,14 @@ def backend_request(command, *, bounds=None):
                                 parse_error = error
                                 output.clear()
                                 break
-            code = process.wait(timeout=max(0.001, deadline - time.monotonic()))
+                if session and stdout_closed and terminal is None and parse_error is None:
+                    raise _BackendTransportError('child_eof', 'backend CLI stdout closed before a terminal result')
+                if session and parse_error is not None:
+                    raise parse_error
+                if session and terminal is not None and terminal['kind'] == 'result':
+                    break
+            code = (0 if session and terminal is not None and terminal['kind'] == 'result' and parse_error is None
+                    else process.wait(timeout=max(0.001, deadline - time.monotonic())))
         if parse_error is not None:
             raise parse_error
         if output:
@@ -321,7 +422,9 @@ def backend_request(command, *, bounds=None):
             diagnostic['retention_error'] = Redactor(None).text(str(retention), limit=1024)
         raise BackendCliError(diagnostic) from None
     finally:
-        if process is not None:
+        if session and (terminal is None or terminal['kind'] != 'result' or parse_error is not None):
+            close_backend_session()
+        elif process is not None and not session:
             _stop_backend_cli(process, stdout_evidence, stderr_evidence)
             process.stdin.close()
             process.stdout.close()
@@ -336,10 +439,12 @@ def _stop_backend_cli(process, stdout, stderr):
         os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
-    process.wait()
+    process.wait(timeout=2)
+    _reap_owned_group(process.pid, 1)
     for pipe, evidence in ((process.stdout, stdout), (process.stderr, stderr)):
         os.set_blocking(pipe.fileno(), False)
-        while True:
+        # An escaped, unowned writer cannot keep diagnostic shutdown draining forever.
+        for _ in range(4):
             try:
                 chunk = os.read(pipe.fileno(), 65536)
             except BlockingIOError:
@@ -354,6 +459,44 @@ def output_bounds(suite):
 
 
 def collect_host_payload(command, *, timeout, operation='collect_runner'):
+    with _adopt_local_children():
+        try:
+            return _collect_host_payload(command, timeout=timeout, operation=operation)
+        finally:
+            close_backend_session()
+
+
+@contextmanager
+def _adopt_local_children():
+    import ctypes
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    previous = ctypes.c_int()
+    if libc.prctl(37, ctypes.byref(previous), 0, 0, 0) != 0 or libc.prctl(36, 1, 0, 0, 0) != 0:
+        raise OSError(ctypes.get_errno(), 'cannot own local orphan cleanup')
+    try:
+        yield
+    finally:
+        if libc.prctl(36, previous.value, 0, 0, 0) != 0:
+            raise OSError(ctypes.get_errno(), 'cannot restore local orphan cleanup')
+
+
+def _reap_owned_group(group, timeout):
+    import time
+
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            pid, _ = os.waitpid(-group, os.WNOHANG)
+        except ChildProcessError:
+            return
+        if not pid:
+            if time.monotonic() >= deadline:
+                raise RuntimeError('owned local descendants did not exit; cessation remains unknown')
+            time.sleep(0.01)
+
+
+def _collect_host_payload(command, *, timeout, operation):
     """Retain raw action bytes. Rust alone extracts and validates the check report."""
     import hashlib
     import selectors
@@ -377,15 +520,26 @@ def collect_host_payload(command, *, timeout, operation='collect_runner'):
         counts = {stdout: 0, stderr: 0}
         limits = {stdout: bounds["stdout_bytes"], stderr: bounds["stderr_bytes"]}
         deadline = time.monotonic() + timeout
+        exited_at = None
         try:
             with selectors.DefaultSelector() as ready:
                 ready.register(process.stdout, selectors.EVENT_READ, stdout)
                 ready.register(process.stderr, selectors.EVENT_READ, stderr)
                 while ready.get_map():
+                    if process.poll() is not None:
+                        if exited_at is None:
+                            exited_at = time.monotonic()
+                            # A dead action cannot finish its pipe-holding local children.
+                            try:
+                                os.killpg(process.pid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                        elif time.monotonic() - exited_at >= 1:
+                            raise RuntimeError('host action exited with unclosed descendant pipes; ownership remains unknown')
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         raise RuntimeError('host payload timed out; container cleanup remains unknown')
-                    for key, _ in ready.select(remaining):
+                    for key, _ in ready.select(min(remaining, 0.05)):
                         chunk = os.read(key.fd, 65536)
                         if not chunk:
                             ready.unregister(key.fileobj)
@@ -402,6 +556,7 @@ def collect_host_payload(command, *, timeout, operation='collect_runner'):
                 pass
             try:
                 process.wait(timeout=5)
+                _reap_owned_group(process.pid, 1)
             finally:
                 try:
                     process.stdout.close()
@@ -521,6 +676,25 @@ def stage_host_runtime(destination, *, interpreter, producer_commit, podman, sys
     write(cleanup, (verifier + f'sys.argv[1:1] = {cleanup_args!r}\n'
                     'from tl3_harness.runtime import cleanup_main\ncleanup_main()\n').encode())
     return executable, manifest, package
+
+
+def prepare_allocation(evidence):
+    context = evidence.context
+    host = evidence.host_facts
+    observed = {'run': context['run'], 'request_digest': context['request_digest'],
+                'hostname': host['hostname'], 'allowed_cpus': host['Cpus_allowed_list'], 'cgroup': host['cgroup']}
+    facts = backend_request({'op': 'observe_allocation', 'owner': context['owner'],
+                             'correlation': context['correlation'], 'observed': observed})['facts']
+    grant = backend_request({'op': 'validate_allocation', 'owner': context['owner'],
+                             'correlation': context['correlation'], 'facts': facts})['grant']
+    refreshed = launch_context()
+    if (grant['run'] != context['run'] or grant['request_digest'] != context['request_digest']
+            or refreshed['run'] != context['run'] or refreshed['request_digest'] != context['request_digest']
+            or refreshed['placement'] != {'kind': 'observed', **{key: grant[key] for key in
+                ('allocation', 'topology', 'host', 'rank', 'os_pus')}}):
+        raise RuntimeError('launch context does not contain the exact validated allocation grant')
+    evidence.context = refreshed
+    evidence.record('allocation_grant', grant)
 
 
 def begin_container_launch(child, evidence):

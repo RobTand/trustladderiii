@@ -8,6 +8,7 @@ pub fn launch_context() -> std::result::Result<String, serde_json::Error> {
 #[allow(dead_code)]
 #[derive(JsonSchema)]
 struct WireSchema {
+    session_request: cli::SessionRequest,
     command: cli::Command,
     frame: cli::Frame,
     options: Options,

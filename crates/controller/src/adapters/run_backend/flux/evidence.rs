@@ -11,6 +11,7 @@ fn unqualified(reason: &str) -> RuntimeQualification {
 
 pub(super) fn allocation_grant(record: &Record, facts: &AllocationInput) -> Result<CpuGrant> {
     facts.run.validate()?;
+    cgroup_path(&facts.host.cgroup)?;
     if facts.run.instance != record.intent.instance
         || facts.run.uri != record.intent.uri
         || facts.request_digest != record.intent.request_digest
@@ -29,6 +30,7 @@ pub(super) fn allocation_grant(record: &Record, facts: &AllocationInput) -> Resu
     let topology: TopologyMapping =
         serde_json::from_slice(&checked_blob(&facts.topology, &record.intent.output_dir)?)?;
     if r.version != 1
+        || r.execution.ranks.len() != 1
         || topology.run != facts.run
         || topology.request_digest != record.intent.request_digest
         || topology.ranks.len() > 4096
@@ -67,7 +69,11 @@ pub(super) fn allocation_grant(record: &Record, facts: &AllocationInput) -> Resu
         ));
     }
     let cores = resources::idset(&allocated[0].children.core)?;
-    if cores.len() as u64 != u64::from(record.request.reservation.cpus.get()) {
+    if resources::idset(&allocated[0].rank)? != BTreeSet::from([facts.host.rank])
+        || cores.len() as u64 != u64::from(record.request.reservation.cpus.get())
+        || resources::idset(&allocated[0].children.gpu)?.len() as u64
+            != u64::from(record.request.reservation.gpus)
+    {
         return Err(BackendError::invalid(
             "observed core grant differs from declared task shape",
         ));

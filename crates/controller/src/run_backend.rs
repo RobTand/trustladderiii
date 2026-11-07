@@ -808,6 +808,17 @@ pub struct AllocationInput {
     pub host: ProcessPlacement,
 }
 
+/// Raw observations of the action process, not a native rank or CPU mapping.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AllocationObservation {
+    pub run: BackendId,
+    pub request_digest: String,
+    pub hostname: String,
+    pub allowed_cpus: String,
+    pub cgroup: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct CpuGrant {

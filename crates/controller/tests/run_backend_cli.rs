@@ -57,6 +57,134 @@ fn cli_schema_is_generated_from_rust_and_describes_all_operations() {
 }
 
 #[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn generated_action_refusal_is_typed_prompt_and_releases_scratch() {
+    generated_action_case("refusal");
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn generated_action_consumes_native_grant_before_binding_and_payload() {
+    for case in [
+        "success",
+        "affinity-mismatch",
+        "resource-mismatch",
+        "changed-allocation",
+        "binding-mismatch",
+    ] {
+        generated_action_case(case);
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn action_session_rechecks_generation_owner_and_live_allocation() {
+    generated_action_case("session");
+}
+
+fn generated_action_case(mode: &str) {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::InJob, true);
+    let scratch = tempfile::tempdir().unwrap();
+    f.request.scratch_root = scratch.path().to_owned();
+    f.request.reservation.cpus = 1.try_into().unwrap();
+    f.request.reservation.parallelism = 1.try_into().unwrap();
+    f.request.suite = Suite::DaytimeChecks {
+        base: f.request.tree.head.clone(),
+        head: f.request.tree.head.clone(),
+        reviewed: None,
+        plan_digest: "a".repeat(64),
+    };
+    f.request.no_progress_seconds = Some(10.try_into().unwrap());
+    f.intent.request_digest = digest(&serde_json::to_vec(&f.request).unwrap());
+    f.submit();
+    let mut environment = f.request.environment.clone();
+    for (name, value) in [
+        ("TL3_EXECUTION_BACKEND", "flux".to_owned()),
+        (
+            "TL3_RUN_BACKEND_CLI",
+            env!("CARGO_BIN_EXE_tl3-run-backend").to_owned(),
+        ),
+        (
+            "TL3_RUN_BACKEND_CONFIG",
+            f.config.to_string_lossy().into_owned(),
+        ),
+        ("TL3_RUN_OWNER", f.intent.owner.clone()),
+        ("TL3_RUN_CORRELATION", f.intent.correlation.clone()),
+        (
+            "TL3_RUN_DIAGNOSTIC_DIR",
+            f.intent.output_dir.to_string_lossy().into_owned(),
+        ),
+        ("FLUX_JOB_ID", "fABC".to_owned()),
+        ("TL3_RUN_BACKEND_SESSION", "1".to_owned()),
+        ("OUT", f.intent.output_dir.to_string_lossy().into_owned()),
+    ] {
+        environment.insert(name.into(), value);
+    }
+    fs::write(
+        f.root.path().join("action-fixture.json"),
+        serde_json::to_vec(&json!({
+            "environment": environment, "output_dir": f.intent.output_dir,
+            "scratch": scratch.path().join("fABC"), "mode": mode,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let output = Command::new("/home/rob/venvs/pb-cpu/bin/python")
+        .arg(source.join("harness/tests/fx_action_e2e.py"))
+        .arg(f.root.path())
+        .arg(source)
+        .arg(mode)
+        .output()
+        .unwrap();
+    eprintln!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if let Ok(destination) = std::env::var("FX_E2E_EVIDENCE") {
+        let destination = Path::new(&destination).join(mode);
+        fs::create_dir_all(&destination).unwrap();
+        for entry in fs::read_dir(&f.intent.output_dir).unwrap().flatten() {
+            if entry.file_type().unwrap().is_file() {
+                fs::copy(entry.path(), destination.join(entry.file_name())).unwrap();
+            }
+        }
+        for name in [
+            "calls",
+            "all.json",
+            "runtime-calls.jsonl",
+            "action-fixture.json",
+        ] {
+            let file = f.root.path().join(name);
+            if file.is_file() {
+                fs::copy(file, destination.join(name)).unwrap();
+            }
+        }
+        fs::copy(
+            f.root
+                .path()
+                .join("journal")
+                .join(&f.intent.correlation)
+                .join("state.json"),
+            destination.join("state.json"),
+        )
+        .unwrap();
+        fs::write(destination.join("driver.stdout"), &output.stdout).unwrap();
+        fs::write(destination.join("driver.stderr"), &output.stderr).unwrap();
+    }
+    assert!(
+        output.status.success(),
+        "generated action refusal regression"
+    );
+}
+
+#[test]
 fn malformed_requests_have_a_versioned_bounded_error_frame() {
     assert!(!api::token("."));
     assert!(!api::token(".."));
@@ -1341,7 +1469,11 @@ fn own_scope_runtime_mapping_compares_golden_dl380_sets_and_effective_cap() {
     f.submit();
     let owned = f.container_ownership();
     f.call(json!({"op":"retain_runtime","owner":f.intent.owner,"correlation":f.intent.correlation,"ownership":owned}));
-    let allocation = api::durable::blob(&f.intent.output_dir.join("R.json"), &serde_json::to_vec(&json!({"version":1,"execution":{"R_lite":[{"rank":"0","children":{"core":"21-23,30"}}],"nodelist":["dl380g10"]}})).unwrap()).unwrap();
+    let native = serde_json::to_vec(&json!({"version":1,"execution":{"R_lite":[{"rank":"0","children":{"core":"21-23,30"}}],"nodelist":["dl380g10"]},
+        "scheduling":{"graph":{"nodes":std::iter::once(json!({"metadata":{"type":"node","rank":0,"id":0,"name":"dl380g10"}}))
+            .chain([21,22,23,30].into_iter().map(|id| json!({"metadata":{"type":"core","rank":0,"id":id,"properties":{"os-pus":format!("{id},{}",id+40)}}}))).collect::<Vec<_>>()}}})).unwrap();
+    fs::write(f.root.path().join("all.json"), &native).unwrap();
+    let allocation = api::durable::blob(&f.intent.output_dir.join("R.json"), &native).unwrap();
     let topology = api::durable::blob(
         &f.intent.output_dir.join("topology.json"),
         &serde_json::to_vec(&TopologyMapping {

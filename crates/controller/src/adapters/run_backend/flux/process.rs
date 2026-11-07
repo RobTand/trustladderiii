@@ -214,6 +214,7 @@ impl Flux {
                 record.intent.request_digest.clone(),
             ),
             ("TL3_EXECUTION_BACKEND", "flux".into()),
+            ("TL3_RUN_BACKEND_SESSION", "1".into()),
             (
                 "TL3_RUN_BACKEND_CLI",
                 self.options.bootstrap.cli.to_string_lossy().into_owned(),

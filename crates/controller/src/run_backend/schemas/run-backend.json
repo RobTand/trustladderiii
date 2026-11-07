@@ -39,11 +39,15 @@
     "runtime_preflight": {
       "$ref": "#/$defs/RuntimePreflight"
     },
+    "session_request": {
+      "$ref": "#/$defs/SessionRequest"
+    },
     "topology": {
       "$ref": "#/$defs/TopologyMapping"
     }
   },
   "required": [
+    "session_request",
     "command",
     "frame",
     "options",
@@ -86,6 +90,35 @@
         "allocation",
         "topology",
         "host"
+      ]
+    },
+    "AllocationObservation": {
+      "description": "Raw observations of the action process, not a native rank or CPU mapping.",
+      "type": "object",
+      "properties": {
+        "allowed_cpus": {
+          "type": "string"
+        },
+        "cgroup": {
+          "type": "string"
+        },
+        "hostname": {
+          "type": "string"
+        },
+        "request_digest": {
+          "type": "string"
+        },
+        "run": {
+          "$ref": "#/$defs/BackendId"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "run",
+        "request_digest",
+        "hostname",
+        "allowed_cpus",
+        "cgroup"
       ]
     },
     "Availability": {
@@ -568,6 +601,22 @@
     },
     "CliResult": {
       "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "facts": {
+              "$ref": "#/$defs/AllocationInput"
+            },
+            "op": {
+              "type": "string",
+              "const": "observe_allocation"
+            }
+          },
+          "required": [
+            "op",
+            "facts"
+          ]
+        },
         {
           "type": "object",
           "properties": {
@@ -1443,6 +1492,31 @@
             "correlation": {
               "type": "string"
             },
+            "observed": {
+              "$ref": "#/$defs/AllocationObservation"
+            },
+            "op": {
+              "type": "string",
+              "const": "observe_allocation"
+            },
+            "owner": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "owner",
+            "correlation",
+            "observed"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "correlation": {
+              "type": "string"
+            },
             "op": {
               "type": "string",
               "const": "retain_runtime"
@@ -2069,6 +2143,14 @@
     "Frame": {
       "type": "object",
       "properties": {
+        "request_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
         "schema": {
           "$ref": "#/$defs/FrameSchema"
         },
@@ -4363,6 +4445,24 @@
         "cases",
         "remaining",
         "reason"
+      ]
+    },
+    "SessionRequest": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "$ref": "#/$defs/Command"
+        },
+        "request_id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "request_id",
+        "command"
       ]
     },
     "SubjectDigests": {

@@ -2,6 +2,7 @@
 mod cleanup;
 mod evidence;
 mod lifecycle;
+mod placement;
 mod process;
 mod progress;
 mod resources;
@@ -549,6 +550,7 @@ impl RunBackend for Flux {
     fn validate_allocation(&self, owner: &Owner, facts: &AllocationInput) -> Result<CpuGrant> {
         let record = self.journal.load(owner)?;
         self.instance(&record)?;
+        self.check_live_allocation(&record, facts)?;
         let grant = evidence::allocation_grant(&record, facts)?;
         self.journal.transaction(owner, |dir, current| {
             let mut current = current.ok_or_else(|| BackendError::unknown("intent disappeared"))?;

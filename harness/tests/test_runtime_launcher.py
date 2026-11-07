@@ -761,6 +761,8 @@ def test_durable_launch_precedes_podman_and_binding_gates_payload(launcher, monk
                'runtime': {'mode': 'in_job'}}
     (executable.parent / 'stderr').write_text(PREFIX + json.dumps({'Cpus_allowed_list': '1', 'cgroup': '0::/job'}) + '\n')
     monkeypatch.setattr(runtime, 'launch_context', lambda: context)
+    # Allocation is exercised with the real Rust CLI by fx_action_e2e.py.
+    monkeypatch.setattr(runtime, 'prepare_allocation', lambda evidence: None)
     operations = []
     def backend(request):
         op = request['op']
@@ -958,6 +960,7 @@ def test_prelaunch_cancellation_never_executes_podman_and_reaps_gated_client(lau
                'output_dir': str(output), 'progress': {'no_progress_seconds': 10},
                'placement': {'kind': 'observed', 'host': 'dl380g10', 'rank': 0}}
     monkeypatch.setattr(runtime, 'launch_context', lambda: context)
+    monkeypatch.setattr(runtime, 'prepare_allocation', lambda evidence: None)
     launcher_pids = []
     def backend(request):
         assert request['op'] == 'begin_container_launch'
@@ -965,13 +968,152 @@ def test_prelaunch_cancellation_never_executes_podman_and_reaps_gated_client(lau
         raise RuntimeError('launch held after cancellation')
     monkeypatch.setattr(runtime, 'backend_request', backend)
     with calls.with_suffix('.stdin').open('w+b') as selection:
-        with pytest.raises(RuntimeError, match='cancellation'):
+        with pytest.raises(ExecutionFailure) as failed:
             with Supervised([str(executable), 'run', 'fixture'], selection, ()):
                 pytest.fail('cancelled begin must never return an active launcher')
+        assert failed.value.outcome == ExecutionOutcome.SETUP_FAILURE
+        assert 'cancellation' in failed.value.stderr_tail
     assert not calls.exists()
     assert len(launcher_pids) == 1
     with pytest.raises(ChildProcessError):
         os.waitpid(launcher_pids[0], os.WNOHANG)
+
+
+@pytest.fixture
+def session_cli(tmp_path, monkeypatch):
+    from tl3_harness import runtime
+    executable = tmp_path / 'session-cli'
+    control = tmp_path / 'session-mode'
+    config = tmp_path / 'session-config'
+    config.write_text('{}')
+    control.write_text('ok')
+    executable.write_text(f'''#!{sys.executable}
+import json, os, pathlib, sys, time
+for line in sys.stdin:
+    request = json.loads(line)
+    command = request['command']
+    mode = pathlib.Path({str(control)!r}).read_text()
+    if mode == 'silent':
+        time.sleep(30)
+    if mode == 'pipe-holder':
+        child = os.fork()
+        if child == 0:
+            time.sleep(30)
+            os._exit(0)
+        pathlib.Path({str(control)!r} + '.pid').write_text(str(child))
+        os._exit(7)
+    if mode == 'closed-output':
+        os.close(1)
+        os.close(2)
+        time.sleep(30)
+    if mode == 'eof':
+        sys.exit(7)
+    frame = {{'schema':'tl3.run_backend.frame.v1', 'sequence':0,
+              'request_id':request['request_id'], 'kind':'result',
+              'result':{{'op':command['op'], 'pid':os.getpid()}}}}
+    if mode == 'wrong-id': frame['request_id'] -= 1
+    if mode == 'wrong-sequence': frame['sequence'] = 1
+    if mode == 'oversize': frame['result']['data'] = 'x' * 10000
+    if mode == 'error':
+        frame = {{**frame, 'kind':'error', 'code':'invalid_request','message':'retained refusal'}}
+        del frame['result']
+        print('CLI stderr diagnostic', file=sys.stderr, flush=True)
+    print(json.dumps(frame), flush=True)
+    if mode == 'error': sys.exit(7)
+''')
+    executable.chmod(0o700)
+    monkeypatch.setenv('TL3_RUN_BACKEND_CLI', str(executable))
+    monkeypatch.setenv('TL3_RUN_BACKEND_CONFIG', str(config))
+    monkeypatch.setenv('TL3_RUN_BACKEND_SESSION', '1')
+    monkeypatch.setattr(runtime, 'BACKEND_IDLE_SECONDS', 0.5)
+    runtime.close_backend_session()
+    try:
+        yield control, config
+    finally:
+        runtime.close_backend_session()
+
+
+def test_session_owns_one_action_config_and_reaps_on_close(session_cli):
+    import os
+    from tl3_harness import runtime
+
+    _, config = session_cli
+    command = {'op': 'launch_context', 'owner': 'first', 'correlation': 'one'}
+    first = runtime.backend_request(command)['pid']
+    assert runtime.backend_request(command)['pid'] == first
+    config.write_text('{"generation":"changed"}')
+    second = runtime.backend_request(command)['pid']
+    assert second != first
+    with pytest.raises(ChildProcessError):
+        os.waitpid(first, os.WNOHANG)
+    third = runtime.backend_request({**command, 'owner': 'other'})['pid']
+    assert third != second
+    runtime.close_backend_session()
+    with pytest.raises(ChildProcessError):
+        os.waitpid(third, os.WNOHANG)
+
+
+def test_session_fork_closes_copies_without_stopping_parent(session_cli):
+    import os
+    from tl3_harness import runtime
+
+    command = {'op': 'launch_context', 'owner': 'first', 'correlation': 'one'}
+    original = runtime.backend_request(command)['pid']
+    child = os.fork()
+    if child == 0:
+        try:
+            assert runtime._backend_session is None
+            assert runtime.backend_request(command)['pid'] != original
+            runtime.close_backend_session()
+        except BaseException:
+            os._exit(1)
+        os._exit(0)
+    assert os.waitpid(child, 0)[1] == 0
+    assert runtime.backend_request(command)['pid'] == original
+
+
+@pytest.mark.parametrize('mode', ['wrong-id', 'wrong-sequence', 'oversize', 'silent', 'eof', 'error', 'pipe-holder', 'closed-output'])
+def test_session_refuses_bad_frames_eof_and_timeout_and_reaps(session_cli, mode):
+    import os
+    import time
+    from tl3_harness import runtime
+
+    control, _ = session_cli
+    command = {'op': 'launch_context', 'owner': 'first', 'correlation': 'one'}
+    pid = runtime.backend_request(command)['pid']
+    control.write_text(mode)
+    started = time.monotonic()
+    with pytest.raises(runtime.BackendCliError) as failed:
+        runtime.backend_request(command, bounds={'cli_result_bytes': 2048})
+    assert time.monotonic() - started < 2
+    assert runtime._backend_session is None
+    with pytest.raises(ChildProcessError):
+        os.waitpid(pid, os.WNOHANG)
+    if mode == 'pipe-holder':
+        assert not Path('/proc', control.with_suffix('.pid').read_text()).exists()
+    if mode == 'error':
+        diagnostic = failed.value.diagnostic
+        assert diagnostic['status']['code'] == 7
+        assert 'CLI stderr diagnostic' in diagnostic['stderr']['text']
+        assert diagnostic['cause']['message'] == 'retained refusal'
+
+
+def test_host_collector_reaps_pipe_holder_when_action_exits(tmp_path, monkeypatch):
+    import time
+    from tl3_harness import runtime
+
+    monkeypatch.setattr(runtime, 'launch_context', lambda: {'output_dir': str(tmp_path), 'run': {},
+        'owner': 'owner', 'correlation': 'correlation', 'output_bounds': {'stdout_bytes': 1024, 'stderr_bytes': 1024}})
+    monkeypatch.setattr(runtime, 'backend_request', lambda command: {})
+    child_file = tmp_path / 'child-pid'
+    script = ('import os,subprocess,sys; child=subprocess.Popen([sys.executable,"-c","import time;time.sleep(30)"]);'
+              f'open({str(child_file)!r},"w").write(str(child.pid)); os._exit(7)')
+    started = time.monotonic()
+    code, _ = runtime.collect_host_payload([sys.executable, '-I', '-c', script], timeout=20)
+    assert code == 7 and time.monotonic() - started < 2
+    pid = int(child_file.read_text())
+    status = Path(f'/proc/{pid}/stat')
+    assert not status.exists()
 
 
 def test_pending_injob_absent_name_and_empty_labels_retains_typed_evidence(cleanup_fixture):

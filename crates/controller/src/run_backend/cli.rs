@@ -1,4 +1,5 @@
-//! One JSON command on stdin, NDJSON result/event frames on stdout.
+//! JSON commands on stdin, NDJSON result/event frames on stdout.
+//! Opt-in sessions warm process policy only; every command reloads validated state.
 use super::*;
 use crate::adapters::run_backend::flux::Flux;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -88,6 +89,11 @@ pub enum Command {
         correlation: String,
         facts: Box<AllocationInput>,
     },
+    ObserveAllocation {
+        owner: String,
+        correlation: String,
+        observed: Box<AllocationObservation>,
+    },
     RetainRuntime {
         owner: String,
         correlation: String,
@@ -110,6 +116,8 @@ pub enum Command {
 pub struct Frame {
     pub schema: FrameSchema,
     pub sequence: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<u64>,
     #[serde(flatten)]
     pub body: FrameBody,
 }
@@ -129,6 +137,9 @@ pub enum FrameBody {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum CliResult {
+    ObserveAllocation {
+        facts: Box<AllocationInput>,
+    },
     CleanupLimits {
         limits: CleanupLimits,
     },
@@ -198,12 +209,14 @@ pub enum CliResult {
 
 struct Writer {
     sequence: u64,
+    request_id: Option<u64>,
 }
 impl Writer {
     fn frame(&mut self, body: FrameBody) -> Result<()> {
         let frame = Frame {
             schema: FrameSchema::V1,
             sequence: self.sequence,
+            request_id: self.request_id,
             body,
         };
         let mut stdout = std::io::stdout().lock();
@@ -216,8 +229,48 @@ impl Writer {
 }
 
 pub fn main() -> i32 {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let mut writer = Writer { sequence: 0 };
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let session = args.first().is_some_and(|arg| arg == "--session");
+    if session {
+        args.remove(0);
+    }
+    let mut reader = BufReader::new(std::io::stdin());
+    let mut request_id = 1_u64;
+    loop {
+        if session {
+            match reader.fill_buf() {
+                Ok([]) => return 0,
+                Ok(_) => {}
+                Err(_) => return 1,
+            }
+        }
+        let code = command_main(&args, &mut reader, session.then_some(request_id));
+        if code != 0 || !session {
+            return code;
+        }
+        let Some(next) = request_id.checked_add(1) else {
+            return 1;
+        };
+        request_id = next;
+    }
+}
+
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SessionRequest {
+    pub request_id: u64,
+    pub command: Command,
+}
+
+fn command_main(
+    args: &[String],
+    reader: &mut BufReader<std::io::Stdin>,
+    request_id: Option<u64>,
+) -> i32 {
+    let mut writer = Writer {
+        sequence: 0,
+        request_id,
+    };
     let result = (|| -> Result<()> {
         if args == ["schema"] {
             print!("{}", schema::cli()?);
@@ -237,16 +290,28 @@ pub fn main() -> i32 {
             )?;
             return Ok(());
         }
-        let mut reader = BufReader::new(std::io::stdin());
         let mut line = Vec::new();
-        std::io::Read::by_ref(&mut reader)
+        std::io::Read::by_ref(reader)
             .take(durable::MAX_BYTES as u64 + 1)
             .read_until(b'\n', &mut line)?;
         if line.len() > durable::MAX_BYTES {
             return Err(BackendError::invalid("command exceeds byte bound"));
         }
-        let command: Command = serde_json::from_slice(&line)
-            .map_err(|_| BackendError::invalid("command does not match generated Rust schema"))?;
+        let command: Command = if let Some(expected) = request_id {
+            let request: SessionRequest = serde_json::from_slice(&line).map_err(|_| {
+                BackendError::invalid("command does not match generated Rust session schema")
+            })?;
+            if request.request_id != expected {
+                return Err(BackendError::invalid(
+                    "session request ID is not the next request",
+                ));
+            }
+            request.command
+        } else {
+            serde_json::from_slice(&line).map_err(|_| {
+                BackendError::invalid("command does not match generated Rust schema")
+            })?
+        };
         if matches!(command, Command::CleanupLimits) {
             return writer.frame(FrameBody::Result {
                 result: Box::new(CliResult::CleanupLimits {
@@ -314,6 +379,12 @@ pub fn main() -> i32 {
                 submission: backend.submit(*request, intent)?,
             },
             Command::Attach { owner, correlation } => {
+                if request_id.is_some() {
+                    return Err(BackendError::invalid(
+                        "attach requires its dedicated single-request control pipe",
+                    ));
+                }
+                let mut reader = std::mem::replace(reader, BufReader::new(std::io::stdin()));
                 let stop = WatchStop::default();
                 let control = stop.clone();
                 // EOF is normal for a one-shot command. A second control frame stops only this watcher.
@@ -414,6 +485,15 @@ pub fn main() -> i32 {
                 facts,
             } => CliResult::ValidateAllocation {
                 grant: backend.validate_allocation(&Owner { owner, correlation }, &facts)?,
+            },
+            Command::ObserveAllocation {
+                owner,
+                correlation,
+                observed,
+            } => CliResult::ObserveAllocation {
+                facts: Box::new(
+                    backend.observe_allocation(&Owner { owner, correlation }, &observed)?,
+                ),
             },
             Command::RetainRuntime {
                 owner,
