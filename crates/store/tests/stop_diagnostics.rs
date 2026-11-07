@@ -24,7 +24,7 @@ impl Drop for RestorePidfile {
 fn failed_stop_retains_server_diagnostics() {
     if std::env::var_os("TL3_STOP_DIAGNOSTICS_CHILD").is_some() {
         let mut database = support::Database::start();
-        let settings = database.create_uninitialized("stop_diagnostics");
+        let settings = database.create("stop_diagnostics");
         let mut client = postgres::Config::new()
             .host(&settings.host)
             .port(settings.port)
@@ -51,7 +51,11 @@ fn failed_stop_retains_server_diagnostics() {
             .batch_execute(&format!("DO $$ BEGIN RAISE LOG '{MARKER}'; END $$"))
             .unwrap();
         drop(client);
-        fs::rename(data.join("postmaster.pid"), data.join("postmaster.pid.hidden")).unwrap();
+        fs::rename(
+            data.join("postmaster.pid"),
+            data.join("postmaster.pid.hidden"),
+        )
+        .unwrap();
         let _restore = RestorePidfile(data);
         database.stop();
         panic!("pg_ctl unexpectedly accepted a missing pidfile");
@@ -63,7 +67,9 @@ fn failed_stop_retains_server_diagnostics() {
         Some(root) => tempfile::Builder::new()
             .prefix("stop-regression-")
             .tempdir_in(root),
-        None => tempfile::Builder::new().prefix("stop-regression-").tempdir(),
+        None => tempfile::Builder::new()
+            .prefix("stop-regression-")
+            .tempdir(),
     }
     .unwrap();
     let root_record = artifacts.path().join("fixture-root.txt");
@@ -85,7 +91,10 @@ fn failed_stop_retains_server_diagnostics() {
     );
     println!("forced-stop child stderr:\n{stderr}");
     assert!(!result.status.success());
-    assert!(stderr.contains("DatabaseStopError"), "original error missing");
+    assert!(
+        stderr.contains("DatabaseStopError"),
+        "original error missing"
+    );
     assert!(stderr.contains("stdout=") && stderr.contains("stderr="));
     assert!(stderr.contains("postmaster.pid") && stderr.contains("does not exist"));
     let root = fs::read_to_string(&root_record).unwrap();
@@ -110,5 +119,5 @@ fn failed_stop_retains_server_diagnostics() {
     let retained = fs::read_to_string(logs[0].join("server.log")).unwrap();
     assert!(retained.contains(OLD) && retained.contains(MARKER));
     println!("retained server log verified after fixture cleanup; no skips");
-    artifacts.keep();
+    let _ = artifacts.keep();
 }
