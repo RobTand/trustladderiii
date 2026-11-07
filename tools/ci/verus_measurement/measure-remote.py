@@ -335,7 +335,7 @@ def frontend_verdict(stats, inventory, measurement, row, execution):
             v.get('is-verifying-entire-crate') is False and ('success' not in v or v['success'] is True),
             'frontend verdict/error/selection failed')
     times = stats.get('times-ms', {})
-    require(type(times) is dict and metric(times.get('total')) is not None and metric(times.get('num-threads')) == 0, 'missing frontend timing/no-worker evidence')
+    require(type(times) is dict and metric(times.get('total')) is not None and metric(times.get('num-threads')) == 1, 'missing frontend timing/configured-thread evidence')
     smt = times.get('smt', {})
     require(all(metric(smt.get(k)) == 0 for k in ('total', 'smt-init', 'smt-run', 'rlimit-init', 'rlimit-run')) and
             all(smt.get(k) == [] for k in ('smt-init-module-times', 'smt-run-module-times')), 'missing/conflicting no-SMT evidence')

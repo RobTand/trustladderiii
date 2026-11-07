@@ -120,7 +120,7 @@ mod measurement {
             let v = &stats["verification-results"];
             let smt = &stats["times-ms"]["smt"];
             if expected == 0
-                || stats["times-ms"]["num-threads"].as_u64() != Some(0)
+                || stats["times-ms"]["num-threads"].as_u64() != Some(1)
                 || stats["times-ms"]["total"].as_u64().is_none()
                 || v["verified"].as_u64() != Some(0)
                 || v["errors"].as_u64() != Some(0)
@@ -220,7 +220,7 @@ mod measurement {
         fn frontend_is_never_a_positive_proof_or_resource_measurement() {
             let mut v = verdict();
             v["verification-results"]["verified"] = json!(0);
-            v["times-ms"] = json!({"total": 1, "num-threads": 0, "smt": {"total": 0, "smt-init": 0, "smt-run": 0,
+            v["times-ms"] = json!({"total": 1, "num-threads": 1, "smt": {"total": 0, "smt-init": 0, "smt-run": 0,
                 "rlimit-init": 0, "rlimit-run": 0, "smt-init-module-times": [], "smt-run-module-times": []}});
             let text = serde_json::to_string_pretty(&v).unwrap();
             assert!(

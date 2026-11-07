@@ -48,3 +48,9 @@ print statement as quoted Python source. The collector records that exact
 non-JSON source line separately. It rejects changed/repeated source echoes and
 all embedded, duplicate or conflicting emitted JSON markers. Source text grants
 no wrapper verdict or fallback authority. The wrapper and scanner are unchanged.
+
+Pinned Verus initializes num_threads to 1 in Verifier::new and skips the inner
+verification loop for --no-verify without --build-sst. Frontend stats therefore
+retain configured thread count 1. Empty SMT samples and explicit zero counters,
+with the pinned control flow, establish no SMT execution; a zero thread count
+is not fabricated as evidence.

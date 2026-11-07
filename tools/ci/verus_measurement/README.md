@@ -120,7 +120,7 @@ No profiles run by default.
 
 Frontend uses actual pinned `--no-verify` without `--build-sst`. It reports
 `FRONTEND_ONLY`, `proof=NOT_RUN`, and `resources=NOT_APPLICABLE`. Success requires
-exit 0, a clean zero-proof JSON verdict, zero worker threads, explicit zero SMT
+exit 0, a clean zero-proof JSON verdict, configured thread count 1, explicit zero SMT
 counters and empty INIT/run query measurements. Positive expected obligations
 remain source-selection metadata. Missing JSON, metrics, pins, tool identities,
 source identities or no-SMT evidence cannot pass. No zero-query receipt can

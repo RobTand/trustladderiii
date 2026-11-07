@@ -185,7 +185,7 @@ class Fixtures(unittest.TestCase):
         row = self.config().selections[0]
         stats = {'verification-results': {'verified': 0, 'errors': 0, 'encountered-error': False,
                  'encountered-vir-error': False, 'is-verifying-entire-crate': False},
-                 'times-ms': {'total': 1, 'num-threads': 0, 'smt': {**{k: 0 for k in ('total', 'smt-init', 'smt-run', 'rlimit-init', 'rlimit-run')},
+                 'times-ms': {'total': 1, 'num-threads': 1, 'smt': {**{k: 0 for k in ('total', 'smt-init', 'smt-run', 'rlimit-init', 'rlimit-run')},
                      'smt-init-module-times': [], 'smt-run-module-times': []}}}
         proof = {'proofs': {row.target: {'kind': 'FRONTEND_ONLY', 'module': row.selector, 'verified': 0,
                  'expected_obligations': row.expected, 'threads': 1, 'seconds': 1}}}
