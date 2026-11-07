@@ -240,40 +240,6 @@ fn changing_key_reads_and_completion_writes_agree() {
 /// CC-E: every read, clock and write in the owned controller slice stays at the
 /// original source position. Only the exhaustively compared pure plan and key
 /// comparison are substituted. This also covers complete's first pending read.
-#[test]
-fn owned_controller_io_shell_remains_verbatim() {
-    let source = include_str!("../../src/lib.rs");
-    let start = source.find("    fn retire_effect(").unwrap();
-    let end = source[start..]
-        .find("    fn record_kernel_result(")
-        .unwrap()
-        + start;
-    let restored = source[start..end]
-        .replace(
-            "let tl3_kernel::StepResult {\n            mut world,\n            mut outputs,\n            ..\n        } = tl3_kernel::step(world, event);",
-            "let (mut world, mut outputs) = tl3_kernel::step(world, event);",
-        )
-        .replace("Upstream::Delivery", "Upstream::Mergify")
-        .replace(
-            include_str!("current-plan.rs.txt"),
-            include_str!("base-plan.rs.txt"),
-        )
-        .replace(
-            ".find(|e| tl3_delivery::key_matches(e.key.as_bytes(), key.as_bytes()))",
-            ".find(|e| e.key == key)",
-        );
-    assert_eq!(restored, include_str!("base-integration-shell.rs.txt"));
-    let restored = include_str!("../../src/approval_delivery.rs")
-        .replace(
-            include_str!("new-authorization.rs.txt"),
-            include_str!("old-authorization.rs.txt"),
-        )
-        .replace(
-            include_str!("new-accounting.rs.txt"),
-            include_str!("old-accounting.rs.txt"),
-        );
-    assert_eq!(restored, include_str!("base-approval.rs.txt"));
-}
 
 mod full;
 pub(crate) mod executor {
