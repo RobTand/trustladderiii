@@ -17,3 +17,6 @@ unsafe_code = "forbid"
 
 [dependencies.tl3-harness-core]
 path = "../harness-core"
+
+[dependencies.url]
+version = "2.5.8"

@@ -428,3 +428,37 @@ fn trace_usage_keeps_only_nonnegative_integer_observations() {
         "password":"confidential observation","unknown":5}}}));
     assert_eq!(result["ok"]["result"]["value"]["value"], json!({"input_tokens":3,"cache_creation_input_tokens":4}));
 }
+
+
+#[test]
+fn azure_sas_context_redacts_exact_signature_spans_without_granting_generic_sig_semantics() {
+    let signature = format!("TL3FAKE{}=", "a".repeat(36));
+    let encoded = signature.replace('=', "%3D");
+    for query in [
+        format!("sv=2022-11-02&se=2026-12-01&sr=b&sig={signature}"),
+        format!("sig={encoded}&ss=b&se=2026-12-01&sv=2022-11-02"),
+        format!("%73v=2022-11-02&%73e=2026-12-01&%73r=b&%73ig={encoded}"),
+    ] {
+        let source = format!("https://st42.blob.core.windows.net/c/b?{query}&after=ordinary");
+        let result = command(json!({"op":"text","value":source}));
+        let text = result["ok"]["result"]["value"].as_str().unwrap();
+        assert!(!text.contains("TL3FAKE") && text.contains("[REDACTED]&after=ordinary"));
+        let start = source.find("TL3FAKE").unwrap() + 3;
+        let result = command(json!({"op":"window","value":source,"start":start,"end":start+16}));
+        assert_eq!(result["ok"]["result"]["value"], "[REDACTED]");
+    }
+    for source in [
+        format!("ordinary sig={encoded}"),
+        format!("https://example.com/c?sv=v&se=e&sr=b&sig={encoded}"),
+        format!("https://st42.blob.core.windows.net.evil.example/c?sv=v&se=e&sr=b&sig={encoded}"),
+        format!("https://st42.blob.core.windows.net/c?sv=v&sr=b&sig={encoded}"),
+        format!("https://st42.blob.core.windows.net/c?sv=v&se=&sr=b&sig={encoded}"),
+        format!("https://st42.blob.core.windows.net/c#?sv=v&se=e&sr=b&sig={encoded}"),
+        format!("https://st42.blob.core.windows.net@evil.example/c?sv=v&se=e&sr=b&sig={encoded}"),
+        format!("https://st42.blob.core.windows.net/c?sv=v&sv=w&se=e&sr=b&sig={encoded}"),
+    ] {
+        let result = command(json!({"op":"text","value":source}));
+        let text = result["ok"]["result"]["value"].as_str().unwrap();
+        assert!(text.contains(&encoded), "missing Azure context must retain ordinary weak sig semantics");
+    }
+}

@@ -1,5 +1,6 @@
 //! Text matching against the authoritative Rust redaction policy.
 use fancy_regex::{Captures, Regex};
+mod azure_sas;
 mod compatibility;
 mod source;
 mod unicode;
@@ -542,7 +543,7 @@ fn checked(check: Check, cap: &Captures<'_>, text: &str) -> Result<Option<Span>>
 }
 fn spans(text: &str) -> Result<Vec<Span>> {
     let chars = characters()?;
-    let mut found = Vec::new();
+    let mut found = azure_sas::spans(text);
     let ends = matches(&rule("PRIVATE_END")?, text)?
         .iter()
         .filter_map(|c| c.get(0).map(|m| m.end()))
