@@ -347,7 +347,11 @@ pub fn main() -> i32 {
             Command::Cancel { owner, correlation } => CliResult::Cancel {
                 acknowledgement: backend.cancel_with_cleanup_progress(
                     &Owner { owner, correlation },
-                    &mut |_progress| Ok(()),
+                    &mut |progress| {
+                        writer.frame(FrameBody::CleanupProgress {
+                            progress: Box::new(progress.clone()),
+                        })
+                    },
                 )?,
             },
             Command::Liveness { owner, correlation } => CliResult::Liveness {
@@ -429,7 +433,11 @@ pub fn main() -> i32 {
             Command::CleanupRuntime { owner, correlation } => CliResult::CleanupRuntime {
                 cleanup: backend.cleanup_runtime_with_progress(
                     &Owner { owner, correlation },
-                    &mut |_progress| Ok(()),
+                    &mut |progress| {
+                        writer.frame(FrameBody::CleanupProgress {
+                            progress: Box::new(progress.clone()),
+                        })
+                    },
                 )?,
             },
             Command::StopWatch => {
