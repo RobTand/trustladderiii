@@ -139,7 +139,9 @@ fn blocked(snapshot: &Snapshot, world: &World, scan: &mut impl FnMut()) -> Optio
         return Some(Deferral::Incident);
     }
     scan();
-    world.counter_exhaustion().map(Deferral::Counter)
+    tl3_kernel::step_checked(world.clone(), crate::input_errors::settlement_event())
+        .err()
+        .map(|refusal| Deferral::Counter(refusal.exhaustion))
 }
 
 pub(crate) fn queue_pool_changes(
@@ -242,12 +244,7 @@ impl Controller {
                 // The existing #771 halt covers a parked wait even when no
                 // kernel input has arrived yet. Clearance releases the queue.
                 if let Deferral::Counter(exhausted) = reason {
-                    self.counter_exhausted(
-                        &snapshot,
-                        &mut commit,
-                        exhausted.node,
-                        format!("kernel counter headroom exhausted: {}", exhausted.counter),
-                    )?;
+                    self.kernel_counter_refused(&snapshot, exhausted, &mut commit)?;
                 }
                 commit
                     .rows
@@ -337,12 +334,7 @@ impl Controller {
                     snapshot,
                 );
                 if let Deferral::Counter(exhausted) = reason {
-                    self.counter_exhausted(
-                        snapshot,
-                        &mut commit,
-                        exhausted.node,
-                        format!("kernel counter headroom exhausted: {}", exhausted.counter),
-                    )?;
+                    self.kernel_counter_refused(snapshot, exhausted, &mut commit)?;
                 }
                 commit
                     .rows

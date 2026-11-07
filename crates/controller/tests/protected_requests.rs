@@ -1,3 +1,6 @@
+#[path = "protected_requests/stop_reasons.rs"]
+mod stop_reasons;
+
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 
