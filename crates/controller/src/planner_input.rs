@@ -699,11 +699,9 @@ mod tests {
                 }
                 setup.rows.push(put("requests", index.to_string(), row));
             }
-            if count_only {
-                let mut raw = serde_json::to_value(world_node(&snapshot, count - 1)).unwrap();
-                raw["empty_allowed_replanned"] = json!(true);
-                setup.rows.push(put("nodes", (count - 1).to_string(), raw));
-            }
+            let mut raw = serde_json::to_value(snapshot::decode(&snapshot).unwrap().nodes[count - 1]).unwrap();
+            raw["empty_allowed_replanned"] = if count_only { json!(true) } else { json!("malformed") };
+            setup.rows.push(put("nodes", (count - 1).to_string(), raw));
             c.store.commit(&setup).unwrap();
             let snapshot = c.store.load().unwrap();
             let before = snapshot::decode(&snapshot).unwrap();
@@ -735,12 +733,24 @@ mod tests {
                 assert!(load_budget(&snapshot, &read, NodeId((count - 1) as u64)).unwrap().used());
                 assert!(snapshot.rows.iter().find(|r| r.table == "nodes" && r.id == (count - 1).to_string())
                     .unwrap().value.get("empty_allowed_replanned").is_none());
+            } else {
+                let snapshot = c.store.load().unwrap();
+                let generation = snapshot::decode(&snapshot).unwrap().nodes[0].generation;
+                REQUEST_ROW_LOADS.set(0);
+                let own = prepare(&mut c, &snapshot, "own-planner", generation,
+                    PlannerResult::Ordinary(Reply::RunFailed));
+                assert_eq!(REQUEST_ROW_LOADS.get(), 2, "planner input loads and saves only its own request row");
+                assert!(!own.rows.iter().any(|r| matches!(r, RowChange::Put { table, id, .. }
+                    if table == "requests" && id != "0")));
+                c.store.commit(&own).unwrap();
+                let snapshot = c.store.load().unwrap();
+                let mut rewrite = Commit::new("malformed-legacy-rewrite", json!({}), &snapshot);
+                let error = c.apply(&snapshot, snapshot::decode(&snapshot).unwrap(), Event::Fact {
+                    node: NodeId((count - 1) as u64), fact: Fact::Priority(Priority::P0),
+                }, &mut rewrite).unwrap_err();
+                assert!(matches!(error, Error::Invalid("invalid legacy replan budget")));
             }
         }
-    }
-
-    fn world_node(snapshot: &Snapshot, index: usize) -> Node {
-        snapshot::decode(snapshot).unwrap().nodes[index]
     }
 
     #[test]

@@ -13,7 +13,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
                 && settle_shape(old(w).nodes@[j]) && stopping_effect_fits(old(w).nodes@[j])
                 && (old(w).nodes@[j].phase is Closed ==> old(w).nodes@[j].effect.is_none())
                 && footprint::valid_footprint(*old(w), old(w).nodes@[j].footprint),
-    ensures empty_replan::generic_planner_stop(*old(w), *final(w), event),
+    ensures empty_replan::generic_planner_stop(*old(w), *final(w), event, false),
         (progress_input(*old(w), event)
             ==> progress_measure(*final(w)) < progress_measure(*old(w))
                 && dependencies::edges_indexable(*final(w))),
@@ -172,7 +172,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
             reveal(progress_gate_apply::resume_apply_post);
         }
         events_lemmas::footprints_after(before_apply@, *w);
-        empty_replan::generic_planner_stop_definition(before_apply@, *w, event);
+        empty_replan::generic_planner_stop_definition(before_apply@, *w, event, false);
     }
 }
 }

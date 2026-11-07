@@ -9,7 +9,7 @@ kernel_fn! {
 pub fn step(world: World, event: Event) -> (result: (World, Vec<Out>)) [
     requires world_checked(world), world_headroom(world), storage_ordered(world),
     ensures step_budget(world, result.0),
-        empty_replan::generic_planner_stop(world, result.0, event),
+        empty_replan::generic_planner_stop(world, result.0, event, true),
         (progress_input(world, event) ==> progress_measure(result.0) < progress_measure(world)),
 ] {
     kernel_proof! { reveal(storage_ordered); checked_reserves(world); }
@@ -27,7 +27,7 @@ kernel_fn! {
 pub fn step_with_passes(mut world: World, event: Event) -> (result: (World, Vec<Out>, u32)) [
     requires step_scope(world),
     ensures step_budget(world, result.0),
-        empty_replan::generic_planner_stop(world, result.0, event),
+        empty_replan::generic_planner_stop(world, result.0, event, true),
         (progress_input(world, event) ==> progress_measure(result.0) < progress_measure(world)),
 ] {
     kernel_snapshot! { before_step = world }
@@ -54,9 +54,14 @@ pub fn step_with_passes(mut world: World, event: Event) -> (result: (World, Vec<
     let passes = settle(&mut world, &mut out, None);
     kernel_proof! {
         reveal(step_budget);
-        empty_replan::generic_planner_stop_definition(before_step@, after_apply@, event);
-        empty_replan::generic_planner_stop_definition(before_step@, world, event);
+        empty_replan::generic_planner_stop_definition(before_step@, after_apply@, event, false);
+        empty_replan::generic_planner_stop_definition(before_step@, world, event, true);
         reveal(settle_chain);
+        if let Event::Reply { node, .. } = event {
+            if node.0 < before_step@.nodes@.len() {
+                assert(empty_replan::settle_frame(after_apply@.nodes@[node.0 as int], world.nodes@[node.0 as int]));
+            }
+        }
         if progress_input(before_step@, event) {
             progress::settle_measure(after_apply@, world);
         }

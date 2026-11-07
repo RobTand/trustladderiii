@@ -116,27 +116,27 @@ pub closed spec fn mapped_planner_reply(w: World, consumed: bool, request: NodeI
     } else { reply }
 }
 
-pub closed spec fn planner_review_result(before: World, after: World, request: NodeId) -> bool {
+pub closed spec fn planner_review_result(before: World, after: World, request: NodeId, settled: bool) -> bool {
     let b = before.nodes@[request.0 as int];
     let a = after.nodes@[request.0 as int];
-    (a.phase == Phase::Stopping(Outcome::Stopped) || a.phase == Phase::Closed(Outcome::Stopped))
+    (a.phase == Phase::Stopping(Outcome::Stopped) || (settled && a.phase == Phase::Closed(Outcome::Stopped)))
         && a.review_stop == Some(ReviewStop::PlanCantMeet) && a.question.is_none()
         && a.credit == b.credit && a.plan_retries == b.plan_retries
         && after.next_question == before.next_question
 }
 
 /// The existing generic reply path exports its code-owned planner stop through settle.
-pub closed spec fn generic_planner_stop(before: World, after: World, event: Event) -> bool {
+pub closed spec fn generic_planner_stop(before: World, after: World, event: Event, settled: bool) -> bool {
     match event {
         Event::Reply { node, generation, reply: Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit } =>
-            admitted(before, node, generation) ==> planner_review_result(before, after, node),
+            admitted(before, node, generation) ==> planner_review_result(before, after, node, settled),
         _ => true,
     }
 }
 
 /// Internal equation for sibling kernel proofs; public views remain CLOSED.
-pub(super) proof fn generic_planner_stop_definition(before: World, after: World, event: Event)
-    ensures generic_planner_stop(before, after, event) == match event {
+pub(super) proof fn generic_planner_stop_definition(before: World, after: World, event: Event, settled: bool)
+    ensures generic_planner_stop(before, after, event, settled) == match event {
         Event::Reply { node, generation, reply: Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit } =>
             (node.0 < before.nodes@.len() && before.nodes@[node.0 as int].phase is Planning
                 && current_item(before.nodes@[node.0 as int]) == Some(Item::Await)
@@ -144,7 +144,7 @@ pub(super) proof fn generic_planner_stop_definition(before: World, after: World,
                     || before.nodes@[node.0 as int].job == Some(generation))) ==> {
                 let b = before.nodes@[node.0 as int];
                 let a = after.nodes@[node.0 as int];
-                (a.phase == Phase::Stopping(Outcome::Stopped) || a.phase == Phase::Closed(Outcome::Stopped))
+                (a.phase == Phase::Stopping(Outcome::Stopped) || (settled && a.phase == Phase::Closed(Outcome::Stopped)))
                     && a.review_stop == Some(ReviewStop::PlanCantMeet) && a.question.is_none()
                     && a.credit == b.credit && a.plan_retries == b.plan_retries
                     && after.next_question == before.next_question
@@ -174,8 +174,9 @@ pub(super) fn map_planner_reply(world: &World, consumed: bool, request: NodeId,
     generation: u64, reply: Reply) -> (mapped: Reply) [
     ensures mapped == mapped_planner_reply(*world, consumed, request, generation, reply),
 ] proof [reveal(mapped_planner_reply); reveal(admitted);] {
+    let count = world.nodes.len();
     if let Some(i) = request.index() {
-        if i < world.nodes.len() {
+        if i < count {
             let n = &world.nodes[i];
             if matches!(n.phase, Phase::Planning { .. }) && n.current() == Some(Item::Await)
                 && (n.run == Some(generation) || n.job == Some(generation)) {
@@ -217,7 +218,7 @@ pub fn step_planner(mut world: World, mut budget: ReplanBudget, request: NodeId,
         budget.request_version() == request ==> match planner_result {
             PlannerResult::Ordinary(reply) => {
                 let mapped = mapped_planner_reply(world, budget.consumed(), request, generation, reply);
-                generic_planner_stop(world, result.0, Event::Reply { node: request, generation, reply: mapped })
+                generic_planner_stop(world, result.0, Event::Reply { node: request, generation, reply: mapped }, true)
                     && (progress_input(world, Event::Reply { node: request, generation, reply: mapped })
                         ==> progress_measure(result.0) < progress_measure(world))
             },
@@ -237,11 +238,12 @@ pub fn step_planner(mut world: World, mut budget: ReplanBudget, request: NodeId,
         }
         PlannerResult::EmptyAllowedReplan => {}
     }
+    let count = world.nodes.len();
     let i = match request.index() {
         Some(i) => i,
         None => return (world, budget, Vec::new()),
     };
-    if i >= world.nodes.len() {
+    if i >= count {
         let (world, out) = step(world, Event::Reply {
             node: request, generation, reply: Reply::PlanCheckRejected,
         });
