@@ -4,6 +4,10 @@ use super::*;
 #[path = "../verus/dependencies.rs"]
 pub(super) mod lemmas;
 
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/dependency_writes.rs"]
+mod writes;
+
 #[cfg_attr(
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
@@ -17,6 +21,22 @@ pub struct Dependency {
     pub status: DependencyStatus,
     /// A rejected declaration blocks its owner without adding an edge to the graph.
     pub rejected: bool,
+}
+
+kernel_fn! {
+/// #693 / #771: perform the original replacement or append behind a table boundary.
+fn write_dependency(table: &mut Vec<Dependency>, existing: Option<usize>,
+    dependency: Dependency) -> (result: ()) [
+    requires match existing { None => true, Some(index) => index < old(table)@.len() },
+    ensures writes::write(old(table)@, final(table)@, existing, dependency),
+] {
+    kernel_snapshot! { before_table = table@ }
+    match existing {
+        Some(index) => table[index] = dependency,
+        None => table.push(dependency),
+    }
+    kernel_proof! { writes::pack(before_table@, table@, existing, dependency); }
+}
 }
 
 #[cfg(verus_keep_ghost)]
@@ -1158,9 +1178,9 @@ impl World {
     ] proof [reveal(dependency_frame); reveal(prerequisites_delivered); reveal(delivered);] {
         kernel_snapshot! { before_record = *self }
         let node = NodeId(i as u64);
-        match existing {
-            Some(index) => self.dependencies[index] = dependency,
-            None => self.dependencies.push(dependency),
+        write_dependency(&mut self.dependencies, existing, dependency);
+        kernel_proof! {
+            writes::length(before_record@.dependencies@, self.dependencies@, existing, dependency);
         }
         if dependency.rejected {
             notice(
@@ -1183,6 +1203,7 @@ impl World {
             if dependency_retirement::edge_domain(before_record@) && i == 0 && existing == Some(0usize)
                 && dependency.node == NodeId(0) && dependency.target == before_record@.dependencies@[0].target
                 && !dependency.rejected {
+                writes::index(before_record@.dependencies@, self.dependencies@, existing, dependency);
                 assert(dependency_retirement::edge_domain(*self));
                 assert(self.dependencies@[0] == dependency);
             }
@@ -1199,6 +1220,9 @@ impl World {
             }
         }
         self.withhold_dependency_credit(i);
+        kernel_proof! {
+            writes::finish(before_record@.dependencies@, self.dependencies@, existing, dependency);
+        }
     }
     }
 
