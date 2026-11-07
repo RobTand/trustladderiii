@@ -248,7 +248,13 @@ fn owned_controller_io_shell_remains_verbatim() {
         .find("    fn record_kernel_result(")
         .unwrap()
         + start;
-    let restored = source[start..end]
+    let apply = source[start..end].find("    fn apply(").unwrap() + start;
+    assert_eq!(&source[apply..end], include_str!("planner-apply.rs.txt"));
+    let baseline = include_str!("base-integration-shell.rs.txt");
+    let baseline_apply = baseline.find("    fn apply(").unwrap();
+    // The planner boundary has its own current pin. Preserve the frozen
+    // comparison for the entire delivery shell and the historical generic apply.
+    let restored = format!("{}{}", &source[start..apply], &baseline[baseline_apply..])
         .replace("Upstream::Delivery", "Upstream::Mergify")
         .replace(
             include_str!("current-plan.rs.txt"),

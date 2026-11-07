@@ -1,0 +1,165 @@
+    fn apply(
+        &mut self,
+        snapshot: &Snapshot,
+        world: World,
+        event: Event,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        self.apply_input(snapshot, world, KernelInput::Event(event), commit)
+    }
+
+    fn apply_input(
+        &mut self,
+        snapshot: &Snapshot,
+        mut world: World,
+        input: KernelInput,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        if !self.kernel_headroom(snapshot, &world, commit)? {
+            return Ok(());
+        }
+        // A dequeue receipt can precede queue admission, where the kernel
+        // intentionally ignores it. Only an accepted Resume releases that hold.
+        if let KernelInput::Event(Event::Command {
+            node,
+            id,
+            command: tl3_kernel::Command::Resume,
+        }) = input
+            && let Some(current) = world.nodes.get(node.0 as usize)
+            && id > current.last_cmd
+            && !current.phase.is_closed()
+        {
+            commit.rows.push(put(
+                "queue_resumes",
+                node.0.to_string(),
+                json!({"command": id}),
+            ));
+        }
+        let closing_cause = match input {
+            KernelInput::Event(Event::Command {
+                node,
+                command:
+                    tl3_kernel::Command::Stop
+                    | tl3_kernel::Command::Answer {
+                        answer: tl3_kernel::Answer::Stop,
+                        ..
+                    },
+                ..
+            }) => Some((node, "user_stop")),
+            KernelInput::Event(Event::Command {
+                node,
+                command:
+                    tl3_kernel::Command::ChangeRequest
+                    | tl3_kernel::Command::Answer {
+                        answer: tl3_kernel::Answer::ChangeRequest,
+                        ..
+                    },
+                ..
+            }) => Some((node, "replaced")),
+            KernelInput::Event(Event::Fact {
+                node,
+                fact: tl3_kernel::Fact::PrClosedByPerson,
+            }) => Some((node, "pr_closed")),
+            KernelInput::Event(Event::Fact {
+                node,
+                fact: tl3_kernel::Fact::PrDequeuedByPerson,
+            }) => Some((node, "pr_dequeued")),
+            _ => None,
+        }
+        .filter(|(node, _)| {
+            world.nodes.get(node.0 as usize).is_some_and(|n| {
+                !matches!(
+                    n.phase,
+                    tl3_kernel::Phase::Stopping(_) | tl3_kernel::Phase::Closed(_)
+                )
+            })
+        });
+        let mut dependency_outputs = Vec::new();
+        if let KernelInput::Event(event) = input {
+        self.declare_merge_dependencies(
+            snapshot,
+            &mut world,
+            event,
+            &mut dependency_outputs,
+            commit,
+        )?;
+        }
+        if !self.kernel_headroom(snapshot, &world, commit)? {
+            return Ok(());
+        }
+        let dependency_roots = match input {
+            KernelInput::Event(event) => merge_dependencies::changed_roots(&world, event),
+            KernelInput::Planner { .. } => Vec::new(),
+        };
+        if !self.input_checkpoint(snapshot, commit)? {
+            return Ok(());
+        }
+        let planner_before = match input {
+            KernelInput::Planner { node, generation, result } => {
+                Some((node, generation, result, planner_input::load_budget(snapshot, commit, node)?, world.clone()))
+            }
+            KernelInput::Event(_) => None,
+        };
+        let (mut world, mut outputs) = match planner_before {
+            Some((node, generation, result, budget, ref before)) => {
+                let (next, after_budget, outputs) = tl3_kernel::step_planner(world, budget, node, generation, result);
+                planner_input::save_budget(snapshot, commit, node, after_budget)?;
+                if after_budget.used() && next.nodes.get(node.0 as usize).is_some_and(|n|
+                    n.review_stop == Some(tl3_kernel::ReviewStop::PlanCantMeet)) {
+                    let plan = commit.rows.iter_mut().rev().find_map(|row| match row {
+                        RowChange::Put { table, id, value } if table == "plans" && *id == node.0.to_string() => Some(value),
+                        _ => None,
+                    });
+                    if let Some(plan) = plan {
+                        plan["empty_allowed_replan_stop"] = json!("Planning failed after the one empty-allowed re-plan for this request version; stop for TL3 review.");
+                    }
+                }
+                if !commit.result.is_object() { commit.result = json!({}); }
+                commit.result["planner_replay"] = json!(replay::PlannerStepRecord {
+                    input: before.clone(), node, generation, result, budget, after_budget, after: next.clone(),
+                });
+                (next, outputs)
+            }
+            None => {
+                let KernelInput::Event(event) = input else { unreachable!() };
+                tl3_kernel::step(world, event)
+            }
+        };
+        outputs.splice(0..0, dependency_outputs);
+        self.announce_dependency_endings(
+            snapshot,
+            &mut world,
+            dependency_roots,
+            &mut outputs,
+            commit,
+        )?;
+        if input_errors::deferred(commit) {
+            return Ok(());
+        }
+        if let Some((node, reason)) = closing_cause
+            && world.nodes.get(node.0 as usize).is_some_and(|n| {
+                matches!(
+                    n.phase,
+                    tl3_kernel::Phase::Stopping(_) | tl3_kernel::Phase::Closed(_)
+                )
+            })
+        {
+            commit.rows.push(put(
+                "close_reasons",
+                node.0.to_string(),
+                json!({"reason":reason}),
+            ));
+        }
+        self.record_kernel_result(snapshot, world, outputs, commit)?;
+        if !commit.result.is_object() {
+            commit.result = json!({});
+        }
+        match input {
+            KernelInput::Event(event) => commit.result["kernel_event"] = json!(event),
+            KernelInput::Planner { node, generation, result } => {
+                commit.result["kernel_planner_input"] = json!({"node":node,"generation":generation,"result":result});
+            }
+        }
+        Ok(())
+    }
+

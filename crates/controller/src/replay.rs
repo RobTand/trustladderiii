@@ -332,3 +332,46 @@ pub fn command() -> crate::Result<()> {
     );
     Ok(())
 }
+
+
+#[cfg(test)]
+mod planner_tests {
+    use super::*;
+    use serde_json::json;
+    use tl3_store::{CommitReceipt, Epoch, Revision};
+
+    fn record(consumed: bool) -> EventRecord {
+        let input = World::new(&[1], 1);
+        let budget = ReplanBudget::import(NodeId(0), consumed);
+        let result = PlannerResult::Ordinary(tl3_kernel::Reply::PlanCantMeet);
+        let (after, after_budget, _) = tl3_kernel::step_planner(input.clone(), budget, NodeId(0), 7, result);
+        EventRecord { key: "planner-record".into(), payload: json!({}), receipt: CommitReceipt {
+            revision: Revision::try_from(1).unwrap(), epoch: Epoch::ZERO,
+            result: json!({"planner_replay":PlannerStepRecord { input, node:NodeId(0), generation:7,
+                result, budget, after_budget, after },
+                "kernel_planner_input":{"node":0,"generation":7,"result":result}}),
+        }}
+    }
+
+    #[test]
+    fn real_entry_replay_rejects_budget_chain_reset_and_metadata_corruption() {
+        let first = record(true);
+        let reset = record(false);
+        check_record(&first, None).unwrap();
+        check_record(&reset, None).unwrap();
+        let mut budgets = std::collections::BTreeMap::new();
+        check_budget_chain(&first, &mut budgets).unwrap();
+        assert!(check_budget_chain(&reset, &mut budgets).unwrap_err().contains("budget chain"));
+        for pointer in ["/planner_replay/budget/request", "/planner_replay/after_budget/request",
+            "/kernel_planner_input/node"] {
+            let mut corrupt = first.clone();
+            *corrupt.receipt.result.pointer_mut(pointer).unwrap() = json!(1);
+            assert!(check_record(&corrupt, None).is_err(), "{pointer}");
+        }
+        let mut corrupt = first.clone();
+        corrupt.receipt.result["planner_replay"]["after_budget"]["used"] = json!(false);
+        assert!(check_record(&corrupt, None).unwrap_err().contains("budget diverged"));
+        corrupt.receipt.result.as_object_mut().unwrap().remove("planner_replay");
+        assert!(check_record(&corrupt, None).is_err());
+    }
+}

@@ -4117,9 +4117,15 @@ impl Controller {
                 }
                 let mapped = match mapped {
                     adapters::workers::protocol::MappedReply::Planner(result) => {
+                        if !matches!(result, tl3_kernel::PlannerResult::Ordinary(Reply::RunFailed)) {
+                            commit.rows.push(RowChange::Delete { table: "worker_failures".into(), id: node.0.to_string() });
+                        }
                         return Ok(Some(KernelInput::Planner { node, generation, result }));
                     }
                     adapters::workers::protocol::MappedReply::Kernel(reply) if role == "planner" => {
+                        if reply != Reply::RunFailed {
+                            commit.rows.push(RowChange::Delete { table: "worker_failures".into(), id: node.0.to_string() });
+                        }
                         return Ok(Some(KernelInput::Planner { node, generation,
                             result: tl3_kernel::PlannerResult::Ordinary(reply) }));
                     }
