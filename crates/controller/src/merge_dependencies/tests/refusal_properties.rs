@@ -2058,7 +2058,6 @@ fn startup_counter_halt_preserves_recovery_input_and_effects() {
     assert_eq!(incidents[0].value["open"], true);
 }
 
-
 #[test]
 fn startup_capacity_change_refusal_preserves_world_repositories_and_effects() {
     let mut db = Database::start();
@@ -2070,7 +2069,11 @@ fn startup_capacity_change_refusal_preserves_world_repositories_and_effects() {
     let before = c.snapshot().unwrap();
     assert!(!before.rows.iter().any(|row| row.table == "incidents"
         && row.value["signature"]["class"] == "kernel_counter_headroom"));
-    let Controller { store, mut bootstrap, .. } = c;
+    let Controller {
+        store,
+        mut bootstrap,
+        ..
+    } = c;
     bootstrap.pool += 1;
     bootstrap.slots += 1;
     let mut addition = repository.clone();
@@ -2080,18 +2083,43 @@ fn startup_capacity_change_refusal_preserves_world_repositories_and_effects() {
         store,
         crate::adapters::simulation(&repo.root.path().join("fakes")).unwrap(),
         bootstrap,
-    ).unwrap();
-    assert_eq!(c.world().unwrap(), world, "capacity reconciliation must refuse before persisting changed gates or pool");
+    )
+    .unwrap();
+    assert_eq!(
+        c.world().unwrap(),
+        world,
+        "capacity reconciliation must refuse before persisting changed gates or pool"
+    );
     let after = c.snapshot().unwrap();
-    let business = |snapshot: &Snapshot| snapshot.rows.iter()
-        .filter(|row| row.table != "incidents" && row.table != crate::dispatch_liveness::PARKED)
-        .cloned().collect::<Vec<_>>();
-    assert_eq!(business(&after), business(&before), "repository and gate rows must not be written on refusal");
-    assert_eq!(after.interned, before.interned, "new repositories must not be interned on refusal");
+    let business = |snapshot: &Snapshot| {
+        snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table != "incidents" && row.table != crate::dispatch_liveness::PARKED)
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        business(&after),
+        business(&before),
+        "repository and gate rows must not be written on refusal"
+    );
+    assert_eq!(
+        after.interned, before.interned,
+        "new repositories must not be interned on refusal"
+    );
     assert_eq!(after.pending_effects, before.pending_effects);
-    let incidents: Vec<_> = after.rows.iter().filter(|row| row.table == "incidents"
-        && row.value["signature"]["class"] == "kernel_counter_headroom").collect();
+    let incidents: Vec<_> = after
+        .rows
+        .iter()
+        .filter(|row| {
+            row.table == "incidents" && row.value["signature"]["class"] == "kernel_counter_headroom"
+        })
+        .collect();
     assert_eq!(incidents.len(), 1);
-    assert_eq!(incidents[0].value["summary"], "kernel counter headroom exhausted: next_seq");
+    assert_eq!(
+        incidents[0].value["summary"],
+        "kernel counter headroom exhausted: next_seq"
+    );
     assert_eq!(incidents[0].value["open"], true);
 }
