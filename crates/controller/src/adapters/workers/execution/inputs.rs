@@ -307,6 +307,8 @@ fn execute(command: Command) -> Result<Value> {
             let mut runner_args = vec![
                 "--timeout".into(),
                 walltime_seconds.to_string(),
+                "--collector-operation".into(),
+                "collect_worker".into(),
                 "--".into(),
                 "/usr/bin/python3.14".into(),
                 "-I".into(),
