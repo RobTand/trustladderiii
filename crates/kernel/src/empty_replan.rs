@@ -359,6 +359,26 @@ proof [reveal(empty_replan::admitted);] {
 
 #[cfg(verus_keep_ghost)]
 kernel_fn! {
+/// The actual public entry must export the ordinary post-consumption stop.
+fn check_planner_ordinary_stop(fail_fast: bool) -> (result: ()) [] {
+    let w = planner_entry_fixture(fail_fast);
+    kernel_snapshot! { before = w }
+    let budget = ReplanBudget::import(NodeId(0), true);
+    let (after, _, _) = step_planner(w, budget, NodeId(0), 3,
+        PlannerResult::Ordinary(Reply::PlanCantMeet));
+    kernel_proof! {
+        assert(after.nodes@[0].review_stop == Some(ReviewStop::PlanCantMeet));
+        assert(after.nodes@[0].phase == Phase::Stopping(Outcome::Stopped)
+            || after.nodes@[0].phase == Phase::Closed(Outcome::Stopped));
+        assert(after.nodes@[0].question.is_none());
+        assert(after.nodes@[0].credit == before@.nodes@[0].credit);
+        assert(after.next_question == before@.next_question);
+    }
+}
+}
+
+#[cfg(verus_keep_ghost)]
+kernel_fn! {
 /// New NodeId gets permission even while the older request remains consumed.
 fn check_planner_entry_new_version(fail_fast: bool) -> (result: ()) []
 proof [reveal(empty_replan::empty_replan_transition);] {
