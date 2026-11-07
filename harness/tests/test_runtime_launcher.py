@@ -751,3 +751,30 @@ def test_raw_prepared_inventory_includes_explicit_runtime_tools(tmp_path):
         'podman': '/explicit/podman', 'systemctl': '/explicit/systemctl'}
     assert str((trusted / 'runtime-tools.json').relative_to(collector.parent)) in {
         entry['path'] for entry in json.loads(inventory.read_bytes())['files']}
+
+
+def test_prelaunch_cancellation_never_executes_podman_and_reaps_gated_client(launcher, monkeypatch):
+    import os
+    from tl3_harness import runtime
+
+    executable, calls = launcher
+    output = executable.parent / 'output'
+    output.mkdir()
+    context = {'run': {}, 'owner': 'owner', 'correlation': 'correlation', 'request_digest': 'f' * 64,
+               'output_dir': str(output), 'progress': {'no_progress_seconds': 10},
+               'placement': {'kind': 'observed', 'host': 'dl380g10', 'rank': 0}}
+    monkeypatch.setattr(runtime, 'launch_context', lambda: context)
+    launcher_pids = []
+    def backend(request):
+        assert request['op'] == 'begin_container_launch'
+        launcher_pids.append(request['launcher']['launcher']['pid'])
+        raise RuntimeError('launch held after cancellation')
+    monkeypatch.setattr(runtime, 'backend_request', backend)
+    with calls.with_suffix('.stdin').open('w+b') as selection:
+        with pytest.raises(RuntimeError, match='cancellation'):
+            with Supervised([str(executable), 'run', 'fixture'], selection, ()):
+                pytest.fail('cancelled begin must never return an active launcher')
+    assert not calls.exists()
+    assert len(launcher_pids) == 1
+    with pytest.raises(ChildProcessError):
+        os.waitpid(launcher_pids[0], os.WNOHANG)
