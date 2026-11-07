@@ -1017,6 +1017,21 @@
         {
           "type": "object",
           "properties": {
+            "op": {
+              "type": "string",
+              "const": "usage"
+            },
+            "value": true
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
             "kind": {
               "$ref": "#/$defs/LabelKind"
             },

@@ -426,7 +426,10 @@ fn trace_usage_keeps_only_nonnegative_integer_observations() {
         "input_tokens":3,"output_tokens":false,"total_tokens":-1,
         "cache_read_input_tokens":2.5,"cache_creation_input_tokens":4,
         "password":"confidential observation","unknown":5}}}));
-    assert_eq!(result["ok"]["result"]["value"]["value"], json!({"input_tokens":3,"cache_creation_input_tokens":4}));
+    assert_eq!(
+        result["ok"]["result"]["value"]["value"],
+        json!({"input_tokens":3,"cache_creation_input_tokens":4})
+    );
 }
 
 

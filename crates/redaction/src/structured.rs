@@ -727,8 +727,13 @@ pub fn measure_json(text: &str) -> Result<usize> {
 /// Numeric usage fields pass through the same authoritative policy as text redaction.
 /// Python booleans and negative/noninteger observations are never token counts.
 pub fn usage_counts(value: &serde_json::Value) -> serde_json::Value {
-    serde_json::Value::Object(policy().words["TOKEN_FIELDS"].iter().filter_map(|key| {
-        let count = value.get(*key)?;
-        count.as_u64().map(|_| ((*key).to_owned(), count.clone()))
-    }).collect())
+    serde_json::Value::Object(
+        policy().words["TOKEN_FIELDS"]
+            .iter()
+            .filter_map(|key| {
+                let count = value.get(*key)?;
+                count.as_u64().map(|_| ((*key).to_owned(), count.clone()))
+            })
+            .collect(),
+    )
 }
