@@ -110,6 +110,51 @@ def test_selected_flux_maker_consumes_verified_payload_and_checkpoints_before_di
     assert result['receipts'][0]['backend'] == 'flux'
 
 
+@pytest.mark.parametrize('response', ['verified', 'changed_blob', 'unknown'])
+def test_flux_observation_uses_generated_wire_and_explicit_payload(tmp_path, monkeypatch, response):
+    from pathlib import Path
+    import hashlib
+    import sys
+    from tl3_workers import flux_execution
+    schema = Path(__file__).resolve().parents[2] / 'crates/controller/src/run_backend/schemas/run-backend.json'
+    raw = json.dumps({'status': 'completed', 'tests': [], 'totals': {}, 'note': ''}).encode()
+    payload = tmp_path / 'verified-summary.json'
+    payload.write_bytes(raw if response != 'changed_blob' else b'changed')
+    blob = {'path': str(payload), 'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()}
+    terminal = {'ending': 'passed', 'reason': 'controlled fixture', 'receipt': blob}
+    commands = tmp_path / 'observed-commands.jsonl'
+    cli = tmp_path / 'shared-cli-fixture'
+    cli.write_text(f'#!{sys.executable} -I\n' +
+        'import json, sys\nfrom pathlib import Path\n' +
+        f'if sys.argv[1:] == ["schema"]:\n print(Path({str(schema)!r}).read_text()); raise SystemExit(0)\n' +
+        'command = json.loads(sys.stdin.readline())\n' +
+        f'with open({str(commands)!r}, "a") as log: log.write(json.dumps(command) + "\\n")\n' +
+        f'unknown = {response == "unknown"!r}\n' +
+        'if unknown:\n frame = {"kind": "error", "code": "acceptance_unknown", "message": "retained uncertainty"}\n' +
+        f'elif command["op"] == "attach":\n frame = {{"kind": "result", "result": {{"op": "attach", "observation": {{"kind": "terminal", "binding": None, "terminal": {terminal!r}}}}}}}\n' +
+        f'elif command["op"] == "worker_payload":\n frame = {{"kind": "result", "result": {{"op": "worker_payload", "payload": {{"kind": "tests", "summary": {blob!r}, "symptom_runs": []}}}}}}\n' +
+        'else: raise SystemExit("unexpected operation")\n' +
+        'print(json.dumps({"schema": "tl3.run_backend.frame.v1", "sequence": 0, **frame}), flush=True)\n')
+    cli.chmod(0o700)
+    owner = {'owner': 'worker-tools', 'correlation': 'controlled-worker'}
+    plan = {'cli': str(cli), 'config': str(tmp_path / 'options.json'), 'key': 'worker:' + 'a' * 64,
+            'owner': owner, 'attach': {'op': 'attach', **owner},
+            'bounds': {'cli_envelope_bytes': len(schema.read_bytes()), 'payload_bytes': len(raw)}}
+    monkeypatch.setattr(flux_execution, 'activation', lambda: None)
+    events = []
+    if response == 'verified':
+        result = flux_execution.execute(plan, resumed=True, emit=events.append)
+        assert result['summary'] == json.loads(raw)
+        assert result['receipts'][0]['receipt_sha256'] == blob['sha256']
+    else:
+        with pytest.raises(ValueError):
+            flux_execution.execute(plan, resumed=True, emit=events.append)
+    observed = [json.loads(line)['op'] for line in commands.read_text().splitlines()]
+    assert observed == (['attach'] if response == 'unknown' else ['attach', 'worker_payload'])
+    assert events[0]['wait']['key'] == plan['key']
+    assert payload.exists()
+
+
 @pytest.mark.parametrize('reached', [False, True])
 def test_real_planner_tool_loop_refuses_or_binds_handoff(rehearsal, monkeypatch, reached):
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
