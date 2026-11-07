@@ -722,6 +722,11 @@ impl Adapter {
         self.accept(d)?;
         match self.attempt_accepted(d) {
             Ok(mut completion) => {
+                if completion.ack == tl3_kernel::Ack::Permanent && completion.diagnostic.is_none() {
+                    completion.diagnostic = Some(crate::publication_failure::Diagnostic::capture(
+                        d, None, completion.failure_class.as_deref().unwrap_or("direct_merge_refused"),
+                    )?);
+                }
                 completion.ack = tl3_kernel::Ack::DeliveryAccepted;
                 Ok(completion)
             }
@@ -730,6 +735,11 @@ impl Adapter {
                 self.wait(d)?;
                 let mut completion = Completion::delivery_accepted(vec![]);
                 completion.failure_class = Some(crate::looks::failure_class(&error).into());
+                if matches!(error, Error::Permanent { .. }) {
+                    completion.diagnostic = Some(crate::publication_failure::Diagnostic::capture(
+                        d, Some(&error), crate::looks::failure_class(&error),
+                    )?);
+                }
                 Ok(completion)
             }
         }
@@ -948,6 +958,11 @@ impl Executor for Adapter {
                 self.wait(d)?;
                 let mut completion = Completion::delivery_accepted(vec![]);
                 completion.failure_class = Some(crate::looks::failure_class(&error).into());
+                if matches!(error, Error::Permanent { .. }) {
+                    completion.diagnostic = Some(crate::publication_failure::Diagnostic::capture(
+                        d, Some(&error), crate::looks::failure_class(&error),
+                    )?);
+                }
                 completion
             }
         };

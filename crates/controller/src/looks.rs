@@ -1250,6 +1250,61 @@ impl Controller {
         Ok(())
     }
 
+    /// Durable delivery responsibility survives a permanent upstream refusal.
+    /// Retain its incident beside acceptance, so later wakes cannot issue another PUT.
+    pub(crate) fn accepted_delivery_refusal(
+        &self,
+        snapshot: &Snapshot,
+        delivery: &Delivery,
+        completion: &Completion,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        let Some(diagnostic) = &completion.diagnostic else { return Ok(()); };
+        if completion.ack != Ack::DeliveryAccepted
+            || !matches!(delivery.output, Out::Effect { kind: tl3_kernel::EffectKind::Enqueue, .. })
+        { return Ok(()); }
+        let world = snapshot::decode(snapshot)?;
+        let node = &world.nodes[delivery.node().0 as usize];
+        if !node.operation_pending(tl3_kernel::EffectKind::Enqueue, delivery.generation)
+            || node.effect.is_some_and(|effect| effect.cancelling)
+            || snapshot.rows.iter().any(|row| row.table == "incidents"
+                && row.value["open"] == true && row.value["effect"] == delivery.key)
+        { return Ok(()); }
+        let id = incident_id(snapshot, "delivery");
+        let class = completion.failure_class.as_deref().unwrap_or("direct_merge_refused");
+        let signature = IncidentSignature { upstream: Upstream::Delivery, class: class.into() };
+        let request = crate::request(snapshot, delivery.node())?;
+        let summary = format!("{} {}", incident_summary(&request.title, &signature, false, None), diagnostic.render());
+        let mut post = delivery.clone();
+        post.key = format!("incident:{id}");
+        post.output = Out::Notice { node: delivery.node(), notice: tl3_kernel::Notice::Incident { needs_rob: false } };
+        post.epoch = snapshot.epoch.get();
+        post.note = Some(incident_note(&request.repo, request.issue, &summary));
+        post.question_context = Some(json!({"issue_title":request.title,"signature":signature,
+            "incident_id":id,"publication_diagnostic":diagnostic}));
+        if let Some(o) = &self.bootstrap.operations {
+            post.repository = crate::Repository { owner:o.owner.clone(),name:o.name.clone(),installation:o.installation_id };
+            post.issue = o.number;
+        }
+        commit.rows.push(put("publication_failures", delivery.key.clone(), json!(diagnostic)));
+        commit.rows.push(put("incidents", id.clone(), json!(Incident {
+            id:id.clone(),node:Some(delivery.node()),input_failure:None,open:true,needs_rob:false,
+            blocking:false,summary,signature:signature.clone(),effect:Some(delivery.key.clone()),
+            post_key:Some(post.key.clone()),cause:Some(Cause::of(signature.upstream,class)),
+        })));
+        if let Some(row) = snapshot.rows.iter().find(|row| row.table == "allowances" && row.id == delivery.key) {
+            let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
+            state.incident = Some(id);
+            state.failure = Some(class.into());
+            state.healthy = false;
+            self.rearm(&mut state);
+            commit.rows.push(put("allowances", delivery.key.clone(), json!(state)));
+        }
+        commit.rows.push(self.allowance_row(post.clone()));
+        commit.effects.push(post.into_effect());
+        Ok(())
+    }
+
     pub(crate) fn look_observations(
         &mut self,
         delivery: &Delivery,
@@ -1270,6 +1325,7 @@ impl Controller {
         if let Some(class) = completion.failure_class.as_deref() {
             self.failure_allowance(&snapshot, &delivery.key, class, &mut commit)?;
         }
+        self.accepted_delivery_refusal(&snapshot, delivery, &completion, &mut commit)?;
         for (index, observation) in completion.observations.iter().enumerate() {
             self.queue_observation(&snapshot, &mut commit, &delivery.key, index, observation)?;
             if let Some(source) = crate::observation_upstream(&snapshot, observation)? {

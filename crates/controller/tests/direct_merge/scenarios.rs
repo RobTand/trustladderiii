@@ -307,6 +307,14 @@ fn merge_permission_refusal_becomes_an_incident() {
     drain(&mut controller);
     assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
     assert!(controller.snapshot().unwrap().rows.iter().any(|row| row.table == "incidents" && row.value["open"] == true));
+    let node = controller.world().unwrap().nodes[0];
+    assert_eq!(node.phase, Phase::AwaitingDelivery);
+    assert!(!node.holds && node.effect.is_none());
+    fixture.check(Some("success"));
+    fixture.check_event(&settings);
+    drain(&mut controller);
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1, "incident must fence later authenticated wakes");
+    assert_eq!(fixture.direct.lock().unwrap().successes, 0);
 }
 
 #[test]
@@ -436,7 +444,7 @@ fn missing_exact_head_approval_waits_without_put() {
     let Reconciliation::Found(completion) = adapter.reconcile(&delivery).unwrap() else { panic!("durable responsibility must be accepted before approval checks report"); };
     assert_eq!(completion.ack, tl3_kernel::Ack::DeliveryAccepted);
     assert!(fixture.direct.lock().unwrap().puts.is_empty());
-    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Publishing);
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::AwaitingDelivery);
 }
 
 #[test]

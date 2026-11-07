@@ -1549,7 +1549,7 @@ impl Controller {
                 if !matches!(completion.ack, Ack::Confirmed | Ack::DeliveryAccepted) {
                     continue;
                 }
-                if completion.observations.is_empty() {
+                if completion.observations.is_empty() && completion.diagnostic.is_none() {
                     continue;
                 }
                 if completion.releases_holds() {
@@ -1562,6 +1562,7 @@ impl Controller {
                 if let Some(class) = completion.failure_class.as_deref() {
                     self.failure_allowance(&snapshot, &delivery.key, class, &mut commit)?;
                 }
+                self.accepted_delivery_refusal(&snapshot, &delivery, &completion, &mut commit)?;
                 for (index, observation) in completion.observations.iter().enumerate() {
                     self.queue_observation(
                         &snapshot,
@@ -1781,6 +1782,7 @@ impl Controller {
         if let Some(class) = completion.failure_class.as_deref() {
             self.failure_allowance(snapshot, key, class, &mut commit)?;
         }
+        self.accepted_delivery_refusal(snapshot, &delivery, &completion, &mut commit)?;
         let plan = tl3_delivery::completion(
             executor::delivery_state(effect.state),
             executor::delivery_ack(completion.ack),
