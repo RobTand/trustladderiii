@@ -42,7 +42,7 @@ pub(super) proof fn index(before: Seq<Dependency>, after: Seq<Dependency>,
     existing: Option<usize>, dependency: Dependency)
     requires match existing { None => true, Some(index) => index < before.len() },
         write(before, after, existing, dependency),
-    ensures after[match existing { Some(index) => index as int, None => before.len() }]
+    ensures after[match existing { Some(index) => index as int, None => before.len() as int }]
         == dependency,
 {
     reveal(write);
