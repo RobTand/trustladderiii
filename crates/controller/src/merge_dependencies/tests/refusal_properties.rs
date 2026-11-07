@@ -2001,7 +2001,7 @@ fn deadlock_retains_input_and_replays_without_incident() {
 }
 
 #[test]
-fn startup_dependency_refusal_persists_one_incident_without_recovery_rows() {
+fn startup_counter_halt_preserves_recovery_input_and_effects() {
     let mut db = Database::start();
     let (repo, mut c, repository, _) = fixture_with_settings(&mut db, "startup_counter_refusal");
     let waiter = intake(&mut c, &repository, 42);
@@ -2022,7 +2022,11 @@ fn startup_dependency_refusal_persists_one_incident_without_recovery_rows() {
     ).unwrap();
     assert_eq!(c.world().unwrap(), world);
     let after = c.snapshot().unwrap();
-    let business = |snapshot: &Snapshot| snapshot.rows.iter().filter(|row| row.table != "incidents").cloned().collect::<Vec<_>>();
+    let business = |snapshot: &Snapshot| snapshot.rows.iter().filter(|row| row.table != "incidents" && row.table != crate::dispatch_liveness::PARKED).cloned().collect::<Vec<_>>();
+    let parked: Vec<_> = after.rows.iter().filter(|row| row.table == crate::dispatch_liveness::PARKED).collect();
+    assert_eq!(parked.len(), 1);
+    assert_eq!(parked[0].id, "headroom");
+    assert_eq!(parked[0].value, json!(true));
     assert_eq!(business(&after), business(&before));
     assert_eq!(after.pending_effects, before.pending_effects);
     let incidents: Vec<_> = after.rows.iter().filter(|row| row.table == "incidents" && row.value["signature"]["class"] == "kernel_counter_headroom").collect();
