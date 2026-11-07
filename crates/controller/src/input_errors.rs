@@ -264,6 +264,8 @@ impl Controller {
         let holds = self.held_effects.clone();
         let postmortem_since = self.postmortem_since;
         let attempted = self.prepare_kernel_input(snapshot, row);
+        let planner_input = attempted.as_ref().is_ok_and(|commit|
+            commit.result.get("kernel_planner_input").is_some());
         let result = match attempted {
             Ok(mut commit) if !deferred(&commit) => {
                 commit.rows.push(RowChange::Delete {
@@ -290,7 +292,7 @@ impl Controller {
         }
         // A losing revision retains the input. The next pass reloads both
         // World and request budget and runs translation and the kernel again.
-        if matches!(&result, Err(Error::Store(tl3_store::Error::Stale { .. }))) {
+        if planner_input && matches!(&result, Err(Error::Store(tl3_store::Error::Stale { .. }))) {
             return Ok(false);
         }
         // Q39 accepts contention starvation. Rollback has retained the input;

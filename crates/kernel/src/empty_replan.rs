@@ -125,8 +125,7 @@ pub fn step_planner(mut world: World, mut budget: ReplanBudget, request: NodeId,
     ensures result.1.request_version() == budget.request_version(),
         result.1.consumed() == (budget.consumed() || (budget.request_version() == request
             && admitted(world, request, generation) && planner_result is EmptyAllowedReplan)),
-        (budget.request_version() != request || (planner_result is EmptyAllowedReplan
-            && !admitted(world, request, generation))) ==>
+        budget.request_version() != request ==>
             result.0 == world && result.2@.len() == 0,
         (budget.request_version() == request && admitted(world, request, generation)
             && planner_result is EmptyAllowedReplan) ==>
@@ -168,12 +167,18 @@ pub fn step_planner(mut world: World, mut budget: ReplanBudget, request: NodeId,
         None => return (world, budget, Vec::new()),
     };
     if i >= world.nodes.len() {
-        return (world, budget, Vec::new());
+        let (world, out) = step(world, Event::Reply {
+            node: request, generation, reply: Reply::PlanCheckRejected,
+        });
+        return (world, budget, out);
     }
     let n = &world.nodes[i];
     if !matches!(n.phase, Phase::Planning { .. }) || n.current() != Some(Item::Await)
         || (n.run != Some(generation) && n.job != Some(generation)) {
-        return (world, budget, Vec::new());
+        let (world, out) = step(world, Event::Reply {
+            node: request, generation, reply: Reply::PlanCheckRejected,
+        });
+        return (world, budget, out);
     }
     kernel_snapshot! { before_replan = world }
     let mut outbox = Outbox::new();
@@ -348,7 +353,7 @@ proof [reveal(empty_replan::admitted);] {
     let generation = if wrong_key { 3 } else { 2 };
     let (after, budget, out) = step_planner(w, budget, NodeId(0), generation, PlannerResult::EmptyAllowedReplan);
     let used = budget.used();
-    kernel_proof! { assert(!used); assert(after == before@); assert(out@.len() == 0); }
+    kernel_proof! { assert(!used); if wrong_key { assert(after == before@); assert(out@.len() == 0); } }
 }
 }
 

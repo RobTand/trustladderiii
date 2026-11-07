@@ -892,10 +892,7 @@ impl Controller {
                     priority: priority::pool_priority(&issue.title, &issue.labels),
                 }
             };
-            commit.rows.push(put(
-                "requests",
-                node,
-                json!(Request {
+            let mut request = json!(Request {
                     repo,
                     issue: issue.number,
                     title: issue.title.clone(),
@@ -903,8 +900,12 @@ impl Controller {
                     source,
                     proposed,
                     priority: priority::issue_priority(&issue.title, &issue.labels),
-                }),
+                });
+            request["replan_budget"] = json!(tl3_kernel::ReplanBudget::new(
+                NodeId(world.nodes.len() as u64),
             ));
+            request["replan_budget_format"] = json!(1);
+            commit.rows.push(put("requests", node, request));
             return Ok(Some(event));
         }
         Ok(None)
@@ -2235,20 +2236,10 @@ impl Controller {
         outputs: Vec<Out>,
         commit: &mut Commit,
     ) -> Result<()> {
-        // Import legacy consumption before encoding World discards removed fields.
-        // New request rows are staged by intake before their first kernel step.
-        for index in 0..world.nodes.len() {
-            let node = NodeId(index as u64);
-            let budget = planner_input::load_budget(snapshot, commit, node)?;
-            let row = planner_input::request_row(snapshot, commit, node)?;
-            if row.get("replan_budget") != Some(&serde_json::to_value(budget)?)
-                || row.get("replan_budget_format") != Some(&json!(1))
-            {
-                planner_input::save_budget(snapshot, commit, node, budget)?;
-            }
-        }
         let previous = snapshot::decode(snapshot)?;
         let before = snapshot::encode(&previous)?;
+        let world_changes = snapshot::changes(&before, snapshot::encode(&world)?);
+        planner_input::import_rewritten_legacy(snapshot, commit, &world_changes)?;
         for (index, node) in world.nodes.iter().enumerate() {
             if !matches!(node.phase, tl3_kernel::Phase::Planning { .. })
                 || previous
@@ -2297,9 +2288,7 @@ impl Controller {
                 commit.rows.push(put("findings", id, findings));
             }
         }
-        commit
-            .rows
-            .extend(snapshot::changes(&before, snapshot::encode(&world)?));
+        commit.rows.extend(world_changes);
         self.close_replacement(snapshot, &previous, &world, commit)?;
         self.record_review_stops(snapshot, &previous, &world, commit)?;
         self.resolve_closed_effect_incidents(snapshot, &world, commit)?;

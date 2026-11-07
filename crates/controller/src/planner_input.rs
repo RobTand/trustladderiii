@@ -150,6 +150,32 @@ pub(crate) fn save_budget(
     Ok(())
 }
 
+/// Preserve removed legacy state only when this commit rewrites its node row.
+pub(crate) fn import_rewritten_legacy(
+    snapshot: &Snapshot,
+    commit: &mut Commit,
+    changes: &[RowChange],
+) -> Result<()> {
+    let legacy: std::collections::BTreeMap<_, _> = snapshot.rows.iter()
+        .filter(|row| row.table == "nodes")
+        .filter_map(|row| row.value.get("empty_allowed_replanned").map(|flag| (&row.id, flag)))
+        .collect();
+    for change in changes {
+        let RowChange::Put { table, id, .. } = change else { continue };
+        if table != "nodes" { continue; }
+        match legacy.get(id) {
+            Some(Value::Bool(true)) => {
+                let node = NodeId(id.parse().map_err(|_| Error::Invalid("invalid legacy node id"))?);
+                let budget = load_budget(snapshot, commit, node)?;
+                save_budget(snapshot, commit, node, budget)?;
+            }
+            Some(Value::Bool(false)) | None => {}
+            Some(_) => return Err(Error::Invalid("invalid legacy replan budget")),
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
@@ -673,6 +699,11 @@ mod tests {
                 }
                 setup.rows.push(put("requests", index.to_string(), row));
             }
+            if count_only {
+                let mut raw = serde_json::to_value(world_node(&snapshot, count - 1)).unwrap();
+                raw["empty_allowed_replanned"] = json!(true);
+                setup.rows.push(put("nodes", (count - 1).to_string(), raw));
+            }
             c.store.commit(&setup).unwrap();
             let snapshot = c.store.load().unwrap();
             let before = snapshot::decode(&snapshot).unwrap();
@@ -690,7 +721,26 @@ mod tests {
                 "unrelated legacy request rows must remain untouched");
             c.store.commit(&commit).unwrap();
             assert_eq!(snapshot::decode(&c.store.load().unwrap()).unwrap().nodes[0].priority, Priority::P0);
+            if count_only {
+                let snapshot = c.store.load().unwrap();
+                let mut rewrite = Commit::new("legacy-rewrite", json!({}), &snapshot);
+                REQUEST_ROW_LOADS.set(0);
+                c.apply(&snapshot, snapshot::decode(&snapshot).unwrap(), Event::Fact {
+                    node: NodeId((count - 1) as u64), fact: Fact::Priority(Priority::P0),
+                }, &mut rewrite).unwrap();
+                assert_eq!(REQUEST_ROW_LOADS.get(), 2, "only the rewritten legacy row is loaded and saved");
+                c.store.commit(&rewrite).unwrap();
+                let snapshot = c.store.load().unwrap();
+                let read = Commit::new("legacy-read", json!({}), &snapshot);
+                assert!(load_budget(&snapshot, &read, NodeId((count - 1) as u64)).unwrap().used());
+                assert!(snapshot.rows.iter().find(|r| r.table == "nodes" && r.id == (count - 1).to_string())
+                    .unwrap().value.get("empty_allowed_replanned").is_none());
+            }
         }
+    }
+
+    fn world_node(snapshot: &Snapshot, index: usize) -> Node {
+        snapshot::decode(snapshot).unwrap().nodes[index]
     }
 
     #[test]
