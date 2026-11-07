@@ -104,6 +104,9 @@ class MirrorLintTests(unittest.TestCase):
                     files['crates/contracts/generated/manifest.json'] = json.dumps({
                         'files': [{'path': 'workers/src/p/schemas/a.json'}],
                     })
+                    files['crates/contracts/tests/schema_drift.rs'] = (
+                        'include_str!("../../../' + unknown + '");'
+                    )
                 result = self.scan(files)
                 self.assertNotIn((path, 'ungenerated-schema'), result)
                 self.assertNotIn((launch, 'ungenerated-schema'), result)
