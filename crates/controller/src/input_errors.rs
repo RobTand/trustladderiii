@@ -238,13 +238,12 @@ impl Controller {
             }
             return Ok(Some(false));
         }
-        let world = crate::snapshot::decode(snapshot)?;
         let mut commit = Commit::new(
             format!("kernel-headroom:{}", snapshot.revision.get()),
             json!({"kernel_headroom": false}),
             snapshot,
         );
-        if self.kernel_headroom(snapshot, &world, &mut commit)? {
+        if self.kernel_input_ready(snapshot, &mut commit)? {
             return Ok(None);
         }
         self.store.commit(&commit)?;
@@ -355,6 +354,9 @@ impl Controller {
     ) -> Result<Commit> {
         let mut world = crate::snapshot::decode(snapshot)?;
         let mut commit = Commit::new(format!("consume:{}", row.id), row.value.clone(), snapshot);
+        if !self.kernel_input_ready(snapshot, &mut commit)? {
+            return Ok(commit);
+        }
         if row.table == "inbox" {
             let observation: Observation = crate::decode_stored(row.value.clone())?;
             match self.translate(snapshot, &mut world, observation.clone(), &mut commit) {
@@ -407,9 +409,6 @@ impl Controller {
                         .ok_or(Error::Invalid("retained intake is no longer authorized"))?;
                     commit.event_key = format!("github:{}", issue.delivery);
                     commit.event = json!({"labelled_issue": issue, "proposed": proposed});
-                    if !self.kernel_headroom(snapshot, &world, &mut commit)? {
-                        return Ok(commit);
-                    }
                     self.prepare_intake(snapshot, &issue, repository, proposed, &mut commit)?
                 }
             };
@@ -599,33 +598,44 @@ impl Controller {
         Ok(())
     }
 
-    pub(crate) fn kernel_headroom(
+    /// Refusals have one incident projection. The kernel returns the unchanged
+    /// input world; dependency callers must keep it rather than commit a prefix.
+    pub(crate) fn checked_kernel_step(
         &self,
         snapshot: &Snapshot,
-        world: &tl3_kernel::World,
+        world: &mut tl3_kernel::World,
+        event: tl3_kernel::Event,
+        commit: &mut Commit,
+    ) -> Result<Option<tl3_kernel::StepResult>> {
+        if deferred(commit) || snapshot.rows.iter().any(counter_incident) {
+            retain_input(commit);
+            return Ok(None);
+        }
+        match tl3_kernel::step_checked(world.clone(), event) {
+            Ok(result) => Ok(Some(result)),
+            Err(refusal) => {
+                *world = refusal.world;
+                self.counter_exhausted(
+                    snapshot,
+                    commit,
+                    refusal.exhaustion.node,
+                    format!("kernel counter headroom exhausted: {}", refusal.exhaustion.counter),
+                )?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// Inputs without an event still obey the halt before translation or SQL
+    /// interning. An absent-node fact changes no input state. Discard settlement
+    /// here; startup uses its result to reconcile capacity through the same API.
+    pub(crate) fn kernel_input_ready(
+        &self,
+        snapshot: &Snapshot,
         commit: &mut Commit,
     ) -> Result<bool> {
-        if snapshot.rows.iter().any(counter_incident)
-            || commit.rows.iter().any(|row| {
-                matches!(row,
-                RowChange::Put { table, value, .. }
-                    if table == "incidents" && value["open"] == true
-                        && value["signature"]["class"] == COUNTER_HEADROOM)
-            })
-        {
-            retain_input(commit);
-            return Ok(false);
-        }
-        let Some(exhausted) = world.counter_exhaustion() else {
-            return Ok(true);
-        };
-        self.counter_exhausted(
-            snapshot,
-            commit,
-            exhausted.node,
-            format!("kernel counter headroom exhausted: {}", exhausted.counter),
-        )?;
-        Ok(false)
+        let mut world = crate::snapshot::decode(snapshot)?;
+        Ok(self.checked_kernel_step(snapshot, &mut world, settlement_event(), commit)?.is_some())
     }
 
     pub(crate) fn counter_exhausted(
@@ -992,4 +1002,12 @@ pub(crate) fn observation_context(
         ));
     }
     Ok((None, "An incoming update".into(), None))
+}
+
+/// Facts for missing nodes are ignored by apply; step_checked still settles.
+pub(crate) fn settlement_event() -> tl3_kernel::Event {
+    tl3_kernel::Event::Fact {
+        node: NodeId(u64::MAX),
+        fact: tl3_kernel::Fact::Priority(tl3_kernel::Priority::Unranked),
+    }
 }
