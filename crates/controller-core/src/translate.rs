@@ -17,7 +17,7 @@ macro_rules! scan {
 /// this value; callers construct it only through `begin` at the receipt read.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub struct Translation {
-    receipt: (),
+    _receipt: (),
 }
 
 /// S-once: preserve the recorded-receipt early return on
@@ -30,7 +30,7 @@ pub fn begin(recorded: bool) -> Option<Translation> {
     if recorded {
         None
     } else {
-        Some(Translation { receipt: () })
+        Some(Translation { _receipt: () })
     }
 }
 
