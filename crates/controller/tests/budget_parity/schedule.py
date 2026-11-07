@@ -1,7 +1,7 @@
 """Recorded I/O interface shared by the verbatim base and extracted shells."""
 from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass, replace
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 import os
 from copy import deepcopy
 import json
@@ -71,6 +71,10 @@ class File:
         self.io.calls.append(["write_chunk", self.path, text])
         self.buffer += text
         self.chunks += 1
+        self.io.chunk_writes += 1
+        if self.io.chunk_writes == self.io.chunk_crash:
+            self.io.dead = True
+            raise Crash()
         if self.chunks in {1, 1 + self.io.schedule[0] % 200}:
             self.io.stage("partial_write", self.path)
         return len(text)
@@ -129,10 +133,11 @@ class IOPath:
 
 
 class Filesystem(IO):
-    def __init__(self, schedule, crash):
+    def __init__(self, schedule, crash, chunk_crash):
         super().__init__(schedule, crash)
         self.files, self.durable, self.namespace, self.handles = {}, {}, {}, {}
         self.stages, self.dead = [], False
+        self.chunk_writes, self.chunk_crash = 0, chunk_crash
         self.os = SimpleNamespace(open=self.open, fsync=self.fsync, replace=self.rename,
                                   close=self.close, O_RDONLY=os.O_RDONLY, O_DIRECTORY=os.O_DIRECTORY)
 
@@ -172,11 +177,11 @@ class Filesystem(IO):
                 "buffered": {h.path: h.buffer for h in self.handles.values()}}
 
 
-def loop(modules, schedule, crash):
+def loop(modules, schedule, crash, *, chunk_crash=0):
     """Run the real maker.run closure and session.save, rather than simulating it."""
     from tl3_workers import runtime
     from tl3_workers.pb_tests import TestSettings
-    io = Filesystem(schedule, crash)
+    io = Filesystem(schedule, crash, chunk_crash)
     module, edge, session = modules
     budget = edge.ExplorationBudget(tool_turns=8, finalization_turns=1, input_tokens=1_000_000,
                                    history_bytes=1024, no_progress_window=4)
@@ -313,7 +318,9 @@ def exhausted(module, schedule, crash):
 
 
 def compare(old, schedules):
+    from checkpoint_migration import CheckpointMigration, refusal_controls
     from tl3_workers import session
+    refusal_controls()
     # Verbatim reference modules import current names. Bind their original edge
     # functions explicitly so the old run really uses the old implementation.
     old["maker"].save = old["session"].save
@@ -335,21 +342,29 @@ def compare(old, schedules):
             expected = loop(reference, schedule, 0)
             actual = loop(current, schedule, 0)
             assert isinstance(expected[2], dict) and expected[2]["kind"] == "cant_meet", expected[2]
-            # Retain the raw current writes. JSON emits each new metadata field in
-            # additional chunks, so stripping it would change this crash oracle's counts.
-            chunks = [call[2] for call in actual[0] if call[0] == "write_chunk"]
-            for index, chunk in enumerate(chunks):
-                if chunk == '\"backend\"':
-                    assert chunks[index + 1:index + 3] == [": ", '\"prismabuild\"']
-            counts = tuple(sum(call[0] == "write_chunk" for call in observed[0])
-                           for observed in (expected, actual))
-            assert expected == actual, ("maker.run", schedule, 0, "raw write_chunk counts", counts)
+            migration = CheckpointMigration(expected)
+            migration.compare(expected, actual)
             assert {kind for kind, _ in expected[3]} == {"partial_write", "write", "flush", "fsync", "rename", "directory_fsync"}
             for crash in range(1, len(expected[3]) + 1):
                 expected_crash = loop(reference, schedule, crash)
                 actual_crash = loop(current, schedule, crash)
-                assert expected_crash == actual_crash, ("maker.run", schedule, crash, expected[3][crash-1])
+                migration.compare(expected_crash, actual_crash)
                 assert expected_crash[2] == "crash"
+            for old_chunk, new_chunk in migration.extra_prefixes:
+                expected_crash = loop(reference, schedule, 0, chunk_crash=old_chunk)
+                actual_crash = loop(current, schedule, 0, chunk_crash=new_chunk)
+                migration.compare(expected_crash, actual_crash, inserted_prefix=True)
+                assert expected_crash[2] == "crash"
+            if output := os.environ.get('TEST_UNDECLARED_OUTPUTS_DIR'):
+                destination = Path(output)
+                if not (destination / 'checkpoint-raw-reference.json').exists():
+                    for name, tape in (('reference', expected), ('current', actual)):
+                        (destination / f'checkpoint-raw-{name}.json').write_text(json.dumps(tape, ensure_ascii=False))
+                with (destination / 'checkpoint-migration-audit.jsonl').open('a') as audit:
+                    audit.write(json.dumps(dict(schedule=schedule, raw_calls=[len(tape[0]) for tape in (expected, actual)],
+                        raw_chunks=[sum(call[0] == 'write_chunk' for call in tape[0]) for tape in (expected, actual)],
+                        durability_points=len(expected[3]), durability_replays=len(expected[3]),
+                        inserted_chunk_replays=len(migration.extra_prefixes))) + '\n')
             expected = exhausted(old["maker"], schedule, 0)
             assert expected == exhausted(maker, schedule, 0), ("budget_reply", schedule, 0)
             for crash in range(1, sum(call[0] == "write" for call in expected[0]) + 1):
