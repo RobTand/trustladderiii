@@ -108,6 +108,12 @@ impl RunBackend for Backend {
     fn validate_allocation(&self, _: &Owner, _: &AllocationInput) -> api::Result<CpuGrant> { panic!("controller must not qualify allocation") }
     fn worker_payload(&self, _: &Owner, _: &Terminal) -> api::Result<WorkerPayload> { panic!("daytime adapter must not consume worker payload") }
     fn launch_context(&self, _: &Owner, _: &str) -> api::Result<LaunchContext> { panic!("controller must not launch") }
+    fn begin_container_launch(&self, _: &Owner, _: &RuntimeOwnership) -> api::Result<ContainerLaunchIntent> {
+        Err(BackendError::invalid("controller fixture refuses container launch"))
+    }
+    fn bind_container_launch(&self, _: &Owner, _: RuntimeOwnership) -> api::Result<ContainerLaunchBinding> {
+        Err(BackendError::invalid("controller fixture refuses container binding"))
+    }
     fn retain_runtime(&self, _: &Owner, _: RuntimeOwnership) -> api::Result<()> { panic!("controller must not own runtime launch") }
     fn cleanup_runtime(&self, _: &Owner) -> api::Result<CleanupResult> { panic!("controller must not infer cleanup") }
     fn daytime_payload(&self, _: &Owner, _: &Terminal) -> api::Result<tl3_controller::contracts::report::CheckReport> { Err(BackendError::invalid("no semantic payload in infrastructure fixtures")) }
