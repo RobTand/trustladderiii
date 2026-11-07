@@ -3852,6 +3852,7 @@ impl Controller {
                     }
                 };
                 if role == "planner" && (!matches!(n.phase, tl3_kernel::Phase::Planning { .. })
+                    || n.generation != generation
                     || (n.run != Some(generation) && n.job != Some(generation))) {
                     let result = match mapped {
                         adapters::workers::protocol::MappedReply::Planner(result) => result,

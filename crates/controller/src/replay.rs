@@ -65,6 +65,10 @@ pub(crate) enum StoredSnapshot {
 pub(crate) fn stored_snapshot(
     result: &serde_json::Value,
 ) -> Result<Option<StoredSnapshot>, &'static str> {
+    if ["kernel_anchor", "kernel_replay", "planner_replay"].iter()
+        .filter(|key| result.get(**key).is_some()).count() > 1 {
+        return Err("ambiguous replay record");
+    }
     if let Some(anchor) = result.get("kernel_anchor") {
         return serde_json::from_value(anchor.clone())
             .map(StoredSnapshot::Anchor)
