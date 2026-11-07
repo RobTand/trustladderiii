@@ -64,7 +64,7 @@ const VERUS_RETIREMENTS: &[(&str, &str)] = &[
     ),
     // #832: new semantic replies are covered by Verus; Kani stays frozen.
     ("apply_empty_allowed_replan", "empty_replan_witness"),
-    ("apply_planner_entry_cases", "empty_replan_witness"),
+    ("apply_planner_entry_cases", "planner_entry_cases"),
     ("apply_plan_check_rejected", "plan_check_witness"),
     ("apply_plan_check_needs_split", "plan_check_witness"),
     ("apply_incident_cleared", "facts_incident_cleared"),

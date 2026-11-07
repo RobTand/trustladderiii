@@ -875,7 +875,7 @@ fn sent_but_absent(settings: &tl3_config::Store) {
     assert!(
         !events
             .iter()
-            .any(|event| event.receipt.result["kernel_event"]["Reply"]["reply"] == "RunFailed"),
+            .any(|event| (event.receipt.result["kernel_event"]["Reply"].get("reply").or_else(|| event.receipt.result["kernel_planner_input"]["result"].get("Ordinary"))) == Some(&serde_json::json!("RunFailed"))),
         "absence of an unacknowledged start must retry delivery without failing the run"
     );
 }
