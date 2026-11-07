@@ -25,7 +25,11 @@ def main():
         started = time.monotonic()
         accepted = False
         try:
+            if settings['mode'] == 'no-ownership' and command['op'] == 'validate_allocation':
+                raise RuntimeError('admitted fixture has no retained prelaunch allocation ownership')
             if command['op'] == 'cleanup_runtime':
+                if settings['mode'] == 'cancel-term-unconfirmed':
+                    raise RuntimeError('admitted fixture cleanup transport remains unconfirmed')
                 state = json.loads((root / 'journal' / os.environ['TL3_RUN_CORRELATION'] / 'state.json').read_text())
                 for owned in state['runtime_ownerships']:
                     facts = runtime.cleanup_observations(owned, podman=str(root / 'podman'),
@@ -74,12 +78,12 @@ def main():
 
         def command(tree, scratch):
             context = runtime.launch_context()
-            return runtime.podman_command(tree, context['runtime']['image'], scratch, 1,
+            return runtime.podman_command(tree, context['runtime_identity']['expected_image'], scratch, 1,
                                           mode='in_job', executable=root / 'podman')
 
         runtime.command = command
         snapshot = runtime.Evidence.host_snapshot
-        runtime.Evidence.host_snapshot = staticmethod(lambda: {**snapshot(), 'hostname': 'dl380g10',
+        runtime.Evidence.host_snapshot = staticmethod(lambda: {**snapshot(), 'hostname': '' if settings['mode'] == 'host-absent' else 'dl380g10',
             'cgroup': '0::/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/shell-fABC:sys.service\n'})
         runpy.run_path(str(root / 'staged/action.py'), run_name='__main__')
         runtime.command = original
@@ -101,7 +105,7 @@ def main():
     (repo / 'pyproject.toml').write_text('[tool.tl3.harness]\ncommand=["python","-m","pytest"]\ntest-files=["test_*.py"]\n')
     (repo / 'test_value.py').write_text(
         'import time\ndef test_value():\n    time.sleep(12)\n    assert True\n'
-        if mode in ('cancel-term', 'cancel-kill', 'timeout-kill') else 'def test_value():\n    assert True\n')
+        if mode in ('cancel-term', 'cancel-term-unconfirmed', 'cancel-kill', 'timeout-kill') else 'def test_value():\n    assert True\n')
     git('add', '.')
     git('commit', '-qm', 'fixture')
     head = git('rev-parse', 'HEAD')
@@ -276,7 +280,7 @@ sys.exit(0)
         except BaseException as error:
             signal_errors.append(repr(error))
     watcher = None
-    if mode in ('cancel-term', 'cancel-kill', 'timeout-kill'):
+    if mode in ('cancel-term', 'cancel-term-unconfirmed', 'cancel-kill', 'timeout-kill'):
         watcher = threading.Thread(target=cancel_qualified)
         watcher.start()
     faulthandler.dump_traceback_later(10, repeat=True)
@@ -306,7 +310,13 @@ sys.exit(0)
                  'elapsed': elapsed, 'external_fixture_pidfd_cessation': True,
                  'process_status': json.loads((output / 'action-process-status.json').read_text())}
         (output / 'cancellation-assertions.json').write_text(json.dumps(facts))
-        if mode == 'cancel-term':
+        if mode == 'cancel-term-unconfirmed':
+            assert facts['process_status']['returncode'] == 143, facts
+            assert not absent and facts['handler_record'] and not facts['finally_record'], facts
+            requests = [json.loads(line) for line in (output / 'requests-action.jsonl').read_text().splitlines()]
+            assert sum(row['op'] == 'begin_container_launch' for row in requests) == 1
+            assert 'TL3_CHECKS ' not in (output / 'host.stdout').read_text()
+        elif mode == 'cancel-term':
             assert facts['process_status']['returncode'] in (-15, 143), facts
             assert absent, 'actual generated TERM action left own job scratch'
             assert facts['handler_record'] and facts['finally_record'], facts
@@ -317,7 +327,7 @@ sys.exit(0)
         return
     raw = (output / 'host.stdout').read_text()
     assert elapsed < 15, f'action took {elapsed:.3f}s'
-    if mode in ('success', 'success-retained'):
+    if mode in ('success', 'success-retained', 'front-door'):
         assert '"verdict":"pass"' in raw, raw + (output / 'host.stderr').read_text()
         assert (root / 'payload-started').exists()
     else:
@@ -354,7 +364,7 @@ sys.exit(0)
             assert 'container' not in names
             assert names.index('launcher_exit') < names.index('no_container_observed')
             assert next(event['exit_code'] for event in log if event['event'] == 'launcher_exit') == 127
-    elif mode in ('success', 'success-retained', 'binding-mismatch'):
+    elif mode in ('success', 'success-retained', 'front-door', 'binding-mismatch'):
         for event_log in events:
             names = [event['event'] for event in event_log]
             assert names.index('allocation_grant') < names.index('launch_intent') < names.index('container')
@@ -364,7 +374,7 @@ sys.exit(0)
             assert grant['os_pus'] == cpus and grant['rank'] == 0
         assert operations.index('observe_allocation') < operations.index('validate_allocation') < operations.index('begin_container_launch')
         assert 'bind_container_launch' in operations
-        if mode in ('success', 'success-retained'):
+        if mode in ('success', 'success-retained', 'front-door'):
             assert operations.index('bind_container_launch') < operations.index('validate_runtime_binding')
             assert (output / 'runtime-bindings.jsonl').stat().st_size
     elif mode == 'begin-response-lost':

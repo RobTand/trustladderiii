@@ -178,6 +178,61 @@ fn generated_action_sigterm_unwinds_workspace() {
 
 #[test]
 #[ignore = "requires admitted PB actual-action fixture"]
+fn generated_action_sigterm_unconfirmed_cleanup_exits_without_later_checks() {
+    let f = generated_action_case("cancel-term-unconfirmed");
+    let state: Value = serde_json::from_slice(
+        &fs::read(
+            f.options
+                .journal_root
+                .join(&f.intent.correlation)
+                .join("state.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(state["container_launches"].as_object().unwrap().len(), 1);
+    assert_eq!(state["runtime_ownerships"].as_array().unwrap().len(), 1);
+    assert!(state["cleanup_evidence"].as_object().unwrap().is_empty());
+    f.call(json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}));
+    f.events(&[
+        json!({"name":"start","context":{}}),
+        json!({"name":"exception","context":{"type":"cancel","severity":0}}),
+        json!({"name":"finish","context":{"status":143}}),
+        json!({"name":"clean"}),
+    ]);
+    let frames = f.attach();
+    assert_eq!(
+        frames.last().unwrap()["result"]["observation"]["kind"],
+        "unknown",
+        "{frames:?}"
+    );
+    assert!(f.request.scratch_root.join("fABC").exists());
+    assert!(
+        !f.intent
+            .output_dir
+            .join("scratch-reclamation.manifest.json")
+            .exists()
+    );
+    assert!(!f.intent.output_dir.join("receipt.json").exists());
+    let debt = f
+        .options
+        .journal_root
+        .join("cleanup-debt")
+        .join(&f.request.runtime.manifest_digest);
+    assert!(fs::read_dir(debt).unwrap().next().is_some());
+    if let Ok(destination) = std::env::var("FX_E2E_EVIDENCE") {
+        let destination = Path::new(&destination).join("cancel-term-unconfirmed");
+        fs::write(
+            destination.join("attach-unknown.json"),
+            serde_json::to_vec(&frames).unwrap(),
+        )
+        .unwrap();
+        fs::write(destination.join("unconfirmed-assertions.json"), json!({"launches":1,"no_later_checks":true,"scratch_retained":true,"debt_retained":true,"terminal_absent":true}).to_string()).unwrap();
+    }
+}
+
+#[test]
+#[ignore = "requires admitted PB actual-action fixture"]
 fn generated_action_sigkill_reclaims_after_cancel_and_timeout() {
     for timeout in [false, true] {
         let f = generated_action_case(if timeout {
@@ -353,6 +408,210 @@ fn scratch_reclamation_serializes_begin_until_terminal_and_rejects_late_begin() 
 
 #[test]
 #[ignore = "requires admitted PB actual-action fixture"]
+fn scratch_preflight_requires_helper_and_retained_host_authority() {
+    for case in ["no-helper", "no-ownership", "host-absent"] {
+        let f = generated_action_case(case);
+        let report: Value =
+            serde_json::from_slice(&fs::read(f.intent.output_dir.join("report.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            report["outcome"], "refused_before_tests",
+            "{case}: {report}"
+        );
+        let state: Value = serde_json::from_slice(
+            &fs::read(
+                f.options
+                    .journal_root
+                    .join(&f.intent.correlation)
+                    .join("state.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(state["container_launches"].as_object().unwrap().is_empty());
+        assert!(state["runtime_ownerships"].as_array().unwrap().is_empty());
+        f.events(&completed(0));
+        let frames = f.attach();
+        assert_eq!(
+            frames.last().unwrap()["result"]["observation"]["kind"],
+            "unknown",
+            "{case}: {frames:?}"
+        );
+        assert!(!f.intent.output_dir.join("receipt.json").exists());
+        assert!(
+            !f.intent
+                .output_dir
+                .join("scratch-reclamation.manifest.json")
+                .exists()
+        );
+        let debt = f
+            .options
+            .journal_root
+            .join("cleanup-debt")
+            .join(&f.request.runtime.manifest_digest);
+        assert!(fs::read_dir(debt).unwrap().next().is_some());
+        if let Ok(destination) = std::env::var("FX_E2E_EVIDENCE") {
+            fs::write(
+                Path::new(&destination)
+                    .join(case)
+                    .join("attach-unknown.json"),
+                serde_json::to_vec(&frames).unwrap(),
+            )
+            .unwrap();
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires admitted PB actual-action fixture"]
+fn rust_scratch_input_reaches_real_staged_cleanup_front_door() {
+    let f = generated_action_case("front-door");
+    f.events(&completed(0));
+    let frames = f.attach();
+    assert_eq!(
+        frames.last().unwrap()["result"]["observation"]["terminal"]["ending"],
+        "passed",
+        "{frames:?}"
+    );
+    let input = fs::read_dir(&f.intent.output_dir)
+        .unwrap()
+        .flatten()
+        .find(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            name.starts_with("scratch-absence-") && name.ends_with(".input.json")
+        })
+        .unwrap()
+        .path();
+    let destination = std::env::var_os("FX_E2E_EVIDENCE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| f.root.path().join("evidence"))
+        .join("front-door-pin");
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let output = Command::new("/home/rob/venvs/pb-cpu/bin/python")
+        .arg(source.join("harness/tests/fx_scratch_front_door.py"))
+        .arg(&input)
+        .arg(&destination)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+#[ignore = "requires admitted PB actual-action fixture"]
+fn scratch_reclamation_rejects_manifest_completion_and_attribution_mutations() {
+    let f = generated_action_case("success-retained");
+    let root = f.request.scratch_root.join("fABC");
+    fs::create_dir(&root).unwrap();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::write(root.join("leftover"), b"owned rejection fixture").unwrap();
+    f.events(&[
+        json!({"name":"start","context":{}}),
+        json!({"name":"exception","context":{"type":"timeout","severity":0}}),
+        json!({"name":"finish","context":{"status":9}}),
+        json!({"name":"clean"}),
+    ]);
+    for (case, mutation) in [
+        ("schema", json!({"manifest_replace":{"schema":"foreign"}})),
+        ("path", json!({"manifest_replace":{"path":"/foreign"}})),
+        ("uid", json!({"manifest_replace":{"uid":0}})),
+        ("run", json!({"manifest_replace":{"run":null}})),
+        ("owner", json!({"manifest_replace":{"owner":null}})),
+        (
+            "digest",
+            json!({"manifest_replace":{"request_digest":"foreign"}}),
+        ),
+        (
+            "attribution",
+            json!({"manifest_replace":{"attribution":"action cleanup"}}),
+        ),
+        (
+            "entries-bound",
+            json!({"manifest_replace":{"entries":vec![json!({});4097]}}),
+        ),
+        ("entries-type", json!({"manifest_replace":{"entries":null}})),
+        (
+            "bytes-bound",
+            json!({"manifest_replace":{"total_bytes":2_u64*1024*1024*1024+1}}),
+        ),
+        (
+            "bytes-type",
+            json!({"manifest_replace":{"total_bytes":null}}),
+        ),
+        ("completion-missing", json!({"completion":"missing"})),
+        ("completion-unequal", json!({"completion":"unequal"})),
+        (
+            "pre-removal-generation-missing",
+            json!({"replace":{"generation_pre_removal":null}}),
+        ),
+        (
+            "manifest-path",
+            json!({"replace":{"manifest":"/foreign/manifest.json"}}),
+        ),
+        ("unsolicited-attribution", json!({})),
+    ] {
+        if case == "unsolicited-attribution" {
+            f.events(&completed(0));
+        }
+        let mut mutation = mutation;
+        mutation["reclamation_result"] = json!(true);
+        fs::write(
+            f.intent.output_dir.join("scratch-control.json"),
+            mutation.to_string(),
+        )
+        .unwrap();
+        let frames = f.attach();
+        assert_eq!(
+            frames.last().unwrap()["result"]["observation"]["kind"],
+            "unknown",
+            "{case}: {frames:?}"
+        );
+        assert!(
+            !root.exists(),
+            "first genuine authorized reclamation must remove only own root"
+        );
+        assert!(!f.intent.output_dir.join("receipt.json").exists());
+        let debt = f
+            .options
+            .journal_root
+            .join("cleanup-debt")
+            .join(&f.request.runtime.manifest_digest)
+            .join(format!("{}.scratch", f.intent.correlation));
+        assert!(debt.exists());
+        if let Ok(destination) = std::env::var("FX_E2E_EVIDENCE") {
+            let destination = Path::new(&destination)
+                .join("reclamation-result-negatives")
+                .join(case);
+            fs::create_dir_all(&destination).unwrap();
+            for name in [
+                "scratch-control.json",
+                "scratch-reclamation.manifest.json",
+                "scratch-reclamation.complete.json",
+            ] {
+                if f.intent.output_dir.join(name).exists() {
+                    fs::copy(f.intent.output_dir.join(name), destination.join(name)).unwrap();
+                }
+            }
+            fs::write(
+                destination.join("attach-unknown.json"),
+                serde_json::to_vec(&frames).unwrap(),
+            )
+            .unwrap();
+            fs::write(destination.join("assertions.json"), json!({"terminal_absent":true,"scratch_debt_retained":true,"no_additional_tree_removal":true,"reclamation_result_rejected":true}).to_string()).unwrap();
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires admitted PB actual-action fixture"]
 fn terminal_scratch_guards_keep_ordinary_leftovers_and_reject_bad_external_evidence() {
     let f = generated_action_case("success-retained");
     let root = f.request.scratch_root.join("fABC");
@@ -448,6 +707,17 @@ fn terminal_scratch_guards_keep_ordinary_leftovers_and_reject_bad_external_evide
 fn generated_action_case(mode: &str) -> Fixture {
     let mut f = Fixture::new();
     f.podman(ContainerMode::InJob, true);
+    if mode == "front-door" {
+        f.options.instance_generation = format!("fv1-model/{}", "a".repeat(32));
+        f.intent.instance = f.options.instance_generation.clone();
+        fs::write(&f.config, serde_json::to_vec(&f.options).unwrap()).unwrap();
+    }
+    if mode == "no-helper" {
+        f.request.runtime.runtime = ExecutionRuntime::Native {
+            interpreter: "/usr/bin/python3".into(),
+        };
+        f.request.runtime.cleanup = None;
+    }
     let scratch = tempfile::tempdir().unwrap();
     fs::set_permissions(scratch.path(), fs::Permissions::from_mode(0o700)).unwrap();
     f.request.scratch_root = scratch.path().to_owned();
@@ -489,7 +759,7 @@ fn generated_action_case(mode: &str) -> Fixture {
         f.root.path().join("action-fixture.json"),
         serde_json::to_vec(&json!({
             "environment": environment, "output_dir": f.intent.output_dir,
-            "scratch": scratch.path().join("fABC"), "mode": mode,
+            "scratch": scratch.path().join("fABC"), "mode": if mode == "front-door" { "success-retained" } else { mode },
             "source": Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap(),
         }))
         .unwrap(),
@@ -585,6 +855,7 @@ fn refused_before_tests_never_invokes_external_unit_absence() {
     let mut f = Fixture::new();
     f.podman(ContainerMode::InJob, true);
     f.submit();
+    f.retain_fixture_allocation();
     fs::write(f.intent.output_dir.join("report.json"), json!({
         "schema":"tl3.runner_report.v1", "run":f.ownership().run,
         "request_digest":f.intent.request_digest, "tree":f.request.tree,
@@ -1263,7 +1534,25 @@ text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
             container: None,
         }
     }
+    fn retain_fixture_allocation(&self) {
+        let count = self.request.reservation.cpus.get();
+        let cpus = (0..count)
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let nodes = std::iter::once(json!({"metadata":{"type":"node","rank":0,"id":0,"name":"dl380g10"}}))
+            .chain((0..count).map(|n| json!({"metadata":{"type":"core","rank":0,"id":n,"properties":{"os-pus":n.to_string()}}}))).collect::<Vec<_>>();
+        fs::write(self.root.path().join("all.json"), json!({"version":1,"execution":{"R_lite":[{"rank":"0","children":{"core":cpus}}],"nodelist":["dl380g10"]},"scheduling":{"graph":{"nodes":nodes}}}).to_string()).unwrap();
+        let observed = self.call(json!({"op":"observe_allocation","owner":self.intent.owner,"correlation":self.intent.correlation,
+            "observed":{"run":self.ownership().run,"request_digest":self.intent.request_digest,"hostname":"dl380g10","allowed_cpus":cpus,
+            "cgroup":"0::/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/shell-fABC:sys.service"}}));
+        assert_eq!(observed.last().unwrap()["kind"], "result", "{observed:?}");
+        let frames = self.call(json!({"op":"validate_allocation","owner":self.intent.owner,"correlation":self.intent.correlation,"facts":observed.last().unwrap()["result"]["facts"]}));
+        assert_eq!(frames.last().unwrap()["kind"], "result", "{frames:?}");
+    }
+
     fn report(&self, outcome: ReportOutcome, cleanup_complete: bool) {
+        self.retain_fixture_allocation();
         let out = &self.intent.output_dir;
         fs::write(out.join("membership.json"), &self.membership).unwrap();
         let owned = self.ownership();

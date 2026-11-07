@@ -8,7 +8,7 @@ struct ScratchInput<'a> {
     run: &'a BackendId,
     owner: Owner,
     request_digest: &'a str,
-    host: &'static str,
+    host: &'a str,
     nonce: &'a str,
     budget_seconds: u64,
     reclamation: Option<&'a str>,
@@ -165,6 +165,23 @@ impl Flux {
         if canonical_job_id(&binding.id.job)? != binding.id.job {
             return Ok(None);
         }
+        let Some(grant) = &record.allocation_grant else {
+            return Ok(None);
+        };
+        if grant.run != binding.id
+            || grant.request_digest != record.intent.request_digest
+            || grant.host.is_empty()
+            || grant.rank != 0
+            || record.container_launches.values().any(|launch| {
+                launch.launcher.host != grant.host || launch.launcher.run != grant.run
+            })
+            || record
+                .runtime_ownerships
+                .iter()
+                .any(|owned| owned.host != grant.host || owned.run != grant.run)
+        {
+            return Ok(None);
+        }
         let nonce = digest(
             format!(
                 "{:?}:{}:{}",
@@ -182,7 +199,7 @@ impl Flux {
                 correlation: record.intent.correlation.clone(),
             },
             request_digest: &record.intent.request_digest,
-            host: "dl380g10",
+            host: &grant.host,
             nonce: &nonce,
             budget_seconds: 5,
             reclamation,
@@ -227,7 +244,7 @@ impl Flux {
             || observed.owner.owner != record.intent.owner
             || observed.owner.correlation != record.intent.correlation
             || observed.request_digest != record.intent.request_digest
-            || observed.host != "dl380g10"
+            || observed.host != grant.host
             || record
                 .runtime_ownerships
                 .iter()

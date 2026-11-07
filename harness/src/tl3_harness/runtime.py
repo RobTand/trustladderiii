@@ -687,6 +687,8 @@ def stage_host_runtime(destination, *, interpreter, producer_commit, podman, sys
 
 def prepare_allocation(evidence):
     context = evidence.context
+    if context['runtime_identity']['cleanup'] is None:
+        raise RuntimeError('canonical scratch requires a pinned cleanup helper; bundle misconfiguration')
     host = evidence.host_facts
     observed = {'run': context['run'], 'request_digest': context['request_digest'],
                 'hostname': host['hostname'], 'allowed_cpus': host['Cpus_allowed_list'], 'cgroup': host['cgroup']}
@@ -695,7 +697,8 @@ def prepare_allocation(evidence):
     grant = backend_request({'op': 'validate_allocation', 'owner': context['owner'],
                              'correlation': context['correlation'], 'facts': facts})['grant']
     refreshed = launch_context()
-    if (grant['run'] != context['run'] or grant['request_digest'] != context['request_digest']
+    if (not grant['host'] or grant['host'] != host['hostname']
+            or grant['run'] != context['run'] or grant['request_digest'] != context['request_digest']
             or refreshed['run'] != context['run'] or refreshed['request_digest'] != context['request_digest']
             or refreshed['placement'] != {'kind': 'observed', **{key: grant[key] for key in
                 ('allocation', 'topology', 'host', 'rank', 'os_pus')}}):
@@ -1378,7 +1381,7 @@ def scratch_cleanup(request, *, systemctl):
             or not re.fullmatch(r'[0-9a-f]{64}', request['nonce'])
             or set(owner) != {'owner', 'correlation'}
             or any(not re.fullmatch(r'[A-Za-z0-9_-]+', value) for value in owner.values())
-            or request['host'] != 'dl380g10'
+            or not re.fullmatch(r'[A-Za-z0-9_.-]+', request['host'])
             or type(request['budget_seconds']) is not int or not 0 < request['budget_seconds'] <= 10
             or request['reclamation'] not in (None, 'external scratch reclamation',
                                              'external scratch reclamation after validated launch failure')):

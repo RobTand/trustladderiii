@@ -19,7 +19,7 @@ export FX_HELPER_EVIDENCE="$fx_out/helper-pin"
 set +e
 fx_failed=0
 check() { fx_name=$1; shift; "$@" > "$fx_out/$fx_name.log" 2>&1; fx_status=$?; printf '%s=%s\n' "$fx_name" "$fx_status" >> "$fx_out/verdict.txt"; tail -n 15 "$fx_out/$fx_name.log"; if [ "$fx_status" != 0 ]; then fx_failed=1; fi; }
-if [ "${FX_SCRATCH_FINAL:-0}" = 1 ]; then
+if [ "${FX_SCRATCH_FINAL:-0}" = 1 ] || [ "${FX_SCRATCH_REVIEW:-0}" = 1 ]; then
  check fmt /home/rob/.cargo/bin/cargo fmt --all -- --check
 else
  check fmt /home/rob/.cargo/bin/cargo fmt --all
@@ -29,7 +29,7 @@ check python /home/rob/venvs/pb-cpu/bin/python -m pytest -q --basetemp="$fx_clon
 for fx_test in ${FX_SCRATCH_TESTS:-generated_action_sigterm_unwinds_workspace generated_action_sigkill_reclaims_after_cancel_and_timeout terminal_scratch_guards_keep_ordinary_leftovers_and_reject_bad_external_evidence jobspec_and_native_access_environment_are_exact_and_exclude_caller_sentinels}; do
  check "$fx_test" /home/rob/.cargo/bin/cargo test -p tl3-controller --test run_backend_cli --locked "$fx_test" -- --exact --include-ignored --test-threads=1 --nocapture
 done
-if [ "${FX_SCRATCH_FINAL:-0}" = 1 ]; then
+if [ "${FX_SCRATCH_FINAL:-0}" = 1 ] || [ "${FX_SCRATCH_REVIEW:-0}" = 1 ]; then
  check rust-cli /home/rob/.cargo/bin/cargo test -p tl3-controller --test run_backend_cli --locked -- --test-threads=1
  export FX_FIXTURE_PYTHON=/home/rob/venvs/pb-cpu/bin/python
  export FX_FIXTURE_EVIDENCE="$fx_out/stage-fixture"
@@ -38,10 +38,12 @@ if [ "${FX_SCRATCH_FINAL:-0}" = 1 ]; then
  fx_lint=$(mktemp -d)
  check lint-venv /home/rob/venvs/pb-cpu/bin/python -m venv "$fx_lint"
  check lint-install "$fx_lint/bin/python" -m pip install --disable-pip-version-check ruff==0.14.14
- check ruff "$fx_lint/bin/ruff" check --isolated --select E9,F crates/controller/src/adapters/prismabuild/action.py harness/src/tl3_harness/runtime.py harness/tests/fx_action_e2e.py harness/tests/test_launch_failure.py harness/tests/test_scratch_cleanup.py crates/controller/tests/python/fx_native_scratch_helper.py crates/controller/tests/python/fx_scratch_helper.py tools/fx-scratch-requirements.py
+ check ruff "$fx_lint/bin/ruff" check --isolated --select E9,F crates/controller/src/adapters/prismabuild/action.py harness/src/tl3_harness/runtime.py harness/src/tl3_harness/execution.py harness/tests/fx_action_e2e.py harness/tests/fx_scratch_front_door.py harness/tests/test_launch_failure.py harness/tests/test_scratch_cleanup.py crates/controller/tests/python/fx_native_scratch_helper.py crates/controller/tests/python/fx_scratch_helper.py tools/fx-scratch-requirements.py
+ if [ "${FX_SCRATCH_FINAL:-0}" = 1 ]; then
  check mirror /home/rob/venvs/pb-cpu/bin/python tools/ci/mirror_lint.py
  check rust-builds /home/rob/venvs/pb-cpu/bin/python tools/bazel/rust_builds.py --check
  check requirements /home/rob/venvs/pb-cpu/bin/python tools/fx-scratch-requirements.py "$fx_out/requirements"
+ fi
  git status --porcelain=v1 --untracked-files=all > "$fx_out/final-clean.txt"
  check final-clean test ! -s "$fx_out/final-clean.txt"
 fi

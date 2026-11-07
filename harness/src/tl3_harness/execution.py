@@ -211,6 +211,8 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
                 exit_code = process.exit_code
         except ExecutionFailure as failure:
             failure.log()
+            if isinstance(failure.__context__, SystemExit):
+                raise failure.__context__
             if messages is not None:
                 messages.update(dict.fromkeys(tests, failure.message()))
             # UNCOLLECTED cannot be assertion RED, GREEN, or an allowed pre-existing error.
