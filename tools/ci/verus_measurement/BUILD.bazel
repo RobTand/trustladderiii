@@ -4,6 +4,7 @@ py_binary(
     name = "fixture-check",
     srcs = ["fixture-check.py"],
     data = [
+        "clone-singleton-argv.fixture.json.gz",
         "measure-remote.py",
         "production-selectors.fixture.json",
         "six-helper-argv.fixture.json.gz",

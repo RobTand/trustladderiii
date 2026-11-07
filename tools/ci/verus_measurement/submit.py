@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import functools
 import gzip
 import inspect
 import json
@@ -26,10 +27,12 @@ BB = ['python3', '-I', '/home/rob/tmp/bazel-wave2/tools/bbrun.py']
 HOLD = Path('/home/rob/tmp/tl3-build/rust-fv/BB-HOLD')
 MARKER = 'BBRUN_WRAPPER_RESULT_V1 '
 RESERVED = 'bbrun-wrapper-result.v1.json'
+BATCH_SAFETY_MARGIN = 2048
 
 
-def unpack_transport(payload, expected):
+def unpack_transport(payload, expected, source=None):
     import base64, gzip, hashlib, json
+    from pathlib import Path
     packed = base64.b64decode(payload, validate=True)
     if hashlib.sha256(packed).hexdigest() != expected:
         raise ValueError('packed transport hash mismatch')
@@ -38,26 +41,49 @@ def unpack_transport(payload, expected):
         raise ValueError('invalid transport file set')
     files = {}
     for name, record in records.items():
-        if type(record) is not dict or set(record) != {'bytes', 'sha256', 'data'}:
+        if type(record) is not dict:
             raise ValueError('invalid transport file identity')
-        data = base64.b64decode(record['data'], validate=True)
+        if set(record) == {'bytes', 'sha256', 'path'} and name == 'measure-remote.py':
+            if record['path'] != 'tools/ci/verus_measurement/measure-remote.py':
+                raise ValueError('invalid checkout driver path')
+            path = Path(source or Path.cwd()) / record['path']
+            if path.is_symlink() or not path.is_file():
+                raise ValueError('missing/nonregular checkout driver')
+            data = path.read_bytes()
+        elif set(record) == {'bytes', 'sha256', 'data'}:
+            data = base64.b64decode(record['data'], validate=True)
+        else:
+            raise ValueError('invalid transport file identity')
         if type(record['bytes']) is not int or len(data) != record['bytes'] or hashlib.sha256(data).hexdigest() != record['sha256']:
             raise ValueError('decoded transport hash/length mismatch')
         files[name] = data
     return files
 
 
-def transport_payload(config, frontend):
+@functools.lru_cache(maxsize=32)
+def pinned_driver(source, head):
+    path = 'tools/ci/verus_measurement/measure-remote.py'
+    entry = D['git'](Path(source), 'ls-tree', head, '--', path)
+    if not entry or entry.split()[0] not in (b'100644', b'100755'):
+        return None
+    return D['git'](Path(source), 'show', head + ':' + path)
+
+
+def transport_payload(config, frontend, source=None):
     files = {'measure-remote.py': DRIVER.read_bytes(), 'config.json': encoded(config.json()),
              'frontend.json': encoded(frontend)}
     records = {name: {'bytes': len(data), 'sha256': digest(data), 'data': base64.b64encode(data).decode()}
                for name, data in files.items()}
+    if pinned_driver(str((source or HERE.parents[2]).resolve()), config.head) == files['measure-remote.py']:
+        records['measure-remote.py'] = {'bytes': len(files['measure-remote.py']),
+            'sha256': digest(files['measure-remote.py']),
+            'path': 'tools/ci/verus_measurement/measure-remote.py'}
     packed = gzip.compress(encoded(records), mtime=0)
     return base64.b64encode(packed).decode(), digest(packed)
 
 
-def submission(config, runner_log, frontend=None):
-    payload, packed_hash = transport_payload(config, frontend)
+def submission(config, runner_log, frontend=None, source=None):
+    payload, packed_hash = transport_payload(config, frontend, source)
     bootstrap = ('import os,sys,tempfile,hashlib\nfrom pathlib import Path\n' + inspect.getsource(unpack_transport) +
         '\nfiles=unpack_transport(*sys.argv[1:3])\n' +
         'with tempfile.TemporaryDirectory(prefix="tl3-verus-transport-") as temporary:\n'
@@ -94,39 +120,46 @@ def stock_size(command):
             'client_sha256': digest(client_bytes), 'scanner_sha256': digest(stock['checked_scanner']())}
 
 
-def minimal_batches(length, fits):
-    """Fewest contiguous batches; longest first batch breaks equal-count ties."""
-    best = {length: []}
-    for start in range(length - 1, -1, -1):
-        candidates = [[(start, end), *best[end]] for end in range(start + 1, length + 1)
-                      if end in best and fits(start, end)]
-        if candidates:
-            best[start] = min(candidates, key=lambda rows: (len(rows), -rows[0][1]))
-    require(0 in best, 'no ordered batch partition fits the stock size guard')
-    return best[0]
-
-
 def subset(config, start, end):
     return D['Config'].parse({**config.json(), 'selections': [D['asdict'](row) for row in config.selections[start:end]]})
 
 
-def batch_plan(config, runner_log, prior):
-    def item(start, end, log):
+def batch_plan(config, runner_log, prior, source=None):
+    """Fill ordered batches once; no lookahead across a rejected prefix."""
+    def item(start, end):
         current = subset(config, start, end)
         ticket = frontend_ticket(prior, current) if prior is not None else None
-        command = submission(current, log, ticket)
-        return {'start': start, 'end': end, 'config': current.json(), 'command': command, 'size': stock_size(command)}
-    full = item(0, len(config.selections), runner_log)
-    if full['size']['fits']:
-        return [full]
-    def candidate(start, end):
         log = runner_log.with_name(runner_log.name + f'.batch-{start:04d}')
-        result = item(start, end, log)
-        return result
-    def fits(start, end):
-        return candidate(start, end)['size']['fits']
-    intervals = minimal_batches(len(config.selections), fits)
-    return [candidate(start, end) for start, end in intervals]
+        command = submission(current, log, ticket, source)
+        return {'start': start, 'end': end, 'config': current.json(), 'command': command, 'size': stock_size(command)}
+
+    def singleton(current):
+        row = config.selections[current['start']]
+        require(current['size']['fits'],
+                f'single selector exceeds stock size limit: {row.target} [{row.selector}]')
+        return current
+
+    def close(current):
+        # Recheck the exact final command with the unchanged stock guard.
+        checked = stock_size(current['command'])
+        require(checked == current['size'] and checked['fits'], 'final batch size check changed or failed')
+        return current
+
+    plan, start, current = [], 0, None
+    for end in range(1, len(config.selections) + 1):
+        trial = item(start, end)
+        size = trial['size']
+        if size['fits'] and size['estimated_serialized_bytes'] <= size['limit_bytes'] - BATCH_SAFETY_MARGIN:
+            current = trial
+        elif current is None:
+            # The fill margin never turns a stock-valid singleton into a refusal.
+            current = singleton(trial)
+        else:
+            plan.append(close(current))
+            start = end - 1
+            current = singleton(item(start, end))
+    plan.append(close(current))
+    return plan
 
 
 def identity(config, prepared, command):
@@ -392,7 +425,7 @@ def collect_terminal(parent, terminal, output, runner_log, config, expected, *, 
     if config.mode != 'frontend-only':
         argv = expected['exact_submission_argv']
         index = argv.index('-c')
-        ticket = loads(unpack_transport(argv[index + 2], argv[index + 3])['frontend.json'])
+        ticket = loads(unpack_transport(argv[index + 2], argv[index + 3], HERE.parents[2])['frontend.json'])
         require(curated.get('frontend-prerequisite.json') == encoded(ticket), 'missing/mismatched measured frontend prerequisite')
         D['validate_frontend_ticket'](ticket, config, expected)
         for index, frontend_execution in enumerate(ticket['executions']):
@@ -690,7 +723,7 @@ def main():
         args.receipt.unlink(missing_ok=True)
     config = D['Config'].parse(loads(args.config.read_bytes()))
     prior = loads(D['regular_bytes'](args.frontend_receipt)) if args.frontend_receipt is not None else None
-    plan = batch_plan(config, args.runner_log, prior)
+    plan = batch_plan(config, args.runner_log, prior, args.source)
     if len(plan) > 1:
         if args.dry_run:
             result = prepare_batches(args.source, config, args.output, args.receipt, plan)
