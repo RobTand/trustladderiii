@@ -1149,6 +1149,7 @@ def verus_proofs():
             "empty_replan": ("kernel::empty_replan#reply_empty_replan", 1),
             "planner_entry": ("kernel::empty_replan#step_planner", 1),
         "planner_map_reply": ("kernel::empty_replan#map_planner_reply", 1),
+        "planner_stop_definition": ("kernel::empty_replan#generic_planner_stop_definition", 1),
         "planner_ordinary_stop": ("kernel::empty_replan#check_planner_ordinary_stop", 1),
             "planner_budget_clone": ("kernel::empty_replan#ReplanBudget::clone", 1),
             "planner_result_clone": ("kernel::empty_replan#PlannerResult::clone", 1),

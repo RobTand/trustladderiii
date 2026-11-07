@@ -80,8 +80,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
                     generation, Reply::AuditDisagrees, *old(out), *final(out)),
             _ => true,
         }),
-] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands); reveal(empty_replan::generic_planner_stop);
-    reveal(empty_replan::admitted); reveal(empty_replan::planner_review_result);] {
+] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
     kernel_snapshot! { before_apply = *w }
     kernel_snapshot! { before_apply_out = *out }
     kernel_proof! { events_lemmas::selected_input(before_apply@, event); }
@@ -173,6 +172,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
             reveal(progress_gate_apply::resume_apply_post);
         }
         events_lemmas::footprints_after(before_apply@, *w);
+        empty_replan::generic_planner_stop_definition(before_apply@, *w, event);
     }
 }
 }

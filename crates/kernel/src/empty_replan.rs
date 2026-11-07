@@ -134,6 +134,27 @@ pub closed spec fn generic_planner_stop(before: World, after: World, event: Even
     }
 }
 
+/// Internal equation for sibling kernel proofs; public views remain CLOSED.
+pub(super) proof fn generic_planner_stop_definition(before: World, after: World, event: Event)
+    ensures generic_planner_stop(before, after, event) == match event {
+        Event::Reply { node, generation, reply: Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit } =>
+            (node.0 < before.nodes@.len() && before.nodes@[node.0 as int].phase is Planning
+                && current_item(before.nodes@[node.0 as int]) == Some(Item::Await)
+                && (before.nodes@[node.0 as int].run == Some(generation)
+                    || before.nodes@[node.0 as int].job == Some(generation))) ==> {
+                let b = before.nodes@[node.0 as int];
+                let a = after.nodes@[node.0 as int];
+                (a.phase == Phase::Stopping(Outcome::Stopped) || a.phase == Phase::Closed(Outcome::Stopped))
+                    && a.review_stop == Some(ReviewStop::PlanCantMeet) && a.question.is_none()
+                    && a.credit == b.credit && a.plan_retries == b.plan_retries
+                    && after.next_question == before.next_question
+            },
+        _ => true,
+    },
+{
+    reveal(generic_planner_stop); reveal(admitted); reveal(planner_review_result);
+}
+
 /// Settling advances agendas without changing the planner's retry decision.
 pub(super) open spec fn settle_frame(before: Node, after: Node) -> bool {
     after.plan_retries == before.plan_retries && after.replanned == before.replanned

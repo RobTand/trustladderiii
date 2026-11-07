@@ -54,8 +54,9 @@ pub fn step_with_passes(mut world: World, event: Event) -> (result: (World, Vec<
     let passes = settle(&mut world, &mut out, None);
     kernel_proof! {
         reveal(step_budget);
-        reveal(empty_replan::generic_planner_stop); reveal(empty_replan::admitted);
-        reveal(empty_replan::planner_review_result); reveal(settle_chain);
+        empty_replan::generic_planner_stop_definition(before_step@, after_apply@, event);
+        empty_replan::generic_planner_stop_definition(before_step@, world, event);
+        reveal(settle_chain);
         if progress_input(before_step@, event) {
             progress::settle_measure(after_apply@, world);
         }
