@@ -26,3 +26,18 @@ Frontend prerequisites bind exact source, tooling, runner, mode and commands;
 normal submission refuses missing or mismatched completed frontend evidence.
 Wrapper/scanner/cleanup ownership and pins remain with ops. Live normal
 qualification stays UNKNOWN until captain runs the landed exact head.
+
+The current K4 candidate predates the runner capability. It is not an eligible
+measurement source for these modes. Captain must assemble reviewed tooling into
+an explicit source revision and qualify that exact revision; this producer does
+not patch or run the candidate. Tooling provenance names the executing driver
+hash separately from measured source hashes. Production runner bytes are always
+tracked bytes from the measured source.
+
+Normal and diagnostic submission reaudits the frontend own terminal parent and
+scanned CAS evidence. It binds a compact ticket into preparation's exact argv.
+The remote command refuses a missing/mismatched ticket before Bazel. Collection
+checks raw source/pin/runner identities and actual tools again. Legacy diagnostic
+configuration remains available on capable sources with its existing explicit
+authorization, timeout and optional query logs. Unsupported older diagnostic
+sources require an explicit update; disposable patch fallback is removed.

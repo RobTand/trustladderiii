@@ -185,7 +185,7 @@ class Fixtures(unittest.TestCase):
         row = self.config().selections[0]
         stats = {'verification-results': {'verified': 0, 'errors': 0, 'encountered-error': False,
                  'encountered-vir-error': False, 'is-verifying-entire-crate': False},
-                 'times-ms': {'smt': {**{k: 0 for k in ('total', 'smt-init', 'smt-run', 'rlimit-init', 'rlimit-run')},
+                 'times-ms': {'total': 1, 'num-threads': 0, 'smt': {**{k: 0 for k in ('total', 'smt-init', 'smt-run', 'rlimit-init', 'rlimit-run')},
                      'smt-init-module-times': [], 'smt-run-module-times': []}}}
         proof = {'proofs': {row.target: {'kind': 'FRONTEND_ONLY', 'module': row.selector, 'verified': 0,
                  'expected_obligations': row.expected, 'threads': 1, 'seconds': 1}}}
@@ -219,6 +219,30 @@ class Fixtures(unittest.TestCase):
             locator.write_bytes(D['encoded'](prior))
             with self.assertRaisesRegex(ValueError, 'failed/stale'):
                 S['check_frontend'](self.source, self.config(), locator, self.evidence)
+
+    def test_frontend_ticket_and_stale_mode_source_argv(self):
+        config = self.config()
+        output = D['owned_directory'](self.root / 'ticket-preparation')
+        prepared, _, _ = D['prepare'](self.source, config, output)
+        ticket = {'schema': 'tl3.verus-measurement.frontend-prerequisite.v1',
+                  'parent_invocation_id': '12345678-1234-1234-1234-123456789abc', 'no_smt': True,
+                  **{key: prepared[key] for key in ('source_sha256', 'selection_sha256', 'runner_sha256', 'pins_sha256')},
+                  'driver_sha256': D['tooling_identity']()['driver_sha256'],
+                  'frontend_bazel_argv': self.config(mode='frontend-only').command(),
+                  'executions': [fake_execution(config.selections[0], 'frontend-only')]}
+        D['validate_frontend_ticket'](ticket, config, prepared)
+        for key, value in [('source_sha256', 'b' * 64), ('runner_sha256', 'b' * 64),
+                           ('driver_sha256', 'b' * 64), ('no_smt', False),
+                           ('frontend_bazel_argv', config.command()), ('executions', [])]:
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                D['validate_frontend_ticket']({**ticket, key: value}, config, prepared)
+        with self.assertRaises(ValueError):
+            D['validate_frontend_ticket'](None, config, prepared)
+        receipt = self.evidence / 'ticket-dry-receipt.json'
+        S['full_dry_run'](self.source, config, self.evidence / 'ticket-dry', receipt, S['submission'](config, self.evidence / 'runner.log'))
+        with self.assertRaisesRegex(ValueError, 'stale/mismatched'):
+            S['check_receipt'](self.source, self.config(mode='frontend-only'), receipt,
+                              S['submission'](self.config(mode='frontend-only'), self.evidence / 'runner.log'))
 
     def test_curated_archive_boundary(self):
         directory = self.root / 'archive-child'
@@ -441,9 +465,15 @@ class Fixtures(unittest.TestCase):
         summary['rows'][0]['rlimit_run'] = 999  # Untrusted summary must not supply metrics.
         summary['rlimit_run_sum'] = 999
         expected = D['loads']((self.evidence / 'normal-receipt.json').read_bytes())
+        ticket = {'schema': 'tl3.verus-measurement.frontend-prerequisite.v1',
+                  'parent_invocation_id': parent, 'no_smt': True,
+                  **{key: expected[key] for key in ('source_sha256', 'selection_sha256', 'runner_sha256', 'pins_sha256', 'driver_sha256')},
+                  'frontend_bazel_argv': self.config(mode='frontend-only').command(),
+                  'executions': [fake_execution(row, 'frontend-only')]}
+        expected['exact_submission_argv'] = S['submission'](config, self.evidence / 'fake.log', ticket)
         objects = {p.name: p.read_bytes() for p in (self.evidence / 'normal').iterdir()
                    if not p.name.endswith('pyc') and p.name != 'submission-argv.json'}
-        objects.update({'measurement-summary.json': D['encoded'](summary),
+        objects.update({'frontend-prerequisite.json': D['encoded'](ticket), 'measurement-summary.json': D['encoded'](summary),
             '0-test.log': b'FAKE selected child log\n',
             '0-test.xml': b'<testsuite tests="1" failures="0" errors="0"><testcase/></testsuite>',
             '0-inventory.json': D['encoded']({'proofs': {row.target: {'kind': 'verus', 'module': row.selector,

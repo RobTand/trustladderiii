@@ -27,7 +27,7 @@ MARKER = 'BBRUN_WRAPPER_RESULT_V1 '
 RESERVED = 'bbrun-wrapper-result.v1.json'
 
 
-def submission(config, runner_log):
+def submission(config, runner_log, frontend=None):
     # Ship the exact reviewed driver bytes; remote preparation rechecks the source.
     code = DRIVER.read_bytes()
     # Compressed single script, no full source/diff duplication in transport.
@@ -41,7 +41,8 @@ def submission(config, runner_log):
             '--commit', config.head, '--branch', config.branch,
             '--timeout', str(config.coordinator_minutes), '--max-wait', '600',
             '--log-file', str(runner_log), '--', 'python3', '-I', '-c', bootstrap,
-            '--config-json', json.dumps(config.json(), sort_keys=True)]
+            '--config-json', json.dumps(config.json(), sort_keys=True),
+            '--frontend-prerequisite-json', json.dumps(frontend, sort_keys=True)]
 
 
 
@@ -284,7 +285,14 @@ def collect_terminal(parent, terminal, output, runner_log, config, expected, *, 
         require(loads(curated[f'{index}-execution.json']).get('pins') == loads(curated['pins.json']), 'actual/source toolchain pins differ')
         rows.append(D['child_verdict'](loads(curated[f'{index}-verifier.json']),
                                       loads(curated[f'{index}-inventory.json']),
-                                      loads(curated[f'{index}-measurement.json']), selection, config.mode, loads(curated[f'{index}-execution.json'])))
+                                      loads(curated[f'{index}-measurement.json']), selection, config.mode, loads(curated[f'{index}-execution.json']), config.raw_queries))
+    if config.mode != 'frontend-only':
+        argv = expected['exact_submission_argv']
+        ticket = loads(argv[argv.index('--frontend-prerequisite-json') + 1])
+        require(curated.get('frontend-prerequisite.json') == encoded(ticket), 'missing/mismatched measured frontend prerequisite')
+        D['validate_frontend_ticket'](ticket, config, expected)
+        for index, frontend_execution in enumerate(ticket['executions']):
+            D['same_tools'](frontend_execution, loads(curated[f'{index}-execution.json']))
     require(len(summary.get('rows', [])) == len(config.selections), 'missing/duplicate measurement rows')
     for row, selection in zip(summary['rows'], config.selections):
         require(all(row.get(k) == v for k, v in D['asdict'](selection).items()), 'summary selection/count/bijection mismatch')
@@ -294,6 +302,7 @@ def collect_terminal(parent, terminal, output, runner_log, config, expected, *, 
             summary.get('collection') == 'PASS' and summary.get('preparation') == 'PASS', 'remote stages did not pass')
     summary['rows'] = [{**D['asdict'](selection), **row} for selection, row in zip(config.selections, rows)]
     summary.update(D['result_stages'](config, rows))
+    summary['executions'] = [loads(curated[f'{i}-execution.json']) for i in range(len(config.selections))]
     for stage in ('parent', 'scanner', 'cleanup', 'overall', 'artifacts'):
         summary.pop(stage, None)
     wrapper_bytes = None
@@ -390,6 +399,16 @@ def wait_own(command, output, config, expected):
     return {'PASS': 0, 'FAIL': 1, 'UNKNOWN': 3}[observation['overall']]
 
 
+def frontend_ticket(prior):
+    require(prior.get('overall') == 'PASS' and prior.get('config', {}).get('mode') == 'frontend-only', 'frontend locator is not a completed frontend PASS')
+    expected = prior['preparation_identity']
+    return {'schema': 'tl3.verus-measurement.frontend-prerequisite.v1',
+            'parent_invocation_id': prior['parent_invocation_id'],
+            **{key: expected[key] for key in ('source_sha256', 'selection_sha256', 'runner_sha256', 'pins_sha256', 'driver_sha256')},
+            'frontend_bazel_argv': D['Config'].parse(prior['config']).command(),
+            'executions': prior['driver']['executions'], 'no_smt': True}
+
+
 def check_frontend(source, config, path, output):
     require(path is not None, 'missing frontend prerequisite; normal/diagnostic submission refused')
     prior = loads(D['regular_bytes'](path))
@@ -418,7 +437,8 @@ def check_frontend(source, config, path, output):
     require(inspected.returncode == 0, 'frontend own terminal logs unavailable')
     audited = collect_terminal(parent, 'PASS', D['owned_directory'](output / 'frontend-audit'), inspected.stdout, frontend, expected)
     D['put'](output, 'frontend-prerequisite.json', encoded(audited))
-    require(audited['overall'] == 'PASS', 'frontend independently scanned evidence did not pass')
+    require(audited['overall'] == 'PASS' and audited['driver'] == prior.get('driver') and
+            audited['cas'] == prior.get('cas'), 'frontend independently scanned evidence did not pass or locator changed')
     return audited
 
 
@@ -436,7 +456,9 @@ def main():
     if args.dry_run:
         args.receipt.unlink(missing_ok=True)
     config = D['Config'].parse(loads(args.config.read_bytes()))
-    command = submission(config, args.runner_log)
+    prior = loads(D['regular_bytes'](args.frontend_receipt)) if args.frontend_receipt is not None else None
+    ticket = frontend_ticket(prior) if prior is not None else None
+    command = submission(config, args.runner_log, ticket)
     if args.dry_run:
         result = full_dry_run(args.source, config, args.output, args.receipt, command)
         print(json.dumps({k: v for k, v in result.items() if k != 'exact_submission_argv'}, indent=2))

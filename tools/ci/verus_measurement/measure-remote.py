@@ -241,7 +241,7 @@ def metric(value):
     return value if type(value) is int and value >= 0 else None
 
 
-def child_verdict(stats, proof, measurement, row, mode="normal", execution=None):
+def child_verdict(stats, proof, measurement, row, mode="normal", execution=None, raw_queries=False):
     require(all(type(value) is dict for value in (stats, proof, measurement)), 'raw receipt must be a JSON object')
     if mode == 'frontend-only':
         return frontend_verdict(stats, proof, measurement, row, execution)
@@ -284,12 +284,12 @@ def child_verdict(stats, proof, measurement, row, mode="normal", execution=None)
             measurement.get('function_rlimit_sum') == sum(functions) and
             measurement.get('function_count') == len(functions) and
             measurement.get('max_function_rlimit') == max(functions), 'expanded/raw resource disagreement')
-    validate_execution(execution, row, mode)
+    validate_execution(execution, row, mode, raw_queries)
     return {'proof': 'PASS', 'function_rlimit_sum': sum(functions), 'function_count': len(functions), 'resources': 'PASS' if None not in resources.values() and resources['threads'] == 1 else 'UNKNOWN',
             **resources, 'wall_seconds': wall, 'wall_warning': wall > 20}
 
 
-def validate_execution(execution, row, mode):
+def validate_execution(execution, row, mode, raw_queries=False):
     require(type(execution) is dict and execution.get('protocol') == CAPABILITY and
             execution.get('mode') == mode and type(execution.get('status')) is int and execution['status'] == 0,
             'missing/failed runner execution identity')
@@ -301,6 +301,7 @@ def validate_execution(execution, row, mode):
     require(argv.count('--time-expanded') == argv.count('--output-json') == 1 and
             '--build-sst' not in argv and '--profile' not in argv and '--profile-all' not in argv and
             argv.count('--no-verify') == int(mode == 'frontend-only'), 'mode argv mismatch')
+    require(argv.count('--log-all') == argv.count('--log-dir') == int(raw_queries), 'raw query mode mismatch')
     owner, _, function = row.selector.partition('#')
     require(argv.count('--verify-only-module') == 1 and argv[argv.index('--verify-only-module') + 1] == owner,
             'argv selection mismatch')
@@ -333,14 +334,16 @@ def frontend_verdict(stats, inventory, measurement, row, execution):
             v.get('encountered-error') is False and v.get('encountered-vir-error') is False and
             v.get('is-verifying-entire-crate') is False and ('success' not in v or v['success'] is True),
             'frontend verdict/error/selection failed')
-    smt = stats.get('times-ms', {}).get('smt', {})
+    times = stats.get('times-ms', {})
+    require(type(times) is dict and metric(times.get('total')) is not None and metric(times.get('num-threads')) == 0, 'missing frontend timing/no-worker evidence')
+    smt = times.get('smt', {})
     require(all(metric(smt.get(k)) == 0 for k in ('total', 'smt-init', 'smt-run', 'rlimit-init', 'rlimit-run')) and
             all(smt.get(k) == [] for k in ('smt-init-module-times', 'smt-run-module-times')), 'missing/conflicting no-SMT evidence')
     require(type(inventory.get('proofs')) is dict and set(inventory['proofs']) == {row.target}, 'wrong frontend inventory')
     p = inventory['proofs'][row.target]
     require(p.get('kind') == 'FRONTEND_ONLY' and p.get('module') == row.selector and
             type(p.get('expected_obligations')) is int and p['expected_obligations'] == row.expected and
-            type(p.get('verified')) is int and p['verified'] == 0 and p.get('threads') == 1,
+            type(p.get('verified')) is int and p['verified'] == 0 and type(p.get('threads')) is int and p['threads'] == 1,
             'frontend positive inventory is metadata only')
     wall = p.get('seconds')
     require(type(wall) in (int, float) and math.isfinite(wall) and wall >= 0, 'missing frontend wall')
@@ -424,7 +427,7 @@ def collect(root, config, output, batch_exit):
                     invalid = True
             if len(objects) == 4:
                 try:
-                    row.update(child_verdict(objects['verifier.json'], objects['inventory.json'], objects['measurement.json'], selection, config.mode, objects['execution.json']))
+                    row.update(child_verdict(objects['verifier.json'], objects['inventory.json'], objects['measurement.json'], selection, config.mode, objects['execution.json'], config.raw_queries))
                 except (ValueError, KeyError, TypeError):
                     invalid = True
             if config.raw_queries:
@@ -447,6 +450,30 @@ def collect(root, config, output, batch_exit):
             'collection': collection, 'artifacts': files}
 
 
+def same_tools(frontend, actual):
+    require(actual.get('pins') == frontend['pins'] and all(
+        {k: actual['tools'][name][k] for k in ('sha256', 'bytes')} ==
+        {k: tool[k] for k in ('sha256', 'bytes')} for name, tool in frontend['tools'].items()),
+        'frontend/measurement actual tool identity mismatch')
+
+
+def validate_frontend_ticket(ticket, config, prepared):
+    require(type(ticket) is dict and ticket.get('schema') == 'tl3.verus-measurement.frontend-prerequisite.v1' and
+            ticket.get('no_smt') is True, 'missing frontend prerequisite; no measured execution allowed')
+    for key in ('source_sha256', 'selection_sha256', 'runner_sha256', 'pins_sha256'):
+        require(ticket.get(key) == prepared[key], 'frontend prerequisite source/runner/selection/pins mismatch')
+    require(ticket.get('driver_sha256') == tooling_identity()['driver_sha256'], 'frontend prerequisite driver mismatch')
+    frontend = Config.parse({**config.json(), 'mode': 'frontend-only', 'watchdog_seconds': 45,
+                             'diagnostic_authorization': None, 'raw_queries': False})
+    require(ticket.get('frontend_bazel_argv') == frontend.command() and
+            type(ticket.get('parent_invocation_id')) is str and
+            re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', ticket['parent_invocation_id']), 'frontend prerequisite argv/parent mismatch')
+    require(type(ticket.get('executions')) is list and len(ticket['executions']) == len(config.selections), 'missing frontend execution identities')
+    for row, execution in zip(config.selections, ticket['executions']):
+        validate_execution(execution, row, 'frontend-only')
+    return ticket
+
+
 def main():
     require(sys.version_info >= (3, 10), 'measurement driver requires Python 3.10 or later')
     parser = argparse.ArgumentParser(description=__doc__)
@@ -454,6 +481,7 @@ def main():
     parser.add_argument('--source', type=Path, default=Path.cwd())
     parser.add_argument('--output', type=Path, required=True, help='new owned directory')
     parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--frontend-prerequisite-json', default='null')
     args = parser.parse_args()
     config = Config.parse(loads(args.config_json))
     require(not args.output.resolve().is_relative_to(args.source.resolve()),
@@ -464,6 +492,10 @@ def main():
     if args.dry_run:
         print(json.dumps(prepared))
         return
+    ticket = None
+    if config.mode != 'frontend-only':
+        ticket = validate_frontend_ticket(loads(args.frontend_prerequisite_json), config, prepared)
+        put(output, 'frontend-prerequisite.json', encoded(ticket))
     summary = {'preparation': 'PASS', 'restoration': 'UNKNOWN', 'collection': 'UNKNOWN',
                'child': 'UNKNOWN', 'resources': 'UNKNOWN',
                'command_artifact_namespace': 'verus-measurement',
@@ -475,6 +507,10 @@ def main():
             run = subprocess.run(config.command(), cwd=args.source, check=False)
             summary['child'] = 'PASS' if run.returncode == 0 else 'FAIL'
             summary.update(collect(args.source, config, output, run.returncode))
+            if ticket is not None:
+                for index, frontend_execution in enumerate(ticket['executions']):
+                    actual = loads(regular_bytes(output / f'{index}-execution.json'))
+                    same_tools(frontend_execution, actual)
     except Exception:
         summary['collection'] = 'FAIL'
         raise
