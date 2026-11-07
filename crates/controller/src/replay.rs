@@ -60,6 +60,7 @@ pub fn check_world(world: &World) -> Result<(), String> {
 pub(crate) enum StoredSnapshot {
     Anchor(World),
     Replay(ReplayRecord),
+    Planner(PlannerStepRecord),
 }
 pub(crate) fn stored_snapshot(
     result: &serde_json::Value,
@@ -69,6 +70,10 @@ pub(crate) fn stored_snapshot(
             .map(StoredSnapshot::Anchor)
             .map(Some)
             .map_err(|_| "invalid anchor");
+    }
+    if let Some(value) = result.get("planner_replay") {
+        return serde_json::from_value(value.clone())
+            .map(StoredSnapshot::Planner).map(Some).map_err(|_| "invalid planner replay");
     }
     result
         .get("kernel_replay")
@@ -100,8 +105,13 @@ pub fn check_record(
         let planner: PlannerStepRecord = serde_json::from_value(value.clone())
             .map_err(|_| fail("invalid planner replay"))?;
         planner.check().map_err(|error| fail(&error))?;
-        if previous.is_some_and(|world| world != &planner.input) {
-            return Err(fail("planner snapshot chain diverged"));
+        if let Some(world) = previous {
+            check_prepared(world, &planner.input).map_err(|reason| fail(&reason))?;
+        }
+        if let Some(metadata) = result.get("kernel_planner_input") {
+            if *metadata != serde_json::json!({"node":planner.node,"generation":planner.generation,"result":planner.result}) {
+                return Err(fail("planner input metadata diverged"));
+            }
         }
         return Ok(Some(planner.after));
     }
@@ -114,6 +124,7 @@ pub fn check_record(
             return Ok(Some(world));
         }
         Some(StoredSnapshot::Replay(replay)) => replay,
+        Some(StoredSnapshot::Planner(_)) => unreachable!("planner replay checked above"),
         None => {
             if result.get("kernel_event").is_some()
                 || result.get("kernel_planner_input").is_some()
@@ -157,24 +168,35 @@ pub fn check_record(
         if next != step.after {
             return Err(fail("step snapshot diverged"));
         }
-        // Translation may intern footprints before a step. All other fields
-        // must come from the preceding real kernel result.
-        let mut prepared =
-            serde_json::to_value(&world).map_err(|_| fail("cannot encode baseline"))?;
-        prepared["file_sets"] = serde_json::to_value(step.input.file_sets())
-            .map_err(|_| fail("cannot encode footprints"))?;
-        if !step.input.file_sets().starts_with(world.file_sets())
-            || prepared
-                != serde_json::to_value(&step.input).map_err(|_| fail("cannot encode input"))?
-        {
-            return Err(fail("step input snapshot diverged"));
-        }
+        check_prepared(&world, &step.input).map_err(|reason| fail(&reason))?;
         world = next;
     }
     if world != replay.after {
         return Err(fail("stored snapshot diverged"));
     }
     Ok(Some(world))
+}
+
+/// Translation may append interned footprints before either public entry.
+fn check_prepared(world: &World, input: &World) -> Result<(), String> {
+    let mut prepared = serde_json::to_value(world).map_err(|_| "cannot encode baseline")?;
+    prepared["file_sets"] = serde_json::to_value(input.file_sets()).map_err(|_| "cannot encode footprints")?;
+    if !input.file_sets().starts_with(world.file_sets())
+        || prepared != serde_json::to_value(input).map_err(|_| "cannot encode input")? {
+        return Err("step input snapshot diverged".into());
+    }
+    Ok(())
+}
+
+fn check_budget_chain(record: &EventRecord, budgets: &mut std::collections::BTreeMap<u64, ReplanBudget>) -> Result<(), String> {
+    if let Some(value) = record.receipt.result.get("planner_replay") {
+        let planner: PlannerStepRecord = serde_json::from_value(value.clone()).map_err(|_| "invalid planner replay")?;
+        if budgets.get(&planner.node.0).is_some_and(|budget| *budget != planner.budget) {
+            return Err(format!("event {}: planner budget chain diverged", record.key));
+        }
+        budgets.insert(planner.node.0, planner.after_budget);
+    }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -200,6 +222,7 @@ pub fn run(reader: &mut tl3_store::Reader, from: Option<&str>) -> crate::Result<
         }
     };
     let mut previous = None;
+    let mut budgets = std::collections::BTreeMap::new();
     let mut report = Report {
         events: 0,
         steps: 0,
@@ -216,16 +239,19 @@ pub fn run(reader: &mut tl3_store::Reader, from: Option<&str>) -> crate::Result<
             last_key = record.key.clone();
             if from.is_none()
                 && previous.is_none()
-                && record.receipt.result.get("kernel_replay").is_some()
+                && (record.receipt.result.get("kernel_replay").is_some()
+                    || record.receipt.result.get("planner_replay").is_some())
             {
                 return Err(Error::Replay(format!(
                     "event {last_key}: missing initial anchor; choose --from explicitly"
                 )));
             }
+            check_budget_chain(&record, &mut budgets).map_err(Error::Replay)?;
             if let Some(world) = check_record(&record, previous.as_ref()).map_err(Error::Replay)? {
                 report.steps += record.receipt.result["kernel_replay"]["steps"]
                     .as_array()
-                    .map_or(0, |steps| steps.len() as u64);
+                    .map_or(0, |steps| steps.len() as u64)
+                    + u64::from(record.receipt.result.get("planner_replay").is_some());
                 previous = Some(world);
             }
             report.events += 1;
@@ -268,6 +294,15 @@ pub fn run(reader: &mut tl3_store::Reader, from: Option<&str>) -> crate::Result<
             "event {last_key}: final stored snapshot diverged at revision {}",
             snapshot.revision.get()
         )));
+    }
+    let read = tl3_store::Commit::new("replay-read", serde_json::json!({}), &snapshot);
+    for index in 0..expected.nodes.len() {
+        let node = NodeId(index as u64);
+        let budget = crate::planner_input::load_budget(&snapshot, &read, node)
+            .map_err(|error| Error::Replay(format!("event {last_key}: final budget {}: {error}", node.0)))?;
+        if budgets.get(&node.0).is_some_and(|expected| *expected != budget) {
+            return Err(Error::Replay(format!("event {last_key}: final planner budget {} diverged", node.0)));
+        }
     }
     tx.commit().map_err(tl3_store::Error::from)?;
     Ok(report)

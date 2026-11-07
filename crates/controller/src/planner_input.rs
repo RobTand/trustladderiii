@@ -58,7 +58,33 @@ pub(crate) fn load_budget(snapshot: &Snapshot, commit: &Commit, node: NodeId) ->
         }
     };
     if !budget.bound_to(node) { return Err(Error::Invalid("replan budget binding mismatch")); }
+    if let Some(old) = snapshot.rows.iter().find(|row| row.table == "requests" && row.id == node.0.to_string()) {
+        if let Some(value) = old.value.get("replan_budget") {
+            let persisted = decode_stored::<ReplanBudget>(value.clone())?;
+            if !persisted.bound_to(node) || (persisted.used() && !budget.used() && !consumed) {
+                return Err(Error::Invalid("replan budget reset"));
+            }
+        }
+    }
     Ok(if consumed { ReplanBudget::import(node, true) } else { budget })
+}
+
+pub(crate) fn save_budget(snapshot: &Snapshot, commit: &mut Commit, node: NodeId, budget: ReplanBudget) -> Result<()> {
+    if !budget.bound_to(node) { return Err(Error::Invalid("replan budget binding mismatch")); }
+    if let Some(old) = snapshot.rows.iter().find(|row| row.table == "requests" && row.id == node.0.to_string()) {
+        if let Some(value) = old.value.get("replan_budget") {
+            let persisted = decode_stored::<ReplanBudget>(value.clone())?;
+            if !persisted.bound_to(node) || (persisted.used() && !budget.used() && !consumed) {
+                return Err(Error::Invalid("replan budget reset"));
+            }
+        }
+    }
+    let mut row = request_row(snapshot, commit, node)?;
+    let fields = row.as_object_mut().ok_or(Error::Invalid("invalid request binding"))?;
+    fields.insert("replan_budget".into(), serde_json::to_value(budget)?);
+    fields.insert("replan_budget_format".into(), serde_json::json!(1));
+    commit.rows.push(put("requests", node.0.to_string(), row));
+    Ok(())
 }
 
 #[cfg(test)]
@@ -184,6 +210,19 @@ mod tests {
             assert_eq!(stopped.nodes[0].review_stop, Some(ReviewStop::PlanCantMeet));
             assert_eq!(stopped.nodes[0].credit, before.nodes[0].credit);
             assert!(stopped.nodes[0].question.is_none());
+            let mut reader = tl3_store::Reader::open(&settings).unwrap();
+            let report = crate::replay::run(&mut reader, Some("repeat")).unwrap();
+            assert_eq!(report.steps, 1);
+            let mut tampered = Commit::new("tamper-budget", json!({}), &snapshot);
+            let mut binding = request_row(&snapshot, &tampered, NodeId(0)).unwrap();
+            binding["replan_budget"] = json!(ReplanBudget::new(NodeId(0)));
+            tampered.rows.push(put("requests", "0".into(), binding));
+            c.store.commit(&tampered).unwrap();
+            assert!(crate::replay::run(&mut reader, Some("repeat")).unwrap_err().to_string().contains("budget"));
+            let mut restore = Commit::new("restore-budget", json!({}), &c.store.load().unwrap());
+            restore.rows.push(put("requests", "0".into(), request_row(&snapshot, &restore, NodeId(0)).unwrap()));
+            c.store.commit(&restore).unwrap();
+            let snapshot = c.store.load().unwrap();
             let mut version = Commit::new("new-version", json!({}), &snapshot);
             let mut binding = request_row(&snapshot, &version, NodeId(0)).unwrap();
             binding.as_object_mut().unwrap().remove("replan_budget");
@@ -214,6 +253,14 @@ mod tests {
         assert!(load_budget(&snapshot, &pending, NodeId(0)).unwrap().used());
         assert!(snapshot.rows.iter().find(|r| r.table == "nodes" && r.id == "0").unwrap().value.get("empty_allowed_replanned").is_none());
         let mut binding = request_row(&snapshot, &pending, NodeId(0)).unwrap();
+        for corrupt in [
+            { let mut row = binding.clone(); row.as_object_mut().unwrap().remove("replan_budget"); row },
+            { let mut row = binding.clone(); row["replan_budget"] = json!(ReplanBudget::new(NodeId(0))); row },
+            { let mut row = binding.clone(); row["replan_budget_format"] = json!(99); row },
+        ] {
+            pending.rows.push(put("requests", "0".into(), corrupt));
+            assert!(load_budget(&snapshot, &pending, NodeId(0)).is_err());
+        }
         binding["replan_budget"] = json!(ReplanBudget::new(NodeId(1)));
         pending.rows.push(put("requests", "0".into(), binding.clone()));
         assert!(load_budget(&snapshot, &pending, NodeId(0)).is_err());
@@ -229,14 +276,4 @@ mod tests {
         save_budget(&snapshot, &mut pending, NodeId(0), ReplanBudget::import(NodeId(0), true)).unwrap();
         assert_eq!(request_row(&snapshot, &pending, NodeId(0)).unwrap()["extra_metadata"], "pending wins");
     }
-}
-
-pub(crate) fn save_budget(snapshot: &Snapshot, commit: &mut Commit, node: NodeId, budget: ReplanBudget) -> Result<()> {
-    if !budget.bound_to(node) { return Err(Error::Invalid("replan budget binding mismatch")); }
-    let mut row = request_row(snapshot, commit, node)?;
-    let fields = row.as_object_mut().ok_or(Error::Invalid("invalid request binding"))?;
-    fields.insert("replan_budget".into(), serde_json::to_value(budget)?);
-    fields.insert("replan_budget_format".into(), serde_json::json!(1));
-    commit.rows.push(put("requests", node.0.to_string(), row));
-    Ok(())
 }

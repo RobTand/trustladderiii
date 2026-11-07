@@ -173,7 +173,7 @@ pub fn step_planner(mut world: World, mut budget: ReplanBudget, request: NodeId,
     reply_empty_replan(&mut world, i, &mut budget, &mut outbox);
     kernel_proof! {
         reveal(reply_bounds); reveal(storage_ordered);
-        reveal(settle_ready); reveal(scheduling_safe);
+        reveal(settle_ready); reveal(scheduling_safe); reveal(node_checked);
         reveal(footprint::ordered_table);
         assert forall|j: int| 0 <= j < world.nodes@.len() implies
             settle_shape(world.nodes@[j])
@@ -184,6 +184,13 @@ pub fn step_planner(mut world: World, mut budget: ReplanBudget, request: NodeId,
             assert(node_checked(before_replan@, before_replan@.nodes@[j]));
             footprint::valid_under_table_growth(before_replan@, world, world.nodes@[j].footprint);
             local_capacities(world.nodes@[j]);
+            if j != i { assert(world.nodes@[j] == before_replan@.nodes@[j]); }
+        }
+        assert forall|j: int| 0 <= j < world.nodes@.len() implies
+            footprint::valid_footprint(world, world.nodes@[j].footprint)
+                && ((world.nodes@[j].holds || world.nodes@[j].pool) ==> !(world.nodes@[j].phase is Closed))
+        by {
+            footprint::valid_under_table_growth(before_replan@, world, world.nodes@[j].footprint);
             if j != i { assert(world.nodes@[j] == before_replan@.nodes@[j]); }
         }
         open_prefix_compare(before_replan@.nodes@, world.nodes@, before_replan@.nodes@.len());
