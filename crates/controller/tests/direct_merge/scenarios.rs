@@ -198,6 +198,60 @@ fn failed_protection_check_uses_the_existing_ci_failure_path() {
 }
 
 #[test]
+fn pending_direct_handoff_releases_full_gate_and_keeps_authenticated_wake() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_neutral_delivery");
+    let fixture = DirectFixture::new();
+    fixture.check(None);
+    let (mut controller, delivery) = fixture.start(&settings);
+    drain(&mut controller);
+    let world = controller.world().unwrap();
+    world.check().unwrap();
+    let accepted = world.nodes[0];
+    assert!(!accepted.holds, "durable Direct responsibility must release the full change gate before checks pass");
+    assert_eq!(accepted.phase.name(), "AwaitingDelivery");
+    assert_eq!(accepted.generation, delivery.generation + 1);
+    assert_eq!(accepted.head, accepted.checked);
+    assert_eq!(accepted.head, accepted.approved);
+    assert!(accepted.approved.is_some());
+    assert!(accepted.footprint.is_some());
+    assert!(accepted.effect.is_none() && accepted.run.is_none() && accepted.job.is_none());
+    assert!(!accepted.pool && accepted.ticket.is_none());
+    assert!(controller.snapshot().unwrap().rows.iter().any(|row| row.table == "watches" && row.id == delivery.key));
+    assert!(fixture.direct.lock().unwrap().puts.is_empty());
+
+    controller.intake(LabelledIssue { delivery:"direct-overlap".into(), owner:"owner".into(), repo:"sandbox".into(), installation:3, number:13, title:"overlapping change".into(), actor:42, label:"tl3".into(), labels:vec![] }).unwrap();
+    let mut overlapping = false;
+    for _ in 0..100 {
+        let world = controller.world().unwrap();
+        world.check().unwrap();
+        if world.nodes.len() > 1 && world.nodes[1].holds {
+            assert_eq!(world.nodes[1].footprint, accepted.footprint, "fixture must exercise overlapping files");
+            assert!(!world.nodes[0].holds);
+            assert_eq!(world.nodes[0].approved, accepted.approved);
+            overlapping = true;
+            break;
+        }
+        assert!(controller.drive_once().unwrap(), "released slot must admit the next change");
+    }
+    assert!(overlapping, "overlapping Ready work must acquire the released slot");
+    fixture.check(Some("success"));
+    fixture.check_event(&settings);
+    for _ in 0..100 {
+        let world = controller.world().unwrap();
+        world.check().unwrap();
+        if world.nodes[0].phase == Phase::Closed(Outcome::Merged) {
+            let direct = fixture.direct.lock().unwrap();
+            assert_eq!(direct.puts.len(), 1);
+            assert_eq!(direct.puts[0]["sha"], json!(delivery.head_sha));
+            return;
+        }
+        controller.drive_once().unwrap();
+    }
+    panic!("accepted watch lost the authenticated exact-head successful-check wake");
+}
+
+#[test]
 fn pending_check_waits_for_webhook_without_polling() {
     let mut database = support::Database::start();
     let settings = database.create("direct_pending");
