@@ -214,7 +214,7 @@ fn pending_direct_handoff_releases_full_gate_and_keeps_authenticated_wake() {
     assert_eq!(accepted.head, accepted.checked);
     assert_eq!(accepted.head, accepted.approved);
     assert!(accepted.approved.is_some());
-    assert!(accepted.footprint.is_some());
+    assert!(!accepted.footprint.is_empty());
     assert!(accepted.effect.is_none() && accepted.run.is_none() && accepted.job.is_none());
     assert!(!accepted.pool && accepted.ticket.is_none());
     assert!(controller.snapshot().unwrap().rows.iter().any(|row| row.table == "watches" && row.id == delivery.key));
