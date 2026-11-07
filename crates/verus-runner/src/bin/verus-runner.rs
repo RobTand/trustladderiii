@@ -46,11 +46,9 @@ fn check_result(
 mod measurement {
     use serde_json::{Value, json};
 
-    pub fn check_result(
+    fn parse_result(
         status: Option<i32>,
         output: &str,
-        expected: u64,
-        partial: bool,
     ) -> Result<Value, String> {
         if status != Some(0) {
             return Err(format!("Verus failed or timed out: exit {status:?}"));
@@ -71,11 +69,21 @@ mod measurement {
         let [stats] = objects.as_slice() else {
             return Err("Verus must emit exactly one JSON verification result".into());
         };
+        Ok(stats.clone())
+    }
+
+    pub fn check_result(status: Option<i32>, output: &str, expected: u64, partial: bool) -> Result<Value, String> {
+        let stats = parse_result(status, output)?;
+        validate_verdict(&stats, expected, partial, false)?;
+        Ok(stats)
+    }
+
+    fn validate_verdict(stats: &Value, expected: u64, partial: bool, optional_success: bool) -> Result<(), String> {
         let verdict = &stats["verification-results"];
         if expected == 0
             || verdict["verified"].as_u64() != Some(expected)
             || verdict["errors"].as_u64() != Some(0)
-            || verdict["success"].as_bool() != Some(true)
+            || if optional_success { verdict.get("success").is_some_and(|v| v.as_bool() != Some(true)) } else { verdict["success"].as_bool() != Some(true) }
             || verdict["encountered-error"].as_bool() != Some(false)
             || verdict["encountered-vir-error"].as_bool() != Some(false)
             || verdict["is-verifying-entire-crate"].as_bool() != Some(!partial)
@@ -84,7 +92,49 @@ mod measurement {
                 "Verus JSON verdict failed, has the wrong selection, or differs from {expected} positive obligations: {verdict}"
             ));
         }
-        Ok(stats.clone())
+        Ok(())
+    }
+
+    pub fn check_mode_result(status: Option<i32>, output: &str, expected: u64, partial: bool, mode: super::ExecutionMode) -> Result<Value, String> {
+        let stats = parse_result(status, output)?;
+        if mode == super::ExecutionMode::FrontendOnly {
+            let v = &stats["verification-results"];
+            let smt = &stats["times-ms"]["smt"];
+            if expected == 0 || v["verified"].as_u64() != Some(0) || v["errors"].as_u64() != Some(0)
+                || v["encountered-error"].as_bool() != Some(false)
+                || v["encountered-vir-error"].as_bool() != Some(false)
+                || v["is-verifying-entire-crate"].as_bool() != Some(!partial)
+                || v.get("success").is_some_and(|v| v.as_bool() != Some(true))
+                || ["total", "smt-init", "smt-run", "rlimit-init", "rlimit-run"].iter().any(|k| smt[k].as_u64() != Some(0))
+                || ["smt-init-module-times", "smt-run-module-times"].iter().any(|k| smt[k].as_array().is_none_or(|a| !a.is_empty())) {
+                return Err("frontend requires explicit zero-query/SMT evidence and a clean zero-proof verdict".into());
+            }
+        } else {
+            validate_verdict(&stats, expected, partial, true)?;
+        }
+        Ok(stats)
+    }
+
+    pub fn expanded_receipt(stats: &Value, label: &str, seconds: f64) -> Result<Value, String> {
+        if seconds > 20.0 { eprintln!("VERUS_WALL_WARNING {label}: exceeds historical 20s ceiling ({seconds:.3}s)"); }
+        // Reuse extraction, keeping the legacy hard ceiling confined to --measure.
+        let mut receipt = receipt(stats, label, seconds.min(20.0))?;
+        receipt["seconds"] = json!(seconds);
+        let modules = stats["times-ms"]["smt"]["smt-run-module-times"].as_array().ok_or("missing expanded SMT modules")?;
+        let mut sum = 0u64;
+        let mut count = 0u64;
+        for module in modules {
+            for function in module["function-breakdown"].as_array().ok_or("missing function breakdown")? {
+                sum = sum.checked_add(function["rlimit"].as_u64().ok_or("missing function rlimit")?).ok_or("function sum overflow")?;
+                count += 1;
+            }
+        }
+        if count == 0 || receipt["rlimit_run"].as_u64() != Some(sum) {
+            return Err("expanded function sum differs from raw run rlimit or is empty".into());
+        }
+        receipt["function_rlimit_sum"] = json!(sum);
+        receipt["function_count"] = json!(count);
+        Ok(receipt)
     }
 
     pub fn receipt(stats: &Value, label: &str, seconds: f64) -> Result<Value, String> {
@@ -124,6 +174,44 @@ mod measurement {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn frontend_is_never_a_positive_proof_or_resource_measurement() {
+            let mut v = verdict();
+            v["verification-results"]["verified"] = json!(0);
+            v["times-ms"] = json!({"smt": {"total": 0, "smt-init": 0, "smt-run": 0,
+                "rlimit-init": 0, "rlimit-run": 0, "smt-init-module-times": [], "smt-run-module-times": []}});
+            let text = serde_json::to_string_pretty(&v).unwrap();
+            assert!(check_mode_result(Some(0), &text, 2, false, super::super::ExecutionMode::FrontendOnly).is_ok());
+            assert!(check_result(Some(0), &text, 2, false).is_err());
+            assert!(expanded_receipt(&v, "fake", 1.0).is_err());
+            for status in [Some(127), Some(124), None] {
+                assert!(check_mode_result(status, &text, 2, false, super::super::ExecutionMode::FrontendOnly).is_err());
+            }
+            for field in ["rlimit-init", "rlimit-run", "smt-run-module-times"] {
+                let mut bad = v.clone();
+                bad["times-ms"]["smt"].as_object_mut().unwrap().remove(field);
+                assert!(check_mode_result(Some(0), &serde_json::to_string_pretty(&bad).unwrap(), 2, false, super::super::ExecutionMode::FrontendOnly).is_err());
+            }
+        }
+
+        #[test]
+        fn normal_expanded_metrics_exclude_init_and_warn_only_for_wall() {
+            let mut v = verdict();
+            v["verification-results"].as_object_mut().unwrap().remove("success");
+            v["times-ms"] = json!({"smt": {"rlimit-init": 900, "rlimit-run": 7,
+                "smt-run-module-times": [{"function-breakdown": [{"rlimit": 3}, {"rlimit": 4}]}]}});
+            let text = serde_json::to_string_pretty(&v).unwrap();
+            assert!(check_mode_result(Some(0), &text, 2, false, super::super::ExecutionMode::NormalStats).is_ok());
+            let r = expanded_receipt(&v, "fake", 25.0).unwrap();
+            assert_eq!(r["rlimit_run"], 7);
+            assert_eq!(r["rlimit_init"], 900);
+            assert_eq!(r["function_rlimit_sum"], 7);
+            assert_eq!(r["function_count"], 2);
+            assert_eq!(r["seconds"], 25.0);
+            v["times-ms"]["smt"]["rlimit-run"] = json!(907);
+            assert!(expanded_receipt(&v, "fake", 1.0).is_err());
+        }
 
         fn verdict() -> Value {
             json!({"verification-results": {
@@ -322,7 +410,46 @@ mod mutation {
     }
 }
 
+// Capability checked by the measurement driver before any submission.
+const MEASUREMENT_PROTOCOL: &str = "tl3.verus-runner.modes.v1";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ExecutionMode {
+    Proof,
+    LegacyMeasure,
+    FrontendOnly,
+    NormalStats,
+    DiagnosticStats,
+}
+
+impl ExecutionMode {
+    fn selected(measured: bool) -> Result<Self, String> {
+        match std::env::var("TL3_VERUS_MODE").as_deref() {
+            Err(std::env::VarError::NotPresent) => Ok(if measured { Self::LegacyMeasure } else { Self::Proof }),
+            Ok("frontend-only") if !measured => Ok(Self::FrontendOnly),
+            Ok("normal") if !measured => Ok(Self::NormalStats),
+            Ok("diagnostic") if !measured => Ok(Self::DiagnosticStats),
+            _ => Err("unsupported or conflicting TL3_VERUS_MODE".into()),
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Proof => "proof",
+            Self::LegacyMeasure => "legacy-measure",
+            Self::FrontendOnly => "frontend-only",
+            Self::NormalStats => "normal",
+            Self::DiagnosticStats => "diagnostic",
+        }
+    }
+
+    fn modern(self) -> bool {
+        matches!(self, Self::FrontendOnly | Self::NormalStats | Self::DiagnosticStats)
+    }
+}
+
 struct Toolchain {
+    rustc: PathBuf,
     verifier: PathBuf,
     z3: PathBuf,
     sysroot: PathBuf,
@@ -332,14 +459,22 @@ struct Verification {
     status: Option<i32>,
     output: String,
     seconds: f64,
+    execution: serde_json::Value,
 }
 
 impl Toolchain {
-    fn verify(&self, source: &Path, module: &str, measured: bool) -> std::io::Result<Verification> {
+    fn new(verifier: &Path, z3: &Path, rustc: &Path) -> std::io::Result<Self> {
+        let rustc = rustc.canonicalize()?;
+        let sysroot = rustc.parent().and_then(Path::parent)
+            .ok_or_else(|| std::io::Error::other("missing private sysroot"))?.to_owned();
+        Ok(Self { verifier: verifier.canonicalize()?, z3: z3.canonicalize()?, rustc, sysroot })
+    }
+
+    fn verify(&self, source: &Path, module: &str, mode: ExecutionMode) -> std::io::Result<Verification> {
         let started = Instant::now();
         let mut process = Command::new("/usr/bin/timeout");
         process
-            .args(["--kill-after=5s", "45s"])
+            .args(["--kill-after=5s", if mode == ExecutionMode::DiagnosticStats { "120s" } else { "45s" }])
             .arg(&self.verifier)
             .args([
                 "--num-threads",
@@ -366,9 +501,37 @@ impl Toolchain {
         if let Some(function) = function {
             process.args(["--verify-function", function]);
         }
-        if measured {
-            process.args(["--time", "--output-json"]);
+        match mode {
+            ExecutionMode::Proof => {},
+            ExecutionMode::LegacyMeasure => { process.args(["--time", "--output-json"]); },
+            _ => { process.args(["--time-expanded", "--output-json"]); },
         }
+        if mode == ExecutionMode::FrontendOnly {
+            process.arg("--no-verify");
+        }
+        if mode != ExecutionMode::FrontendOnly && mode.modern() && std::env::var("TL3_VERUS_RAW_QUERIES").as_deref() == Ok("1") {
+            let directory = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR")
+                .ok_or_else(|| std::io::Error::other("raw queries require output directory"))?;
+            let logs = Path::new(&directory).join("raw-queries");
+            std::fs::create_dir_all(&logs)?;
+            process.arg("--log-all").arg("--log-dir").arg(logs);
+        }
+        let argv: Vec<_> = std::iter::once(process.get_program()).chain(process.get_args())
+            .map(|s| s.to_string_lossy().into_owned()).collect();
+        let mut tools = serde_json::Map::new();
+        if mode.modern() {
+            for (name, path) in [("verifier", &self.verifier), ("z3", &self.z3), ("rustc", &self.rustc)] {
+                let hash = Command::new("/usr/bin/sha256sum").arg(path).output()?;
+                if !hash.status.success() { return Err(std::io::Error::other("tool identity hash failed")); }
+                let text = String::from_utf8_lossy(&hash.stdout);
+                let sha = text.split_whitespace().next().ok_or_else(|| std::io::Error::other("missing tool hash"))?;
+                tools.insert(name.into(), serde_json::json!({"path": path, "sha256": sha, "bytes": path.metadata()?.len()}));
+            }
+        }
+        let pins = if mode.modern() {
+            let path = self.sysroot.parent().ok_or_else(|| std::io::Error::other("missing toolchain root"))?.join("pins.json");
+            serde_json::from_slice::<serde_json::Value>(&std::fs::read(path)?)?
+        } else { serde_json::Value::Null };
         let result = process
             .env_clear()
             .env(
@@ -389,6 +552,14 @@ impl Toolchain {
                 String::from_utf8_lossy(&result.stderr)
             ),
             seconds: started.elapsed().as_secs_f64(),
+            execution: serde_json::json!({
+                "protocol": MEASUREMENT_PROTOCOL, "mode": mode.name(), "argv": argv,
+                "tools": tools, "pins": pins, "sysroot": self.sysroot,
+                "environment": {"PATH": format!("{}/bin:/usr/bin:/bin", self.sysroot.display()),
+                    "LD_LIBRARY_PATH": self.sysroot.join("lib"), "VERUS_USE_RUSTUP": "0",
+                    "VERUS_Z3_PATH": self.z3, "OMP_NUM_THREADS": "1", "RAYON_NUM_THREADS": "1"},
+                "status": result.status.code(),
+            }),
         })
     }
 }
@@ -422,18 +593,35 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if expected == 0 {
         return Err("expected obligations must be positive".into());
     }
-    let rustc = Path::new(rustc).canonicalize()?;
-    let toolchain = Toolchain {
-        verifier: Path::new(verifier).canonicalize()?,
-        z3: Path::new(z3).canonicalize()?,
-        sysroot: rustc
-            .parent()
-            .and_then(Path::parent)
-            .ok_or("missing private sysroot")?
-            .to_owned(),
-    };
+    let toolchain = Toolchain::new(Path::new(verifier), Path::new(z3), Path::new(rustc))?;
     let source = Path::new(source);
-    let result = toolchain.verify(source, module, measured)?;
+    let mode = ExecutionMode::selected(measured)?;
+    let result = toolchain.verify(source, module, mode)?;
+    if mode.modern() {
+        print!("{}", result.output);
+        let directory = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR")
+            .ok_or("measurement mode requires TEST_UNDECLARED_OUTPUTS_DIR")?;
+        let directory = Path::new(&directory);
+        std::fs::write(directory.join("execution.json"), format!("{}\n", result.execution))?;
+        let stats = measurement::check_mode_result(result.status, &result.output, expected, !module.is_empty(), mode)?;
+        std::fs::write(directory.join("verifier.json"), format!("{stats}\n"))?;
+        let frontend = mode == ExecutionMode::FrontendOnly;
+        let receipt = serde_json::json!({"proofs": {label: {
+            "kind": if frontend { "FRONTEND_ONLY" } else { "verus" },
+            "expected_obligations": expected, "verified": if frontend { 0 } else { expected },
+            "module": module, "threads": 1, "seconds": result.seconds,
+        }}});
+        let metrics = if frontend {
+            serde_json::json!({"label": label, "mode": "FRONTEND_ONLY", "no_smt": true,
+                "proof": "NOT_RUN", "resource_acceptance": "NOT_APPLICABLE"})
+        } else {
+            measurement::expanded_receipt(&stats, label, result.seconds)?
+        };
+        std::fs::write(directory.join("inventory.json"), format!("{receipt}\n"))?;
+        std::fs::write(directory.join("measurement.json"), format!("{metrics}\n"))?;
+        println!("VERUS_MODE {} {metrics}", mode.name());
+        return Ok(());
+    }
     let (verified, mut measurements, stats) = if measured {
         let stats =
             measurement::check_result(result.status, &result.output, expected, !module.is_empty())
@@ -463,7 +651,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let seeded = mutation::seed(&std::fs::read_to_string(&path)?, function, before, after)?;
         std::fs::write(&path, seeded)?;
         let changed =
-            toolchain.verify(&copied.join(source.strip_prefix(root)?), selection, false)?;
+            toolchain.verify(&copied.join(source.strip_prefix(root)?), selection, ExecutionMode::Proof)?;
         print!("{}", changed.output);
         mutation::check_rejection(changed.status, &changed.output)?;
         measurements.as_mut().ok_or("mutation must be measured")?["mutant"] = serde_json::json!({
@@ -558,5 +746,28 @@ mod process_tests {
                 .is_err()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod toolchain_tests {
+    use super::*;
+
+    #[test]
+    fn launcher_rustc_is_canonicalized_before_deriving_sysroot() {
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!("toolchain-fixture-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("real/rust/bin")).unwrap();
+        for name in ["real/rust/bin/rustc", "real/verus", "real/z3"] {
+            std::fs::write(root.join(name), "FAKE tool identity").unwrap();
+        }
+        symlink(root.join("real/rust/bin/rustc"), root.join("launcher-rustc")).unwrap();
+        symlink(root.join("real/verus"), root.join("verus")).unwrap();
+        let tools = Toolchain::new(&root.join("verus"), &root.join("real/z3"), &root.join("launcher-rustc")).unwrap();
+        assert_eq!(tools.sysroot, root.join("real/rust").canonicalize().unwrap());
+        assert_eq!(tools.rustc, root.join("real/rust/bin/rustc").canonicalize().unwrap());
+        assert_eq!(tools.verifier, root.join("real/verus").canonicalize().unwrap());
+        assert!(Toolchain::new(&root.join("missing"), &tools.z3, &tools.rustc).is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

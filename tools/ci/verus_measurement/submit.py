@@ -5,6 +5,8 @@ Run dry-runs on admitted PB or supported free remote compute, never a fleet host
 from __future__ import annotations
 
 import argparse
+import base64
+import zlib
 import json
 import os
 from pathlib import Path
@@ -27,14 +29,20 @@ RESERVED = 'bbrun-wrapper-result.v1.json'
 
 def submission(config, runner_log):
     # Ship the exact reviewed driver bytes; remote preparation rechecks the source.
-    code = DRIVER.read_text()
-    output = 'import os,sys;sys.argv += ["--output", os.path.join(os.environ["BUILDBUDDY_ARTIFACTS_DIRECTORY"], "verus-measurement")];'
+    code = DRIVER.read_bytes()
+    # Compressed single script, no full source/diff duplication in transport.
+    payload = base64.b64encode(zlib.compress(code, 9)).decode()
+    bootstrap = ('import base64,hashlib,os,sys,zlib;'
+                 f'code=zlib.decompress(base64.b64decode({payload!r}));'
+                 f'assert hashlib.sha256(code).hexdigest()=={digest(code)!r};'
+                 'sys.argv += ["--output",os.path.join(os.environ["BUILDBUDDY_ARTIFACTS_DIRECTORY"],"verus-measurement")];'
+                 f'exec(compile(code,"<reviewed-measure-remote>","exec"),dict(__name__="__main__",__driver_sha256__={digest(code)!r}))')
     return [*BB, 'step', '--repo', 'https://github.com/RobTand/trustladderiii.git',
             '--commit', config.head, '--branch', config.branch,
             '--timeout', str(config.coordinator_minutes), '--max-wait', '600',
-            '--log-file', str(runner_log), '--', 'python3', '-I', '-c',
-            'from __future__ import annotations\n' + output + '\n' + code.replace('from __future__ import annotations\n', ''),
+            '--log-file', str(runner_log), '--', 'python3', '-I', '-c', bootstrap,
             '--config-json', json.dumps(config.json(), sort_keys=True)]
+
 
 
 def identity(config, prepared, command):
@@ -45,6 +53,8 @@ def identity(config, prepared, command):
             'config_sha256': prepared['config_sha256'],
             'selection_sha256': prepared['selection_sha256'],
             'instrumentation_sha256': prepared['instrumentation_sha256'],
+            'runner_sha256': prepared['runner_sha256'], 'pins_sha256': prepared['pins_sha256'],
+            'mode': config.mode,
             'exact_submission_argv': command}
 
 
@@ -64,6 +74,8 @@ def atomic_receipt(path, value):
 def full_dry_run(source, config, output, receipt, command):
     # First action, before config/preparation/compilation can fail.
     receipt.unlink(missing_ok=True)
+    require(not output.resolve().is_relative_to(source.resolve()), 'evidence output must be outside the clean source checkout')
+    D['source_identity'](source, config)
     D['owned_directory'](output)
     for script in (DRIVER, Path(__file__)):
         py_compile.compile(str(script), cfile=str(output / (script.name + 'c')), doraise=True)
@@ -88,7 +100,7 @@ def check_receipt(source, config, receipt, command):
                                       fromfile='a/' + D['RUNNER'], tofile='b/' + D['RUNNER']))
     prepared = {'source_sha256': source_hash, 'config_sha256': digest(encoded(config.json())),
                 'selection_sha256': digest(encoded([D['asdict'](s) for s in config.selections])),
-                'instrumentation_sha256': digest(diff.encode())}
+                'instrumentation_sha256': digest(diff.encode()), 'runner_sha256': digest(patch.encode()), 'pins_sha256': digest(encoded(D['source_pins'](source)))}
     expected = {**identity(config, prepared, command), 'py_compile': 'PASS', 'full_preparation': 'PASS',
                 'build_executed': False, 'buildbuddy_submitted': False}
     require(type(saved) is dict, 'malformed dry-run receipt; repeat --dry-run')
@@ -176,7 +188,11 @@ def wrapper_evidence(*, parent, terminal, trusted_artifact=None, trusted_runner_
 
 
 def qualify(driver, wrapper, parent):
-    stages = ('preparation', 'child', 'resources', 'collection', 'restoration')
+    stages = ('preparation', 'child', 'collection', 'restoration')
+    if driver.get('mode') != 'frontend-only':
+        stages += ('resources',)
+    elif driver.get('resources') != 'NOT_APPLICABLE' or not all(r.get('no_smt') is True for r in driver.get('rows', [])) or not driver.get('rows'):
+        return 'UNKNOWN'
     if parent == 'FAIL' or any(driver.get(k) == 'FAIL' for k in stages):
         return 'FAIL'
     if wrapper is None or parent != 'PASS':
@@ -253,29 +269,31 @@ def collect_terminal(parent, terminal, output, runner_log, config, expected, *, 
         audits.append(audit)
         curated[entry['name']] = data
     for name, identity_key in (('source.json', 'source_sha256'), ('config.json', 'config_sha256'),
-                               ('selections.json', 'selection_sha256'), ('runner.patch', 'instrumentation_sha256')):
+                               ('selections.json', 'selection_sha256'), ('runner.patch', 'instrumentation_sha256'),
+                               ('runner-preview.rs', 'runner_sha256'), ('pins.json', 'pins_sha256')):
         require(name in curated and digest(curated[name]) == expected[identity_key], 'remote preparation identity mismatch: ' + name)
     require(loads(curated['config.json']) == config.json() and loads(curated['command.json']) == config.command(),
             'remote config/command mismatch')
+    require(loads(curated['tooling.json']) == D['tooling_identity'](), 'executed driver tooling provenance mismatch')
     require(curated.get('measurement-summary.json') == summary_bytes, 'summary/manifest disagreement')
     rows = []
     for index, selection in enumerate(config.selections):
-        for name in ('test.log', 'test.xml', 'inventory.json', 'measurement.json', 'verifier.json'):
+        for name in ('test.log', 'test.xml', 'inventory.json', 'measurement.json', 'verifier.json', 'execution.json'):
             require(f'{index}-{name}' in curated and curated[f'{index}-{name}'], 'missing raw selected-child receipt')
         D['check_test_xml'](curated[f'{index}-test.xml'])
+        require(loads(curated[f'{index}-execution.json']).get('pins') == loads(curated['pins.json']), 'actual/source toolchain pins differ')
         rows.append(D['child_verdict'](loads(curated[f'{index}-verifier.json']),
                                       loads(curated[f'{index}-inventory.json']),
-                                      loads(curated[f'{index}-measurement.json']), selection))
+                                      loads(curated[f'{index}-measurement.json']), selection, config.mode, loads(curated[f'{index}-execution.json'])))
     require(len(summary.get('rows', [])) == len(config.selections), 'missing/duplicate measurement rows')
     for row, selection in zip(summary['rows'], config.selections):
         require(all(row.get(k) == v for k, v in D['asdict'](selection).items()), 'summary selection/count/bijection mismatch')
     # Only verified raw receipts determine the returned metrics. Summary values
     # cannot supply a measurement that is absent from the child evidence.
+    require(summary.get('restoration') == 'PASS' and summary.get('child') == 'PASS' and
+            summary.get('collection') == 'PASS' and summary.get('preparation') == 'PASS', 'remote stages did not pass')
     summary['rows'] = [{**D['asdict'](selection), **row} for selection, row in zip(config.selections, rows)]
-    summary['resources'] = 'PASS' if all(row['resources'] == 'PASS' for row in rows) else 'UNKNOWN'
-    runs = [row['rlimit_run'] for row in rows]
-    summary['rlimit_run_sum'] = sum(runs) if all(value is not None for value in runs) else None
-    summary['init_included_in_sum'] = False
+    summary.update(D['result_stages'](config, rows))
     for stage in ('parent', 'scanner', 'cleanup', 'overall', 'artifacts'):
         summary.pop(stage, None)
     wrapper_bytes = None
@@ -366,8 +384,42 @@ def wait_own(command, output, config, expected):
             observation.update(collection='FAIL', overall='FAIL', reason='terminal_evidence_invalid')
     else:
         observation.update(collection='UNKNOWN', reason='terminal_evidence_unavailable')
+    observation['preparation_identity'] = expected
+    observation['config'] = config.json()
     D['put'](output, 'terminal-attribution.json', encoded(observation))
     return {'PASS': 0, 'FAIL': 1, 'UNKNOWN': 3}[observation['overall']]
+
+
+def check_frontend(source, config, path, output):
+    require(path is not None, 'missing frontend prerequisite; normal/diagnostic submission refused')
+    prior = loads(D['regular_bytes'](path))
+    frontend = D['Config'].parse({**config.json(), 'mode': 'frontend-only',
+        'watchdog_seconds': 45, 'diagnostic_authorization': None, 'raw_queries': False})
+    require(prior.get('overall') == 'PASS' and prior.get('config') == frontend.json(), 'failed/stale frontend mode/source/selection prerequisite')
+    expected = prior.get('preparation_identity', {})
+    require(expected.get('driver_sha256') == digest(DRIVER.read_bytes()) and
+            expected.get('submit_sha256') == digest(Path(__file__).read_bytes()) and
+            expected.get('source_sha256') == digest(encoded(D['source_identity'](source, frontend))) and
+            expected.get('runner_sha256') == digest(D['regular_bytes'](source / D['RUNNER'])) and
+            expected.get('mode') == 'frontend-only', 'stale frontend tooling/source/runner prerequisite')
+    argv = expected.get('exact_submission_argv', [])
+    require('--log-file' in argv and argv == submission(frontend, Path(argv[argv.index('--log-file') + 1])), 'stale frontend argv prerequisite')
+    parent = prior.get('parent_invocation_id')
+    require(type(parent) is str and re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', parent), 'missing own frontend parent')
+    # Re-read the own terminal verdict and all scanned CAS bytes. The local file
+    # is a locator, never authority for PASS or no-SMT evidence.
+    terminal = subprocess.run([*BB, 'wait', parent, '--max-wait', '1'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    D['put'](output, 'frontend-parent-terminal.txt', terminal.stdout.encode())
+    verdicts = [loads(line[len('verdict: '):]) for line in terminal.stdout.splitlines() if line.startswith('verdict: ')]
+    require(terminal.returncode == 0 and len(verdicts) == 1 and verdicts[0].get('invocationId') == parent and
+            verdicts[0].get('invocationStatus') == 'COMPLETE_INVOCATION_STATUS' and verdicts[0].get('success') is True,
+            'frontend own parent is not terminal PASS')
+    inspected = subprocess.run(['python3', '-I', '/home/rob/tmp/tl3-build/bb_logs.py', parent, '--runner', '200'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    require(inspected.returncode == 0, 'frontend own terminal logs unavailable')
+    audited = collect_terminal(parent, 'PASS', D['owned_directory'](output / 'frontend-audit'), inspected.stdout, frontend, expected)
+    D['put'](output, 'frontend-prerequisite.json', encoded(audited))
+    require(audited['overall'] == 'PASS', 'frontend independently scanned evidence did not pass')
+    return audited
 
 
 def main():
@@ -378,6 +430,7 @@ def main():
     parser.add_argument('--receipt', type=Path, required=True)
     parser.add_argument('--runner-log', type=Path, required=True)
     parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--frontend-receipt', type=Path, help='own frontend terminal-attribution.json; reaudited before measured submission')
     args = parser.parse_args()
     # Invalidate even when config parsing fails, not merely inside preparation.
     if args.dry_run:
@@ -389,7 +442,10 @@ def main():
         print(json.dumps({k: v for k, v in result.items() if k != 'exact_submission_argv'}, indent=2))
         return
     checked = check_receipt(args.source, config, args.receipt, command)
+    require(not args.output.resolve().is_relative_to(args.source.resolve()), 'output inside source')
     D['owned_directory'](args.output)
+    if config.mode != 'frontend-only':
+        check_frontend(args.source, config, args.frontend_receipt, args.output)
     D['put'](args.output, 'submission-argv.json', encoded(command))
     if HOLD.exists():
         raise SystemExit('paused for BB hold')

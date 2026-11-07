@@ -17,7 +17,7 @@ import zipfile
 HERE = Path(__file__).resolve().parent
 S = runpy.run_path(str(HERE / 'submit.py'))
 D = S['D']
-HEAD = '6c6efd421c7026b9277c6af3ebb27c74030219fe'
+HEAD = subprocess.check_output(['git', '-C', str(HERE.parents[2]), 'rev-parse', 'HEAD'], text=True).strip()
 
 
 def configuration():
@@ -26,6 +26,24 @@ def configuration():
             'coordinator_minutes': 30, 'diagnostic_authorization': None, 'raw_queries': False,
             'selections': [{'target': '//crates/kernel:verus_dependencies',
                             'selector': 'kernel::dependencies#World::record_dependency', 'expected': 1}]}
+
+
+def fake_execution(row, mode='normal'):
+    tools = {key: {'path': path, 'sha256': 'a' * 64, 'bytes': 1} for key, path in
+             [('verifier', '/FAKE/verus'), ('rustc', '/FAKE/rust/bin/rustc'), ('z3', '/FAKE/z3'), ('rust_verify', '/FAKE/rust_verify')]}
+    tools['z3']['sha256'] = D['source_pins'](HERE.parents[2])['z3']
+    owner, _, function = row.selector.partition('#')
+    argv = ['/usr/bin/timeout', '--kill-after=5s', '120s' if mode == 'diagnostic' else '45s', '/FAKE/verus',
+            '--num-threads', '1', '--rlimit', '30', '--multiple-errors', '0', '-V', 'spinoff-all',
+            '--sysroot', '/FAKE/rust', 'crates/kernel/verus/progress.rs', '--edition', '2024', '--verify-only-module', owner,
+            '--time-expanded', '--output-json']
+    if function:
+        argv += ['--verify-function', function]
+    if mode == 'frontend-only':
+        argv += ['--no-verify']
+    return {'protocol': D['CAPABILITY'], 'mode': mode, 'argv': argv, 'tools': tools, 'pins': D['source_pins'](HERE.parents[2]), 'sysroot': '/FAKE/rust', 'status': 0,
+            'environment': {'PATH': '/FAKE/rust/bin:/usr/bin:/bin', 'LD_LIBRARY_PATH': '/FAKE/rust/lib',
+                'VERUS_USE_RUSTUP': '0', 'VERUS_Z3_PATH': '/FAKE/z3', 'OMP_NUM_THREADS': '1', 'RAYON_NUM_THREADS': '1'}}
 
 
 def fake_wrapper():
@@ -48,7 +66,7 @@ class Fixtures(unittest.TestCase):
         cls.evidence.mkdir(mode=0o700)
         subprocess.run(['git', 'init', '-q', str(cls.source)], check=True)
         subprocess.run(['git', '-C', str(cls.source), 'fetch', '-q', '--depth=1',
-                        'https://github.com/RobTand/trustladderiii.git', HEAD], check=True)
+                        str(HERE.parents[2]), HEAD], check=True)
         subprocess.run(['git', '-C', str(cls.source), 'checkout', '-q', '--detach', 'FETCH_HEAD'], check=True)
         assert D['git'](cls.source, 'rev-parse', '--is-shallow-repository').strip() == b'true'
         cls.original = (cls.source / D['RUNNER']).read_bytes()
@@ -57,18 +75,18 @@ class Fixtures(unittest.TestCase):
         return D['Config'].parse({**configuration(), **changes})
 
     def test_full_preparation_and_receipts(self):
-        for mode in ('normal', 'diagnostic'):
-            config = self.config(mode=mode, watchdog_seconds=45 if mode == 'normal' else 120,
-                                 diagnostic_authorization=None if mode == 'normal' else 'FAKE fixture authorization')
+        for mode in ('normal', 'diagnostic', 'frontend-only'):
+            config = self.config(mode=mode, watchdog_seconds=120 if mode == 'diagnostic' else 45,
+                                 diagnostic_authorization='FAKE fixture authorization' if mode == 'diagnostic' else None)
             receipt = self.evidence / f'{mode}-receipt.json'
             command = S['submission'](config, self.evidence / 'runner.log')
             result = S['full_dry_run'](self.source, config, self.evidence / mode, receipt, command)
             S['check_receipt'](self.source, config, receipt, command)
             self.assertEqual(result['full_preparation'], 'PASS')
             preview = (self.evidence / mode / 'runner-preview.rs').read_text()
-            self.assertIn(f'"{config.watchdog_seconds}s"', preview)
-            self.assertIn('let measured = true;', preview)
-            self.assertNotIn('--no-verify', preview)
+            self.assertEqual(preview.encode(), self.original)
+            self.assertEqual((self.evidence / mode / 'runner.patch').read_bytes(), b'')
+            self.assertIn('Toolchain::new', preview)
             self.assertNotIn('--log-all', preview)
             self.assertEqual((self.source / D['RUNNER']).read_bytes(), self.original)
             with self.assertRaisesRegex(ValueError, 'exact_submission_argv'):
@@ -114,24 +132,17 @@ class Fixtures(unittest.TestCase):
             extra.unlink()
 
     def test_anchors_and_restoration(self):
-        anchors = ['"--num-threads",', '"--rlimit",', '.env("OMP_NUM_THREADS", "1")',
-                   '.env("RAYON_NUM_THREADS", "1")', '.env("VERUS_Z3_PATH", &self.z3)',
-                   'process.args(["--time", "--output-json"]);',
-                   '.args(["--kill-after=5s", "45s"])',
-                   'verdict["success"].as_bool() != Some(true)',
-                   '    let result = toolchain.verify(source, module, measured)?;',
-                   '"{label}: group exceeds the hard 20s ceiling ({seconds:.3}s)"']
         text = self.original.decode()
-        for anchor in anchors:
-            with self.subTest(anchor=anchor), self.assertRaises(ValueError):
-                D['instrument'](text.replace(anchor, 'MISSING_ANCHOR'), self.config())
+        with self.assertRaisesRegex(ValueError, 'unsupported runner capability'):
+            D['instrument'](text.replace(D['CAPABILITY'], 'old-runner'), self.config())
         changed = D['instrument'](text, self.config()).encode()
+        self.assertEqual(changed, self.original)
         with self.assertRaisesRegex(RuntimeError, 'fixture exception'):
             with D['disposable_runner'](self.source, self.original, changed):
                 self.assertEqual((self.source / D['RUNNER']).read_bytes(), changed)
                 raise RuntimeError('fixture exception')
         self.assertEqual((self.source / D['RUNNER']).read_bytes(), self.original)
-        self.assertIn('--log-all', D['instrument'](text, self.config(raw_queries=True)))
+        self.assertEqual(D['instrument'](text, self.config(raw_queries=True)), text)
 
     def test_curated_readonly_and_metrics(self):
         source = self.root / 'read-only.json'
@@ -154,21 +165,60 @@ class Fixtures(unittest.TestCase):
         row = self.config().selections[0]
         stats = {'verification-results': {'verified': 1, 'errors': 0, 'encountered-error': False,
                  'encountered-vir-error': False, 'is-verifying-entire-crate': False},
-                 'times-ms': {'total': 0, 'num-threads': 1, 'smt': {'rlimit-run': 0, 'rlimit-init': 0}}}
+                 'times-ms': {'total': 0, 'num-threads': 1, 'smt': {'rlimit-run': 0, 'rlimit-init': 7, 'smt-run-module-times': [{'function-breakdown': [{'rlimit': 0, 'success': True}]}]}}}
         proof = {'proofs': {row.target: {'kind': 'verus', 'module': row.selector, 'verified': 1,
                   'expected_obligations': 1, 'threads': 1, 'seconds': 0}}}
         measurement = {'label': row.target, 'verified': 1, 'seconds': 0, 'rlimit_budget': 30,
-                       'rlimit_run': 0, 'rlimit_init': 0}
-        self.assertEqual(D['child_verdict'](stats, proof, measurement, row)['resources'], 'PASS')
+                       'rlimit_run': 0, 'rlimit_init': 7, 'function_rlimit_sum': 0, 'function_count': 1, 'max_function_rlimit': 0}
+        self.assertEqual(D['child_verdict'](stats, proof, measurement, row, execution=fake_execution(row))['resources'], 'PASS')
         del stats['times-ms']['total']
-        self.assertEqual(D['child_verdict'](stats, proof, measurement, row)['resources'], 'UNKNOWN')
+        self.assertEqual(D['child_verdict'](stats, proof, measurement, row, execution=fake_execution(row))['resources'], 'UNKNOWN')
         stats['verification-results']['success'] = False
         with self.assertRaises(ValueError):
-            D['child_verdict'](stats, proof, measurement, row)
+            D['child_verdict'](stats, proof, measurement, row, execution=fake_execution(row))
         stats['verification-results']['success'] = True
         stats['verification-results']['verified'] = True
         with self.assertRaises(ValueError):
-            D['child_verdict'](stats, proof, measurement, row)
+            D['child_verdict'](stats, proof, measurement, row, execution=fake_execution(row))
+
+    def test_frontend_boundaries_and_prerequisite(self):
+        row = self.config().selections[0]
+        stats = {'verification-results': {'verified': 0, 'errors': 0, 'encountered-error': False,
+                 'encountered-vir-error': False, 'is-verifying-entire-crate': False},
+                 'times-ms': {'smt': {**{k: 0 for k in ('total', 'smt-init', 'smt-run', 'rlimit-init', 'rlimit-run')},
+                     'smt-init-module-times': [], 'smt-run-module-times': []}}}
+        proof = {'proofs': {row.target: {'kind': 'FRONTEND_ONLY', 'module': row.selector, 'verified': 0,
+                 'expected_obligations': row.expected, 'threads': 1, 'seconds': 1}}}
+        metrics = {'label': row.target, 'mode': 'FRONTEND_ONLY', 'no_smt': True,
+                   'proof': 'NOT_RUN', 'resource_acceptance': 'NOT_APPLICABLE'}
+        execution = fake_execution(row, 'frontend-only')
+        result = D['child_verdict'](stats, proof, metrics, row, 'frontend-only', execution)
+        self.assertEqual(result['proof'], 'NOT_RUN')
+        self.assertEqual(result['resources'], 'NOT_APPLICABLE')
+        for key in ('rlimit-run', 'rlimit-init', 'smt-run-module-times'):
+            bad = copy.deepcopy(stats)
+            del bad['times-ms']['smt'][key]
+            with self.assertRaises(ValueError):
+                D['child_verdict'](bad, proof, metrics, row, 'frontend-only', execution)
+        for key, value in [('verified', 1), ('verified', True), ('errors', 1), ('success', False), ('encountered-error', True)]:
+            bad = copy.deepcopy(stats)
+            bad['verification-results'][key] = value
+            with self.assertRaises(ValueError):
+                D['child_verdict'](bad, proof, metrics, row, 'frontend-only', execution)
+        for mutate in [lambda e: e.update(status=127), lambda e: e.update(mode='normal'),
+                       lambda e: e.update(sysroot='/FAKE/rust/bin/rustc'),
+                       lambda e: e['argv'].append('--build-sst'), lambda e: e['argv'].remove('--no-verify')]:
+            bad = copy.deepcopy(execution)
+            mutate(bad)
+            with self.assertRaises(ValueError):
+                D['child_verdict'](stats, proof, metrics, row, 'frontend-only', bad)
+        with self.assertRaisesRegex(ValueError, 'missing frontend prerequisite'):
+            S['check_frontend'](self.source, self.config(), None, self.evidence)
+        locator = self.evidence / 'fake-frontend-locator.json'
+        for prior in [{'overall': 'FAIL'}, {'overall': 'PASS', 'config': self.config().json()}]:
+            locator.write_bytes(D['encoded'](prior))
+            with self.assertRaisesRegex(ValueError, 'failed/stale'):
+                S['check_frontend'](self.source, self.config(), locator, self.evidence)
 
     def test_curated_archive_boundary(self):
         directory = self.root / 'archive-child'
@@ -399,10 +449,11 @@ class Fixtures(unittest.TestCase):
             '0-inventory.json': D['encoded']({'proofs': {row.target: {'kind': 'verus', 'module': row.selector,
                 'verified': 1, 'expected_obligations': 1, 'threads': 1, 'seconds': 0}}}),
             '0-measurement.json': D['encoded']({'label': row.target, 'verified': 1, 'seconds': 0,
-                'rlimit_budget': 30, 'rlimit_run': 0, 'rlimit_init': 0}),
+                'rlimit_budget': 30, 'rlimit_run': 0, 'rlimit_init': 7, 'function_rlimit_sum': 0, 'function_count': 1, 'max_function_rlimit': 0}),
+            '0-execution.json': D['encoded'](fake_execution(row)),
             '0-verifier.json': D['encoded']({'verification-results': {'verified': 1, 'errors': 0,
                 'encountered-error': False, 'encountered-vir-error': False, 'is-verifying-entire-crate': False},
-                'times-ms': {'total': 0, 'num-threads': 1, 'smt': {'rlimit-run': 0, 'rlimit-init': 0}}})})
+                'times-ms': {'total': 0, 'num-threads': 1, 'smt': {'rlimit-run': 0, 'rlimit-init': 7, 'smt-run-module-times': [{'function-breakdown': [{'rlimit': 0, 'success': True}]}]}}})})
         manifest = [{'name': name, 'sha256': D['digest'](data), 'bytes': len(data)} for name, data in objects.items()]
         files = {'verus-measurement/' + name: data for name, data in objects.items()}
         files.update({'verus-measurement/artifact-manifest.json': D['encoded'](manifest),
