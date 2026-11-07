@@ -40,12 +40,20 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
     if e.seq != seq {
         return;
     }
+    if ack == Ack::DeliveryAccepted
+        && (e.kind != EffectKind::Enqueue
+            || (!e.cancelling && (w.nodes[i].phase != Phase::Publishing
+                || w.nodes[i].current() != Some(Item::Do(EffectKind::Enqueue)))))
+    {
+        return;
+    }
     w.nodes[i].effect = None;
     if e.cancelling {
         return;
     }
     match ack {
         Ack::Confirmed => confirmed(&mut w.nodes[i], e.kind),
+        Ack::DeliveryAccepted => delivery::accept(&mut w.nodes[i]),
         Ack::Retryable => delivery_failed(w, i, e.kind, out),
         Ack::Permanent => effect_failed(w, i, e.kind, out),
         Ack::BodyPolicyRefused if e.kind == EffectKind::OpenPr => {

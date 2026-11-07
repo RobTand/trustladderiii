@@ -504,7 +504,13 @@ impl World {
         if let Some(r) = n.phase.resume() {
             self.check_ready(n, r)?;
         }
-        if n.phase == Phase::Queued && !n.pr_open {
+        if n.phase == Phase::AwaitingDelivery {
+            self.check_ready(n, Resume::Publishing)?;
+            if n.effect.is_some() {
+                return Err(Broken::Effect);
+            }
+        }
+        if matches!(n.phase, Phase::Queued | Phase::AwaitingDelivery) && !n.pr_open {
             return Err(Broken::Pr);
         }
         // The PR counts as open from the moment TL3 asks GitHub to open it.

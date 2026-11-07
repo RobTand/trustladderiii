@@ -104,7 +104,7 @@ pub(super) proof fn outside_branch_exists(w: World)
         match n.phase {
             Phase::Ingesting | Phase::Auditing | Phase::Unplanned | Phase::Planning { .. }
                 | Phase::Ready(_) | Phase::Making | Phase::Checking | Phase::Reviewing
-                | Phase::Publishing | Phase::Queued | Phase::Rebasing | Phase::AwaitingRob
+                | Phase::Publishing | Phase::Queued | Phase::AwaitingDelivery | Phase::Rebasing | Phase::AwaitingRob
                 | Phase::Stopping(_) | Phase::Closed(_) => {},
         }
         assert(movable(w, i));
@@ -122,7 +122,7 @@ pub(super) proof fn resume_decreases(w: World, n: Node)
     match n.phase {
         Phase::Ingesting | Phase::Auditing | Phase::Unplanned | Phase::Planning { .. }
             | Phase::Ready(_) | Phase::Making | Phase::Checking | Phase::Reviewing
-            | Phase::Publishing | Phase::Queued | Phase::Rebasing | Phase::AwaitingRob
+            | Phase::Publishing | Phase::Queued | Phase::AwaitingDelivery | Phase::Rebasing | Phase::AwaitingRob
             | Phase::Stopping(_) | Phase::Closed(_) => {},
     }
 }

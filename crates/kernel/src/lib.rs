@@ -93,6 +93,7 @@ mod work_replies;
 use work_replies::*;
 mod retries;
 use retries::*;
+mod delivery;
 mod acknowledgements;
 use acknowledgements::*;
 mod facts;
@@ -271,6 +272,7 @@ pub enum Phase {
     Checking,
     Reviewing,
     Publishing,
+    AwaitingDelivery,
     Queued,
     Rebasing,
     AwaitingRob,
@@ -346,6 +348,7 @@ impl Phase {
             Phase::Checking => "Checking",
             Phase::Reviewing => "Reviewing",
             Phase::Publishing => "Publishing",
+            Phase::AwaitingDelivery => "AwaitingDelivery",
             Phase::Queued => "Queued",
             Phase::Rebasing => "Rebasing",
             Phase::AwaitingRob => "AwaitingRob",
@@ -989,6 +992,7 @@ pub enum Reply {
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Ack {
     Confirmed,
+    DeliveryAccepted,
     Retryable,
     Permanent,
     /// A TL3-created local body defect; only OpenPr can stop for this cause.
@@ -1376,6 +1380,8 @@ enum Item {
     Admit,
     /// Wait for a slot and its files.
     Slot,
+    /// Wait for an accepted delivery's outcome.
+    Delivery,
     /// Wait in Mergify's queue.
     Merge,
     /// Wait for Rob's answer.
@@ -1410,6 +1416,7 @@ kernel_fn! {
                 I::Do(K::OpenPr),
                 I::Do(K::Enqueue),
             ],
+            Phase::AwaitingDelivery => &[I::Delivery],
             Phase::Queued => &[I::Merge],
             Phase::Rebasing => &[I::StartRebase, I::Await],
             Phase::AwaitingRob => &[I::Answer],
@@ -1445,7 +1452,7 @@ kernel_fn! {
         match phase {
             Phase::Closed(_) => 0,
             Phase::Stopping(_) => 2,
-            Phase::Queued => 4,
+            Phase::Queued | Phase::AwaitingDelivery => 4,
             Phase::Publishing => 6,
             Phase::Reviewing => 10,
             Phase::Checking => 14,
@@ -1677,6 +1684,7 @@ pub fn proof_of_event(event: &Event) -> &'static str {
         },
         Event::Ack { ack, .. } => match ack {
             Ack::Confirmed => "apply_ack_confirmed",
+            Ack::DeliveryAccepted => "delivery_acceptance",
             Ack::Retryable => "apply_ack_retryable",
             Ack::Permanent => "apply_ack_permanent",
             Ack::BodyPolicyRefused => "apply_ack_body_policy_refused",
@@ -1732,6 +1740,7 @@ pub fn proofs_of_phase(phase: Phase) -> &'static [&'static str] {
         Phase::Checking => &["advance_checking", "progress_from_checking"],
         Phase::Reviewing => &["advance_reviewing", "progress_from_reviewing"],
         Phase::Publishing => &["advance_publishing", "progress_from_publishing"],
+        Phase::AwaitingDelivery => &["delivery_waiting", "delivery_progress"],
         Phase::Queued => &["advance_queued", "progress_from_queued"],
         Phase::Rebasing => &[
             "advance_rebasing",
@@ -1811,6 +1820,8 @@ spec fn node_checked(w: World, n: Node) -> bool {
         && (holding(n.phase) ==> n.holds)
         && (n.holds ==> holding(n.phase) || (n.phase is Stopping && n.pos <= RELEASE_STEP))
         && (n.phase == Phase::Queued ==> n.pr_open)
+        && (n.phase == Phase::AwaitingDelivery ==> ready_checked(n, Resume::Publishing)
+            && n.pr_open && n.effect.is_none())
         && (n.pr_open ==> n.had_pr)
         && (n.merged.is_some() ==> n.phase == Phase::Stopping(Outcome::Merged)
             || n.phase == Phase::Closed(Outcome::Merged))

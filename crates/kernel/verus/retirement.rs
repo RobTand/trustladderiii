@@ -71,7 +71,7 @@ pub(super) open spec fn node_rules(w: World, n: Node) -> bool {
             && n.credit.added == 0 && n.credit.spent == 0 && !n.credit.merge_credited)
         && (holding(n.phase) || n.phase is Ready || matches!(n.phase,
             Phase::Auditing | Phase::Unplanned | Phase::Planning { .. }) || n.had_pr ==> n.credit.ready)
-        && (n.phase == Phase::Queued ==> n.pr_open)
+        && (matches!(n.phase, Phase::Queued | Phase::AwaitingDelivery) ==> n.pr_open)
         && (n.phase == Phase::Publishing && (n.pos >= 3 || (n.pos == 2
             && match n.effect { Some(e) => !e.cancelling && e.kind == EffectKind::OpenPr, None => false })) ==> n.pr_open)
         && (n.pr_open ==> n.had_pr)
