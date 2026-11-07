@@ -99,7 +99,10 @@ def _command(plan, command):
                     process.stdin.flush()
                     process.wait(timeout=30)
                 except (OSError, subprocess.TimeoutExpired):
-                    os.killpg(process.pid, signal.SIGKILL)
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
                     process.wait()
 
 
