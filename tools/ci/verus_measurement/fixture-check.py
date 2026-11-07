@@ -171,6 +171,10 @@ class Fixtures(unittest.TestCase):
         measurement = {'label': row.target, 'verified': 1, 'seconds': 0, 'rlimit_budget': 30,
                        'rlimit_run': 0, 'rlimit_init': 7, 'function_rlimit_sum': 0, 'function_count': 1, 'max_function_rlimit': 0}
         self.assertEqual(D['child_verdict'](stats, proof, measurement, row, execution=fake_execution(row))['resources'], 'PASS')
+        for key in ('rlimit_run', 'function_rlimit_sum', 'function_count', 'max_function_rlimit', 'seconds'):
+            bad = {**measurement, key: False if key != 'function_count' else True}
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                D['child_verdict'](stats, proof, bad, row, execution=fake_execution(row))
         del stats['times-ms']['total']
         self.assertEqual(D['child_verdict'](stats, proof, measurement, row, execution=fake_execution(row))['resources'], 'UNKNOWN')
         stats['verification-results']['success'] = False

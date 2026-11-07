@@ -269,10 +269,10 @@ def child_verdict(stats, proof, measurement, row, mode="normal", execution=None,
     resources = {'rlimit_run': metric(smt.get('rlimit-run')), 'rlimit_init': metric(smt.get('rlimit-init')),
                  'total_ms': metric(times.get('total')), 'threads': metric(times.get('num-threads'))}
     require(measurement.get('label') == actual_label and type(measurement.get('verified')) is int and measurement['verified'] == row.expected and
-            measurement.get('seconds') == wall and measurement.get('rlimit_budget') == 30,
+            type(measurement.get('seconds')) in (int, float) and measurement['seconds'] == wall and measurement.get('rlimit_budget') == 30,
             'measurement identity/budget mismatch')
-    require(measurement.get('rlimit_run') == resources['rlimit_run'] and
-            measurement.get('rlimit_init') == resources['rlimit_init'], 'measurement resource mismatch')
+    require(metric(measurement.get('rlimit_run')) == resources['rlimit_run'] and
+            metric(measurement.get('rlimit_init')) == resources['rlimit_init'], 'measurement resource mismatch')
     functions = []
     modules = smt.get('smt-run-module-times')
     if type(modules) is list:
@@ -282,9 +282,9 @@ def child_verdict(stats, proof, measurement, row, mode="normal", execution=None,
                 require(type(function) is dict and metric(function.get('rlimit')) is not None and function.get('success') is True, 'invalid expanded function metric')
                 functions.append(function['rlimit'])
     require(functions and sum(functions) == resources['rlimit_run'] and
-            measurement.get('function_rlimit_sum') == sum(functions) and
-            measurement.get('function_count') == len(functions) and
-            measurement.get('max_function_rlimit') == max(functions), 'expanded/raw resource disagreement')
+            metric(measurement.get('function_rlimit_sum')) == sum(functions) and
+            metric(measurement.get('function_count')) == len(functions) and
+            metric(measurement.get('max_function_rlimit')) == max(functions), 'expanded/raw resource disagreement')
     validate_execution(execution, row, mode, raw_queries)
     return {'proof': 'PASS', 'bazel_label': actual_label, 'function_rlimit_sum': sum(functions), 'function_count': len(functions), 'resources': 'PASS' if None not in resources.values() and resources['threads'] == 1 else 'UNKNOWN',
             **resources, 'wall_seconds': wall, 'wall_warning': wall > 20}
@@ -358,7 +358,7 @@ def frontend_verdict(stats, inventory, measurement, row, execution):
             'frontend positive inventory is metadata only')
     wall = p.get('seconds')
     require(type(wall) in (int, float) and math.isfinite(wall) and wall >= 0, 'missing frontend wall')
-    require(measurement == {'label': actual_label, 'mode': 'FRONTEND_ONLY', 'no_smt': True,
+    require(measurement.get('no_smt') is True and measurement == {'label': actual_label, 'mode': 'FRONTEND_ONLY', 'no_smt': True,
                            'proof': 'NOT_RUN', 'resource_acceptance': 'NOT_APPLICABLE'}, 'frontend/proof conflation')
     return {'frontend': 'PASS', 'bazel_label': actual_label, 'mode': 'FRONTEND_ONLY', 'proof': 'NOT_RUN', 'no_smt': True,
             'resources': 'NOT_APPLICABLE', 'rlimit_run': None, 'rlimit_init': None,

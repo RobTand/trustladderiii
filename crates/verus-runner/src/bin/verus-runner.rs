@@ -904,7 +904,8 @@ mod toolchain_tests {
     #[test]
     fn modern_process_receipt_includes_the_actual_verifier_binary() {
         use std::os::unix::fs::PermissionsExt;
-        let root = std::env::temp_dir().join(format!("toolchain-process-fixture-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("toolchain-process-fixture-{}", std::process::id()));
         std::fs::create_dir_all(root.join("rust/bin")).unwrap();
         std::fs::create_dir(root.join("verus")).unwrap();
         for name in ["rust/bin/rustc", "verus/z3", "verus/rust_verify"] {
@@ -914,17 +915,37 @@ mod toolchain_tests {
         let verifier = root.join("verus/verus");
         std::fs::write(&verifier, "#!/bin/sh\nexit 0\n").unwrap();
         std::fs::set_permissions(&verifier, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let tools = Toolchain::new(&verifier, &root.join("verus/z3"), &root.join("rust/bin/rustc")).unwrap();
-        let result = tools.verify(Path::new("FAKE.rs"), "kernel#fake", ExecutionMode::FrontendOnly).unwrap();
+        let tools = Toolchain::new(
+            &verifier,
+            &root.join("verus/z3"),
+            &root.join("rust/bin/rustc"),
+        )
+        .unwrap();
+        let result = tools
+            .verify(
+                Path::new("FAKE.rs"),
+                "kernel#fake",
+                ExecutionMode::FrontendOnly,
+            )
+            .unwrap();
         assert_eq!(result.status, Some(0));
         let identities = result.execution["tools"].as_object().unwrap();
         assert_eq!(identities.len(), 4);
-        assert_eq!(identities["rust_verify"]["path"], serde_json::json!(root.join("verus/rust_verify").canonicalize().unwrap()));
-        assert_eq!(identities["rust_verify"]["sha256"].as_str().unwrap().len(), 64);
+        assert_eq!(
+            identities["rust_verify"]["path"],
+            serde_json::json!(root.join("verus/rust_verify").canonicalize().unwrap())
+        );
+        assert_eq!(
+            identities["rust_verify"]["sha256"].as_str().unwrap().len(),
+            64
+        );
         let argv = result.execution["argv"].as_array().unwrap();
         assert!(argv.contains(&serde_json::json!("--no-verify")));
         assert!(!argv.contains(&serde_json::json!("--build-sst")));
-        assert_eq!(result.execution["sysroot"], serde_json::json!(root.join("rust").canonicalize().unwrap()));
+        assert_eq!(
+            result.execution["sysroot"],
+            serde_json::json!(root.join("rust").canonicalize().unwrap())
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
