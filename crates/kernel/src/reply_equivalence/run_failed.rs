@@ -13,7 +13,9 @@ fn compare_failed(world: World, i: usize, out: Outbox, prefix: Vec<ReportEntry>)
     let mut expected = world;
     let mut actual_out = out;
     let mut expected_out = out;
-    let mut actual_report = Report { entries: prefix.clone() };
+    let mut actual_report = Report {
+        entries: prefix.clone(),
+    };
     let mut expected_report = Report { entries: prefix };
     reference::run_failed(&mut expected, i, &mut expected_out, &mut expected_report);
     crate::retries::run_failed(&mut actual, i, &mut actual_out, &mut actual_report);
