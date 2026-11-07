@@ -1,0 +1,18 @@
+{
+  "head": "6c6efd421c7026b9277c6af3ebb27c74030219fe",
+  "comparison_base": "e57039b018966a4feb0b254e126c749f93d6e288",
+  "branch": "example/measurement",
+  "mode": "normal",
+  "watchdog_seconds": 45,
+  "outer_seconds": 180,
+  "coordinator_minutes": 30,
+  "diagnostic_authorization": null,
+  "raw_queries": false,
+  "selections": [
+    {
+      "target": "//crates/kernel:verus_dependencies",
+      "selector": "kernel::dependencies#World::record_dependency",
+      "expected": 1
+    }
+  ]
+}
