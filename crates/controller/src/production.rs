@@ -1,8 +1,8 @@
 use crate::{Result, adapters, executor::Registry, ingress::Webhooks};
 use tl3_worktrees::{CommitId, Worktrees};
 
-mod flux_options;
 mod checks;
+mod flux_options;
 pub use checks::{CheckSource, register_execution};
 pub use flux_options::{flux_job_environment, flux_options, provision_flux_options};
 
@@ -46,7 +46,9 @@ fn require_drained_pb(root: &std::path::Path) -> Result<()> {
     use std::{fs, io::ErrorKind};
     const HOLD: &str = "Flux selection requires ops to drain or explicitly hold retained PrismaBuild bindings on the PB route";
     match fs::symlink_metadata(root) {
-        Ok(metadata) if metadata.file_type().is_symlink() => return Err(crate::Error::Invalid(HOLD)),
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(crate::Error::Invalid(HOLD));
+        }
         Ok(_) => {}
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error.into()),
@@ -57,7 +59,8 @@ fn require_drained_pb(root: &std::path::Path) -> Result<()> {
         Err(error) => return Err(error.into()),
     };
     let retained = |path: &std::path::Path| {
-        path.extension().is_some_and(|suffix| matches!(suffix.to_str(), Some("job" | "wait" | "done")))
+        path.extension()
+            .is_some_and(|suffix| matches!(suffix.to_str(), Some("job" | "wait" | "done")))
     };
     for entry in entries {
         let entry = entry?;

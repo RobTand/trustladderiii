@@ -8,9 +8,19 @@ pub(super) fn flux(root: &Path) -> tl3_config::Flux {
         executable: "/opt/flux/bin/flux".into(),
         backend_cli: "/opt/tl3/bin/tl3-run-backend".into(),
         container_mode: tl3_config::ContainerMode::OwnScope,
-                runtime_bundles: vec![format!("/mnt/shared/flux-out/tl3/.runtime/{}/manifest.json", "0".repeat(64)).into()],
+        runtime_bundles: vec![
+            format!(
+                "/mnt/shared/flux-out/tl3/.runtime/{}/manifest.json",
+                "0".repeat(64)
+            )
+            .into(),
+        ],
         uri: "local:///run/flux/local-0".into(),
-        environment: BTreeMap::from([("PATH".into(), "/opt/flux/bin:/usr/bin:/bin".into()), ("HOME".into(), "/home/rob".into()), ("XDG_RUNTIME_DIR".into(), "/run/user/1000".into())]),
+        environment: BTreeMap::from([
+            ("PATH".into(), "/opt/flux/bin:/usr/bin:/bin".into()),
+            ("HOME".into(), "/home/rob".into()),
+            ("XDG_RUNTIME_DIR".into(), "/run/user/1000".into()),
+        ]),
         staging_root: root.join("inputs"),
         output_root: root.join("outputs"),
         container_image: format!("dl380g10:5000/tl3/harness@sha256:{}", "a".repeat(64)),
@@ -27,8 +37,14 @@ fn bootstrap_preserves_uri_generation_and_explicit_environment() {
     assert_eq!(options.instance_generation, config.instance_generation);
     assert_eq!(options.executable, config.executable);
     assert_eq!(options.bootstrap.cli, config.backend_cli);
-    assert_eq!(options.bootstrap.config, config.output_root.join(".run-backend/options.json"));
-    assert_eq!(options.journal_root, config.output_root.join(".run-backend"));
+    assert_eq!(
+        options.bootstrap.config,
+        config.output_root.join(".run-backend/options.json")
+    );
+    assert_eq!(
+        options.journal_root,
+        config.output_root.join(".run-backend")
+    );
     assert!(options.arguments.is_empty());
     let mut expected = config.environment.clone();
     expected.insert("FLUX_URI".into(), config.uri.clone());
@@ -46,14 +62,39 @@ fn bootstrap_publication_is_private_and_refuses_a_lost_claim() {
     let options = production::provision_flux_options(&config, &mut ownership).unwrap();
     let bytes = fs::read(&options.bootstrap.config).unwrap();
     let retained: Options = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(serde_json::to_value(&retained).unwrap(), serde_json::to_value(&options).unwrap());
-    assert_eq!(fs::metadata(&options.bootstrap.config).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_eq!(
+        serde_json::to_value(&retained).unwrap(),
+        serde_json::to_value(&options).unwrap()
+    );
+    assert_eq!(
+        fs::metadata(&options.bootstrap.config)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
     let environment_path = options.journal_root.join("job-environment.json");
-    let environment: BTreeMap<String, String> = serde_json::from_slice(&fs::read(&environment_path).unwrap()).unwrap();
+    let environment: BTreeMap<String, String> =
+        serde_json::from_slice(&fs::read(&environment_path).unwrap()).unwrap();
     assert_eq!(environment, production::flux_job_environment());
-    assert_eq!(environment, BTreeMap::from([("HOME".into(), "/home/rob".into()), ("XDG_RUNTIME_DIR".into(), "/run/user/1000".into()), ("PATH".into(), "/usr/bin:/bin".into())]));
+    assert_eq!(
+        environment,
+        BTreeMap::from([
+            ("HOME".into(), "/home/rob".into()),
+            ("XDG_RUNTIME_DIR".into(), "/run/user/1000".into()),
+            ("PATH".into(), "/usr/bin:/bin".into())
+        ])
+    );
     assert_ne!(environment.get("PATH"), config.environment.get("PATH"));
-    assert_eq!(fs::metadata(&environment_path).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_eq!(
+        fs::metadata(&environment_path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
     // Repeat publication preserves the exact shared profile.
     production::provision_flux_options(&config, &mut ownership).unwrap();
     assert_eq!(fs::read(&options.bootstrap.config).unwrap(), bytes);

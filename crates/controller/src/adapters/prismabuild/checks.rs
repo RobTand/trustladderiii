@@ -382,7 +382,7 @@ pub(crate) fn descended_base(delivery: &Delivery) -> Result<CheckRun> {
     Ok(run)
 }
 
-pub(crate) fn stage(
+pub(in crate::adapters) fn stage(
     root: &Path,
     harness: &Path,
     delivery: &Delivery,

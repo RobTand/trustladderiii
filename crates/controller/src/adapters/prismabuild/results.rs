@@ -37,20 +37,27 @@ trait ReportJob {
 
 impl ReportJob for Job {
     fn report_context(&self) -> ReportContext<'_> {
-        ReportContext { delivery: &self.delivery, run: &self.run,
+        ReportContext {
+            delivery: &self.delivery,
+            run: &self.run,
             changed_paths: &self.changed_paths,
-            selected_tests: self.selected_tests, always_tests: &self.always_tests }
+            selected_tests: self.selected_tests,
+            always_tests: &self.always_tests,
+        }
     }
 }
 
 impl ReportJob for ReportContext<'_> {
     fn report_context(&self) -> ReportContext<'_> {
-        ReportContext { delivery: self.delivery, run: self.run,
+        ReportContext {
+            delivery: self.delivery,
+            run: self.run,
             changed_paths: self.changed_paths,
-            selected_tests: self.selected_tests, always_tests: self.always_tests }
+            selected_tests: self.selected_tests,
+            always_tests: self.always_tests,
+        }
     }
 }
-
 
 #[derive(Deserialize)]
 struct Endings {
@@ -282,7 +289,11 @@ fn evidence_with_read(
 
 /// Interpret a verified daytime payload using the same strict identity and semantic judge.
 /// Transport success alone never establishes a report or full-suite membership.
-pub(crate) fn judge_payload(raw: &[u8], job: &ReportContext<'_>, successful: bool) -> Result<CheckEvidence> {
+pub(crate) fn judge_payload(
+    raw: &[u8],
+    job: &ReportContext<'_>,
+    successful: bool,
+) -> Result<CheckEvidence> {
     if raw.len() > MAX_RESULT_BYTES {
         return Err(Error::Invalid("oversized check result"));
     }
@@ -328,8 +339,7 @@ pub(crate) fn judge_payload(raw: &[u8], job: &ReportContext<'_>, successful: boo
             .map(|test| FailedTest {
                 test: clipped(test.test.as_str(), 4096),
                 message: if test.failure_message().trim().is_empty() {
-                    "The harness rejected this named test; no failure message was supplied."
-                        .into()
+                    "The harness rejected this named test; no failure message was supplied.".into()
                 } else {
                     test.failure_message().to_owned()
                 },
@@ -404,7 +414,14 @@ fn completion(
     results: Vec<serde_json::Value>,
     failed_tests: Vec<FailedTest>,
 ) -> Result<Completion> {
-    completion_for(&job.report_context(), job.action.as_str(), report, pass, results, failed_tests)
+    completion_for(
+        &job.report_context(),
+        job.action.as_str(),
+        report,
+        pass,
+        results,
+        failed_tests,
+    )
 }
 
 fn completion_for(
@@ -444,7 +461,10 @@ fn completion_for(
     Ok(Completion::confirmed(observations))
 }
 
-pub(crate) fn transport_completion(context: &ReportContext<'_>, action_key: &str) -> Result<Completion> {
+pub(crate) fn transport_completion(
+    context: &ReportContext<'_>,
+    action_key: &str,
+) -> Result<Completion> {
     completion_for(context, action_key, false, false, vec![], vec![])
 }
 
@@ -456,20 +476,25 @@ pub(crate) fn daytime_completion(
     context: &ReportContext<'_>,
     action_key: &str,
 ) -> Result<Completion> {
-    let payload = backend.daytime_payload(owner, terminal)
+    let payload = backend
+        .daytime_payload(owner, terminal)
         .map_err(|error| Error::Adapter(Box::new(error)))?;
     let mut raw = b"TL3_CHECKS ".to_vec();
     raw.extend(serde_json::to_vec(&payload)?);
-    let (report, pass, results, failures, failure, diagnostic) = judge_payload(&raw, context, true)?;
+    let (report, pass, results, failures, failure, diagnostic) =
+        judge_payload(&raw, context, true)?;
     let mut completion = completion_for(context, action_key, report, pass, results, failures)?;
     completion.failure_class = failure.map(Into::into);
     if let Some(diagnostic) = diagnostic {
-        completion.observations.insert(0, Observation::CheckExecutionFailure {
-            node: context.delivery.node(),
-            generation: context.delivery.generation,
-            action_key: action_key.to_owned(),
-            diagnostic,
-        });
+        completion.observations.insert(
+            0,
+            Observation::CheckExecutionFailure {
+                node: context.delivery.node(),
+                generation: context.delivery.generation,
+                action_key: action_key.to_owned(),
+                diagnostic,
+            },
+        );
     }
     Ok(completion)
 }

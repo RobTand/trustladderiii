@@ -597,7 +597,8 @@ pub struct Flux {
 
 impl std::fmt::Debug for Flux {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_struct("Flux")
+        formatter
+            .debug_struct("Flux")
             .field("instance_generation", &self.instance_generation)
             .field("executable", &self.executable)
             .field("backend_cli", &self.backend_cli)
@@ -614,51 +615,121 @@ impl std::fmt::Debug for Flux {
 impl Flux {
     fn validate(&self) -> Result<(), Error> {
         let generation = self.instance_generation.as_str();
-        let (run, invocation) = generation.split_once('/').map_or((generation, None), |(run, id)| (run, Some(id)));
-        if run.is_empty() || matches!(run, "." | "..") || generation.len() > 128
-            || !run.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-            || invocation.is_some_and(|id| id.len() != 32 || !id.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
+        let (run, invocation) = generation
+            .split_once('/')
+            .map_or((generation, None), |(run, id)| (run, Some(id)));
+        if run.is_empty()
+            || matches!(run, "." | "..")
+            || generation.len() > 128
+            || !run
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+            || invocation.is_some_and(|id| {
+                id.len() != 32
+                    || !id
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
         {
-            return Err(invalid("flux.instance_generation", "use an operator-assigned generation or run-name/32-lowercase-hex-InvocationID; it is an identity, never a filesystem path"));
+            return Err(invalid(
+                "flux.instance_generation",
+                "use an operator-assigned generation or run-name/32-lowercase-hex-InvocationID; it is an identity, never a filesystem path",
+            ));
         }
         if self.runtime_bundles.is_empty() {
-            return Err(invalid("flux.runtime_bundles", "select at least one provisioned immutable runtime bundle"));
+            return Err(invalid(
+                "flux.runtime_bundles",
+                "select at least one provisioned immutable runtime bundle",
+            ));
         }
         let mut locators = std::collections::BTreeSet::new();
         for path in &self.runtime_bundles {
-            let digest = path.to_str().and_then(|text| text.strip_prefix("/mnt/shared/flux-out/tl3/.runtime/"))
+            let digest = path
+                .to_str()
+                .and_then(|text| text.strip_prefix("/mnt/shared/flux-out/tl3/.runtime/"))
                 .and_then(|text| text.strip_suffix("/manifest.json"));
-            if !digest.is_some_and(|digest| digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
-                || !locators.insert(path)
+            if !digest.is_some_and(|digest| {
+                digest.len() == 64
+                    && digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            }) || !locators.insert(path)
             {
-                return Err(invalid("flux.runtime_bundles", "use unique /mnt/shared/flux-out/tl3/.runtime/<64-lowercase-hex>/manifest.json locators; content verification belongs to runtime preparation"));
+                return Err(invalid(
+                    "flux.runtime_bundles",
+                    "use unique /mnt/shared/flux-out/tl3/.runtime/<64-lowercase-hex>/manifest.json locators; content verification belongs to runtime preparation",
+                ));
             }
         }
         absolute("flux.executable", &self.executable)?;
         absolute("flux.backend_cli", &self.backend_cli)?;
-        if self.backend_cli.components().any(|part| matches!(part, std::path::Component::ParentDir)) {
-            return Err(invalid("flux.backend_cli", "use an absolute provisioned executable without parent traversal"));
+        if self
+            .backend_cli
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+        {
+            return Err(invalid(
+                "flux.backend_cli",
+                "use an absolute provisioned executable without parent traversal",
+            ));
         }
         nonempty("flux.uri", &self.uri)?;
-        let uri = Url::parse(&self.uri).map_err(|_| invalid("flux.uri", "use an explicit local:/// absolute Flux socket path"))?;
-        if !self.uri.starts_with("local:///") || uri.scheme() != "local" || uri.host_str().is_some() || !uri.path().starts_with('/')
-            || uri.path() == "/" || uri.query().is_some() || uri.fragment().is_some()
+        let uri = Url::parse(&self.uri).map_err(|_| {
+            invalid(
+                "flux.uri",
+                "use an explicit local:/// absolute Flux socket path",
+            )
+        })?;
+        if !self.uri.starts_with("local:///")
+            || uri.scheme() != "local"
+            || uri.host_str().is_some()
+            || !uri.path().starts_with('/')
+            || uri.path() == "/"
+            || uri.query().is_some()
+            || uri.fragment().is_some()
         {
-            return Err(invalid("flux.uri", "use an explicit local:/// absolute Flux socket path"));
+            return Err(invalid(
+                "flux.uri",
+                "use an explicit local:/// absolute Flux socket path",
+            ));
         }
-        shared_directory("flux.staging_root", &self.staging_root, Path::new("/mnt/shared"))?;
-        shared_directory("flux.output_root", &self.output_root, Path::new("/mnt/shared/flux-out/tl3"))?;
+        shared_directory(
+            "flux.staging_root",
+            &self.staging_root,
+            Path::new("/mnt/shared"),
+        )?;
+        shared_directory(
+            "flux.output_root",
+            &self.output_root,
+            Path::new("/mnt/shared/flux-out/tl3"),
+        )?;
         if self.output_root != Path::new("/mnt/shared/flux-out/tl3") {
-            return Err(invalid("flux.output_root", "the first Flux cut requires /mnt/shared/flux-out/tl3 exactly"));
+            return Err(invalid(
+                "flux.output_root",
+                "the first Flux cut requires /mnt/shared/flux-out/tl3 exactly",
+            ));
         }
-        if self.staging_root.starts_with(&self.output_root) || self.output_root.starts_with(&self.staging_root) {
-            return Err(invalid("flux.staging_root", "staging and output directories must be disjoint"));
+        if self.staging_root.starts_with(&self.output_root)
+            || self.output_root.starts_with(&self.staging_root)
+        {
+            return Err(invalid(
+                "flux.staging_root",
+                "staging and output directories must be disjoint",
+            ));
         }
         if !self.environment.contains_key("PATH") {
-            return Err(invalid("flux.environment", "set PATH explicitly; the controller does not merge ambient environment variables"));
+            return Err(invalid(
+                "flux.environment",
+                "set PATH explicitly; the controller does not merge ambient environment variables",
+            ));
         }
-        if !self.environment.contains_key("HOME") || !self.environment.contains_key("XDG_RUNTIME_DIR") {
-            return Err(invalid("flux.environment", "set both provisioned HOME and XDG_RUNTIME_DIR explicitly for the authoritative user-systemd generation guard"));
+        if !self.environment.contains_key("HOME")
+            || !self.environment.contains_key("XDG_RUNTIME_DIR")
+        {
+            return Err(invalid(
+                "flux.environment",
+                "set both provisioned HOME and XDG_RUNTIME_DIR explicitly for the authoritative user-systemd generation guard",
+            ));
         }
         for (name, value) in &self.environment {
             let fixed = match name.as_str() {
@@ -668,17 +739,33 @@ impl Flux {
             };
             if let Some(expected) = fixed {
                 if value != expected {
-                    return Err(invalid("flux.environment", "access HOME and XDG_RUNTIME_DIR must match the explicitly provisioned profile; values withheld"));
+                    return Err(invalid(
+                        "flux.environment",
+                        "access HOME and XDG_RUNTIME_DIR must match the explicitly provisioned profile; values withheld",
+                    ));
                 }
                 continue;
             }
             if !matches!(name.as_str(), "PATH" | "LD_LIBRARY_PATH") {
-                return Err(invalid("flux.environment", "only explicit PATH, LD_LIBRARY_PATH and provisioned HOME/XDG_RUNTIME_DIR are accepted; backend, job and output variables are controller-owned"));
+                return Err(invalid(
+                    "flux.environment",
+                    "only explicit PATH, LD_LIBRARY_PATH and provisioned HOME/XDG_RUNTIME_DIR are accepted; backend, job and output variables are controller-owned",
+                ));
             }
-            if value.is_empty() || value.len() > 8192 || value.chars().any(char::is_control)
-                || value.split(':').any(|entry| !Path::new(entry).is_absolute() || Path::new(entry).components().any(|part| matches!(part, std::path::Component::ParentDir)))
+            if value.is_empty()
+                || value.len() > 8192
+                || value.chars().any(char::is_control)
+                || value.split(':').any(|entry| {
+                    !Path::new(entry).is_absolute()
+                        || Path::new(entry)
+                            .components()
+                            .any(|part| matches!(part, std::path::Component::ParentDir))
+                })
             {
-                return Err(invalid("flux.environment", "use a bounded list of absolute search directories without empty entries or parent traversal"));
+                return Err(invalid(
+                    "flux.environment",
+                    "use a bounded list of absolute search directories without empty entries or parent traversal",
+                ));
             }
         }
         Ok(())
@@ -687,10 +774,16 @@ impl Flux {
 
 fn shared_directory(field: &str, path: &Path, parent: &Path) -> Result<(), Error> {
     absolute(field, path)?;
-    if !path.starts_with(parent) || path == parent && parent == Path::new("/mnt/shared")
-        || path.components().any(|part| matches!(part, std::path::Component::ParentDir))
+    if !path.starts_with(parent)
+        || path == parent && parent == Path::new("/mnt/shared")
+        || path
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
     {
-        return Err(invalid(field, "use the approved shared directory without parent traversal"));
+        return Err(invalid(
+            field,
+            "use the approved shared directory without parent traversal",
+        ));
     }
     Ok(())
 }
@@ -823,7 +916,10 @@ impl Config {
     pub fn selected_execution(&self) -> Result<SelectedExecution<'_>, Error> {
         match self.execution_backend {
             ExecutionBackend::PrismaBuild => Ok(SelectedExecution::PrismaBuild(&self.prismabuild)),
-            ExecutionBackend::Flux => self.flux.as_ref().map(SelectedExecution::Flux)
+            ExecutionBackend::Flux => self
+                .flux
+                .as_ref()
+                .map(SelectedExecution::Flux)
                 .ok_or_else(|| invalid("flux", "execution_backend = 'flux' requires [flux]")),
         }
     }
@@ -840,8 +936,10 @@ impl Config {
             }
         };
         if !immutable_image(image.1) {
-            return Err(invalid(image.0,
-                "use sha256:<64 lowercase hex digits> or repository@sha256:<64 lowercase hex digits>, as harness.Container requires"));
+            return Err(invalid(
+                image.0,
+                "use sha256:<64 lowercase hex digits> or repository@sha256:<64 lowercase hex digits>, as harness.Container requires",
+            ));
         }
         Ok(())
     }

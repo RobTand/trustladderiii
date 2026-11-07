@@ -68,7 +68,11 @@ fn backend_neutral_payload_keeps_identity_and_semantic_guards() {
     assert!(!judge_payload(&raw(&report), &context, false).unwrap().1);
     for field in ["effect_key", "base", "head", "reviewed"] {
         let mut wrong = report.clone();
-        wrong[field] = if field == "effect_key" { "another-effect".into() } else { "c".repeat(40).into() };
+        wrong[field] = if field == "effect_key" {
+            "another-effect".into()
+        } else {
+            "c".repeat(40).into()
+        };
         let rejected = judge_payload(&raw(&wrong), &context, true).unwrap();
         assert!(!rejected.0 && !rejected.1, "accepted wrong {field}");
     }
@@ -81,14 +85,61 @@ fn backend_neutral_payload_keeps_identity_and_semantic_guards() {
 
 struct DaytimePayload(Option<Report>);
 impl crate::run_backend::RunBackend for DaytimePayload {
-    fn submit(&self, _: crate::run_backend::Request, _: crate::run_backend::SubmissionIntent) -> crate::run_backend::Result<crate::run_backend::Submission> { unreachable!() }
-    fn attach(&self, _: &crate::run_backend::Owner, _: &crate::run_backend::WatchStop, _: &mut dyn FnMut(&crate::run_backend::Event) -> crate::run_backend::Result<()>) -> crate::run_backend::Result<crate::run_backend::Observation> { unreachable!() }
-    fn cancel(&self, _: &crate::run_backend::Owner) -> crate::run_backend::Result<crate::run_backend::CancelAck> { unreachable!() }
-    fn probe(&self, _: &crate::run_backend::Reservation, _: &crate::run_backend::Placement) -> crate::run_backend::Result<crate::run_backend::Probe> { unreachable!() }
-    fn liveness(&self, _: &crate::run_backend::Owner) -> crate::run_backend::Result<crate::run_backend::Liveness> { unreachable!() }
-    fn validate_allocation(&self, _: &crate::run_backend::Owner, _: &crate::run_backend::AllocationInput) -> crate::run_backend::Result<crate::run_backend::CpuGrant> { unreachable!() }
-    fn worker_payload(&self, _: &crate::run_backend::Owner, _: &crate::run_backend::Terminal) -> crate::run_backend::Result<crate::run_backend::WorkerPayload> { unreachable!() }
-    fn launch_context(&self, _: &crate::run_backend::Owner, _: &str) -> crate::run_backend::Result<crate::run_backend::LaunchContext> { unreachable!() }
+    fn submit(
+        &self,
+        _: crate::run_backend::Request,
+        _: crate::run_backend::SubmissionIntent,
+    ) -> crate::run_backend::Result<crate::run_backend::Submission> {
+        unreachable!()
+    }
+    fn attach(
+        &self,
+        _: &crate::run_backend::Owner,
+        _: &crate::run_backend::WatchStop,
+        _: &mut dyn FnMut(&crate::run_backend::Event) -> crate::run_backend::Result<()>,
+    ) -> crate::run_backend::Result<crate::run_backend::Observation> {
+        unreachable!()
+    }
+    fn cancel(
+        &self,
+        _: &crate::run_backend::Owner,
+    ) -> crate::run_backend::Result<crate::run_backend::CancelAck> {
+        unreachable!()
+    }
+    fn probe(
+        &self,
+        _: &crate::run_backend::Reservation,
+        _: &crate::run_backend::Placement,
+    ) -> crate::run_backend::Result<crate::run_backend::Probe> {
+        unreachable!()
+    }
+    fn liveness(
+        &self,
+        _: &crate::run_backend::Owner,
+    ) -> crate::run_backend::Result<crate::run_backend::Liveness> {
+        unreachable!()
+    }
+    fn validate_allocation(
+        &self,
+        _: &crate::run_backend::Owner,
+        _: &crate::run_backend::AllocationInput,
+    ) -> crate::run_backend::Result<crate::run_backend::CpuGrant> {
+        unreachable!()
+    }
+    fn worker_payload(
+        &self,
+        _: &crate::run_backend::Owner,
+        _: &crate::run_backend::Terminal,
+    ) -> crate::run_backend::Result<crate::run_backend::WorkerPayload> {
+        unreachable!()
+    }
+    fn launch_context(
+        &self,
+        _: &crate::run_backend::Owner,
+        _: &str,
+    ) -> crate::run_backend::Result<crate::run_backend::LaunchContext> {
+        unreachable!()
+    }
     fn begin_container_launch(
         &self,
         _: &crate::run_backend::Owner,
@@ -107,10 +158,27 @@ impl crate::run_backend::RunBackend for DaytimePayload {
             "daytime payload fixture refuses container binding",
         ))
     }
-    fn retain_runtime(&self, _: &crate::run_backend::Owner, _: crate::run_backend::RuntimeOwnership) -> crate::run_backend::Result<()> { unreachable!() }
-    fn cleanup_runtime(&self, _: &crate::run_backend::Owner) -> crate::run_backend::Result<crate::run_backend::CleanupResult> { unreachable!() }
-    fn daytime_payload(&self, _: &crate::run_backend::Owner, _: &crate::run_backend::Terminal) -> crate::run_backend::Result<Report> {
-        self.0.clone().ok_or_else(|| crate::run_backend::BackendError::unknown("verified payload unavailable"))
+    fn retain_runtime(
+        &self,
+        _: &crate::run_backend::Owner,
+        _: crate::run_backend::RuntimeOwnership,
+    ) -> crate::run_backend::Result<()> {
+        unreachable!()
+    }
+    fn cleanup_runtime(
+        &self,
+        _: &crate::run_backend::Owner,
+    ) -> crate::run_backend::Result<crate::run_backend::CleanupResult> {
+        unreachable!()
+    }
+    fn daytime_payload(
+        &self,
+        _: &crate::run_backend::Owner,
+        _: &crate::run_backend::Terminal,
+    ) -> crate::run_backend::Result<Report> {
+        self.0.clone().ok_or_else(|| {
+            crate::run_backend::BackendError::unknown("verified payload unavailable")
+        })
     }
 }
 
@@ -120,19 +188,58 @@ fn shared_backend_payload_builds_controller_completion_without_pb_identity() {
     use crate::run_backend as rb;
     let (job, report) = fixture("passed", "passed", true, false);
     let report: Report = serde_json::from_value(report).unwrap();
-    let owner = rb::Owner { owner: "controller".into(), correlation: "retained-check".into() };
-    let terminal = rb::Terminal { ending: rb::Ending::Passed, reason: "verified checks completed".into(),
-        receipt: rb::BlobRef { sha256: "c".repeat(64), bytes: 1, path: "/owned/receipt".into() } };
-    let completion = daytime_completion(&DaytimePayload(Some(report.clone())), &owner, &terminal, &job.report_context(), "flux:retained-check").unwrap();
+    let owner = rb::Owner {
+        owner: "controller".into(),
+        correlation: "retained-check".into(),
+    };
+    let terminal = rb::Terminal {
+        ending: rb::Ending::Passed,
+        reason: "verified checks completed".into(),
+        receipt: rb::BlobRef {
+            sha256: "c".repeat(64),
+            bytes: 1,
+            path: "/owned/receipt".into(),
+        },
+    };
+    let completion = daytime_completion(
+        &DaytimePayload(Some(report.clone())),
+        &owner,
+        &terminal,
+        &job.report_context(),
+        "flux:retained-check",
+    )
+    .unwrap();
     assert!(completion.failure_class.is_none());
     assert!(completion.observations.iter().any(|observation| matches!(observation,
         Observation::Checks { action_key, report: true, pass: true, .. } if action_key == "flux:retained-check")));
     let mut wrong = report;
     wrong.effect_key = "another-effect".into();
-    let rejected = daytime_completion(&DaytimePayload(Some(wrong)), &owner, &terminal, &job.report_context(), "flux:retained-check").unwrap();
-    assert!(rejected.observations.iter().any(|observation| matches!(observation,
-        Observation::Checks { report: false, pass: false, .. })));
-    assert!(daytime_completion(&DaytimePayload(None), &owner, &terminal, &job.report_context(), "flux:retained-check").is_err());
+    let rejected = daytime_completion(
+        &DaytimePayload(Some(wrong)),
+        &owner,
+        &terminal,
+        &job.report_context(),
+        "flux:retained-check",
+    )
+    .unwrap();
+    assert!(rejected.observations.iter().any(|observation| matches!(
+        observation,
+        Observation::Checks {
+            report: false,
+            pass: false,
+            ..
+        }
+    )));
+    assert!(
+        daytime_completion(
+            &DaytimePayload(None),
+            &owner,
+            &terminal,
+            &job.report_context(),
+            "flux:retained-check"
+        )
+        .is_err()
+    );
 }
 
 /// #822: use real producer output after late parse rejection and selected retries.
