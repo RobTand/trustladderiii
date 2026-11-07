@@ -420,7 +420,7 @@ impl RunBackend for Flux {
                     backend: BackendTag::Flux,
                     instance: record.intent.instance.clone(),
                     uri: record.intent.uri.clone(),
-                    job: id.into(),
+                    job: id,
                 },
                 intent: record.intent.clone(),
             };
