@@ -432,14 +432,15 @@ def _judged_run(model, request, workdir, emit):
             try:
                 result = _checked(inputs, envelope(written, grades))
             except ValidationError as error:
-                from tl3_workers.rules import Violation
-                # The model edits the inner object, not the code-owned envelope.
+                # Rebase the code-owned envelope pointer for the model's inner object.
                 violations = getattr(error, 'rule_violations', ())
-                if any(item.facts['pointer'] != '/postmortem'
-                       and not item.facts['pointer'].startswith('/postmortem/') for item in violations):
+                if any(item['repair']['pointer'] != '/postmortem'
+                       and not item['repair']['pointer'].startswith('/postmortem/') for item in violations):
                     raise ReplyCheckInfrastructureError('reply validator returned invalid output') from error
-                error.rule_violations = tuple(Violation(item.rule, {
-                    **item.facts, 'pointer': item.facts['pointer'].removeprefix('/postmortem')})
+                error.rule_violations = tuple({**item,
+                    'names': [{**name, 'value': name['value'].removeprefix('/postmortem')}
+                              for name in item['names']],
+                    'repair': {**item['repair'], 'pointer': item['repair']['pointer'].removeprefix('/postmortem')}}
                     for item in violations)
                 raise
             try:

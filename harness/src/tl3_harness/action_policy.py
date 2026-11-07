@@ -126,3 +126,16 @@ def permits_rows(rows, before, after, *, role):
 def admit_plan(checks, goal_count, required_goals):
     _request({'op': 'admit_plan', 'checks': checks, 'goal_count': goal_count,
               'required_goals': required_goals})
+
+
+def row_membership(allowed, value):
+    return _request({'op': 'membership', 'allowed': allowed, 'value': value})['result']['value']
+
+
+def schema_rows(errors, root_schema, *, role):
+    return _request({'op': 'schema_rows', 'errors': errors, 'root_schema': root_schema,
+                     'role': role})['result']['value']
+
+
+def repair_prompt(message):
+    return _request({'op': 'repair_prompt', 'message': message})['result']['value']

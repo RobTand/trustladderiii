@@ -182,21 +182,21 @@ class ProofRefusal(HarnessInputError):
         self.role = role
         self.violations = tuple(violations) if violations is not None else evaluate(
             (ROWS[rule],), {**facts, 'module': module, 'symbol': symbol}, role=role)
-        self.rule = self.violations[0].rule.id
-        first = self.violations[0].facts
+        self.rule = self.violations[0][0].id
+        first = self.violations[0][1]
         self.module, self.symbol = first.get('module', ''), first.get('symbol', '')
         self.reason = render_proof(self.violations, role)
         super().__init__(named(self.rule, self.reason, {'violations': self.as_json()}))
 
     @classmethod
     def from_violations(cls, violations, *, role='maker'):
-        return cls(violations[0].rule.id, violations=violations, role=role)
+        return cls(violations[0][0].id, violations=violations, role=role)
 
     def for_check(self, check, role, check_index=0, *, footprint=(), protected=(), generated=()):
         """Bind field names to the actual editable declaration and caller."""
         violations = []
         for violation in self.violations:
-            facts = dict(violation.facts)
+            facts = dict(violation[1])
             module, symbol = facts.get('module', ''), facts.get('symbol', '')
             identity = module + ('::' + symbol if symbol and not symbol.startswith(module + '::') else '')
             if symbol.startswith(module + '::') and module:
@@ -206,7 +206,7 @@ class ProofRefusal(HarnessInputError):
                 groups += [('/proof/subjects', check.proof.subjects),
                            ('/proof/observer_support', check.proof.observer_support)]
             groups += [('/tests', check.tests)]
-            area = violation.rule.id.split('.')[1]
+            area = violation[0].id.split('.')[1]
             preferred = {'support': '/proof/observer_support', 'observer': '/tests', 'subject': '/proof/subjects'}.get(area)
             groups.sort(key=lambda group: group[0] != preferred)
             matches = [(prefix, index) for prefix, units in groups for index, unit in enumerate(units)
@@ -230,11 +230,11 @@ class ProofRefusal(HarnessInputError):
             if check.forcing:
                 declaration['forcing'] = check.forcing.as_json()
             facts['reply'] = {'checks': [{} for _ in range(check_index)] + [declaration]}
-            violations.extend(evaluate((violation.rule,), facts, role=role))
+            violations.extend(evaluate((violation[0],), facts, role=role))
         return self.from_violations(violations, role=role)
 
     def as_json(self):
-        return [violation_data(violation) for violation in self.violations]
+        return [violation_data(violation, self.role) for violation in self.violations]
 
 
 @dataclass(frozen=True)

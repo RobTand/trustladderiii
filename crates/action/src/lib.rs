@@ -15,6 +15,8 @@ pub struct PolicyRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PolicyOperation {
+    RepairPrompt { message: String },
+    SchemaRows { errors: Vec<schema::ValidationFact>, root_schema: Option<serde_json::Value>, role: Role },
     Membership { allowed: rules::Allowed, value: serde_json::Value },
     AdmitPlan { checks: Vec<tl3_contracts::Check>, goal_count: usize, required_goals: Vec<tl3_contracts::GoalId> },
     Text { value: String, limit: usize },
@@ -47,6 +49,7 @@ pub enum PolicyResult {
     Path(Option<String>),
     Permitted(bool),
     Valid,
+    Rows(Vec<Violation>),
 }
 fn cant_meet(reply: &serde_json::Value) -> bool { reply.get("kind").and_then(serde_json::Value::as_str) == Some("cant_meet") }
 const TERMINALS: &[TerminalForm] = &[
@@ -58,6 +61,13 @@ fn row_policy() -> Policy<'static> { Policy { terminals: TERMINALS, source_edito
 pub fn policy(request: PolicyRequest) -> Result<PolicyResponse, String> {
     let mut state = request.state;
     let result = match request.operation {
+        PolicyOperation::RepairPrompt { message } => {
+            let complete = format!("Your reply failed validation: {message}\nTools are unavailable for this turn. Return one corrected JSON object matching your reply schema and nothing else.");
+            let safe = state.window(&complete, 0, complete.chars().count())?;
+            if safe.len() > rules::MESSAGE_BYTES { return Err("complete repair prompt exceeds publication byte budget".into()); }
+            PolicyResult::Text(safe)
+        },
+        PolicyOperation::SchemaRows { errors, root_schema, role } => PolicyResult::Rows(schema::refusal_rows(&errors, root_schema.as_ref(), role)?),
         PolicyOperation::Membership { allowed, value } => PolicyResult::Permitted(allowed.accepts(&value, &row_policy())?),
         PolicyOperation::AdmitPlan { checks, goal_count, required_goals } => {
             tl3_contracts::checks::admit_plan(&checks, goal_count, &required_goals)?;

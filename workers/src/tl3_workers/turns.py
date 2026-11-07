@@ -11,10 +11,6 @@ import openai
 
 # A refused connection, or a stream the proxy or network cut off mid-reply.
 DROPPED = (openai.APIConnectionError, httpx.TransportError)
-REPAIR = ("Your reply failed validation: {}\nTools are unavailable for this turn. Return one "
-          "corrected JSON object matching your reply schema and nothing else.")
-
-
 REPAIR_MESSAGE_BYTES = 2_048
 
 
@@ -23,21 +19,17 @@ def validation_message(error):
 
 
 def repair_message(error):
-    from tl3_workers.rules import render_all
+    from tl3_harness.action_policy import render_rows
     from tl3_workers.contracts import schema_violations
-    role = getattr(error, 'rule_role', 'schema')
+    # The planner evaluator remains its explicit slice-2 owner exception.
+    if getattr(error, 'guard_after_check', False):
+        return error.repair_text
+    role = getattr(error, 'rule_role', None)
     if getattr(error, 'rule_violations', None):
-        return render_all(error.rule_violations, role=role)
+        return render_rows(error.rule_violations, role=role)
     if isinstance(error, ValidationError):
-        return render_all(schema_violations((error,), role=role), role=role)
-    # Legacy sources keep their existing bounded repair text until migrated.
-    message = validation_message(error)
-    raw = message.encode()
-    if len(raw) <= REPAIR_MESSAGE_BYTES:
-        return message
-    # jsonschema puts the instance first and the reason last; keep both ends.
-    head, tail = raw[:REPAIR_MESSAGE_BYTES - 512], raw[-500:]
-    return head.decode(errors="ignore") + " [...] " + tail.decode(errors="ignore")
+        return render_rows(schema_violations((error,), role=role), role=role)
+    return validation_message(error)
 
 
 class InvalidReply(ValueError):
@@ -83,7 +75,8 @@ class TurnControl(AgentMiddleware):
 
     @contextmanager
     def repair(self, history, error):
-        history.append(HumanMessage(content=REPAIR.format(repair_message(error))))
+        from tl3_harness.action_policy import repair_prompt
+        history.append(HumanMessage(content=repair_prompt(repair_message(error))))
         self.repairing = True
         if self.allowance is not None:
             self.allowance.repairing = True
@@ -133,8 +126,8 @@ def repaired(control, history, ask, check):
     except Unrepairable:
         raise
     except (ValueError, ValidationError) as first:
-        from tl3_harness.rules import SourceEdit
-        if any(isinstance(item.repair, SourceEdit) for item in getattr(first, 'rule_violations', ())):
+        if not getattr(first, 'guard_after_check', False) and any(
+                item['repair']['kind'] == 'source_edit' for item in getattr(first, 'rule_violations', ())):
             raise first
         try:
             with control.repair(history, first):
@@ -150,7 +143,7 @@ def repaired(control, history, ask, check):
             violations = () if deferred else getattr(first, 'rule_violations', ())
             if violations:
                 from tl3_workers.contracts import read_reply
-                from tl3_workers.rules import permits
+                from tl3_harness.action_policy import permits_rows as permits
                 before = read_reply(original) if isinstance(original, str) else original
                 after = read_reply(text) if isinstance(text, str) else text
                 if not permits(violations, before, after, role=getattr(first, 'rule_role', 'schema')):

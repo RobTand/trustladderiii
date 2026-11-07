@@ -468,7 +468,7 @@ def assemble_proof(base: Path, head: Path, destination: Path, check, config, *, 
     # Advice observes the same generated headers as the maker's file boundary.
     generated = list(generated)
     for violation in refusal.violations:
-        for name in (violation.facts.get('module'), violation.facts.get('path')):
+        for name in (violation[1].get('module'), violation[1].get('path')):
             if name not in footprint or not (head / name).is_file():
                 continue
             with (head / name).open('rb') as source:
@@ -492,14 +492,14 @@ def planner_selections(refusal, base, head, check, config):
     from types import SimpleNamespace
     violations = []
     for violation in refusal.violations:
-        facts = dict(violation.facts)
+        facts = dict(violation[1])
         field = facts['field']
         relative = field.removeprefix(f"/checks/{facts['check_index']}")
         test_key = declaration_pointer('/tests', facts['check_index'], 'planner').rsplit('/', 1)[1]
         test_group = '/' + test_key
         group = next((prefix for prefix in ('/proof/subjects', '/proof/observer_support', test_group)
                       if relative.startswith(prefix + '/')), None)
-        if group is None or violation.rule.id in ('proof.source.unparsable', 'proof.tree.destination_fresh'):
+        if group is None or violation[0].id in ('proof.source.unparsable', 'proof.tree.destination_fresh'):
             violations.append(violation)
             continue
         def passes(reply):
@@ -562,7 +562,7 @@ def planner_selections(refusal, base, head, check, config):
         if passing:
             facts.update(alternatives=passing, replacement_total=total,
                          bad_value={'replacement_total': total})
-        violations.extend(evaluate((violation.rule,), facts, role='planner'))
+        violations.extend(evaluate((violation[0],), facts, role='planner'))
     return ProofRefusal.from_violations(violations, role='planner')
 
 
@@ -609,10 +609,10 @@ def _assemble_proof(base: Path, head: Path, destination: Path, check, config):
             try:
                 return validate(*args, **kwargs)
             except ProofRefusal as error:
-                if any(item.rule.gating for item in error.violations):
+                if any(item[0].gating for item in error.violations):
                     raise ProofRefusal.from_violations([*violations, *error.violations]) from None
                 violations.extend(found for item in error.violations
-                                  for found in evaluate((item.rule,), {**item.facts, **({'field': field} if field else {})}, role='maker'))
+                                  for found in evaluate((item[0],), {**item[1], **({'field': field} if field else {})}, role='maker'))
 
         requested = [item for item in (*observers, *support) if item.split('::')[0] == name]
         for statement in ast.parse(new, filename=name).body:
