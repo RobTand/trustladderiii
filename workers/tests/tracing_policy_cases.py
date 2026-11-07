@@ -1,5 +1,8 @@
 """Input-only producer cases retained for Rust redaction qualification. No redactor oracle."""
 import json
+from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).parent))
 import tracing_forms
 import tracing_forms3
 from tracing_forms import FORMS, PLANTED, PLANTED_LINES

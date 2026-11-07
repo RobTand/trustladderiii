@@ -187,3 +187,22 @@ fn complete_repair_prompts_are_redacted_and_never_clip_the_repair_tail() {
             .is_some()
     );
 }
+
+#[test]
+fn every_row_boundary_rejects_unsupported_constraints_before_publication() {
+    for constraint in [
+        json!({"properties":{"x":{"items":{"x-ordered":[]}}}}),
+        json!({"$ref":"unavailable.json"}),
+        json!({"$defs":{"unused":{"$ref":"unavailable.json"}}}),
+    ] {
+        let mut value = serde_json::to_value(row()).unwrap();
+        value["allowed"] = json!({"kind":"schema","keyword":"schema","value":constraint});
+        for operation in [
+            json!({"op":"validate","rows":[value.clone()],"role":"maker"}),
+            json!({"op":"render","rows":[value.clone()],"role":"maker","context":"tool"}),
+            json!({"op":"permits","rows":[value],"role":"maker","before":{},"after":{}}),
+        ] {
+            assert!(command(operation.clone()).get("error").is_some(), "boundary accepted unsupported semantics: {operation}");
+        }
+    }
+}
