@@ -45,6 +45,7 @@ def model_result(value):
 
 
 class ExecutionOutcome(StrEnum):
+    POST_BEGIN_LAUNCH_FAILURE_CANDIDATE = 'post_begin_launch_failure_candidate'
     TEST_TIMEOUT = 'test_timeout'
     SETUP_FAILURE = 'setup_failure'
     TRANSPORT_FAILURE = 'transport_failure'
@@ -105,6 +106,9 @@ class Supervised:
         self.cleanup_seconds = min(2, quiet * 0.1) if quiet is not None else 2
         self.report_started = False
         self.exit_code = None
+        self.exit_recorded = False
+        self.exit_observed_ns = None
+        self.command_released = False
         self.container = None
         self.runtime = None
         self.cleanup_confirmed = False
@@ -155,6 +159,7 @@ class Supervised:
                 # Begin returned only after Rust fsynced the intent and debt. No retry on failure.
                 self.child.stdin.write(json.dumps(self.command).encode() + b'\n')
                 self.child.stdin.flush()
+                self.command_released = True
             except BaseException as error:
                 # __exit__ is not called when __enter__ fails. Stop only this owned gated launcher.
                 try:
@@ -165,6 +170,8 @@ class Supervised:
                 finally:
                     for pipe in (self.child.stdin, self.child.stdout, self.child.stderr):
                         pipe.close()
+                self.capture_diagnostic(str(error).encode(errors='replace'))
+                self.retain_exit()
                 if not self.evidence.launch_requested:
                     if isinstance(error, Exception):
                         raise self.prelaunch_failure(error, 'container_start', 'launch_refused',
@@ -205,6 +212,20 @@ class Supervised:
         setup = not self.report_started and self.exit_code in (125, 126, 127)
         return self.failure(ExecutionOutcome.SETUP_FAILURE if setup else ExecutionOutcome.UNKNOWN_INCOMPLETE,
                             'container_start' if setup else 'unknown', 'incomplete_report')
+
+    def retain_exit(self):
+        if self.evidence is None or self.exit_recorded:
+            return
+        self.exit_observed_ns = time.monotonic_ns()
+        # wait()/poll() supply the actual launcher status, never an inferred stderr code.
+        self.evidence.record('launcher_exit', {
+            'execution': self.evidence.container, 'exit_code': self.child.returncode,
+            'command_released': self.command_released,
+            'natural_exit': self.exit_code is not None and self.exit_code == self.child.returncode,
+            'monotonic_ns': self.exit_observed_ns,
+            'stderr_tail': self.stderr_diagnostic,
+        })
+        self.exit_recorded = True
 
     def failure(self, outcome, phase, reason):
         return ExecutionFailure(outcome, phase, reason, stderr_tail=self.stderr_diagnostic)
@@ -321,6 +342,9 @@ class Supervised:
                     raise ValueError('oversized report line')
             try:
                 self.exit_code = self.child.wait(timeout=max(0.001, deadline - time.monotonic()) if deadline is not None else None)
+                self.capture_diagnostic(self.evidence_buffer)
+                self.evidence_buffer = b''
+                self.retain_exit()
                 if self.evidence is not None and not self.evidence.container_seen:
                     raise self.failure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'runtime', 'missing_runtime_evidence')
             except subprocess.TimeoutExpired as error:
@@ -338,6 +362,7 @@ class Supervised:
             self.child.wait(timeout=self.cleanup_seconds)
         except subprocess.TimeoutExpired:
             pass
+        self.retain_exit()
         if self.child.stdin is not None:
             self.child.stdin.close()
         self.child.stdout.close()
@@ -356,13 +381,27 @@ class Supervised:
             try:
                 # Observe the captured identities even when Rust cleanup is unconfirmed.
                 # A pending launch may have failed before any container was observed.
-                processes_stopped = (runtime.processes_stopped(self.process_handles, self.cleanup_seconds)
-                                     if self.process_handles else not self.evidence.container_seen)
+                processes_stopped = runtime.processes_stopped(self.process_handles, self.cleanup_seconds)
                 self.evidence.record('container_processes_stopped', {
                     'confirmed': processes_stopped, 'captured': len(self.process_handles),
                     'started_monotonic_ns': started, 'finished_monotonic_ns': time.monotonic_ns(),
                 })
                 self.cleanup_confirmed = runtime_stopped and processes_stopped
+                if (not self.evidence.container_seen and not self.process_handles
+                        and self.command_released and self.exit_recorded
+                        and self.exit_code is not None
+                        and self.child.returncode is not None and self.child.returncode != 0):
+                    references = result.get('evidence', []) if runtime_stopped else []
+                    cleanup = runtime.post_exit_launch_absence(self.evidence, references, self.exit_observed_ns)
+                    if cleanup is not None:
+                        self.evidence.record('no_container_observed', {
+                            'execution': self.evidence.container, 'cleanup': cleanup,
+                            'pidfd_cessation': False,
+                        })
+                        # The job still contains this action. Keep scratch pending until
+                        # external whole-unit evidence; this is only a local candidate.
+                        raise self.failure(ExecutionOutcome.POST_BEGIN_LAUNCH_FAILURE_CANDIDATE,
+                                           'container_start', 'nonzero_launcher_no_container_observed')
             except (RuntimeError, OSError, ValueError, KeyError):
                 self.cleanup_confirmed = False
             finally:

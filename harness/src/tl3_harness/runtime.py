@@ -88,6 +88,12 @@ class Evidence:
             target.write(json.dumps({'event': event, **facts}, sort_keys=True) + '\n')
             target.flush()
             os.fsync(target.fileno())
+        if mode == 'x':
+            descriptor = os.open(self.path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
 
     def observe(self, line):
         from .runtime_evidence import PREFIX
@@ -1033,6 +1039,7 @@ def cleanup_observations(ownership, *, launch=None, podman, systemctl, cgroup_ro
 
     if not 0 < timeout < float('inf'):
         raise ValueError('cleanup total budget must be positive and finite')
+    started_ns = time.monotonic_ns()
     deadline = time.monotonic() + timeout
 
     def remaining():
@@ -1098,7 +1105,8 @@ def cleanup_observations(ownership, *, launch=None, podman, systemctl, cgroup_ro
                 if not filters:
                     raise RuntimeError('pending cleanup requires retained ownership labels')
                 remaining_ids = capture([podman, 'ps', '--all', '--no-trunc', *filters, '--format', '{{.ID}}']).decode().split()
-                pending = {'intent': launch, 'name_exists_exit': named, 'sweep_exit': 0, 'remaining_ids': remaining_ids}
+                pending = {'intent': launch, 'name_exists_exit': named, 'sweep_exit': 0, 'remaining_ids': remaining_ids,
+                           'started_monotonic_ns': started_ns, 'finished_monotonic_ns': time.monotonic_ns()}
             elif named == 0:
                 actual = inspect(launch['name'], launch['name'], launch['labels'])
                 scope = (scope_identity(actual['Pid'], systemctl=systemctl, timeout=remaining())
@@ -1174,6 +1182,9 @@ def cleanup_main():
     if len(raw) > 1024 * 1024:
         raise ValueError('cleanup input exceeds byte bound')
     request = json.loads(raw)
+    if request['schema'] == 'tl3.job_unit_absence_input.v1':
+        print(json.dumps(job_unit_absence(request, systemctl=args.systemctl), sort_keys=True))
+        return
     if request['schema'] != 'tl3.cleanup_input.v1':
         raise ValueError('unsupported Rust cleanup input')
     budget = request['budget_seconds']
@@ -1182,3 +1193,121 @@ def cleanup_main():
     evidence = cleanup_observations(request['ownership'], launch=request['launch'], podman=args.podman, systemctl=args.systemctl,
                                     timeout=budget)
     print(json.dumps(evidence, sort_keys=True))
+
+
+def post_exit_launch_absence(evidence, references, exited_ns):
+    """Read only exact Rust-accepted cleanup references; never infer process cessation."""
+    import hashlib
+
+    for reference in references:
+        path = Path(reference['path'])
+        if path.parent != Path(evidence.context['output_dir']) or reference['bytes'] > 1024 * 1024:
+            continue
+        with path.open('rb') as source:
+            raw = source.read(1024 * 1024 + 1)
+        if len(raw) != reference['bytes'] or hashlib.sha256(raw).hexdigest() != reference['sha256']:
+            continue
+        cleanup = json.loads(raw)
+        pending = cleanup.get('pending_launch')
+        if (cleanup['ownership'] == evidence.launch['launcher'] and cleanup['container'] is None
+                and pending is not None and pending['intent'] == evidence.launch
+                and pending['name_exists_exit'] == 1 and pending['sweep_exit'] == 0
+                and not pending['remaining_ids'] and cleanup['process_group_probe_errno'] == 3
+                and cleanup['launcher']['kind'] in ('absent', 'reaped')
+                and pending.get('started_monotonic_ns', 0) > exited_ns
+                and pending.get('finished_monotonic_ns', 0) >= pending['started_monotonic_ns']):
+            return reference
+    return None
+
+
+def job_unit_absence(request, *, systemctl):
+    """External, read-only observation. A present unit never proves no survivors."""
+    import re
+    import selectors
+    import stat
+    import subprocess
+    import time
+
+    if set(request) != {'schema', 'run', 'owner', 'request_digest', 'host', 'nonce', 'budget_seconds'}:
+        raise ValueError('invalid exact-unit input fields')
+    run = request['run']
+    instance = run['instance'].split('/')
+    if (len(instance) != 2 or not re.fullmatch(r'[A-Za-z0-9_-]+', instance[0])
+            or not re.fullmatch(r'[0-9a-f]{32}', instance[1])
+            or run['backend'] != 'flux' or not run['uri'].startswith('local:///')
+            or not re.fullmatch(r'f[1-9A-HJ-NP-Za-km-z]+', run['job'])
+            or not re.fullmatch(r'[0-9a-f]{64}', request['request_digest'])
+            or not re.fullmatch(r'[0-9a-f]{64}', request['nonce'])
+            or set(request['owner']) != {'owner', 'correlation'}
+            or any(not re.fullmatch(r'[A-Za-z0-9_-]+', value) for value in request['owner'].values())
+            or request['host'] != 'dl380g10'
+            or type(request['budget_seconds']) is not int or not 0 < request['budget_seconds'] <= 10):
+        raise ValueError('unqualified exact-unit identity')
+    started = time.monotonic_ns()
+    deadline = time.monotonic() + request['budget_seconds']
+
+    def guard():
+        from .redaction import Redactor
+
+        process = subprocess.Popen([systemctl, '--user', 'show', f'flux-vanilla-{instance[0]}.service',
+                                    '-p', 'InvocationID', '--value'], stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        streams = {process.stdout: bytearray(), process.stderr: bytearray()}
+        try:
+            with selectors.DefaultSelector() as ready:
+                for pipe in streams:
+                    ready.register(pipe, selectors.EVENT_READ)
+                while ready.get_map():
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise RuntimeError('generation observation timed out')
+                    for key, _ in ready.select(remaining):
+                        chunk = os.read(key.fd, 4096)
+                        streams[key.fileobj].extend(chunk)
+                        if len(streams[key.fileobj]) > 16384:
+                            raise RuntimeError('generation observation exceeds byte bound')
+                        if not chunk:
+                            ready.unregister(key.fileobj)
+            code = process.wait(timeout=max(0.001, deadline - time.monotonic()))
+            return {'exit_code': code, 'stdout': streams[process.stdout].decode(errors='replace'),
+                    'stderr': Redactor(None).text(streams[process.stderr].decode(errors='replace'), limit=16384)}
+        finally:
+            import signal
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait(timeout=1)
+            process.stdout.close()
+            process.stderr.close()
+
+    path = '/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/' + f"shell-{run['job']}:sys.service"
+    control_path = path.rsplit('/', 2)[0]
+    result = {'schema': 'tl3.job_unit_absence.v1', 'run': run, 'owner': request['owner'],
+              'request_digest': request['request_digest'], 'nonce': request['nonce'],
+              'host': os.uname().nodename, 'path': path, 'started_monotonic_ns': started,
+              'generation_before': guard(), 'observation': {'kind': 'unknown'},
+              'control': {'path': control_path, 'observation': {'kind': 'unknown'}}}
+    if (result['host'] == request['host'] and result['generation_before']['exit_code'] == 0
+            and result['generation_before']['stdout'].strip() == instance[1]):
+        try:
+            control = os.stat(control_path, follow_symlinks=False)
+        except FileNotFoundError as error:
+            result['control']['observation'] = {'kind': 'absent', 'errno': error.errno}
+        except OSError as error:
+            result['control']['observation'] = {'kind': 'unknown', 'errno': error.errno}
+        else:
+            result['control']['observation'] = {'kind': 'directory' if stat.S_ISDIR(control.st_mode) else 'not_directory'}
+    if result['control']['observation']['kind'] == 'directory':
+        try:
+            # The authorized hierarchy control precedes this exact job stat. No traversal.
+            os.stat(path, follow_symlinks=False)
+        except FileNotFoundError as error:
+            result['observation'] = {'kind': 'absent', 'errno': error.errno}
+        except OSError as error:
+            result['observation'] = {'kind': 'unknown', 'errno': error.errno}
+        else:
+            result['observation'] = {'kind': 'present'}
+    result['generation_after'] = guard()
+    result['finished_monotonic_ns'] = time.monotonic_ns()
+    return result

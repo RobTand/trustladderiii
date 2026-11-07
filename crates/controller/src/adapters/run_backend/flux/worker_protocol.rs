@@ -331,6 +331,7 @@ impl Flux {
             payload: None,
             runtime_binding: input.runtime_binding.clone(),
             runtime_bindings: input.runtime_bindings.clone(),
+            launch_failures: vec![],
             cleanup: input.cleanup.clone(),
             stdout: Some(input.stdout.clone()),
             stderr: input.stderr.clone(),

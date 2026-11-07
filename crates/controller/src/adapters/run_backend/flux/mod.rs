@@ -1,6 +1,7 @@
 //! Public Flux 0.91 CLI only. Retained instance generations are operator-owned.
 mod cleanup;
 mod evidence;
+mod launch_failure;
 mod lifecycle;
 mod placement;
 mod process;
@@ -634,6 +635,9 @@ impl Flux {
         let record = self.journal.load(owner)?;
         self.instance(&record)?;
         if let Some(terminal) = record.terminal {
+            if terminal.ending == Ending::InfraLost {
+                self.retire_launch_failure_debt(owner, &terminal)?;
+            }
             return Ok(Observation::Terminal {
                 binding: record.binding,
                 terminal,

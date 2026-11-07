@@ -64,6 +64,85 @@ fn generated_action_refusal_is_typed_prompt_and_releases_scratch() {
 
 #[test]
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn generated_action_post_begin_launch_failure_is_a_candidate_until_external_absence() {
+    let f = generated_action_case("absent-interpreter");
+    launch_failure_acceptance_matrix(&f);
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn generated_action_post_begin_launch_failure_with_cancel_retires_debt() {
+    let f = generated_action_case("absent-interpreter");
+    let state_path = f
+        .options
+        .journal_root
+        .join(&f.intent.correlation)
+        .join("state.json");
+    let mut state: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    state["cancel_requested"] = json!(true);
+    fs::write(&state_path, state.to_string()).unwrap();
+    let mut events = completed(0);
+    events.insert(
+        1,
+        json!({"timestamp":1.5,"name":"exception","context":{"type":"cancel","severity":0,"note":"fixture cancellation before finish"}}),
+    );
+    f.events(&events);
+    let debt = f
+        .options
+        .journal_root
+        .join("cleanup-debt")
+        .join(&f.request.runtime.manifest_digest);
+    assert!(fs::read_dir(&debt).unwrap().next().is_some());
+    let frames = f.attach();
+    let terminal = &frames.last().unwrap()["result"]["observation"]["terminal"];
+    assert_eq!(terminal["ending"], "infra-lost", "{frames:?}");
+    let receipt: Value =
+        serde_json::from_slice(&fs::read(f.intent.output_dir.join("receipt.json")).unwrap())
+            .unwrap();
+    assert!(
+        receipt["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| { item["path"].as_str().unwrap().contains("unit-absence-") })
+    );
+    assert!(fs::read_dir(&debt).unwrap().next().is_none());
+    let repeated = f.attach();
+    assert_eq!(
+        repeated.last().unwrap()["result"]["observation"]["terminal"],
+        *terminal,
+        "{repeated:?}"
+    );
+    assert!(fs::read_dir(&debt).unwrap().next().is_none());
+    if let Ok(destination) = std::env::var("FX_E2E_EVIDENCE") {
+        let destination = Path::new(&destination).join("accepted-launch-failure-with-cancel");
+        fs::create_dir_all(&destination).unwrap();
+        fs::copy(
+            f.intent.output_dir.join("receipt.json"),
+            destination.join("receipt.json"),
+        )
+        .unwrap();
+        for entry in fs::read_dir(&f.intent.output_dir).unwrap().flatten() {
+            if entry.file_type().unwrap().is_file() {
+                fs::copy(entry.path(), destination.join(entry.file_name())).unwrap();
+            }
+        }
+        fs::copy(&state_path, destination.join("state.json")).unwrap();
+        fs::write(
+            destination.join("attach.json"),
+            serde_json::to_vec(&frames).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            destination.join("repeat-attach.json"),
+            serde_json::to_vec(&repeated).unwrap(),
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn generated_action_consumes_native_grant_before_binding_and_payload() {
     for case in [
         "success",
@@ -83,7 +162,7 @@ fn action_session_rechecks_generation_owner_and_live_allocation() {
     generated_action_case("session");
 }
 
-fn generated_action_case(mode: &str) {
+fn generated_action_case(mode: &str) -> Fixture {
     let mut f = Fixture::new();
     f.podman(ContainerMode::InJob, true);
     let scratch = tempfile::tempdir().unwrap();
@@ -183,6 +262,391 @@ fn generated_action_case(mode: &str) {
         output.status.success(),
         "generated action refusal regression"
     );
+    if mode == "success" {
+        f.events(&completed(0));
+        let frames = f.attach();
+        assert_eq!(
+            frames.last().unwrap()["result"]["observation"]["terminal"]["ending"],
+            "passed",
+            "{frames:?}"
+        );
+        assert!(
+            !fs::read_dir(&f.intent.output_dir)
+                .unwrap()
+                .flatten()
+                .any(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("unit-absence-"))
+        );
+        if let Ok(destination) = std::env::var("FX_E2E_EVIDENCE") {
+            fs::copy(
+                f.intent.output_dir.join("receipt.json"),
+                Path::new(&destination).join(mode).join("receipt.json"),
+            )
+            .unwrap();
+        }
+    }
+    f
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn refused_before_tests_never_invokes_external_unit_absence() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::InJob, true);
+    f.submit();
+    fs::write(f.intent.output_dir.join("report.json"), json!({
+        "schema":"tl3.runner_report.v1", "run":f.ownership().run,
+        "request_digest":f.intent.request_digest, "tree":f.request.tree,
+        "runner_digest":f.request.runner.executable_digest, "runtime_digest":f.request.runtime.manifest_digest,
+        "suite":f.request.suite, "complete":false, "cleanup_complete":true,
+        "tests_started":0, "outcome":"refused_before_tests", "cases":[], "payload":null,
+        "runtime_binding":null, "runtime_bindings":[], "cleanup":null, "stdout":null, "stderr":null, "worker_payload":null
+    }).to_string()).unwrap();
+    f.events(&completed(0));
+    let frames = f.attach();
+    assert_eq!(
+        frames.last().unwrap()["result"]["observation"]["terminal"]["ending"],
+        "refused",
+        "{frames:?}"
+    );
+    assert!(
+        !fs::read_dir(&f.intent.output_dir)
+            .unwrap()
+            .flatten()
+            .any(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("unit-absence-"))
+    );
+}
+
+fn launch_failure_acceptance_matrix(f: &Fixture) {
+    let out = &f.intent.output_dir;
+    let state_path = f
+        .options
+        .journal_root
+        .join(&f.intent.correlation)
+        .join("state.json");
+    let original_state = fs::read(&state_path).unwrap();
+    let original_report = fs::read(out.join("report.json")).unwrap();
+    let report: Value = serde_json::from_slice(&original_report).unwrap();
+    let proofs = report["launch_failures"].as_array().unwrap();
+    assert_eq!(
+        proofs.len(),
+        2,
+        "both actual generated launches must be retained"
+    );
+    let process_path = PathBuf::from(proofs[0]["process_record"]["path"].as_str().unwrap());
+    let process_raw = fs::read(&process_path).unwrap();
+    let cleanup_path = PathBuf::from(proofs[0]["cleanup"]["path"].as_str().unwrap());
+    let cleanup_raw = fs::read(&cleanup_path).unwrap();
+    let unknown = |case: &str| {
+        let frames = f.attach();
+        assert_eq!(
+            frames.last().unwrap()["result"]["observation"]["kind"],
+            "unknown",
+            "{case}: {frames:?}"
+        );
+        assert!(
+            !out.join("receipt.json").exists(),
+            "{case} committed a terminal"
+        );
+        let debt = f
+            .options
+            .journal_root
+            .join("cleanup-debt")
+            .join(&f.request.runtime.manifest_digest);
+        assert!(
+            fs::read_dir(debt).unwrap().next().is_some(),
+            "{case} lost cleanup debt"
+        );
+        if let Ok(destination) = std::env::var("FX_E2E_EVIDENCE") {
+            let destination = Path::new(&destination).join("acceptance-matrix").join(case);
+            fs::create_dir_all(&destination).unwrap();
+            for entry in fs::read_dir(out).unwrap().flatten() {
+                if entry.file_type().unwrap().is_file() {
+                    fs::copy(entry.path(), destination.join(entry.file_name())).unwrap();
+                }
+            }
+            fs::write(
+                destination.join("state.json"),
+                fs::read(&state_path).unwrap(),
+            )
+            .unwrap();
+            fs::write(
+                destination.join("attach.json"),
+                serde_json::to_vec(&frames).unwrap(),
+            )
+            .unwrap();
+        }
+    };
+    // No native Clean means the new helper is unreachable.
+    f.events(&[]);
+    unknown("missing-native-clean");
+    assert!(!fs::read_dir(out).unwrap().flatten().any(|entry| {
+        entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with("unit-absence-")
+    }));
+    f.events(&completed(0));
+    for (case, replacement) in [
+        (
+            "control-missing",
+            json!({"control":{"path":"/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/flux.slice","observation":{"kind":"absent","errno":2}}}),
+        ),
+        (
+            "control-unreadable",
+            json!({"control":{"path":"/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/flux.slice","observation":{"kind":"unknown","errno":13}}}),
+        ),
+        (
+            "control-file",
+            json!({"control":{"path":"/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/flux.slice","observation":{"kind":"not_directory"}}}),
+        ),
+        ("missing-control", json!({"control":null})),
+        (
+            "wrong-control-path",
+            json!({"control":{"path":"/sys/fs/cgroup/foreign.slice","observation":{"kind":"directory"}}}),
+        ),
+        (
+            "control-directory-job-present",
+            json!({"observation":{"kind":"present"}}),
+        ),
+        (
+            "unit-unreadable",
+            json!({"observation":{"kind":"unknown","errno":13}}),
+        ),
+        (
+            "unit-present-populated0",
+            json!({"observation":{"kind":"present","populated":0}}),
+        ),
+        ("wrong-host", json!({"host":"foreign-host"})),
+        (
+            "generation-before",
+            json!({"generation_before":{"exit_code":0,"stdout":"wrong\n","stderr":""}}),
+        ),
+        (
+            "generation-after",
+            json!({"generation_after":{"exit_code":0,"stdout":"wrong\n","stderr":""}}),
+        ),
+        (
+            "generation-nonzero",
+            json!({"generation_before":{"exit_code":1,"stdout":"fixture-generation\n","stderr":""}}),
+        ),
+        (
+            "sibling-unit",
+            json!({"path":"/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/shell-fABD:sys.service"}),
+        ),
+        (
+            "foreign-unit",
+            json!({"path":"/sys/fs/cgroup/foreign.slice/shell-fABC:sys.service"}),
+        ),
+        (
+            "shared-slice",
+            json!({"path":"/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice"}),
+        ),
+        (
+            "wrong-correlation",
+            json!({"owner":{"owner":"fixture-owner","correlation":"foreign"}}),
+        ),
+        (
+            "wrong-run",
+            json!({"run":{"backend":"flux","instance":"fixture-generation","uri":"local:///fixture","job":"fABD"}}),
+        ),
+        (
+            "wrong-instance",
+            json!({"run":{"backend":"flux","instance":"foreign-generation","uri":"local:///fixture","job":"fABC"}}),
+        ),
+        ("wrong-request", json!({"request_digest":"f".repeat(64)})),
+        ("stale-nonce", json!({"nonce":"0".repeat(64)})),
+        (
+            "stale-time",
+            json!({"started_monotonic_ns":1,"finished_monotonic_ns":2}),
+        ),
+        ("missing-before", json!({"generation_before":null})),
+        ("missing-after", json!({"generation_after":null})),
+        ("missing-unit", json!({"observation":null})),
+        ("missing-nonce", json!({"nonce":null})),
+    ] {
+        fs::write(
+            out.join("unit-control.json"),
+            json!({"replace":replacement}).to_string(),
+        )
+        .unwrap();
+        unknown(case);
+    }
+    fs::write(
+        out.join("unit-control.json"),
+        json!({"exit_code":1}).to_string(),
+    )
+    .unwrap();
+    unknown("helper-nonzero");
+    fs::remove_file(out.join("unit-control.json")).unwrap();
+    for case in [
+        "name-present",
+        "labels-present",
+        "launcher-present",
+        "group-present",
+        "missing-pending",
+        "missing-post-exit-time",
+        "pre-exit-absence",
+    ] {
+        let mut cleanup: Value = serde_json::from_slice(&cleanup_raw).unwrap();
+        match case {
+            "name-present" => cleanup["pending_launch"]["name_exists_exit"] = json!(0),
+            "labels-present" => {
+                cleanup["pending_launch"]["remaining_ids"] = json!(["a".repeat(64)])
+            }
+            "launcher-present" => {
+                cleanup["launcher"] = json!({"kind":"present","observed_start_ticks":1})
+            }
+            "group-present" => cleanup["process_group_probe_errno"] = Value::Null,
+            "missing-pending" => cleanup["pending_launch"] = Value::Null,
+            "missing-post-exit-time" => {
+                cleanup["pending_launch"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("started_monotonic_ns");
+            }
+            "pre-exit-absence" => cleanup["pending_launch"]["started_monotonic_ns"] = json!(1),
+            _ => unreachable!(),
+        }
+        let reference =
+            api::durable::blob(&cleanup_path, &serde_json::to_vec(&cleanup).unwrap()).unwrap();
+        let mut state: Value = serde_json::from_slice(&original_state).unwrap();
+        state["cleanup_evidence"][proofs[0]["execution"].as_str().unwrap()] =
+            serde_json::to_value(&reference).unwrap();
+        let mut changed_report = report.clone();
+        changed_report["launch_failures"][0]["cleanup"] = serde_json::to_value(&reference).unwrap();
+        let mut rows: Vec<Value> = String::from_utf8(process_raw.clone())
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        rows.iter_mut()
+            .find(|row| row["event"] == "no_container_observed")
+            .unwrap()["cleanup"] = serde_json::to_value(reference).unwrap();
+        let bytes = rows
+            .iter()
+            .map(|row| format!("{row}\n"))
+            .collect::<String>();
+        let reference = api::durable::blob(&process_path, bytes.as_bytes()).unwrap();
+        changed_report["launch_failures"][0]["process_record"] =
+            serde_json::to_value(reference).unwrap();
+        fs::write(&state_path, serde_json::to_vec(&state).unwrap()).unwrap();
+        fs::write(out.join("report.json"), changed_report.to_string()).unwrap();
+        unknown(case);
+    }
+    fs::write(&cleanup_path, &cleanup_raw).unwrap();
+    fs::write(&state_path, &original_state).unwrap();
+    for case in [
+        "missing-exit",
+        "missing-exit-status",
+        "exit0",
+        "forced-exit",
+        "missing-release",
+        "missing-intent",
+        "missing-absence",
+        "observed-with-matching-stderr",
+        "stderr-only",
+    ] {
+        let mut rows: Vec<Value> = String::from_utf8(process_raw.clone())
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        match case {
+            "missing-exit" => rows.retain(|row| row["event"] != "launcher_exit"),
+            "missing-exit-status" => {
+                rows.iter_mut()
+                    .find(|row| row["event"] == "launcher_exit")
+                    .unwrap()["exit_code"] = Value::Null
+            }
+            "exit0" => {
+                rows.iter_mut()
+                    .find(|row| row["event"] == "launcher_exit")
+                    .unwrap()["exit_code"] = json!(0)
+            }
+            "forced-exit" => {
+                rows.iter_mut()
+                    .find(|row| row["event"] == "launcher_exit")
+                    .unwrap()["natural_exit"] = json!(false)
+            }
+            "missing-release" => {
+                rows.iter_mut()
+                    .find(|row| row["event"] == "launcher_exit")
+                    .unwrap()["command_released"] = json!(false)
+            }
+            "missing-intent" => rows.retain(|row| row["event"] != "launch_intent"),
+            "missing-absence" => rows.retain(|row| row["event"] != "no_container_observed"),
+            "observed-with-matching-stderr" => {
+                rows.push(json!({"event":"container","Cpus_allowed_list":"0","cgroup":"0::/"}))
+            }
+            "stderr-only" => {
+                rows = vec![
+                    json!({"event":"stderr","stderr_tail":"catatonit: failed to exec pid1: No such file or directory"}),
+                ]
+            }
+            _ => unreachable!(),
+        }
+        let bytes = rows
+            .iter()
+            .map(|row| format!("{row}\n"))
+            .collect::<String>();
+        let reference = api::durable::blob(&process_path, bytes.as_bytes()).unwrap();
+        let mut changed = report.clone();
+        changed["launch_failures"][0]["process_record"] = serde_json::to_value(reference).unwrap();
+        fs::write(out.join("report.json"), changed.to_string()).unwrap();
+        unknown(case);
+    }
+    fs::write(&process_path, &process_raw).unwrap();
+    fs::write(out.join("report.json"), &original_report).unwrap();
+    let mut state: Value = serde_json::from_slice(&original_state).unwrap();
+    let mut observed = state["container_launches"]
+        .as_object()
+        .unwrap()
+        .values()
+        .next()
+        .unwrap()["launcher"]
+        .clone();
+    observed["container"] =
+        json!({"mode":"in_job","id":"c".repeat(64),"name":"observed","labels":{},"scope":null});
+    state["runtime_ownerships"] = json!([observed]);
+    fs::write(&state_path, state.to_string()).unwrap();
+    unknown("mixed-bound-and-failed");
+    fs::write(&state_path, &original_state).unwrap();
+    let frames = f.attach();
+    assert_eq!(
+        frames.last().unwrap()["result"]["observation"]["terminal"]["ending"],
+        "infra-lost",
+        "{frames:?}"
+    );
+    let receipt: Value =
+        serde_json::from_slice(&fs::read(out.join("receipt.json")).unwrap()).unwrap();
+    assert_eq!(receipt["report"].as_object().unwrap().len(), 3);
+    assert!(
+        receipt["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["path"].as_str().unwrap().contains("unit-absence-"))
+    );
+    if let Ok(destination) = std::env::var("FX_E2E_EVIDENCE") {
+        let destination = Path::new(&destination).join("accepted-launch-failure");
+        fs::create_dir_all(&destination).unwrap();
+        for entry in fs::read_dir(out).unwrap().flatten() {
+            if entry.file_type().unwrap().is_file() {
+                fs::copy(entry.path(), destination.join(entry.file_name())).unwrap();
+            }
+        }
+        fs::write(
+            destination.join("attach.json"),
+            serde_json::to_vec(&frames).unwrap(),
+        )
+        .unwrap();
+    }
 }
 
 #[test]
@@ -536,6 +1000,7 @@ text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
             payload: None,
             runtime_binding: None,
             runtime_bindings: vec![],
+            launch_failures: vec![],
             cleanup: Some(BlobRef {
                 sha256: digest(&cleanup_bytes),
                 bytes: cleanup_bytes.len() as u64,
@@ -1274,6 +1739,22 @@ impl Fixture {
             br#"#!/usr/bin/python3
 import json,sys,pathlib,time
 facts=json.load(sys.stdin)
+if facts['schema']=='tl3.job_unit_absence_input.v1':
+    output=pathlib.Path('/mnt/shared/flux-out/tl3')/facts['owner']['correlation']
+    control=output/'unit-control.json'
+    control=json.loads(control.read_text()) if control.exists() else {}
+    now=time.monotonic_ns()
+    guard={'exit_code':0,'stdout':facts['run']['instance'].split('/')[-1]+'\n','stderr':''}
+    result={'schema':'tl3.job_unit_absence.v1','run':facts['run'],'owner':facts['owner'],'request_digest':facts['request_digest'],
+      'host':facts['host'],'nonce':facts['nonce'],
+      'path':'/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/shell-'+facts['run']['job']+':sys.service',
+      'control':{'path':'/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/flux.slice','observation':{'kind':'directory'}},
+      'generation_before':guard,'generation_after':guard,'observation':{'kind':'absent','errno':2},
+      'started_monotonic_ns':now,'finished_monotonic_ns':now+1}
+    result.update(control.get('replace',{}))
+    if result.get('control') is None: result.pop('control',None)
+    print(json.dumps(result),flush=True)
+    sys.exit(control.get('exit_code',0))
 owned=facts['ownership']
 root=pathlib.Path('/mnt/shared/flux-out/tl3')/owned['owner']['correlation']
 (root/('helper-called-'+owned['execution'])).write_text(json.dumps(facts))
@@ -2978,7 +3459,7 @@ fn pending_injob_launch_requires_exact_stopped_launcher_and_empty_name_and_label
     assert_eq!(frames.last().unwrap()["kind"], "result", "{frames:?}");
     let facts = json!({"schema":"tl3.cleanup_evidence.v1","ownership":launcher,"launcher":{"kind":"absent"},
         "process_group_probe_errno":3,"container":null,
-        "pending_launch":{"intent":launch,"name_exists_exit":1,"sweep_exit":0,"remaining_ids":[]}});
+        "pending_launch":{"intent":launch,"name_exists_exit":1,"sweep_exit":0,"remaining_ids":[],"started_monotonic_ns":1,"finished_monotonic_ns":2}});
     for defect in [
         "name",
         "sweep",
@@ -3029,7 +3510,7 @@ fn pending_injob_launch_requires_exact_stopped_launcher_and_empty_name_and_label
         .journal_root
         .join("cleanup-debt")
         .join(&f.request.runtime.manifest_digest);
-    assert!(fs::read_dir(debt).unwrap().next().is_none());
+    assert!(fs::read_dir(debt).unwrap().next().is_some());
     let mut late = launcher.clone();
     late.container = Some(ContainerOwnership {
         name: launch["name"].as_str().unwrap().into(),
@@ -3051,8 +3532,8 @@ fn pending_injob_launch_requires_exact_stopped_launcher_and_empty_name_and_label
     ]);
     let terminal = f.attach();
     assert_eq!(
-        terminal.last().unwrap()["result"]["observation"]["terminal"]["ending"],
-        "cancelled",
+        terminal.last().unwrap()["result"]["observation"]["kind"],
+        "unknown",
         "{terminal:?}"
     );
 }
@@ -3071,7 +3552,7 @@ fn failed_pending_injob_launch(late_cancel: bool) {
     }
     let evidence = json!({"schema":"tl3.cleanup_evidence.v1","ownership":launcher,"launcher":{"kind":"absent"},
         "process_group_probe_errno":3,"container":null,
-        "pending_launch":{"intent":launch,"name_exists_exit":1,"sweep_exit":0,"remaining_ids":[]}});
+        "pending_launch":{"intent":launch,"name_exists_exit":1,"sweep_exit":0,"remaining_ids":[],"started_monotonic_ns":1,"finished_monotonic_ns":2}});
     let reference = api::durable::blob(
         &f.intent.output_dir.join("failed-pending.json"),
         &serde_json::to_vec(&evidence).unwrap(),
@@ -3087,8 +3568,8 @@ fn failed_pending_injob_launch(late_cancel: bool) {
     f.events(&completed(256));
     let frames = f.attach();
     assert_eq!(
-        frames.last().unwrap()["result"]["observation"]["terminal"]["ending"],
-        "infra-lost",
+        frames.last().unwrap()["result"]["observation"]["kind"],
+        "unknown",
         "{frames:?}"
     );
     let state = f.state();
@@ -3100,7 +3581,7 @@ fn failed_pending_injob_launch(late_cancel: bool) {
         .journal_root
         .join("cleanup-debt")
         .join(&f.request.runtime.manifest_digest);
-    assert!(!debt.exists() || fs::read_dir(debt).unwrap().next().is_none());
+    assert!(fs::read_dir(debt).unwrap().next().is_some());
 }
 
 #[test]

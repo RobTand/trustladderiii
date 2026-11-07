@@ -406,6 +406,18 @@ impl Flux {
             self.retain_cleanup(owner, reference)?;
         }
         let cleanup_complete = super::cleanup::all_stopped(&self.journal.load(owner)?);
+        let latest = self.journal.load(owner)?;
+        let post_begin_failure = latest.container_launches.keys().any(|execution| {
+            !latest
+                .runtime_ownerships
+                .iter()
+                .any(|owned| &owned.execution == execution)
+        });
+        let launch_failures = if post_begin_failure {
+            super::launch_failure::collect_candidates(&latest).unwrap_or_default()
+        } else {
+            vec![]
+        };
         let report = RunnerReport {
             schema: "tl3.runner_report.v1".into(),
             run: input.run.clone(),
@@ -414,14 +426,19 @@ impl Flux {
             runner_digest: record.request.runner.executable_digest.clone(),
             runtime_digest: record.request.runtime.manifest_digest.clone(),
             suite: record.request.suite.clone(),
-            complete: true,
-            cleanup_complete,
+            complete: !post_begin_failure,
+            cleanup_complete: cleanup_complete && !post_begin_failure,
             tests_started: 0,
-            outcome: ReportOutcome::ChecksCompleted,
+            outcome: if post_begin_failure {
+                ReportOutcome::PostBeginLaunchFailure
+            } else {
+                ReportOutcome::ChecksCompleted
+            },
             cases: vec![],
             payload: Some(payload.clone()),
             runtime_binding: input.runtime_binding.clone(),
             runtime_bindings: input.runtime_bindings.clone(),
+            launch_failures,
             cleanup: input.cleanup.clone(),
             stdout: Some(input.stdout.clone()),
             stderr: input.stderr.clone(),
@@ -536,6 +553,12 @@ impl Flux {
                         "trusted report identity/coverage invalid",
                     ));
                 }
+                if report.outcome == ReportOutcome::PostBeginLaunchFailure {
+                    let fresh = self.launch_failure_unit_absence(&record)?.ok_or_else(|| {
+                        BackendError::unknown("exact job-unit cessation unproven")
+                    })?;
+                    evidence.extend(fresh);
+                }
                 evidence.push(blob(&out.join("retained-report.json"), &raw)?);
                 if let Some(payload) = &report.payload {
                     let bytes = checked_blob(payload, out)?;
@@ -586,6 +609,12 @@ impl Flux {
             None
         };
         let terminal = self.terminal(owner, ending, reason, evidence, report_ref)?;
+        if report
+            .as_ref()
+            .is_some_and(|report| report.outcome == ReportOutcome::PostBeginLaunchFailure)
+        {
+            self.retire_launch_failure_debt(owner, &terminal)?;
+        }
         Ok(Observation::Terminal {
             binding: Some(binding),
             terminal,
@@ -707,6 +736,15 @@ impl Flux {
         }
         if matches!(report.outcome, ReportOutcome::RefusedBeforeTests) {
             return Ok(report.tests_started == 0 && report.cases.is_empty());
+        }
+        if report.outcome == ReportOutcome::PostBeginLaunchFailure {
+            return Ok(!report.complete
+                && !report.cleanup_complete
+                && report.tests_started == 0
+                && report.cases.is_empty()
+                && report.runtime_binding.is_none()
+                && report.runtime_bindings.is_empty()
+                && super::launch_failure::candidate(record, &report.launch_failures)?);
         }
         if matches!(
             record.request.runtime.runtime,
@@ -844,6 +882,23 @@ fn classify(
     let fatal = record.events.iter().position(|event| matches!(&event.fact, NativeFact::Exception { exception_type, severity: 0, .. } if exception_type != "cancel"));
     if !cleanup_complete {
         return None;
+    }
+    if record.container_launches.keys().any(|execution| {
+        !record
+            .runtime_ownerships
+            .iter()
+            .any(|owned| &owned.execution == execution)
+    }) && report.is_none_or(|report| report.outcome != ReportOutcome::PostBeginLaunchFailure)
+    {
+        return None;
+    }
+    if report.is_some_and(|report| report.outcome == ReportOutcome::PostBeginLaunchFailure) {
+        // collect() reaches classification only after validating the fresh external
+        // exact-unit absence alongside every local candidate evidence requirement.
+        return Some((
+            Ending::InfraLost,
+            "post-begin launch/setup failure; nonzero launchers, no container observations and fresh external exact-unit absence",
+        ));
     }
     if fatal.is_some() {
         return Some((

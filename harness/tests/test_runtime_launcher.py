@@ -179,10 +179,15 @@ def test_runtime_evidence_is_retained_outside_report(launcher, monkeypatch, evid
     assert records[0] == {'event': 'host', **facts}
     assert records[-1] == {'event': 'cleanup', 'confirmed': evidence_present}
     assert [record['event'] for record in records] == (
-        ['host', 'container', 'container_processes', 'cleanup'] if evidence_present
-        else ['host', 'execution_failure', 'cleanup'])
+        ['host', 'container', 'container_processes', 'launcher_exit', 'cleanup'] if evidence_present
+        else ['host', 'launcher_exit', 'execution_failure', 'cleanup'])
+    exit_record = next(record for record in records if record['event'] == 'launcher_exit')
+    assert exit_record['exit_code'] == 0
+    assert exit_record['natural_exit'] is True
+    assert exit_record['stderr_tail'] == ''
+    assert exit_record['monotonic_ns'] > 0
     if not evidence_present:
-        assert records[1]['termination_reason'] == 'missing_runtime_evidence'
+        assert records[2]['termination_reason'] == 'missing_runtime_evidence'
 
 
 def test_unqualified_binding_never_opens_payload_gate(launcher, monkeypatch):
@@ -1253,7 +1258,11 @@ def test_pending_injob_absent_name_and_empty_labels_retains_typed_evidence(clean
               'mode': 'in_job', 'labels': owned['container']['labels']}
     result = runtime.cleanup_observations(launcher, launch=launch, podman=podman, systemctl=systemctl, timeout=2)
     assert result['ownership'] == launcher
-    assert result['pending_launch'] == {'intent': launch, 'name_exists_exit': 1, 'sweep_exit': 0, 'remaining_ids': []}
+    pending = result['pending_launch']
+    assert 0 < pending['started_monotonic_ns'] <= pending['finished_monotonic_ns']
+    assert pending == {'intent': launch, 'name_exists_exit': 1, 'sweep_exit': 0, 'remaining_ids': [],
+                       'started_monotonic_ns': pending['started_monotonic_ns'],
+                       'finished_monotonic_ns': pending['finished_monotonic_ns']}
     assert result['process_group_probe_errno'] == 3
     assert result['container'] is None
     assert not any(args[0] == 'rm' for args in map(json.loads, (root / 'cleanup-calls').read_text().splitlines()))

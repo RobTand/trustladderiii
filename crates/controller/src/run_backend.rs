@@ -569,6 +569,8 @@ pub struct RunnerReport {
     pub runtime_binding: Option<RuntimeBindingInput>,
     #[serde(default)]
     pub runtime_bindings: Vec<RuntimeBindingInput>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub launch_failures: Vec<LaunchFailureEvidence>,
     pub cleanup: Option<BlobRef>,
     pub stdout: Option<BlobRef>,
     #[serde(default)]
@@ -599,6 +601,7 @@ pub enum ReportOutcome {
     ChecksCompleted,
     WorkerPayloadCompleted,
     RefusedBeforeTests,
+    PostBeginLaunchFailure,
     EnvironmentLost,
 }
 
@@ -1034,6 +1037,17 @@ pub struct PendingLaunchStop {
     pub name_exists_exit: i32,
     pub sweep_exit: i32,
     pub remaining_ids: Vec<String>,
+    pub started_monotonic_ns: u64,
+    pub finished_monotonic_ns: u64,
+}
+
+/// Local candidate evidence, never a claim that the containing job unit ceased.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct LaunchFailureEvidence {
+    pub execution: String,
+    pub process_record: BlobRef,
+    pub cleanup: BlobRef,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]

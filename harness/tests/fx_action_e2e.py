@@ -29,6 +29,13 @@ def main():
                     facts = runtime.cleanup_observations(owned, podman=str(root / 'podman'),
                         systemctl='/unused-fixture', timeout=1)
                     (output / ('trusted-stop-' + owned['execution'] + '.json')).write_text(json.dumps(facts))
+                for launch in state['container_launches'].values():
+                    owned = launch['launcher']
+                    if any(item['execution'] == owned['execution'] for item in state['runtime_ownerships']):
+                        continue
+                    facts = runtime.cleanup_observations(owned, launch=launch, podman=str(root / 'podman'),
+                        systemctl='/unused-fixture', timeout=1)
+                    (output / ('trusted-stop-' + owned['execution'] + '.json')).write_text(json.dumps(facts))
             result = request(command, **kwargs)
             accepted = True
             if command['op'] == 'begin_container_launch' and settings['mode'] == 'begin-response-lost':
@@ -165,6 +172,12 @@ args = sys.argv[1:]
 with (root / 'runtime-calls.jsonl').open('a') as log:
     log.write(json.dumps(args) + '\\n')
 if args[0] == 'run':
+    if {mode!r} == 'absent-interpreter':
+        try:
+            os.execv('/__tl3_deliberately_absent_interpreter__', ['/__tl3_deliberately_absent_interpreter__'])
+        except FileNotFoundError:
+            print('catatonit: failed to exec pid1: No such file or directory', file=sys.stderr, flush=True)
+            sys.exit(127)
     name = args[args.index('--name') + 1]
     labels = {{args[i+1].split('=',1)[0]: args[i+1].split('=',1)[1] for i in range(len(args)-1) if args[i]=='--label'}}
     metadata = {{'Id':hashlib.sha256(name.encode()).hexdigest(), 'Name':name, 'Labels':labels, 'Pid':os.getpid(), 'ConmonPid':os.getpid()}}
@@ -212,22 +225,36 @@ sys.exit(0)
         assert 'TL3_EXECUTION_FAILURE ' in raw, (output / 'host.stderr').read_text()
         failure = next(json.loads(line.split(' ', 1)[1]) for line in raw.splitlines()
                        if line.startswith('TL3_EXECUTION_FAILURE '))
-        assert failure['outcome'] == ('unknown_incomplete' if mode in ('binding-mismatch', 'begin-response-lost') else 'setup_failure')
+        expected = ('post_begin_launch_failure_candidate' if mode == 'absent-interpreter' else
+                    'unknown_incomplete' if mode in ('binding-mismatch', 'begin-response-lost') else 'setup_failure')
+        assert failure['outcome'] == expected, failure
         assert not failure['test_started'], failure
         assert 'infrastructure-failure' in raw, raw
-    if mode == 'begin-response-lost':
+    if mode in ('begin-response-lost', 'absent-interpreter'):
         assert any(Path(settings['scratch']).iterdir()), 'ambiguous begin must retain scratch'
+    if mode == 'begin-response-lost':
         assert (output / 'begin-persisted-state.json').exists()
         assert not (root / 'runtime-calls.jsonl').exists() or all(
             json.loads(line)[0] != 'run' for line in (root / 'runtime-calls.jsonl').read_text().splitlines())
         assert not (root / 'payload-started').exists()
-    else:
+    elif mode != 'absent-interpreter':
         assert not Path(settings['scratch']).exists(), 'owned run scratch root retained'
     requests = [json.loads(line) for line in (output / 'requests-action.jsonl').read_text().splitlines()]
     operations = [item['op'] for item in requests if item['accepted']]
     launches = list(output.glob('*.runtime.jsonl'))
     events = [[json.loads(line) for line in path.read_text().splitlines()] for path in launches]
-    if mode in ('success', 'binding-mismatch'):
+    if mode == 'absent-interpreter':
+        assert 'begin_container_launch' in operations
+        assert 'bind_container_launch' not in operations
+        report = json.loads((output / 'report.json').read_text())
+        assert report['outcome'] == 'post_begin_launch_failure', report
+        assert report['launch_failures'] and not report['runtime_bindings']
+        for log in events:
+            names = [event['event'] for event in log]
+            assert 'container' not in names
+            assert names.index('launcher_exit') < names.index('no_container_observed')
+            assert next(event['exit_code'] for event in log if event['event'] == 'launcher_exit') == 127
+    elif mode in ('success', 'binding-mismatch'):
         for event_log in events:
             names = [event['event'] for event in event_log]
             assert names.index('allocation_grant') < names.index('launch_intent') < names.index('container')

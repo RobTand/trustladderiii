@@ -2419,6 +2419,27 @@
         "output_bounds"
       ]
     },
+    "LaunchFailureEvidence": {
+      "description": "Local candidate evidence, never a claim that the containing job unit ceased.",
+      "type": "object",
+      "properties": {
+        "cleanup": {
+          "$ref": "#/$defs/BlobRef"
+        },
+        "execution": {
+          "type": "string"
+        },
+        "process_record": {
+          "$ref": "#/$defs/BlobRef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "execution",
+        "process_record",
+        "cleanup"
+      ]
+    },
     "LaunchPlacement": {
       "oneOf": [
         {
@@ -2954,6 +2975,11 @@
       "description": "Exact absence facts after stopping an unbound InJob launcher. OwnScope needs\na bound scope identity and cannot be discharged by container absence alone.",
       "type": "object",
       "properties": {
+        "finished_monotonic_ns": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
         "intent": {
           "$ref": "#/$defs/ContainerLaunchIntent"
         },
@@ -2967,6 +2993,11 @@
             "type": "string"
           }
         },
+        "started_monotonic_ns": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
         "sweep_exit": {
           "type": "integer",
           "format": "int32"
@@ -2977,7 +3008,9 @@
         "intent",
         "name_exists_exit",
         "sweep_exit",
-        "remaining_ids"
+        "remaining_ids",
+        "started_monotonic_ns",
+        "finished_monotonic_ns"
       ]
     },
     "PhaseEvidence": {
@@ -3709,6 +3742,7 @@
         "checks_completed",
         "worker_payload_completed",
         "refused_before_tests",
+        "post_begin_launch_failure",
         "environment_lost"
       ]
     },
@@ -3900,6 +3934,12 @@
         },
         "complete": {
           "type": "boolean"
+        },
+        "launch_failures": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LaunchFailureEvidence"
+          }
         },
         "outcome": {
           "$ref": "#/$defs/ReportOutcome"

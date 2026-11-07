@@ -199,6 +199,14 @@ pub(super) fn all_stopped(record: &Record) -> bool {
     })
 }
 
+fn unobserved_launch(record: &Record, execution: &str) -> bool {
+    record.container_launches.contains_key(execution)
+        && !record
+            .runtime_ownerships
+            .iter()
+            .any(|owned| owned.execution == execution)
+}
+
 fn executions(record: &Record) -> Vec<RuntimeOwnership> {
     record
         .runtime_ownerships
@@ -247,7 +255,13 @@ impl Flux {
                 correlation: record.intent.correlation.clone(),
             };
             let record = self.journal.load(&owner)?;
-            if record.terminal.is_some() || all_stopped(&record) {
+            if record.terminal.is_some()
+                || (all_stopped(&record)
+                    && !record
+                        .container_launches
+                        .keys()
+                        .any(|execution| unobserved_launch(&record, execution)))
+            {
                 return Ok(());
             }
             let runtime = debts.join(&record.request.runtime.manifest_digest);
@@ -259,11 +273,12 @@ impl Flux {
                     executions(&record)
                         .into_iter()
                         .filter(|owned| {
-                            !record.cleanup_evidence.get(&owned.execution).is_some_and(
-                                |reference| {
-                                    stopped(&record, &owned.run, reference).unwrap_or(false)
-                                },
-                            )
+                            unobserved_launch(&record, &owned.execution)
+                                || !record.cleanup_evidence.get(&owned.execution).is_some_and(
+                                    |reference| {
+                                        stopped(&record, &owned.run, reference).unwrap_or(false)
+                                    },
+                                )
                         })
                         .map(|owned| owned.execution)
                         .collect()
@@ -317,6 +332,11 @@ impl Flux {
             })?;
             let runtime = debts.join(&record.request.runtime.manifest_digest);
             for owned in &executions(&current) {
+                // Name/label/group absence is local candidate evidence. An unobserved
+                // launch keeps debt until external whole-unit absence is accepted.
+                if unobserved_launch(&current, &owned.execution) {
+                    continue;
+                }
                 if !current
                     .cleanup_evidence
                     .get(&owned.execution)
@@ -350,6 +370,49 @@ impl Flux {
                 Some(execution),
                 "exact execution stopped; terminal still requires every registered execution",
             ))
+        })
+    }
+
+    pub(super) fn retire_launch_failure_debt(
+        &self,
+        owner: &Owner,
+        terminal: &Terminal,
+    ) -> Result<()> {
+        self.journal.runtime_gate(|debts| {
+            let record = self.journal.load(owner)?;
+            if record.terminal.as_ref() != Some(terminal) || terminal.ending != Ending::InfraLost {
+                return Err(BackendError::unknown(
+                    "launch-failure debt lacks committed terminal",
+                ));
+            }
+            let receipt: Receipt = serde_json::from_slice(&checked_blob(
+                &terminal.receipt,
+                &record.intent.output_dir,
+            )?)?;
+            let Some(reference) = receipt.report else {
+                return Ok(());
+            };
+            let report: RunnerReport =
+                serde_json::from_slice(&checked_blob(&reference, &record.intent.output_dir)?)?;
+            if report.outcome != ReportOutcome::PostBeginLaunchFailure {
+                return Ok(());
+            }
+            let runtime = debts.join(&record.request.runtime.manifest_digest);
+            for intent in record.container_launches.values() {
+                let path = runtime.join(format!(
+                    "{}.{}",
+                    record.intent.correlation, intent.launcher.execution
+                ));
+                if path.exists()
+                    && serde_json::from_slice::<SubmissionIntent>(&read(&path)?)? == record.intent
+                {
+                    std::fs::remove_file(path)?;
+                }
+            }
+            if runtime.exists() {
+                std::fs::File::open(runtime)?.sync_all()?;
+            }
+            Ok(())
         })
     }
 
