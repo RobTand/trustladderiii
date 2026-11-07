@@ -108,6 +108,7 @@
           "additionalProperties": false,
           "properties": {
             "excerpt": {
+              "description": "At most 4096 UTF-8 bytes after Violation normalization, including newline+[truncated]. JSON Schema maxLength counts characters; Violation serialization/deserialization and rendering enforce the UTF-8 byte cap.",
               "maxLength": 4096,
               "type": "string"
             },
@@ -247,6 +248,7 @@
           "additionalProperties": false,
           "properties": {
             "instruction": {
+              "description": "Nonblank instruction of at most 1024 UTF-8 bytes. JSON Schema maxLength counts characters; Rust deserialization and validation enforce the byte cap.",
               "maxLength": 1024,
               "minLength": 1,
               "type": "string"

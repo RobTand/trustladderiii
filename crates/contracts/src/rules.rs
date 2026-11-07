@@ -186,10 +186,14 @@ pub enum Repair {
     },
 }
 
-fn instruction_from_wire<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+fn instruction_from_wire<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<String, D::Error> {
     let instruction = String::deserialize(deserializer)?;
     if instruction.trim().is_empty() || instruction.len() > INSTRUCTION_BYTES {
-        return Err(serde::de::Error::custom("source instruction must be nonblank and at most 1024 UTF-8 bytes"));
+        return Err(serde::de::Error::custom(
+            "source instruction must be nonblank and at most 1024 UTF-8 bytes",
+        ));
     }
     Ok(instruction)
 }

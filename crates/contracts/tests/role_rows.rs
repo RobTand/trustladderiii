@@ -772,56 +772,144 @@ fn mixed_field_and_source_repairs_register_a_complete_reply_witness() {
             }
             rows
         },
-        names: |facts| vec![Name {
-            kind: if facts["source"] == true { NameKind::Path } else { NameKind::Field },
-            value: if facts["source"] == true { "src/lib.rs" } else { "/value" }.into(),
-        }],
+        names: |facts| {
+            vec![Name {
+                kind: if facts["source"] == true {
+                    NameKind::Path
+                } else {
+                    NameKind::Field
+                },
+                value: if facts["source"] == true {
+                    "src/lib.rs"
+                } else {
+                    "/value"
+                }
+                .into(),
+            }]
+        },
         bad_value: |_| Value::Null,
-        allowed: Callback::Static(Allowed::Schema { keyword: SchemaKeyword::Const, value: json!("good") }),
-        repair: Callback::Facts(|facts| if facts["source"] == true {
-            Repair::SourceEdit { path: "src/lib.rs".into(), instruction: "Fix the source assertion.".into() }
-        } else {
-            Repair::Edit { pointer: "/value".to_owned().try_into().unwrap(), op: EditOp::Replace,
-                           allowed: Allowed::Schema { keyword: SchemaKeyword::Const, value: json!("good") } }
+        allowed: Callback::Static(Allowed::Schema {
+            keyword: SchemaKeyword::Const,
+            value: json!("good"),
+        }),
+        repair: Callback::Facts(|facts| {
+            if facts["source"] == true {
+                Repair::SourceEdit {
+                    path: "src/lib.rs".into(),
+                    instruction: "Fix the source assertion.".into(),
+                }
+            } else {
+                Repair::Edit {
+                    pointer: "/value".to_owned().try_into().unwrap(),
+                    op: EditOp::Replace,
+                    allowed: Allowed::Schema {
+                        keyword: SchemaKeyword::Const,
+                        value: json!("good"),
+                    },
+                }
+            }
         }),
         gating: false,
         roles: vec![Role::Maker],
     };
     let fixture = Registration {
-        example: json!({"value":"bad"}), reply: json!({"value":"bad"}),
+        example: json!({"value":"bad"}),
+        reply: json!({"value":"bad"}),
         with_reply: |_, reply| reply.clone(),
         witness: Witness::Shared(json!({"value":"good"})),
     };
     let registered = rule.register(&fixture, &policy()).unwrap();
-    let rows = registered.evaluate(&fixture.example, Role::Maker, &policy()).unwrap();
-    assert!(permits(&rows, &fixture.reply, &json!({"value":"good"}), Role::Maker, &policy()).unwrap());
-    assert!(!permits(&rows, &fixture.reply, &json!({"value":"good", "other":true}), Role::Maker, &policy()).unwrap());
+    let rows = registered
+        .evaluate(&fixture.example, Role::Maker, &policy())
+        .unwrap();
+    assert!(
+        permits(
+            &rows,
+            &fixture.reply,
+            &json!({"value":"good"}),
+            Role::Maker,
+            &policy()
+        )
+        .unwrap()
+    );
+    assert!(
+        !permits(
+            &rows,
+            &fixture.reply,
+            &json!({"value":"good", "other":true}),
+            Role::Maker,
+            &policy()
+        )
+        .unwrap()
+    );
 }
 
 #[test]
 fn source_instruction_wire_boundary_counts_utf8_bytes() {
-    for instruction in ["a".repeat(INSTRUCTION_BYTES), "é".repeat(INSTRUCTION_BYTES / 2)] {
-        let repair: Repair = serde_json::from_value(json!({"kind":"source_edit", "path":"src/lib.rs", "instruction":instruction})).unwrap();
-        let mut row = registered().evaluate(&json!({"value":"bad"}), Role::Maker, &policy()).unwrap().remove(0);
-        row.names = vec![Name { kind: NameKind::Path, value: "src/lib.rs".into() }];
+    for instruction in [
+        "a".repeat(INSTRUCTION_BYTES),
+        "é".repeat(INSTRUCTION_BYTES / 2),
+    ] {
+        let repair: Repair = serde_json::from_value(
+            json!({"kind":"source_edit", "path":"src/lib.rs", "instruction":instruction}),
+        )
+        .unwrap();
+        let mut row = registered()
+            .evaluate(&json!({"value":"bad"}), Role::Maker, &policy())
+            .unwrap()
+            .remove(0);
+        row.names = vec![Name {
+            kind: NameKind::Path,
+            value: "src/lib.rs".into(),
+        }];
         row.repair = repair;
         assert!(row.validate(Role::Maker, &policy()).is_ok());
     }
-    for instruction in ["a".repeat(INSTRUCTION_BYTES + 1), "é".repeat(INSTRUCTION_BYTES / 2) + "a"] {
-        assert!(serde_json::from_value::<Repair>(json!({"kind":"source_edit", "path":"src/lib.rs", "instruction":instruction})).is_err());
+    for instruction in [
+        "a".repeat(INSTRUCTION_BYTES + 1),
+        "é".repeat(INSTRUCTION_BYTES / 2) + "a",
+    ] {
+        assert!(
+            serde_json::from_value::<Repair>(
+                json!({"kind":"source_edit", "path":"src/lib.rs", "instruction":instruction})
+            )
+            .is_err()
+        );
     }
 }
 
 #[test]
 fn source_editor_and_terminal_authority_are_required() {
-    let mut row = registered().evaluate(&json!({"value":"bad"}), Role::Maker, &policy()).unwrap().remove(0);
-    row.names = vec![Name { kind: NameKind::Path, value: "src/lib.rs".into() }];
-    row.repair = Repair::SourceEdit { path: "src/lib.rs".into(), instruction: "Fix it.".into() };
-    let no_editors = Policy { source_editors: &[], ..policy() };
+    let mut row = registered()
+        .evaluate(&json!({"value":"bad"}), Role::Maker, &policy())
+        .unwrap()
+        .remove(0);
+    row.names = vec![Name {
+        kind: NameKind::Path,
+        value: "src/lib.rs".into(),
+    }];
+    row.repair = Repair::SourceEdit {
+        path: "src/lib.rs".into(),
+        instruction: "Fix it.".into(),
+    };
+    let no_editors = Policy {
+        source_editors: &[],
+        ..policy()
+    };
     assert!(row.validate(Role::Maker, &no_editors).is_err());
-    assert!(render_all(std::slice::from_ref(&row), Role::Maker, RenderContext::Reply, &no_editors).is_err());
+    assert!(
+        render_all(
+            std::slice::from_ref(&row),
+            Role::Maker,
+            RenderContext::Reply,
+            &no_editors
+        )
+        .is_err()
+    );
     row.role = Role::Postmortem;
-    row.repair = Repair::CantMeet { reason: "No valid repair.".into() };
+    row.repair = Repair::CantMeet {
+        reason: "No valid repair.".into(),
+    };
     assert!(row.validate(Role::Postmortem, &policy()).is_err());
     assert!(render_all(&[row], Role::Postmortem, RenderContext::Reply, &policy()).is_err());
 }
@@ -830,12 +918,22 @@ fn source_editor_and_terminal_authority_are_required() {
 fn excerpt_exact_byte_boundary_and_straddling_character_are_pinned() {
     for (excerpt, expected) in [
         ("é".repeat(EXCERPT_BYTES / 2), "é".repeat(EXCERPT_BYTES / 2)),
-        ("a".repeat(EXCERPT_BYTES - TRUNCATED.len() - 1) + "💡" + &"z".repeat(32),
-         "a".repeat(EXCERPT_BYTES - TRUNCATED.len() - 1) + TRUNCATED),
+        (
+            "a".repeat(EXCERPT_BYTES - TRUNCATED.len() - 1) + "💡" + &"z".repeat(32),
+            "a".repeat(EXCERPT_BYTES - TRUNCATED.len() - 1) + TRUNCATED,
+        ),
     ] {
-        let mut row = registered().evaluate(&json!({"value":"bad"}), Role::Maker, &policy()).unwrap().remove(0);
-        row.evidence = vec![Evidence::TestFailure { target:"//pkg:test".into(), test:"case".into(), excerpt,
-                           log_ref:"log".into(), receipt:"receipt".into() }];
+        let mut row = registered()
+            .evaluate(&json!({"value":"bad"}), Role::Maker, &policy())
+            .unwrap()
+            .remove(0);
+        row.evidence = vec![Evidence::TestFailure {
+            target: "//pkg:test".into(),
+            test: "case".into(),
+            excerpt,
+            log_ref: "log".into(),
+            receipt: "receipt".into(),
+        }];
         let encoded = serde_json::to_value(&row).unwrap();
         assert_eq!(encoded["evidence"][0]["excerpt"], expected);
         let restored: Violation = serde_json::from_value(encoded.clone()).unwrap();
