@@ -37,7 +37,10 @@ if args[:2] == ['container', 'inspect']:
     if any('{{{{json .Id}}}}' in argument for argument in args):
         sys.exit(125)
     pid = int(pathlib.Path({str(tmp_path / 'run-pid')!r}).read_text())
-    print(json.dumps({{'Id': 'a' * 64, 'Pid': pid, 'ConmonPid': pid}}))
+    launch_path = pathlib.Path({str(tmp_path / 'launch.json')!r})
+    launch = json.loads(launch_path.read_text()) if launch_path.exists() else {{}}
+    print(json.dumps({{'Id': 'a' * 64, 'Pid': pid, 'ConmonPid': pid,
+                      'Name': launch.get('name'), 'Labels': launch.get('labels')}}))
     sys.exit(0)
 if args[:2] == ['container', 'exists']:
     sys.exit(int(pathlib.Path({str(tmp_path / 'exists')!r}).read_text()))
@@ -561,3 +564,124 @@ def test_published_host_entry_verifies_imported_bytes_before_any_operation(tmp_p
     assert executable.stat().st_mode & 0o777 == 0o600
     assert manifest.stat().st_mode & 0o777 == 0o600
     assert executable.parent.stat().st_mode & 0o777 == 0o700
+
+
+def test_host_collector_preserves_near_budget_complete_refusal_and_independent_stderr(tmp_path, monkeypatch):
+    from tl3_harness import runtime
+
+    report = {'schema': 'tl3.checks.v3', 'effect_key': 'fixture', 'base': 'b' * 40, 'head': 'c' * 40,
+              'reviewed': None, 'results': [{'name': 'complete refusal', 'kind': 'demonstrating',
+              'verdict': 'infrastructure-failure', 'custody': 'in-process', 'tests': [
+                  {'test': f'test_{index}', 'base': 'uncollected', 'head': 'uncollected',
+                   'pre_existing': False, 'passed': False, 'message': 'summary',
+                   'proof_refusal': 'complete proof refusal ' * 2800} for index in range(129)]}]}
+    payload = json.dumps(report, separators=(',', ':')).encode()
+    assert 8 * 1024 * 1024 - 128 * 1024 < len(payload) < 8 * 1024 * 1024
+    raw = b'TL3_CHECKS ' + payload + b'\n'
+    source = tmp_path / 'input'
+    source.write_bytes(raw)
+    bounds = {'stdout_bytes': 9 * 1024 * 1024 + 12, 'stderr_bytes': 1024 * 1024}
+    monkeypatch.setattr(runtime, 'launch_context', lambda: {'output_dir': str(tmp_path), 'run': {},
+                        'owner': 'owner', 'correlation': 'correlation', 'output_bounds': bounds})
+    requests = []
+    monkeypatch.setattr(runtime, 'backend_request', lambda request: requests.append(request) or
+                        ({'stopped': False} if request['op'] == 'cleanup_runtime' else {'report': 'rust-owned'}))
+    code, _ = runtime.collect_host_payload([sys.executable, '-I', '-c',
+        'import pathlib,sys;sys.stdout.buffer.write(pathlib.Path(sys.argv[1]).read_bytes());'
+        'sys.stderr.buffer.write(b"x"*1048576)', str(source)], timeout=15)
+    assert code == 0
+    assert (tmp_path / 'host.stdout').read_bytes() == raw
+    assert (tmp_path / 'host.stderr').stat().st_size == bounds['stderr_bytes']
+    facts = next(request['facts'] for request in requests if request['op'] == 'collect_runner')
+    assert facts['stderr']['bytes'] == bounds['stderr_bytes']
+    assert json.loads((tmp_path / 'host.stdout').read_bytes()[len(b'TL3_CHECKS '):]) == report
+
+
+@pytest.mark.parametrize('operation', ['collect_runner', 'collect_worker'])
+def test_collector_uses_rust_selected_stream_bounds_and_operation(tmp_path, monkeypatch, operation):
+    from tl3_harness import runtime
+
+    monkeypatch.setattr(runtime, 'launch_context', lambda: {'output_dir': str(tmp_path), 'run': {},
+                        'owner': 'owner', 'correlation': 'correlation',
+                        'output_bounds': {'stdout_bytes': 13, 'stderr_bytes': 17}})
+    requests = []
+    monkeypatch.setattr(runtime, 'backend_request', lambda request: requests.append(request) or {'stopped': False})
+    code, _ = runtime.collect_host_payload([sys.executable, '-I', '-c',
+        'import sys;sys.stdout.buffer.write(b"a"*13);sys.stderr.buffer.write(b"b"*17)'],
+        timeout=10, operation=operation)
+    assert code == 0
+    assert requests[-1]['op'] == operation
+    assert requests[-1]['facts']['stdout']['bytes'] == 13
+    assert requests[-1]['facts']['stderr']['bytes'] == 17
+
+
+@pytest.mark.parametrize('stream', ['stdout', 'stderr'])
+def test_collector_refuses_independent_stream_overflow(tmp_path, monkeypatch, stream):
+    from tl3_harness import runtime
+
+    monkeypatch.setattr(runtime, 'launch_context', lambda: {'output_dir': str(tmp_path), 'run': {},
+                        'owner': 'owner', 'correlation': 'correlation',
+                        'output_bounds': {'stdout_bytes': 31, 'stderr_bytes': 31}})
+    requests = []
+    monkeypatch.setattr(runtime, 'backend_request', lambda request: requests.append(request) or {'stopped': False})
+    with pytest.raises(RuntimeError, match=stream):
+        runtime.collect_host_payload([sys.executable, '-I', '-c',
+            f'import sys;sys.{stream}.buffer.write(b"a"*32)'], timeout=10)
+    assert not any(request['op'].startswith('collect_') for request in requests)
+
+
+@pytest.mark.parametrize('allowed', [True, False])
+def test_durable_launch_precedes_podman_and_binding_gates_payload(launcher, monkeypatch, allowed):
+    from tl3_harness import runtime
+    from tl3_harness.runtime_evidence import PREFIX
+
+    executable, calls = launcher
+    output = executable.parent / 'output'
+    output.mkdir()
+    context = {'run': {'backend': 'flux', 'uri': 'local:///fixture', 'instance': 'run/generation', 'job': 'fJob'},
+               'owner': 'owner', 'correlation': 'correlation', 'request_digest': 'f' * 64,
+               'output_dir': str(output), 'progress': {'no_progress_seconds': 10},
+               'placement': {'kind': 'observed', 'host': 'dl380g10', 'rank': 0,
+                             'allocation': {}, 'topology': {}, 'os_pus': [1]},
+               'runtime': {'mode': 'in_job'}}
+    (executable.parent / 'stderr').write_text(PREFIX + json.dumps({'Cpus_allowed_list': '1', 'cgroup': '0::/job'}) + '\n')
+    monkeypatch.setattr(runtime, 'launch_context', lambda: context)
+    operations = []
+    def backend(request):
+        op = request['op']
+        operations.append(op)
+        if op == 'begin_container_launch':
+            assert not calls.exists(), 'Podman must remain gated until begin returns'
+            launch = {'launcher': request['launcher'], 'name': 'tl3-exact-fixture',
+                      'mode': 'in_job', 'labels': {'tl3.execution': request['launcher']['execution']}}
+            (executable.parent / 'launch.json').write_text(json.dumps(launch))
+            return {'launch': launch}
+        if op == 'bind_container_launch':
+            assert not (executable.parent / 'payload').exists()
+            assert request['observed']['container']['name'] == 'tl3-exact-fixture'
+            return {'binding': {'payload_allowed': allowed, 'ownership': request['observed']}}
+        if op == 'validate_runtime_binding':
+            assert 'bind_container_launch' in operations
+            assert request['facts']['container_id'] == 'a' * 64
+            assert request['facts']['execution']
+            return {'qualification': {'qualified': True}}
+        if op == 'cleanup_runtime':
+            return {'cleanup': {'stopped': True}}
+        raise AssertionError(op)
+    monkeypatch.setattr(runtime, 'backend_request', backend)
+    with calls.with_suffix('.stdin').open('w+b') as selection:
+        selection.write(b'["private-test"]')
+        selection.seek(0)
+        if allowed:
+            with Supervised([str(executable), 'run', 'fixture'], selection, ()) as process:
+                list(process.records())
+            assert (executable.parent / 'payload').read_bytes() == b'["private-test"]'
+            assert operations.index('bind_container_launch') < operations.index('validate_runtime_binding')
+        else:
+            with pytest.raises(ExecutionFailure):
+                with Supervised([str(executable), 'run', 'fixture'], selection, ()) as process:
+                    list(process.records())
+            assert not (executable.parent / 'payload').exists()
+            assert 'validate_runtime_binding' not in operations
+    assert operations[0] == 'begin_container_launch'
+    assert operations[-1] == 'cleanup_runtime'
