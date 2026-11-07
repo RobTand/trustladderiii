@@ -1265,7 +1265,11 @@ impl Controller {
         { return Ok(()); }
         let world = snapshot::decode(snapshot)?;
         let node = &world.nodes[delivery.node().0 as usize];
-        if !node.operation_pending(tl3_kernel::EffectKind::Enqueue, delivery.generation)
+        let publishing = node.phase == Phase::Publishing && node.generation == delivery.generation
+            && matches!((node.effect, delivery.output),
+                (Some(effect), Out::Effect {seq, kind:tl3_kernel::EffectKind::Enqueue, ..})
+                    if effect.seq == seq && effect.kind == tl3_kernel::EffectKind::Enqueue && !effect.cancelling);
+        if !(publishing || node.operation_pending(tl3_kernel::EffectKind::Enqueue, delivery.generation))
             || node.effect.is_some_and(|effect| effect.cancelling)
             || snapshot.rows.iter().any(|row| row.table == "incidents"
                 && row.value["open"] == true && row.value["effect"] == delivery.key)
