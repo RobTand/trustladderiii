@@ -81,7 +81,12 @@ pub(crate) fn save_budget(snapshot: &Snapshot, commit: &mut Commit, node: NodeId
     }
     let mut row = request_row(snapshot, commit, node)?;
     let fields = row.as_object_mut().ok_or(Error::Invalid("invalid request binding"))?;
-    fields.insert("replan_budget".into(), serde_json::to_value(budget)?);
+    let encoded = serde_json::to_value(budget)?;
+    if fields.get("replan_budget") == Some(&encoded)
+        && fields.get("replan_budget_format") == Some(&serde_json::json!(1)) {
+        return Ok(());
+    }
+    fields.insert("replan_budget".into(), encoded);
     fields.insert("replan_budget_format".into(), serde_json::json!(1));
     commit.rows.push(put("requests", node.0.to_string(), row));
     Ok(())
