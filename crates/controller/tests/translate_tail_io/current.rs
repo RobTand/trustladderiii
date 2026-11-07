@@ -53,7 +53,7 @@ impl Shell<'_> {
                         tl3_kernel::Phase::Checking => tail::Phase::Checking,
                         tl3_kernel::Phase::Reviewing => tail::Phase::Reviewing,
                         tl3_kernel::Phase::Making => tail::Phase::Making,
-                        tl3_kernel::Phase::Queued => tail::Phase::Queued,
+                        tl3_kernel::Phase::AwaitingDelivery => tail::Phase::AwaitingDelivery,
                         // #862: the kernel's ci_failed runs a failed round here too.
                         tl3_kernel::Phase::Publishing
                             if n.effect.is_some_and(|effect| {

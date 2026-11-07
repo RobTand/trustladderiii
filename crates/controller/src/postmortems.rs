@@ -1183,28 +1183,7 @@ impl crate::Controller {
                         history.escaped_ci = true;
                     }
                 }
-                "queue_facts" => {
-                    let Ok(fact) = serde_json::from_value::<crate::adapters::mergify::QueueFact>(
-                        value.clone(),
-                    ) else {
-                        continue;
-                    };
-                    if fact.node(snapshot)? != Some(node) {
-                        continue;
-                    }
-                    use crate::adapters::mergify::Evidence;
-                    match fact.evidence {
-                        Evidence::CiFailed {
-                            head_check: false, ..
-                        }
-                        | Evidence::Conflict { .. }
-                        | Evidence::DequeuedByCommand { .. }
-                        | Evidence::DequeuedByPerson { .. } => history.dequeues += 1,
-                        Evidence::Merged {
-                            checks_passed: false,
-                            ..
-                        } => history.escaped_ci = true,
-                        _ => {}
+                _ => {}
                     }
                 }
                 _ => {}

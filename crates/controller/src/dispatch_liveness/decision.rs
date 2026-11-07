@@ -178,7 +178,7 @@ pub fn classify(wait: Wait, e: Evidence) -> DispatchStatus {
                 DispatchStatus::Silent
             }
         }
-        Wait::MergeQueue => {
+        Wait::Delivery => {
             if e.external {
                 DispatchStatus::MergeQueue
             } else {
@@ -349,7 +349,7 @@ pub open spec fn classification(wait: Wait, e: Evidence) -> DispatchStatus {
         Wait::WorkerReply => operation_classification(e),
         Wait::CheckResults => operation_classification(Evidence { class: DeliveryClass::Once, ..e }),
         Wait::Answer => if e.question { DispatchStatus::Answer } else { DispatchStatus::Silent },
-        Wait::MergeQueue => if e.external { DispatchStatus::MergeQueue } else { DispatchStatus::Silent },
+        Wait::Delivery => if e.external { DispatchStatus::MergeQueue } else { DispatchStatus::Silent },
         Wait::SlotOrFiles => if e.ticket && e.obstruction { DispatchStatus::SlotOrFiles } else { DispatchStatus::Silent },
         Wait::UpstreamEvent => if e.external { DispatchStatus::Prerequisite }
             else if e.admission { DispatchStatus::Admission } else { DispatchStatus::Silent },

@@ -14,7 +14,7 @@ pub(super) proof fn pause_resume(phase: Phase)
         Phase::Making => Some(Resume::Making),
         Phase::Checking => Some(Resume::Checking),
         Phase::Reviewing => Some(Resume::Reviewing),
-        Phase::Publishing | Phase::Queued => Some(Resume::Publishing),
+        Phase::Publishing => Some(Resume::Publishing),
         Phase::Rebasing => Some(Resume::Rebasing),
         _ => None,
     }) == if holding(phase) {
@@ -22,7 +22,7 @@ pub(super) proof fn pause_resume(phase: Phase)
             Phase::Making => Resume::Making,
             Phase::Checking => Resume::Checking,
             Phase::Reviewing => Resume::Reviewing,
-            Phase::Publishing | Phase::Queued => Resume::Publishing,
+            Phase::Publishing => Resume::Publishing,
             _ => Resume::Rebasing,
         })
     } else { None },

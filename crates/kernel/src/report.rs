@@ -176,7 +176,7 @@ pub closed spec fn agrees(event: Event,
 pub closed spec fn ci_cause(phase: Phase, current: Option<Item>, fact: Fact)
     -> Option<FailedRoundCause> {
     match fact {
-        Fact::CiFailed { infra: false } if phase == Phase::Queued
+        Fact::CiFailed { infra: false } if phase == Phase::AwaitingDelivery
             || phase == Phase::Publishing && current == Some(Item::Do(EffectKind::Enqueue)) =>
             Some(FailedRoundCause::CiFailed),
         _ => None,
@@ -480,7 +480,7 @@ pub(super) fn ci_failure_cause(phase: Phase, current: Option<Item>, fact: Fact)
 ] {
     kernel_proof! { lemmas::ci_cause_value(phase, current, fact); }
     match fact {
-        Fact::CiFailed { infra: false } if phase == Phase::Queued
+        Fact::CiFailed { infra: false } if phase == Phase::AwaitingDelivery
             || phase == Phase::Publishing && current == Some(Item::Do(EffectKind::Enqueue)) => {
             Some(FailedRoundCause::CiFailed)
         }

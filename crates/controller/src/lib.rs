@@ -10,8 +10,6 @@ pub mod adoption;
 mod approval_delivery;
 pub mod findings;
 pub mod outcome;
-pub mod queue_cause;
-mod queue_cause_decide;
 
 pub mod adapters;
 mod blocked;
@@ -954,19 +952,6 @@ impl Controller {
             return Ok(());
         }
         let news = observation_upstream(&snapshot, &observation)?;
-        if let Observation::Queue(fact) = &observation {
-            let identity = fact.identity();
-            if fact.recorded(&snapshot)?
-                || snapshot.rows.iter().any(|row| {
-                    row.table == "inbox"
-                        && serde_json::from_value::<Observation>(row.value.clone())
-                            .ok()
-                            .is_some_and(|pending| matches!(pending, Observation::Queue(pending) if pending.identity() == identity))
-                })
-            {
-                return Ok(());
-            }
-        }
         if let Observation::GitHubComment {
             repository,
             comment,
@@ -990,13 +975,6 @@ impl Controller {
                 return Ok(());
             }
         }
-        // Setup gaps describe current health. A fresh read after a clear must
-        // not be suppressed by the receipt for an earlier observation.
-        let key = if matches!(&observation, Observation::Queue(fact) if fact.setup()) {
-            format!("{key}:{}", snapshot.revision.get())
-        } else {
-            key.to_owned()
-        };
         let mut commit = Commit::new(format!("observe:{key}"), json!(&observation), &snapshot);
         self.model_success_evidence(&snapshot, &observation, &mut commit)?;
         commit
@@ -1042,24 +1020,6 @@ impl Controller {
             None
         };
         let key = quota_key.as_deref().unwrap_or(key);
-        if let Observation::Queue(fact) = observation
-            && fact.setup()
-        {
-            let identity = fact.identity();
-            if fact.recorded(snapshot)? || snapshot.rows.iter().any(|row| {
-                row.table == "inbox" && serde_json::from_value::<Observation>(row.value.clone())
-                    .ok().is_some_and(|pending| matches!(pending, Observation::Queue(pending) if pending.identity() == identity))
-            }) {
-                return Ok(());
-            }
-            let id = inbox_key(
-                &format!("{key}:{}", snapshot.revision.get()),
-                index,
-                observation,
-            )?;
-            commit.rows.push(put("inbox", id, json!(observation)));
-            return Ok(());
-        }
         let id = inbox_key(key, index, observation)?;
         let aliases = [
             id.clone(),
@@ -1202,36 +1162,7 @@ impl Controller {
                 return Ok(true);
             }
             let observation: Observation = decode_stored(row.value.clone())?;
-            let mut waiting_for_queue = false;
-            if let Observation::Queue(fact) = &observation
-                && fact.needs_queue_ack()
-                && let Some(node) = fact.node(&snapshot)?
             {
-                for effect in &snapshot.pending_effects {
-                    let delivery = hydrate(effect, &snapshot)?;
-                    if delivery.node() == node
-                        && matches!(
-                            delivery.output,
-                            DeliveryOutput::Effect {
-                                kind: tl3_kernel::EffectKind::Enqueue,
-                                ..
-                            }
-                        )
-                        && matches!(effect.state, EffectState::Sent | EffectState::Uncertain)
-                    {
-                        // Queue facts can beat a lost enqueue response. Confirm that key first.
-                        hook(Boundary::BeforeReconcile, &delivery.key);
-                        let reconciled = self.adapters.adapter(&delivery)?.reconcile(&delivery);
-                        hook(Boundary::AfterReconcile, &delivery.key);
-                        if let Ok(Reconciliation::Found(completion)) = reconciled {
-                            self.complete_queue_prerequisite(row, &effect.key, *completion)?;
-                            return Ok(true);
-                        }
-                        waiting_for_queue = true;
-                    }
-                }
-            }
-            if !waiting_for_queue {
                 if let Err(error) = self.consume_kernel_input(&snapshot, row) {
                     let mut commit =
                         Commit::new(format!("consume:{}", row.id), row.value.clone(), &snapshot);
@@ -1283,16 +1214,6 @@ impl Controller {
         }
         for effect in &snapshot.pending_effects {
             let delivery = hydrate(effect, &snapshot)?;
-            // ClosePr removes the queue label without waiting for Mergify admission reads.
-            let closing_queue = executor::upstream(delivery.output) == executor::Upstream::Delivery
-                && matches!(
-                    world.nodes[delivery
-                        .node()
-                        .index()
-                        .ok_or(Error::Invalid("node index overflow"))?]
-                    .phase,
-                    tl3_kernel::Phase::Stopping(_) | tl3_kernel::Phase::Closed(_)
-                );
             let cancelling = effect.epoch < snapshot.epoch
                 || match delivery.output {
                     DeliveryOutput::Effect { node, seq, .. } => {
@@ -1307,7 +1228,6 @@ impl Controller {
                 match effect.state {
                     EffectState::Intended => {
                         if executor::upstream(delivery.output) == executor::Upstream::Delivery
-                            && !closing_queue
                             && !matches!(
                                 self.adapters
                                     .adapter(&delivery)?
@@ -1502,15 +1422,7 @@ impl Controller {
                     }
                     hook(Boundary::BeforeReconcile, &effect.key);
                     let reconciled = if effect.state == EffectState::Cancelling {
-                        if closing_queue {
-                            Ok(Reconciliation::Found(Box::new(Completion::confirmed(
-                                vec![],
-                            ))))
-                        } else {
-                            self.adapters
-                                .adapter(&delivery)?
-                                .reconcile_cancellation(&delivery)
-                        }
+                        self.adapters.adapter(&delivery)?.reconcile_cancellation(&delivery)
                     } else {
                         self.adapters.adapter(&delivery)?.reconcile(&delivery)
                     };
@@ -1634,22 +1546,10 @@ impl Controller {
                         continue;
                     }
                 };
-                if completion.ack != Ack::Confirmed {
+                if !matches!(completion.ack, Ack::Confirmed | Ack::DeliveryAccepted) {
                     continue;
                 }
                 if completion.observations.is_empty() {
-                    let changed = self.record_progress(
-                        &snapshot,
-                        &mut commit,
-                        &row.id,
-                        completion.progress.as_ref(),
-                    )?;
-                    if !commit.rows.is_empty() {
-                        self.store.commit(&commit)?;
-                    }
-                    if changed == Some(true) {
-                        self.retry_held_effects(executor::upstream(delivery.output));
-                    }
                     continue;
                 }
                 if completion.releases_holds() {
@@ -1672,7 +1572,7 @@ impl Controller {
                     )?;
                 }
             }
-            if !quota {
+            if !quota && !active {
                 commit.rows.push(RowChange::Delete {
                     table: "watches".into(),
                     id: row.id.clone(),
@@ -1832,6 +1732,19 @@ impl Controller {
             .find(|e| tl3_delivery::key_matches(e.key.as_bytes(), key.as_bytes()))
             .ok_or(Error::Invalid("completion has no pending effect"))?;
         let delivery: Delivery = decode_stored(effect.payload.clone())?;
+        if completion.ack == Ack::DeliveryAccepted && !matches!(delivery.output,
+            DeliveryOutput::Effect { kind: tl3_kernel::EffectKind::Enqueue, .. })
+        {
+            return Err(Error::Invalid("delivery acceptance requires the handoff effect"));
+        }
+        if completion.ack == Ack::Confirmed
+            && effect.state != EffectState::Cancelling
+            && matches!(delivery.output, DeliveryOutput::Effect {
+                kind: tl3_kernel::EffectKind::Enqueue, ..
+            })
+        {
+            return Err(Error::Invalid("live handoff requires typed delivery acceptance"));
+        }
         if completion.ack == Ack::Permanent
             && publication_failure::handles(&delivery)
             && completion.diagnostic.is_none()
@@ -1999,7 +1912,7 @@ impl Controller {
                 to: EffectState::Cancelled,
             });
         }
-        if completion.ack == Ack::Confirmed {
+        if matches!(completion.ack, Ack::Confirmed | Ack::DeliveryAccepted) {
             if matches!(
                 delivery.output,
                 DeliveryOutput::Effect {
@@ -2019,7 +1932,6 @@ impl Controller {
                     id: marker.clone(),
                 });
             }
-            self.record_progress(snapshot, &mut commit, key, completion.progress.as_ref())?;
         }
         // Upstream facts remain evidence even when the attempted write was refused.
         for (index, observation) in completion.observations.iter().enumerate() {
@@ -2051,23 +1963,6 @@ impl Controller {
         commit: &mut Commit,
     ) -> Result<()> {
         let close_details = close_reasons::take_details(commit);
-        // A dequeue receipt can precede queue admission, where the kernel
-        // intentionally ignores it. Only an accepted Resume releases that hold.
-        if let Event::Command {
-            node,
-            id,
-            command: tl3_kernel::Command::Resume,
-        } = event
-            && let Some(current) = world.nodes.get(node.0 as usize)
-            && id > current.last_cmd
-            && !current.phase.is_closed()
-        {
-            commit.rows.push(put(
-                "queue_resumes",
-                node.0.to_string(),
-                json!({"command": id}),
-            ));
-        }
         let mut dependency_outputs = Vec::new();
         self.declare_merge_dependencies(
             snapshot,
@@ -2175,7 +2070,6 @@ impl Controller {
         self.record_review_stops(snapshot, &previous, &world, commit)?;
         self.resolve_closed_effect_incidents(snapshot, &world, commit)?;
         self.record_postmortems(snapshot, &previous, &world, commit)?;
-        self.resolve_stale_missing_checks(snapshot, &world, commit)?;
         for (index, node) in world.nodes.iter().enumerate() {
             if previous
                 .nodes
@@ -2501,16 +2395,6 @@ impl Controller {
                         diagnostic.render()
                     ));
                 }
-                if let Some(detail) = looks::queue_command_detail(&delivery, &class) {
-                    summary.push(' ');
-                    summary.push_str(&detail);
-                }
-                if class == "queue_unfinished"
-                    && let Some(detail) = looks::queue_incident_detail(snapshot, node)?
-                {
-                    summary.push(' ');
-                    summary.push_str(&detail);
-                }
                 if let Some(evidence) = blocked {
                     summary.push(' ');
                     summary.push_str(&evidence);
@@ -2654,47 +2538,20 @@ impl Controller {
             .filter(|(_, node)| matches!(node.phase, tl3_kernel::Phase::Closed(_)))
             .map(|(index, _)| NodeId(index as u64))
             .collect();
-        let closed_fact = |value: &Value| -> Result<bool> {
-            let fact: adapters::mergify::QueueFact = decode_stored(value.clone())?;
-            Ok(fact
-                .node(snapshot)?
-                .is_some_and(|node| closed.contains(&node)))
-        };
-        let retired_hold = |value: &Value| -> Result<bool> {
-            let hold: queue_cause::Hold = decode_stored(value.clone())?;
-            Ok(world.nodes.get(hold.node.0 as usize).is_none_or(|node| {
-                matches!(node.phase, tl3_kernel::Phase::Closed(_))
-                    || node.merged.is_some()
-                    || commit_sha(snapshot, node.head) != Some(hold.head.as_str())
-            }))
-        };
         let mut rows = Vec::new();
         for row in std::mem::take(&mut commit.rows) {
             if let RowChange::Put { table, value, .. } = &row
-                && ((table == "queue_facts" && closed_fact(value)?)
-                    || (table == "delivery_outcomes"
+                && ((table == "delivery_outcomes"
                         && value["node"]
                             .as_u64()
                             .is_some_and(|node| closed.contains(&NodeId(node))))
-                    || (table == "queue_holds" && retired_hold(value)?))
+)
             {
                 continue;
             }
             rows.push(row);
         }
         commit.rows = rows;
-        for row in snapshot
-            .rows
-            .iter()
-            .filter(|row| row.table == "queue_facts")
-        {
-            if closed_fact(&row.value)? {
-                commit.rows.push(RowChange::Delete {
-                    table: "queue_facts".into(),
-                    id: row.id.clone(),
-                });
-            }
-        }
         for row in &snapshot.rows {
             let discard_rebase_context = row.table == "rebase_conflicts"
                 && row
@@ -2710,7 +2567,6 @@ impl Controller {
                     && row.value["node"]
                         .as_u64()
                         .is_some_and(|node| closed.contains(&NodeId(node))))
-                || (row.table == "queue_holds" && retired_hold(&row.value)?)
                 || row.table == "check_reports"
                     && row
                         .id
@@ -2955,17 +2811,6 @@ impl Controller {
         observation: Observation,
         commit: &mut Commit,
     ) -> Result<Option<Event>> {
-        self.translate_with_receipt(snapshot, world, observation, commit, None)
-    }
-
-    fn translate_with_receipt(
-        &mut self,
-        snapshot: &Snapshot,
-        world: &mut World,
-        observation: Observation,
-        commit: &mut Commit,
-        queue_receipt: Option<(RowChange, findings::QueueCiEvidence)>,
-    ) -> Result<Option<Event>> {
         if let Observation::GitHubComment {
             repository,
             issue,
@@ -3018,10 +2863,7 @@ impl Controller {
             other => other,
         };
 
-        let mut ci_details = if let Some((_, details)) = &queue_receipt {
-            details.clone()
-        } else {
-            match &observation {
+        let mut ci_details = match &observation {
                 Observation::Outcome {
                     outcome:
                         outcome::Outcome::CiFailed {
@@ -3035,14 +2877,9 @@ impl Controller {
                     details.failed_tests = failed_tests.clone();
                     details
                 }
-                Observation::Queue(adapters::mergify::QueueFact {
-                    evidence: adapters::mergify::Evidence::CiFailed { details, .. },
-                    ..
-                }) => details.clone(),
                 _ => Default::default(),
-            }
         };
-        ci_details = adapters::mergify::ci_evidence::bounded(ci_details);
+        ci_details = findings::bounded_ci_evidence(ci_details);
         let ci_checks = ci_details.checks.clone();
         let mut failed_tests = ci_details.failed_tests.clone();
         let mut outside_paths = Vec::new();
@@ -3105,249 +2942,6 @@ impl Controller {
             } => {
                 return self.linked_request(snapshot, repository, issue, original, commit);
             }
-            Observation::Queue(mut fact) => {
-                if let adapters::mergify::Evidence::Gate(gate) = &fact.evidence {
-                    self.queue_gate(snapshot, &fact, gate, commit)?;
-                    return Ok(None);
-                }
-                let identity = fact.identity();
-                let Some(translation) =
-                    tl3_controller_core::translate::begin(fact.recorded(snapshot)?)
-                else {
-                    return Ok(None);
-                };
-                let Some(node) = fact.node(snapshot)? else {
-                    return Ok(None);
-                };
-                use adapters::mergify::Evidence;
-                use tl3_controller_core::translate::{
-                    self as core, Decision, IncidentAction, KernelKind as KernelFact,
-                };
-                use tl3_mergify::decide::translate as queue;
-                let current = &world.nodes[node.0 as usize];
-                let view = queue::NodeView {
-                    phase: match current.phase {
-                        tl3_kernel::Phase::Publishing => queue::Phase::Publishing,
-                        tl3_kernel::Phase::Queued => queue::Phase::Queued,
-                        tl3_kernel::Phase::Closed(_) => queue::Phase::Closed,
-                        _ => queue::Phase::Other,
-                    },
-                    merged: current.merged.is_some(),
-                    enqueue_pending: current.effect.is_some_and(|effect| {
-                        core::enqueue_pending(
-                            effect.kind == tl3_kernel::EffectKind::Enqueue,
-                            effect.cancelling,
-                        )
-                    }),
-                };
-                // A closed node takes only a merge it has not recorded. A later
-                // active enqueue must still be able to consume head evidence.
-                let Some(kind) = fact.evidence.kind() else {
-                    return Ok(None);
-                };
-                if !queue::admit(kind, view) {
-                    return Ok(None);
-                }
-                if let Evidence::CiFailed {
-                    head,
-                    infra,
-                    head_check: false,
-                    details,
-                    ..
-                } = &mut fact.evidence
-                {
-                    *details = adapters::mergify::ci_evidence::bounded(details.clone());
-                    let plan = check_run(snapshot, node, Some(head))?;
-                    let outside = adapters::mergify::ci_evidence::outside_change(
-                        &fact.repository,
-                        details,
-                        plan.as_ref(),
-                    );
-                    let previous: Vec<_> = snapshot
-                        .rows
-                        .iter()
-                        .filter(|row| row.table == "queue_facts")
-                        .map(|row| core::PriorFailure {
-                            same_repository: row.value["repository"] == json!(&fact.repository),
-                            same_number: row.value["number"] == fact.number,
-                            same_head: row.value["evidence"]["CiFailed"]["head"] == *head,
-                            infra: row.value["evidence"]["CiFailed"]["infra"] == true,
-                            overlapping_test:
-                                row.value["evidence"]["CiFailed"]["details"]["failed_tests"]
-                                    .as_array()
-                                    .is_some_and(|previous| {
-                                        previous.iter().any(|previous| {
-                                            details
-                                                .failed_tests
-                                                .iter()
-                                                .any(|test| previous["test"] == test.test)
-                                        })
-                                    }),
-                        })
-                        .collect();
-                    let repeated = core::repeated(&previous);
-                    let (classified, decision) = queue::classify_ci(*infra, outside, repeated);
-                    *infra = classified;
-                    details.decision = Some(decision.as_str().into());
-                }
-                let q58 = matches!(&fact.evidence, Evidence::CiFailed { details, .. } if details.decision.as_deref() == Some("outside_change"));
-                let current_failure = matches!(&fact.evidence, Evidence::CiFailed { head, .. } if commit_sha(snapshot, current.head) == Some(head));
-                if current_failure
-                    && self.queue_failure_cause(snapshot, &mut fact, node, q58, commit)?
-                {
-                    return Ok(None);
-                }
-                let value = json!(&fact);
-                let head_current = match &fact.evidence {
-                    Evidence::CiFailed { head, .. }
-                    | Evidence::Conflict { head, .. }
-                    | Evidence::DequeuedByCommand { head, .. } => core::head_current(
-                        self.head(node, head)?.0,
-                        world.nodes[node.0 as usize].head.map(|head| head.0),
-                    ),
-                    _ => true,
-                };
-                let approved_head = match &fact.evidence {
-                    Evidence::CheckMissing { head, .. } | Evidence::QueueBlocked { head, .. } => {
-                        commit_sha(snapshot, current.approved) == Some(head)
-                    }
-                    _ => false,
-                };
-                let route = match queue::route(
-                    fact.evidence.kind().expect("queue evidence"),
-                    view,
-                    head_current,
-                    approved_head,
-                ) {
-                    queue::Route::Record => core::Route::Record,
-                    queue::Route::Skip => core::Route::Skip,
-                    queue::Route::SetupIncident
-                    | queue::Route::MissingIncident
-                    | queue::Route::BlockedIncident
-                    | queue::Route::ClearIncident => core::Route::Incident,
-                    queue::Route::Kernel(kernel) => core::Route::Kernel(match kernel {
-                        queue::KernelFact::PrMerged { checks_passed } => {
-                            KernelFact::PrMerged { checks_passed }
-                        }
-                        queue::KernelFact::CiFailed { infra } => KernelFact::CiFailed { infra },
-                        queue::KernelFact::Conflict => KernelFact::Conflict,
-                        queue::KernelFact::PrDequeuedByPerson => KernelFact::PrDequeuedByPerson,
-                        queue::KernelFact::PrClosedByPerson => KernelFact::PrClosedByPerson,
-                        queue::KernelFact::PushByOther => KernelFact::PushByOther,
-                    }),
-                };
-                let kind = match &fact.evidence {
-                    Evidence::ChecksUnavailable { .. } => core::EvidenceKind::Setup,
-                    Evidence::CheckMissing { .. } => core::EvidenceKind::Missing,
-                    Evidence::QueueBlocked { .. } => core::EvidenceKind::Blocked,
-                    Evidence::CheckReported { .. } => core::EvidenceKind::Reported,
-                    Evidence::Merged { .. } => core::EvidenceKind::Merged,
-                    Evidence::PushByOther { .. } => core::EvidenceKind::PushByOther,
-                    _ => core::EvidenceKind::Other,
-                };
-                let kernel = match core::dispatch(translation, route, kind) {
-                    Decision::Record => {
-                        commit.rows.push(put("queue_facts", identity, value));
-                        return Ok(None);
-                    }
-                    Decision::Skip => return Ok(None),
-                    Decision::Kernel(kernel) => kernel,
-                    // Setup rows (Q52, #447): none reaches the kernel, so no
-                    // failure or credit is charged.
-                    Decision::Incident(action) => {
-                        match (action, fact.evidence) {
-                            (
-                                IncidentAction::Setup,
-                                Evidence::ChecksUnavailable { permissions },
-                            ) => {
-                                self.check_setup_incident(snapshot, commit, node, &permissions)?;
-                                commit.rows.push(put("queue_facts", identity, value));
-                            }
-                            (
-                                IncidentAction::Missing,
-                                Evidence::CheckMissing { head, required },
-                            ) => {
-                                self.missing_check_incident(
-                                    snapshot, commit, node, &head, &required,
-                                )?;
-                                commit.rows.push(put("queue_facts", identity, value));
-                            }
-                            (
-                                IncidentAction::Blocked,
-                                Evidence::QueueBlocked {
-                                    head,
-                                    conditions,
-                                    failed,
-                                },
-                            ) => {
-                                self.queue_blocked_incident(
-                                    snapshot,
-                                    commit,
-                                    node,
-                                    &head,
-                                    &conditions,
-                                    &failed,
-                                )?;
-                                commit.rows.push(put("queue_facts", identity, value));
-                            }
-                            (IncidentAction::Clear, Evidence::CheckReported { head, required }) => {
-                                let id = looks::missing_check_incident_id(node, &head, &required);
-                                let incidents: Vec<_> = snapshot
-                                    .rows
-                                    .iter()
-                                    .map(|row| core::IncidentRow {
-                                        own_incident: row.table == "incidents" && row.id == id,
-                                        open: row.value["open"] == true,
-                                    })
-                                    .collect();
-                                if let Some(index) = core::clear_reported(&incidents) {
-                                    let mut incident: looks::Incident =
-                                        decode_stored(snapshot.rows[index].value.clone())?;
-                                    incident.open = false;
-                                    commit.rows.push(put("incidents", id, json!(incident)));
-                                }
-                            }
-                            _ => {
-                                return Err(Error::Invalid(
-                                    "only setup evidence routes to an incident",
-                                ));
-                            }
-                        }
-                        return Ok(None);
-                    }
-                    Decision::InvalidIncident => {
-                        return Err(Error::Invalid("only setup evidence routes to an incident"));
-                    }
-                    Decision::InvalidKernel => {
-                        return Err(Error::Invalid(
-                            "queue evidence routed to another kernel fact",
-                        ));
-                    }
-                };
-                if let Some(outcome) = fact.evidence.outcome() {
-                    return self.translate_with_receipt(
-                        snapshot,
-                        world,
-                        Observation::Outcome {
-                            node,
-                            outcome,
-                            receipt: None,
-                        },
-                        commit,
-                        Some((put("queue_facts", identity, value), ci_details)),
-                    );
-                }
-                let fact = match kernel {
-                    KernelFact::PrDequeuedByPerson => Fact::PrDequeuedByPerson,
-                    _ => {
-                        return Err(Error::Invalid(
-                            "queue evidence routed to another kernel fact",
-                        ));
-                    }
-                };
-                commit.rows.push(put("queue_facts", identity, value));
-                Event::Fact { node, fact }
-            }
             Observation::GitHubComment {
                 repository,
                 issue,
@@ -3400,7 +2994,7 @@ impl Controller {
             } => {
                 if receipt.as_ref().is_some_and(|id| {
                     snapshot.rows.iter().any(|row| {
-                        matches!(row.table.as_str(), "delivery_outcomes" | "queue_facts")
+                        row.table == "delivery_outcomes"
                             && row.id == *id
                     })
                 }) {
@@ -3421,7 +3015,7 @@ impl Controller {
                 // Direct head checks retain the pre-S2 queued/enqueuing admission rule.
                 if receipt.is_some()
                     && matches!(outcome, Outcome::CiFailed { .. })
-                    && !(current.phase == tl3_kernel::Phase::Queued
+                    && !(current.phase == tl3_kernel::Phase::AwaitingDelivery
                         || current.phase == tl3_kernel::Phase::Publishing
                             && current.effect.is_some_and(|effect| {
                                 effect.kind == tl3_kernel::EffectKind::Enqueue && !effect.cancelling
@@ -3430,7 +3024,6 @@ impl Controller {
                     return Ok(None);
                 }
                 if let Outcome::CiFailed { head, evidence, .. } = &mut outcome
-                    && queue_receipt.is_none()
                     && Some(self.head(node, head)?) != current.head
                 {
                     // Base records stale head evidence without attributing it or applying a fact.
@@ -4290,9 +3883,6 @@ impl Controller {
                 return Ok(None);
             }
         };
-        if let Some((receipt, _)) = queue_receipt {
-            commit.rows.push(receipt);
-        }
         let finding = {
             use tl3_controller_core::translate_tail as tail;
             let (node, input) = match event {
@@ -4333,7 +3923,7 @@ impl Controller {
                         tl3_kernel::Phase::Checking => tail::Phase::Checking,
                         tl3_kernel::Phase::Reviewing => tail::Phase::Reviewing,
                         tl3_kernel::Phase::Making => tail::Phase::Making,
-                        tl3_kernel::Phase::Queued => tail::Phase::Queued,
+                        tl3_kernel::Phase::AwaitingDelivery => tail::Phase::AwaitingDelivery,
                         // #862: the kernel's ci_failed runs a failed round here too.
                         tl3_kernel::Phase::Publishing
                             if n.effect.is_some_and(|effect| {
@@ -4563,10 +4153,7 @@ fn observation_upstream(
         | Observation::Quota { .. }
         | Observation::TraceLogsCapped { .. }
         | Observation::Steering { .. }
-        | Observation::Kernel(Event::Fact {
-            fact: Fact::UpstreamStalled,
-            ..
-        }) => None,
+ => None,
         Observation::GitHubComment { .. }
         | Observation::PrerequisiteRead { .. }
         | Observation::Prerequisite(_)
@@ -4589,7 +4176,6 @@ fn observation_upstream(
         | Observation::ScratchPruned { .. } => Some(Upstream::Worktrees),
         Observation::Outcome { .. }
         | Observation::Merged { .. }
-        | Observation::Queue(_)
         | Observation::CiFailed { .. } => Some(Upstream::Delivery),
         Observation::Kernel(Event::Reply {
             node, generation, ..

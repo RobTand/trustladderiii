@@ -12,7 +12,7 @@ fn terminal_fact_world(case: u8) -> (result: World) [
             0 => Phase::Stopping(Outcome::Stopped),
             1 => Phase::Closed(Outcome::Stopped),
             4 => Phase::Publishing,
-            _ => Phase::Queued,
+            _ => Phase::AwaitingDelivery,
         },
         result.nodes@[0].had_pr && result.nodes@[0].merged.is_none(),
         result.nodes@[0].priority == Priority::P3,
@@ -27,7 +27,7 @@ fn terminal_fact_world(case: u8) -> (result: World) [
         0 => Phase::Stopping(Outcome::Stopped),
         1 => Phase::Closed(Outcome::Stopped),
         4 => Phase::Publishing,
-        _ => Phase::Queued,
+        _ => Phase::AwaitingDelivery,
     };
     first.credit.ready = true;
     first.credit.start = 4;
@@ -38,7 +38,7 @@ fn terminal_fact_world(case: u8) -> (result: World) [
     first.attempt = 1;
     first.footprint = Footprint::inline(1);
     first.priority = Priority::P3;
-    first.holds = case >= 2;
+    first.holds = case == 4;
     first.pr_open = case >= 2;
     if case == 0 {
         first.run = Some(0);

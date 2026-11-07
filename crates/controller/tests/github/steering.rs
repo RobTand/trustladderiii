@@ -1446,7 +1446,7 @@ pub(super) fn replacement_race(settings: &tl3_config::Store, race: &str) {
     );
     controller.intake(labelled()).unwrap();
     drain(&mut controller);
-    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::AwaitingDelivery);
     let snapshot = controller.snapshot().unwrap();
     let head = controller.world().unwrap().nodes[0].head.unwrap();
     let sha = snapshot
@@ -1689,7 +1689,7 @@ pub(super) fn second_replacement(settings: &tl3_config::Store) {
     );
     assert_eq!(world.nodes[0].phase, Phase::Closed(Outcome::Replaced));
     assert_eq!(world.nodes[1].phase, Phase::Closed(Outcome::Replaced));
-    assert_eq!(world.nodes[2].phase, Phase::Queued);
+    assert_eq!(world.nodes[2].phase, Phase::AwaitingDelivery);
     let snapshot = controller.snapshot().unwrap();
     assert!(
         !snapshot

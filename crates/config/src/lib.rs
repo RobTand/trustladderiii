@@ -429,7 +429,6 @@ pub struct Repository {
 #[serde(rename_all = "snake_case")]
 pub enum Delivery {
     #[default]
-    Queue,
     Direct,
 }
 
@@ -1331,16 +1330,17 @@ fn immutable_image(image: &str) -> bool {
 mod delivery_tests {
     use super::*;
     #[test]
-    fn repository_delivery_defaults_to_queue_and_is_strict() {
+    fn repository_delivery_defaults_to_direct_and_is_strict() {
         let original = r#"{"owner":"owner","name":"repo","installation_id":3}"#;
         let queue: Repository = serde_json::from_str(original).unwrap();
-        assert_eq!(queue.delivery, Delivery::Queue);
-        for mode in ["queue", "direct"] {
+        assert_eq!(queue.delivery, Delivery::Direct);
+        for mode in ["direct"] {
             let value = serde_json::json!({"owner":"owner","name":"repo","installation_id":3,"delivery":mode});
             let repo: Repository = serde_json::from_value(value).unwrap();
             assert_eq!(serde_json::to_value(repo.delivery).unwrap(), mode);
         }
         for mode in [
+            serde_json::json!("queue"),
             serde_json::json!("Direct"),
             serde_json::json!("mergify"),
             serde_json::json!(""),

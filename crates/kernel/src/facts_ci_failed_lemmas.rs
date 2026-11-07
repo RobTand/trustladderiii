@@ -15,7 +15,7 @@ pub(super) proof fn retry_frame(before: World, after: World, i: usize,
 
 /// #806 / Q50: pre-enqueue cancellation does not alter the infrastructure result.
 pub(super) proof fn cancellation_input(before: Node, prepared: Node)
-    requires before.phase == Phase::Queued || (before.phase == Phase::Publishing
+    requires before.phase == Phase::AwaitingDelivery || (before.phase == Phase::Publishing
         && current_item(before) == Some(Item::Do(EffectKind::Enqueue))),
         prepared == (Node { effect: match before.effect {
             Some(e) => Some(InFlight { cancelling: e.cancelling

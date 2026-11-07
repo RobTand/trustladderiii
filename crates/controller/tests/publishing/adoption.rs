@@ -295,7 +295,7 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
         )
         .unwrap();
     }
-    drain(&mut c, &mut source, &mut store, Phase::Queued);
+    drain(&mut c, &mut source, &mut store, Phase::AwaitingDelivery);
     let d = f.delivery(EffectKind::Push, 100);
     let landed = f.head(&d);
     assert_eq!(

@@ -558,7 +558,7 @@ impl Server {
                 AppConfig {
                     id: 123,
                     slug: "factory".into(),
-                    pem: include_str!("../../mergify/tests/fixtures/throwaway-key.pem").into(),
+                    pem: include_str!("../../github/tests/fixtures/throwaway-key.pem").into(),
                     webhook_secret: "fixture".into(),
                 },
                 1,
@@ -1019,7 +1019,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         );
         return;
     }
-    drain(&mut c, &mut source, &mut store, Phase::Queued);
+    drain(&mut c, &mut source, &mut store, Phase::AwaitingDelivery);
     if mode == "repo-conventions" {
         c.observe(
             "settlement-last-progress",
@@ -1029,7 +1029,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         )
         .unwrap();
         // Consuming the final input must still reach an idle Queued node within budget.
-        drain(&mut c, &mut source, &mut store, Phase::Queued);
+        drain(&mut c, &mut source, &mut store, Phase::AwaitingDelivery);
         assert!(
             c.snapshot()
                 .unwrap()
@@ -1112,7 +1112,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
                 "outside push starts a new review"
             );
         }
-        drain(&mut c, &mut source, &mut store, Phase::Queued);
+        drain(&mut c, &mut source, &mut store, Phase::AwaitingDelivery);
     } else if mode.starts_with("d5-") {
         let checkout = f.adapter().checkout(&d);
         if mode == "d5-conflict" {
@@ -1129,7 +1129,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             pull["mergeable_state"] = json!("dirty");
         }
         for _ in 0..10 {
-            if c.world().unwrap().nodes[0].phase != Phase::Queued {
+            if c.world().unwrap().nodes[0].phase != Phase::AwaitingDelivery {
                 break;
             }
             assert!(drive_once(&mut c));
@@ -1165,7 +1165,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             pull["mergeable"] = json!(true);
             pull["mergeable_state"] = json!("clean");
         }
-        drain(&mut c, &mut source, &mut store, Phase::Queued);
+        drain(&mut c, &mut source, &mut store, Phase::AwaitingDelivery);
         let published = git(&f.remote, &["rev-parse", f.branch(&d).as_str()]);
         assert_eq!(published, head);
         assert_eq!(
@@ -1205,7 +1205,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             pull["mergeable_state"] = json!("dirty");
         }
         for _ in 0..10 {
-            if c.world().unwrap().nodes[0].phase != Phase::Queued {
+            if c.world().unwrap().nodes[0].phase != Phase::AwaitingDelivery {
                 break;
             }
             assert!(drive_once(&mut c), "PR_DEQUEUED must yield a Conflict fact");
@@ -1240,7 +1240,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             pull["mergeable"] = json!(true);
             pull["mergeable_state"] = json!("clean");
         }
-        drain(&mut c, &mut source, &mut store, Phase::Queued);
+        drain(&mut c, &mut source, &mut store, Phase::AwaitingDelivery);
         let reviews: Vec<Value> = fs::read_to_string(root.path().join("reviews.jsonl"))
             .unwrap()
             .lines()
@@ -1301,7 +1301,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             }
         }
         server.api.state.lock().unwrap().queue_fixture = "running";
-        drain(&mut c, &mut source, &mut store, Phase::Queued);
+        drain(&mut c, &mut source, &mut store, Phase::AwaitingDelivery);
     }
     let reviews: Vec<Value> = fs::read_to_string(root.path().join("reviews.jsonl"))
         .unwrap()

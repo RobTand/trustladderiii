@@ -153,7 +153,7 @@ impl Run {
         self.reply(Reply::MakerDone { head: *head });
         self.reply(CHECKS_PASS);
         self.reply(Reply::Approved { head: *head });
-        assert_eq!(self.phase(), Phase::Queued);
+        assert_eq!(self.phase(), Phase::AwaitingDelivery);
     }
 }
 
@@ -286,7 +286,7 @@ fn a_queued_pr_can_still_merge_while_paused() {
     let mut head = HeadId(0);
     run.pass(&mut head);
     run.command(Command::Pause);
-    assert_eq!(run.phase(), Phase::Queued);
+    assert_eq!(run.phase(), Phase::AwaitingDelivery);
     run.fact(Fact::PrMerged {
         head,
         checks_passed: true,
@@ -840,7 +840,7 @@ fn q44_first_exhaustion_starts_a_free_fresh_review() {
     assert_eq!(run.node().checked, before.checked);
     assert!(run.node().holds);
     run.reply(Reply::Approved { head: HeadId(1) });
-    assert_eq!(run.phase(), Phase::Queued);
+    assert_eq!(run.phase(), Phase::AwaitingDelivery);
 }
 
 #[test]
@@ -862,7 +862,7 @@ fn q44_fresh_review_shares_the_rebase_recheck_allowance() {
         assert_eq!(run.phase(), Phase::Reviewing);
         assert_eq!(run.credit(), 0);
         run.reply(Reply::Approved { head: HeadId(1) });
-        assert_eq!(run.phase(), Phase::Queued);
+        assert_eq!(run.phase(), Phase::AwaitingDelivery);
     }
 }
 
@@ -919,7 +919,7 @@ fn q44_new_head_review(rebase: bool) {
     let mut run = q44_review();
     run.reply(Reply::ReviewerOutOfRoom);
     run.reply(Reply::Approved { head: HeadId(1) });
-    assert_eq!(run.phase(), Phase::Queued);
+    assert_eq!(run.phase(), Phase::AwaitingDelivery);
     if rebase {
         run.fact(Fact::Conflict);
         run.reply(Reply::RebaseClean { head: HeadId(2) });

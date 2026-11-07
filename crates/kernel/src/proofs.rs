@@ -328,8 +328,8 @@ fn check_apply(event: Event) -> World {
     {
         let b = &before.nodes[0];
         let n = &after.nodes[0];
-        if matches!(b.phase, Phase::Publishing | Phase::Queued) {
-            assert_eq!(n.phase, Phase::Rebasing);
+        if matches!(b.phase, Phase::Publishing | Phase::AwaitingDelivery) {
+            assert_eq!(n.phase, if b.phase == Phase::AwaitingDelivery { Phase::Ready(Resume::Rebasing) } else { Phase::Rebasing });
             assert_eq!(n.generation, b.generation + 1);
             assert_eq!(n.credit, b.credit);
             assert_eq!(n.holds, b.holds);
@@ -988,6 +988,7 @@ proof!(apply_rebase_needs_changes, {
 });
 proof!(apply_run_failed, check_apply(reply(Reply::RunFailed)));
 proof!(apply_ack_confirmed, check_apply(ack(Ack::Confirmed)));
+proof!(apply_ack_delivery_accepted, check_apply(ack(Ack::DeliveryAccepted)));
 proof!(apply_ack_retryable, check_apply(ack(Ack::Retryable)));
 proof!(apply_ack_permanent, check_apply(ack(Ack::Permanent)));
 proof!(apply_ack_body_policy_refused, {
@@ -1050,10 +1051,6 @@ proof!(
     apply_ci_failed,
     check_apply(fact(Fact::CiFailed { infra: kani::any() }))
 );
-proof!(
-    apply_upstream_stalled,
-    check_apply(fact(Fact::UpstreamStalled))
-);
 proof!(apply_stop, check_apply(command(Command::Stop)));
 proof!(apply_pause, check_apply(command(Command::Pause)));
 proof!(apply_resume, check_apply(command(Command::Resume)));
@@ -1103,7 +1100,7 @@ proof!(advance_making, check_advance(Phase::Making, true));
 proof!(advance_checking, check_advance(Phase::Checking, true));
 proof!(advance_reviewing, check_advance(Phase::Reviewing, true));
 proof!(advance_publishing, check_advance(Phase::Publishing, true));
-proof!(advance_queued, check_advance(Phase::Queued, false));
+proof!(advance_awaiting_delivery, check_advance(Phase::AwaitingDelivery, false));
 proof!(advance_rebasing, check_advance(Phase::Rebasing, true));
 proof!(
     advance_stopping,
@@ -1214,7 +1211,7 @@ fn gate_world_with_waiters(width: u8, first: Option<Phase>, waiting_only: bool) 
         n.phase = match phase {
             0 => Phase::Ready(Resume::Making),
             1 if waiting_only => Phase::Unplanned,
-            1 => Phase::Queued,
+            1 => Phase::Rebasing,
             2 => Phase::Making,
             _ => Phase::Unplanned,
         };
@@ -1223,8 +1220,10 @@ fn gate_world_with_waiters(width: u8, first: Option<Phase>, waiting_only: bool) 
         {
             n.phase = first;
         }
-        if n.phase == Phase::Queued {
+        if n.phase == Phase::Rebasing {
             n.holds = true;
+            n.pos = 1;
+            n.run = Some(n.generation);
             n.head = Some(HeadId(1));
             n.checked = n.head;
             n.approved = n.head;
@@ -1407,20 +1406,24 @@ fn check_publishing_ci_tests() {
     let b = &before.nodes[0];
     let n = &after.nodes[0];
     assert_ne!(n.phase, Phase::Publishing);
-    // Compare the credit ladder with the existing Queued rule.
-    let mut queued = before.clone();
-    queued.nodes[0].phase = Phase::Queued;
-    queued.nodes[0].pos = 0;
-    queued.nodes[0].effect = None;
-    apply(
-        &mut queued,
-        fact(Fact::CiFailed { infra: false }),
-        &mut Outbox::new(),
-        &mut Report::new(),
-    );
-    assert_eq!(n.credit, queued.nodes[0].credit);
-    assert_eq!(n.round, queued.nodes[0].round);
-    assert_eq!(n.attempt, queued.nodes[0].attempt);
+    if b.round == 0 {
+        assert_eq!(n.round, 1);
+        assert_eq!(n.attempt, b.attempt);
+        assert_eq!(n.credit, b.credit);
+    } else if before.fail_fast {
+        assert_eq!(n.credit, b.credit);
+        assert_eq!(n.review_stop, Some(ReviewStop::CiFailed));
+    } else if b.attempt < 3 {
+        assert_eq!(n.attempt, b.attempt + 1);
+        assert_eq!(n.round, 0);
+        assert_eq!(n.credit.spent, b.credit.spent + u64::from(b.credit.can_spend(1)));
+    } else if !b.replanned {
+        assert!(n.replanned);
+        assert_eq!(n.credit.spent, b.credit.spent + u64::from(b.credit.can_spend(1)));
+    } else {
+        assert_eq!(n.credit, b.credit);
+        assert_eq!(n.phase, Phase::AwaitingRob);
+    }
     assert!(
         n.round != b.round
             || n.credit.spent > b.credit.spent
@@ -1495,8 +1498,8 @@ proof!(
     check_fail_fast_diverts(Phase::Reviewing, reply(Reply::ReviewerOutOfRoom))
 );
 proof!(
-    fail_fast_ci_failed_queued,
-    check_fail_fast_diverts(Phase::Queued, fact(Fact::CiFailed { infra: kani::any() }))
+    fail_fast_ci_failed_awaiting_delivery,
+    check_fail_fast_diverts(Phase::AwaitingDelivery, fact(Fact::CiFailed { infra: kani::any() }))
 );
 proof!(
     fail_fast_ci_failed_publishing,
@@ -1529,12 +1532,12 @@ proof!(
 fn check_gate_leaf_progress(width: u8) {
     let mut w = gate_world_in_phase(width, Some(Phase::Ready(Resume::Making)));
     kani::assume(w.nodes.iter().all(|n| !n.paused));
-    kani::assume(w.nodes[1].phase == Phase::Queued);
+    kani::assume(w.nodes[1].phase == Phase::Rebasing);
     kani::assume(!w.footprints_disjoint(w.nodes[0].footprint, w.nodes[1].footprint));
     kani::assume(w.nodes[0].ticket.is_some());
     let ticket = w.nodes[0].ticket.unwrap();
     for i in 2..4 {
-        kani::assume(matches!(w.nodes[i].phase, Phase::Queued | Phase::Ready(_)));
+        kani::assume(matches!(w.nodes[i].phase, Phase::Rebasing | Phase::Ready(_)));
         if w.nodes[i].holds {
             kani::assume(w.footprints_disjoint(w.nodes[0].footprint, w.nodes[i].footprint));
         } else {

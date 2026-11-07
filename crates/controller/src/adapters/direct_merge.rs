@@ -1,7 +1,6 @@
 //! #830: SHA-pinned direct delivery behind the kernel's existing Enqueue effect.
 pub mod decide;
 mod events;
-pub(super) mod repository_config;
 pub use events::Translator;
 
 use super::record::Records;
@@ -22,7 +21,6 @@ use std::{
 use tl3_github::checks::{self, required};
 use tl3_github::{GitHub, MergeMethod, PullRequest};
 use tl3_kernel::{EffectKind, Phase};
-use tl3_mergify::decide::enqueue as lifecycle;
 use tl3_store::{Snapshot, Store};
 
 fn head_failure(
@@ -31,9 +29,9 @@ fn head_failure(
     check: u64,
     completed_at: Option<String>,
 ) -> (DeliveryOutcome, String) {
-    let cause = crate::queue_cause::CauseEvidence::Change {
+    let cause = crate::findings::CauseEvidence::Change {
         fingerprint: format!(
-            "queue:{head}:{}",
+            "head:{head}:{}",
             completed_at.as_deref().unwrap_or("unknown")
         ),
     };
@@ -57,7 +55,7 @@ fn head_failure(
     )
 }
 
-pub const VISIBILITY: &str = "delivered directly (CI bypassed by repo config)";
+pub const VISIBILITY: &str = "delivered directly";
 
 #[derive(Serialize, Deserialize)]
 struct Intent {
@@ -67,6 +65,13 @@ struct Intent {
     method: MergeMethod,
     #[serde(default)]
     consumed_through: Option<u64>,
+}
+#[derive(Serialize, Deserialize)]
+struct Accepted {
+    key: String,
+    head: String,
+    generation: u64,
+    waiting_through: Option<u64>,
 }
 #[derive(Serialize, Deserialize)]
 struct Merged {
@@ -124,6 +129,7 @@ impl Wakes {
 /// Durable and upstream write boundaries exposed for process-crash verification.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Write {
+    Acceptance,
     Fence,
     Intent,
     Annotation,
@@ -332,7 +338,7 @@ impl Adapter {
             .nodes
             .get(d.node().0 as usize)
             .ok_or(Error::Invalid("missing direct delivery node"))?;
-        if !repository_config::direct(&snapshot, &d.repository)?
+        if n.head != n.approved
             || crate::commit_sha(&snapshot, n.approved) != d.head_sha.as_deref()
             || n.checked.is_none()
             || n.checked != n.approved
@@ -341,10 +347,9 @@ impl Adapter {
                     && row.value["open"] == true
                     && row.value["node"].as_u64() == Some(d.node().0)
             })
-            || n.generation != d.generation
+            || !delivery_authority(n, d)
             || n.paused
             || n.waiting_incident
-            || !matches!(n.phase, Phase::Publishing | Phase::Queued)
         {
             return Err(Error::ChecksPending);
         }
@@ -352,6 +357,35 @@ impl Adapter {
         self.records.fence(d.epoch)?;
         self.boundary(Write::Fence, true);
         self.epoch = d.epoch;
+        Ok(())
+    }
+    fn accept(&mut self, d: &Delivery) -> Result<()> {
+        number(d)?;
+        self.fence(d)?;
+        let head = d.head_sha.as_deref().ok_or(Error::Invalid("direct acceptance needs a head"))?;
+        let path = self.records.path(&d.key).with_extension("accepted");
+        if let Some(accepted) = read_file::<Accepted>(&path)? {
+            if accepted.key != d.key || accepted.head != head || accepted.generation != d.generation {
+                return Err(Error::Invalid("direct acceptance identity changed"));
+            }
+            return Ok(());
+        }
+        self.write(Write::Acceptance, &path, &serde_json::to_vec(&Accepted {
+            key: d.key.clone(), head: head.into(), generation: d.generation,
+            waiting_through: None,
+        })?)
+    }
+    fn wait(&self, d: &Delivery) -> Result<()> {
+        let path = self.records.path(&d.key).with_extension("accepted");
+        let mut accepted: Accepted = read_file(&path)?
+            .ok_or(Error::Invalid("Direct wait has no durable acceptance"))?;
+        accepted.waiting_through = Some(decide::consume(
+            self.wakes.event(&d.key).unwrap_or(0),
+            ingress_highwater(&self.store)?,
+            accepted.waiting_through.unwrap_or(0),
+        ));
+        self.write(Write::Acceptance, &path, &serde_json::to_vec(&accepted)?)?;
+        self.wakes.sleep(&d.key);
         Ok(())
     }
     fn read(&self, d: &Delivery, write_authorized: bool) -> Result<Read> {
@@ -485,13 +519,13 @@ impl Adapter {
                     } else {
                         false
                     };
-                    let item = match lifecycle::required_check(view, runner) {
-                        lifecycle::RequiredState::Passed => required::Contribution::Passed,
-                        lifecycle::RequiredState::Infrastructure => {
+                    let item = match required::required_check(view, runner) {
+                        required::RequiredState::Passed => required::Contribution::Passed,
+                        required::RequiredState::Infrastructure => {
                             required::Contribution::Infrastructure
                         }
-                        lifecycle::RequiredState::Tests => required::Contribution::Tests,
-                        lifecycle::RequiredState::Pending | lifecycle::RequiredState::Unknown => {
+                        required::RequiredState::Tests => required::Contribution::Tests,
+                        required::RequiredState::Pending | required::RequiredState::Unknown => {
                             required::Contribution::Pending
                         }
                     };
@@ -557,8 +591,7 @@ impl Adapter {
             .unwrap_or(Head { upper: 0, lower: 0 });
         let held = n.paused
             || n.waiting_incident
-            || n.generation != d.generation
-            || !matches!(n.phase, Phase::Publishing | Phase::Queued)
+            || !delivery_authority(n, d)
             || snapshot.rows.iter().any(|row| {
                 row.table == "incidents"
                     && row.value["open"] == true
@@ -595,7 +628,7 @@ impl Adapter {
             DeliveryOutcome::Merged { head, .. } => format!("merged:{head}"),
             DeliveryOutcome::PushByOther { head } => format!("push:{head}"),
             DeliveryOutcome::Conflict { .. } => {
-                return Ok(Completion::confirmed(vec![Observation::Outcome {
+                return Ok(Completion::delivery_accepted(vec![Observation::Outcome {
                     node: d.node(),
                     outcome,
                     receipt: None,
@@ -624,7 +657,7 @@ impl Adapter {
                 receipt: Some(identity),
             }]
         };
-        Ok(Completion::confirmed(observations))
+        Ok(Completion::delivery_accepted(observations))
     }
     fn journal(&self) -> Journal {
         Journal {
@@ -677,9 +710,9 @@ impl Adapter {
                     .ok_or(Error::Invalid("direct check failure lacks evidence"))?;
                 self.fact_with_receipt(d, outcome, &receipt)?
             }
-            Outcome::Closed => Completion::permanent("direct_pr_closed"),
+            Outcome::Closed => self.fact(d, DeliveryOutcome::ClosedByPerson)?,
             Outcome::Wait => {
-                self.wakes.sleep(&d.key);
+                self.wait(d)?;
                 return Err(Error::ChecksPending);
             }
             Outcome::Held => return Err(Error::ChecksPending),
@@ -687,6 +720,22 @@ impl Adapter {
         }))
     }
     fn attempt(&mut self, d: &Delivery) -> Result<Completion> {
+        self.accept(d)?;
+        match self.attempt_accepted(d) {
+            Ok(mut completion) => {
+                completion.ack = tl3_kernel::Ack::DeliveryAccepted;
+                Ok(completion)
+            }
+            Err(Error::ChecksPending) => Ok(Completion::delivery_accepted(vec![])),
+            Err(error) => {
+                self.wait(d)?;
+                let mut completion = Completion::delivery_accepted(vec![]);
+                completion.failure_class = Some(crate::looks::failure_class(&error).into());
+                Ok(completion)
+            }
+        }
+    }
+    fn attempt_accepted(&mut self, d: &Delivery) -> Result<Completion> {
         number(d)?;
         if let Some(merged) = self.recorded(d)? {
             return self.merged(d, merged);
@@ -697,13 +746,16 @@ impl Adapter {
         let intent: Option<Intent> =
             read_file(&self.records.path(&d.key).with_extension("intent"))?;
         let event = self.wakes.event(&d.key).unwrap_or(0);
-        let attempted = intent
+        let accepted: Accepted = read_file(&self.records.path(&d.key).with_extension("accepted"))?
+            .ok_or(Error::Invalid("Direct attempt has no durable acceptance"))?;
+        let attempted = accepted.waiting_through.is_some() || intent
             .as_ref()
             .is_some_and(|i| i.action == "Merge" || i.consumed_through.is_some());
         let consumed = intent
             .as_ref()
             .and_then(|i| i.consumed_through)
-            .unwrap_or(0);
+            .unwrap_or(0)
+            .max(accepted.waiting_through.unwrap_or(0));
         let authorized = decide::authorized(attempted, event, consumed, self.recovery_through);
         // At most one annotation and one merge per call. A pending check never loops.
         for _ in 0..2 {
@@ -713,7 +765,7 @@ impl Adapter {
                 return Ok(completion);
             }
             if plan.outcome == Outcome::Observe {
-                self.wakes.sleep(&d.key);
+                self.wait(d)?;
                 return Err(Error::ChecksPending);
             }
             let github = self.client(d)?.clone();
@@ -887,12 +939,21 @@ impl Executor for Adapter {
                 Reconciliation::Pending => Look::Healthy,
             });
         }
-        let observations = self.observations(d)?;
-        Ok(if observations.is_empty() {
-            Look::Healthy
-        } else {
-            Look::Found(Box::new(Completion::confirmed(observations)))
-        })
+        match self.accept(d) {
+            Err(Error::ChecksPending) => return Ok(Look::Healthy),
+            Err(error) => return Err(error),
+            Ok(()) => {},
+        }
+        let completion = match self.observations(d) {
+            Ok(observations) => Completion::delivery_accepted(observations),
+            Err(error) => {
+                self.wait(d)?;
+                let mut completion = Completion::delivery_accepted(vec![]);
+                completion.failure_class = Some(crate::looks::failure_class(&error).into());
+                completion
+            }
+        };
+        Ok(Look::Found(Box::new(completion)))
     }
     fn reconcile_cancellation(&mut self, d: &Delivery) -> Result<Reconciliation> {
         let github = self.client(d)?;
@@ -962,6 +1023,7 @@ impl Executor for Adapter {
             self.records.fence(self.epoch)?;
             for path in [
                 self.records.path(&d.key).with_extension("intent"),
+                self.records.path(&d.key).with_extension("accepted"),
                 self.receipt_path(d)?,
             ] {
                 self.boundary(Write::Reclaim, false);
@@ -987,6 +1049,17 @@ impl Executor for Adapter {
         self.clients
             .get(&installation)
             .map(|client| format!("{}[bot]", client.app_slug()))
+    }
+}
+fn delivery_authority(n: &tl3_kernel::Node, d: &Delivery) -> bool {
+    match n.phase {
+        Phase::Publishing => n.generation == d.generation && matches!(
+            (n.effect, d.output),
+            (Some(effect), Output::Effect { seq, kind: EffectKind::Enqueue, .. })
+                if effect.seq == seq && effect.kind == EffectKind::Enqueue && !effect.cancelling
+        ),
+        Phase::AwaitingDelivery => d.generation.checked_add(1) == Some(n.generation),
+        _ => false,
     }
 }
 fn number(d: &Delivery) -> Result<u64> {
@@ -1040,5 +1113,58 @@ fn read_file<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>> {
         Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error.into()),
+    }
+}
+
+pub struct Fake {
+    records: Records,
+    hold_merges: bool,
+}
+impl Fake {
+    pub fn new(root: &Path) -> Self {
+        Self {
+            records: Records::new(root),
+            hold_merges: root.join("hold-merges").exists(),
+        }
+    }
+}
+impl Executor for Fake {
+    fn contract_evidence(
+        &mut self,
+        delivery: &Delivery,
+    ) -> Result<crate::dispatch_liveness::decision::ContractEvidence> {
+        self.records.contract_evidence(delivery)
+    }
+
+    fn execute(&mut self, delivery: &Delivery) -> Result<Completion> {
+        let node = delivery.node();
+        if delivery.pull_request.is_none() {
+            return Err(crate::Error::Invalid("enqueue needs a PR number"));
+        }
+        let observations = match delivery.output {
+            Output::Effect {
+                kind: EffectKind::Enqueue,
+                ..
+            } => vec![Observation::Merged {
+                node,
+                sha: delivery
+                    .head_sha
+                    .clone()
+                    .ok_or(crate::Error::Invalid("delivery needs a head"))?,
+                checks_passed: true,
+            }],
+            _ => return Err(crate::Error::Invalid("unsupported delivery effect")),
+        };
+        self.records.deliver(
+            delivery,
+            Completion::delivery_accepted(if self.hold_merges {
+                vec![]
+            } else {
+                observations
+            }),
+        )
+    }
+    fn reconcile(&mut self, delivery: &Delivery) -> Result<Reconciliation> {
+        self.records.reconcile(delivery)
     }
 }

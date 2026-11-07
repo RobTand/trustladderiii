@@ -1792,12 +1792,12 @@ fn watches_and_pending(settings: &tl3_config::Store) {
         if kind == EffectKind::SubmitChecks {
             // Reach the queue without delivering its merge fact, then require a rebase.
             for _ in 0..100 {
-                if controller.world().unwrap().nodes[0].phase == Phase::Queued {
+                if controller.world().unwrap().nodes[0].phase == Phase::AwaitingDelivery {
                     break;
                 }
                 assert!(controller.drive_once().unwrap());
             }
-            assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+            assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::AwaitingDelivery);
             controller
                 .observe(
                     "conflict",
@@ -2357,7 +2357,7 @@ fn closure_discards_rebase_context(settings: &tl3_config::Store, stopped: bool) 
     let phase = if stopped {
         Phase::Making
     } else {
-        Phase::Queued
+        Phase::AwaitingDelivery
     };
     for _ in 0..100 {
         if controller.world().unwrap().nodes[0].phase == phase {
@@ -2534,7 +2534,7 @@ fn mixed_registry_case(settings: &tl3_config::Store, conflict: bool) {
         if checkout.join(".git").is_file() {
             created = true;
         }
-        if world.nodes[0].phase == Phase::Queued && !pushed {
+        if world.nodes[0].phase == Phase::AwaitingDelivery && !pushed {
             if !conflict {
                 let mut store = Store::open(settings).unwrap();
                 let mut saved =

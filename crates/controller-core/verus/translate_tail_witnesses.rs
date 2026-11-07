@@ -39,7 +39,7 @@ pub fn maker_witness() {
 /// in Queued is preserved existing behaviour (no rule); no operation required.
 /// #862 (base 3587a599 docs/state-table.md:599): Enqueuing records them too.
 pub fn ci_witness() {
-    let n = Some(Node {phase:Phase::Queued,generation:0,run:None,job:None});
+    let n = Some(Node {phase:Phase::AwaitingDelivery,generation:0,run:None,job:None});
     let code = finding(n,Input::CiFailed {infra:false},true);
     let infra = finding(n,Input::CiFailed {infra:true},false);
     let e = Some(Node {phase:Phase::Enqueuing,generation:0,run:None,job:None});

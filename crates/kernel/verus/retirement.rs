@@ -41,7 +41,7 @@ pub(super) open spec fn incident(n: Node, needs_rob: bool) -> Node {
         Phase::Making => phased(Node { holds: false, ..waiting }, Phase::Ready(Resume::Making)),
         Phase::Checking => phased(Node { holds: false, ..waiting }, Phase::Ready(Resume::Checking)),
         Phase::Reviewing => phased(Node { holds: false, ..waiting }, Phase::Ready(Resume::Reviewing)),
-        Phase::Publishing | Phase::Queued => phased(Node { holds: false, ..waiting }, Phase::Ready(Resume::Publishing)),
+        Phase::Publishing => phased(Node { holds: false, ..waiting }, Phase::Ready(Resume::Publishing)),
         Phase::Rebasing => phased(Node { holds: false, ..waiting }, Phase::Ready(Resume::Rebasing)),
         _ => waiting,
     }
@@ -71,7 +71,7 @@ pub(super) open spec fn node_rules(w: World, n: Node) -> bool {
             && n.credit.added == 0 && n.credit.spent == 0 && !n.credit.merge_credited)
         && (holding(n.phase) || n.phase is Ready || matches!(n.phase,
             Phase::Auditing | Phase::Unplanned | Phase::Planning { .. }) || n.had_pr ==> n.credit.ready)
-        && (n.phase == Phase::Queued ==> n.pr_open)
+        && (n.phase == Phase::AwaitingDelivery ==> n.pr_open)
         && (n.phase == Phase::Publishing && (n.pos >= 3 || (n.pos == 2
             && match n.effect { Some(e) => !e.cancelling && e.kind == EffectKind::OpenPr, None => false })) ==> n.pr_open)
         && (n.pr_open ==> n.had_pr)
@@ -115,7 +115,7 @@ pub(super) open spec fn accepted(w: World) -> bool {
 verus! {
 /// State-table fact rows selected for #806 safety retirement.
 pub(super) open spec fn selected(fact: Fact) -> bool {
-    matches!(fact, Fact::IncidentCleared { .. } | Fact::PrDequeuedByPerson
+    matches!(fact, Fact::IncidentCleared { .. }
         | Fact::CiFailed { infra: true } | Fact::PrMerged { .. }
         | Fact::Priority(_) | Fact::PrClosedByPerson | Fact::Conflict)
 }
@@ -129,14 +129,9 @@ pub(super) open spec fn fact_node(n: Node, fact: Fact) -> Node {
                 Node { waiting_incident: false, incident_needs_rob: false, ..n }
             } else { n }
         },
-        Fact::PrDequeuedByPerson => {
-            if n.phase == Phase::Queued {
-                phased(Node { holds: false, paused: true, ..n }, Phase::Ready(Resume::Publishing))
-            } else { n }
-        },
         Fact::CiFailed { infra: true } => {
-            if n.phase == Phase::Queued || (n.phase == Phase::Publishing
-                && current_item(n) == Some(Item::Do(EffectKind::Enqueue))) {
+            if n.phase == Phase::Publishing
+                && current_item(n) == Some(Item::Do(EffectKind::Enqueue)) {
                 if n.run_failures == 0 {
                     phased(Node { run_failures: 1, ..n }, Phase::Publishing)
                 } else {
@@ -158,7 +153,9 @@ pub(super) open spec fn fact_node(n: Node, fact: Fact) -> Node {
             }
         },
         Fact::Conflict => {
-            if matches!(n.phase, Phase::Publishing | Phase::Queued) {
+            if n.phase == Phase::AwaitingDelivery {
+                phased(n, Phase::Ready(Resume::Rebasing))
+            } else if n.phase == Phase::Publishing {
                 phased(n, Phase::Rebasing)
             } else { n }
         },
@@ -242,7 +239,6 @@ pub(super) proof fn fact_preserves_node(w: World, n: Node, fact: Fact)
     reveal(node_rules); reveal(fact_node); reveal(stopped); reveal(incident);
     match fact {
         Fact::IncidentCleared { .. } => {},
-        Fact::PrDequeuedByPerson => {},
         Fact::CiFailed { infra: true } => {},
         Fact::PrMerged { .. } => {},
         Fact::Priority(_) | Fact::PrClosedByPerson | Fact::Conflict => {},
@@ -303,7 +299,10 @@ pub(super) fn verify_selected_apply(mut w: World, fact: Fact) -> (result: (World
             Fact::Conflict => {
                 let n = w.nodes@[0];
                 let after = result.0.nodes@[0];
-                if matches!(n.phase, Phase::Publishing | Phase::Queued) {
+                if n.phase == Phase::AwaitingDelivery {
+                    after.phase == Phase::Ready(Resume::Rebasing) && after.generation == n.generation + 1
+                        && after.credit == n.credit && after.holds == n.holds
+                } else if n.phase == Phase::Publishing {
                     after.phase == Phase::Rebasing && after.generation == n.generation + 1
                         && after.credit == n.credit && after.holds == n.holds
                 } else { after == n }
@@ -390,9 +389,8 @@ pub(super) proof fn infrastructure_frame(before: World, after: World, i: usize,
     requires i < before.nodes@.len(),
         node_headroom(before.nodes@[i as int]),
         after.nodes@[i as int] == fact_node(before.nodes@[i as int], Fact::CiFailed { infra: true }),
-        before.nodes@[i as int].phase == Phase::Queued ||
-            (before.nodes@[i as int].phase == Phase::Publishing
-                && current_item(before.nodes@[i as int]) == Some(Item::Do(EffectKind::Enqueue))),
+        before.nodes@[i as int].phase == Phase::Publishing
+                && current_item(before.nodes@[i as int]) == Some(Item::Do(EffectKind::Enqueue)),
         after.nodes@.len() == before.nodes@.len(),
         forall|j: int| 0 <= j < before.nodes@.len() && j != i ==> after.nodes@[j] == before.nodes@[j],
         after.gates@ == before.gates@, after.file_sets@ == before.file_sets@,
@@ -424,8 +422,8 @@ pub(super) proof fn infrastructure_result(before: Node, after: Node, escalation:
             Some(needs_rob) => incident(infrastructure_retry(before).0, needs_rob),
             None => infrastructure_retry(before).0,
         },
-        before.phase == Phase::Queued || (before.phase == Phase::Publishing
-            && current_item(before) == Some(Item::Do(EffectKind::Enqueue))),
+        before.phase == Phase::Publishing
+            && current_item(before) == Some(Item::Do(EffectKind::Enqueue)),
     ensures after == fact_node(before, Fact::CiFailed { infra: true }),
 {
     reveal(infrastructure_retry); reveal(incident); reveal(fact_node);

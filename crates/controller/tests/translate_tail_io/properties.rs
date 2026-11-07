@@ -11,7 +11,7 @@ fn schedule(kind: u8) -> Schedule {
         0 => Phase::Checking,
         1 => Phase::Reviewing,
         2 => Phase::Making,
-        _ => Phase::Queued,
+        _ => Phase::AwaitingDelivery,
     };
     n.generation = 9;
     n.run = Some(9);

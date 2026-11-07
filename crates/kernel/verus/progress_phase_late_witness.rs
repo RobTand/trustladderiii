@@ -7,7 +7,7 @@ kernel_fn! {
 /// Q30/Q39 / #806 A2: each late phase and every terminal outcome has a
 /// consistent settled original-domain world. Closed retains an open node1.
 fn world(phase: Phase) -> (result: World) [
-    requires matches!(phase, Phase::Publishing | Phase::Queued | Phase::Rebasing
+    requires matches!(phase, Phase::Publishing | Phase::AwaitingDelivery | Phase::Rebasing
         | Phase::AwaitingRob | Phase::Stopping(_) | Phase::Closed(_)),
     ensures original(result), retirement::accepted(result), settled_world(result),
         result.nodes@[0].phase == phase,
@@ -41,8 +41,9 @@ fn world(phase: Phase) -> (result: World) [
         first.next_seq = 1;
         match phase {
             Phase::Publishing | Phase::Rebasing => { first.holds = true; },
-            Phase::Queued => {
-                first.holds = true;
+            Phase::AwaitingDelivery => {
+                first.holds = false;
+                first.effect = None;
                 first.pr_open = true;
                 first.had_pr = true;
             },
@@ -103,7 +104,7 @@ kernel_fn! {
 /// The input phase preserves every Stopping/Closed outcome, and Closed
 /// explicitly retains the original open-node1 requirement.
 fn cover(phase: Phase) -> (result: (Ghost<World>, World, Event, u64, u64)) [
-    requires matches!(phase, Phase::Publishing | Phase::Queued | Phase::Rebasing
+    requires matches!(phase, Phase::Publishing | Phase::AwaitingDelivery | Phase::Rebasing
         | Phase::AwaitingRob | Phase::Stopping(_) | Phase::Closed(_)),
     ensures original(result.0@), retirement::accepted(result.0@), settled_world(result.0@),
         result.0@.nodes@[0].phase == phase,

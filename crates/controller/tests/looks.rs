@@ -992,7 +992,7 @@ fn token_only_queue_progress(settings: &tl3_config::Store) {
             terminal: terminal.clone(),
         },
     );
-    assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Queued);
+    assert_eq!(c.world().unwrap().nodes[0].phase, Phase::AwaitingDelivery);
     let row = c
         .snapshot()
         .unwrap()

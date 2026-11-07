@@ -3,14 +3,14 @@ use super::retirement::*;
 use super::*;
 
 kernel_fn! {
-/// State-table incident, dequeue, infrastructure and merge rows / #806.
+/// State-table incident, delivery Conflict, infrastructure and merge rows / #806.
 /// Six finite witnesses cover five harnesses and both infrastructure outcomes.
 /// The original two-node, two-repo, four-file and small-counter bounds hold.
 fn witness_world(case: u8) -> (result: World) [
     requires case < 6,
     ensures domain(result), accepted(result), bounded(result), storage_ordered(result),
         result.nodes@[0].phase == match case {
-            0 => Phase::Ingesting, 1 => Phase::Queued,
+            0 => Phase::Ingesting, 1 => Phase::AwaitingDelivery,
             2 | 3 => Phase::Publishing, 4 => Phase::Ingesting, _ => Phase::Auditing,
         },
         result.nodes@[0].had_pr == (case > 0), result.nodes@[0].merged.is_none(),
@@ -35,14 +35,14 @@ fn witness_world(case: u8) -> (result: World) [
         first.had_pr = true;
         first.next_seq = 1;
         if case < 4 {
-            first.phase = if case == 1 { Phase::Queued } else { Phase::Publishing };
+            first.phase = if case == 1 { Phase::AwaitingDelivery } else { Phase::Publishing };
             first.attempt = 1;
             first.footprint = Footprint::inline(1);
             first.head = Some(HeadId(1));
             first.checked = first.head;
             first.approved = first.head;
             first.pr_open = true;
-            first.holds = true;
+            first.holds = case != 1;
             if case > 1 {
                 first.pos = 3;
                 first.run_failures = case - 2;
@@ -84,7 +84,7 @@ fn witness_world(case: u8) -> (result: World) [
 }
 
 kernel_fn! {
-/// #806 covers: incident clears, dequeue changes the world, infrastructure
+/// #806 covers: incident clears, delivery Conflict becomes Ready, infrastructure
 /// retries once then raises an incident, and both merge phases record a merge.
 /// Every case calls the real apply composition with a satisfiable precondition.
 fn changed_world_witness(case: u8) -> (result: ()) [
@@ -93,7 +93,7 @@ fn changed_world_witness(case: u8) -> (result: ()) [
     let w = witness_world(case);
     kernel_snapshot! { before = w }
     let fact = if case == 0 { Fact::IncidentCleared { by_rob: true } }
-        else if case == 1 { Fact::PrDequeuedByPerson }
+        else if case == 1 { Fact::Conflict }
         else if case < 4 { Fact::CiFailed { infra: true } }
         else { Fact::PrMerged { head: HeadId(2), checks_passed: false } };
     let (after, out) = verify_selected_apply(w, fact);

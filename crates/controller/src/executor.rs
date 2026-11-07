@@ -32,7 +32,7 @@ pub(crate) fn stored_state(state: tl3_delivery::State) -> tl3_store::EffectState
 
 pub(crate) fn delivery_ack(ack: Ack) -> tl3_delivery::Ack {
     match ack {
-        Ack::Confirmed => tl3_delivery::Ack::Confirmed,
+        Ack::Confirmed | Ack::DeliveryAccepted => tl3_delivery::Ack::Confirmed,
         Ack::Retryable => tl3_delivery::Ack::Retryable,
         Ack::Permanent => tl3_delivery::Ack::Permanent,
         Ack::BodyPolicyRefused => tl3_delivery::Ack::BodyPolicyRefused,
@@ -225,7 +225,6 @@ pub enum Observation {
         issue: tl3_github::Issue,
         original: NodeId,
     },
-    Queue(crate::adapters::mergify::QueueFact),
     GitHubComment {
         repository: crate::Repository,
         issue: u64,
@@ -330,25 +329,6 @@ pub enum Observation {
     },
 }
 
-/// The upstream record read by a look. Equality means no observed progress.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub enum ProgressToken {
-    Mergify(crate::adapters::mergify::Progress),
-}
-
-/// Stored in a watch's `progress` field. The first read has no previous token.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct WatchProgress {
-    pub previous: Option<ProgressToken>,
-    pub current: ProgressToken,
-}
-
-impl WatchProgress {
-    pub fn changed(&self) -> bool {
-        self.previous.as_ref() != Some(&self.current)
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Completion {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -356,35 +336,29 @@ pub struct Completion {
     pub ack: Ack,
     #[serde(default)]
     pub failure_class: Option<String>,
-    /// Progress from this read, even when it produces no kernel observations.
-    #[serde(default)]
-    pub progress: Option<ProgressToken>,
     pub observations: Vec<Observation>,
 }
 
 impl Completion {
+    pub fn delivery_accepted(observations: Vec<Observation>) -> Self {
+        Self { ack: Ack::DeliveryAccepted, ..Self::confirmed(observations) }
+    }
+
     pub fn permanent(class: impl Into<String>) -> Self {
         Self {
             diagnostic: None,
             ack: Ack::Permanent,
             failure_class: Some(class.into()),
-            progress: None,
             observations: vec![],
         }
     }
     pub(crate) fn releases_holds(&self) -> bool {
-        if self.progress.is_some() && self.observations.is_empty() {
-            return false;
-        }
         !self.observations.iter().any(|observation| {
             matches!(
                 observation,
                 Observation::Progress { .. }
                     | Observation::Quota { .. }
-                    | Observation::Kernel(Event::Fact {
-                        fact: tl3_kernel::Fact::UpstreamStalled,
-                        ..
-                    })
+
             )
         })
     }
@@ -394,7 +368,6 @@ impl Completion {
             diagnostic: None,
             failure_class: None,
             ack: Ack::Confirmed,
-            progress: None,
             observations,
         }
     }
@@ -603,7 +576,6 @@ pub trait Executor {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Eq, PartialEq, Ord, PartialOrd)]
 pub enum Upstream {
     GitHub,
-    #[serde(rename = "Mergify", alias = "Delivery")]
     Delivery,
     PrismaBuild,
     Workers,
@@ -611,14 +583,10 @@ pub enum Upstream {
 }
 
 impl Upstream {
-    /// Source compatibility for retained pre-rename reference suites; removed in S7a (#915).
-    #[allow(non_upper_case_globals)]
-    pub const Mergify: Self = Self::Delivery;
-
     pub const fn kind(self) -> &'static str {
         match self {
             Self::GitHub => "GitHub",
-            Self::Delivery => "Mergify",
+            Self::Delivery => "Delivery",
             Self::PrismaBuild => "PrismaBuild",
             Self::Workers => "Workers",
             Self::Worktrees => "Worktrees",

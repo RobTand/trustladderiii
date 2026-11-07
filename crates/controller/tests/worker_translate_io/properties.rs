@@ -189,7 +189,7 @@ fn mandatory_roles_and_staleness() {
 fn mandatory_role_validation_and_error_classes() {
     for role in ["ingest", "audit", "planner", "maker", "reviewer"] {
         let mut s = schedule(role, reply(role));
-        s.phase = tl3_kernel::Phase::Queued;
+        s.phase = tl3_kernel::Phase::AwaitingDelivery;
         assert!(routed(&s).result.to_string().contains("RunFailed"));
         assert!(
             routed(&schedule(role, json!({})))

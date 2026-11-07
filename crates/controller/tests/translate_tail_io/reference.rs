@@ -49,7 +49,7 @@ impl Shell<'_> {
             } if world
                 .nodes
                 .get(node.0 as usize)
-                .is_some_and(|n| n.phase == tl3_kernel::Phase::Queued) =>
+                .is_some_and(|n| n.phase == tl3_kernel::Phase::AwaitingDelivery) =>
             {
                 Some((
                     node,

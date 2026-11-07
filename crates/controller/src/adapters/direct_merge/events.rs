@@ -141,8 +141,21 @@ impl Translator {
             return Ok(vec![]);
         };
         let mut inputs = Vec::new();
+        let mut deliveries = BTreeMap::new();
         for effect in &snapshot.pending_effects {
-            let delivery = crate::hydrate(effect, snapshot)?;
+            deliveries.insert(effect.key.clone(), crate::hydrate(effect, snapshot)?);
+        }
+        for row in snapshot.rows.iter().filter(|row| row.table == "watches") {
+            let delivery: Delivery = crate::decode_stored(row.value.clone())?;
+            deliveries.entry(delivery.key.clone()).or_insert(delivery);
+        }
+        let world = crate::snapshot::decode(snapshot)?;
+        for (key, delivery) in deliveries {
+            let n = world.nodes.get(delivery.node().0 as usize)
+                .ok_or(Error::Invalid("missing watched direct node"))?;
+            if !delivery_authority(n, &delivery) {
+                continue;
+            }
             if delivery.repository == *repo
                 && number.is_none_or(|number| delivery.pull_request == Some(number))
                 && sha.is_none_or(|sha| delivery.head_sha.as_deref() == Some(sha))
@@ -154,9 +167,9 @@ impl Translator {
                     }
                 )
             {
-                self.wakes.wake(&effect.key, sequence);
+                self.wakes.wake(&key, sequence);
                 inputs.push(Input::Look {
-                    key: effect.key.clone(),
+                    key,
                 });
             }
         }
@@ -186,9 +199,7 @@ impl GitHubTranslator for Translator {
                     name: status.repository.name,
                     installation: status.installation.id,
                 };
-                if repository_config::direct(snapshot, &repo)? {
-                    return self.wakes(snapshot, &repo, None, Some(&status.sha), delivery);
-                }
+                return self.wakes(snapshot, &repo, None, Some(&status.sha), delivery);
             }
         }
         let repo: Option<Repository> = match delivery {
@@ -216,9 +227,6 @@ impl GitHubTranslator for Translator {
         let Some(repo) = repo else {
             return Ok(vec![]);
         };
-        if !repository_config::direct(snapshot, &repo)? {
-            return Ok(vec![]);
-        }
         match delivery {
             GitHubDelivery::Webhook(webhook) => match webhook.event.as_ref() {
                 Some(Event::PullRequestMerged { pull_request, .. }) => {

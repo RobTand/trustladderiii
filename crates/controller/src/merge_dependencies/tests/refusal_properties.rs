@@ -119,14 +119,14 @@ fn queue_merge_refusal() {
     c.store.commit(&binding).unwrap();
     c.observe(
         "queue-merge-refusal",
-        Observation::Queue(crate::adapters::mergify::QueueFact {
-            repository,
-            number: 7714,
-            evidence: crate::adapters::mergify::Evidence::Merged {
+        Observation::Outcome {
+            node: root,
+            receipt: Some("owner/sandbox/3/7714/merged".into()),
+            outcome: crate::outcome::Outcome::Merged {
                 head: repo.head,
                 checks_passed: true,
             },
-        }),
+        },
     )
     .unwrap();
     let before = business_bytes(&mut c);
@@ -546,7 +546,7 @@ impl InputCase {
             Observation::Classified { .. } => Self::Classified,
             Observation::Postmortem { .. } => Self::Postmortem,
             Observation::LinkedRequest { .. } => Self::LinkedRequest,
-            Observation::Outcome { .. } | Observation::Queue(..) => Self::Queue,
+            Observation::Outcome { .. } => Self::Queue,
             Observation::GitHubComment { .. } => Self::GitHubComment,
             Observation::WorkerFailed { .. } => Self::WorkerFailed,
             Observation::WorkerReply { .. } => Self::WorkerReply,
@@ -645,14 +645,14 @@ fn observation_inventory(
             issue,
             original: node,
         },
-        Observation::Queue(crate::adapters::mergify::QueueFact {
-            repository: repository.clone(),
-            number: 7714,
-            evidence: crate::adapters::mergify::Evidence::Merged {
+        Observation::Outcome {
+            node,
+            receipt: Some("owner/sandbox/3/7714/merged".into()),
+            outcome: crate::outcome::Outcome::Merged {
                 head: sha.clone(),
                 checks_passed: true,
             },
-        }),
+        },
         comment(repository, 42, c.bootstrap.rob, &format!("pause {payload}")),
         Observation::WorkerFailed {
             node,
@@ -794,7 +794,7 @@ fn activate_handler(c: &mut Controller, repo: &Repo, case: InputCase) {
                     );
                     if case != InputCase::Reviewed {
                         reply(c, NodeId(0), Reply::Approved { head });
-                        assert_eq!(c.world().unwrap().nodes[0].phase, tl3_kernel::Phase::Queued);
+                        assert_eq!(c.world().unwrap().nodes[0].phase, tl3_kernel::Phase::AwaitingDelivery);
                         if !matches!(case, InputCase::CiFailed | InputCase::Merged) {
                             event(
                                 c,

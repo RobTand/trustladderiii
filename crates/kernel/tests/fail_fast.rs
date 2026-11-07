@@ -163,7 +163,7 @@ impl Run {
         self.reply(Reply::Approved {
             head: HeadId(self.head),
         });
-        assert_eq!(self.phase(), Phase::Queued);
+        assert_eq!(self.phase(), Phase::AwaitingDelivery);
     }
 
     /// Round 0 fails review, so the free fix round starts.

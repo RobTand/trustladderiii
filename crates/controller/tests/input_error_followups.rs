@@ -1019,12 +1019,12 @@ fn malformed_review_fixes(mut record: serde_json::Value) {
     let mut c = open(&settings, root.path());
     c.intake(issue()).unwrap();
     for _ in 0..200 {
-        if c.world().unwrap().nodes[0].phase == tl3_kernel::Phase::Queued {
+        if c.world().unwrap().nodes[0].phase == tl3_kernel::Phase::AwaitingDelivery {
             break;
         }
         assert!(c.drive_once().unwrap());
     }
-    assert_eq!(c.world().unwrap().nodes[0].phase, tl3_kernel::Phase::Queued);
+    assert_eq!(c.world().unwrap().nodes[0].phase, tl3_kernel::Phase::AwaitingDelivery);
     c.observe(
         "rebase",
         Observation::Kernel(Event::Fact {

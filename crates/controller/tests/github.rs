@@ -54,7 +54,7 @@ use tl3_store::Store;
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 static PEM: LazyLock<String> =
-    LazyLock::new(|| include_str!("../../mergify/tests/fixtures/throwaway-key.pem").into());
+    LazyLock::new(|| include_str!("../../github/tests/fixtures/throwaway-key.pem").into());
 fn bootstrap() -> Bootstrap {
     Bootstrap {
         operations: None,

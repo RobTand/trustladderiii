@@ -16,9 +16,9 @@ fn watches_name_one_generation_and_one_operation() {
     assert!(node.operation_pending(EffectKind::SubmitChecks, 5));
     assert!(!node.operation_pending(EffectKind::SubmitChecks, 4));
     node.job = None;
-    node.phase = Phase::Queued;
+    node.phase = Phase::AwaitingDelivery;
     node.generation = 8;
-    assert_eq!(node.waiting_on(), Wait::MergeQueue);
+    assert_eq!(node.waiting_on(), Wait::Delivery);
     // Entering Queued advances the generation after the enqueue acknowledgement.
     assert!(node.operation_pending(EffectKind::Enqueue, 7));
     assert!(!node.operation_pending(EffectKind::Enqueue, 6));

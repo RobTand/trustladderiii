@@ -475,7 +475,7 @@ pub(super) fn run(s: &Schedule, new: bool, cut: Option<(usize, bool)>) -> Run {
     other_state.incident = None;
     let mut world = World::new(&[1], 1);
     let mut node = tl3_kernel::Node::new(tl3_kernel::RepoId(0));
-    node.phase = Phase::Queued;
+    node.phase = Phase::AwaitingDelivery;
     node.pr_open = true;
     node.had_pr = true;
     node.head = Some(tl3_kernel::HeadId(0));

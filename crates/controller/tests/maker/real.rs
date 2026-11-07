@@ -280,7 +280,7 @@ pub(super) fn rebase_revisit(settings: &tl3_config::Store, new_edits: bool) {
         if new_edits { "rebase-edits" } else { "normal" },
         true,
     );
-    flow.until(|phase| phase == Phase::Queued);
+    flow.until(|phase| phase == Phase::AwaitingDelivery);
     let first = flow.controller.world().unwrap().nodes[0];
     let head = git(&flow.worktree, &["rev-parse", "HEAD"]);
     let upstream = root.path().join("repo");
@@ -463,7 +463,7 @@ pub(super) fn reproducing_fix(settings: &tl3_config::Store, rebase: bool) {
     assert_eq!(checks[1]["kind"], "reproducing");
     assert_eq!(checks[1]["tests"], json!(["test_greeting.py::test_empty"]));
     if rebase {
-        flow.until(|phase| phase == Phase::Queued);
+        flow.until(|phase| phase == Phase::AwaitingDelivery);
         // Reconciliation can consume a reply before its source message is received.
         let request = requests(&flow.config).pop().unwrap();
         let reply = store
@@ -519,7 +519,7 @@ pub(super) fn reproducing_fix(settings: &tl3_config::Store, rebase: bool) {
             )
             .unwrap();
         flow.until(|phase| phase == Phase::Checking);
-        flow.until(|phase| phase == Phase::Queued);
+        flow.until(|phase| phase == Phase::AwaitingDelivery);
         let head = git(&flow.worktree, &["rev-parse", "HEAD"]);
         let snapshot = flow.controller.snapshot().unwrap();
         let plan = snapshot

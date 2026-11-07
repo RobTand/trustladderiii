@@ -1,3 +1,13 @@
+#[macro_use]
+#[path = "../src/checks/verification.rs"]
+mod verification;
+#[path = "../src/checks/check.rs"]
+mod check;
+use check::{App, CheckView, Conclusion, Head, Status};
+const MERGIFY_APP_ID: u64 = 10562;
+const MERGIFY_APP_SLUG: &str = "mergify";
+const QUEUE_CHECK: &str = "Mergify Merge Queue";
+const QUEUE_RULE_CHECK: &str = "Rule: Queue TL3-approved PRs (queue)";
 #[path = "../src/checks/required.rs"]
 mod required;
 mod required_spec;

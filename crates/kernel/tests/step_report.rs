@@ -100,7 +100,7 @@ impl Run {
         self.reviewing();
         self.reply(Reply::Approved { head: HEAD });
         self.confirm();
-        assert_eq!(self.world.nodes[0].phase, Phase::Queued);
+        assert_eq!(self.world.nodes[0].phase, Phase::AwaitingDelivery);
     }
 
     fn failed(&self, cause: FailedRoundCause) {
@@ -206,7 +206,7 @@ fn ci_failure_reports_its_fact_path_review_stop() {
     run.reply(PASS);
     run.reply(Reply::Approved { head: HEAD });
     run.confirm();
-    assert_eq!(run.world.nodes[0].phase, Phase::Queued);
+    assert_eq!(run.world.nodes[0].phase, Phase::AwaitingDelivery);
     run.world.fail_fast = true;
     run.fact(Fact::CiFailed { infra: false });
     assert_eq!(

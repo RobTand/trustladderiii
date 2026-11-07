@@ -271,7 +271,7 @@ pub enum Phase {
     Checking,
     Reviewing,
     Publishing,
-    Queued,
+    AwaitingDelivery,
     Rebasing,
     AwaitingRob,
     Stopping(Outcome),
@@ -290,7 +290,6 @@ impl Phase {
                     | Phase::Checking
                     | Phase::Reviewing
                     | Phase::Publishing
-                    | Phase::Queued
                     | Phase::Rebasing
             )
         }
@@ -303,7 +302,7 @@ impl Phase {
                 Phase::Making => Some(Resume::Making),
                 Phase::Checking => Some(Resume::Checking),
                 Phase::Reviewing => Some(Resume::Reviewing),
-                Phase::Publishing | Phase::Queued => Some(Resume::Publishing),
+                Phase::Publishing => Some(Resume::Publishing),
                 Phase::Rebasing => Some(Resume::Rebasing),
                 _ => None,
             },
@@ -312,7 +311,7 @@ impl Phase {
                 Phase::Making => Some(Resume::Making),
                 Phase::Checking => Some(Resume::Checking),
                 Phase::Reviewing => Some(Resume::Reviewing),
-                Phase::Publishing | Phase::Queued => Some(Resume::Publishing),
+                Phase::Publishing => Some(Resume::Publishing),
                 Phase::Rebasing => Some(Resume::Rebasing),
                 _ => None,
             }
@@ -346,7 +345,7 @@ impl Phase {
             Phase::Checking => "Checking",
             Phase::Reviewing => "Reviewing",
             Phase::Publishing => "Publishing",
-            Phase::Queued => "Queued",
+            Phase::AwaitingDelivery => "AwaitingDelivery",
             Phase::Rebasing => "Rebasing",
             Phase::AwaitingRob => "AwaitingRob",
             Phase::Stopping(_) => "Stopping",
@@ -989,6 +988,8 @@ pub enum Reply {
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum Ack {
     Confirmed,
+    /// Durable responsibility for the current generic hand-to-delivery effect.
+    DeliveryAccepted,
     Retryable,
     Permanent,
     /// A TL3-created local body defect; only OpenPr can stop for this cause.
@@ -1094,7 +1095,6 @@ pub enum Fact {
         checks_passed: bool,
     },
     PrClosedByPerson,
-    PrDequeuedByPerson,
     PushByOther {
         head: HeadId,
     },
@@ -1105,8 +1105,6 @@ pub enum Fact {
     IncidentCleared {
         by_rob: bool,
     },
-    /// A PR or queue record is alive but unchanged across allowance looks.
-    UpstreamStalled,
     /// The issue's title or labels now give this priority.
     Priority(Priority),
 }
@@ -1211,7 +1209,6 @@ pub enum NoteKind {
     UnapprovedMerge,
     Replanned,
     PrClosed,
-    PrDequeued,
     OutsidePush,
     LateMerge,
     DependencyAbandoned { number: u64 },
@@ -1376,8 +1373,8 @@ enum Item {
     Admit,
     /// Wait for a slot and its files.
     Slot,
-    /// Wait in Mergify's queue.
-    Merge,
+    /// Await the delivery outcome without reserving execution resources.
+    Delivery,
     /// Wait for Rob's answer.
     Answer,
     /// Give back the slot and files.
@@ -1410,7 +1407,7 @@ kernel_fn! {
                 I::Do(K::OpenPr),
                 I::Do(K::Enqueue),
             ],
-            Phase::Queued => &[I::Merge],
+            Phase::AwaitingDelivery => &[I::Delivery],
             Phase::Rebasing => &[I::StartRebase, I::Await],
             Phase::AwaitingRob => &[I::Answer],
             Phase::Stopping(_) => &[
@@ -1445,7 +1442,7 @@ kernel_fn! {
         match phase {
             Phase::Closed(_) => 0,
             Phase::Stopping(_) => 2,
-            Phase::Queued => 4,
+            Phase::AwaitingDelivery => 4,
             Phase::Publishing => 6,
             Phase::Reviewing => 10,
             Phase::Checking => 14,
@@ -1677,6 +1674,7 @@ pub fn proof_of_event(event: &Event) -> &'static str {
         },
         Event::Ack { ack, .. } => match ack {
             Ack::Confirmed => "apply_ack_confirmed",
+            Ack::DeliveryAccepted => "apply_ack_delivery_accepted",
             Ack::Retryable => "apply_ack_retryable",
             Ack::Permanent => "apply_ack_permanent",
             Ack::BodyPolicyRefused => "apply_ack_body_policy_refused",
@@ -1685,12 +1683,10 @@ pub fn proof_of_event(event: &Event) -> &'static str {
             // Merges are heavy, so they get one proof per phase: pr_merged_<phase>.
             Fact::PrMerged { .. } => "pr_merged_by_phase",
             Fact::PrClosedByPerson => "apply_pr_closed",
-            Fact::PrDequeuedByPerson => "apply_pr_dequeued",
             Fact::PushByOther { .. } => "apply_outside_push",
             Fact::CiFailed { .. } => "apply_ci_failed",
             Fact::Conflict => "apply_conflict",
             Fact::IncidentCleared { .. } => "apply_incident_cleared",
-            Fact::UpstreamStalled => "apply_upstream_stalled",
             Fact::Priority(_) => "apply_priority",
             Fact::Dependency { .. } => "apply_dependency",
             Fact::DependencyRemove { .. } => "apply_dependency_remove",
@@ -1732,7 +1728,7 @@ pub fn proofs_of_phase(phase: Phase) -> &'static [&'static str] {
         Phase::Checking => &["advance_checking", "progress_from_checking"],
         Phase::Reviewing => &["advance_reviewing", "progress_from_reviewing"],
         Phase::Publishing => &["advance_publishing", "progress_from_publishing"],
-        Phase::Queued => &["advance_queued", "progress_from_queued"],
+        Phase::AwaitingDelivery => &["advance_awaiting_delivery", "progress_from_awaiting_delivery"],
         Phase::Rebasing => &[
             "advance_rebasing",
             "progress_from_rebasing",
@@ -1807,10 +1803,10 @@ spec fn node_checked(w: World, n: Node) -> bool {
             && n.job.is_none() && !n.pool && !n.holds && n.ticket.is_none()
             && n.question.is_none() && !n.waiting_incident && !n.pr_open && !n.worktree)
         && (!(n.phase is Closed) ==> n.pos <= items(n.phase).len()
-            && (n.pos == items(n.phase).len() ==> n.phase == Phase::Publishing || n.phase is Stopping))
+            && (n.pos == items(n.phase).len() ==> n.phase is Stopping))
         && (holding(n.phase) ==> n.holds)
         && (n.holds ==> holding(n.phase) || (n.phase is Stopping && n.pos <= RELEASE_STEP))
-        && (n.phase == Phase::Queued ==> n.pr_open)
+        && (n.phase == Phase::AwaitingDelivery ==> n.pr_open && n.effect.is_none())
         && (n.pr_open ==> n.had_pr)
         && (n.merged.is_some() ==> n.phase == Phase::Stopping(Outcome::Merged)
             || n.phase == Phase::Closed(Outcome::Merged))
@@ -1857,7 +1853,7 @@ spec fn node_checked(w: World, n: Node) -> bool {
             Phase::Making => ready_checked(n, Resume::Making),
             Phase::Checking => ready_checked(n, Resume::Checking),
             Phase::Reviewing => ready_checked(n, Resume::Reviewing),
-            Phase::Publishing | Phase::Queued => ready_checked(n, Resume::Publishing),
+            Phase::Publishing | Phase::AwaitingDelivery => ready_checked(n, Resume::Publishing),
             Phase::Rebasing => ready_checked(n, Resume::Rebasing),
             _ => true,
         })
@@ -2098,7 +2094,7 @@ kernel_fn! {
                 Phase::Making => Resume::Making,
                 Phase::Checking => Resume::Checking,
                 Phase::Reviewing => Resume::Reviewing,
-                Phase::Publishing | Phase::Queued => Resume::Publishing,
+                Phase::Publishing => Resume::Publishing,
                 _ => Resume::Rebasing,
             }) && final(m).pos == 0 && final(m).ticket.is_none()
                 && final(m).effect == match old(m).effect {

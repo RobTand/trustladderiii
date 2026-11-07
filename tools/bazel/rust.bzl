@@ -28,8 +28,6 @@ _COMPILE_DATA = {
     "crates/contracts": ["//workers:schemas", "//workers/tests:footprint_paths"],
     "crates/controller": ["//workers:schemas"],
     "crates/config": ["//deploy/dl380g10:models.toml"],
-    "crates/github": ["//crates/mergify:sources"],
-    "crates/mergify": ["//crates/github:sources"],
 }
 _BUILD_SCRIPT_DATA = {
     "crates/controller": ["//workers:schemas", "//workers/src:prompts"],
@@ -53,7 +51,6 @@ _GATE_GROUPS = {"tl3-controller/github": ["flow", "notices"]}
 _SCENARIO_SHARDS = {
     "tl3-controller/github-flow": 50,
     "tl3-controller/github-notices": 32,
-    "tl3-controller/mergify": 50,
     "tl3-controller/publishing": 38,
     "tl3-controller/prismabuild": 7,
     "tl3-controller/simulation": 16,
@@ -83,7 +80,6 @@ _LIBTEST_SHARDS = {
 _CONTROLLER_TEST_DATA = [
     "//crates/config:sources",
     "//crates/github:sources",
-    "//crates/mergify:sources",
     "//crates/store:sources",
 ]
 _CONTROLLER_TEST_COMPILE_DATA = {
@@ -154,7 +150,7 @@ _CONTROLLER_RUNTIME = {
 # Shared modules and runtime fixtures outside tests/NAME/. The per-test glob
 # includes its own module tree; these are the cross-tree reads Cargo cannot see.
 _CONTROLLER_TEST_SOURCES = {
-    "tests/direct_merge.rs": ["tests/mergify.rs", "tests/mergify/**", "tests/support/**", "tests/fixtures/mergify/**"],
+    "tests/direct_merge.rs": ["tests/support/**"],
     "tests/input_resources.rs": ["tests/support/**"],
     "src/lib.rs": ["tests/worker_events_io/**", "tests/support/input_resource_world.rs", "tests/fail_fast/pb-2781.json", "tests/fixtures/dispatch_recovery_original.rs", "tests/fixtures/dispatch-recovery.proptest-regressions", "tests/fixtures/dispatch-conformance.proptest-regressions", "tests/fixtures/dispatch-conformance-regressions.json", "tests/fixtures/dispatch-restart-regressions.json"],
     # CC-P: exact source replay and persistent differential schedules.
@@ -171,7 +167,6 @@ _CONTROLLER_TEST_SOURCES = {
     "tests/hindsight.rs": ["README.md"],
     "tests/fail_fast.rs": ["tests/support/**"],
     "tests/fixture_contracts.rs": ["tests/support/**"],
-    "tests/mergify.rs": ["tests/support/**", "tests/fixtures/mergify/**"],
     "tests/core_defects.rs": ["tests/worktree_fixture/**", "tests/support/ownership.rs"],
     "tests/crash_safety.rs": ["tests/crash/**"],
     "tests/github.rs": ["tests/support/**", "tests/fixtures/decisions/**", "tests/fixtures/steering/**", "tests/worker_model.py", "tests/worker_replies.py", "tests/worker_transport.py"],
@@ -396,10 +391,8 @@ def _crate_test(kind, package, name, source, harness, options):
     if kind == "bin" and name == "verus-runner" and native.package_name() == "crates/verus-runner":
         sources = [source]
     compile_data = options["compile_data"]
-    if source == "tests/proof_map.rs" and native.package_name() in ["crates/kernel", "crates/mergify"]:
+    if source == "tests/proof_map.rs" and native.package_name() == "crates/kernel":
         compile_data = compile_data + ["//tools/bazel:verus.bzl"]
-        if native.package_name() == "crates/mergify":
-            sources = sources + native.glob(["proofs/enqueue_*.rs"])
     if native.package_name() == "crates/store":
         compile_data = compile_data + native.glob(["tests/fixtures/**"], allow_empty = True)
     if native.package_name() == "crates/controller":

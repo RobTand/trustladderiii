@@ -330,7 +330,7 @@ fn open_clock(
             AppConfig {
                 id: 123,
                 slug: "factory".into(),
-                pem: include_str!("../../mergify/tests/fixtures/throwaway-key.pem").into(),
+                pem: include_str!("../../github/tests/fixtures/throwaway-key.pem").into(),
                 webhook_secret: "fixture".into(),
             },
             3,
@@ -1152,7 +1152,7 @@ fn concurrent_approval_reconciliations_converge() {
                     AppConfig {
                         id: 123,
                         slug: "factory".into(),
-                        pem: include_str!("../../mergify/tests/fixtures/throwaway-key.pem").into(),
+                        pem: include_str!("../../github/tests/fixtures/throwaway-key.pem").into(),
                         webhook_secret: "fixture".into(),
                     },
                     3,
@@ -1663,7 +1663,7 @@ fn connect_failure_before_post_has_no_dispatch_evidence() {
         AppConfig {
             id: 123,
             slug: "factory".into(),
-            pem: include_str!("../../mergify/tests/fixtures/throwaway-key.pem").into(),
+            pem: include_str!("../../github/tests/fixtures/throwaway-key.pem").into(),
             webhook_secret: "fixture".into(),
         },
         3,
@@ -1851,7 +1851,7 @@ fn gap_catchup_repairs_late_approval_after_closure() {
         AppConfig {
             id: 123,
             slug: "factory".into(),
-            pem: include_str!("../../mergify/tests/fixtures/throwaway-key.pem").into(),
+            pem: include_str!("../../github/tests/fixtures/throwaway-key.pem").into(),
             webhook_secret: "fixture".into(),
         },
         3,
@@ -1912,7 +1912,7 @@ fn http_client(case: &Case) -> GitHub {
         AppConfig {
             id: 123,
             slug: "factory".into(),
-            pem: include_str!("../../mergify/tests/fixtures/throwaway-key.pem").into(),
+            pem: include_str!("../../github/tests/fixtures/throwaway-key.pem").into(),
             webhook_secret: "fixture".into(),
         },
         3,

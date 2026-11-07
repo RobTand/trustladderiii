@@ -10,9 +10,9 @@ pub enum Phase {
     Checking,
     Reviewing,
     Making,
-    Queued,
+    AwaitingDelivery,
     /// Publishing with its Enqueue effect in flight: the kernel's `ci_failed`
-    /// takes a CI failure here exactly as in Queued (#854 D2, #862).
+    /// takes a CI failure here exactly as in AwaitingDelivery (#854 D2, #862).
     Enqueuing,
     Other,
 }
@@ -63,7 +63,7 @@ pub enum Finding {
 /// selection, run-or-job admission, report flag and detailed-review suppression
 /// are preserved existing behaviour (no rule), lib.rs:3844-3889.
 /// #862 (found by live probe, tessera #1574): a code CI failure while Enqueuing
-/// is recorded as in Queued. On base 3587a599, docs/state-table.md:599 sends
+/// is recorded as in AwaitingDelivery. On base 3587a599, docs/state-table.md:599 sends
 /// that D2 failure to maker repair "with the checks, summaries and unmet
 /// conditions", and :615 resumes the maker "with the evidence".
 /// Total over every input and u64 generation; no loop or finite proof bound.
@@ -83,7 +83,7 @@ pub enum Finding {
                     }
                 } else { Finding::None },
             Input::CiFailed { infra } =>
-                if !infra && (n.phase == Phase::Queued || n.phase == Phase::Enqueuing) { Finding::Ci } else { Finding::None },
+                if !infra && (n.phase == Phase::AwaitingDelivery || n.phase == Phase::Enqueuing) { Finding::Ci } else { Finding::None },
             Input::Other => Finding::None,
         },
     },
@@ -112,7 +112,7 @@ pub fn finding(node: Option<Node>, input: Input, detailed_review: bool) -> Findi
             }
         }
         Input::CiFailed { infra: false }
-            if n.phase == Phase::Queued || n.phase == Phase::Enqueuing =>
+            if n.phase == Phase::AwaitingDelivery || n.phase == Phase::Enqueuing =>
         {
             Finding::Ci
         }

@@ -27,7 +27,6 @@ tl3-contracts = { path = "../contracts" }
 tl3-controller-core = { path = "../controller-core" }
 tl3-delivery = { path = "../delivery" }
 tl3-github = { path = "../github" }
-tl3-mergify = { path = "../mergify" }
 chrono = { version = "0.4", features = ["serde"] }
 ts-rs = { version = "12", features = ["no-serde-warnings"] }
 schemars = "1"
@@ -75,11 +74,6 @@ harness = false
 [[test]]
 name = "crash_safety"
 path = "tests/crash_safety.rs"
-harness = false
-
-[[test]]
-name = "mergify"
-path = "tests/mergify.rs"
 harness = false
 
 [[test]]

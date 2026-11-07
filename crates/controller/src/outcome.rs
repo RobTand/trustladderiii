@@ -36,6 +36,6 @@ pub(crate) fn identity(repository: &crate::Repository, number: u64, suffix: &str
 
 pub(crate) fn recorded(snapshot: &tl3_store::Snapshot, identity: &str) -> bool {
     snapshot.rows.iter().any(|row| {
-        matches!(row.table.as_str(), "queue_facts" | "delivery_outcomes") && row.id == identity
+        row.table == "delivery_outcomes" && row.id == identity
     })
 }

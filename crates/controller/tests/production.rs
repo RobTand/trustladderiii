@@ -25,7 +25,7 @@ fn config(root: &Path) -> tl3_config::Config {
     config.github.repos[0].installation_id = 987;
     config.github.app_credentials_file = root.join("github-app.json");
     config.models.key_file = root.join("model-key");
-    let pem = include_str!("../../mergify/tests/fixtures/throwaway-key.pem");
+    let pem = include_str!("../../github/tests/fixtures/throwaway-key.pem");
     fs::write(
         &config.github.app_credentials_file,
         serde_json::to_vec(

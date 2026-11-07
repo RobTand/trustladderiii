@@ -107,7 +107,7 @@ fn user_stop_and_pr_close_keep_distinct_reasons_and_summary_evidence() {
         let root = tempfile::tempdir().unwrap();
         let mut c = open(&settings, root.path(), false);
         start(&mut c);
-        assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Queued);
+        assert_eq!(c.world().unwrap().nodes[0].phase, Phase::AwaitingDelivery);
         send(&mut c, "terminal-input", event);
         assert_eq!(reason(&mut c).unwrap()["reason"], expected);
         assert_eq!(

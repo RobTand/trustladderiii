@@ -84,7 +84,7 @@ fn every_phase_maps_to_its_column_and_label() {
         (Phase::Checking, Column::Checking, "Running checks"),
         (Phase::Reviewing, Column::Reviewing, "Reviewing"),
         (Phase::Publishing, Column::Merging, "Publishing"),
-        (Phase::Queued, Column::Merging, "In the merge queue"),
+        (Phase::AwaitingDelivery, Column::Merging, "In the merge queue"),
         (Phase::Rebasing, Column::Merging, "Updating the branch"),
         (Phase::AwaitingRob, Column::NeedsRob, "Awaiting Rob"),
     ];
@@ -384,7 +384,7 @@ fn waiting_on_names_the_next_evidence() {
         failed_question,
         effect,
         checks,
-        request(3, Phase::Queued),
+        request(3, Phase::AwaitingDelivery),
         request(4, Phase::Closed(Outcome::Merged)),
         request(5, Phase::Rebasing),
     ])
