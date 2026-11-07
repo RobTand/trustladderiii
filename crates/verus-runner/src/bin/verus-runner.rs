@@ -544,8 +544,12 @@ fn mode_log(
     raw: &serde_json::Value,
     receipt: &serde_json::Value,
 ) -> String {
-    let _ = (raw, receipt);
-    format!("VERUS_MODE {} {metrics}", mode.name())
+    let modern = format!("VERUS_MODE {} {metrics}", mode.name());
+    if matches!(mode, ExecutionMode::NormalStats | ExecutionMode::DiagnosticStats) {
+        format!("{modern}\nVERUS_RAW_MEASUREMENT {raw}\nVERUS_PROOF {receipt}")
+    } else {
+        modern
+    }
 }
 
 struct Toolchain {
