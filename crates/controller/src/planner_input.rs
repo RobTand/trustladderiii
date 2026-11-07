@@ -228,17 +228,32 @@ mod tests {
             restore.rows.push(put("requests", "0".into(), request_row(&snapshot, &restore, NodeId(0)).unwrap()));
             c.store.commit(&restore).unwrap();
             let snapshot = c.store.load().unwrap();
+            let mut replacement = Commit::new("request-replacement", json!({}), &snapshot);
+            let issue: tl3_github::Issue = serde_json::from_value(json!({"number":930,
+                "title":"Budget replacement","body":"New request version","state":"open",
+                "updated_at":"2026-11-07T00:00:00Z"})).unwrap();
+            replacement.rows.push(put("replacement_pending", "0".into(), json!(crate::steering::Task::Restart {
+                comment_key:"replacement-comment".into(), text:"restart".into(), issue:Some(issue),
+            })));
+            replacement.rows.push(put("request_decisions", "0".into(),
+                serde_json::from_str(include_str!("../tests/fixtures/decisions/pq2662.json")).unwrap()));
+            c.store.commit(&replacement).unwrap();
+            let snapshot = c.store.load().unwrap();
             let mut version = Commit::new("new-version", json!({}), &snapshot);
-            let mut binding = request_row(&snapshot, &version, NodeId(0)).unwrap();
-            binding.as_object_mut().unwrap().remove("replan_budget");
-            binding.as_object_mut().unwrap().remove("replan_budget_format");
-            version.rows.push(put("requests", "1".into(), binding));
-            c.apply(&snapshot, stopped, Event::NewRequest { repo: RepoId(0), priority: Priority::Unranked }, &mut version).unwrap();
+            let labelled = LabelledIssue { delivery:"new-version".into(), owner:"owner".into(),
+                repo:"repo".into(), installation:1, number:930, title:"Budget replacement".into(),
+                actor:1, label:"tl3".into(), labels:vec![] };
+            let event = c.prepare_intake(&snapshot, &labelled, bootstrap(fail_fast).repos.remove(0), None, &mut version).unwrap().unwrap();
+            c.apply(&snapshot, stopped, event, &mut version).unwrap();
             c.store.commit(&version).unwrap();
             let snapshot = c.store.load().unwrap();
             let read = Commit::new("read", json!({}), &snapshot);
             assert!(load_budget(&snapshot, &read, NodeId(0)).unwrap().used());
             assert!(!load_budget(&snapshot, &read, NodeId(1)).unwrap().used());
+            let inherited = crate::decisions::Context::load(&snapshot, NodeId(1)).unwrap();
+            assert_eq!(inherited.request_version, 1);
+            assert_eq!(inherited.decisions[0].id, "pq2662-q10");
+            assert_eq!(inherited.decisions[0].origin_request_version, 0);
         }
     }
 
