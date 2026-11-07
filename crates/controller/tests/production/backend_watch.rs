@@ -55,11 +55,23 @@ impl RunBackend for Backend {
     fn launch_context(&self, _: &Owner, _: &str) -> Result<LaunchContext> {
         panic!("observer must never launch")
     }
-    fn begin_container_launch(&self, _: &Owner, _: &RuntimeOwnership) -> Result<ContainerLaunchIntent> {
-        Err(BackendError::invalid("controller fixture refuses container launch"))
+    fn begin_container_launch(
+        &self,
+        _: &Owner,
+        _: &RuntimeOwnership,
+    ) -> Result<ContainerLaunchIntent> {
+        Err(BackendError::invalid(
+            "controller fixture refuses container launch",
+        ))
     }
-    fn bind_container_launch(&self, _: &Owner, _: RuntimeOwnership) -> Result<ContainerLaunchBinding> {
-        Err(BackendError::invalid("controller fixture refuses container binding"))
+    fn bind_container_launch(
+        &self,
+        _: &Owner,
+        _: RuntimeOwnership,
+    ) -> Result<ContainerLaunchBinding> {
+        Err(BackendError::invalid(
+            "controller fixture refuses container binding",
+        ))
     }
     fn retain_runtime(&self, _: &Owner, _: RuntimeOwnership) -> Result<()> {
         panic!("observer must never launch")
