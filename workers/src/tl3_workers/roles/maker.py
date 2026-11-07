@@ -253,6 +253,24 @@ def _check_reply(inputs, reply, *, captured_assertions=()):
         raise MakerReplyError(violations)
 
 
+
+def _validate_reply_schema(inputs, reply, proposal, captured_assertions):
+    validator = Draft202012Validator(proposal, registry=registry())
+    if reply.get('kind') == 'done':
+        candidate = deepcopy(reply)
+        missing = False
+        for item in candidate.get('reproductions', []):
+            if isinstance(item, dict) and 'tests' in item and 'proof' not in item:
+                missing = True
+                item['proof'] = {'subjects': [], 'observer_support': [],
+                                 'red_message': 'Schema shape check only.'}
+        if missing and validator.is_valid(candidate):
+            # Preserve schema failure order for other defects. This one missing
+            # field needs its evidence-aware row rather than an unbounded schema repair.
+            _check_reply(inputs, reply, captured_assertions=captured_assertions)
+    validator.validate(reply)
+
+
 def _checking_handoff(inputs, head, tree):
     """Describe pending ordinary proof, never infer it from development receipts."""
     if not inputs.get("check_base_sha"):
@@ -681,7 +699,7 @@ def run(model, request, worktree, emit):
 
     def check(text):
         reply = read_reply(text)
-        Draft202012Validator(proposal, registry=registry()).validate(reply)
+        _validate_reply_schema(inputs, reply, proposal, _captured_assertions(history))
         if reply["kind"] == "done" and any(check["status"] == "not_met" for check in reply["self_check"]):
             reply = {"kind": "cant_meet", "report": json.dumps(reply["self_check"], ensure_ascii=False)}
         if reply["kind"] == "blocked":

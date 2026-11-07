@@ -421,3 +421,22 @@ def test_maker_selector_membership_matches_existing_harness_check(selector):
     except HarnessInputError:
         accepted = False
     assert maker._REPRODUCTION_TESTS.accepts([selector]) is accepted
+
+
+def test_missing_proof_schema_repair_uses_captured_row_membership(review_fix):
+    from copy import deepcopy
+    from tl3_workers.rules import permits
+
+    inputs, good = review_fix
+    before = deepcopy(good)
+    before['reproductions'][0].pop('proof')
+    # The model-facing schema omits the code-owned head, as in maker.run.
+    from tl3_workers.contracts import model_facing, schema
+    proposal = model_facing(schema('maker-reply'))
+    proposal['oneOf'][0]['required'].remove('head')
+    with pytest.raises(maker.MakerReplyError) as raised:
+        maker._validate_reply_schema(inputs, before, proposal, (_captured_assertion(),))
+    assert permits(raised.value.rule_violations, before, good, role='maker')
+    invented = deepcopy(good)
+    invented['reproductions'][0]['proof']['red_message'] = 'model invented evidence'
+    assert not permits(raised.value.rule_violations, before, invented, role='maker')
