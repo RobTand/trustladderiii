@@ -32,7 +32,7 @@ pub(super) proof fn extend(w: World, from: NodeId, owner: NodeId, target: NodeId
     assert(path(w, next));
 }
 
-pub(super) proof fn path_in_cut(w: World, route: Seq<NodeId>, cut: Set<NodeId>, end: int)
+pub(super) proof fn path_in_cut(w: World, route: Seq<NodeId>, cut: vstd::iset::ISet<NodeId>, end: int)
     requires path(w, route), 0 <= end < route.len(), cut.contains(route[0]),
         forall|a: NodeId, b: NodeId| cut.contains(a) && active_edge(w, a, b)
             ==> cut.contains(b),
@@ -46,7 +46,7 @@ pub(super) proof fn path_in_cut(w: World, route: Seq<NodeId>, cut: Set<NodeId>, 
     }
 }
 
-pub(super) proof fn cut_excludes(w: World, from: NodeId, to: NodeId, cut: Set<NodeId>)
+pub(super) proof fn cut_excludes(w: World, from: NodeId, to: NodeId, cut: vstd::iset::ISet<NodeId>)
     requires cut.contains(from), !cut.contains(to),
         forall|a: NodeId, b: NodeId| cut.contains(a) && active_edge(w, a, b)
             ==> cut.contains(b),

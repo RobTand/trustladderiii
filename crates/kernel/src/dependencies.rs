@@ -422,7 +422,7 @@ impl World {
                 } }
                 if seen == before {
                     kernel_proof! {
-                        let cut = Set::new(|n: NodeId| n.0 < self.nodes@.len()
+                        let cut = vstd::iset::ISet::new(|n: NodeId| n.0 < self.nodes@.len()
                             && seen & (1u64 << n.0) != 0);
                         assert forall|a: NodeId, b: NodeId| cut.contains(a)
                             && active_edge(*self, a, b) implies cut.contains(b) by {
@@ -470,7 +470,7 @@ impl World {
             kernel_snapshot! { frontier_before = pending@ }
             let Some(node) = pending.pop() else {
                 kernel_proof! {
-                    let cut = Set::new(|n: NodeId| explored(*self, seen@, to, n));
+                    let cut = vstd::iset::ISet::new(|n: NodeId| explored(*self, seen@, to, n));
                     lemmas::cut_excludes(*self, from, to, cut);
                 }
                 return false;
