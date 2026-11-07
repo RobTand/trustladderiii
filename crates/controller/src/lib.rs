@@ -23,7 +23,6 @@ pub mod check_harness;
 pub mod classifier;
 pub mod cli;
 pub mod clock;
-mod close_reasons;
 pub mod console;
 pub use tl3_contracts as contracts;
 mod decisions;
@@ -2047,7 +2046,6 @@ impl Controller {
         event: Event,
         commit: &mut Commit,
     ) -> Result<()> {
-        let close_details = close_reasons::take_details(commit);
         if !self.kernel_headroom(snapshot, &world, commit)? {
             return Ok(());
         }
@@ -2068,6 +2066,45 @@ impl Controller {
                 json!({"command": id}),
             ));
         }
+        let closing_cause = match event {
+            Event::Command {
+                node,
+                command:
+                    tl3_kernel::Command::Stop
+                    | tl3_kernel::Command::Answer {
+                        answer: tl3_kernel::Answer::Stop,
+                        ..
+                    },
+                ..
+            } => Some((node, "user_stop")),
+            Event::Command {
+                node,
+                command:
+                    tl3_kernel::Command::ChangeRequest
+                    | tl3_kernel::Command::Answer {
+                        answer: tl3_kernel::Answer::ChangeRequest,
+                        ..
+                    },
+                ..
+            } => Some((node, "replaced")),
+            Event::Fact {
+                node,
+                fact: tl3_kernel::Fact::PrClosedByPerson,
+            } => Some((node, "pr_closed")),
+            Event::Fact {
+                node,
+                fact: tl3_kernel::Fact::PrDequeuedByPerson,
+            } => Some((node, "pr_dequeued")),
+            _ => None,
+        }
+        .filter(|(node, _)| {
+            world.nodes.get(node.0 as usize).is_some_and(|n| {
+                !matches!(
+                    n.phase,
+                    tl3_kernel::Phase::Stopping(_) | tl3_kernel::Phase::Closed(_)
+                )
+            })
+        });
         let mut dependency_outputs = Vec::new();
         self.declare_merge_dependencies(
             snapshot,
@@ -2086,7 +2123,7 @@ impl Controller {
         let tl3_kernel::StepResult {
             mut world,
             mut outputs,
-            report,
+            ..
         } = tl3_kernel::step(world, event);
         outputs.splice(0..0, dependency_outputs);
         self.announce_dependency_endings(
@@ -2099,7 +2136,20 @@ impl Controller {
         if input_errors::deferred(commit) {
             return Ok(());
         }
-        close_reasons::record(&report, close_details, commit);
+        if let Some((node, reason)) = closing_cause
+            && world.nodes.get(node.0 as usize).is_some_and(|n| {
+                matches!(
+                    n.phase,
+                    tl3_kernel::Phase::Stopping(_) | tl3_kernel::Phase::Closed(_)
+                )
+            })
+        {
+            commit.rows.push(put(
+                "close_reasons",
+                node.0.to_string(),
+                json!({"reason":reason}),
+            ));
+        }
         self.record_kernel_result(snapshot, world, outputs, commit)?;
         if !commit.result.is_object() {
             commit.result = json!({});
