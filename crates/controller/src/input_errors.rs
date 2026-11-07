@@ -264,8 +264,9 @@ impl Controller {
         let holds = self.held_effects.clone();
         let postmortem_since = self.postmortem_since;
         let attempted = self.prepare_kernel_input(snapshot, row);
-        let planner_input = attempted.as_ref().is_ok_and(|commit|
-            commit.result.get("kernel_planner_input").is_some());
+        let planner_input = attempted
+            .as_ref()
+            .is_ok_and(|commit| commit.result.get("kernel_planner_input").is_some());
         let result = match attempted {
             Ok(mut commit) if !deferred(&commit) => {
                 commit.rows.push(RowChange::Delete {

@@ -156,16 +156,29 @@ pub(crate) fn import_rewritten_legacy(
     commit: &mut Commit,
     changes: &[RowChange],
 ) -> Result<()> {
-    let legacy: std::collections::BTreeMap<_, _> = snapshot.rows.iter()
+    let legacy: std::collections::BTreeMap<_, _> = snapshot
+        .rows
+        .iter()
         .filter(|row| row.table == "nodes")
-        .filter_map(|row| row.value.get("empty_allowed_replanned").map(|flag| (&row.id, flag)))
+        .filter_map(|row| {
+            row.value
+                .get("empty_allowed_replanned")
+                .map(|flag| (&row.id, flag))
+        })
         .collect();
     for change in changes {
-        let RowChange::Put { table, id, .. } = change else { continue };
-        if table != "nodes" { continue; }
+        let RowChange::Put { table, id, .. } = change else {
+            continue;
+        };
+        if table != "nodes" {
+            continue;
+        }
         match legacy.get(id) {
             Some(Value::Bool(true)) => {
-                let node = NodeId(id.parse().map_err(|_| Error::Invalid("invalid legacy node id"))?);
+                let node = NodeId(
+                    id.parse()
+                        .map_err(|_| Error::Invalid("invalid legacy node id"))?,
+                );
                 let budget = load_budget(snapshot, commit, node)?;
                 save_budget(snapshot, commit, node, budget)?;
             }
@@ -680,8 +693,12 @@ mod tests {
         for count in [2usize, 16] {
             let settings = database.create(&format!("rp_bounded_{count}_{count_only}"));
             let root = tempfile::tempdir().unwrap();
-            let mut c = Controller::open(Store::open(&settings).unwrap(),
-                adapters::simulation(root.path()).unwrap(), bootstrap(false)).unwrap();
+            let mut c = Controller::open(
+                Store::open(&settings).unwrap(),
+                adapters::simulation(root.path()).unwrap(),
+                bootstrap(false),
+            )
+            .unwrap();
             let mut world = planning(false);
             let n = world.nodes[0];
             world.nodes.resize(count, n);
@@ -699,56 +716,126 @@ mod tests {
                 }
                 setup.rows.push(put("requests", index.to_string(), row));
             }
-            let mut raw = serde_json::to_value(snapshot::decode(&snapshot).unwrap().nodes[count - 1]).unwrap();
-            raw["empty_allowed_replanned"] = if count_only { json!(true) } else { json!("malformed") };
+            let mut raw =
+                serde_json::to_value(snapshot::decode(&snapshot).unwrap().nodes[count - 1])
+                    .unwrap();
+            raw["empty_allowed_replanned"] = if count_only {
+                json!(true)
+            } else {
+                json!("malformed")
+            };
             setup.rows.push(put("nodes", (count - 1).to_string(), raw));
             c.store.commit(&setup).unwrap();
             let snapshot = c.store.load().unwrap();
             let before = snapshot::decode(&snapshot).unwrap();
             let mut commit = Commit::new("other-input", json!({}), &snapshot);
             REQUEST_ROW_LOADS.set(0);
-            let result = c.apply(&snapshot, before, Event::Fact {
-                node: NodeId(0), fact: Fact::Priority(Priority::P0),
-            }, &mut commit);
+            let result = c.apply(
+                &snapshot,
+                before,
+                Event::Fact {
+                    node: NodeId(0),
+                    fact: Fact::Priority(Priority::P0),
+                },
+                &mut commit,
+            );
             let loads = REQUEST_ROW_LOADS.get();
             result.expect("an unrelated request row must not block a kernel input");
             if count_only {
-                assert_eq!(loads, 0, "non-planner input must not load unrelated request budgets");
+                assert_eq!(
+                    loads, 0,
+                    "non-planner input must not load unrelated request budgets"
+                );
             }
-            assert!(!commit.rows.iter().any(|r| matches!(r, RowChange::Put { table, .. } if table == "requests")),
-                "unrelated legacy request rows must remain untouched");
+            assert!(
+                !commit
+                    .rows
+                    .iter()
+                    .any(|r| matches!(r, RowChange::Put { table, .. } if table == "requests")),
+                "unrelated legacy request rows must remain untouched"
+            );
             c.store.commit(&commit).unwrap();
-            assert_eq!(snapshot::decode(&c.store.load().unwrap()).unwrap().nodes[0].priority, Priority::P0);
+            assert_eq!(
+                snapshot::decode(&c.store.load().unwrap()).unwrap().nodes[0].priority,
+                Priority::P0
+            );
             if count_only {
                 let snapshot = c.store.load().unwrap();
                 let mut rewrite = Commit::new("legacy-rewrite", json!({}), &snapshot);
                 REQUEST_ROW_LOADS.set(0);
-                c.apply(&snapshot, snapshot::decode(&snapshot).unwrap(), Event::Fact {
-                    node: NodeId((count - 1) as u64), fact: Fact::Priority(Priority::P0),
-                }, &mut rewrite).unwrap();
-                assert_eq!(REQUEST_ROW_LOADS.get(), 2, "only the rewritten legacy row is loaded and saved");
+                c.apply(
+                    &snapshot,
+                    snapshot::decode(&snapshot).unwrap(),
+                    Event::Fact {
+                        node: NodeId((count - 1) as u64),
+                        fact: Fact::Priority(Priority::P0),
+                    },
+                    &mut rewrite,
+                )
+                .unwrap();
+                assert_eq!(
+                    REQUEST_ROW_LOADS.get(),
+                    2,
+                    "only the rewritten legacy row is loaded and saved"
+                );
                 c.store.commit(&rewrite).unwrap();
                 let snapshot = c.store.load().unwrap();
                 let read = Commit::new("legacy-read", json!({}), &snapshot);
-                assert!(load_budget(&snapshot, &read, NodeId((count - 1) as u64)).unwrap().used());
-                assert!(snapshot.rows.iter().find(|r| r.table == "nodes" && r.id == (count - 1).to_string())
-                    .unwrap().value.get("empty_allowed_replanned").is_none());
+                assert!(
+                    load_budget(&snapshot, &read, NodeId((count - 1) as u64))
+                        .unwrap()
+                        .used()
+                );
+                assert!(
+                    snapshot
+                        .rows
+                        .iter()
+                        .find(|r| r.table == "nodes" && r.id == (count - 1).to_string())
+                        .unwrap()
+                        .value
+                        .get("empty_allowed_replanned")
+                        .is_none()
+                );
             } else {
                 let snapshot = c.store.load().unwrap();
                 let generation = snapshot::decode(&snapshot).unwrap().nodes[0].generation;
                 REQUEST_ROW_LOADS.set(0);
-                let own = prepare(&mut c, &snapshot, "own-planner", generation,
-                    PlannerResult::Ordinary(Reply::RunFailed));
-                assert_eq!(REQUEST_ROW_LOADS.get(), 2, "planner input loads and saves only its own request row");
-                assert!(!own.rows.iter().any(|r| matches!(r, RowChange::Put { table, id, .. }
-                    if table == "requests" && id != "0")));
+                let own = prepare(
+                    &mut c,
+                    &snapshot,
+                    "own-planner",
+                    generation,
+                    PlannerResult::Ordinary(Reply::RunFailed),
+                );
+                assert_eq!(
+                    REQUEST_ROW_LOADS.get(),
+                    2,
+                    "planner input loads and saves only its own request row"
+                );
+                assert!(
+                    !own.rows
+                        .iter()
+                        .any(|r| matches!(r, RowChange::Put { table, id, .. }
+                    if table == "requests" && id != "0"))
+                );
                 c.store.commit(&own).unwrap();
                 let snapshot = c.store.load().unwrap();
                 let mut rewrite = Commit::new("malformed-legacy-rewrite", json!({}), &snapshot);
-                let error = c.apply(&snapshot, snapshot::decode(&snapshot).unwrap(), Event::Fact {
-                    node: NodeId((count - 1) as u64), fact: Fact::Priority(Priority::P0),
-                }, &mut rewrite).unwrap_err();
-                assert!(matches!(error, Error::Invalid("invalid legacy replan budget")));
+                let error = c
+                    .apply(
+                        &snapshot,
+                        snapshot::decode(&snapshot).unwrap(),
+                        Event::Fact {
+                            node: NodeId((count - 1) as u64),
+                            fact: Fact::Priority(Priority::P0),
+                        },
+                        &mut rewrite,
+                    )
+                    .unwrap_err();
+                assert!(matches!(
+                    error,
+                    Error::Invalid("invalid legacy replan budget")
+                ));
             }
         }
     }

@@ -32,7 +32,11 @@ fn planner_ordinary_reply_releases_stopping_run() {
         let reply = Reply::PlanCantMeet;
         let (expected, expected_out) = step(
             run.w.clone(),
-            Event::Reply { node: NodeId(0), generation, reply },
+            Event::Reply {
+                node: NodeId(0),
+                generation,
+                reply,
+            },
         );
         assert!(expected.nodes[0].run.is_none());
         assert!(!expected.nodes[0].pool);
@@ -43,8 +47,14 @@ fn planner_ordinary_reply_releases_stopping_run() {
             generation,
             PlannerResult::Ordinary(reply),
         );
-        assert!(actual.nodes[0].run.is_none(), "stopping reply must release the run");
-        assert!(!actual.nodes[0].pool, "stopping reply must release the pool grant");
+        assert!(
+            actual.nodes[0].run.is_none(),
+            "stopping reply must release the run"
+        );
+        assert!(
+            !actual.nodes[0].pool,
+            "stopping reply must release the pool grant"
+        );
         assert_eq!(actual, expected);
         assert_eq!(out, expected_out);
         assert!(!budget.used());
@@ -63,14 +73,26 @@ fn planner_empty_allowed_reply_releases_stopping_run() {
                 id: run.node().last_cmd + 1,
                 command: Command::Stop,
             });
-            let (expected, expected_out) = step(run.w.clone(), Event::Reply {
-                node: NodeId(0), generation, reply: Reply::PlanCheckRejected,
-            });
+            let (expected, expected_out) = step(
+                run.w.clone(),
+                Event::Reply {
+                    node: NodeId(0),
+                    generation,
+                    reply: Reply::PlanCheckRejected,
+                },
+            );
             let budget = ReplanBudget::import(NodeId(0), used);
             let (actual, after_budget, out) = step_planner(
-                run.w, budget, NodeId(0), generation, PlannerResult::EmptyAllowedReplan,
+                run.w,
+                budget,
+                NodeId(0),
+                generation,
+                PlannerResult::EmptyAllowedReplan,
             );
-            assert!(actual.nodes[0].run.is_none(), "empty-allowed stopping reply must release the run");
+            assert!(
+                actual.nodes[0].run.is_none(),
+                "empty-allowed stopping reply must release the run"
+            );
             assert!(!actual.nodes[0].pool);
             assert_eq!(actual, expected);
             assert_eq!(out, expected_out);

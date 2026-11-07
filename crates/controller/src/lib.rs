@@ -893,17 +893,17 @@ impl Controller {
                 }
             };
             let mut request = json!(Request {
-                    repo,
-                    issue: issue.number,
-                    title: issue.title.clone(),
-                    issue_id,
-                    source,
-                    proposed,
-                    priority: priority::issue_priority(&issue.title, &issue.labels),
-                });
-            request["replan_budget"] = json!(tl3_kernel::ReplanBudget::new(
-                NodeId(world.nodes.len() as u64),
-            ));
+                repo,
+                issue: issue.number,
+                title: issue.title.clone(),
+                issue_id,
+                source,
+                proposed,
+                priority: priority::issue_priority(&issue.title, &issue.labels),
+            });
+            request["replan_budget"] = json!(tl3_kernel::ReplanBudget::new(NodeId(
+                world.nodes.len() as u64
+            ),));
             request["replan_budget_format"] = json!(1);
             commit.rows.push(put("requests", node, request));
             return Ok(Some(event));
