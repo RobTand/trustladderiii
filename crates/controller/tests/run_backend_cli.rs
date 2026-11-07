@@ -2594,3 +2594,59 @@ fn cleanup_transport_separate_cancel_late_writes_preserve_binding_debt_and_termi
     );
     assert!(f.state().cancel_requested);
 }
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn undispatched_cancel_commits_without_runtime_debt_or_native_effect() {
+    let f = Fixture::new();
+    fs::write(f.root.path().join("jobspec.py"), "raise SystemExit(1)\n").unwrap();
+    assert_eq!(f.submit()["kind"], "unknown");
+    assert!(!f.state().dispatched);
+    let frames = f.call(json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}));
+    assert_eq!(frames.last().unwrap()["result"]["ack"]["terminal"]["ending"], "cancelled", "{frames:?}");
+    assert_eq!(f.state().terminal.unwrap().ending, Ending::Cancelled);
+    let debt = f.options.journal_root.join("cleanup-debt").join(&f.request.runtime.manifest_digest);
+    assert!(!debt.exists() || fs::read_dir(debt).unwrap().next().is_none());
+    assert!(!fs::read_to_string(f.root.path().join("calls")).unwrap().lines().any(|line| line.starts_with("cancel ")));
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn pending_injob_launch_requires_exact_stopped_launcher_and_empty_name_and_label_sweep() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::InJob, false);
+    f.submit();
+    let launcher = f.ownership();
+    let frames = f.call(json!({"op":"begin_container_launch","owner":f.intent.owner,"correlation":f.intent.correlation,"launcher":launcher}));
+    let launch = frames.last().unwrap()["result"]["launch"].clone();
+    assert_eq!(frames.last().unwrap()["kind"], "result", "{frames:?}");
+    let facts = json!({"schema":"tl3.cleanup_evidence.v1","ownership":launcher,"launcher":{"kind":"absent"},
+        "process_group_probe_errno":3,"container":null,
+        "pending_launch":{"intent":launch,"name_exists_exit":1,"sweep_exit":0,"remaining_ids":[]}});
+    for defect in ["name", "sweep", "remaining", "launcher", "group", "intent", "missing", "valid"] {
+        let mut evidence = facts.clone();
+        match defect {
+            "name" => evidence["pending_launch"]["name_exists_exit"] = json!(125),
+            "sweep" => evidence["pending_launch"]["sweep_exit"] = json!(125),
+            "remaining" => evidence["pending_launch"]["remaining_ids"] = json!(["c".repeat(64)]),
+            "launcher" => evidence["launcher"] = json!({"kind":"unknown"}),
+            "group" => evidence["process_group_probe_errno"] = Value::Null,
+            "intent" => evidence["pending_launch"]["intent"]["name"] = json!("another-name"),
+            "missing" => { evidence.as_object_mut().unwrap().remove("pending_launch"); },
+            _ => {},
+        }
+        let reference = api::durable::blob(&f.intent.output_dir.join(format!("pending-{defect}.json")), &serde_json::to_vec(&evidence).unwrap()).unwrap();
+        let frames = f.call(json!({"op":"retain_cleanup","owner":f.intent.owner,"correlation":f.intent.correlation,"evidence":reference}));
+        if defect == "valid" {
+            assert_eq!(frames.last().unwrap()["result"]["cleanup"]["stopped"], true, "{frames:?}");
+        } else {
+            assert_ne!(frames.last().unwrap()["result"]["cleanup"]["stopped"], true, "{defect}: {frames:?}");
+        }
+    }
+    let debt = f.options.journal_root.join("cleanup-debt").join(&f.request.runtime.manifest_digest);
+    assert!(fs::read_dir(debt).unwrap().next().is_none());
+    f.call(json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}));
+    f.events(&[json!({"name":"exception","context":{"type":"cancel","severity":0}}),json!({"name":"clean"})]);
+    let terminal = f.attach();
+    assert_eq!(terminal.last().unwrap()["result"]["observation"]["terminal"]["ending"], "cancelled", "{terminal:?}");
+}

@@ -929,3 +929,19 @@ def test_prelaunch_cancellation_never_executes_podman_and_reaps_gated_client(lau
     assert len(launcher_pids) == 1
     with pytest.raises(ChildProcessError):
         os.waitpid(launcher_pids[0], os.WNOHANG)
+
+
+def test_pending_injob_absent_name_and_empty_labels_retains_typed_evidence(cleanup_fixture):
+    from tl3_harness import runtime
+
+    root, podman, systemctl, owned = cleanup_fixture
+    (root / 'absent').touch()
+    launcher = {**owned, 'container': None}
+    launch = {'schema': 'tl3.container_launch.v1', 'launcher': launcher, 'name': 'tl3-pending',
+              'mode': 'in_job', 'labels': owned['container']['labels']}
+    result = runtime.cleanup_observations(launcher, launch=launch, podman=podman, systemctl=systemctl, timeout=2)
+    assert result['ownership'] == launcher
+    assert result['pending_launch'] == {'intent': launch, 'name_exists_exit': 1, 'sweep_exit': 0, 'remaining_ids': []}
+    assert result['process_group_probe_errno'] == 3
+    assert result['container'] is None
+    assert not any(args[0] == 'rm' for args in map(json.loads, (root / 'cleanup-calls').read_text().splitlines()))

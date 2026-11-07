@@ -76,7 +76,7 @@ impl Stager {
         let image = self
             .images
             .for_repository(&delivery.repository, &self.config.container_image);
-        let root = self.config.staging_root.join(correlation(delivery));
+        let root = input_root(&self.config.staging_root, delivery)?;
         // The collector supports at most one day. Existing no-progress allowance still bounds silence.
         let walltime = std::num::NonZeroU32::new(86400).expect("positive collector bound");
         let arguments = vec![
@@ -173,6 +173,10 @@ impl Preparation for Stager {
         )?;
         Ok((reservation, prepared.runtime.placement()))
     }
+}
+
+fn input_root(parent: &Path, delivery: &Delivery) -> Result<PathBuf> {
+    Ok(parent.join(correlation(delivery)))
 }
 
 pub struct PreparedInput {
@@ -454,4 +458,33 @@ mod tests {
         );
         writable(root.path());
     }
+    #[test]
+    fn staging_retries_preserve_partial_and_published_inputs() {
+        let root = tempfile::tempdir().unwrap();
+        let fixture = crate::git_tests::Repo::new();
+        let delivery = fixture.delivery();
+        let harness = root.path().join("trusted");
+        fs::create_dir(&harness).unwrap();
+        fs::write(harness.join("runner.py"), "# trusted\n").unwrap();
+        let partial = input_root(root.path(), &delivery).unwrap();
+        fs::create_dir(&partial).unwrap();
+        fs::write(partial.join("retained"), b"partial before crash").unwrap();
+        let tests = crate::adapters::images::AdditionalTests {
+            selected: None, always: vec![], generated: vec![],
+        };
+        let next = input_root(root.path(), &delivery).unwrap();
+        let staged = stage_input(&delivery, &next, &harness, "image", &[], &tests)
+            .expect("partial staging must not prevent a fresh attempt");
+        let retry = input_root(root.path(), &delivery).unwrap();
+        let again = stage_input(&delivery, &retry, &harness, "image", &[], &tests)
+            .expect("publication before job save must permit a fresh attempt");
+        assert_ne!(staged.tree.root, again.tree.root);
+        assert_eq!(fs::read(partial.join("retained")).unwrap(), b"partial before crash");
+        for input in [staged, again] {
+            assert_eq!(durable::digest(&fs::read(&input.tree.manifest).unwrap()), input.tree.input_digest);
+            assert_eq!(input.run.base_sha, delivery.checks.as_ref().unwrap().base_sha);
+        }
+        writable(root.path());
+    }
+
 }
