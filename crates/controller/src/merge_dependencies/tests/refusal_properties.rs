@@ -1999,3 +1999,34 @@ fn deadlock_retains_input_and_replays_without_incident() {
             .any(|r| r.table == "incidents")
     );
 }
+
+#[test]
+fn startup_dependency_refusal_persists_one_incident_without_recovery_rows() {
+    let mut db = Database::start();
+    let (repo, mut c, repository, _) = fixture_with_settings(&mut db, "startup_counter_refusal");
+    let waiter = intake(&mut c, &repository, 42);
+    ingest(&mut c, waiter, &[2761, 2772]);
+    external(&mut c, &repository, 2761, DependencyStatus::Abandoned);
+    let mut world = c.world().unwrap();
+    assert_eq!(world.dependencies()[0].status, DependencyStatus::Delivered);
+    assert!(!world.nodes[waiter.0 as usize].planning_started);
+    world.nodes[waiter.0 as usize].next_seq = u64::MAX;
+    persist_world(&mut c, &world, "startup-exhausted-counter");
+    let before = c.snapshot().unwrap();
+    // Transfer the claimed session so opening the successor has no unlock race.
+    let Controller { store, bootstrap, .. } = c;
+    let mut c = Controller::open(
+        store,
+        crate::adapters::simulation(&repo.root.path().join("fakes")).unwrap(),
+        bootstrap,
+    ).unwrap();
+    assert_eq!(c.world().unwrap(), world);
+    let after = c.snapshot().unwrap();
+    let business = |snapshot: &Snapshot| snapshot.rows.iter().filter(|row| row.table != "incidents").cloned().collect::<Vec<_>>();
+    assert_eq!(business(&after), business(&before));
+    assert_eq!(after.pending_effects, before.pending_effects);
+    let incidents: Vec<_> = after.rows.iter().filter(|row| row.table == "incidents" && row.value["signature"]["class"] == "kernel_counter_headroom").collect();
+    assert_eq!(incidents.len(), 1);
+    assert_eq!(incidents[0].value["summary"], "kernel counter headroom exhausted: next_seq");
+    assert_eq!(incidents[0].value["open"], true);
+}
