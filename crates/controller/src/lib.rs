@@ -2121,7 +2121,7 @@ impl Controller {
         }
         let dependency_roots = match input {
             KernelInput::Event(event) => merge_dependencies::changed_roots(&world, event),
-            KernelInput::Planner { node, .. } => vec![node],
+            KernelInput::Planner { .. } => Vec::new(),
         };
         if !self.input_checkpoint(snapshot, commit)? {
             return Ok(());
@@ -2208,7 +2208,8 @@ impl Controller {
             let node = NodeId(index as u64);
             let budget = planner_input::load_budget(snapshot, commit, node)?;
             let row = planner_input::request_row(snapshot, commit, node)?;
-            if row.get("replan_budget") != Some(&serde_json::to_value(budget)?) {
+            if row.get("replan_budget") != Some(&serde_json::to_value(budget)?)
+                || row.get("replan_budget_format") != Some(&json!(1)) {
                 planner_input::save_budget(snapshot, commit, node, budget)?;
             }
         }

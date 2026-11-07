@@ -186,9 +186,9 @@ fn mandatory_role_validation_and_error_classes() {
     for role in ["ingest", "audit", "planner", "maker", "reviewer"] {
         let mut s = schedule(role, reply(role));
         s.phase = tl3_kernel::Phase::Queued;
-        let routed = routed(&s);
-        if role == "planner" { assert!(routed.result.get("planner_input").is_some()); }
-        else { assert!(routed.result.to_string().contains("RunFailed")); }
+        let route = routed(&s);
+        if role == "planner" { assert!(route.result.get("planner_input").is_some()); }
+        else { assert!(route.result.to_string().contains("RunFailed")); }
         assert!(
             routed(&schedule(role, json!({})))
                 .result

@@ -33,6 +33,9 @@ pub(crate) fn request_row(snapshot: &Snapshot, commit: &Commit, node: NodeId) ->
 
 pub(crate) fn load_budget(snapshot: &Snapshot, commit: &Commit, node: NodeId) -> Result<ReplanBudget> {
     let row = request_row(snapshot, commit, node)?;
+    if row.get("replan_budget_format").is_some_and(|format| format != 1) {
+        return Err(Error::Invalid("unsupported replan budget format"));
+    }
     let legacy = snapshot.rows.iter().find(|row| row.table == "nodes" && row.id == node.0.to_string())
         .and_then(|row| row.value.get("empty_allowed_replanned"));
     let consumed = match legacy {
@@ -43,6 +46,13 @@ pub(crate) fn load_budget(snapshot: &Snapshot, commit: &Commit, node: NodeId) ->
     let budget = match row.get("replan_budget") {
         Some(value) => decode_stored::<ReplanBudget>(value.clone())?,
         None => {
+            // Only unversioned legacy rows and genuinely new request rows may
+            // lack a budget. A pending overwrite cannot erase persisted state.
+            if row.get("replan_budget_format").is_some() || snapshot.rows.iter().any(|old|
+                old.table == "requests" && old.id == node.0.to_string()
+                    && (old.value.get("replan_budget").is_some() || old.value.get("replan_budget_format").is_some())) {
+                return Err(Error::Invalid("removed request replan budget"));
+            }
             // Inspect raw legacy storage before World decoding drops the old field.
             ReplanBudget::import(node, consumed)
         }
@@ -98,6 +108,7 @@ mod tests {
         commit.rows.extend(snapshot::changes(&snapshot::encode(&snapshot::decode(&snapshot).unwrap()).unwrap(), snapshot::encode(&world).unwrap()));
         let mut binding = request_row(&snapshot, &commit, NodeId(0)).unwrap();
         binding.as_object_mut().unwrap().remove("replan_budget");
+        binding.as_object_mut().unwrap().remove("replan_budget_format");
         binding["extra_metadata"] = json!({"retain": [1, 2, 3]});
         commit.rows.push(put("requests", "0".into(), binding));
         if legacy {
@@ -176,6 +187,7 @@ mod tests {
             let mut version = Commit::new("new-version", json!({}), &snapshot);
             let mut binding = request_row(&snapshot, &version, NodeId(0)).unwrap();
             binding.as_object_mut().unwrap().remove("replan_budget");
+            binding.as_object_mut().unwrap().remove("replan_budget_format");
             version.rows.push(put("requests", "1".into(), binding));
             c.apply(&snapshot, stopped, Event::NewRequest { repo: RepoId(0), priority: Priority::Unranked }, &mut version).unwrap();
             c.store.commit(&version).unwrap();
@@ -224,6 +236,7 @@ pub(crate) fn save_budget(snapshot: &Snapshot, commit: &mut Commit, node: NodeId
     let mut row = request_row(snapshot, commit, node)?;
     let fields = row.as_object_mut().ok_or(Error::Invalid("invalid request binding"))?;
     fields.insert("replan_budget".into(), serde_json::to_value(budget)?);
+    fields.insert("replan_budget_format".into(), serde_json::json!(1));
     commit.rows.push(put("requests", node.0.to_string(), row));
     Ok(())
 }

@@ -2045,7 +2045,8 @@ kernel_fn! {
     #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
     fn pause_node(m: &mut Node) -> (result: bool) [
     requires holding(old(m).phase) ==> old(m).generation < u64::MAX,
-    ensures final(m).generation as int <= old(m).generation as int + 1,
+    ensures empty_replan::settle_frame(*old(m), *final(m)),
+        final(m).generation as int <= old(m).generation as int + 1,
         final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
         final(m).pool == old(m).pool,
         final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,

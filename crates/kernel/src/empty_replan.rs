@@ -173,6 +173,7 @@ pub fn step_planner(mut world: World, mut budget: ReplanBudget, request: NodeId,
     reply_empty_replan(&mut world, i, &mut budget, &mut outbox);
     kernel_proof! {
         reveal(reply_bounds); reveal(storage_ordered);
+        reveal(settle_ready); reveal(scheduling_safe);
         reveal(footprint::ordered_table);
         assert forall|j: int| 0 <= j < world.nodes@.len() implies
             settle_shape(world.nodes@[j])
@@ -189,6 +190,9 @@ pub fn step_planner(mut world: World, mut budget: ReplanBudget, request: NodeId,
         settle_reserve_totals(world.nodes@);
         open_prefix_monotone(world.nodes@, 0, world.nodes@.len());
         reveal(open_prefix);
+        assert(scheduling_safe(world));
+        assert(world.next_ticket as int + potential_prefix(world.nodes@, world.nodes@.len(), |n: Node| ticket_capacity(n)) <= u64::MAX as int);
+        assert(potential_prefix(world.nodes@, world.nodes@.len(), |n: Node| internal_height(n)) <= u32::MAX as int);
         assert(settle_ready(world));
     }
     let mut out = Vec::new();
