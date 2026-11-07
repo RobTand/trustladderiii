@@ -42,7 +42,7 @@ _EXAMPLE_DATA = {
 }
 
 # Files other crates' tests read at run time.
-_RUNTIME = {"crates/harness-core": [
+_RUNTIME = {"crates/redaction": ["//workers/tests:tracing_policy_inputs"], "crates/harness-core": [
     "//harness:core_vectors",
     "//harness:test-vectors/summary/python-envelope.json",
     "//harness:test-vectors/summary/python-numbers.json",
@@ -211,7 +211,7 @@ _LIBTEST_SHARDS["tl3-controller/approval_race"] = 37
 def tl3_rust_test(name, binary_id, gate_args, **kwargs):
     package = native.package_name()
     controller = package == "crates/controller"
-    binaries = _CONTROLLER_BINARIES.get(name, []) if controller else []
+    binaries = _CONTROLLER_BINARIES.get(name, []) if controller else ([":tl3-action"] if package == "crates/action" and name == "test_test_policy" else [])
     # Every controller test can reach the adapter, including through shared fixtures.
     if controller and ":tl3" not in binaries:
         binaries = binaries + [":tl3"]
@@ -225,7 +225,7 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
     if package == "crates/config" and name.startswith("test_test_tokenizer_"):
         runtime = runtime + ["@o200k_base//file"]
     if workers:
-        runtime = runtime + ["//tools/bazel:worker_python", "@o200k_base//file"]
+        runtime = runtime + ["//tools/bazel:worker_python", "//crates/action:tl3-action", "@o200k_base//file"]
     postgres = select({
         "@platforms//cpu:aarch64": ["@postgres_linux_arm64//:all"],
         "//conditions:default": ["@postgres_linux_amd64//:all"],

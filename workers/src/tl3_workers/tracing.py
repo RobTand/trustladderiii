@@ -1,6 +1,5 @@
 """Observational MLflow capture with bounded, redacted content and detached export."""
 import base64
-from collections import deque
 from contextlib import contextmanager
 from contextvars import ContextVar
 import json
@@ -17,22 +16,7 @@ import tomllib
 active = ContextVar('tl3_trace_capture', default=None)
 
 
-PAYLOAD_BYTES = 65536
-TRACE_BYTES = 1024 * 1024
-STRING_CHARS = 8192
-ITEM_BYTES = 16384
-# Text kept beyond each cut, so a label or prefix outside the shown window still
-# redacts the value inside it.
-# Every span keeps up to this much content before the newest spans take the rest.
-FLOOR_BYTES = 4096
-# Spans beyond the first and last of these are omitted from very long runs.
-FIRST_SPANS, LAST_SPANS = 1024, 3072
-# Unredacted, bounded content held until the run ends. Older spans shrink to the
-# floor beyond this, which the final allocation would give them anyway.
-SHAPED_BYTES = 4 * TRACE_BYTES
-LEAD_NOTE = '[truncated: earlier text omitted]\n'
-
-from tl3_harness.action_policy import Redactor, size, sensitive_path, file_marker
+from tl3_harness.action_policy import Redactor, size, sensitive_path, file_marker, trace_policy
 
 
 # The run's loaded model key, for redaction outside tracing too (#322).
@@ -103,10 +87,10 @@ class Content:
 
 class Entry:
     """One ended span: metadata now, and content shaped for redaction at the end."""
-    __slots__ = ('proto', 'name', 'kind', 'contents', 'dropped')
+    __slots__ = ('proto', 'name', 'kind', 'contents', 'shrunk')
 
     def __init__(self, proto, name, kind, contents):
-        self.proto, self.name, self.kind, self.contents, self.dropped = proto, name, kind, contents, False
+        self.proto, self.name, self.kind, self.contents, self.shrunk = proto, name, kind, contents, False
 
 
 class Capture:
@@ -122,10 +106,9 @@ class Capture:
         self.redactor = Redactor(request.get('key_file'))
         self.role = request['role']
         self.model = request['model']['name']
-        self.first, self.last = [], deque()
-        self.unshrunk = deque()  # entries at full shaped size, oldest first
+        self.entries = []
+        self.shrinking = False
         self.omitted = 0
-        self.shaped = 0
         self.lock = threading.Lock()
         capture = self
         logger = logging.getLogger('mlflow')
@@ -210,50 +193,39 @@ class Capture:
 
     def live_record(self, entry):
         """Append an ended span to the span log, redacted now within the live budget."""
-        # Past the first spans, the final packet decides which spans a long run
-        # keeps; a live copy of a span it omits would stay in MLflow.
-        if self.log is None or not entry.proto.parent_span_id or self.live_spans >= FIRST_SPANS:
-            return
         from opentelemetry.proto.trace.v1.trace_pb2 import Span
         from mlflow.tracing.utils.otlp import _set_otel_proto_anyvalue
 
+        decision = self.live.trace({'op': 'live', 'enabled': self.log is not None,
+            'root': not bool(entry.proto.parent_span_id), 'spans': self.live_spans,
+            'used': self.live_bytes, 'contents': [content.value.wire for content in entry.contents]})
+        if decision['values'] is None:
+            return
         proto = Span()
         proto.CopyFrom(entry.proto)
         proto.name = self.live.text(entry.name)[:256]
-        for content in entry.contents:
-            limit = min(PAYLOAD_BYTES, TRACE_BYTES - self.live_bytes)
-            value = (self.live.clean(content.value, limit) if limit >= 512
-                     else {'truncated': True, 'note': 'trace content budget exhausted'})
-            self.live_bytes += size(value)
+        for content, value in zip(entry.contents, decision['values'], strict=True):
             _set_otel_proto_anyvalue(proto.attributes.add(key=content.key).value, value)
-        self.live_spans += 1
+        self.live_bytes, self.live_spans = decision['used'], decision['spans']
         self.log.append({'kind': 'span', 'otlp': encode(proto)})
 
     def add(self, entry):
-        if len(self.first) < FIRST_SPANS:
-            self.first.append(entry)
-        else:
-            self.last.append(entry)
-            if len(self.last) > LAST_SPANS:
-                dropped = self.last.popleft()
-                dropped.dropped = True
-                self.omitted += 1
-                self.shaped -= sum(content.size for content in dropped.contents)
-        self.shaped += sum(content.size for content in entry.contents)
-        self.unshrunk.append(entry)
-        if len(self.unshrunk) > 2 * (FIRST_SPANS + LAST_SPANS):
-            self.unshrunk = deque(older for older in self.unshrunk if not older.dropped)
-        if self.shaped > SHAPED_BYTES:
-            # Older spans could only receive their floor from the final budget.
-            while self.shaped > SHAPED_BYTES // 2 and len(self.unshrunk) > 1:
-                older = self.unshrunk.popleft()
-                if older.dropped:
-                    continue
-                for content in older.contents:
-                    self.shaped -= content.size
-                    content.value = self.redactor.reshape(content.value, FLOOR_BYTES)
-                    content.size = size(content.value)
-                    self.shaped += content.size
+        self.entries.append(entry)
+        while True:
+            decision = trace_policy({'op': 'retain', 'entries': [entry_facts(item) for item in self.entries],
+                                     'shrinking': self.shrinking})
+            self.omitted += len(self.entries) - len(decision['keep'])
+            self.entries = [self.entries[index] for index in decision['keep']]
+            self.shrinking = decision['shrinking']
+            if decision['shrink'] is None:
+                return
+            # The decision indexes the request's entries, before retention.
+            older = next(item for index, item in zip(decision['keep'], self.entries, strict=True)
+                         if index == decision['shrink'])
+            for content in older.contents:
+                content.value = self.redactor.reshape(content.value, decision['floor_bytes'])
+                content.size = size(content.value)
+            older.shrunk = True
 
     def finish(self, outcome):
         try:
@@ -275,7 +247,7 @@ class Capture:
         InMemoryTraceManager.get_instance().pop_trace(self.root._span.context.trace_id)
         mlflow.langchain.autolog(disable=True, silent=True)
         with self.lock:
-            entries = [*self.first, *self.last]
+            entries = list(self.entries)
         root = next(entry for entry in entries if not entry.proto.parent_span_id)
         kept = {entry.proto.span_id for entry in entries}
         for entry in entries:
@@ -305,9 +277,10 @@ class Capture:
             root.proto.attributes.add(key='tl3.trace.omitted_spans').value.int_value = self.omitted
         truncated = self.allocate(root, entries)
         for entry in entries:
-            for content in entry.contents:
-                value = (self.redactor.clean(content.value, content.limit) if content.limit
-                         else {'truncated': True, 'note': 'trace content budget exhausted'})
+            decision = self.redactor.trace({'op': 'clean',
+                'contents': [content.value.wire for content in entry.contents],
+                'limits': [content.limit for content in entry.contents]})
+            for content, value in zip(entry.contents, decision['values'], strict=True):
                 _set_otel_proto_anyvalue(entry.proto.attributes.add(key=content.key).value, value)
         if truncated or self.redactor.truncated or self.omitted:
             root.proto.attributes.add(key='tl3.trace.truncated').value.bool_value = True
@@ -317,18 +290,14 @@ class Capture:
         add_tags(resource, self.live_tags())
         spans = resource.scope_spans.add().spans
         spans.extend(entry.proto for entry in entries)
-        # Encoding differs from the JSON sizes the budget uses. Drop the oldest
-        # child content until the packet fits.
-        for index, entry in enumerate(entries):
-            if packet.ByteSize() <= TRACE_BYTES:
-                break
-            if entry is root:
-                continue
+        decision = trace_policy({'op': 'packet', 'bytes': packet.ByteSize(), 'entries': [
+            {'root': entry is root, 'content_bytes': sum(attr.ByteSize() for attr in entry.proto.attributes
+                if attr.key in {'mlflow.spanInputs', 'mlflow.spanOutputs'})} for entry in entries]})
+        for index in decision['remove']:
             for attr in list(spans[index].attributes):
                 if attr.key in {'mlflow.spanInputs', 'mlflow.spanOutputs'}:
                     spans[index].attributes.remove(attr)
-        if packet.ByteSize() > TRACE_BYTES:
-            # The root alone still closes the trace; live copies keep the children.
+        if decision['root_only']:
             failure()
             del resource.scope_spans[:]
             only = resource.scope_spans.add().spans.add()
@@ -336,32 +305,23 @@ class Capture:
             for attr in list(only.attributes):
                 if attr.key in {'mlflow.spanInputs', 'mlflow.spanOutputs'}:
                     only.attributes.remove(attr)
+        if not trace_policy({'op': 'fits', 'bytes': packet.ByteSize(), 'next': None})['fits']:
+            raise RuntimeError('trace packet exceeds publication budget')
         with self.lock:
             self.log.append({'kind': 'final', 'otlp': encode(packet)})
 
     def allocate(self, root, entries):
-        """Give the root its content, then the newest model and tool spans, then
-        chain spans, which repeat the graph state. Every child keeps a floor."""
-        budget = TRACE_BYTES - sum(entry.proto.ByteSize() + 16 for entry in entries) - 32768
-        for content in root.contents:
-            content.limit = min(PAYLOAD_BYTES, content.size + 256)
-            budget -= content.limit
-        children = [entry for entry in reversed(entries) if entry is not root]
-        order = ([content for entry in children if entry.kind != 'CHAIN' for content in entry.contents]
-                 + [content for entry in children if entry.kind == 'CHAIN' for content in entry.contents])
-        floor = min(FLOOR_BYTES, max(0, budget // 2) // max(1, len(order)))
-        pool = budget - floor * len(order)
-        truncated = False
-        for content in order:
-            need = content.size + 256
-            if need <= floor:
-                content.limit, pool = need, pool + floor - need
-                continue
-            extra = max(0, min(need - floor, pool))
-            content.limit, pool, truncated = floor + extra, pool - extra, True
-            if content.limit < 512:
-                content.limit = 0
-        return truncated
+        decision = trace_policy({'op': 'allocate', 'entries': [entry_facts(entry) for entry in entries]})
+        for entry, limits in zip(entries, decision['limits'], strict=True):
+            for content, limit in zip(entry.contents, limits, strict=True):
+                content.limit = limit
+        return decision['truncated']
+
+
+def entry_facts(entry):
+    return {'root': not bool(entry.proto.parent_span_id), 'kind': entry.kind,
+            'proto_bytes': entry.proto.ByteSize(), 'sizes': [content.size for content in entry.contents],
+            'shrunk': entry.shrunk}
 
 
 def retro_spans(entries):
@@ -441,15 +401,15 @@ def span_entry(span, redactor, role, model):
     return Entry(result, name, kind, contents)
 
 
-def safe_span(span, redactor=None, role="unknown", model="unknown", payload_limit=PAYLOAD_BYTES):
+def safe_span(span, redactor=None, role="unknown", model="unknown", payload_limit=None):
     from mlflow.tracing.utils.otlp import _set_otel_proto_anyvalue
 
     redactor = redactor or Redactor(None)
     entry = span_entry(span, redactor, role, model)
     entry.proto.name = redactor.text(entry.name)[:256]
-    for content in entry.contents:
-        value = (redactor.clean(content.value, payload_limit) if payload_limit >= 512
-                 else {'truncated': True, 'note': 'trace content budget exhausted'})
+    decision = redactor.trace({'op': 'clean', 'contents': [content.value.wire for content in entry.contents],
+                               'limits': [payload_limit for content in entry.contents]})
+    for content, value in zip(entry.contents, decision['values'], strict=True):
         _set_otel_proto_anyvalue(entry.proto.attributes.add(key=content.key).value, value)
     return entry.proto
 
@@ -777,6 +737,8 @@ class Shipper:
         return experiment
 
     def post(self, packet):
+        if not trace_policy({'op': 'fits', 'bytes': packet.ByteSize(), 'next': None})['fits']:
+            raise RuntimeError('trace packet exceeds publication budget')
         response = self.client.post(self.header['settings']['tracking_uri'].rstrip('/') + '/v1/traces',
                                     content=packet.SerializeToString(),
                                     headers={'Content-Type': 'application/x-protobuf',
@@ -795,7 +757,7 @@ class Shipper:
 
         current, spans = packet()
         for proto in list(protos):
-            if spans and current.ByteSize() + proto.ByteSize() + 16 > TRACE_BYTES:
+            if spans and not trace_policy({'op': 'fits', 'bytes': current.ByteSize(), 'next': proto.ByteSize()})['fits']:
                 self.post(current)
                 del protos[:len(spans)]
                 current, spans = packet()

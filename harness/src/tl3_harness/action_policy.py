@@ -77,22 +77,25 @@ class Redactor:
         self.truncated = response['state']['truncated']
         return response['result']['value']
 
-    def text(self, value, limit=8192):
+    def text(self, value, limit=None):
         return self._call('text', value=value, limit=limit)
 
     def window(self, value, start, end):
         return self._call('window', value=value, start=start, end=end)
 
-    def shape(self, value, limit=65536):
+    def shape(self, value, limit=None):
         return _Shaped(self._call('shape', input_json=json.dumps(value), limit=limit))
 
     def reshape(self, value, limit):
         return _Shaped(self._call('reshape', shaped=value.wire, limit=limit))
 
-    def clean(self, value, limit=65536):
+    def clean(self, value, limit=None):
         return json.loads(self._call('clean', shaped=value.wire, limit=limit))
 
-    def payload(self, value, limit=65536):
+    def trace(self, request):
+        return self._call('trace', request=request)
+
+    def payload(self, value, limit=None):
         return json.loads(self._call('payload', input_json=json.dumps(value), limit=limit))
 
 
@@ -139,3 +142,7 @@ def schema_rows(errors, root_schema, *, role):
 
 def repair_prompt(message):
     return _request({'op': 'repair_prompt', 'message': message})['result']['value']
+
+
+def trace_policy(request):
+    return _request({'op': 'trace', 'request': request})['result']['value']

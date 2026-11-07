@@ -1,6 +1,7 @@
 //! The action's implemented policy operations. Execution remains in later slices.
 pub mod plugin;
 mod schema;
+mod trace;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tl3_contracts::rules::{self, Policy, RenderContext, Role, TerminalForm, Violation};
@@ -15,6 +16,7 @@ pub struct PolicyRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PolicyOperation {
+    Trace { request: trace::Request },
     RepairPrompt {
         message: String,
     },
@@ -34,7 +36,7 @@ pub enum PolicyOperation {
     },
     Text {
         value: String,
-        limit: usize,
+        limit: Option<usize>,
     },
     Window {
         value: String,
@@ -43,7 +45,7 @@ pub enum PolicyOperation {
     },
     Shape {
         input_json: String,
-        limit: usize,
+        limit: Option<usize>,
     },
     Reshape {
         shaped: Shaped,
@@ -51,11 +53,11 @@ pub enum PolicyOperation {
     },
     Clean {
         shaped: Shaped,
-        limit: usize,
+        limit: Option<usize>,
     },
     Payload {
         input_json: String,
-        limit: usize,
+        limit: Option<usize>,
     },
     Size {
         shaped: Shaped,
@@ -94,6 +96,7 @@ pub struct PolicyResponse {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum PolicyResult {
+    Trace(trace::Decision),
     Text(String),
     Json(String),
     Shaped(Shaped),
@@ -127,8 +130,17 @@ fn row_policy() -> Policy<'static> {
 }
 
 pub fn policy(request: PolicyRequest) -> Result<PolicyResponse, String> {
+    // Schema constraints are checked before validation, rendering or permission can publish a row.
+    if let PolicyOperation::Render { rows, .. } | PolicyOperation::Validate { rows, .. }
+        | PolicyOperation::Permits { rows, .. } = &request.operation {
+        for row in rows {
+            schema::validate_allowed(&row.allowed)?;
+            if let rules::Repair::Edit { allowed, .. } = &row.repair { schema::validate_allowed(allowed)?; }
+        }
+    }
     let mut state = request.state;
     let result = match request.operation {
+        PolicyOperation::Trace { request } => PolicyResult::Trace(trace::decide(request, &mut state)?),
         PolicyOperation::RepairPrompt { message } => {
             let complete = format!(
                 "Your reply failed validation: {message}\nTools are unavailable for this turn. Return one corrected JSON object matching your reply schema and nothing else."
@@ -164,21 +176,21 @@ pub fn policy(request: PolicyRequest) -> Result<PolicyResponse, String> {
             }
             PolicyResult::Valid
         }
-        PolicyOperation::Text { value, limit } => PolicyResult::Text(state.text(&value, limit)?),
+        PolicyOperation::Text { value, limit } => PolicyResult::Text(state.text(&value, limit.unwrap_or(tl3_redaction::structured::STRING_CHARS))?),
         PolicyOperation::Window { value, start, end } => {
             PolicyResult::Text(state.window(&value, start, end)?)
         }
         PolicyOperation::Shape { input_json, limit } => {
-            PolicyResult::Shaped(state.shape(&input_json, limit)?)
+            PolicyResult::Shaped(state.shape(&input_json, limit.unwrap_or(tl3_redaction::structured::PAYLOAD_BYTES))?)
         }
         PolicyOperation::Reshape { shaped, limit } => {
             PolicyResult::Shaped(state.reshape(&shaped, limit)?)
         }
         PolicyOperation::Clean { shaped, limit } => {
-            PolicyResult::Json(state.clean(&shaped, limit)?)
+            PolicyResult::Json(state.clean(&shaped, limit.unwrap_or(tl3_redaction::structured::PAYLOAD_BYTES))?)
         }
         PolicyOperation::Payload { input_json, limit } => {
-            PolicyResult::Json(state.payload(&input_json, limit)?)
+            PolicyResult::Json(state.payload(&input_json, limit.unwrap_or(tl3_redaction::structured::PAYLOAD_BYTES))?)
         }
         PolicyOperation::Size { shaped } => PolicyResult::Size(shaped.size()?),
         PolicyOperation::MeasureJson { input_json } => {

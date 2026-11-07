@@ -1262,3 +1262,10 @@ filegroup(
     srcs = ["fixtures/footprint-paths.json"],
     visibility = ["//visibility:public"],
 )
+
+# Input-only deterministic generators invoked by Rust producer tests.
+filegroup(
+    name = "tracing_policy_inputs",
+    srcs = ["tracing_policy_cases.py", "tracing_forms.py", "tracing_forms3.py"],
+    visibility = ["//visibility:public"],
+)

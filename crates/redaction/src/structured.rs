@@ -249,25 +249,44 @@ impl Redactor {
         }
         Ok(out)
     }
-    fn cut(&self, source: &str, start: usize, end: usize, limit: usize) -> Result<usize> {
-        let mut cut = end.saturating_sub(limit).max(start);
-        let text = substring(source, start, end);
-        let relative = byte_at(text, cut - start);
-        for (first, last) in spans(text)? {
-            if first < relative && last > relative {
-                cut = start + text[..last].chars().count();
+    // Source rule: the removed Python settle/tail_window safety boundary. Use the
+    // authoritative TOKEN_CHAR/NOT_TOKEN/PRIVATE_HEADER grammar, never rescan a huge
+    // omitted prefix through every secret matcher just to choose a window.
+    fn settle(&self, source: &str, cut: usize, end: usize) -> Result<usize> {
+        let stop = byte_at(source,end);
+        let mut position = byte_at(source,cut);
+        if let Some(begin) = source[..position].rfind("-----BEGIN ") {
+            let header = rule("PRIVATE_HEADER")?.find(&source[begin..stop]).map_err(|error|error.to_string())?;
+            if header.is_some_and(|matched|matched.start()==0)
+                && !source[begin..position].contains("-----END ") {
+                position = source[position..stop].find("-----END ")
+                    .and_then(|close| {let close=position+close+9; source[close..stop].find("-----").map(|tail|close+tail+5)})
+                    .unwrap_or(stop);
             }
         }
         for secret in &self.secrets {
-            if !secret.is_empty() {
-                for (first, _) in text.match_indices(secret) {
-                    if first < relative && first + secret.len() > relative {
-                        cut = start + text[..first + secret.len()].chars().count();
-                    }
-                }
+            if secret.is_empty() {continue;}
+            let mut low=position.saturating_sub(secret.len());
+            while !source.is_char_boundary(low) {low+=1;}
+            let mut high=position.saturating_add(secret.len()).min(stop);
+            while !source.is_char_boundary(high) {high-=1;}
+            for (first,_) in source[low..high].match_indices(secret) {
+                let first=low+first;
+                if first<position && first+secret.len()>position {position=first+secret.len();}
             }
         }
-        Ok(cut.min(end))
+        if position>0 && position<stop {
+            let before=source[..position].chars().next_back().ok_or("missing cut context")?;
+            let after=source[position..stop].chars().next().ok_or("missing cut context")?;
+            if full_rule("TOKEN_CHAR", &before.to_string())? && full_rule("TOKEN_CHAR", &after.to_string())? {
+                position = rule("NOT_TOKEN")?.find(&source[position..stop]).map_err(|error|error.to_string())?
+                    .map_or(stop,|matched|position+matched.start());
+            }
+        }
+        Ok(source[..position].chars().count())
+    }
+    fn cut(&self, source: &str, start: usize, end: usize, limit: usize) -> Result<usize> {
+        self.settle(source,end.saturating_sub(limit).max(start),end)
     }
     fn clip(&self, value: &str, limit: usize) -> Result<Clip> {
         let end = value.chars().count();
@@ -282,7 +301,7 @@ impl Redactor {
             if let Some(newline) = tail.find('\n')
                 && tail[newline..].chars().count() > limit / 2
             {
-                parts = vec![(cut + tail[..newline + 1].chars().count(), end)];
+                parts = vec![(self.settle(value, cut + tail[..newline + 1].chars().count(), end)?, end)];
                 lead = true;
             } else {
                 let head = limit / 4;
@@ -497,20 +516,12 @@ impl Redactor {
                 Shaped::Array(result)
             }
             SummaryValue::Object(fields) => {
-                let path = fields
-                    .iter()
-                    .find_map(|(key, value)| {
-                        let key = scalar(key).ok()?;
-                        let path = as_text(value)?;
-                        (has("PATH_KEYS", &key).ok()? && sensitive_file(&path).ok()?)
-                            .then_some(path)
-                    })
-                    .or_else(|| {
-                        value
-                            .field("tool_call_id")
-                            .and_then(as_text)
-                            .and_then(|id| self.calls.get(&id).cloned())
-                    });
+                let mut path=None;
+                for (key,value) in fields {
+                    if has("PATH_KEYS", &scalar(key)?)? && let Some(candidate)=as_text(value)
+                        && sensitive_file(&candidate)? {path=Some(candidate);break;}
+                }
+                let path=path.or_else(|| value.field("tool_call_id").and_then(as_text).and_then(|id|self.calls.get(&id).cloned()));
                 let named = ["name", "key", "Name", "Key"]
                     .iter()
                     .find_map(|key| value.field(key).and_then(as_text))
@@ -535,17 +546,16 @@ impl Redactor {
                     } else {
                         label_kind(&key)?
                     };
+                    let weak_secret = if kind == Some(Kind::Weak) {
+                        if let Some(text)=as_text(value) {plausible(Some(Kind::Weak),&key,&text,"","",false)?} else {false}
+                    } else {false};
                     let substitute = if let Some(path) = &path
                         && has("CONTENT_KEYS", &key)?
                     {
                         Some(file_marker(path))
                     } else if matches!(kind, Some(Kind::Strong))
                         && !matches!(value, SummaryValue::Null | SummaryValue::Bool(_))
-                        || matches!(kind, Some(Kind::Weak))
-                            && as_text(value).is_some_and(|text| {
-                                plausible(Some(Kind::Weak), &key, &text, "", "", false)
-                                    .unwrap_or(true)
-                            })
+                        || weak_secret
                         || matches!(key.as_str(), "value" | "Value")
                             && label_kind(&named)? == Some(Kind::Strong)
                             && matches!(value, SummaryValue::String(_) | SummaryValue::Number(_))

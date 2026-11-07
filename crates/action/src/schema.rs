@@ -93,6 +93,13 @@ pub(super) fn membership(
     Ok(validator.is_valid(value))
 }
 
+pub(super) fn validate_allowed(allowed: &tl3_contracts::rules::Allowed) -> Result<(), String> {
+    if let tl3_contracts::rules::Allowed::Schema {keyword, value} = allowed {
+        membership(*keyword, value, &Value::Null)?;
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ValidationFact {
@@ -179,6 +186,7 @@ pub(super) fn refusal_rows(
         }
         value
     }
+    if let Some(source) = source { membership(SchemaKeyword::Schema, source, &Value::Null)?; }
     let mut rows = Vec::new();
     let mut required = std::collections::BTreeSet::new();
     for parent in errors {
