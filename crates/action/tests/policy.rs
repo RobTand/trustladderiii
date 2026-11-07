@@ -1,7 +1,7 @@
 use serde_json::json;
 use tl3_action::{PolicyOperation, PolicyRequest, PolicyResult, policy};
 use tl3_contracts::rules::{self, *};
-use tl3_redaction::structured::Redactor;
+use tl3_action::structured::Redactor;
 fn row() -> Violation {
     Violation {
         rule_id: "proof.subject".into(),

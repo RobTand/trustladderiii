@@ -1,6 +1,6 @@
-//! Actual producer inputs and assertions transferred from the deleted Python policy tests.
+//! Actual producer inputs and assertions shared with the retained job-side Python policy tests.
 use serde_json::{Value, json};
-use tl3_redaction::structured::{PAYLOAD_BYTES, Redactor};
+use tl3_action::structured::{PAYLOAD_BYTES, Redactor};
 fn data() -> &'static Value {
     static DATA: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
     DATA.get_or_init(|| {

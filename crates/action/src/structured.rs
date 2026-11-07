@@ -1,5 +1,6 @@
 //! Structured redaction and bounded windows. Unredacted windows remain private until clean.
-use super::{Kind, Result, full_rule, has, label_kind, plausible, policy, rule, spans};
+use tl3_redaction::{FieldRole, FieldValue, context_chars, field_is_secret, field_matches, redacted_marker, sensitive_file};
+type Result<T> = std::result::Result<T, String>;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -102,7 +103,7 @@ impl Shaped {
                 for part in &clip.parts {
                     if part.start > part.end
                         || part.end > part.source.chars().count()
-                        || part.source.len() > super::LIMIT
+                        || part.source.len() > tl3_redaction::INPUT_BYTE_LIMIT
                     {
                         return Err("invalid shaped window boundary".into());
                     }
@@ -150,29 +151,6 @@ impl Shaped {
     }
 }
 
-pub fn sensitive_file(path: &str) -> Result<bool> {
-    if path.chars().count() > 4096 {
-        return Ok(false);
-    }
-    let path = path.replace('\\', "/");
-    let path = path.trim().trim_end_matches('/');
-    let name = path.rsplit('/').next().unwrap_or("").trim();
-    if path.ends_with(".docker/config.json") || path.ends_with(".kube/config") {
-        return Ok(true);
-    }
-    if full_rule("SENSITIVE_NAME", name)? {
-        return Ok(name.starts_with(".env")
-            || !rule("SOURCE_FILE")?
-                .is_match(name)
-                .map_err(|error| error.to_string())?);
-    }
-    Ok(rule("SENSITIVE_BROAD")?
-        .is_match(path)
-        .map_err(|error| error.to_string())?
-        && !rule("SOURCE_FILE")?
-            .is_match(name)
-            .map_err(|error| error.to_string())?)
-}
 pub fn file_marker(path: &str) -> String {
     format!("[omitted: content of sensitive file {path}]")
 }
@@ -185,7 +163,7 @@ fn sensitive_path(value: &SummaryValue) -> Result<Option<String>> {
         match value {
             SummaryValue::Object(fields) => {
                 for (key, value) in fields {
-                    if has("PATH_KEYS", &scalar(key)?)?
+                    if field_matches(FieldRole::Path, &scalar(key)?)?
                         && let Some(path) = as_text(value)
                         && sensitive_file(&path)?
                     {
@@ -210,107 +188,10 @@ pub struct Redactor {
 }
 impl Redactor {
     pub fn window(&self, source: &str, start: usize, end: usize) -> Result<String> {
-        let length = source.chars().count();
-        if start > end || end > length {
-            return Err("invalid redaction window".into());
-        }
-        let low = start.saturating_sub(policy().context);
-        let high = end.saturating_add(policy().context).min(length);
-        let text = substring(source, low, high);
-        if text.len() > super::LIMIT {
-            return Err("redaction window exceeds one MiB".into());
-        }
-        let first = byte_at(text, start - low);
-        let stop = byte_at(text, end - low);
-        let mut found = spans(text)?;
-        for secret in &self.secrets {
-            if !secret.is_empty() {
-                found.extend(
-                    text.match_indices(secret)
-                        .map(|(index, _)| (index, index + secret.len())),
-                );
-            }
-        }
-        found.sort_unstable();
-        let mut cursor = first;
-        let mut out = String::new();
-        for (start, end) in found {
-            if end <= cursor || start >= stop {
-                continue;
-            }
-            if start > cursor {
-                out.push_str(&text[cursor..start]);
-            }
-            out.push_str(policy().redacted);
-            cursor = cursor.max(end);
-        }
-        if cursor < stop {
-            out.push_str(&text[cursor..stop]);
-        }
-        Ok(out)
+        tl3_redaction::window(source, start..end, &self.secrets.iter().map(String::as_str).collect::<Vec<_>>())
     }
-    // Source rule: the removed Python settle/tail_window safety boundary. Use the
-    // authoritative TOKEN_CHAR/NOT_TOKEN/PRIVATE_HEADER grammar, never rescan a huge
-    // omitted prefix through every secret matcher just to choose a window.
     fn settle(&self, source: &str, cut: usize, end: usize) -> Result<usize> {
-        let stop = byte_at(source, end);
-        let mut position = byte_at(source, cut);
-        if let Some(begin) = source[..position].rfind("-----BEGIN ") {
-            let header = rule("PRIVATE_HEADER")?
-                .find(&source[begin..stop])
-                .map_err(|error| error.to_string())?;
-            if header.is_some_and(|matched| matched.start() == 0)
-                && !source[begin..position].contains("-----END ")
-            {
-                position = source[position..stop]
-                    .find("-----END ")
-                    .and_then(|close| {
-                        let close = position + close + 9;
-                        source[close..stop]
-                            .find("-----")
-                            .map(|tail| close + tail + 5)
-                    })
-                    .unwrap_or(stop);
-            }
-        }
-        for secret in &self.secrets {
-            if secret.is_empty() {
-                continue;
-            }
-            let mut low = position.saturating_sub(secret.len());
-            while !source.is_char_boundary(low) {
-                low += 1;
-            }
-            let mut high = position.saturating_add(secret.len()).min(stop);
-            while !source.is_char_boundary(high) {
-                high -= 1;
-            }
-            for (first, _) in source[low..high].match_indices(secret) {
-                let first = low + first;
-                if first < position && first + secret.len() > position {
-                    position = first + secret.len();
-                }
-            }
-        }
-        if position > 0 && position < stop {
-            let before = source[..position]
-                .chars()
-                .next_back()
-                .ok_or("missing cut context")?;
-            let after = source[position..stop]
-                .chars()
-                .next()
-                .ok_or("missing cut context")?;
-            if full_rule("TOKEN_CHAR", &before.to_string())?
-                && full_rule("TOKEN_CHAR", &after.to_string())?
-            {
-                position = rule("NOT_TOKEN")?
-                    .find(&source[position..stop])
-                    .map_err(|error| error.to_string())?
-                    .map_or(stop, |matched| position + matched.start());
-            }
-        }
-        Ok(source[..position].chars().count())
+        tl3_redaction::settled_cut(source, cut, end, &self.secrets.iter().map(String::as_str).collect::<Vec<_>>())
     }
     fn cut(&self, source: &str, start: usize, end: usize, limit: usize) -> Result<usize> {
         self.settle(source, end.saturating_sub(limit).max(start), end)
@@ -344,8 +225,8 @@ impl Redactor {
             parts: parts
                 .into_iter()
                 .map(|(start, stop)| {
-                    let low = start.saturating_sub(policy().context);
-                    let high = stop.saturating_add(policy().context).min(end);
+                    let low = start.saturating_sub(context_chars());
+                    let high = stop.saturating_add(context_chars()).min(end);
                     Window {
                         source: substring(value, low, high).to_owned(),
                         start: start - low,
@@ -436,9 +317,9 @@ impl Redactor {
                 let parts = [(first, first.start, head_end), (last, tail_start, last.end)]
                     .into_iter()
                     .map(|(old, start, end)| {
-                        let low = start.saturating_sub(policy().context);
+                        let low = start.saturating_sub(context_chars());
                         let high = end
-                            .saturating_add(policy().context)
+                            .saturating_add(context_chars())
                             .min(old.source.chars().count());
                         Window {
                             source: substring(&old.source, low, high).to_owned(),
@@ -548,7 +429,7 @@ impl Redactor {
             SummaryValue::Object(fields) => {
                 let mut path = None;
                 for (key, value) in fields {
-                    if has("PATH_KEYS", &scalar(key)?)?
+                    if field_matches(FieldRole::Path, &scalar(key)?)?
                         && let Some(candidate) = as_text(value)
                         && sensitive_file(&candidate)?
                     {
@@ -570,7 +451,7 @@ impl Redactor {
                 let mut result = vec![];
                 for (index, (key, value)) in fields.iter().rev().enumerate() {
                     let key = scalar(key)?;
-                    if has("SKIPPED_KEYS", &key)? {
+                    if field_matches(FieldRole::Skipped, &key)? {
                         continue;
                     }
                     if remaining < 160 {
@@ -581,35 +462,21 @@ impl Redactor {
                         ));
                         break;
                     }
-                    let kind = if key.chars().count() > 128 {
-                        Some(Kind::Strong)
-                    } else {
-                        label_kind(&key)?
-                    };
-                    let weak_secret = if kind == Some(Kind::Weak) {
-                        if let Some(text) = as_text(value) {
-                            plausible(Some(Kind::Weak), &key, &text, "", "", false)?
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
+                    let scalar_text = as_text(value);
+                    let field_value = match value {
+                        SummaryValue::Null => FieldValue::Null,
+                        SummaryValue::Bool(_) => FieldValue::Bool,
+                        SummaryValue::Number(_) => FieldValue::Number,
+                        SummaryValue::String(_) => FieldValue::Text(scalar_text.as_deref().ok_or("invalid field scalar")?),
+                        _ => FieldValue::Container,
                     };
                     let substitute = if let Some(path) = &path
-                        && has("CONTENT_KEYS", &key)?
+                        && field_matches(FieldRole::Content, &key)?
                     {
                         Some(file_marker(path))
-                    } else if matches!(kind, Some(Kind::Strong))
-                        && !matches!(value, SummaryValue::Null | SummaryValue::Bool(_))
-                        || weak_secret
-                        || matches!(key.as_str(), "value" | "Value")
-                            && label_kind(&named)? == Some(Kind::Strong)
-                            && matches!(value, SummaryValue::String(_) | SummaryValue::Number(_))
-                    {
-                        Some(policy().redacted.into())
-                    } else {
-                        None
-                    };
+                    } else if field_is_secret(&key, field_value, &named)? {
+                        Some(redacted_marker().into())
+                    } else { None };
                     let key: String = key.chars().take(128).collect();
                     let share = remaining
                         .saturating_sub(key.len() + 8)
@@ -726,14 +593,14 @@ pub fn measure_json(text: &str) -> Result<usize> {
 
 /// Numeric usage fields pass through the same authoritative policy as text redaction.
 /// Python booleans and negative/noninteger observations are never token counts.
-pub fn usage_counts(value: &serde_json::Value) -> serde_json::Value {
-    serde_json::Value::Object(
-        policy().words["TOKEN_FIELDS"]
-            .iter()
-            .filter_map(|key| {
-                let count = value.get(*key)?;
-                count.as_u64().map(|_| ((*key).to_owned(), count.clone()))
-            })
-            .collect(),
-    )
+pub fn usage_counts(value: &serde_json::Value) -> Result<serde_json::Value> {
+    let mut counts = serde_json::Map::new();
+    if let Some(fields) = value.as_object() {
+        for (key, count) in fields {
+            if field_matches(FieldRole::TokenCount, key)? && count.as_u64().is_some() {
+                counts.insert(key.clone(), count.clone());
+            }
+        }
+    }
+    Ok(serde_json::Value::Object(counts))
 }

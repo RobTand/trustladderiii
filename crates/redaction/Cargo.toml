@@ -10,13 +10,9 @@ fancy-regex = "0.18"
 regex = "1"
 regex-syntax = "0.8"
 sha2 = "0.10"
-schemars = "1"
 
 [lints.rust]
 unsafe_code = "forbid"
-
-[dependencies.tl3-harness-core]
-path = "../harness-core"
 
 [dependencies.url]
 version = "2.5.8"

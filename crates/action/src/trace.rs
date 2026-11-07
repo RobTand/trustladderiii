@@ -1,7 +1,7 @@
 //! Trace retention and allocation from primitive MLflow/protobuf observations.
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use tl3_redaction::structured::{PAYLOAD_BYTES, Redactor, Shaped};
+use crate::structured::{PAYLOAD_BYTES, Redactor, Shaped};
 const TRACE_BYTES: usize = 1024 * 1024;
 const FLOOR_BYTES: usize = 4096;
 const FIRST_SPANS: usize = 1024;
@@ -107,14 +107,14 @@ fn exhausted() -> serde_json::Value {
 pub fn decide(request: Request, redactor: &mut Redactor) -> Result<Decision, String> {
     Ok(match request {
         Request::Usage { value } => Decision::Usage {
-            value: tl3_redaction::structured::usage_counts(&value),
+            value: crate::structured::usage_counts(&value)?,
         },
         Request::Label { kind, value } => {
             let limit = match kind {
                 LabelKind::Span | LabelKind::Attribute => 256,
                 LabelKind::Tag => 512,
             };
-            let safe = redactor.text(&value, tl3_redaction::structured::STRING_CHARS)?;
+            let safe = redactor.text(&value, crate::structured::STRING_CHARS)?;
             Decision::Label {
                 text: safe.chars().take(limit).collect(),
             }
@@ -229,7 +229,7 @@ pub fn decide(request: Request, redactor: &mut Redactor) -> Result<Decision, Str
                     exhausted()
                 };
                 used = used
-                    .checked_add(tl3_redaction::structured::measure_json(&value.to_string())?)
+                    .checked_add(crate::structured::measure_json(&value.to_string())?)
                     .ok_or("trace size overflow")?;
                 values.push(value);
             }

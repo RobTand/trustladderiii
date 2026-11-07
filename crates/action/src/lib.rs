@@ -1,11 +1,12 @@
 //! The action's implemented policy operations. Execution remains in later slices.
 pub mod plugin;
+pub mod structured;
 mod schema;
 mod trace;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tl3_contracts::rules::{self, Policy, RenderContext, Role, TerminalForm, Violation};
-use tl3_redaction::structured::{Redactor, Shaped};
+use crate::structured::{Redactor, Shaped};
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -186,35 +187,35 @@ pub fn policy(request: PolicyRequest) -> Result<PolicyResponse, String> {
         }
         PolicyOperation::Text { value, limit } => PolicyResult::Text(state.text(
             &value,
-            limit.unwrap_or(tl3_redaction::structured::STRING_CHARS),
+            limit.unwrap_or(crate::structured::STRING_CHARS),
         )?),
         PolicyOperation::Window { value, start, end } => {
             PolicyResult::Text(state.window(&value, start, end)?)
         }
         PolicyOperation::Shape { input_json, limit } => PolicyResult::Shaped(state.shape(
             &input_json,
-            limit.unwrap_or(tl3_redaction::structured::PAYLOAD_BYTES),
+            limit.unwrap_or(crate::structured::PAYLOAD_BYTES),
         )?),
         PolicyOperation::Reshape { shaped, limit } => {
             PolicyResult::Shaped(state.reshape(&shaped, limit)?)
         }
         PolicyOperation::Clean { shaped, limit } => PolicyResult::Json(state.clean(
             &shaped,
-            limit.unwrap_or(tl3_redaction::structured::PAYLOAD_BYTES),
+            limit.unwrap_or(crate::structured::PAYLOAD_BYTES),
         )?),
         PolicyOperation::Payload { input_json, limit } => PolicyResult::Json(state.payload(
             &input_json,
-            limit.unwrap_or(tl3_redaction::structured::PAYLOAD_BYTES),
+            limit.unwrap_or(crate::structured::PAYLOAD_BYTES),
         )?),
         PolicyOperation::Size { shaped } => PolicyResult::Size(shaped.size()?),
         PolicyOperation::MeasureJson { input_json } => {
-            PolicyResult::Size(tl3_redaction::structured::measure_json(&input_json)?)
+            PolicyResult::Size(crate::structured::measure_json(&input_json)?)
         }
         PolicyOperation::SensitivePath { input_json } => {
-            PolicyResult::Path(tl3_redaction::structured::sensitive_path_json(&input_json)?)
+            PolicyResult::Path(crate::structured::sensitive_path_json(&input_json)?)
         }
         PolicyOperation::FileMarker { path } => {
-            PolicyResult::Text(tl3_redaction::structured::file_marker(&path))
+            PolicyResult::Text(crate::structured::file_marker(&path))
         }
         PolicyOperation::Render {
             rows,

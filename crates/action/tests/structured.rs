@@ -1,5 +1,5 @@
 use serde_json::{Value, json};
-use tl3_redaction::structured::{PAYLOAD_BYTES, Redactor};
+use tl3_action::structured::{PAYLOAD_BYTES, Redactor};
 #[test]
 fn structured_credentials_and_sensitive_file_results_never_publish() {
     let secret = "zE9pR4cV7xB2nM8aQ6tK";
