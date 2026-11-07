@@ -777,12 +777,12 @@ fn mixed_field_and_source_repairs_register_a_complete_reply_witness() {
             value: if facts["source"] == true { "src/lib.rs" } else { "/value" }.into(),
         }],
         bad_value: |_| Value::Null,
-        allowed: Callback::Static(Allowed::Const { value: json!("good") }),
+        allowed: Callback::Static(Allowed::Schema { keyword: SchemaKeyword::Const, value: json!("good") }),
         repair: Callback::Facts(|facts| if facts["source"] == true {
             Repair::SourceEdit { path: "src/lib.rs".into(), instruction: "Fix the source assertion.".into() }
         } else {
             Repair::Edit { pointer: "/value".to_owned().try_into().unwrap(), op: EditOp::Replace,
-                           allowed: Allowed::Const { value: json!("good") } }
+                           allowed: Allowed::Schema { keyword: SchemaKeyword::Const, value: json!("good") } }
         }),
         gating: false,
         roles: vec![Role::Maker],
