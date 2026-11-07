@@ -390,7 +390,10 @@ fn malformed_goal_materials_reject_failed_round_without_feedback() {
             .iter()
             .find(|row| row.table == "inbox" && row.value == value)
             .unwrap();
-        let error = f.controller.consume_kernel_input(&snapshot, row).unwrap_err();
+        let error = f
+            .controller
+            .consume_kernel_input(&snapshot, row)
+            .unwrap_err();
         assert!(
             matches!(error, crate::Error::Invalid(actual) if actual == message),
             "{error:?}"
