@@ -81,7 +81,11 @@ fn reason(c: &mut Controller) -> Option<Value> {
 }
 
 fn stop(id: u64) -> Event {
-    Event::Command { node: NodeId(0), id, command: Command::Stop }
+    Event::Command {
+        node: NodeId(0),
+        id,
+        command: Command::Stop,
+    }
 }
 
 #[test]
@@ -89,7 +93,15 @@ fn user_stop_and_pr_close_keep_distinct_reasons_and_summary_evidence() {
     let mut db = support::Database::start();
     for (index, event, expected, wording) in [
         (0, stop(1), "user_stop", "you asked to stop"),
-        (1, Event::Fact { node: NodeId(0), fact: Fact::PrClosedByPerson }, "pr_closed", "someone closed the pull request"),
+        (
+            1,
+            Event::Fact {
+                node: NodeId(0),
+                fact: Fact::PrClosedByPerson,
+            },
+            "pr_closed",
+            "someone closed the pull request",
+        ),
     ] {
         let settings = db.create(&format!("stop_cause_{index}"));
         let root = tempfile::tempdir().unwrap();
@@ -98,22 +110,54 @@ fn user_stop_and_pr_close_keep_distinct_reasons_and_summary_evidence() {
         assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Queued);
         send(&mut c, "terminal-input", event);
         assert_eq!(reason(&mut c).unwrap()["reason"], expected);
-        assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Stopping(Outcome::Stopped));
+        assert_eq!(
+            c.world().unwrap().nodes[0].phase,
+            Phase::Stopping(Outcome::Stopped)
+        );
         let original = reason(&mut c);
         send(&mut c, "stop-again", stop(2));
-        assert_eq!(reason(&mut c), original, "Stopping must not author a new reason");
+        assert_eq!(
+            reason(&mut c),
+            original,
+            "Stopping must not author a new reason"
+        );
         drain(&mut c);
-        assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Stopped));
+        assert_eq!(
+            c.world().unwrap().nodes[0].phase,
+            Phase::Closed(Outcome::Stopped)
+        );
         let mut store = Store::open(&settings).unwrap();
-        let summary = store.effects().unwrap().into_iter()
+        let summary = store
+            .effects()
+            .unwrap()
+            .into_iter()
             .map(|effect| serde_json::from_value::<Delivery>(effect.payload).unwrap())
-            .find(|delivery| matches!(delivery.output, Output::Notice { notice: Notice::Summary(_), .. }))
+            .find(|delivery| {
+                matches!(
+                    delivery.output,
+                    Output::Notice {
+                        notice: Notice::Summary(_),
+                        ..
+                    }
+                )
+            })
             .expect("durable summary effect");
-        assert_eq!(summary.evidence.as_ref().unwrap().stop_reason.as_deref(), Some(expected));
-        assert!(tl3_controller::evidence::summary(&summary).unwrap().contains(wording));
+        assert_eq!(
+            summary.evidence.as_ref().unwrap().stop_reason.as_deref(),
+            Some(expected)
+        );
+        assert!(
+            tl3_controller::evidence::summary(&summary)
+                .unwrap()
+                .contains(wording)
+        );
         drop(c);
         let mut reopened = open(&settings, root.path(), false);
-        assert_eq!(reason(&mut reopened), original, "reopen preserves historical reason");
+        assert_eq!(
+            reason(&mut reopened),
+            original,
+            "reopen preserves historical reason"
+        );
     }
     db.stop();
 }
@@ -126,13 +170,34 @@ fn stale_pr_close_and_out_of_order_stop_do_not_author_reasons() {
     let mut c = open(&settings, root.path(), true);
     start(&mut c);
     assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Ingesting);
-    send(&mut c, "pr-never-opened", Event::Fact { node: NodeId(0), fact: Fact::PrClosedByPerson });
-    send(&mut c, "new-command", Event::Command { node: NodeId(0), id: 3, command: Command::Resume });
+    send(
+        &mut c,
+        "pr-never-opened",
+        Event::Fact {
+            node: NodeId(0),
+            fact: Fact::PrClosedByPerson,
+        },
+    );
+    send(
+        &mut c,
+        "new-command",
+        Event::Command {
+            node: NodeId(0),
+            id: 3,
+            command: Command::Resume,
+        },
+    );
     c.observe("old-stop", Observation::Kernel(stop(2))).unwrap();
     assert!(c.drive_once().unwrap());
     assert!(reason(&mut c).is_none());
     assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Ingesting);
-    assert!(c.snapshot().unwrap().rows.iter().any(|r| r.table == "incidents"));
+    assert!(
+        c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "incidents")
+    );
     db.stop();
 }
 
@@ -149,10 +214,29 @@ fn accepted_early_end_projects_reason_but_stale_reply_does_not() {
         let mut c = open(&settings, root.path(), true);
         start(&mut c);
         let generation = c.world().unwrap().nodes[0].generation;
-        send(&mut c, "stale-early-end", Event::Reply { node: NodeId(0), generation: generation + 1, reply: Reply::IngestEarlyEnd(end) });
+        send(
+            &mut c,
+            "stale-early-end",
+            Event::Reply {
+                node: NodeId(0),
+                generation: generation + 1,
+                reply: Reply::IngestEarlyEnd(end),
+            },
+        );
         assert!(reason(&mut c).is_none());
-        send(&mut c, "current-early-end", Event::Reply { node: NodeId(0), generation, reply: Reply::IngestEarlyEnd(end) });
-        assert_eq!(reason(&mut c).expect("accepted stop has a durable reason")["reason"], expected);
+        send(
+            &mut c,
+            "current-early-end",
+            Event::Reply {
+                node: NodeId(0),
+                generation,
+                reply: Reply::IngestEarlyEnd(end),
+            },
+        );
+        assert_eq!(
+            reason(&mut c).expect("accepted stop has a durable reason")["reason"],
+            expected
+        );
     }
     db.stop();
 }

@@ -34,7 +34,8 @@ pub(crate) fn record(report: &Report, mut details: BTreeMap<String, Value>, comm
             StopCause::Merged => json!({"reason":"merged"}),
             StopCause::Duplicate => json!({"reason":"duplicate"}),
             StopCause::AlreadyDone => json!({"reason":"already_done"}),
-            StopCause::NotActionable => details.remove(&id)
+            StopCause::NotActionable => details
+                .remove(&id)
                 .filter(|value| value["reason"] == "protected_paths")
                 .unwrap_or_else(|| json!({"reason":"not_actionable"})),
             StopCause::ReviewStop(kind) => json!({"reason":"review_stop", "review_stop":kind}),
