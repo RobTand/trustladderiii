@@ -94,7 +94,7 @@ impl DirectFixture {
         if let Some(worktrees) = worktrees { registry.register(Upstream::Worktrees, worktrees); }
         let mut controller = Controller::open_with_clock(Store::open(settings).unwrap(), registry, bootstrap(), self.clock.clone()).unwrap();
         let mut allowances = tl3_config::Allowances::default();
-        allowances.github_mergify.silence_secs = 1;
+        allowances.github_delivery.silence_secs = 1;
         controller.set_allowances(allowances);
         controller.register_github_translator("delivery", direct_merge::Translator::new(self.api.clients()).unwrap().with_wakes(self.wakes.clone()));
         controller
@@ -498,7 +498,7 @@ fn r1_unlanded_put_silence_timer_cannot_retry_without_event() {
     let (mut controller, _) = fixture.start(&settings);
     assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
     let mut allowances = tl3_config::Allowances::default();
-    allowances.github_mergify.silence_secs = 1;
+    allowances.github_delivery.silence_secs = 1;
     controller.set_allowances(allowances);
     fixture.direct.lock().unwrap().status = None;
     fixture.clock.0.set(fixture.clock.0.get() + Duration::from_secs(10));
@@ -1163,7 +1163,14 @@ fn changed_head_after_durable_intent_process_crash_never_replays_put() {
     let settings = database.create("direct_changed_head_process_crash");
     let mut fixture = DirectFixture::new();
     fixture.check(None);
-    let (mut controller, delivery) = fixture.start(&settings);
+    let mut controller = fixture.open(&settings);
+    store_direct_check_event(&fixture, &settings, "pre-wait-pending");
+    let pending = Store::open(&settings).unwrap().ingress_after(0).unwrap()
+        .into_iter().find(|event| event.delivery_key == "pre-wait-pending").unwrap();
+    let expected_waiting_through = u64::try_from(pending.sequence).unwrap();
+    ingress::drain(&mut controller).unwrap();
+    assert_eq!(Store::open(&settings).unwrap().translator_cursor("github-translator:delivery").unwrap(), pending.sequence);
+    let (mut controller, delivery) = fixture.start_controller(&settings, controller);
     drain(&mut controller);
     assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::AwaitingDelivery);
     drop(controller);
@@ -1188,6 +1195,10 @@ fn changed_head_after_durable_intent_process_crash_never_replays_put() {
     reached(&mut output, "TD_RECOVERY_READY");
     fixture.check(Some("success"));
     store_direct_check_event(&fixture, &settings, "post-child-start-success");
+    let authorizer = Store::open(&settings).unwrap().ingress_after(pending.sequence).unwrap()
+        .into_iter().find(|event| event.delivery_key == "post-child-start-success").unwrap();
+    let expected_merge_consumed = u64::try_from(authorizer.sequence).unwrap();
+    assert!(expected_merge_consumed > expected_waiting_through);
     child.stdin.as_mut().unwrap().write_all(b"go\n").unwrap();
     reached(&mut output, "TD_INTENT_DURABLE");
     fixture.direct.lock().unwrap().moved = true;
@@ -1209,7 +1220,15 @@ fn changed_head_after_durable_intent_process_crash_never_replays_put() {
     assert_eq!(accepted[0]["key"], delivery.key);
     assert_eq!(accepted[0]["head"], json!(delivery.head_sha));
     assert_eq!(accepted[0]["generation"], delivery.generation);
-    assert!(accepted[0]["waiting_through"].is_u64());
+    assert_eq!(accepted[0]["waiting_through"], json!(expected_waiting_through),
+        "retained waiting watermark must equal the real pre-wait ingress fence");
+    let expected_intent_consumed = match intent["action"].as_str().unwrap() {
+        "Annotate" => expected_waiting_through,
+        "Merge" => expected_merge_consumed,
+        _ => unreachable!("the reached Intent belongs to annotation or merge"),
+    };
+    assert_eq!(intent["consumed_through"], json!(expected_intent_consumed),
+        "retained intent must consume exactly its action's real ingress fence");
     let epoch: i64 = serde_json::from_slice(&std::fs::read(fixture.root.path().join("direct/epoch.fence")).unwrap()).unwrap();
     assert_eq!(epoch, delivery.epoch);
     assert!(fixture.direct.lock().unwrap().puts.is_empty());
@@ -1224,6 +1243,15 @@ fn changed_head_after_durable_intent_process_crash_never_replays_put() {
     world.check().unwrap();
     assert!(matches!(world.nodes[0].phase, Phase::Checking | Phase::Ready(tl3_kernel::Resume::Checking)));
     assert!(world.nodes[0].rechecks > 0);
+    let retained: Value = serde_json::from_slice(&std::fs::read(
+        std::fs::read_dir(fixture.root.path().join("direct")).unwrap()
+            .map(|entry|entry.unwrap().path()).find(|path|path.extension().is_some_and(|ext|ext == "accepted")).unwrap()
+    ).unwrap()).unwrap();
+    assert_eq!(retained["waiting_through"], json!(expected_waiting_through),
+        "recovery must retain the exact precrash waiting watermark");
+    let retained_intent: Value = serde_json::from_slice(&std::fs::read(&intent_path).unwrap()).unwrap();
+    assert_eq!(retained_intent["consumed_through"], json!(expected_intent_consumed),
+        "changed-head recovery cannot rewrite the consumed authorization");
     assert_eq!(fixture.direct.lock().unwrap().successes, 0);
     assert!(fixture.direct.lock().unwrap().puts.is_empty(), "changed-head crash recovery cannot replay a stale PUT");
     let before = r1_kernel_facts(&settings);

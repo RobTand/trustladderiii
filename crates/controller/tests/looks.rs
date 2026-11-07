@@ -81,7 +81,7 @@ fn allowances() -> tl3_config::Allowances {
     for value in [
         &mut a.agent_worker,
         &mut a.prismabuild,
-        &mut a.github_mergify,
+        &mut a.github_delivery,
     ] {
         value.silence_secs = 1;
         value.no_progress_secs = 3;

@@ -545,7 +545,7 @@ impl Controller {
         match upstream(delivery.output) {
             Upstream::Workers => &self.allowances.agent_worker,
             Upstream::PrismaBuild => &self.allowances.prismabuild,
-            Upstream::GitHub | Upstream::Delivery => &self.allowances.github_mergify,
+            Upstream::GitHub | Upstream::Delivery => &self.allowances.github_delivery,
             Upstream::Worktrees => &self.allowances.worktrees,
         }
     }

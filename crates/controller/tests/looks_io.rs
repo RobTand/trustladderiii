@@ -170,7 +170,7 @@ macro_rules! controller {
                 let mut allowances = tl3_config::Allowances::default();
                 for a in [
                     &mut allowances.agent_worker,
-                    &mut allowances.github_mergify,
+                    &mut allowances.github_delivery,
                     &mut allowances.prismabuild,
                     &mut allowances.worktrees,
                 ] {
@@ -195,7 +195,7 @@ macro_rules! controller {
                 match upstream(d.output) {
                     Upstream::Workers => &self.allowances.agent_worker,
                     Upstream::PrismaBuild => &self.allowances.prismabuild,
-                    Upstream::GitHub | Upstream::Delivery => &self.allowances.github_mergify,
+                    Upstream::GitHub | Upstream::Delivery => &self.allowances.github_delivery,
                     Upstream::Worktrees => &self.allowances.worktrees,
                 }
             }

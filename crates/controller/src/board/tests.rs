@@ -84,7 +84,7 @@ fn every_phase_maps_to_its_column_and_label() {
         (Phase::Checking, Column::Checking, "Running checks"),
         (Phase::Reviewing, Column::Reviewing, "Reviewing"),
         (Phase::Publishing, Column::Merging, "Publishing"),
-        (Phase::AwaitingDelivery, Column::Merging, "In the merge queue"),
+        (Phase::AwaitingDelivery, Column::Merging, "Awaiting delivery"),
         (Phase::Rebasing, Column::Merging, "Updating the branch"),
         (Phase::AwaitingRob, Column::NeedsRob, "Awaiting Rob"),
     ];
@@ -398,7 +398,7 @@ fn waiting_on_names_the_next_evidence() {
             "the question post that failed; the question was never posted",
             "writer to start",
             "check results",
-            "merge queue",
+            "delivery",
             "none",
             "the branch update to finish",
         ]
@@ -610,7 +610,7 @@ fn only_merges_count_as_merged() {
 
 #[test]
 fn a_cancelled_step_is_not_the_wait() {
-    // Stopping from the merge queue leaves the queue admission in flight, cancelled.
+    // Stopping from the delivery leaves the queue admission in flight, cancelled.
     let mut stopping = request(0, Phase::Stopping(Outcome::Stopped));
     stopping.node.effect = Some(InFlight {
         seq: 3,

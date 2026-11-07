@@ -153,7 +153,7 @@ no_progress_secs = 900
 silence_secs = 300
 no_progress_secs = 900
 
-[allowances.github_mergify]
+[allowances.github_delivery]
 silence_secs = 300
 no_progress_secs = 1800
 

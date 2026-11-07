@@ -628,7 +628,7 @@ impl Console {
 pub struct Allowances {
     pub agent_worker: Allowance,
     pub prismabuild: Allowance,
-    pub github_mergify: Allowance,
+    pub github_delivery: Allowance,
     pub model_calls: Allowance,
     pub hindsight: Allowance,
     pub worktrees: Allowance,
@@ -652,7 +652,7 @@ impl Default for Allowances {
                 silence_secs: 300,
                 no_progress_secs: 900,
             },
-            github_mergify: Allowance {
+            github_delivery: Allowance {
                 silence_secs: 300,
                 no_progress_secs: 1800,
             },
@@ -1149,7 +1149,7 @@ impl Config {
         for (name, allowance) in [
             ("agent_worker", &self.allowances.agent_worker),
             ("prismabuild", &self.allowances.prismabuild),
-            ("github_mergify", &self.allowances.github_mergify),
+            ("github_delivery", &self.allowances.github_delivery),
             ("model_calls", &self.allowances.model_calls),
             ("hindsight", &self.allowances.hindsight),
             ("worktrees", &self.allowances.worktrees),
