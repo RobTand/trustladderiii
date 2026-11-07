@@ -4,7 +4,8 @@ import json
 import random
 import string
 
-rng = random.Random(1101_2349)
+SEED = 1101_2349
+rng = random.Random(SEED)
 ALNUM = string.ascii_letters + string.digits
 HEX = '0123456789abcdef'
 B64 = string.ascii_letters + string.digits + '+/'
@@ -16,7 +17,10 @@ FORMS = []   # (name, text, [secrets], category)
 
 
 def r(n, alpha=ALNUM):
-    return ''.join(rng.choice(alpha) for _ in range(n))
+    # Fixed-seed synthetic values carry a fake marker where their alphabet permits.
+    value = ''.join(rng.choice(alpha) for _ in range(n))
+    marker = 'TL3FAKE'
+    return marker + value[len(marker):] if n >= len(marker) and set(marker) <= set(alpha) else value
 
 
 def b64(s, urlsafe=False):

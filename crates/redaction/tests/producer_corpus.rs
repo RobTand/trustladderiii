@@ -1,9 +1,37 @@
 //! Actual producer inputs and assertions transferred from the deleted Python policy tests.
 use serde_json::{Value, json};
 use tl3_redaction::structured::{PAYLOAD_BYTES, Redactor};
-fn data() -> Value {
-    serde_json::from_str(include_str!("fixtures/producer-cases.json")).unwrap()
+fn data() -> &'static Value {
+    static DATA: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
+    DATA.get_or_init(|| {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let output = std::process::Command::new("python3")
+            .args(["-I"])
+            .arg(root.join("../../workers/tests/tracing_policy_cases.py"))
+            .arg(root.join("tests/fixtures/generator-inputs.json"))
+            .output().unwrap();
+        assert!(output.status.success(), "fixture generator failed: {}", String::from_utf8_lossy(&output.stderr));
+        serde_json::from_slice(&output.stdout).unwrap()
+    })
 }
+#[test]
+fn committed_corpus_has_no_secret_values_even_after_json_decoding() {
+    fn inspect(value: &Value) {
+        match value {
+            Value::String(text) => {
+                assert_eq!(tl3_redaction::text(text).unwrap(), *text, "committed corpus contains a secret pattern");
+                if let Ok(decoded) = serde_json::from_str::<Value>(text) { inspect(&decoded); }
+            }
+            Value::Array(items) => items.iter().for_each(inspect),
+            Value::Object(fields) => { for (key, value) in fields { inspect(&json!(key)); inspect(value); } }
+            _ => (),
+        }
+    }
+    let wire = include_str!("fixtures/generator-inputs.json");
+    assert_eq!(tl3_redaction::text(wire).unwrap(), wire);
+    inspect(&serde_json::from_str::<Value>(wire).unwrap());
+}
+
 fn no_fragments(output: &str, secrets: &[Value], label: &str) {
     for secret in secrets {
         let secret = secret.as_str().unwrap();

@@ -1,5 +1,6 @@
 """Input-only producer cases retained for Rust redaction qualification. No redactor oracle."""
 import json
+import tracing_forms
 import tracing_forms3
 from tracing_forms import FORMS, PLANTED, PLANTED_LINES
 
@@ -162,22 +163,16 @@ ORDINARY_V3 = [
 
 
 def main():
+    import sys
     from pathlib import Path
+    manifest = json.loads(Path(sys.argv[1]).read_text())
+    assert manifest == {'marker': 'TL3FAKE', 'seeds': [tracing_forms.SEED, tracing_forms3.SEED]}
     forms = [(name, text, secrets) for name, text, secrets, _ in FORMS if name not in DOCUMENTED_LIMITS]
     forms += V3_FORMS + [(name, text, [secret]) for name, text, secret in VARIANTS]
     forms += [(f'planted-{index}', text, [secret]) for index, (text, secret) in enumerate(PLANTED + PLANTED_LINES)]
     result = {'forms': forms, 'ordinary': ORDINARY + ORDINARY_V3,
               'sensitive_paths': SENSITIVE_PATHS, 'adversarial': ADVERSARIAL}
-    path = Path('crates/redaction/tests/fixtures/producer-cases.json')
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Keep synthetic token fixtures escaped at rest; JSON decoding restores exact inputs.
-    import re
-    import struct
-    def escaped(match):
-        value = json.loads(match[0]).encode('utf-16-be')
-        return '"' + ''.join(f'\\u{unit:04x}' for unit in struct.unpack(f'>{len(value) // 2}H', value)) + '"'
-    wire = re.sub(r'"(?:[^"\\]|\\.)*"', escaped, json.dumps(result, indent=2, ensure_ascii=True))
-    path.write_text(wire + '\n')
+    print(json.dumps(result))
 
 
 if __name__ == '__main__':
