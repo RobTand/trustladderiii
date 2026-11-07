@@ -143,6 +143,7 @@ pub fn classify(wait: Wait, e: Evidence) -> DispatchStatus {
     }
     match wait {
         Wait::Incident => DispatchStatus::Silent,
+        Wait::Delivery => DispatchStatus::Silent,
         Wait::Resume => {
             let operation = operation_status(e);
             if operation != DispatchStatus::Silent {
@@ -342,6 +343,7 @@ pub open spec fn classification(wait: Wait, e: Evidence) -> DispatchStatus {
     else if e.ending { DispatchStatus::Ending }
     else { match wait {
         Wait::Incident => DispatchStatus::Silent,
+        Wait::Delivery => DispatchStatus::Silent,
         Wait::Resume => if operation_classification(e) != DispatchStatus::Silent { operation_classification(e) }
             else if e.paused { DispatchStatus::Paused } else { DispatchStatus::Silent },
         Wait::AgentPool => if e.ticket && e.obstruction { DispatchStatus::PoolWait } else { DispatchStatus::Silent },
