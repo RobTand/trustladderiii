@@ -142,9 +142,6 @@ impl Flux {
             if job.name != record.intent.correlation {
                 continue;
             }
-            if !f58(&job.jobid) {
-                return Err(BackendError::unknown("invalid recovery job ID"));
-            }
             let original = self.capture(&["job", "info", "--original", &job.jobid, "jobspec"])?;
             if !original.success {
                 return Err(BackendError::unknown("original jobspec unavailable"));
@@ -414,7 +411,7 @@ impl RunBackend for Flux {
         let id = std::str::from_utf8(&reply.stdout)
             .ok()
             .map(str::trim)
-            .filter(|id| f58(id));
+            .and_then(|id| canonical_job_id(id).ok());
         let binding = if reply.success
             && let Some(id) = id
         {
@@ -596,11 +593,11 @@ impl RunBackend for Flux {
         let record = self.journal.load(owner)?;
         self.instance(&record)?;
         validate::trusted_artifacts(&record.request)?;
-        if !f58(job)
-            || record
-                .binding
-                .as_ref()
-                .is_some_and(|binding| binding.id.job != job)
+        let job = canonical_job_id(job)?;
+        if record
+            .binding
+            .as_ref()
+            .is_some_and(|binding| binding.id.job != job)
             || !record.dispatched
         {
             return Err(BackendError::invalid(
@@ -611,9 +608,9 @@ impl RunBackend for Flux {
         Ok(LaunchContext {
             output_bounds,
             schema: LaunchSchema::V1,
-            run: BackendId { backend: BackendTag::Flux, instance: record.intent.instance.clone(), uri: record.intent.uri.clone(), job: job.into() },
+            run: BackendId { backend: BackendTag::Flux, instance: record.intent.instance.clone(), uri: record.intent.uri.clone(), job: job.clone() },
             owner: record.intent.owner, correlation: record.intent.correlation, request_digest: record.intent.request_digest,
-            scratch: OwnedScratch { approved_root: record.request.scratch_root.clone(), leaf: record.request.scratch_root.join(job) },
+            scratch: OwnedScratch { approved_root: record.request.scratch_root.clone(), leaf: record.request.scratch_root.join(&job) },
             output_dir: record.intent.output_dir.clone(),
             progress: ProgressPolicy { journal: record.intent.output_dir.join("progress.json"), no_progress_seconds: record.request.no_progress_seconds },
             native_threads: record.request.reservation.native_threads, runtime: record.request.runtime.runtime.clone(), runtime_identity: record.request.runtime,

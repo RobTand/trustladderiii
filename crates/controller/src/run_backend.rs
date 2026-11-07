@@ -83,14 +83,64 @@ pub fn generation(value: &str) -> bool {
             .split_once('/')
             .is_some_and(|(run, invocation)| token(run) && hex(invocation, 32))
 }
+const JOB_ALPHABET: &[u8; 58] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+/// Flux job IDs are u64 identities. Locale-dependent prefixes never cross our boundary.
+pub fn canonical_job_id(value: &str) -> Result<String> {
+    let invalid = || BackendError::invalid("invalid or overflowing Flux job ID");
+    let mut number = 0_u64;
+    if let Some(digits) = value.strip_prefix('f').or_else(|| value.strip_prefix('ƒ')) {
+        if digits.is_empty() || digits.len() > 11 {
+            return Err(invalid());
+        }
+        for digit in digits.bytes() {
+            let digit = JOB_ALPHABET
+                .iter()
+                .position(|b| *b == digit)
+                .ok_or_else(invalid)?;
+            number = number
+                .checked_mul(58)
+                .and_then(|n| n.checked_add(digit as u64))
+                .ok_or_else(invalid)?;
+        }
+    } else {
+        if value.is_empty() || value.len() > 20 || !value.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(invalid());
+        }
+        number = value.parse().map_err(|_| invalid())?;
+    }
+    let mut digits = Vec::new();
+    loop {
+        digits.push(JOB_ALPHABET[(number % 58) as usize]);
+        number /= 58;
+        if number == 0 {
+            break;
+        }
+    }
+    digits.reverse();
+    Ok(format!(
+        "f{}",
+        String::from_utf8(digits).expect("ASCII alphabet")
+    ))
+}
+
 pub fn f58(value: &str) -> bool {
-    let rest = value.strip_prefix('f').or_else(|| value.strip_prefix('ƒ'));
-    rest.is_some_and(|s| {
-        !s.is_empty()
-            && s.len() <= 16
-            && s.bytes()
-                .all(|b| b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz".contains(&b))
-    })
+    (value.starts_with('f') || value.starts_with('ƒ')) && canonical_job_id(value).is_ok()
+}
+
+fn deserialize_job_id<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<String, D::Error> {
+    canonical_job_id(&String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+}
+
+fn serialize_job_id<S: serde::Serializer>(
+    value: &str,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    canonical_job_id(value)
+        .map_err(serde::ser::Error::custom)?
+        .serialize(serializer)
 }
 pub fn absolute(path: &std::path::Path) -> bool {
     path.is_absolute()
@@ -111,7 +161,7 @@ impl BackendId {
             || !self.uri.starts_with("local:///")
             || self.uri.len() > 4096
             || self.uri.chars().any(char::is_control)
-            || !f58(&self.job)
+            || canonical_job_id(&self.job).is_err()
         {
             return Err(BackendError::invalid(
                 "expected Flux instance generation and f58 job ID; PB keys are unsupported",
@@ -127,6 +177,10 @@ pub struct BackendId {
     pub backend: BackendTag,
     pub instance: String,
     pub uri: String,
+    #[serde(
+        deserialize_with = "deserialize_job_id",
+        serialize_with = "serialize_job_id"
+    )]
     pub job: String,
 }
 

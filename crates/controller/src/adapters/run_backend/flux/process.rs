@@ -198,6 +198,10 @@ impl Flux {
                 record.intent.output_dir.to_string_lossy().into_owned(),
             ),
             (
+                "TL3_RUN_DIAGNOSTIC_DIR",
+                record.intent.output_dir.to_string_lossy().into_owned(),
+            ),
+            (
                 "FLUX_SCRATCH",
                 record.request.scratch_root.to_string_lossy().into_owned(),
             ),
@@ -291,11 +295,28 @@ pub(super) struct Jobs {
 }
 #[derive(Deserialize)]
 pub(super) struct Job {
+    #[serde(deserialize_with = "native_job_id")]
     pub jobid: String,
     pub name: String,
     #[serde(default)]
     pub state: Option<String>,
 }
+fn native_job_id<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<String, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Wire {
+        Text(String),
+        Decimal(u64),
+    }
+    let text = match Wire::deserialize(deserializer)? {
+        Wire::Text(text) => text,
+        Wire::Decimal(number) => number.to_string(),
+    };
+    canonical_job_id(&text).map_err(serde::de::Error::custom)
+}
+
 /// Exact native original, including resources, placement constraints, duration and task shape.
 #[derive(Deserialize, Serialize, PartialEq, Eq)]
 #[serde(transparent)]

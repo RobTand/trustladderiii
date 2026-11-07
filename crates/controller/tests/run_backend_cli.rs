@@ -251,7 +251,7 @@ resource)
     case "$3" in --states=all) cat "$fixture/all.json";; --states=free) cat "$fixture/free.json";; *) exit 9;; esac;;
 job)
     case "$2" in
-    submit) cp "$3" "$fixture/jobspec.json"; if [ "$mode" = unknown ]; then exit 1; fi; printf 'fABC\n';;
+    submit) cp "$3" "$fixture/jobspec.json"; if [ "$mode" = unknown ]; then exit 1; fi; cat "$fixture/submit-id";;
     info)
         if [ "$mode" = quiet-info ]; then touch "$fixture/watching"; exec /bin/sleep 300; fi
         if [ "$3" = --original ]; then cat "$fixture/jobspec.json"; else cat "$fixture/all.json"; fi;;
@@ -274,6 +274,7 @@ text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
 "#).unwrap();
         fs::set_permissions(&native, fs::Permissions::from_mode(0o555)).unwrap();
         fs::write(p.join("mode"), "normal").unwrap();
+        fs::write(p.join("submit-id"), "fABC\n").unwrap();
         let all = json!({"version":1,"execution":{"R_lite":[{"rank":"0","children":{"core":"0-3"}}],"nodelist":["fixture-host"]}});
         fs::write(p.join("all.json"), all.to_string()).unwrap();
         fs::write(p.join("free.json"), all.to_string()).unwrap();
@@ -2927,5 +2928,164 @@ fn injob_no_launch_needs_native_clean_and_does_not_leave_unregistered_debt() {
             .join("cleanup-debt")
             .join(&f.request.runtime.manifest_digest);
         assert!(!debt.exists() || fs::read_dir(debt).unwrap().next().is_none());
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn job_id_spellings_share_one_cli_identity_and_refuse_other_ids() {
+    let f = Fixture::new();
+    assert_eq!(f.submit()["kind"], "accepted");
+    // fABC is 9*58^2 + 10*58 + 11 = 30867 in Flux's Bitcoin base58 alphabet.
+    for spelling in ["fABC", "ƒABC", "30867"] {
+        let frames = f.call(json!({"op":"launch_context","owner":f.intent.owner,"correlation":f.intent.correlation,"job":spelling}));
+        let last = frames.last().unwrap();
+        assert_eq!(last["kind"], "result", "{spelling}: {frames:?}");
+        assert_eq!(last["result"]["context"]["run"]["job"], "fABC");
+        assert_eq!(
+            last["result"]["context"]["scratch"]["leaf"],
+            json!(f.request.scratch_root.join("fABC"))
+        );
+    }
+    for spelling in [
+        "fABD",
+        "30868",
+        "",
+        "f0",
+        "ƒ",
+        "18446744073709551616",
+        "fzzzzzzzzzzzzzzzz",
+        "-1",
+    ] {
+        let frames = f.call(json!({"op":"launch_context","owner":f.intent.owner,"correlation":f.intent.correlation,"job":spelling}));
+        assert_eq!(
+            frames.last().unwrap()["kind"],
+            "error",
+            "{spelling}: {frames:?}"
+        );
+    }
+    let state = f
+        .options
+        .journal_root
+        .join(&f.intent.correlation)
+        .join("state.json");
+    let mut legacy: Value = serde_json::from_slice(&fs::read(&state).unwrap()).unwrap();
+    legacy["binding"]["id"]["job"] = json!("ƒABC");
+    fs::write(&state, serde_json::to_vec(&legacy).unwrap()).unwrap();
+    let frames = f.call(json!({"op":"launch_context","owner":f.intent.owner,"correlation":f.intent.correlation,"job":"30867"}));
+    assert_eq!(
+        frames.last().unwrap()["result"]["context"]["run"]["job"],
+        "fABC"
+    );
+}
+
+#[test]
+fn job_id_domain_is_checked_u64_and_canonical_ascii() {
+    for (spelling, expected) in [
+        ("0", "f1"),
+        ("1", "f2"),
+        ("ƒABC", "fABC"),
+        ("30867", "fABC"),
+        ("18446744073709551615", "fjpXCZedGfVQ"),
+    ] {
+        // Exercise the public wire boundary, including legacy records.
+        let id: BackendId = serde_json::from_value(json!({"backend":"flux","instance":"fixture-generation","uri":"local:///fixture","job":spelling})).unwrap();
+        assert_eq!(id.job, expected);
+        assert_eq!(serde_json::to_value(&id).unwrap()["job"], expected);
+    }
+    for spelling in [
+        "f0",
+        "ƒ",
+        "18446744073709551616",
+        "fzzzzzzzzzzzzzzzz",
+        "-1",
+        "+1",
+        " 1",
+        "1\n",
+    ] {
+        assert!(serde_json::from_value::<BackendId>(json!({"backend":"flux","instance":"fixture-generation","uri":"local:///fixture","job":spelling})).is_err(), "{spelling}");
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn decimal_job_id_matches_retained_f58_at_real_cli() {
+    let f = Fixture::new();
+    assert_eq!(f.submit()["kind"], "accepted");
+    let frames = f.call(json!({"op":"launch_context","owner":f.intent.owner,"correlation":f.intent.correlation,"job":"30867"}));
+    assert_eq!(
+        frames.last().unwrap()["result"]["context"]["run"]["job"],
+        "fABC",
+        "{frames:?}"
+    );
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn native_submit_recovery_and_liveness_normalize_job_ids() {
+    for spelling in ["fABC", "ƒABC", "30867"] {
+        let f = Fixture::new();
+        fs::write(f.root.path().join("submit-id"), format!("{spelling}\n")).unwrap();
+        let submission = f.submit();
+        assert_eq!(submission["kind"], "accepted", "{submission}");
+        assert_eq!(submission["binding"]["id"]["job"], "fABC");
+        let state = f
+            .options
+            .journal_root
+            .join(&f.intent.correlation)
+            .join("state.json");
+        let mut retained: Value = serde_json::from_slice(&fs::read(&state).unwrap()).unwrap();
+        assert_eq!(retained["binding"]["id"]["job"], "fABC");
+        retained["binding"] = Value::Null;
+        fs::write(&state, serde_json::to_vec(&retained).unwrap()).unwrap();
+        fs::write(
+            f.root.path().join("jobs.json"),
+            json!({"jobs":[{"name":f.intent.correlation,"jobid":spelling}]}).to_string(),
+        )
+        .unwrap();
+        // No event stream: recovery must bind the exact retained original jobspec.
+        f.events(&[]);
+        f.attach();
+        let retained: Value = serde_json::from_slice(&fs::read(&state).unwrap()).unwrap();
+        assert_eq!(retained["binding"]["id"]["job"], "fABC");
+        let calls = fs::read_to_string(f.root.path().join("calls")).unwrap();
+        assert!(
+            calls.contains("job info --original fABC jobspec"),
+            "{calls}"
+        );
+        let numeric = f.call(json!({"op":"launch_context","owner":f.intent.owner,"correlation":f.intent.correlation,"job":"30867"}));
+        assert_eq!(numeric.last().unwrap()["kind"], "result");
+        fs::write(
+            f.root.path().join("jobs.json"),
+            json!({"name":f.intent.correlation,"jobid":30867,"state":"RUN"}).to_string(),
+        )
+        .unwrap();
+        let numeric = f.call(
+            json!({"op":"liveness","owner":f.intent.owner,"correlation":f.intent.correlation}),
+        );
+        assert_eq!(
+            numeric.last().unwrap()["result"]["liveness"]["authority"],
+            "fresh_native",
+            "{numeric:?}"
+        );
+        for job in [spelling, "fABD"] {
+            fs::write(
+                f.root.path().join("jobs.json"),
+                json!({"name":f.intent.correlation,"jobid":job,"state":"RUN"}).to_string(),
+            )
+            .unwrap();
+            let frames = f.call(
+                json!({"op":"liveness","owner":f.intent.owner,"correlation":f.intent.correlation}),
+            );
+            assert_eq!(
+                frames.last().unwrap()["result"]["liveness"]["authority"],
+                if job == "fABD" {
+                    "unknown"
+                } else {
+                    "fresh_native"
+                },
+                "{frames:?}"
+            );
+        }
     }
 }

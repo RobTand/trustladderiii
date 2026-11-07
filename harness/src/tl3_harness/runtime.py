@@ -103,10 +103,92 @@ class Evidence:
         return True
 
 
+BACKEND_OUTPUT_ROOT = Path('/mnt/shared/flux-out/tl3')
+BACKEND_IDLE_SECONDS = 30
+DIAGNOSTIC_CAPTURE_BYTES = 65536
+DIAGNOSTIC_TEXT_BYTES = 16384
+
+
+class BackendCliError(RuntimeError):
+    def __init__(self, diagnostic):
+        self.diagnostic = diagnostic
+        super().__init__('backend CLI failure: ' + json.dumps(diagnostic, ensure_ascii=False, sort_keys=True))
+
+
+class _BackendTransportError(RuntimeError):
+    def __init__(self, kind, message):
+        self.kind = kind
+        super().__init__(message)
+
+
+class _DiagnosticStream:
+    def __init__(self):
+        self.prefix = bytearray()
+        self.received = 0
+
+    def add(self, chunk):
+        self.received += len(chunk)
+        self.prefix.extend(chunk[:max(0, DIAGNOSTIC_CAPTURE_BYTES - len(self.prefix))])
+
+    def sanitized(self):
+        from .redaction import Clip, Redactor
+
+        raw = bytes(self.prefix)
+        omitted = self.received - len(raw)
+        if omitted:
+            # A partial final token or private key is never exposed at a capture cut.
+            boundary = raw.rfind(b'\n') + 1
+            omitted += len(raw) - boundary
+            raw = raw[:boundary]
+        text = raw.decode('utf-8', errors='replace')
+        chars = DIAGNOSTIC_TEXT_BYTES // 4
+        if len(text) > chars:
+            head = chars // 4
+            tail = len(text) - (chars - head)
+            text = Clip([(text, 0, head), (text, tail, len(text))], gap=tail - head)
+        text = Redactor(None).text(text, limit=chars)
+        text = ''.join(c for c in text if c.isprintable() or c in '\n\t')
+        if omitted:
+            text += f' [omitted: {omitted} stream bytes beyond capture bound]'
+        # The shared redactor sees context before clipping. Bound encoded UTF-8 independently.
+        encoded = text.encode('utf-8')
+        if len(encoded) > DIAGNOSTIC_TEXT_BYTES:
+            text = encoded[:DIAGNOSTIC_TEXT_BYTES - 64].decode('utf-8', errors='ignore') + ' [omitted: diagnostic byte bound]'
+        return {'text': text, 'received_bytes': self.received, 'capture_omitted_bytes': omitted}
+
+
+def _retain_backend_diagnostic(diagnostic):
+    # Rust's validated request installs these values, overriding caller environment.
+    # This remains available before launch_context succeeds and carries no job binding.
+    correlation = os.environ.get('TL3_RUN_CORRELATION', '')
+    directory = os.environ.get('TL3_RUN_DIAGNOSTIC_DIR')
+    if (not correlation or correlation in ('.', '..') or len(correlation) > 128
+            or any(not (c.isascii() and (c.isalnum() or c in '-_.')) for c in correlation)
+            or directory != os.environ.get('OUT') or directory != str(BACKEND_OUTPUT_ROOT / correlation)):
+        raise RuntimeError('validated Rust bootstrap diagnostic output authority unavailable')
+    descriptor = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in Path(directory).parts[1:]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        name = f'backend-cli-{uuid.uuid4().hex}.json'
+        temporary = '.' + name
+        handle = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=descriptor)
+        with os.fdopen(handle, 'w') as target:
+            json.dump(diagnostic, target, ensure_ascii=False, sort_keys=True)
+            target.write('\n')
+            target.flush()
+            os.fsync(target.fileno())
+        os.rename(temporary, name, src_dir_fd=descriptor, dst_dir_fd=descriptor)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def backend_request(command, *, bounds=None):
     """Transport one command to FX1's Rust CLI; do not interpret its domain schema."""
     import selectors
-    import signal
     import subprocess
     import time
 
@@ -124,27 +206,26 @@ def backend_request(command, *, bounds=None):
     request = json.dumps(command).encode() + b'\n'
     if len(request) > bound:
         raise RuntimeError('backend command exceeds transport bound')
-    process = subprocess.Popen(
-        [os.environ['TL3_RUN_BACKEND_CLI'], *([] if command['op'] in ('output_bounds', 'cleanup_limits') else
-         ['--config', os.environ['TL3_RUN_BACKEND_CONFIG']])],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
+    process = None
+    stdout_evidence, stderr_evidence = _DiagnosticStream(), _DiagnosticStream()
     output = bytearray()
     pending = memoryview(request)
-    idle = limits['idle_timeout_seconds'] if cleanup else 30
+    idle = limits['idle_timeout_seconds'] if cleanup else BACKEND_IDLE_SECONDS
     deadline = time.monotonic() + idle
     sequence, received, executions = 0, 0, set()
     terminal = None
+    parse_error = None
 
     def accept(raw):
         nonlocal sequence, deadline, terminal
         frame = json.loads(raw)
         if (frame['schema'] != 'tl3.run_backend.frame.v1' or type(frame['sequence']) is not int
                 or frame['sequence'] != sequence or terminal is not None):
-            raise RuntimeError('backend CLI returned an invalid frame sequence')
+            raise _BackendTransportError('invalid_frame', 'backend CLI returned an invalid frame sequence')
         sequence += 1
         if frame['kind'] == 'cleanup_progress':
             if not cleanup or len(raw) > limits['max_frame_bytes'] or len(executions) >= limits['max_progress_frames']:
-                raise RuntimeError('backend CLI returned unexpected or excessive cleanup progress')
+                raise _BackendTransportError('invalid_progress', 'backend CLI returned unexpected or excessive cleanup progress')
             progress = frame['progress']
             execution = progress['execution']
             if (progress['owner'] != {'owner': command['owner'], 'correlation': command['correlation']}
@@ -152,24 +233,31 @@ def backend_request(command, *, bounds=None):
                     or not isinstance(execution, str) or not execution or execution in executions
                     or progress['helper_budget_seconds'] != limits['helper_budget_seconds']
                     or progress['idle_timeout_seconds'] != idle):
-                raise RuntimeError('backend CLI cleanup progress differs from retained binding')
+                raise _BackendTransportError('invalid_progress', 'backend CLI cleanup progress differs from retained binding')
             executions.add(execution)
             deadline = time.monotonic() + idle
         elif frame['kind'] in ('result', 'error'):
             if frame['kind'] == 'result' and frame['result']['op'] != command['op']:
-                raise RuntimeError('backend CLI returned the wrong result operation')
+                raise _BackendTransportError('invalid_frame', 'backend CLI returned the wrong result operation')
+            if frame['kind'] == 'error' and (not isinstance(frame.get('code'), str) or not isinstance(frame.get('message'), str)):
+                raise _BackendTransportError('invalid_frame', 'backend CLI returned an invalid error frame')
             terminal = frame
         else:
-            raise RuntimeError('backend CLI returned an unexpected frame')
+            raise _BackendTransportError('invalid_frame', 'backend CLI returned an unexpected frame')
     try:
+        process = subprocess.Popen(
+            [os.environ['TL3_RUN_BACKEND_CLI'], *([] if command['op'] in ('output_bounds', 'cleanup_limits') else
+             ['--config', os.environ['TL3_RUN_BACKEND_CONFIG']])],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
         with selectors.DefaultSelector() as ready:
             os.set_blocking(process.stdin.fileno(), False)
             ready.register(process.stdin, selectors.EVENT_WRITE)
             ready.register(process.stdout, selectors.EVENT_READ)
+            ready.register(process.stderr, selectors.EVENT_READ)
             while ready.get_map():
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    raise RuntimeError('backend CLI transport timed out')
+                    raise _BackendTransportError('timeout', 'backend CLI transport timed out')
                 for key, _ in ready.select(remaining):
                     if key.fileobj is process.stdin:
                         pending = pending[os.write(key.fd, pending[:65536]):]
@@ -180,29 +268,86 @@ def backend_request(command, *, bounds=None):
                         chunk = os.read(key.fd, 65536)
                         if not chunk:
                             ready.unregister(key.fileobj)
-                        output.extend(chunk)
+                        stream = stdout_evidence if key.fileobj is process.stdout else stderr_evidence
+                        stream.add(chunk)
+                        if key.fileobj is process.stderr:
+                            if stream.received > 4 * 1024 * 1024:
+                                raise _BackendTransportError('stderr_oversize', 'backend CLI stderr exceeds transport bound')
+                            continue
                         received += len(chunk)
                         if received > bound:
-                            raise RuntimeError('backend CLI response exceeds transport bound')
+                            raise _BackendTransportError('stdout_oversize', 'backend CLI response exceeds transport bound')
+                        if parse_error is not None:
+                            continue
+                        output.extend(chunk)
                         while b'\n' in output:
                             raw, _, remainder = output.partition(b'\n')
                             output[:] = remainder
-                            accept(raw)
+                            try:
+                                accept(raw)
+                            except (ValueError, KeyError, TypeError, RuntimeError) as error:
+                                parse_error = error
+                                output.clear()
+                                break
             code = process.wait(timeout=max(0.001, deadline - time.monotonic()))
-        if code != 0 or output or terminal is None or terminal['kind'] != 'result':
-            raise RuntimeError('backend CLI did not return one successful result')
+        if parse_error is not None:
+            raise parse_error
+        if output:
+            raise _BackendTransportError('truncated', 'backend CLI returned a truncated frame')
+        if terminal is not None and terminal['kind'] == 'error':
+            raise _BackendTransportError('structured_error', 'backend CLI returned a structured error')
+        if code != 0:
+            raise _BackendTransportError('nonzero_exit', 'backend CLI exited unsuccessfully')
+        if terminal is None:
+            raise _BackendTransportError('missing_result', 'backend CLI returned no terminal result')
         return terminal['result']
-    except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError) as error:
-        raise RuntimeError('backend CLI transport failed') from error
-    finally:
-        # The observer process group is local plumbing, never a native cancel.
+    except (ValueError, KeyError, TypeError, OSError, RuntimeError, subprocess.SubprocessError) as error:
+        from .redaction import Redactor
+
+        if process is not None:
+            _stop_backend_cli(process, stdout_evidence, stderr_evidence)
+        code = process.returncode if process is not None else None
+        cause = {'kind': getattr(error, 'kind', type(error).__name__), 'message': str(error)}
+        if terminal is not None and terminal['kind'] == 'error':
+            cause = {'kind': 'structured_error', 'code': terminal['code'], 'message': terminal['message'],
+                     'transport': str(error)}
+        cause = {key: Redactor(None).text(str(value), limit=2048) for key, value in cause.items()}
+        diagnostic = {'schema': 'tl3.backend_cli_diagnostic.v1', 'operation': command['op'], 'cause': cause,
+                      'status': {'code': code if code is not None and code >= 0 else None,
+                                 'signal': -code if code is not None and code < 0 else None},
+                      'stdout': stdout_evidence.sanitized(), 'stderr': stderr_evidence.sanitized()}
         try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        process.wait()
-        process.stdin.close()
-        process.stdout.close()
+            _retain_backend_diagnostic(diagnostic)
+        except (OSError, RuntimeError) as retention:
+            diagnostic['retention_error'] = Redactor(None).text(str(retention), limit=1024)
+        raise BackendCliError(diagnostic) from None
+    finally:
+        if process is not None:
+            _stop_backend_cli(process, stdout_evidence, stderr_evidence)
+            process.stdin.close()
+            process.stdout.close()
+            process.stderr.close()
+
+
+def _stop_backend_cli(process, stdout, stderr):
+    import signal
+
+    # Local observer plumbing only. Never cancel or inspect a native job here.
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    process.wait()
+    for pipe, evidence in ((process.stdout, stdout), (process.stderr, stderr)):
+        os.set_blocking(pipe.fileno(), False)
+        while True:
+            try:
+                chunk = os.read(pipe.fileno(), 65536)
+            except BlockingIOError:
+                break
+            if not chunk:
+                break
+            evidence.add(chunk)
 
 
 def output_bounds(suite):

@@ -1,5 +1,6 @@
 """Controlled executable fixtures exercise the real launcher and cleanup boundary."""
 import json
+import signal
 from pathlib import Path
 import sys
 
@@ -987,3 +988,163 @@ def test_pending_injob_absent_name_and_empty_labels_retains_typed_evidence(clean
     assert result['process_group_probe_errno'] == 3
     assert result['container'] is None
     assert not any(args[0] == 'rm' for args in map(json.loads, (root / 'cleanup-calls').read_text().splitlines()))
+
+
+@pytest.mark.parametrize('mode,exitcode', [('structured', 0), ('structured', 7), ('nonzero', 7), ('malformed', 7)])
+def test_backend_cli_failure_retains_scrubbed_status_and_both_streams(backend_cli, tmp_path, monkeypatch, mode, exitcode):
+    from tl3_harness import runtime
+
+    reply, _ = backend_cli
+    output = tmp_path / 'correlation'
+    output.mkdir()
+    monkeypatch.setattr(runtime, 'BACKEND_OUTPUT_ROOT', tmp_path)
+    # Trusted bootstrap output authority is installed by the Rust submitter.
+    monkeypatch.setenv('TL3_RUN_DIAGNOSTIC_DIR', str(output))
+    monkeypatch.setenv('OUT', str(output))
+    executable = reply.parent / 'backend-cli'
+    payload = (json.dumps(dict(schema='tl3.run_backend.frame.v1', sequence=0, kind='error',
+                              code='invalid_request', message='native job does not match retained dispatch')) + '\n'
+               if mode == 'structured' else 'native output marker\n' if mode == 'malformed' else
+               json.dumps(dict(schema='tl3.run_backend.frame.v1', sequence=0, kind='result',
+                               result=dict(op='launch_context', context='native output marker'))) + '\n')
+    executable.write_text(f'''#!{sys.executable}
+import sys
+sys.stdin.read()
+sys.stdout.write({payload!r})
+sys.stdout.flush()
+sys.stderr.write('native stderr marker password=actualSecretValue123!\\n')
+sys.exit({exitcode})
+''')
+    with pytest.raises(RuntimeError) as caught:
+        runtime.launch_context()
+    diagnostic = caught.value.diagnostic
+    assert diagnostic['status'] == {'code': exitcode, 'signal': None}
+    assert 'native stderr marker' in diagnostic['stderr']['text']
+    assert 'actualSecretValue123' not in str(caught.value)
+    assert '[REDACTED]' in diagnostic['stderr']['text']
+    assert diagnostic['stdout']['text'] == payload
+    if mode == 'structured':
+        assert diagnostic['cause']['code'] == 'invalid_request'
+        assert 'native job does not match' in diagnostic['cause']['message']
+    records = list(output.glob('backend-cli-*.json'))
+    assert len(records) == 1
+    assert json.loads(records[0].read_text()) == diagnostic
+    assert 'actualSecretValue123' not in records[0].read_text()
+    assert 'native stderr marker' in str(caught.value)
+
+
+@pytest.mark.parametrize('mode', ['truncated', 'oversize', 'timeout', 'signal', 'spawn'])
+def test_backend_cli_transport_failures_keep_durable_diagnostics(backend_cli, tmp_path, monkeypatch, mode):
+    from tl3_harness import runtime
+
+    reply, _ = backend_cli
+    output = tmp_path / 'correlation'
+    output.mkdir()
+    monkeypatch.setattr(runtime, 'BACKEND_OUTPUT_ROOT', tmp_path)
+    monkeypatch.setenv('TL3_RUN_DIAGNOSTIC_DIR', str(output))
+    monkeypatch.setenv('OUT', str(output))
+    executable = reply.parent / 'backend-cli'
+    if mode == 'spawn':
+        executable.unlink()
+    else:
+        action = {
+            'truncated': "sys.stdout.write('unfinished frame'); sys.stdout.flush()",
+            'oversize': "sys.stdout.write('stdout marker\\n' + '界' * 100000); sys.stdout.flush()",
+            'timeout': 'time.sleep(10)',
+            'signal': 'os.kill(os.getpid(), signal.SIGTERM)',
+        }[mode]
+        executable.write_text(f'''#!{sys.executable}
+import os, signal, sys, time
+sys.stdin.read()
+sys.stderr.write('stderr marker password=actualSecretValue123!\\n' + '界\\n' * 40000)
+sys.stderr.flush()
+{action}
+''')
+    monkeypatch.setattr(runtime, 'BACKEND_IDLE_SECONDS', 0.25 if mode == 'timeout' else 30)
+    with pytest.raises(RuntimeError) as caught:
+        runtime.backend_request(dict(op='launch_context'), bounds={'cli_result_bytes': 1024})
+    diagnostic = caught.value.diagnostic
+    assert json.loads(next(output.glob('backend-cli-*.json')).read_text()) == diagnostic
+    assert 'actualSecretValue123' not in str(caught.value)
+    for stream in ('stdout', 'stderr'):
+        assert len(diagnostic[stream]['text'].encode()) <= runtime.DIAGNOSTIC_TEXT_BYTES
+        assert '\ufffd' not in diagnostic[stream]['text']
+    if mode == 'spawn':
+        assert diagnostic['status'] == {'code': None, 'signal': None}
+        assert diagnostic['cause']['kind'] == 'FileNotFoundError'
+    else:
+        assert 'stderr marker' in diagnostic['stderr']['text']
+        assert diagnostic['stderr']['capture_omitted_bytes'] > 0
+        assert 'omitted' in diagnostic['stderr']['text']
+        if mode == 'signal':
+            assert diagnostic['status']['signal'] == signal.SIGTERM
+        elif mode == 'timeout':
+            assert diagnostic['status']['signal'] == signal.SIGKILL
+            assert 'timed out' in diagnostic['cause']['message']
+        elif mode == 'oversize':
+            assert 'exceeds transport bound' in diagnostic['cause']['message']
+            assert 'stdout marker' in diagnostic['stdout']['text']
+        else:
+            assert diagnostic['status']['code'] == 0
+            assert 'truncated' in diagnostic['cause']['message']
+
+
+def test_backend_cli_diagnostic_budget_does_not_clip_legal_results_or_stderr(backend_cli):
+    from tl3_harness import runtime
+
+    reply, _ = backend_cli
+    payload = dict(op='launch_context', context='界' * 30000)
+    reply.write_text(json.dumps(dict(schema='tl3.run_backend.frame.v1', sequence=0, kind='result', result=payload)) + '\n')
+    executable = reply.parent / 'backend-cli'
+    executable.write_text(executable.read_text() + "\nsys.stderr.write('diagnostic line\\n' * 5000)\n")
+    assert runtime.backend_request(dict(op='launch_context'), bounds={'cli_result_bytes': 300000}) == payload
+
+
+@pytest.mark.parametrize('fault', ['caller_path', 'symlink'])
+def test_backend_cli_diagnostic_refuses_unapproved_output(backend_cli, tmp_path, monkeypatch, fault):
+    from tl3_harness import runtime
+
+    reply, _ = backend_cli
+    reply.write_text('bad frame\n')
+    output = tmp_path / 'correlation'
+    target = tmp_path / 'target'
+    target.mkdir()
+    if fault == 'symlink':
+        output.symlink_to(target, target_is_directory=True)
+    else:
+        output = target
+    monkeypatch.setattr(runtime, 'BACKEND_OUTPUT_ROOT', tmp_path)
+    monkeypatch.setenv('TL3_RUN_DIAGNOSTIC_DIR', str(output))
+    monkeypatch.setenv('OUT', str(output))
+    with pytest.raises(runtime.BackendCliError) as caught:
+        runtime.launch_context()
+    assert 'retention_error' in caught.value.diagnostic
+    assert list(target.iterdir()) == []
+
+
+def test_backend_cli_scrubs_structured_cause_and_each_stream_before_retention(backend_cli, tmp_path, monkeypatch):
+    from tl3_harness import runtime
+
+    reply, _ = backend_cli
+    output = tmp_path / 'correlation'
+    output.mkdir()
+    monkeypatch.setattr(runtime, 'BACKEND_OUTPUT_ROOT', tmp_path)
+    monkeypatch.setenv('TL3_RUN_DIAGNOSTIC_DIR', str(output))
+    monkeypatch.setenv('OUT', str(output))
+    frame = dict(schema='tl3.run_backend.frame.v1', sequence=0, kind='error', code='invalid_request',
+                 message='refused password=stdoutSecretValue123!')
+    reply.write_text(json.dumps(frame) + '\n')
+    executable = reply.parent / 'backend-cli'
+    executable.write_text(executable.read_text() + "\nsys.stderr.write('stderr cause password=stderrSecretValue123!\\n')\nsys.exit(3)\n")
+    with pytest.raises(runtime.BackendCliError) as caught:
+        runtime.launch_context()
+    diagnostic = caught.value.diagnostic
+    assert 'stdoutSecretValue123' not in str(caught.value)
+    assert 'stderrSecretValue123' not in str(caught.value)
+    assert '[REDACTED]' in diagnostic['cause']['message']
+    assert '[REDACTED]' in diagnostic['stdout']['text']
+    assert '[REDACTED]' in diagnostic['stderr']['text']
+    assert diagnostic['status'] == {'code': 3, 'signal': None}
+    retained = next(output.glob('backend-cli-*.json'))
+    assert json.loads(retained.read_text()) == diagnostic
+    assert retained.stat().st_mode & 0o777 == 0o600
