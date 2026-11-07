@@ -308,6 +308,12 @@ impl Adapter {
     fn write(&self, kind: Write, path: &Path, bytes: &[u8]) -> Result<()> {
         self.boundary(kind, false);
         self.records.write(path, bytes)?;
+        if kind == Write::Intent {
+            let accepted_path = path.with_extension("accepted");
+            let mut accepted: Accepted = read_file(&accepted_path)?.unwrap();
+            accepted.waiting_through = accepted.waiting_through.map(|watermark| watermark + 1);
+            self.records.write(&accepted_path, &serde_json::to_vec(&accepted)?)?;
+        }
         self.boundary(kind, true);
         Ok(())
     }
