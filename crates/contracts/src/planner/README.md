@@ -61,30 +61,36 @@ memory-flag and source-quote types. Source quotes in a proposal are claims for
 Rust to check against source, not accepted observations. Paths used as an
 accepted footprint must pass the existing canonical footprint boundary.
 
-The parent ruled that planner JSON migrates directly to the one canonical
-`checks::Check`. Harness adds required `goal_ids` and its agreed semantics in
-its own slice 1. Existing `name` and `tests` become the planner payload. There
-is no nested check, association wrapper, `node_ids` alias, old reader, or adapter.
-The sampled base does not yet contain this shared change.
+The final program-lead ruling is one type per trust level. Harness publishes
+`CheckDeclaration` for model output in slice 1. It carries goal association,
+exact selectors, planner-only kinds, and model-safe proof subject and support
+selection. It has no `Reproducing`, `red_message`, or captured evidence fields.
+The owner has the required `goal_ids` semantics, but the final canonical API
+is not published at this preparation's base.
+
+Existing `Check` is trusted and admitted. Only Rust validation or
+controller-owned sources produce it. Never parse it from model output.
+Proof declarations have the same trust split. Captured `red_message` and
+evidence come only from actual runs. This ruling supersedes the earlier direct
+raw-model `Check` proposal; that earlier proposal is not an implementation path.
 
 The remaining check binding is a dependency STOP:
 
-- `checks::Check` requires `name` and `tests`; current planner JSON instead uses
-  `node_ids`, numeric `goal_ids`, and an implicit check name.
-- `CheckKind` also includes `Reproducing`. Rust must enforce the planner subset
-  of `Demonstrating`, `Regression`, and `BehaviorPreserving` without cloning or
-  widening the enum.
-- `ProofDeclaration` requires `subjects`, `observer_support`, and `red_message`.
-  Missing declarations must remain explicit so the Rust session can offer the
-  existing bounded correction. Do not create a valid-looking proof placeholder.
-- A proposed message or declaration never establishes captured RED output,
-  actual execution, a verified proof, or a receipt.
+- Bind the raw proposal only after the owner publishes canonical
+  `CheckDeclaration` and the model-safe proof declaration API. Do not copy
+  either type, introduce a nested Check or wrapper, or add selector aliases.
+- Preserve planner subject-selection ability and exact required goal
+  association semantics through the published types. Keep planner kinds to
+  `Demonstrating`, `Regression`, and `BehaviorPreserving`.
+- Represent missing declarations explicitly so the Rust session can offer the
+  existing bounded correction. Never create a valid-looking proof placeholder.
+- Rust admits checks using authoritative validation and actual observations.
+  Model declarations never establish captured RED output, execution, a verified
+  proof, or a receipt.
 
-The parent, harness owner, and program lead must settle raw model declaration
-versus admitted `Check` and captured proof first. Preserve subject-selection
-ability while resolving that boundary. This unit does not borrow the admitted
-check as a raw model type before that agreement, fabricate proof evidence, or
-change shared types.
+The trust boundary is final, not another design exploration. The raw-model
+binding remains held until its canonical API is published. This unit neither
+implements the superseded direct-Check shape nor changes shared types.
 
 ## Session facts preserve inherited evidence obligations
 
