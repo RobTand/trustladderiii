@@ -74,6 +74,7 @@ proptest! {
 #[test]
 fn second_failure_emits_one_incident() {
     let mut world = World::new(&[1], 1);
+    world.nodes.push(Node::new(RepoId(0)));
     world.nodes[0].phase = Phase::Making;
     world.nodes[0].run_failures = 1;
     world.nodes[0].run_incidents = 0;

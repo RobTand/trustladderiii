@@ -869,7 +869,7 @@ def verus_proofs():
             "kernel::retries_facts::failed_run": "Q50 hidden failed-run update, typechecked in every selection.",
             "kernel::node_writes::write": "Opaque storage write, typechecked in every selection; four explicit projection proofs.",
             "kernel::retries_facts::incident_write": "Opaque private retries incident write, typechecked in every selection; explicit fold and consumer proofs.",
-            "kernel::reply_equivalence::run_failed::reference::run_failed": "Test-only failed-run extraction equivalence; executed by kernel library tests.",
+            "kernel::reply_equivalence::run_failed_reference::run_failed": "Test-only failed-run extraction equivalence; executed by kernel library tests.",
             "kernel::reply_equivalence::run_failed::compare_failed": "Test-only failed-run extraction equivalence; executed by kernel library tests.",
             "kernel::reply_equivalence::run_failed::incident_call_matches_original": "Test-only failed-run extraction equivalence; executed by kernel library tests.",
             "kernel::reply_equivalence::run_failed::second_failure_emits_one_incident": "Test-only failed-run extraction equivalence; executed by kernel library tests.",
