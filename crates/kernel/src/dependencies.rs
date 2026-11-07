@@ -572,6 +572,10 @@ impl World {
                             lemmas::extend(*self, from, node, target);
                         }
                         pending.push(target);
+                        kernel_proof! {
+                            assert(pending@[pending@.len() - 1] == target);
+                            assert(pending@.contains(target));
+                        }
                     }
                 }
                 kernel_proof! {
@@ -581,6 +585,20 @@ impl World {
                             && frontier_scan@[j] == n;
                         assert(j < pending@.len());
                         assert(pending@[j] == n);
+                    }
+                    assert forall|j: int| 0 <= j < edge + 1
+                        && self.dependencies@[j].node == node
+                        && !self.dependencies@[j].rejected
+                        && self.dependencies@[j].status == DependencyStatus::Pending
+                        && self.dependencies@[j].target.request.is_some()
+                        implies explored(*self, seen@, to, self.dependencies@[j].target.request.unwrap())
+                            || pending@.contains(self.dependencies@[j].target.request.unwrap()) by {
+                        if j < edge {
+                            let target = self.dependencies@[j].target.request.unwrap();
+                            if !explored(*self, seen@, to, target) {
+                                assert(frontier_scan@.contains(target));
+                            }
+                        }
                     }
                 }
                 edge += 1;
