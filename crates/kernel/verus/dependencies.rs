@@ -23,7 +23,7 @@ pub(super) proof fn extend(w: World, from: NodeId, owner: NodeId, target: NodeId
         && route[0] == from && route[route.len() - 1] == owner;
     let next = route.push(target);
     assert forall|i: int| 0 <= i < next.len() - 1
-        implies #[trigger] active_edge(w, next[i], next[i + 1]) by {
+        implies active_edge(w, #[trigger] next[i], next[i + 1]) by {
         if i < route.len() - 1 {
             assert(next[i] == route[i]);
             assert(next[i + 1] == route[i + 1]);

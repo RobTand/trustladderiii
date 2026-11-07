@@ -39,7 +39,7 @@ pub(super) open spec fn path(w: World, route: Seq<NodeId>) -> bool {
     route.len() > 0
         && (forall|i: int| 0 <= i < route.len() ==> route[i].0 < w.nodes@.len())
         && (forall|i: int| 0 <= i < route.len() - 1
-            ==> #[trigger] active_edge(w, route[i], route[i + 1]))
+            ==> active_edge(w, #[trigger] route[i], route[i + 1]))
 }
 
 #[verifier::opaque]
