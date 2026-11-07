@@ -34,6 +34,7 @@ def write(path, value):
 def main():
     from tl3_harness.runtime_image import prepare_runtime_profile
 
+    os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("destination", "cli", "cli-sha256", "binary-producer-commit", "options", "image-map",
                  "image-map-sha256", "profile", "host", "platform", "host-interpreter",
