@@ -377,6 +377,17 @@ pub(super) fn compare(s: &Schedule) -> Run {
     if planner_changed && !s.missing {
         assert!(new.result.get("planner_input").is_some() || new.result.to_string().contains("RunFailed"), "planner delivery must reach real boundary: {new:?}");
         assert!(new.calls.is_empty());
+        assert!(new.rows.is_empty());
+        assert!(new.committed.is_empty());
+        assert_eq!(new.world, old.world);
+        assert_eq!(new.pending, old.pending);
+        assert_eq!(new.persisted, old.persisted);
+        assert_eq!(new.writes, 0);
+        assert_eq!(new.result["detailed_review"], old.result["detailed_review"]);
+        if let Some(input) = new.result.get("planner_input") {
+            assert_eq!(input["node"], 0);
+            assert_eq!(input["generation"], 7);
+        }
         return new;
     }
     assert_eq!(old, project(new.clone()), "observation route mismatch");

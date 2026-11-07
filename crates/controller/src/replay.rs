@@ -101,9 +101,7 @@ pub fn check_record(
     if result.get("kernel_violation").is_some() {
         return Err(fail("recorded kernel invariant violation"));
     }
-    if let Some(value) = result.get("planner_replay") {
-        let planner: PlannerStepRecord = serde_json::from_value(value.clone())
-            .map_err(|_| fail("invalid planner replay"))?;
+    if let Some(StoredSnapshot::Planner(planner)) = stored_snapshot(result).map_err(fail)? {
         planner.check().map_err(|error| fail(&error))?;
         if let Some(world) = previous {
             check_prepared(world, &planner.input).map_err(|reason| fail(&reason))?;

@@ -3840,6 +3840,10 @@ impl Controller {
                 ) {
                     Ok(reply) if valid_role => reply,
                     _ => {
+                        if role == "planner" {
+                            return Ok(Some(KernelInput::Planner { node, generation,
+                                result: tl3_kernel::PlannerResult::Ordinary(Reply::RunFailed) }));
+                        }
                         return Ok(Some(KernelInput::Event(Event::Reply {
                             node,
                             generation,

@@ -74,7 +74,7 @@ pub(crate) fn save_budget(snapshot: &Snapshot, commit: &mut Commit, node: NodeId
     if let Some(old) = snapshot.rows.iter().find(|row| row.table == "requests" && row.id == node.0.to_string()) {
         if let Some(value) = old.value.get("replan_budget") {
             let persisted = decode_stored::<ReplanBudget>(value.clone())?;
-            if !persisted.bound_to(node) || (persisted.used() && !budget.used() && !consumed) {
+            if !persisted.bound_to(node) || (persisted.used() && !budget.used()) {
                 return Err(Error::Invalid("replan budget reset"));
             }
         }
