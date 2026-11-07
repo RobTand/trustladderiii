@@ -262,10 +262,11 @@ fn stall_upstream(source: Upstream) -> decisions::StallUpstream {
     }
 }
 
-fn incident_view(incident: &Incident, delivery: &Delivery) -> decisions::IncidentView {
+fn incident_view(snapshot: &Snapshot, incident: &Incident, delivery: &Delivery) -> decisions::IncidentView {
     decisions::IncidentView {
         needs_rob: incident.needs_rob,
-        refused_command: false,
+        refused_command: incident.signature.upstream == Upstream::Delivery
+            && snapshot.rows.iter().any(|row| row.table == "publication_failures" && row.id == delivery.key),
         own_effect: incident.effect.as_deref() == Some(&delivery.key),
     }
 }
@@ -700,7 +701,7 @@ impl Controller {
             });
             if let Some(row) = incident {
                 let incident: Incident = crate::decode_stored(row.value.clone())?;
-                if decisions::incident_action(true, incident_view(&incident, &state.delivery))
+                if decisions::incident_action(true, incident_view(snapshot, &incident, &state.delivery))
                     == decisions::IncidentAction::Probe
                 {
                     match self
@@ -723,7 +724,7 @@ impl Controller {
                 .find(|r| r.table == "incidents" && r.id == *id && r.value["open"] == true)
         {
             let incident: Incident = crate::decode_stored(row.value.clone())?;
-            match decisions::incident_action(false, incident_view(&incident, &state.delivery)) {
+            match decisions::incident_action(false, incident_view(snapshot, &incident, &state.delivery)) {
                 decisions::IncidentAction::Hold => {
                     // A healthy GET cannot prove command restrictions were fixed (#608).
                     self.save_allowance(state)?;
@@ -886,7 +887,13 @@ impl Controller {
                             if let Some(class) = &completion.failure_class {
                                 state.failure = Some(class.clone());
                             }
+                            let refusal = completion.ack == Ack::DeliveryAccepted && completion.diagnostic.is_some();
                             self.look_observations(&state.delivery, completion)?;
+                            if refusal {
+                                state.incident = self.store.load()?.rows.iter()
+                                    .find(|row| row.table == "allowances" && row.id == state.delivery.key)
+                                    .and_then(|row| row.value["incident"].as_str().map(str::to_owned));
+                            }
                         }
                     }
             }

@@ -319,7 +319,7 @@ fn fake(root: &Path, scenario: &str, seed: u64, upstream: Upstream) -> Fake {
     fs::create_dir_all(&receipts).unwrap();
     let inner: Box<dyn Executor> = match upstream {
         Upstream::GitHub => Box::new(adapters::github::Fake::new(&receipts)),
-        Upstream::Delivery => Box::new(adapters::mergify::Fake::new(&receipts)),
+        Upstream::Delivery => Box::new(adapters::direct_merge::Fake::new(&receipts)),
         Upstream::PrismaBuild => Box::new(adapters::prismabuild::Fake::new(&receipts)),
         Upstream::Workers => Box::new(adapters::workers::Fake::new(&receipts)),
         Upstream::Worktrees => Box::new(adapters::worktrees::Fake::new(&receipts)),

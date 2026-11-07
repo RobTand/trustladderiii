@@ -1737,7 +1737,7 @@ fn watches_and_pending(settings: &tl3_config::Store) {
         (
             Upstream::Delivery,
             EffectKind::Enqueue,
-            Box::new(adapters::mergify::Fake::new(root.path())) as Box<dyn Executor>,
+            Box::new(adapters::direct_merge::Fake::new(root.path())) as Box<dyn Executor>,
         ),
     ] {
         registry.register(
@@ -2301,7 +2301,7 @@ impl Executor for GitHeadWorker {
     }
 }
 struct ConflictQueue {
-    fake: adapters::mergify::Fake,
+    fake: adapters::direct_merge::Fake,
     root: PathBuf,
     first: Option<String>,
     conflict: bool,
@@ -2508,7 +2508,7 @@ fn mixed_registry_case(settings: &tl3_config::Store, conflict: bool) {
     registry.register(
         Upstream::Delivery,
         ConflictQueue {
-            fake: adapters::mergify::Fake::new(&records),
+            fake: adapters::direct_merge::Fake::new(&records),
             root: root.path().into(),
             first: None,
             conflict,

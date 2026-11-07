@@ -988,7 +988,7 @@ fn stored_repository_in_translator_has_fatal_decode_error() {
         "UPDATE tl3_world SET value = value - 'name' WHERE table_name = 'repos'",
     );
     let snapshot = c.snapshot().unwrap();
-    let mut translator = adapters::mergify::Translator::new(Default::default()).unwrap();
+    let mut translator = adapters::direct_merge::Translator::new(Default::default()).unwrap();
     let delivery = GitHubDelivery::CatchUp {
         repository: boot().repos.remove(0),
         changes: Box::new(tl3_github::RepoChanges {

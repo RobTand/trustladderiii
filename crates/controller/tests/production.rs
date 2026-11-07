@@ -74,7 +74,7 @@ fn production_registers_every_real_adapter_and_source() {
         ),
         (
             Upstream::Delivery,
-            "tl3_controller::adapters::mergify::Adapter",
+            "tl3_controller::adapters::direct_merge::Adapter",
         ),
         (
             Upstream::PrismaBuild,
