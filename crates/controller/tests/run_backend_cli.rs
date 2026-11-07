@@ -2733,6 +2733,63 @@ fn pending_injob_launch_requires_exact_stopped_launcher_and_empty_name_and_label
     );
 }
 
+fn failed_pending_injob_launch(late_cancel: bool) {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::InJob, true);
+    assert_eq!(f.submit()["kind"], "accepted");
+    let launcher = f.ownership();
+    let frames = f.call(json!({"op":"begin_container_launch","owner":f.intent.owner,"correlation":f.intent.correlation,"launcher":launcher}));
+    assert_eq!(frames.last().unwrap()["kind"], "result", "{frames:?}");
+    let launch = frames.last().unwrap()["result"]["launch"].clone();
+    if late_cancel {
+        f.events(&completed(256));
+        f.call(json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}));
+    }
+    let evidence = json!({"schema":"tl3.cleanup_evidence.v1","ownership":launcher,"launcher":{"kind":"absent"},
+        "process_group_probe_errno":3,"container":null,
+        "pending_launch":{"intent":launch,"name_exists_exit":1,"sweep_exit":0,"remaining_ids":[]}});
+    let reference = api::durable::blob(
+        &f.intent.output_dir.join("failed-pending.json"),
+        &serde_json::to_vec(&evidence).unwrap(),
+    )
+    .unwrap();
+    let frames = f.call(json!({"op":"retain_cleanup","owner":f.intent.owner,"correlation":f.intent.correlation,"evidence":reference}));
+    assert_eq!(frames.last().unwrap()["result"]["cleanup"]["stopped"], true, "{frames:?}");
+    let mut events = completed(256);
+    if late_cancel {
+        events.push(json!({"name":"exception","context":{"type":"cancel","severity":0}}));
+    }
+    f.events(&events);
+    let frames = f.attach();
+    assert_eq!(
+        frames.last().unwrap()["result"]["observation"]["terminal"]["ending"],
+        "infra-lost",
+        "{frames:?}"
+    );
+    let state = f.state();
+    assert_eq!(state.container_launches.len(), 1);
+    assert!(state.runtime_ownerships.is_empty());
+    assert_eq!(state.cancel_requested, late_cancel);
+    let debt = f
+        .options
+        .journal_root
+        .join("cleanup-debt")
+        .join(&f.request.runtime.manifest_digest);
+    assert!(!debt.exists() || fs::read_dir(debt).unwrap().next().is_none());
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn failed_pending_injob_launch_finishes_without_cancel() {
+    failed_pending_injob_launch(false);
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn failed_pending_injob_launch_preserves_failure_after_late_cancel() {
+    failed_pending_injob_launch(true);
+}
+
 #[test]
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn injob_no_launch_needs_native_clean_and_does_not_leave_unregistered_debt() {
