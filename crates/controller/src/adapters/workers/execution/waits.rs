@@ -40,7 +40,7 @@ impl Shared {
         let profile: Profile =
             serde_json::from_slice(&durable::read(&wait.profile).map_err(backend_error)?)?;
         wait.validate(&key, &profile.checkout, &self.options)?;
-        if wait.owner != *owner {
+        if wait.owner != *owner || profile.waits_root != self.root {
             return Err(Error::Invalid(
                 "worker observation belongs to another owner",
             ));

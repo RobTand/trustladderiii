@@ -174,7 +174,9 @@ fn inventory(root: &Path, directory: &Path, files: &mut Vec<backend::InputFile>)
             let mut chunk = [0_u8; 65536];
             loop {
                 let read = input.read(&mut chunk)?;
-                if read == 0 { break; }
+                if read == 0 {
+                    break;
+                }
                 digest.update(&chunk[..read]);
             }
             files.push(backend::InputFile {
@@ -457,9 +459,18 @@ mod tests {
         inventory(&root, &root, &mut files).unwrap();
         assert_eq!(files.len(), 2);
         assert!(files.iter().all(|file| !file.path.starts_with(".git")));
-        assert!(files.iter().any(|file| file.path == Path::new("worker-input.json")
-            && file.sha256 == durable::digest(b"{}")));
-        assert!(fs::metadata(root.join("action.py")).unwrap().permissions().readonly());
+        assert!(
+            files
+                .iter()
+                .any(|file| file.path == Path::new("worker-input.json")
+                    && file.sha256 == durable::digest(b"{}"))
+        );
+        assert!(
+            fs::metadata(root.join("action.py"))
+                .unwrap()
+                .permissions()
+                .readonly()
+        );
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
         std::os::unix::fs::symlink("worker-input.json", root.join("link")).unwrap();
         assert!(inventory(&root, &root, &mut Vec::new()).is_err());
