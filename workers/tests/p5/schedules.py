@@ -1,4 +1,4 @@
-"""Differential maker schedules through the real summary and completion writers."""
+"""Crash-cut maker schedules through real summary and completion writers."""
 from contextlib import ExitStack, nullcontext
 from copy import deepcopy
 import json
@@ -11,12 +11,11 @@ from unittest.mock import patch
 from tl3_workers import facts, memory, runtime, tracing
 from tl3_workers.roles import maker
 from durable_io import Disk
-from maker_reference import _check_inputs as old_check
 
 
 def cases():
     base = {'goals': [{'id': 'a'}, {'id': 'b', 'stage': 'checking'}], 'footprint': ['a.py'],
-            'plan': {'files': ['a.py'], 'checks': [{'goal_ids': ['a', 'b']}]}}
+            'plan': {'files': ['a.py'], 'checks': [{'name': 'maker behavior', 'kind': 'regression', 'tests': ['test_a.py::test_a'], 'goal_ids': [0, 1]}]}}
     for kind in ['duplicate', 'empty', 'parent', 'git', 'absolute', 'long', 'unknown',
                  'feedback', 'maker-coverage', 'checking-coverage']:
         value = deepcopy(base)
@@ -27,11 +26,11 @@ def cases():
         if kind in paths:
             value['plan']['files'] = [paths[kind]]
         if kind == 'unknown':
-            value['plan']['checks'][0]['goal_ids'] = ['other']
+            value['plan']['checks'][0]['goal_ids'] = [2]
         if kind == 'feedback':
             value['feedback'] = [{'goal_ids': ['other']}]
         if kind.endswith('-coverage'):
-            value['plan']['checks'][0]['goal_ids'] = ['b' if kind == 'maker-coverage' else 'a']
+            value['plan']['checks'][0]['goal_ids'] = [1 if kind == 'maker-coverage' else 0]
         yield kind, value
 
 
@@ -114,18 +113,22 @@ def main():
         for kind, inputs in cases():
             if sys.argv[1:] and kind != sys.argv[1]:
                 continue
-            old = execute(old_check, schedule, inputs)
-            new = execute(new_check, schedule, inputs)
-            assert old == new, (kind, schedule, old, new)
-            assert set(old[1]) == {'summary.json', 'completion.json'}
+            completed = execute(new_check, schedule, inputs)
+            assert set(completed[1]) == {'summary.json', 'completion.json'}
             if not schedule['read_failure']:
-                assert json.loads(old[1]['completion.json'])['failure']['class'] == 'ValueError'
-            # Discover cuts from actual raw writes, flushes, fsyncs and renames.
-            for crash in range(1, old[3] + 1):
-                before = execute(old_check, schedule, inputs, crash)
-                after = execute(new_check, schedule, inputs, crash)
-                assert before == after, (kind, schedule, crash, before, after)
-    print('maker schedules preserve real syscall order and actual persisted bytes')
+                assert json.loads(completed[1]['completion.json'])['failure']['class'] == 'ValueError'
+            # Every published destination is a complete JSON document. Temporary
+            # files may hold a prefix at a crash cut, and are never a publication.
+            for crash in range(1, completed[3] + 1):
+                calls, persisted, ending, points = execute(new_check, schedule, inputs, crash)
+                assert ending == 'Crash'
+                assert points == crash
+                for destination in ('summary.json', 'completion.json'):
+                    if destination in persisted:
+                        json.loads(persisted[destination])
+                renames = [call for call in calls if call[0] == 'rename']
+                assert all(call[2] in {'summary.json', 'completion.json'} for call in renames)
+    print('maker schedules verify crash cuts and complete JSON publication through the current Rust gate')
 
 
 if __name__ == '__main__':

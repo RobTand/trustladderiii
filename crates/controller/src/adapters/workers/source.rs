@@ -1017,13 +1017,11 @@ mod tests {
         assert!(!progress(&checkpoint));
     }
 
-    /// #372: a run outlives the tl3d that started it, so a worker from release N
-    /// may reply to the controller of release N+1. These lines are pinned as
-    /// release d8e4f2a8's workers emit them; a change that rejects them breaks
-    /// every run in flight across a deploy.
+    /// Current canonical protocol cases exercise every worker reply boundary.
+    /// Slice 1 intentionally rejects the former planner Check wire form.
     #[test]
-    fn replies_from_the_previous_release_still_parse() {
-        let fixture = include_str!("../../../tests/fixtures/worker-replies-d8e4f2a8.jsonl");
+    fn current_protocol_reply_corpus_parses() {
+        let fixture = include_str!("../../../tests/fixtures/worker-replies-action-s1.jsonl");
         let mut roles = std::collections::BTreeSet::new();
         for case in fixture.lines() {
             let case: Value = serde_json::from_str(case).unwrap();
@@ -1033,7 +1031,7 @@ mod tests {
                 serde_json::json!({"Effect": {"node": 0, "kind": {"StartRun": case["start"]}, "seq": 1, "head": null}})
             };
             let delivery: Delivery = serde_json::from_value(serde_json::json!({
-                "key": "release-n-minus-one", "epoch": 1, "generation": 3, "output": output,
+                "key": "action-s1-corpus", "epoch": 1, "generation": 3, "output": output,
                 "head_sha": null, "repository": {"owner": "RobTand", "name": "tl3-sandbox", "installation": 1},
                 "issue": 42, "pull_request": null, "paths": ["greeting.py"], "attempt": 1, "round": 0, "checks": null,
             }))

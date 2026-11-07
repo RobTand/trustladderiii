@@ -230,6 +230,41 @@
         "remove"
       ]
     },
+    "Entry": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "proto_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "root": {
+          "type": "boolean"
+        },
+        "shrunk": {
+          "type": "boolean"
+        },
+        "sizes": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "kind",
+        "proto_bytes",
+        "sizes",
+        "shrunk"
+      ]
+    },
     "Evidence": {
       "oneOf": [
         {
@@ -393,8 +428,43 @@
         "symbol"
       ]
     },
+    "PacketEntry": {
+      "type": "object",
+      "properties": {
+        "content_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "root": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "content_bytes"
+      ]
+    },
     "PolicyOperation": {
       "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "trace"
+            },
+            "request": {
+              "$ref": "#/$defs/Request"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "request"
+          ]
+        },
         {
           "type": "object",
           "properties": {
@@ -493,7 +563,10 @@
           "type": "object",
           "properties": {
             "limit": {
-              "type": "integer",
+              "type": [
+                "integer",
+                "null"
+              ],
               "format": "uint",
               "minimum": 0
             },
@@ -508,8 +581,7 @@
           "additionalProperties": false,
           "required": [
             "op",
-            "value",
-            "limit"
+            "value"
           ]
         },
         {
@@ -548,7 +620,10 @@
               "type": "string"
             },
             "limit": {
-              "type": "integer",
+              "type": [
+                "integer",
+                "null"
+              ],
               "format": "uint",
               "minimum": 0
             },
@@ -560,8 +635,7 @@
           "additionalProperties": false,
           "required": [
             "op",
-            "input_json",
-            "limit"
+            "input_json"
           ]
         },
         {
@@ -591,7 +665,10 @@
           "type": "object",
           "properties": {
             "limit": {
-              "type": "integer",
+              "type": [
+                "integer",
+                "null"
+              ],
               "format": "uint",
               "minimum": 0
             },
@@ -606,8 +683,7 @@
           "additionalProperties": false,
           "required": [
             "op",
-            "shaped",
-            "limit"
+            "shaped"
           ]
         },
         {
@@ -617,7 +693,10 @@
               "type": "string"
             },
             "limit": {
-              "type": "integer",
+              "type": [
+                "integer",
+                "null"
+              ],
               "format": "uint",
               "minimum": 0
             },
@@ -629,8 +708,7 @@
           "additionalProperties": false,
           "required": [
             "op",
-            "input_json",
-            "limit"
+            "input_json"
           ]
         },
         {
@@ -922,6 +1000,179 @@
             "kind",
             "path",
             "instruction"
+          ]
+        }
+      ]
+    },
+    "Request": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Entry"
+              }
+            },
+            "op": {
+              "type": "string",
+              "const": "retain"
+            },
+            "shrinking": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "entries",
+            "shrinking"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Entry"
+              }
+            },
+            "op": {
+              "type": "string",
+              "const": "allocate"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "entries"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "contents": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Shaped"
+              }
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "op": {
+              "type": "string",
+              "const": "live"
+            },
+            "root": {
+              "type": "boolean"
+            },
+            "spans": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "used": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "enabled",
+            "root",
+            "spans",
+            "used",
+            "contents"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "bytes": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "entries": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PacketEntry"
+              }
+            },
+            "op": {
+              "type": "string",
+              "const": "packet"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "bytes",
+            "entries"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "bytes": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "next": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint",
+              "minimum": 0
+            },
+            "op": {
+              "type": "string",
+              "const": "fits"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "bytes"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "contents": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Shaped"
+              }
+            },
+            "limits": {
+              "type": "array",
+              "items": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "uint",
+                "minimum": 0
+              }
+            },
+            "op": {
+              "type": "string",
+              "const": "clean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "contents",
+            "limits"
           ]
         }
       ]

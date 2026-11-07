@@ -135,6 +135,136 @@
         "gap"
       ]
     },
+    "Decision": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "floor_bytes": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "keep": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "uint",
+                "minimum": 0
+              }
+            },
+            "shrink": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint",
+              "minimum": 0
+            },
+            "shrinking": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "keep",
+            "shrinking",
+            "floor_bytes"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "limits": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "uint",
+                  "minimum": 0
+                }
+              }
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "limits",
+            "truncated"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "spans": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "used": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "values": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": true
+            }
+          },
+          "required": [
+            "used",
+            "spans"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "remove": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "uint",
+                "minimum": 0
+              }
+            },
+            "root_only": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "remove",
+            "root_only"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "fits": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "fits"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "values": {
+              "type": "array",
+              "items": true
+            }
+          },
+          "required": [
+            "values"
+          ]
+        }
+      ]
+    },
     "EditOp": {
       "type": "string",
       "enum": [
@@ -243,6 +373,22 @@
     },
     "PolicyResult": {
       "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "trace"
+            },
+            "value": {
+              "$ref": "#/$defs/Decision"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
         {
           "type": "object",
           "properties": {

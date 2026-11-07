@@ -16,13 +16,8 @@ pub fn run(command: &str, args: &[String]) -> Result<(), Box<dyn std::error::Err
             io::stdout().write_all(tl3_controller::redaction::generated_policy().as_bytes())?;
         }
         ("redaction-policy", [flag, file])
-            if [
-                "--check",
-                "--output",
-                "--harness-check",
-                "--harness-output",
-            ]
-            .contains(&flag.as_str()) =>
+            if ["--check", "--output", "--harness-check", "--harness-output"]
+                .contains(&flag.as_str()) =>
         {
             let expected = if flag.starts_with("--harness-") {
                 tl3_controller::redaction::generated_harness_policy()

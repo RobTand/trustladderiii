@@ -284,6 +284,8 @@ fn cuts_never_publish_multiline_or_explicit_producer_secret_fragments() {
 }
 #[test]
 fn adversarial_producer_inputs_stay_bounded() {
+    // The former Python test started after module-level matcher compilation.
+    tl3_redaction::text("").unwrap();
     let data = data();
     let mut executed = 0;
     for unit in data["adversarial"].as_array().unwrap() {
