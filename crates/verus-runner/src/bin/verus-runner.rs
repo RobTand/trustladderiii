@@ -538,6 +538,16 @@ impl ExecutionMode {
     }
 }
 
+fn mode_log(
+    mode: ExecutionMode,
+    metrics: &serde_json::Value,
+    raw: &serde_json::Value,
+    receipt: &serde_json::Value,
+) -> String {
+    let _ = (raw, receipt);
+    format!("VERUS_MODE {} {metrics}", mode.name())
+}
+
 struct Toolchain {
     rustc: PathBuf,
     verifier: PathBuf,
@@ -764,7 +774,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         };
         std::fs::write(directory.join("inventory.json"), format!("{receipt}\n"))?;
         std::fs::write(directory.join("measurement.json"), format!("{metrics}\n"))?;
-        println!("VERUS_MODE {} {metrics}", mode.name());
+        let raw = serde_json::json!({"label": label, "seconds": result.seconds, "stats": stats});
+        println!("{}", mode_log(mode, &metrics, &raw, &receipt));
         return Ok(());
     }
     let (verified, mut measurements, stats) = if measured {
@@ -983,5 +994,43 @@ mod toolchain_tests {
         );
         assert!(Toolchain::new(&root.join("missing"), &tools.z3, &tools.rustc).is_err());
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod receipt_tests {
+    use super::*;
+
+    #[test]
+    fn modern_modes_emit_unique_gate_receipts_without_frontend_proof_claims() {
+        let label = "//crates/kernel:verus_fixture";
+        let stats = serde_json::json!({
+            "verification-results": {"verified": 1, "errors": 0,
+                "encountered-error": false, "encountered-vir-error": false,
+                "is-verifying-entire-crate": false},
+            "times-ms": {"smt": {"rlimit-run": 1234}},
+            "verus": {"version": "0.2026.11.02.8bf68ee"}
+        });
+        let raw = serde_json::json!({"label": label, "seconds": 1.0, "stats": stats});
+        let receipt = serde_json::json!({"proofs": {label: {"verified": 1, "expected_obligations": 1}}});
+        let metrics = serde_json::json!({"rlimit_run": 1234});
+        for mode in [ExecutionMode::NormalStats, ExecutionMode::DiagnosticStats] {
+            let output = mode_log(mode, &metrics, &raw, &receipt);
+            if mode == ExecutionMode::NormalStats {
+                println!("MARKER_FIXTURE_START\n{output}\nMARKER_FIXTURE_END");
+            }
+            for (prefix, expected) in [
+                ("VERUS_RAW_MEASUREMENT ", &raw),
+                ("VERUS_PROOF ", &receipt),
+            ] {
+                let lines: Vec<_> = output.lines().filter_map(|s| s.strip_prefix(prefix)).collect();
+                assert_eq!(lines.len(), 1, "missing or duplicate {prefix}");
+                assert_eq!(&serde_json::from_str::<serde_json::Value>(lines[0]).unwrap(), expected);
+            }
+            assert_eq!(output.lines().filter(|s| s.starts_with("VERUS_MODE ")).count(), 1);
+        }
+        let frontend = mode_log(ExecutionMode::FrontendOnly, &metrics, &raw, &receipt);
+        assert!(!frontend.contains("VERUS_RAW_MEASUREMENT"));
+        assert!(!frontend.contains("VERUS_PROOF"));
     }
 }
