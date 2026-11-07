@@ -138,19 +138,15 @@ impl Fixture {
     }
 
     fn observe(&mut self, observation: Observation) {
-        self.try_observe(observation).unwrap();
-    }
-
-    fn try_observe(&mut self, observation: Observation) -> crate::Result<()> {
         let key = format!(
             "failure-{}",
             self.controller.snapshot().unwrap().revision.get()
         );
-        self.controller.observe(&key, observation)?;
+        self.controller.observe(&key, observation).unwrap();
         for _ in 0..32 {
-            assert!(self.controller.drive_once()?);
+            assert!(self.controller.drive_once().unwrap());
             if !crate::input_errors::kernel_backlog(&self.controller.snapshot().unwrap()) {
-                return Ok(());
+                return;
             }
         }
         panic!("the observation must drain through the controller");
@@ -381,18 +377,26 @@ fn malformed_goal_materials_reject_failed_round_without_feedback() {
             .unwrap();
         f.seed(Phase::Publishing, 3);
         let before = f.controller.world().unwrap();
-        let error = f
-            .try_observe(Observation::CiFailed {
-                node: NodeId(0),
-                infra: false,
-                checks: vec![],
-            })
-            .unwrap_err();
+        let observation = Observation::CiFailed {
+            node: NodeId(0),
+            infra: false,
+            checks: vec![],
+        };
+        let value = json!(observation);
+        f.controller.observe("invalid-goals", observation).unwrap();
+        let snapshot = f.controller.snapshot().unwrap();
+        let row = snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == "inbox" && row.value == value)
+            .unwrap();
+        let error = f.controller.consume_kernel_input(&snapshot, row).unwrap_err();
         assert!(
             matches!(error, crate::Error::Invalid(actual) if actual == message),
             "{error:?}"
         );
         assert_eq!(f.controller.world().unwrap(), before);
+        assert_eq!(f.controller.snapshot().unwrap().revision, snapshot.revision);
         assert!(
             !f.controller
                 .snapshot()
