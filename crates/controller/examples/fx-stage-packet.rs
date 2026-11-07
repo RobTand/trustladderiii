@@ -94,6 +94,11 @@ fn fixture(root: &Path) -> Result<Delivery> {
     }))?)
 }
 
+fn staging_destination(root: &Path) -> Result<PathBuf> {
+    Ok(Path::new("/mnt/shared/flux-out/fx2-inputs")
+        .join(root.file_name().ok_or("packet basename required")?))
+}
+
 fn prepare(
     root: &Path,
     bundle: &Path,
@@ -104,8 +109,7 @@ fn prepare(
     if !api::absolute(root) || !root.starts_with("/mnt/shared/flux-out/tl3") || root.exists() {
         return Err("a fresh absolute shared packet destination is required".into());
     }
-    let staging = Path::new("/mnt/shared/flux-out/fx2-inputs")
-        .join(root.file_name().ok_or("packet basename required")?);
+    let staging = staging_destination(root)?;
     if staging.exists() {
         return Err("a fresh disjoint staging destination is required".into());
     }
@@ -288,4 +292,23 @@ fn main() -> Result<()> {
     let generation = arguments[4].to_str().ok_or("UTF-8 generation required")?;
     let paths: Vec<PathBuf> = arguments[..4].iter().map(PathBuf::from).collect();
     prepare(&paths[0], &paths[1], &paths[2], &paths[3], generation)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn staging_namespace_survives_consumer_argument_validation() {
+        let root = Path::new(
+            "/mnt/shared/flux-out/tl3/fx2-staging-c2e2db3250-f107a7b0-20261107T045211Z",
+        );
+        let staging = staging_destination(root).unwrap();
+        assert_eq!(staging, staging_destination(root).unwrap());
+        assert_ne!(staging, staging_destination(&root.with_extension("next")).unwrap());
+        let action = staging.join(format!("{}-{}/tree/action.py", "a".repeat(64), "b".repeat(64)));
+        let argument = action.to_str().unwrap();
+        assert!(argument.len() < 16_384 && !argument.chars().any(char::is_control));
+        assert_eq!(api::durable::safe(argument).unwrap(), argument);
+    }
 }
