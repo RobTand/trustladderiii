@@ -110,6 +110,157 @@ pub(super) fn failures(text: &str) -> Vec<FailedTest> {
         .collect()
 }
 
+// #1574/431: diagnostics must fit inside the existing 1000-character check
+// summary, including markers, before bounded() applies the report-wide cap.
+const MAX_DIAGNOSTICS: usize = 8;
+const MAX_DIAGNOSTIC_BYTES: usize = 256;
+const MAX_DIAGNOSTICS_BYTES: usize = 640;
+const DIAGNOSTICS_OMITTED: &str = "[diagnostics omitted]";
+
+fn byte_excerpt(text: &str, cap: usize, marker: &str) -> String {
+    if text.len() <= cap {
+        return text.into();
+    }
+    let mut end = cap.saturating_sub(marker.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{marker}", &text[..end])
+}
+
+fn log_line(line: &str) -> &str {
+    static TIMESTAMP: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^\d{4}-\d{2}-\d{2}T[0-9:.]+Z ").unwrap());
+    TIMESTAMP
+        .find(line)
+        .map_or(line, |prefix| &line[prefix.end()..])
+}
+
+fn diagnostic_lines(text: &str) -> Vec<String> {
+    static EXCEPTION: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^[A-Za-z_][A-Za-z0-9_.]*(?::|$)").unwrap());
+    static GATE_FAILURE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)\bgate\b.*(?:failed|failure|did not finish)").unwrap());
+    let mut traceback = false;
+    let mut panic_context: usize = 0;
+    let mut seen = BTreeSet::new();
+    let mut diagnostics = Vec::new();
+    for raw in text.lines() {
+        let line = log_line(raw);
+        let message = line.trim();
+        let lower = message.to_ascii_lowercase();
+        let python_header = message == "Traceback (most recent call last):";
+        let exception = traceback && EXCEPTION.is_match(line) && !python_header;
+        let panic = message.starts_with("thread ") && message.contains(" panicked at ");
+        let rust_context = panic_context > 0 && !message.is_empty();
+        let diagnostic = python_header
+            || exception
+            || panic
+            || rust_context
+            || message.contains("::error::")
+            || message.contains("::error ")
+            || message.contains("##[error]")
+            || message.starts_with("ERROR:")
+            || lower.contains("fix with ")
+            || GATE_FAILURE.is_match(message);
+        if diagnostic && seen.insert(message.to_owned()) {
+            diagnostics.push(message.to_owned());
+        }
+        if python_header {
+            traceback = true;
+        } else if exception {
+            traceback = false;
+        }
+        panic_context = if panic {
+            3
+        } else {
+            panic_context.saturating_sub(1)
+        };
+    }
+    diagnostics
+}
+
+fn check_summary(summary: &[String], text: &str, parsed: &[FailedTest]) -> String {
+    // Clean and redact the entire retained window before selecting or clipping:
+    // clipping a credential first can leave a fragment the redactor cannot see.
+    let text = crate::memory::redact_text(&terminal_text(text));
+    let diagnostics = diagnostic_lines(&text);
+    let log_lines = parsed
+        .iter()
+        .map(|test| test.message.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let tail = text
+        .chars()
+        .rev()
+        .take(1000)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>();
+    if diagnostics.is_empty() {
+        return format!("{}\n{log_lines}\n{tail}", summary.join("\n"));
+    }
+    let mut excerpt = String::new();
+    let mut count = 0;
+    let mut seen = BTreeSet::new();
+    for (index, line) in diagnostics.iter().enumerate() {
+        let remaining =
+            MAX_DIAGNOSTICS_BYTES.saturating_sub(excerpt.len() + DIAGNOSTICS_OMITTED.len() + 2);
+        if count == MAX_DIAGNOSTICS || remaining < "[diagnostic clipped]".len() + 1 {
+            break;
+        }
+        if !excerpt.is_empty() {
+            excerpt.push('\n');
+        }
+        if line.len() <= MAX_DIAGNOSTIC_BYTES.min(remaining) {
+            seen.insert(line.clone());
+        }
+        excerpt.push_str(&byte_excerpt(
+            line,
+            MAX_DIAGNOSTIC_BYTES.min(remaining),
+            "[diagnostic clipped]",
+        ));
+        count = index + 1;
+    }
+    if count < diagnostics.len() {
+        excerpt.push('\n');
+        excerpt.push_str(DIAGNOSTICS_OMITTED);
+    }
+    let header = safe(&summary.join("\n"), usize::MAX);
+    let header = header
+        .lines()
+        .filter(|line| !seen.contains(log_line(line).trim()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let header = byte_excerpt(&header, 192, "[summary omitted]");
+    let mut result = format!("{header}\n{excerpt}");
+    seen.extend(header.lines().map(str::to_owned));
+    // Keep target lines and the existing suffix, without re-emitting diagnostics
+    // already retained above. Drop a partial first line only when a complete
+    // following line exists; a complete or single-line suffix remains useful.
+    let tail = if tail.len() < text.len() && !text[..text.len() - tail.len()].ends_with('\n') {
+        tail.split_once('\n')
+            .map_or(tail.as_str(), |(_, rest)| rest)
+    } else {
+        tail.as_str()
+    };
+    let context = crate::memory::redact_text(&terminal_text(&log_lines));
+    let context = context
+        .lines()
+        .chain(tail.lines())
+        .map(|line| log_line(line).trim())
+        .filter(|line| !line.is_empty() && seen.insert((*line).to_owned()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if !context.is_empty() {
+        result.push('\n');
+        let remaining = findings::MAX_MESSAGE_CHARS - result.len();
+        result.push_str(&byte_excerpt(&context, remaining, "[context omitted]"));
+    }
+    result
+}
+
 pub(super) async fn read_checks(
     github: &GitHub,
     repo: &str,
@@ -200,19 +351,7 @@ pub(super) async fn read_checks(
         let text = terminal_text(&text);
         let parsed = failures(&text);
         details.complete &= !parsed.is_empty() && parsed.len() <= findings::MAX_FAILED_TESTS;
-        let log_lines = parsed
-            .iter()
-            .map(|test| test.message.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
-        let tail = text
-            .chars()
-            .rev()
-            .take(1000)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect::<String>();
+        let captured_summary = check_summary(&summary, &text, &parsed);
         for test in parsed {
             fingerprint_parts.push((
                 check.app.as_ref().map(|app| app.id),
@@ -225,7 +364,7 @@ pub(super) async fn read_checks(
         }
         details.checks.push(CiFailure {
             name: check.name.clone(),
-            summary: format!("{}\n{log_lines}\n{tail}", summary.join("\n")),
+            summary: captured_summary,
             url: check.details_url.clone(),
         });
     }
