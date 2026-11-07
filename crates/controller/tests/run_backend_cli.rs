@@ -2603,7 +2603,7 @@ fn undispatched_cancel_commits_without_runtime_debt_or_native_effect() {
     assert_eq!(f.submit()["kind"], "unknown");
     assert!(!f.state().dispatched);
     let frames = f.call(json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}));
-    assert_eq!(frames.last().unwrap()["result"]["ack"]["terminal"]["ending"], "cancelled", "{frames:?}");
+    assert_eq!(frames.last().unwrap()["result"]["acknowledgement"]["terminal"]["ending"], "cancelled", "{frames:?}");
     assert_eq!(f.state().terminal.unwrap().ending, Ending::Cancelled);
     let debt = f.options.journal_root.join("cleanup-debt").join(&f.request.runtime.manifest_digest);
     assert!(!debt.exists() || fs::read_dir(debt).unwrap().next().is_none());
