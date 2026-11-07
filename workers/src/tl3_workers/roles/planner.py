@@ -1191,11 +1191,6 @@ def check_reply(inputs, reply, *, rehearsals=None, plan_errors=None):
             raise repair_error
         if plan_errors is not None:
             plan_errors.append(repair_error)
-    if reply['kind'] == 'leaf' and not violations:
-        from tl3_harness.action_policy import admit_plan
-        admit_plan(reply['checks'], len(inputs['ingest']['goals']),
-                   [index for index, goal in enumerate(inputs['ingest']['goals'])
-                    if goal.get('stage', 'maker') != 'publishing'])
     return None
 
 
