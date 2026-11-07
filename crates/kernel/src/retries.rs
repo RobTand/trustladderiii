@@ -52,17 +52,65 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox, report: &mut
                 retries_facts::incident(before_failed@, *m, needs_rob);
             }
         }
-        raise_incident(w, i, needs_rob, out);
+        kernel_snapshot! { ready = w.nodes@ }
+        raise_failed_run_incident(w, i, needs_rob, out);
+        kernel_proof! {
+            retries_facts::finish_failed_incident(before_failed@, ready@, w.nodes@,
+                i as int, needs_rob, before_failed_out@, *out);
+        }
     }
     kernel_proof! {
         if before_failed@.run_failures == 0 {
             assert(w.nodes@[i as int] == retries_facts::failed_run(before_failed@)) by {
                 retries_facts::restarted(before_failed@, w.nodes@[i as int]);
             }
+            assert(port_t860_contracts::failed_post(before_failed@, w.nodes@[i as int], before_failed_out@, *out)) by {
+                retries_facts::failed_result(before_failed@, w.nodes@[i as int], before_failed_out@, *out);
+            }
         }
-        assert(port_t860_contracts::failed_post(before_failed@, w.nodes@[i as int], before_failed_out@, *out)) by {
-            retries_facts::failed_result(before_failed@, w.nodes@[i as int], before_failed_out@, *out);
-        }
+    }
+}
+}
+
+kernel_fn! {
+/// Private query boundary for the failed-run incident composition.
+fn raise_failed_run_incident(w: &mut World, i: usize, needs_rob: bool,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        holding(old(w).nodes@[i as int].phase) ==>
+            old(w).nodes@[i as int].generation < u64::MAX,
+    ensures retries_facts::incident_write(old(w).nodes@, final(w).nodes@, i as int, needs_rob),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@[i as int].generation as int
+            == old(w).nodes@[i as int].generation as int
+                + if holding(old(w).nodes@[i as int].phase) { 1int } else { 0int },
+        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
+        final(w).nodes@[i as int].credit == old(w).nodes@[i as int].credit,
+        final(w).nodes@[i as int].question == old(w).nodes@[i as int].question,
+        final(w).nodes@[i as int].waiting_incident,
+        final(w).nodes@[i as int].incident_needs_rob == needs_rob,
+        final(w).nodes@[i as int].ticket.is_none(),
+        final(w).nodes@[i as int].run_failures == old(w).nodes@[i as int].run_failures,
+        final(w).nodes@[i as int].run_incidents == old(w).nodes@[i as int].run_incidents,
+        final(w).nodes@[i as int].fx_failures == old(w).nodes@[i as int].fx_failures,
+        final(w).nodes@[i as int].fx_incidents == old(w).nodes@[i as int].fx_incidents,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question == old(w).next_question,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len == old(out).len + 1,
+        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+] {
+    kernel_snapshot! { before_nodes = w.nodes@ }
+    raise_incident(w, i, needs_rob, out);
+    kernel_proof! {
+        retries_facts::pack_incident_write(before_nodes@, w.nodes@, i as int, needs_rob);
     }
 }
 }

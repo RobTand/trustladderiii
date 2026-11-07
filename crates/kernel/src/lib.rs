@@ -2324,6 +2324,10 @@ mod port_t860_link;
 mod reply_equivalence;
 
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/node_writes.rs"]
+mod node_writes;
+
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/retries_facts.rs"]
 mod retries_facts;
 

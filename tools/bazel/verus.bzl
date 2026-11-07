@@ -867,6 +867,12 @@ def verus_proofs():
             "kernel::reply_equivalence::admitted_extraction_matches_original": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
             "kernel::reply_equivalence::audit_disagreement_runs_once_before_reset": "Test-only #860 extraction equivalence reference, generator, or assertion; executed by the kernel library tests.",
             "kernel::retries_facts::failed_run": "Q50 hidden failed-run update, typechecked in every selection.",
+            "kernel::node_writes::write": "Opaque storage write, typechecked in every selection; four explicit projection proofs.",
+            "kernel::retries_facts::incident_write": "Opaque private retries incident write, typechecked in every selection; explicit fold and consumer proofs.",
+            "kernel::reply_equivalence::run_failed::reference::run_failed": "Test-only failed-run extraction equivalence; executed by kernel library tests.",
+            "kernel::reply_equivalence::run_failed::compare_failed": "Test-only failed-run extraction equivalence; executed by kernel library tests.",
+            "kernel::reply_equivalence::run_failed::incident_call_matches_original": "Test-only failed-run extraction equivalence; executed by kernel library tests.",
+            "kernel::reply_equivalence::run_failed::second_failure_emits_one_incident": "Test-only failed-run extraction equivalence; executed by kernel library tests.",
             "kernel::retries_facts::abandoned": "Q30 operation ownership update, typechecked in every selection.",
             "kernel::port_t860_contracts::admissible": "#860: nonrecursive acceptance table predicate",
             "kernel::port_t860_contracts::stopping_post": "#860: nonrecursive release frame predicate",
@@ -1204,6 +1210,13 @@ def verus_proofs():
             "retries_facts_restarted": ("kernel::retries_facts#restarted", 1),
             "retries_facts_incident": ("kernel::retries_facts#incident", 1),
             "retries_facts_failed_result": ("kernel::retries_facts#failed_result", 1),
+            "node_writes_length": ("kernel::node_writes#write_length", 1),
+            "node_writes_index": ("kernel::node_writes#write_index", 1),
+            "node_writes_other": ("kernel::node_writes#write_other", 1),
+            "node_writes_from_frame": ("kernel::node_writes#write_from_frame", 1),
+            "retries_facts_pack_incident_write": ("kernel::retries_facts#pack_incident_write", 1),
+            "retries_facts_finish_failed_incident": ("kernel::retries_facts#finish_failed_incident", 1),
+            "retries_raise_failed_run_incident": ("kernel::retries#raise_failed_run_incident", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
