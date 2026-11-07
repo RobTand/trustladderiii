@@ -1,5 +1,9 @@
 use super::*;
 
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/dependencies.rs"]
+pub(super) mod lemmas;
+
 #[cfg_attr(
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
@@ -17,6 +21,47 @@ pub struct Dependency {
 
 #[cfg(verus_keep_ghost)]
 verus! {
+/// An actual live declaration, independent of either traversal's storage.
+#[verifier::opaque]
+pub(super) open spec fn active_edge(w: World, from: NodeId, to: NodeId) -> bool {
+    from.0 < w.nodes@.len() && to.0 < w.nodes@.len()
+        && !(w.nodes@[from.0 as int].phase is Closed)
+        && exists|i: int| 0 <= i < w.dependencies@.len()
+            && w.dependencies@[i].node == from
+            && w.dependencies@[i].target.request == Some(to)
+            && !w.dependencies@[i].rejected
+            && w.dependencies@[i].status == DependencyStatus::Pending
+}
+
+/// Finite paths include a singleton at any valid vertex, including Closed.
+#[verifier::opaque]
+pub(super) open spec fn path(w: World, route: Seq<NodeId>) -> bool {
+    route.len() > 0
+        && (forall|i: int| 0 <= i < route.len() ==> route[i].0 < w.nodes@.len())
+        && (forall|i: int| 0 <= i < route.len() - 1
+            ==> active_edge(w, route[i], route[i + 1]))
+}
+
+#[verifier::opaque]
+pub(super) open spec fn reachable(w: World, from: NodeId, to: NodeId) -> bool {
+    exists|route: Seq<NodeId>| path(w, route)
+        && route[0] == from && route[route.len() - 1] == to
+}
+
+#[verifier::opaque]
+pub(super) open spec fn acyclic(w: World) -> bool {
+    forall|from: NodeId, to: NodeId| active_edge(w, from, to)
+        ==> !reachable(w, to, from)
+}
+
+/// Closed vertices other than the sought endpoint need no expansion.
+#[verifier::opaque]
+pub(super) open spec fn explored(w: World, seen: Seq<bool>, to: NodeId,
+    node: NodeId) -> bool {
+    node.0 < w.nodes@.len() && (seen[node.0 as int]
+        || ((w.nodes@[node.0 as int].phase is Closed) && node != to))
+}
+
 /// State-table planning admission / #693 / #771: every prerequisite is delivered.
 pub closed spec fn delivered(dependencies: Seq<Dependency>, node: NodeId) -> bool {
     forall|i: int| 0 <= i < dependencies.len() && dependencies[i].node == node
@@ -308,14 +353,25 @@ impl World {
     fn dependency_path(&self, from: NodeId, to: NodeId) -> (result: bool) [
         requires from.0 < self.nodes@.len(), to.0 < self.nodes@.len(),
             edges_indexable(*self),
-    ] proof [reveal(edges_indexable);] {
+        ensures result == reachable(*self, from, to),
+    ] proof [reveal(edges_indexable); reveal(active_edge); reveal(explored);] {
+        kernel_proof! { lemmas::reflexive(*self, from); }
         if self.nodes.len() <= 64 {
             // Most worlds fit in a bitset. Repeated edge relaxation reaches
             // the same nodes as the unbounded traversal below, without allocation.
             let mut seen = 1u64 << from.0;
+            kernel_proof! {
+                assert forall|n: NodeId| n.0 < self.nodes@.len()
+                    implies (seen & (1u64 << n.0) != 0) == (n == from) by {
+                    lemmas::singleton_bit(from.0, n.0);
+                }
+            }
             kernel_loop! { [
-                invariant self.nodes.len() <= 64, to.0 < self.nodes@.len(),
-                    edges_indexable(*self),
+                invariant self.nodes.len() <= 64, from.0 < self.nodes@.len(),
+                    to.0 < self.nodes@.len(), edges_indexable(*self),
+                    seen & (1u64 << from.0) != 0,
+                    forall|n: NodeId| n.0 < self.nodes@.len() && seen & (1u64 << n.0) != 0
+                        ==> reachable(*self, from, n),
                 decreases u64::MAX as int - seen as int,
             ] {
                 if seen & (1u64 << to.0) != 0 {
@@ -326,6 +382,19 @@ impl World {
                 kernel_while! { (index < self.dependencies.len()) [
                     invariant index <= self.dependencies.len(), seen >= before,
                         self.nodes.len() <= 64, edges_indexable(*self),
+                        from.0 < self.nodes@.len(), to.0 < self.nodes@.len(),
+                        seen & (1u64 << from.0) != 0,
+                        forall|n: NodeId| n.0 < self.nodes@.len()
+                            && before & (1u64 << n.0) != 0 ==> seen & (1u64 << n.0) != 0,
+                        forall|n: NodeId| n.0 < self.nodes@.len() && seen & (1u64 << n.0) != 0
+                            ==> reachable(*self, from, n),
+                        forall|j: int| 0 <= j < index
+                            && !self.dependencies@[j].rejected
+                            && self.dependencies@[j].status == DependencyStatus::Pending
+                            && !(self.nodes@[self.dependencies@[j].node.0 as int].phase is Closed)
+                            && before & (1u64 << self.dependencies@[j].node.0) != 0
+                            && self.dependencies@[j].target.request.is_some()
+                            ==> seen & (1u64 << self.dependencies@[j].target.request.unwrap().0) != 0,
                     decreases self.dependencies.len() - index,
                 ] {
                     let dependency = self.dependencies[index];
@@ -336,13 +405,36 @@ impl World {
                     {
                         if let Some(target) = dependency.target.request {
                             let mask = 1u64 << target.0;
-                            kernel_proof! { assert((seen | mask) >= seen) by(bit_vector); }
+                            kernel_proof! {
+                                assert(active_edge(*self, dependency.node, target));
+                                lemmas::extend(*self, from, dependency.node, target);
+                                assert forall|n: NodeId| n.0 < self.nodes@.len()
+                                    implies ((seen | mask) & (1u64 << n.0) != 0)
+                                        == (seen & (1u64 << n.0) != 0 || n == target) by {
+                                    lemmas::union_bit(seen, target.0, n.0);
+                                }
+                                assert((seen | mask) >= seen) by(bit_vector);
+                            }
                             seen |= mask;
                         }
                     }
                     index += 1;
                 } }
                 if seen == before {
+                    kernel_proof! {
+                        let cut = Set::new(|n: NodeId| n.0 < self.nodes@.len()
+                            && seen & (1u64 << n.0) != 0);
+                        assert forall|a: NodeId, b: NodeId| cut.contains(a)
+                            && active_edge(*self, a, b) implies cut.contains(b) by {
+                            let j = choose|j: int| 0 <= j < self.dependencies@.len()
+                                && self.dependencies@[j].node == a
+                                && self.dependencies@[j].target.request == Some(b)
+                                && !self.dependencies@[j].rejected
+                                && self.dependencies@[j].status == DependencyStatus::Pending;
+                            assert(seen & (1u64 << b.0) != 0);
+                        }
+                        lemmas::cut_excludes(*self, from, to, cut);
+                    }
                     return false;
                 }
             } }
@@ -358,7 +450,16 @@ impl World {
         let mut pending = alloc::vec![from];
         kernel_loop! { [
             invariant seen.len() == self.nodes.len(), edges_indexable(*self),
-                forall|i: int| 0 <= i < pending@.len() ==> pending@[i].0 < self.nodes@.len(),
+                from.0 < self.nodes@.len(), to.0 < self.nodes@.len(),
+                !seen@[to.0 as int],
+                forall|n: NodeId| n.0 < seen.len() && seen@[n.0 as int]
+                    ==> reachable(*self, from, n),
+                forall|i: int| 0 <= i < pending@.len() ==> pending@[i].0 < self.nodes@.len()
+                    && reachable(*self, from, pending@[i]),
+                explored(*self, seen@, to, from) || pending@.contains(from),
+                forall|a: NodeId, b: NodeId| explored(*self, seen@, to, a)
+                    && active_edge(*self, a, b)
+                    ==> explored(*self, seen@, to, b) || pending@.contains(b),
             decreases unseen_prefix(seen@, seen@.len()) * (self.dependencies@.len() + 1)
                 + pending@.len(),
         ] {
@@ -366,7 +467,26 @@ impl World {
                 * (self.dependencies@.len() + 1) + pending@.len() }
             kernel_snapshot! { before_unseen = unseen_prefix(seen@, seen@.len()) }
             kernel_snapshot! { before_pending = pending@.len() }
-            let Some(node) = pending.pop() else { return false; };
+            kernel_snapshot! { frontier_before = pending@ }
+            let Some(node) = pending.pop() else {
+                kernel_proof! {
+                    let cut = Set::new(|n: NodeId| explored(*self, seen@, to, n));
+                    lemmas::cut_excludes(*self, from, to, cut);
+                }
+                return false;
+            };
+            kernel_proof! {
+                assert(frontier_before@[frontier_before@.len() - 1] == node);
+                assert(node.0 < self.nodes@.len());
+                assert(reachable(*self, from, node));
+                assert forall|n: NodeId| frontier_before@.contains(n) && n != node
+                    implies pending@.contains(n) by {
+                    let j = choose|j: int| 0 <= j < frontier_before@.len()
+                        && frontier_before@[j] == n;
+                    assert(j < pending@.len());
+                    assert(pending@[j] == n);
+                }
+            }
             if node == to {
                 return true;
             }
@@ -392,9 +512,26 @@ impl World {
             kernel_while! { (edge < self.dependencies.len()) [
                 invariant edge <= self.dependencies.len(), edges_indexable(*self),
                     seen.len() == self.nodes.len(),
+                    from.0 < self.nodes@.len(), to.0 < self.nodes@.len(),
+                    node.0 < self.nodes@.len(), node != to, index == node.0,
+                    !(self.nodes@[index as int].phase is Closed), seen@[index as int],
+                    !seen@[to.0 as int], reachable(*self, from, node),
+                    forall|n: NodeId| n.0 < seen.len() && seen@[n.0 as int]
+                        ==> reachable(*self, from, n),
+                    explored(*self, seen@, to, from) || pending@.contains(from),
+                    forall|a: NodeId, b: NodeId| a != node && explored(*self, seen@, to, a)
+                        && active_edge(*self, a, b)
+                        ==> explored(*self, seen@, to, b) || pending@.contains(b),
+                    forall|j: int| 0 <= j < edge && self.dependencies@[j].node == node
+                        && !self.dependencies@[j].rejected
+                        && self.dependencies@[j].status == DependencyStatus::Pending
+                        && self.dependencies@[j].target.request.is_some()
+                        ==> explored(*self, seen@, to, self.dependencies@[j].target.request.unwrap())
+                            || pending@.contains(self.dependencies@[j].target.request.unwrap()),
                     unseen_prefix(seen@, seen@.len()) * (self.dependencies@.len() + 1)
                         + pending@.len() + (self.dependencies@.len() - edge) < before_metric@,
-                    forall|i: int| 0 <= i < pending@.len() ==> pending@[i].0 < self.nodes@.len(),
+                    forall|i: int| 0 <= i < pending@.len() ==> pending@[i].0 < self.nodes@.len()
+                        && reachable(*self, from, pending@[i]),
                 decreases self.dependencies.len() - edge,
             ] {
                 let dependency = self.dependencies[edge];
@@ -403,11 +540,28 @@ impl World {
                     && dependency.status == DependencyStatus::Pending
                 {
                     if let Some(target) = dependency.target.request {
+                        kernel_proof! {
+                            assert(active_edge(*self, node, target));
+                            lemmas::extend(*self, from, node, target);
+                        }
                         pending.push(target);
                     }
                 }
                 edge += 1;
             } }
+            kernel_proof! {
+                assert forall|a: NodeId, b: NodeId| explored(*self, seen@, to, a)
+                    && active_edge(*self, a, b)
+                    implies explored(*self, seen@, to, b) || pending@.contains(b) by {
+                    if a == node {
+                        let j = choose|j: int| 0 <= j < self.dependencies@.len()
+                            && self.dependencies@[j].node == a
+                            && self.dependencies@[j].target.request == Some(b)
+                            && !self.dependencies@[j].rejected
+                            && self.dependencies@[j].status == DependencyStatus::Pending;
+                    }
+                }
+            }
         } }
     }
     }
@@ -418,10 +572,19 @@ impl World {
     pub fn dependency_graph_acyclic(&self) -> (result: bool) [
         requires edges_indexable(*self),
         ensures no_active_graph_edges(*self) ==> result,
-    ] proof [reveal(edges_indexable); reveal(no_active_graph_edges);] {
+            result == acyclic(*self),
+    ] proof [reveal(edges_indexable); reveal(no_active_graph_edges);
+        reveal(active_edge); reveal(acyclic);] {
         let mut index = 0usize;
         kernel_while! { (index < self.dependencies.len()) [
             invariant index <= self.dependencies.len(), edges_indexable(*self),
+                forall|j: int| 0 <= j < index
+                    && !(self.nodes@[self.dependencies@[j].node.0 as int].phase is Closed)
+                    && !self.dependencies@[j].rejected
+                    && self.dependencies@[j].status == DependencyStatus::Pending
+                    && self.dependencies@[j].target.request.is_some()
+                    ==> !reachable(*self, self.dependencies@[j].target.request.unwrap(),
+                        self.dependencies@[j].node),
             decreases self.dependencies.len() - index,
         ] {
             let d = &self.dependencies[index];
@@ -429,11 +592,24 @@ impl World {
                 && !d.rejected && d.status == DependencyStatus::Pending
             {
                 if let Some(target) = d.target.request {
-                    if self.dependency_path(target, d.node) { return false; }
+                    if self.dependency_path(target, d.node) {
+                        kernel_proof! { assert(active_edge(*self, d.node, target)); }
+                        return false;
+                    }
                 }
             }
             index += 1;
         } }
+        kernel_proof! {
+            assert forall|a: NodeId, b: NodeId| active_edge(*self, a, b)
+                implies !reachable(*self, b, a) by {
+                let j = choose|j: int| 0 <= j < self.dependencies@.len()
+                    && self.dependencies@[j].node == a
+                    && self.dependencies@[j].target.request == Some(b)
+                    && !self.dependencies@[j].rejected
+                    && self.dependencies@[j].status == DependencyStatus::Pending;
+            }
+        }
         true
     }
     }
