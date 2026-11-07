@@ -5,12 +5,11 @@ import re
 from tl3_harness.model import named
 from tl3_harness.model import NATIVE_THREAD_ENVIRONMENT, RESERVED_ENVIRONMENT, RESERVED_PREFIXES, MAX_DELAY_SECONDS, MAX_TOTAL_DELAY_SECONDS
 from tl3_workers.contracts import schema
-from tl3_harness.rules import Rule, evaluate_rows as evaluate, register_rows as register
-from tl3_harness.action_policy import render_rows as render_all
+from tl3_workers.rules import Allowed, Edit, Name, Rule, evaluate, register, render_all
 
 
-EVIDENCE_FIELD = {'kind': 'field', 'value': '/evidence_contract'}
-EVIDENCE_ALLOWED = {'kind': 'schema', 'keyword': 'type', 'value': schema('ingest-reply')['$defs']['evidence_contract']['type']}
+EVIDENCE_FIELD = Name('field', '/evidence_contract')
+EVIDENCE_ALLOWED = Allowed('type', schema('ingest-reply')['$defs']['evidence_contract']['type'])
 
 
 def _missing_contract(facts):
@@ -23,8 +22,8 @@ def _missing_contract(facts):
 CONTRACT_MISSING = register(Rule(
     'evidence.contract_missing', _missing_contract,
     lambda facts: (facts['field'],), lambda facts: EVIDENCE_ALLOWED,
-    lambda facts: {'kind': 'edit', 'pointer': facts['field']['value'], 'op': 'add', 'allowed': EVIDENCE_ALLOWED},
-    example={'inputs': {'tool_capabilities': []}, 'reply': {}}, witness={'evidence_contract': []}), roles=('ingest', 'audit'))
+    lambda facts: Edit(facts['field'], 'add', EVIDENCE_ALLOWED),
+    example={'inputs': {'tool_capabilities': []}, 'reply': {}}, witness=[]), roles=('ingest', 'audit'))
 
 
 # #931/Q27: this one row owns the conservative prose fallback. Full clauses
@@ -170,12 +169,12 @@ def _route_context(facts):
             if field == 'goals' and isinstance(entry, dict) and set(entry) - {'description', 'verification'}:
                 route = False
             if route:
-                removed.append({'kind': 'field', 'value': f'/{field}/{index}'})
+                removed.append(Name('field', f'/{field}/{index}'))
                 context.append(text)
             else:
                 kept.append(entry)
         if removed:
-            changes.append({'subjects': tuple(removed), 'pointer': {'kind': 'field', 'value': '/' + field}, 'value': kept})
+            changes.append({'subjects': tuple(removed), 'pointer': Name('field', '/' + field), 'value': kept})
     if context and facts['role'] == 'ingest':
         if reply.get('kind') != 'brief' or not isinstance(reply.get('brief'), str):
             return ()  # An early-end reply has no context field to preserve.
@@ -188,26 +187,20 @@ def _route_context(facts):
             if text not in brief:
                 brief += '\n\n' + text
         if brief != reply['brief']:
-            changes.append({'subjects': ({'kind': 'field', 'value': '/brief'},), 'pointer': {'kind': 'field', 'value': '/brief'}, 'value': brief})
+            changes.append({'subjects': (Name('field', '/brief'),), 'pointer': Name('field', '/brief'), 'value': brief})
     if (facts['role'] == 'audit' and reply.get('verdict') == 'disagree'
-            and any(item['pointer']['value'] == '/objections' and not item['value'] for item in changes)):
-        changes.append({'subjects': ({'kind': 'field', 'value': '/verdict'},), 'pointer': {'kind': 'field', 'value': '/verdict'}, 'value': 'agree'})
+            and any(item['pointer'].value == '/objections' and not item['value'] for item in changes)):
+        changes.append({'subjects': (Name('field', '/verdict'),), 'pointer': Name('field', '/verdict'), 'value': 'agree'})
     return changes
 
 
 _ROUTE_EXAMPLE = {'inputs': {}, 'role': 'audit', 'reply': {
-    'kind': 'brief', 'brief': 'Original summary.',
     'verdict': 'disagree', 'objections': ['Read each run\'s own verdict and log.']}}
-_ROUTE_WITNESSES = {
-    'audit': {**_ROUTE_EXAMPLE['reply'], 'verdict': 'agree', 'objections': []},
-    'ingest': {**_ROUTE_EXAMPLE['reply'], 'objections': [],
-               'brief': 'Original summary.\n\nRead each run\'s own verdict and log.'},
-}
 ROUTE_CONTEXT = register(Rule(
     'evidence.route_context', _route_context, lambda facts: facts['subjects'],
-    lambda facts: {'kind': 'schema', 'keyword': 'const', 'value': facts['value']},
-    lambda facts: {'kind': 'edit', 'pointer': facts['pointer']['value'], 'op': 'replace', 'allowed': {'kind': 'schema', 'keyword': 'const', 'value': facts['value']}},
-    example=_ROUTE_EXAMPLE, witness=_ROUTE_WITNESSES), roles=('ingest', 'audit'))
+    lambda facts: Allowed('const', facts['value']),
+    lambda facts: Edit(facts['pointer'], 'replace', Allowed('const', facts['value'])),
+    example=_ROUTE_EXAMPLE, witness={'verdict': 'agree', 'objections': []}), roles=('ingest', 'audit'))
 
 
 def contract_violations(inputs, reply, *, role='ingest'):
@@ -313,7 +306,7 @@ def proof_applicability(goals, checks, defined=None, *, campaign=False, missing_
                         errors.append(named('proof.subject_identify', prefix + ' must identify its subjects in proof.subjects: ' + ', '.join(obligation['subjects']), dict(check=check_index, goal=index, description=goals[index]["description"], subjects=obligation["subjects"])))
                     else:
                         missing_subjects.setdefault(check_index, set()).update(missing)
-                if obligation['observer'] == 'new' and any(defined(node) for node in check['tests']):
+                if obligation['observer'] == 'new' and any(defined(node) for node in check['node_ids']):
                     errors.append(named('proof.new_observer', prefix + ' requires a new deterministic observer; an existing base test is insufficient.', dict(check=check_index, goal=index, description=goals[index]["description"], nodes=check["node_ids"])))
     return errors
 

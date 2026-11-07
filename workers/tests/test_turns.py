@@ -1,5 +1,6 @@
 """A dropped model turn retries once; an invalid reply gets one tool-free repair turn."""
 import copy
+from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -540,6 +541,7 @@ def test_resume_keeps_compaction_and_cache_pricing(maker_request, tmp_path, monk
 
 @pytest.mark.durability
 def test_resume_keeps_an_exhausted_budget(maker_request, tmp_path, monkeypatch):
+    from dataclasses import replace
     from tl3_workers.exploration import ExplorationBudget
     from tl3_workers.roles import maker
 
@@ -573,6 +575,16 @@ def test_dropped_call_retry_keeps_the_final_answer_reserve(request_doc, monkeypa
     assert len(model.calls) == 2
 
 
+def test_repair_prompt_caps_an_echoed_invalid_reply(tmp_path, monkeypatch):
+    doc = classifier_request(tmp_path)
+    model = install(monkeypatch, [reply({"kind": "remark", "extra": "x" * 20_000}), reply({"kind": "remark"})])
+    runtime.run(doc, lambda _: None)
+    repair = model.calls[-1][0][-1]
+    assert isinstance(repair, HumanMessage)
+    assert len(repair.text.encode()) <= 2_048 + 512
+    assert 'schema.additionalproperties' in repair.text
+    assert '/extra' in repair.text and 'remove' in repair.text
+    assert "x" * 100 not in repair.text
 
 
 @pytest.mark.durability
@@ -593,6 +605,14 @@ def test_environment_evidence_survives_a_checkpoint_round_trip():
     assert restored.detail({"action_key": key}) is None and restored.detail({"tool_error": error}) is None
 
 
+@pytest.mark.parametrize('message, expected', [
+    ('ordinary reviewer failure', 'ordinary reviewer failure'),
+    ('head-' + 'x' * 3000 + '-tail', 'head-' + 'x' * 1531 + ' [...] ' + 'x' * 495 + '-tail'),
+], ids=['short', 'truncated'])
+def test_non_planner_repair_message_is_byte_identical(message, expected):
+    from tl3_workers.turns import repair_message
+
+    assert repair_message(ValueError(message)).encode() == expected.encode()
 
 
 def test_repair_reports_schema_and_independent_missing_contract():
@@ -618,18 +638,128 @@ def test_repair_reports_schema_and_independent_missing_contract():
     assert seen == [False, True] and control.repair_attempts == 1
 
 
+@pytest.mark.parametrize('constraint,bad,good', [
+    ({'enum': ['approve', 'changes']}, 'maybe', 'approve'),
+    ({'const': 'done'}, 'maybe', 'done'),
+    ({'pattern': '^ok$'}, 'bad', 'ok'),
+    ({'type': 'integer'}, 'bad', 2),
+    ({'minLength': 2}, '', 'ok'),
+])
+def test_schema_row_rendered_repair_passes_its_guard(constraint, bad, good):
+    from jsonschema import Draft202012Validator
+    from tl3_workers.contracts import schema_violations
+    from tl3_workers.rules import apply_edit, permits, register
+    validator = Draft202012Validator({'properties': {'a/b~c': constraint}})
+    original = {'a/b~c': bad, 'untouched': True}
+    violations = schema_violations(validator.iter_errors(original))
+    assert len(violations) == 1
+    violation = violations[0]
+    text = violation.render(role='schema')
+    assert '/a~1b~0c' in text and 'Allowed' in text and 'replace' in text
+    assert json.dumps(next(iter(constraint.values()))) in text
+    facts = {**violation.facts, 'reply': original}
+    register(replace(violation.rule, example=facts, witness=good), roles=('schema',))
+    fixed = apply_edit(original, violation.rule.repair(facts), good)
+    assert permits(violations, original, fixed, role='schema')
+    assert validator.is_valid(fixed)
+    assert not permits(violations, original, {**fixed, 'untouched': False}, role='schema')
+    assert not permits(violations, original, {**fixed, 'untouched': 1}, role='schema')
 
 
+def test_evidence_row_has_a_bounded_renderable_repair():
+    from tl3_workers.evidence import CONTRACT_MISSING, contract_violations
+    from tl3_workers.rules import apply_edit, permits, register
+    facts = {'inputs': {'tool_capabilities': []}, 'reply': {'kind': 'brief'}}
+    register(replace(CONTRACT_MISSING, example=facts, witness=[]), roles=('ingest',))
+    violations = contract_violations(**facts)
+    text = violations[0].render(role='ingest')
+    assert '/evidence_contract' in text and 'array' in text and 'add' in text
+    fixed = apply_edit(facts['reply'], CONTRACT_MISSING.repair(violations[0].facts), [])
+    assert permits(violations, facts['reply'], fixed, role='ingest')
+    assert not contract_violations(facts['inputs'], fixed)
+    assert not permits(violations, facts['reply'], {**fixed, 'evidence_contract': 'not an array'}, role='ingest')
 
 
+def test_registration_rejects_unrenderable_and_self_rejecting_rows():
+    from tl3_workers.evidence import CONTRACT_MISSING, EVIDENCE_FIELD
+    from tl3_workers.rules import Allowed, CantMeet, Edit, register
+    facts = {'inputs': {'tool_capabilities': []}, 'reply': {}}
+    with pytest.raises(ValueError, match='renderable repair'):
+        register(replace(CONTRACT_MISSING, repair=lambda facts: None, example=facts, witness=[]), roles=('ingest',))
+    with pytest.raises(ValueError, match='renderable repair'):
+        register(replace(CONTRACT_MISSING, repair=lambda facts: CantMeet(''), example=facts), roles=('ingest',))
+    wrong = replace(CONTRACT_MISSING,
+        repair=lambda facts: Edit(facts['field'], 'add', Allowed('type', 'string')),
+        allowed=lambda facts: Allowed('type', 'string'))
+    with pytest.raises(ValueError, match='own witness'):
+        register(replace(wrong, example=facts, witness=[]), roles=('ingest',))
+    self_rejecting = replace(CONTRACT_MISSING, check=lambda facts: ({'field': EVIDENCE_FIELD},))
+    with pytest.raises(ValueError, match='own witness'):
+        register(replace(self_rejecting, example=facts, witness=[]), roles=('ingest',))
 
 
+def test_typed_subjects_and_gating_report_all_independent_violations():
+    from tl3_workers.rules import Allowed, CantMeet, Edit, Name, Rule, evaluate, register, render_all
+    subjects = (Name('field', '/proof/observer_support/1'), Name('path', 'tests/test_x.py'),
+                Name('symbol', 'tests/test_x.py::test_x'))
+    row = register(Rule('proof.subject', lambda facts: ({}, {}), lambda facts: subjects,
+               lambda facts: Allowed('enum', ['observer']), lambda facts: CantMeet('subject identity differs'),
+               example={'reply': {}}, witness={'kind': 'cant_meet'}), roles=('planner', 'maker'))
+    text = render_all(evaluate((row,), {}, role='planner'), role='planner')
+    assert text.count('proof.subject') == 2
+    assert 'reply field' in text and 'source path' in text and 'symbol' in text
+    assert 'Further checks were not run' not in text
+    calls = []
+    later = replace(row, id='proof.later', check=lambda facts: calls.append(True) or ())
+    gating = replace(row, gating=True)
+    found = evaluate((gating, later), {}, role='planner')
+    assert not calls and len(found) == 2
+    assert all('Further checks were not run' in item.render(role='planner') for item in found)
+    register(replace(gating, example={'reply': {}}), roles=('planner',))
+    with pytest.raises(ValueError, match='field pointer'):
+        Edit(subjects[1], 'replace', Allowed('enum', ['observer']))
 
 
+def test_schema_remove_extra_field_uses_the_same_guard():
+    from jsonschema import Draft202012Validator
+    from tl3_workers.contracts import schema_violations
+    from tl3_workers.rules import apply_edit, permits, register
+    validator = Draft202012Validator({'type': 'object', 'properties': {'kind': {'const': 'remark'}},
+                                     'additionalProperties': False})
+    original = {'kind': 'remark', 'extra': 'x' * 20_000}
+    violations = schema_violations(validator.iter_errors(original))
+    violation, = violations
+    register(replace(violation.rule, example={**violation.facts, 'reply': original}), roles=('schema',))
+    fixed = apply_edit(original, violation.rule.repair(violation.facts))
+    assert permits(violations, original, fixed, role='schema') and validator.is_valid(fixed)
+    assert '/extra' in violation.render(role='schema') and 'remove' in violation.render(role='schema')
 
 
+def test_all_schema_rows_survive_the_legacy_message_limit():
+    from jsonschema import Draft202012Validator
+    from tl3_workers.contracts import schema_violations
+    from tl3_workers.turns import REPAIR_MESSAGE_BYTES, repair_message
+    validator = Draft202012Validator({'type': 'array', 'items': {'enum': ['ok']}})
+    errors = list(validator.iter_errors(['bad'] * 30))
+    errors[0].rule_violations = schema_violations(errors)
+    message = repair_message(errors[0])
+    assert len(message.encode()) > REPAIR_MESSAGE_BYTES
+    assert message.count('schema.enum:') == 30
+    assert all(f'reply field "/{index}"' in message for index in range(30))
 
 
+def test_composite_schema_row_preserves_reference_context():
+    from jsonschema import Draft202012Validator
+    from tl3_workers.contracts import schema_violations
+    from tl3_workers.rules import register
+    proposal = {'$defs': {'text': {'type': 'string'}}, 'oneOf': [
+        {'type': 'object', 'properties': {'kind': {'const': 'x'}, 'item': {'$ref': '#/$defs/text'}},
+         'required': ['kind', 'item']},
+        {'type': 'object', 'properties': {'kind': {'const': 'y'}}, 'required': ['kind']}]}
+    bad = {'kind': 'unknown', 'item': 3}
+    violation, = schema_violations(Draft202012Validator(proposal).iter_errors(bad))
+    register(replace(violation.rule, example={**violation.facts, 'reply': bad}, witness={'kind': 'x', 'item': 'ok'}), roles=('schema',))
+    assert 'oneOf' in violation.render(role='schema') and 'replace' in violation.render(role='schema')
 
 
 def test_pilot_repair_rejects_changes_outside_its_row():
@@ -647,42 +777,115 @@ def test_pilot_repair_rejects_changes_outside_its_row():
     assert control.repair_attempts == 1 and len(history) == 1
 
 
+def test_worker_rule_adapter_reuses_the_harness_core():
+    from tl3_harness import rules as core
+    from tl3_workers import rules as adapter
+    assert adapter.Rule is core.Rule and adapter.Violation is core.Violation
+    assert adapter.permits is core.permits and adapter.register is core.register
+    assert adapter.PLANNER is core.terminal_for('planner') and adapter.MAKER is core.terminal_for('maker')
+    assert isinstance(adapter.Allowed('type', 'array'), core.Allowed)
+    assert adapter.Allowed('type', 'array').accepts([])
+    assert not adapter.Allowed('type', 'array').accepts('not an array')
 
 
+@pytest.mark.parametrize('nested', [False, True], ids=['root', 'nested'])
+def test_required_rows_add_only_the_missing_properties(nested):
+    from jsonschema import Draft202012Validator
+    from tl3_workers.contracts import schema_violations
+    from tl3_workers.rules import apply_edit, permits, register
+    required = {'type': 'object', 'required': ['a/b~c', 'count'], 'properties': {
+        'a/b~c': {'$ref': '#/$defs/name'}, 'count': {'type': 'integer'}}}
+    proposal = {'$defs': {'name': {'enum': ['ok']}}}
+    proposal.update({'properties': {'box': required}} if nested else required)
+    validator = Draft202012Validator(proposal)
+    before = {'untouched': True, **({'box': {'kept': True}} if nested else {})}
+    violations = schema_violations(validator.iter_errors(before), proposal)
+    prefix = '/box' if nested else ''
+    assert len(violations) == 2
+    assert {item.facts['pointer'] for item in violations} == {prefix + '/a~1b~0c', prefix + '/count'}
+    fixed = before
+    for item in violations:
+        edit = item.rule.repair(item.facts)
+        value = 'ok' if edit.pointer.value.endswith('/a~1b~0c') else 3
+        assert edit.op == 'add' and edit.allowed.accepts(value)
+        assert 'add reply field' in item.render(role='schema')
+        register(replace(item.rule, example={**item.facts, 'reply': before}, witness=value), roles=('schema',))
+        fixed = apply_edit(fixed, edit, value)
+    assert validator.is_valid(fixed) and permits(violations, before, fixed, role='schema')
+    assert not permits(violations, before, {**fixed, 'untouched': False}, role='schema')
+    if nested:
+        assert not permits(violations, before, {**fixed, 'box': {**fixed['box'], 'kept': False}}, role='schema')
 
 
+def test_cant_meet_registration_requires_a_terminal_reply_form():
+    from tl3_workers.rules import Allowed, CantMeet, Name, Rule, register
+    row = Rule('proof.identity', lambda facts: ({},),
+               lambda facts: (Name('symbol', 'tests/test_x.py::test_x'),),
+               lambda facts: Allowed('enum', []), lambda facts: CantMeet('identity differs'))
+    with pytest.raises(ValueError, match='terminal reply form'):
+        register(replace(row, example={'reply': {}}, witness={'kind': 'cant_meet'}), roles=('postmortem',))
 
 
+def test_allowed_value_equality_crosses_the_adapter_boundary():
+    from tl3_harness.rules import Allowed as CoreAllowed
+    from tl3_workers.rules import Allowed
+    assert CoreAllowed('enum', ['ok']) == Allowed('enum', ['ok'])
+    assert Allowed('enum', ['ok']) == CoreAllowed('enum', ['ok'])
+    assert CoreAllowed('const', True) != Allowed('const', 1)
+    from tl3_workers.rules import Edit, Name, Rule, register
+    row = register(Rule('test.membership', lambda facts: () if facts['reply']['value'] == 'ok' else ({},),
+        lambda facts: (Name('field', '/value'),), lambda facts: CoreAllowed('enum', ['ok']),
+        lambda facts: Edit(Name('field', '/value'), 'replace', Allowed('enum', ['ok'])),
+        example={'reply': {'value': 'bad'}}, witness='ok'), roles=('schema',))
+    assert row.id == 'test.membership'
 
 
+def test_symbol_names_use_source_path_and_python_qualname():
+    from tl3_workers.rules import Name
+    assert Name('symbol', 'pkg/mod.py::Class.method').value == 'pkg/mod.py::Class.method'
+    for invalid in ('tl3_workers.roles.postmortem::envelope', 'pkg/mod.py::Class::method',
+                    'pkg/mod.py::Class..method'):
+        with pytest.raises(ValueError, match='path::qualname'):
+            Name('symbol', invalid)
 
 
-def test_terminal_reply_passes_the_one_repair_turn():
+def test_planner_terminal_reply_passes_the_one_repair_turn():
+    from tl3_workers.rules import Allowed, CantMeet, Name, Rule, evaluate, permits, register, terminal_for
     from tl3_workers.turns import TurnControl, repaired
     before, terminal = {'kind': 'leaf'}, {'kind': 'cant_meet', 'report': 'subject identity differs'}
+    row = register(Rule('proof.identity', lambda facts: ({},),
+        lambda facts: (Name('symbol', 'tests/test_x.py::test_x'),),
+        lambda facts: Allowed('enum', []), lambda facts: CantMeet('identity differs'),
+        example={'reply': before}, witness=terminal), roles=('planner', 'maker'))
+    violations = evaluate((row,), {'reply': before}, role='planner')
+    assert permits(violations[0], before, terminal, role='planner')
+    assert permits(row, before, terminal, role='maker')
+    assert not permits(violations, before, {'kind': 'leaf', 'edited': True}, role='planner')
+    for role in ('planner', 'maker'):
+        assert terminal_for(role).phrase in violations[0].render(role=role)
     error = ValueError('refused')
-    error.rule_violations = [{'rule_id': 'proof.identity', 'role': 'maker',
-        'names': [{'kind': 'symbol', 'value': 'tests/test_x.py::test_x'}],
-        'bad_value': None, 'allowed': {'kind': 'finite', 'values': []},
-        'repair': {'kind': 'cant_meet', 'reason': 'identity differs'}, 'gating': False}]
-    error.rule_role = 'maker'
+    error.rule_violations, error.rule_role = violations, 'planner'
+
     def check(reply):
         if reply['kind'] != 'cant_meet':
             raise error
         return reply
+
     replies, history, control = iter((before, terminal)), [], TurnControl()
     assert repaired(control, history, lambda: next(replies), check) == terminal
     assert control.repair_attempts == 1 and len(history) == 1
 
 
 def test_source_edit_never_enters_a_tool_free_reply_repair():
+    from tl3_harness.rules import Allowed, Name, Rule, SourceEdit, evaluate
     from tl3_workers.turns import repaired
+    row = Rule('proof.source', lambda facts: ({},),
+               lambda facts: (Name('path', 'tests/test_observer.py'),),
+               Allowed('const', 'observer test body'),
+               SourceEdit('tests/test_observer.py', 'Move the call into the test body.'),
+               roles=frozenset({'maker'}))
     error = ValueError('source repair required')
-    error.rule_violations = [{'rule_id': 'proof.source', 'role': 'maker',
-        'names': [{'kind': 'path', 'value': 'tests/test_observer.py'}], 'bad_value': None,
-        'allowed': {'kind': 'finite', 'values': []}, 'gating': False,
-        'repair': {'kind': 'source_edit', 'path': 'tests/test_observer.py',
-                   'instruction': 'Move the call into the test body.'}}]
+    error.rule_violations = evaluate((row,), {}, role='maker')
     error.rule_role = 'maker'
     asks = []
 

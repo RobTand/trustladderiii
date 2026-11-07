@@ -479,6 +479,79 @@ pub(super) fn stage(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn staged_jobs_import_and_run_without_the_controller_action_executable() {
+        let fixture = crate::git_tests::Repo::new();
+        fs::write(
+            fixture.path.join("test_value.py"),
+            "def test_value():\n    assert True\n",
+        )
+        .unwrap();
+        crate::git_tests::git(&fixture.path, &["add", "test_value.py"]);
+        crate::git_tests::git(&fixture.path, &["commit", "-qm", "job boundary fixture"]);
+        let head = crate::git_tests::git(&fixture.path, &["rev-parse", "HEAD"]);
+        let mut delivery = fixture.delivery();
+        delivery.head_sha = Some(head.clone());
+        delivery.checks.as_mut().unwrap().base_sha = CommitId::new(&head).unwrap();
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let bundle = fixture.root.path().join("staged-job");
+        stage(
+            &bundle,
+            &repository.join("harness/src/tl3_harness"),
+            &delivery,
+            "sha256:fixture",
+            &[],
+            &Default::default(),
+        )
+        .unwrap();
+        let tools = fixture.root.path().join("job-tools");
+        fs::create_dir(&tools).unwrap();
+        let path = std::env::var_os("PATH").unwrap();
+        let git = std::env::split_paths(&path)
+            .map(|directory| directory.join("git"))
+            .find(|candidate| candidate.is_file())
+            .unwrap();
+        std::os::unix::fs::symlink(git, tools.join("git")).unwrap();
+        let probe = || {
+            std::process::Command::new(repository.join("workers/.venv/bin/python"))
+                .args(["-I", "-B"])
+                .arg(repository.join("harness/tools/staged_job_probe.py"))
+                .arg(&bundle)
+                .arg("checks")
+                .env_clear()
+                .env("PATH", &tools)
+                .env("HOME", fixture.root.path())
+                .env("LANG", "C.UTF-8")
+                .env("OMP_NUM_THREADS", "1")
+                .env("OPENBLAS_NUM_THREADS", "1")
+                .current_dir(&bundle)
+                .output()
+                .unwrap()
+        };
+        let output = probe();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(report["modules"].as_array().unwrap().len() >= 20);
+        let init = bundle.join("trusted/tl3_harness/__init__.py");
+        fs::write(
+            &init,
+            format!(
+                "import subprocess\nsubprocess.run(['tl3-action', 'policy'], check=True)\n{}",
+                fs::read_to_string(&init).unwrap()
+            ),
+        )
+        .unwrap();
+        let rejected = probe();
+        assert!(!rejected.status.success());
+        let diagnostic = String::from_utf8(rejected.stderr).unwrap();
+        assert!(diagnostic.contains("FileNotFoundError") && diagnostic.contains("tl3-action"));
+    }
+
     #[test]
     fn check_plan_base_rejects_uppercase_at_the_edge() {
         for length in [40, 64] {

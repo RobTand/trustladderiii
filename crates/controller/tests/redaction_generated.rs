@@ -4,7 +4,7 @@ mod compatibility;
 mod redaction_support;
 
 use fancy_regex::Regex;
-use redaction_support::python_command;
+use redaction_support::{python_command, python_redact};
 use serde_json::Value;
 use std::{collections::HashMap, sync::LazyLock};
 
@@ -29,8 +29,7 @@ fn data() -> &'static Value {
 }
 
 fn classes() -> [String; 3] {
-    let policy: Value =
-        serde_json::from_str(include_str!("../../redaction/src/policy.json")).unwrap();
+    let policy: Value = serde_json::from_str(include_str!("../../redaction/src/policy.json")).unwrap();
     ["alnum", "decimal", "space"].map(|name| {
         let mut body = if name == "alnum" {
             "_".to_owned()
@@ -76,10 +75,12 @@ fn check(shard: usize) {
     }
     let inputs: Vec<String> = serde_json::from_value(cases["inputs"].clone()).unwrap();
     assert!(inputs.len() > 100);
-    for input in &inputs {
-        // Generated class syntax still uses Python re as the independent API oracle.
-        // Full-redactor safety is covered by producer_corpus's runtime planted values.
-        tl3_controller::redaction::text(input).unwrap();
+    for (input, expected) in inputs.iter().zip(python_redact(&inputs)) {
+        assert_eq!(
+            tl3_controller::redaction::text(input).unwrap(),
+            expected,
+            "{input:?}"
+        );
     }
     println!(
         "shard {shard}: {} class/flag records, {} full-redactor inputs",

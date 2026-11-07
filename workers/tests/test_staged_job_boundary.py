@@ -27,7 +27,7 @@ def probe(bundle, tmp_path):
     tools = tmp_path / 'job-tools'
     tools.mkdir()
     (tools / 'git').symlink_to(shutil.which('git'))
-    source = Path(__file__).resolve().parents[2] / 'harness/tests/staged_job_probe.py'
+    source = Path(__file__).resolve().parents[2] / 'harness/tools/staged_job_probe.py'
     return subprocess.run([sys.executable, '-I', '-B', str(source), str(bundle), 'pb'],
         env={'PATH': str(tools), 'HOME': str(tmp_path), 'LANG': 'C.UTF-8',
              'OMP_NUM_THREADS': '1', 'OPENBLAS_NUM_THREADS': '1'},

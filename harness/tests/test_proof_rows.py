@@ -28,11 +28,23 @@ def assemble(case, root):
 
 @pytest.mark.parametrize('row_id', [id for id in ROWS if id not in ('forcing.raise_class', 'proof.staging.single_check')])
 def test_row_has_real_assembly_input_and_source_repair(tmp_path, row_id):
+    from tl3_harness.rules import CantMeet, Edit, SourceEdit
     case = partitions()[row_id]
     with pytest.raises(model.ProofRefusal) as caught:
         assemble(case['bad'], tmp_path / 'bad')
-    assert any(row['rule_id'] == row_id for row in caught.value.as_json())
+    assert any(v.rule.id == row_id for v in caught.value.violations)
     assert caught.value.rule == row_id
+    for v in caught.value.violations:
+        message = v.render(role='maker')
+        assert v.rule.id in message and 'Allowed:' in message
+        subjects = v.rule.names(v.facts)
+        assert subjects and all(name.render() in message for name in subjects)
+        if isinstance(v.repair, CantMeet):
+            assert v.repair.reason in message
+        elif isinstance(v.repair, SourceEdit):
+            assert v.repair.instruction in message
+        else:
+            assert isinstance(v.repair, Edit) and v.repair.pointer.render() in message
     assemble(case['good'], tmp_path / 'good')
 
 
@@ -49,8 +61,8 @@ def test_non_definition_names_are_bad_values():
     with pytest.raises(model.ProofRefusal) as caught:
         proof.validate_support('def helper(value): return sorted(value)', 'tests/test_observer.py')
     assert caught.value.rule == 'proof.support.call_allowlist'
-    assert all(name['kind'] != 'symbol' or name['value'].endswith('::helper')
-               for row in caught.value.as_json() for name in row['names'])
+    assert all(name.kind != 'symbol' or name.value.endswith('::helper')
+               for violation in caught.value.violations for name in violation.rule.names(violation.facts))
     assert 'literal arguments' in str(caught.value)
 
 
@@ -78,6 +90,13 @@ def test_syntax_error_names_the_parsed_support_file(tmp_path):
     assert caught.value.module == 'support.py'
 
 
+def test_export_has_one_path_template_and_a_regeneration_command():
+    from tl3_harness.proof_rules import export_rows
+    rows = export_rows()
+    loader = next(row for row in rows if row['id'] == 'proof.loader.stdlib_shadow')
+    paths = [name for name in loader['names'] if name['kind'] == 'path']
+    assert len({name['value'] for name in paths}) == len(paths)
+    assert 'python -m tl3_harness.proof_rules' in (Path(__file__).parents[1] / 'README.md').read_text()
 
 
 def recorded_table():
@@ -125,6 +144,7 @@ def test_recorded_main_verdict(tmp_path, key, record):
 
 
 def test_role_repairs_and_absolute_declaration_pointers(tmp_path):
+    from tl3_harness.rules import Edit, SourceEdit, apply_edit, permits
     case = partitions()['proof.observer.exact_method']['bad']
     for side in ('before', 'after'):
         for name, text in case[side].items():
@@ -135,15 +155,14 @@ def test_role_repairs_and_absolute_declaration_pointers(tmp_path):
     with pytest.raises(model.ProofRefusal) as caught:
         proof.assemble_proof(tmp_path / 'before', tmp_path / 'after', tmp_path / 'planner', check, case['config'], role='planner', check_index=3)
     assert caught.value.rule == 'proof.observer.exact_method'
-    violation = caught.value.as_json()[0]
-    assert violation['repair']['kind'] == 'edit'
-    assert violation['repair']['pointer'] == '/checks/3/tests/0'
-    assert violation['allowed']['value'] == ['tests/test_observer.py::TestOld::test_observer']
-    assert len(violation['allowed']['value']) <= 10
-    from copy import deepcopy
-    reply = deepcopy(caught.value.violations[0][1]['reply'])
-    reply['checks'][3]['tests'][0] = violation['allowed']['value'][0]
-    repaired = model.Check('repair', model.Kind.DEMONSTRATING, tuple(reply['checks'][3]['tests']), proof=check.proof)
+    violation = caught.value.violations[0]
+    assert isinstance(violation.repair, Edit)
+    assert violation.repair.pointer.value == '/checks/3/node_ids/0'
+    assert violation.allowed.value == ['tests/test_observer.py::TestOld::test_observer']
+    assert len(violation.allowed.value) <= 10
+    reply = apply_edit(violation.facts['reply'], violation.repair, violation.allowed.value[0])
+    assert permits(violation, violation.facts['reply'], reply, role='planner')
+    repaired = model.Check('repair', model.Kind.DEMONSTRATING, tuple(reply['checks'][3]['node_ids']), proof=check.proof)
     proof.assemble_proof(tmp_path / 'before', tmp_path / 'after', tmp_path / 'repaired', repaired, case['config'],
                          role='planner', check_index=3)
     case = partitions()['proof.support.call_allowlist']['bad']
@@ -155,9 +174,9 @@ def test_role_repairs_and_absolute_declaration_pointers(tmp_path):
         proof.assemble_proof(tmp_path / 'before', tmp_path / 'after', tmp_path / 'maker', check, case['config'],
                              footprint=('tests/test_observer.py',), check_index=4)
     assert caught.value.rule == 'proof.support.call_allowlist'
-    assert caught.value.as_json()[0]['repair']['kind'] == 'source_edit'
+    assert isinstance(caught.value.violations[0].repair, SourceEdit)
     assert 'cant_meet' not in str(caught.value)
-    assert caught.value.violations[0][1]['field'] == '/checks/4/proof/observer_support/0'
+    assert caught.value.violations[0].facts['field'] == '/checks/4/proof/observer_support/0'
     assert caught.value.as_json()[0]['role'] == 'maker'
 
 
@@ -165,7 +184,7 @@ def test_forcing_pointer_uses_its_plan_index():
     with pytest.raises(model.ProofRefusal) as caught:
         model.Forcing.parse({'symptom': 'flake', 'patches': [{'target': 'app.value', 'raises': 'AssertionError'}]}, check_index=3)
     assert caught.value.rule == 'forcing.raise_class'
-    assert caught.value.as_json()[0]['repair']['pointer'] == '/checks/3/forcing/patches/0/raises'
+    assert caught.value.violations[0].repair.pointer.value == '/checks/3/forcing/patches/0/raises'
 
 
 @pytest.mark.parametrize('source,why', [
@@ -179,22 +198,33 @@ def test_forcing_pointer_uses_its_plan_index():
 def test_callee_explanations_are_owned_by_the_row(source, why):
     with pytest.raises(model.ProofRefusal) as caught:
         proof.validate_support(source, 'tests/test_observer.py')
-    assert any(row['rule_id'] == 'proof.support.call_allowlist' and why in row['repair'].get('reason', row['repair'].get('instruction', '')) for row in caught.value.as_json())
+    assert any(v.rule.id == 'proof.support.call_allowlist' and why in v.render(role='maker') for v in caught.value.violations)
 
 
 def test_internal_destination_and_uneditable_syntax_are_terminal(tmp_path):
+    from tl3_harness.rules import CantMeet
     with pytest.raises(model.ProofRefusal) as caught:
         assemble(partitions()['proof.tree.destination_fresh']['bad'], tmp_path / 'destination')
     assert caught.value.rule == 'proof.tree.destination_fresh'
-    assert caught.value.as_json()[0]['gating']
-    assert caught.value.as_json()[0]['repair']['kind'] == 'cant_meet'
+    assert caught.value.violations[0].rule.gating
+    assert isinstance(caught.value.violations[0].repair, CantMeet)
     assert 'TL3-side assembly fault' in str(caught.value)
+
+
+def test_complete_proof_messages_still_obey_the_result_byte_limit():
+    from tl3_harness import execution
+    from tl3_harness.limits import MAX_RESULT_BYTES
+    check = model.Check('bounded rows', model.Kind.DEMONSTRATING, ('tests/test_observer.py::test_observer',))
+    error = model.ProofRefusal('proof.support.call_allowlist', module='tests/test_observer.py', why='x' * MAX_RESULT_BYTES)
+    with pytest.raises(model.HarnessInputError, match='result byte budget'):
+        execution.refused((check,), error)
 
 
 @pytest.mark.parametrize('role,editable,repair_kind', [
     ('planner', True, 'CantMeet'), ('maker', False, 'CantMeet'), ('maker', True, 'SourceEdit'),
 ])
 def test_syntax_repairs_respect_role_and_footprint(tmp_path, role, editable, repair_kind):
+    from tl3_harness.rules import CantMeet, SourceEdit
     case = partitions()['proof.source.unparsable']['bad']
     for side in ('before', 'after'):
         for name, text in case[side].items():
@@ -206,11 +236,11 @@ def test_syntax_repairs_respect_role_and_footprint(tmp_path, role, editable, rep
         proof.assemble_proof(tmp_path / 'before', tmp_path / 'after', tmp_path / 'staged', check, case['config'],
                              role=role, footprint=('tests/test_observer.py',) if editable else ())
     assert caught.value.rule == 'proof.source.unparsable'
-    repair = caught.value.as_json()[0]['repair']
-    assert repair['kind'] == {'CantMeet': 'cant_meet', 'SourceEdit': 'source_edit'}[repair_kind]
-    if repair['kind'] == 'source_edit':
-        assert repair['path'] == 'tests/test_observer.py'
-        assert 'fix the syntax error at line ' in repair['instruction']
+    repair = caught.value.violations[0].repair
+    assert isinstance(repair, {'CantMeet': CantMeet, 'SourceEdit': SourceEdit}[repair_kind])
+    if isinstance(repair, SourceEdit):
+        assert repair.path == 'tests/test_observer.py'
+        assert 'fix the syntax error at line ' in repair.instruction
         assert 'cant_meet' not in str(caught.value)
     else:
         assert 'cant_meet' in str(caught.value)
@@ -236,6 +266,7 @@ def planner_refusal(case, root, *, monkeypatch=None, probes=None):
 
 
 def test_planner_support_replacements_skip_duplicates_and_keep_the_list(tmp_path):
+    from tl3_harness.rules import Edit
     case = partitions()['proof.support.call_allowlist']['bad']
     module = 'tests/test_observer.py'
     case['after'][module] = ('def test_control(): pass\ndef helper_bad(value=1): return sorted(value)\n'
@@ -243,33 +274,35 @@ def test_planner_support_replacements_skip_duplicates_and_keep_the_list(tmp_path
     case['proof']['observer_support'] = [module + '::helper_bad', module + '::helper_ok']
     error = planner_refusal(case, tmp_path)
     assert error.rule == 'proof.support.call_allowlist'
-    repair = error.as_json()[0]['repair']
-    assert repair['kind'] == 'edit'
-    assert repair['pointer'] == '/checks/3/proof/observer_support/0'
-    assert module + '::helper_ok' not in repair['allowed']['value']
-    assert all(isinstance(item, str) for item in repair['allowed']['value'])
+    repair = error.violations[0].repair
+    assert isinstance(repair, Edit)
+    assert repair.pointer.value == '/checks/3/proof/observer_support/0'
+    assert module + '::helper_ok' not in repair.allowed.value
+    assert all(isinstance(item, str) for item in repair.allowed.value)
 
 
 def test_planner_subject_replacements_do_not_remove_obligation_subjects(tmp_path):
+    from tl3_harness.rules import Edit
     case = partitions()['proof.subject.changed']['bad']
     case['after']['changed.py'] = 'def changed(): return 2\n'
     case['before']['changed.py'] = 'def changed(): return 1\n'
-    repair = planner_refusal(case, tmp_path).as_json()[0]['repair']
-    assert repair['kind'] == 'edit'
-    assert repair['pointer'] == '/checks/3/proof/subjects/0'
-    assert all(isinstance(value, str) and value for value in repair['allowed']['value'])
+    repair = planner_refusal(case, tmp_path).violations[0].repair
+    assert isinstance(repair, Edit)
+    assert repair.pointer.value == '/checks/3/proof/subjects/0'
+    assert all(isinstance(value, str) and value for value in repair.allowed.value)
 
 
 def test_planner_node_candidates_are_collectable_and_never_empty(tmp_path):
+    from tl3_harness.rules import Edit
     case = partitions()['proof.source.definition']['bad']
     case['after']['tests/test_observer.py'] += ('def helper(): pass\nclass Helper:\n    def test_hidden(self): pass\n'
                                                'class TestReal:\n    def helper(self): pass\n    def test_method(self): pass\n')
-    repair = planner_refusal(case, tmp_path).as_json()[0]['repair']
-    assert repair['kind'] == 'edit'
-    assert repair['pointer'] == '/checks/3/tests/0'
-    assert all(isinstance(value, str) and value for value in repair['allowed']['value'])
-    assert all('helper' not in value and 'Helper' not in value for value in repair['allowed']['value'])
-    assert 'tests/test_observer.py::TestReal::test_method' in repair['allowed']['value']
+    repair = planner_refusal(case, tmp_path).violations[0].repair
+    assert isinstance(repair, Edit)
+    assert repair.pointer.value == '/checks/3/node_ids/0'
+    assert all(isinstance(value, str) and value for value in repair.allowed.value)
+    assert all('helper' not in value and 'Helper' not in value for value in repair.allowed.value)
+    assert 'tests/test_observer.py::TestReal::test_method' in repair.allowed.value
 
 
 def test_planner_probe_budget_and_changed_modules_first(tmp_path, monkeypatch):
@@ -282,7 +315,7 @@ def test_planner_probe_budget_and_changed_modules_first(tmp_path, monkeypatch):
     error = planner_refusal(case, tmp_path, monkeypatch=monkeypatch, probes=probes)
     assert error.rule == 'proof.source.definition'
     assert len(probes) - 1 <= 25
-    selections = error.as_json()[0]['repair']['allowed']['value']
+    selections = error.violations[0].repair.allowed.value
     assert len(selections) <= 10
     assert 'tests/test_zchanged.py::test_new' in selections
 
@@ -290,6 +323,7 @@ def test_planner_probe_budget_and_changed_modules_first(tmp_path, monkeypatch):
 @pytest.mark.parametrize('row_id', ['proof.source.definition', 'proof.observer.module_missing',
                                    'proof.observer.unresolved_symbol', 'proof.support.decorator'])
 def test_maker_repairs_use_editable_observer_source(tmp_path, row_id):
+    from tl3_harness.rules import SourceEdit
     case = partitions()[row_id]['bad']
     for side in ('before', 'after'):
         for name, text in case[side].items():
@@ -300,17 +334,18 @@ def test_maker_repairs_use_editable_observer_source(tmp_path, row_id):
     with pytest.raises(model.ProofRefusal) as caught:
         proof.assemble_proof(tmp_path / 'before', tmp_path / 'after', tmp_path / 'staged', check, case['config'], footprint=('tests/test_observer.py',))
     assert caught.value.rule == row_id
-    repair = caught.value.as_json()[0]['repair']
-    assert repair['kind'] == 'source_edit'
-    assert repair['path'] == 'tests/test_observer.py'
+    repair = caught.value.violations[0].repair
+    assert isinstance(repair, SourceEdit)
+    assert repair.path == 'tests/test_observer.py'
     expected = {'proof.source.definition': 'define', 'proof.observer.module_missing': 'create',
                 'proof.observer.unresolved_symbol': 'define', 'proof.support.decorator': 'fixture body',
                 'proof.loader.stdlib_shadow': 'shadowing file'}[row_id]
-    assert expected in repair['instruction'].lower()
+    assert expected in repair.instruction.lower()
 
 
 @pytest.mark.parametrize('protection', ['protected', 'generated'])
 def test_source_repairs_respect_protected_and_generated_patterns(tmp_path, protection):
+    from tl3_harness.rules import CantMeet
     case = partitions()['proof.support.call_allowlist']['bad']
     for side in ('before', 'after'):
         for name, text in case[side].items():
@@ -322,15 +357,15 @@ def test_source_repairs_respect_protected_and_generated_patterns(tmp_path, prote
         proof.assemble_proof(tmp_path / 'before', tmp_path / 'after', tmp_path / 'staged', check, case['config'],
                              footprint=('tests/test_observer.py',), **{protection: ('tests/*.py',)})
     assert caught.value.rule == 'proof.support.call_allowlist'
-    assert caught.value.as_json()[0]['repair']['kind'] == 'cant_meet'
+    assert isinstance(caught.value.violations[0].repair, CantMeet)
 
 
 def test_planner_names_keep_the_editable_field_when_maker_would_edit_source(tmp_path):
+    from tl3_harness.rules import evaluate
     row = ROWS['proof.support.call_allowlist']
-    from tl3_harness.proof_rules import evaluate
     violation, = evaluate((row,), {'module': 'tests/test_observer.py', 'footprint': ('tests/test_observer.py',),
         'field': '/checks/3/proof/observer_support/0', 'role': 'planner'}, role='planner')
-    assert any(name['kind'] == 'field' for name in row.names(violation[1]))
+    assert any(name.kind == 'field' for name in row.names(violation.facts))
 
 
 @pytest.mark.parametrize('owned,protected,generated,kind', [
@@ -338,6 +373,7 @@ def test_planner_names_keep_the_editable_field_when_maker_would_edit_source(tmp_
     (True, ('path*.py',), (), 'CantMeet'), (True, (), ('path*.py',), 'CantMeet'),
 ])
 def test_stdlib_shadow_repairs_only_the_editable_shadow(tmp_path, owned, protected, generated, kind):
+    from tl3_harness.rules import CantMeet, SourceEdit
     case = partitions()['proof.loader.stdlib_shadow']['bad']
     for side in ('before', 'after'):
         for name, source in case[side].items():
@@ -350,16 +386,17 @@ def test_stdlib_shadow_repairs_only_the_editable_shadow(tmp_path, owned, protect
                              footprint=('tests/test_observer.py', 'pathlib.py') if owned else ('tests/test_observer.py',),
                              protected=protected, generated=generated)
     assert caught.value.rule == 'proof.loader.stdlib_shadow'
-    repair = caught.value.as_json()[0]['repair']
-    assert repair['kind'] == {'CantMeet': 'cant_meet', 'SourceEdit': 'source_edit'}[kind]
+    repair = caught.value.violations[0].repair
+    assert isinstance(repair, {'CantMeet': CantMeet, 'SourceEdit': SourceEdit}[kind])
     if kind == 'SourceEdit':
-        assert repair['path'] == 'pathlib.py'
+        assert repair.path == 'pathlib.py'
     else:
-        assert 'requires a plan change' in repair['reason']
+        assert 'requires a plan change' in repair.reason
 
 
 
 def test_source_repairs_respect_the_shared_generated_header_rule(tmp_path):
+    from tl3_harness.rules import CantMeet
     case = partitions()['proof.support.call_allowlist']['bad']
     for side in ('before', 'after'):
         for name, source in case[side].items():
@@ -370,36 +407,4 @@ def test_source_repairs_respect_the_shared_generated_header_rule(tmp_path):
     with pytest.raises(model.ProofRefusal) as caught:
         proof.assemble_proof(tmp_path / 'before', tmp_path / 'after', tmp_path / 'staged', check, case['config'], footprint=('tests/test_observer.py',))
     assert caught.value.rule == 'proof.support.call_allowlist'
-    assert caught.value.as_json()[0]['repair']['kind'] == 'cant_meet'
-
-
-def test_unreplaced_callback_registration_rechecks_the_full_witness():
-    """Callback execution stays Python until slice 3; row decisions call Rust."""
-    from dataclasses import replace
-    from tl3_harness.rules import Rule, register_rows
-    allowed = {'kind': 'schema', 'keyword': 'type', 'value': 'array'}
-    row = Rule('evidence.contract_missing',
-               lambda facts: ({},) if 'evidence_contract' not in facts['reply'] else (),
-               lambda facts: ({'kind': 'field', 'value': '/evidence_contract'},),
-               allowed, {'kind': 'edit', 'pointer': '/evidence_contract', 'op': 'add', 'allowed': allowed},
-               example={'reply': {}}, witness={'evidence_contract': []})
-    assert register_rows(row, roles=('ingest',)).id == row.id
-    with pytest.raises(ValueError, match='witness'):
-        register_rows(replace(row, witness={'evidence_contract': 'not an array'}), roles=('ingest',))
-    with pytest.raises(ValueError, match='still violates'):
-        register_rows(replace(row, check=lambda facts: ({},)), roles=('ingest',))
-
-
-def test_unreplaced_callback_gating_keeps_all_current_violations_and_stops_later_callbacks():
-    from tl3_harness.rules import Rule, evaluate_rows
-    calls = []
-    row = Rule('proof.subject', lambda facts: ({}, {}),
-               lambda facts: ({'kind': 'path', 'value': 'tests/test_x.py'},),
-               {'kind': 'finite', 'values': []},
-               {'kind': 'cant_meet', 'reason': 'Subject identity differs.'},
-               gating=True, roles=frozenset(('maker',)))
-    later = Rule('proof.later', lambda facts: calls.append(True) or (), row.names,
-                 row.allowed, row.repair, roles=row.roles)
-    found = evaluate_rows((row, later), {}, role='maker')
-    assert not calls and len(found) == 2
-    assert all(item['gating'] and item['rule_id'] == 'proof.subject' for item in found)
+    assert isinstance(caught.value.violations[0].repair, CantMeet)

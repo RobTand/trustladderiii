@@ -188,7 +188,7 @@ def repair_grade(turns, name):
     from mlflow.entities.assessment import Feedback
     from mlflow.genai.judges.adapters import gateway_adapter
     from mlflow.genai.judges.utils.parsing_utils import _strip_markdown_code_blocks
-    from tl3_harness.action_policy import repair_prompt
+    from tl3_workers.turns import REPAIR
 
     if turns.request is None:
         raise MalformedReply("no model call to repair")
@@ -196,7 +196,7 @@ def repair_grade(turns, name):
     messages = list(payload["messages"])
     if turns.reply is not None:
         messages.append({"role": "assistant", "content": turns.reply})
-    messages.append({"role": "user", "content": repair_prompt(GRADE_REPAIR)})
+    messages.append({"role": "user", "content": REPAIR.format(GRADE_REPAIR)})
     payload["messages"] = messages
     payload["tool_choice"] = "none"
     gateway_adapter.send_chat_request(**{**turns.request, "payload": payload})

@@ -148,17 +148,100 @@ def model_facing(reply_schema):
     return result
 
 
-def schema_violations(errors, root_schema=None, *, role):
-    """Transport Python API validation facts; Rust resolves their canonical repairs."""
-    from tl3_harness.action_policy import schema_rows
+def _applicable_errors(error):
+    """Select a discriminated branch; retain alternatives when no branch is known."""
+    if error.validator not in ('oneOf', 'anyOf') or not error.context:
+        yield error
+        return
+    variants = error.validator_value
+    discriminators = set.intersection(*({key for key, item in variant.get('properties', {}).items()
+                                        if 'const' in item or 'enum' in item}
+                                       for variant in variants))
+    matching = []
+    for index, variant in enumerate(variants):
+        constants = {key: item.get('enum', [item.get('const')])
+                     for key, item in variant.get('properties', {}).items()
+                     if key in discriminators}
+        if constants and isinstance(error.instance, dict) and all(
+                key in error.instance and error.instance[key] in values
+                for key, values in constants.items()):
+            matching.append(index)
+    if len(matching) != 1:
+        yield error
+        return
+    for child in error.context:
+        if child.schema_path[0] == matching[0]:
+            yield from _applicable_errors(child)
 
-    def fact(error):
-        return {'keyword': error.validator, 'validator_value': error.validator_value,
-                'instance': error.instance, 'schema': error.schema,
-                'path': list(error.absolute_path), 'schema_path': list(error.schema_path),
-                'context': [fact(child) for child in error.context]}
 
-    return tuple(schema_rows([fact(error) for error in errors], root_schema, role=role))
+def schema_violations(errors, root_schema=None, *, role='schema'):
+    """Translate every schema failure into facts, without jsonschema's reply echo."""
+    from dataclasses import replace
+    from tl3_workers.rules import Allowed, Edit, Name, Rule, Violation, at
+
+    def check(facts):
+        try:
+            value = at(facts['reply'], facts['pointer'])
+        except (KeyError, IndexError, TypeError):
+            return () if facts.get('op') == 'remove' else (facts,)
+        if facts.get('op') == 'remove':
+            return ({**facts, 'bad_value': value},)
+        return () if facts['allowed'].accepts(value) else ({**facts, 'bad_value': value},)
+
+    def names(facts):
+        return (Name('field', facts['pointer']),)
+
+    row = Rule('schema.validation', check, names, lambda facts: facts['allowed'],
+               lambda facts: Edit(Name('field', facts['pointer']), facts.get('op', 'replace'), facts['allowed']),
+               roles=frozenset((role,)))
+
+    def constraint_allowed(error, constraint):
+        context = error
+        while context.parent is not None:
+            context = context.parent
+        source = root_schema or context.schema
+        if isinstance(constraint, dict):
+            constraint = dict(constraint)
+            if any(node['$ref'].startswith('#') for node in _refs(constraint)):
+                constraint['$defs'] = source.get('$defs', {})
+            if '$id' in source:
+                constraint['$id'] = source['$id']
+        return Allowed('schema', constraint)
+
+    result = []
+    required_fields = set()
+    for parent in errors:
+        for error in _applicable_errors(parent):
+            pointer = ''.join('/' + str(part).replace('~', '~0').replace('/', '~1')
+                              for part in error.absolute_path)
+            if error.validator == 'required':
+                for key in error.validator_value:
+                    field = pointer + '/' + key.replace('~', '~0').replace('/', '~1')
+                    if key in error.instance or field in required_fields:
+                        continue
+                    required_fields.add(field)
+                    constraint = error.schema.get('properties', {}).get(key, {})
+                    result.append(Violation(replace(row, id='schema.required'), {
+                        'pointer': field, 'allowed': constraint_allowed(error, constraint), 'op': 'add'}))
+                continue
+            if error.validator == 'additionalProperties' and error.validator_value is False:
+                import re
+                extra = set(error.instance) - error.schema.get('properties', {}).keys()
+                extra = sorted(key for key in extra if not any(re.search(pattern, key)
+                               for pattern in error.schema.get('patternProperties', {})))
+                for key in extra:
+                    result.append(Violation(replace(row, id='schema.additionalproperties'), {
+                        'pointer': pointer + '/' + key.replace('~', '~0').replace('/', '~1'),
+                        'allowed': Allowed('enum', []), 'op': 'remove', 'bad_value': error.instance[key]}))
+                continue
+            if error.validator in ('oneOf', 'anyOf', 'not', 'unevaluatedProperties'):
+                allowed = constraint_allowed(error, error.schema)
+            else:
+                allowed = Allowed(error.validator, error.validator_value)
+            result.append(Violation(replace(row, id='schema.' + error.validator.lower()),
+                                    {'pointer': pointer, 'allowed': allowed,
+                                          'bad_value': error.instance}))
+    return tuple(result)
 
 
 def reply_errors(name, value):

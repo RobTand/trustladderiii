@@ -126,6 +126,7 @@ _CONTROLLER_RUNTIME = {
     "test_test_harness_summary": ["//workers/tests:fixtures", "//workers/tests:harness_io_schedule"],
     "test_test_worker_budget_orchestration": ["//workers/tests:budget_orchestration"],
     "test_test_worker_checker": ["//workers/tests:checker_recordings", ":example_checker-vectors"],
+    "test_test_redaction_policy": ["//workers/src:redaction_contract"],
     "test_test_redaction_adapter": ["//workers/tests:redaction_branches", "//crates/redaction:sources"],
     "test_test_redaction_generated": ["//workers/tests:redaction_generated", "//crates/redaction:sources"],
     "test_test_redaction_parity": ["//workers/tests:redaction_branches"],
@@ -225,7 +226,7 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
     if package == "crates/config" and name.startswith("test_test_tokenizer_"):
         runtime = runtime + ["@o200k_base//file"]
     if workers:
-        runtime = runtime + ["//tools/bazel:worker_python", "//crates/action:tl3-action", "@o200k_base//file"]
+        runtime = runtime + ["//tools/bazel:worker_python", "@o200k_base//file"]
     postgres = select({
         "@platforms//cpu:aarch64": ["@postgres_linux_arm64//:all"],
         "//conditions:default": ["@postgres_linux_amd64//:all"],

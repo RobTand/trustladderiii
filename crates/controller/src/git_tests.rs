@@ -103,7 +103,7 @@ impl Repo {
             "repository":{"owner":"RobTand","name":"tl3-sandbox","installation":1},
             "issue":42,"pull_request":null,"paths":["README.md"],"attempt":1,"round":0,
             "checks":{"repository":self.path,"base_sha":self.base,"plan":[
-                {"name":"value","kind":"regression","tests":["test_value.py::test_value"]}]}
+                {"name":"value","kind":"regression","tests":["test_value.py::test_value"],"goal_ids":[]}]}
         }))
         .unwrap()
     }

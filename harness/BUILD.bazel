@@ -9,6 +9,7 @@ filegroup(
     name = "project_files",
     srcs = [
         "README.md",
+        "proof-rules.json",
         "pyproject.toml",
         "//harness/tests:fixtures",
         "//harness/tools:sources",

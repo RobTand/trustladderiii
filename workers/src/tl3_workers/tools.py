@@ -22,8 +22,8 @@ from tl3_workers.forcing_rehearsal import make_rehearsal_tool
 from tl3_workers.pb_generators import make_generator_tool
 from tl3_workers.recall import make_recall_tool
 from tl3_workers.memory import current
-from tl3_harness.rules import Rule, evaluate_rows as evaluate, register_rows as register
-from tl3_harness.action_policy import render_rows as render_all
+from tl3_harness.rules import Allowed, CantMeet, Name, Rule, evaluate, register, render_all
+from tl3_harness.terminal_forms import MAKER
 
 
 READ_TOOLS = frozenset({"list", "read", "glob", "grep", "diff"})
@@ -126,7 +126,7 @@ def _change_repair(facts):
     query = facts['path'].encode('utf-8')[-512:].decode('utf-8', errors='ignore')
     nearest = get_close_matches(query, candidates, n=1, cutoff=0)
     context += f" The nearest declared path is {json.dumps(nearest[0])}." if nearest else " The footprint is empty."
-    return {'kind': 'cant_meet', 'reason': reasons[facts['refusal']] + context}
+    return CantMeet(reasons[facts['refusal']] + context)
 
 
 # #895: each refusal has one registered row; the tool boundary supplies facts.
@@ -134,13 +134,13 @@ CHANGE_RULES = {
     refusal: register(Rule(
         id=f"worktree.change.{refusal}",
         check=lambda facts, expected=refusal: (facts,) if facts['refusal'] == expected else (),
-        names=lambda facts: ({'kind': 'path', 'value': facts['path']},),
-        allowed=lambda facts: {'kind': 'schema', 'keyword': 'enum', 'value': _visible_footprint(facts['footprint'])},
+        names=lambda facts: (Name('path', facts['path']),),
+        allowed=lambda facts: Allowed('enum', _visible_footprint(facts['footprint'])),
         repair=_change_repair,
         example={'reply': {}, 'refusal': refusal, 'path': 'src/cod.py',
                  'footprint': ('src/code.py',), 'target_kind': 'a missing path'},
         witness={'kind': 'cant_meet'},
-    ), roles={'maker'})
+    ), roles={MAKER.role})
     for refusal in ('reserved', 'protected', 'footprint', 'generated', 'delete_target')
 }
 
@@ -150,8 +150,8 @@ class ChangeRefusal(ValueError):
         self.violations = evaluate((CHANGE_RULES[refusal],), {
             'refusal': refusal, 'path': path, 'op': op, 'footprint': footprint or (),
             'target_kind': target_kind,
-        }, role='maker')
-        super().__init__(render_all(self.violations, role='maker', context="tool"))
+        }, role=MAKER.role)
+        super().__init__(render_all(self.violations, role=MAKER.role, context="tool"))
 
 
 def _matching_lines(stream, pattern, regex=None, cut=None):

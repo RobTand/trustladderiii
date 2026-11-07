@@ -7,8 +7,8 @@ import builtins
 from dataclasses import replace
 from pathlib import PurePosixPath
 
-from .rules import Rule, at, evaluate_facts as core_evaluate, register_rows as register, resolved_row
-from .action_policy import row_membership, render_rows as render_all
+from .terminal_forms import PLANNER, MAKER
+from .rules import Allowed, CantMeet, Edit, SourceEdit, Name, Rule, at, evaluate as core_evaluate, register, render_all
 
 
 PURE_SUPPORT_BUILTINS = frozenset({
@@ -48,27 +48,22 @@ def symbol_name(module, selector):
         levels = levels[1:]
     qualname = '.'.join(levels)
     if qualname and all(part.isidentifier() for part in qualname.split('.')):
-        return {'kind': 'symbol', 'value': module + '::' + qualname}
+        return Name('symbol', module + '::' + qualname)
     return None
 
 
 def names(facts):
-    source = repair_for(facts, facts.get('role', 'maker'), {'kind': 'schema', 'keyword': 'const', 'value': None}, 'Source correction')
-    if source['kind'] == 'source_edit':
-        result = [{'kind': 'path', 'value': source['path']}]
-        if facts.get('module') == source['path'] and (symbol := facts.get('symbol')):
-            if name := symbol_name(source['path'], symbol):
-                result.append(name)
-        return tuple(result)
-    result = [{'kind': 'field', 'value': facts.get('field', declaration_pointer('/proof', facts.get('check_index', 0)))}]
+    source = repair_for(facts, facts.get('role', MAKER.role), Allowed('const', None), 'Source correction')
+    result = ([] if isinstance(source, SourceEdit) else
+              [Name('field', facts.get('field', declaration_pointer('/proof', facts.get('check_index', 0))))])
     if module := facts.get('module'):
-        result.append({'kind': 'path', 'value': module})
+        result.append(Name('path', module))
         if symbol := facts.get('symbol'):
             if name := symbol_name(module, symbol):
                 result.append(name)
     if path := facts.get('path'):
         if path != facts.get('module'):
-            result.append({'kind': 'path', 'value': path})
+            result.append(Name('path', path))
     return tuple(result)
 
 
@@ -79,14 +74,14 @@ def evaluate(rows, facts, *, role):
 
 def render(violations, role):
     """The only adapter from proof facts to the shared role-aware renderer."""
-    return render_all([resolved_row(row, facts, role) for row, facts in violations], role=role)
+    return render_all(violations, role=role)
 
 
 def declaration_pointer(field, check_index, role='maker'):
     """The sole boundary from check-relative paths to planner reply pointers."""
     pointer = field if field.startswith('/checks') else f'/checks/{check_index}' + field
     test_prefix = f'/checks/{check_index}/tests'
-    if role == 'planner' and (pointer == test_prefix or pointer.startswith(test_prefix + '/')):
+    if role == PLANNER.role and (pointer == test_prefix or pointer.startswith(test_prefix + '/')):
         return f'/checks/{check_index}/tests' + pointer[len(test_prefix):]
     return pointer
 
@@ -95,7 +90,7 @@ def failure_facts(facts):
     # Alternatives have been checked by the assembler on the actual source trees.
     if facts.get('alternatives') and 'reply' in facts:
         try:
-            if row_membership(selection_allowed(facts), at(facts['reply'], facts['field'])):
+            if selection_allowed(facts).accepts(at(facts['reply'], facts['field'])):
                 return ()
         except (KeyError, IndexError, TypeError):
             pass
@@ -103,18 +98,18 @@ def failure_facts(facts):
 
 
 def selection_allowed(facts):
-    return {'kind': 'schema', 'keyword': 'enum', 'value': facts['alternatives']}
+    return Allowed('enum', facts['alternatives'])
 
 
 def repair_for(facts, role, allowed, reason):
     """One role adapter: declaration edits, footprint edits, or a specific terminal reason."""
     rule = facts.get('rule', '')
-    if role == 'planner' and facts.get('alternatives'):
-        return {'kind': 'edit', 'pointer': {'kind': 'field', 'value': facts['field']}['value'], 'op': 'replace', 'allowed': allowed}
+    if role == PLANNER.role and facts.get('alternatives'):
+        return Edit(Name('field', facts['field']), 'replace', allowed)
     if rule == 'proof.tree.destination_fresh':
-        return {'kind': 'cant_meet', 'reason': 'TL3-side assembly fault: the harness supplied a staging destination that already exists.'}
+        return CantMeet('TL3-side assembly fault: the harness supplied a staging destination that already exists.')
     if rule == 'proof.staging.single_check':
-        return {'kind': 'cant_meet', 'reason': 'stage one check at a time'}
+        return CantMeet('stage one check at a time')
     path = facts.get('path') if rule == 'proof.loader.stdlib_shadow' else facts.get('module')
     source_rule = (rule.startswith(('proof.support.', 'proof.loader.'))
                    and rule not in ('proof.support.new', 'proof.support.existing_module')
@@ -122,7 +117,7 @@ def repair_for(facts, role, allowed, reason):
                                'proof.observer.module_missing', 'proof.observer.unresolved_symbol'))
     blocked = path and any(PurePosixPath(path).full_match(pattern)
                            for pattern in (*facts.get('protected', ()), *facts.get('generated', ())))
-    if role == 'maker' and source_rule and path in (facts.get('footprint') or ()) and not blocked:
+    if role == MAKER.role and source_rule and path in (facts.get('footprint') or ()) and not blocked:
         if rule == 'proof.source.unparsable':
             reason = f"fix the syntax error at line {facts.get('line', '?')}: {facts.get('bad_value', 'invalid Python')}"
         instructions = {
@@ -132,20 +127,20 @@ def repair_for(facts, role, allowed, reason):
             'proof.support.decorator': 'Move the fixture body into the observer test body and remove the decorated support dependency.',
             'proof.loader.stdlib_shadow': 'Move or rename this shadowing file so it is no longer importable under the trusted standard-library name.',
         }
-        return {'kind': 'source_edit', 'path': path, 'instruction': instructions.get(rule, reason)}
-    if role == 'maker' and rule == 'proof.loader.stdlib_shadow':
+        return SourceEdit(path, instructions.get(rule, reason))
+    if role == MAKER.role and rule == 'proof.loader.stdlib_shadow':
         reason += ' The observer must move to an existing base test module, which requires a plan change.'
-    if role == 'planner' and facts.get('selection_search'):
+    if role == PLANNER.role and facts.get('selection_search'):
         reason += ' No concrete declaration selection passes assembly on these trees.'
-    return {'kind': 'cant_meet', 'reason': reason}
+    return CantMeet(reason)
 
 
 def source_row(id, allowed, reason, *, gating=False):
     def choices(facts, role):
-        if role == 'planner' and facts.get('alternatives'):
+        if role == PLANNER.role and facts.get('alternatives'):
             return selection_allowed(facts)
         value = allowed(facts) if callable(allowed) else allowed
-        return {'kind': 'schema', 'keyword': 'const', 'value': value}
+        return Allowed('const', value)
     def repair(facts, role):
         explanation = reason.format_map(facts)
         if facts.get('why'):
@@ -250,18 +245,18 @@ add('staging', 'single_check', {'checks': STAGED_CHECK_COUNT},
 
 
 def forcing_allowed(facts, role=None):
-    return {'kind': 'schema', 'keyword': 'enum', 'value': sorted((name for name in dir(builtins) if forced_exception(name)))}
+    return Allowed('enum', sorted(name for name in dir(builtins) if forced_exception(name)))
 
 
 def forcing_failures(facts):
     value = at(facts['reply'], facts['field'])
-    return () if row_membership(forcing_allowed(facts), value) else ({**facts, 'bad_value': value},)
+    return () if forcing_allowed(facts).accepts(value) else ({**facts, 'bad_value': value},)
 
 
 FORCING_RAISE_CLASS = Rule(
-    'forcing.raise_class', forcing_failures, lambda facts: ({'kind': 'field', 'value': facts['field']},), forcing_allowed,
-    lambda facts, role: ({'kind': 'edit', 'pointer': {'kind': 'field', 'value': facts['field']}['value'], 'op': 'replace', 'allowed': forcing_allowed(facts)}
-                         if role == 'planner' else {'kind': 'cant_meet', 'reason': 'The declared forcing exception class requires a planner declaration repair.'}))
+    'forcing.raise_class', forcing_failures, lambda facts: (Name('field', facts['field']),), forcing_allowed,
+    lambda facts, role: (Edit(Name('field', facts['field']), 'replace', forcing_allowed(facts))
+                         if role == PLANNER.role else CantMeet('The declared forcing exception class requires a planner declaration repair.')))
 ROWS[FORCING_RAISE_CLASS.id] = FORCING_RAISE_CLASS
 
 
@@ -281,11 +276,54 @@ for _row in ROWS.values():
                  'maker': {'kind': 'cant_meet'}} if _row is FORCING_RAISE_CLASS else
                 {'planner': {'kind': 'cant_meet'}, 'maker': {'kind': 'cant_meet'}})
     ROWS[_row.id] = register(replace(_row, example=_example, witness=_witness),
-                             roles=('planner', 'maker'))
+                             roles=(PLANNER.role, MAKER.role))
 FORCING_RAISE_CLASS = ROWS[FORCING_RAISE_CLASS.id]
 
 
-def violation_data(violation, role):
-    """Resolve callback facts into the one canonical Rust-owned row wire."""
-    row, facts = violation
-    return resolved_row(row, facts, role)
+def violation_data(violation):
+    """Serialize the core's resolved violation for the consuming role."""
+    row, facts = violation.rule, violation.facts
+    allowed, repair = violation.allowed, violation.repair
+    names_data = [{'kind': item.kind, 'value': item.value} for item in row.names(facts)]
+    if isinstance(repair, Edit):
+        repair_data = {'kind': 'Edit', 'pointer': {'kind': 'field', 'value': repair.pointer.value},
+                       'op': repair.op, 'allowed': {'keyword': repair.allowed.keyword, 'value': repair.allowed.value}}
+    elif isinstance(repair, SourceEdit):
+        repair_data = {'kind': 'SourceEdit', 'path': repair.path, 'instruction': repair.instruction}
+    else:
+        repair_data = {'kind': 'CantMeet', 'reason': repair.reason}
+    return {'id': row.id, 'role': violation.role, 'names': names_data, 'allowed': {'keyword': allowed.keyword, 'value': allowed.value},
+            'repair': repair_data, 'gating': row.gating,
+            **({'bad_value': facts['bad_value']} if 'bad_value' in facts else {}),
+            **({'replacement_total': facts['replacement_total']} if 'replacement_total' in facts else {})}
+
+
+def export_rows():
+    """Planner preflight templates, generated from the executable Python rows."""
+    result = []
+    for id, row in sorted(ROWS.items()):
+        if id.startswith(('proof.loader.', 'proof.support.')):
+            facts = example(row)
+            data = violation_data(evaluate((row,), facts, role='planner')[0])
+            if id == 'proof.loader.stdlib_shadow':
+                data['repair']['reason'] = data['repair']['reason'].replace('pathlib.py', '{path}').replace('`pathlib`', '`{stdlib}`')
+            placeholders = {'field': '{declaration_field}', 'path': '{module}', 'symbol': '{module}::{definition}'}
+            data['names'] = [{'kind': name['kind'], 'value': '{path}' if name['kind'] == 'path' and name['value'] == facts['path']
+                             else placeholders[name['kind']]} for name in data['names']]
+            result.append(data)
+    return result
+
+
+def main():
+    """python -m tl3_harness.proof_rules --output harness/proof-rules.json"""
+    import argparse
+    import json
+    from pathlib import Path
+    parser = argparse.ArgumentParser(description='Regenerate the proof preflight row templates.')
+    parser.add_argument('--output', type=Path, default=Path('harness/proof-rules.json'))
+    args = parser.parse_args()
+    args.output.write_text(json.dumps(export_rows(), indent=2, sort_keys=True) + '\n')
+
+
+if __name__ == '__main__':
+    main()
