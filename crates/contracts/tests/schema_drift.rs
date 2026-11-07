@@ -152,3 +152,45 @@ fn red_classes_round_trip_and_reject_unknown_values() {
     receipt["red_classes"] = Value::Null;
     assert!(serde_json::from_value::<ProofReceipt>(receipt).is_err());
 }
+
+/// Rust action slice 1: every refusal consumer uses one generated resolved row.
+#[test]
+fn refusal_row_schema_is_published_by_the_contract_owner() {
+    let files = contracts::generated();
+    let file = files
+        .iter()
+        .find(|file| file.path == "crates/contracts/schema/violation.json")
+        .expect("contracts must publish the canonical resolved refusal row");
+    let schema: serde_json::Value = serde_json::from_str(&file.text).unwrap();
+    let required = schema["required"].as_array().unwrap();
+    for field in ["role", "rule_id", "names", "allowed", "repair", "gating"] {
+        assert!(required.contains(&serde_json::json!(field)), "{field}");
+    }
+    assert_eq!(schema["properties"]["evidence"]["maxItems"], 16);
+    let encoded = file.text.as_str();
+    assert!(encoded.contains("1024 UTF-8 bytes"));
+    assert!(encoded.contains("4096 UTF-8 bytes"));
+    for forbidden in ["Callback", "Registration", "Witness", "RuleFacts"] {
+        assert!(!encoded.contains(forbidden), "executable policy leaked: {forbidden}");
+    }
+}
+
+/// Rust action slice 1: Python transports action requests, never defines their schema.
+#[test]
+fn action_request_schema_reuses_checks_and_excludes_embedded_python() {
+    let files = contracts::generated();
+    let file = files
+        .iter()
+        .find(|file| file.path == "workers/src/tl3_workers/schemas/action-request.json")
+        .expect("contracts must publish the Rust action request");
+    let schema: serde_json::Value = serde_json::from_str(&file.text).unwrap();
+    let alternatives = schema["oneOf"].as_array().unwrap();
+    let actions: Vec<_> = alternatives
+        .iter()
+        .map(|variant| variant["properties"]["action"]["const"].as_str().unwrap())
+        .collect();
+    assert_eq!(actions, ["checks", "tests", "generator"]);
+    assert!(schema["$defs"]["CheckRequest"].is_object());
+    assert!(schema["$defs"].get("Check").is_some());
+    assert!(!file.text.contains("embedded_python"));
+}
