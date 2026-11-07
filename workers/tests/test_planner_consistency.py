@@ -35,9 +35,9 @@ def test_request156_gets_one_tool_free_consistency_correction(planner_request, r
 
     fixed = copy.deepcopy(request156)
     if correction == 'check':
-        fixed['checks'][0]['node_ids'].append(CONTROL)
+        fixed['checks'][0]['tests'].append(CONTROL)
     elif correction == 'new_check':
-        fixed['checks'].append({'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'node_ids': [CONTROL], 'goal_ids': [1]})
+        fixed['checks'].append({"name": 'consistency-40', 'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'tests': [CONTROL], 'goal_ids': [1]})
     elif correction == 'unchanged':
         fixed['edits_tests'].remove(CONTROL)
     else:
@@ -78,7 +78,7 @@ def test_request156_second_mismatch_stops_with_both_named_diagnostics(planner_re
     from tl3_workers import runtime
 
     second = copy.deepcopy(request156)
-    second['checks'][0]['node_ids'] = [CONTROL]
+    second['checks'][0]['tests'] = [CONTROL]
     model = planner_model(monkeypatch, request156, second, LEAF)
     events = []
     runtime.run(planner_request, events.append)
@@ -105,7 +105,7 @@ def test_request156_corrected_reply_is_fully_rechecked(planner_request, request1
     from tl3_workers import runtime
 
     fixed = copy.deepcopy(request156)
-    fixed['checks'][0]['node_ids'].append(CONTROL)
+    fixed['checks'][0]['tests'].append(CONTROL)
     if obstacle == 'goal':
         fixed['checks'][0]['goal_ids'] = [0]
     elif obstacle == 'protected':
@@ -181,7 +181,7 @@ def test_request162_forced_check_gets_the_same_single_correction(planner_request
 
     fixed = copy.deepcopy(request162)
     if resolution == 'base_nodes':
-        fixed['checks'][0]['node_ids'] = [CREATED]
+        fixed['checks'][0]['tests'] = [CREATED]
     elif resolution == 'cant_meet':
         fixed = copy.deepcopy(CANT_MEET)
         fixed['report'] = 'The existing base tests cannot honestly demonstrate the required mutant and deterministic goals.'
@@ -197,7 +197,7 @@ def test_request162_forced_check_gets_the_same_single_correction(planner_request
         assert result['kind'] == fixed['kind']
         if resolution == 'base_nodes':
             assert any('matching forcing rehearsal receipt' in v for v in result['violations'])
-            assert result['checks'][0]['node_ids'] == [CREATED]
+            assert result['checks'][0]['tests'] == [CREATED]
             assert result['checks'][0]['goal_ids'] == [0, 1]
             assert result['checks'][1] == request162['checks'][1]
             assert result['checks'][0]['forcing'] == request162['checks'][0]['forcing']
@@ -250,7 +250,7 @@ def test_request162_correction_cannot_drop_mutant_coverage(planner_request, requ
     from tl3_workers import runtime
 
     fixed = copy.deepcopy(request162)
-    fixed['checks'][0]['node_ids'] = [CREATED]
+    fixed['checks'][0]['tests'] = [CREATED]
     fixed['checks'][0]['goal_ids'] = [0, 2]
     model = planner_model(monkeypatch, request162, fixed)
     events = []
@@ -264,7 +264,7 @@ def test_request165_preserves_deterministic_tier_and_rate_goals(planner_request,
     from tl3_workers import runtime
 
     fixed = copy.deepcopy(request165)
-    fixed['checks'][0]['node_ids'] = [FINISHED]
+    fixed['checks'][0]['tests'] = [FINISHED]
     if resolution == 'cant_meet':
         fixed = copy.deepcopy(CANT_MEET)
         fixed['evidence_contract'] = []
@@ -288,7 +288,7 @@ def test_request165_preserves_deterministic_tier_and_rate_goals(planner_request,
             assert result['kind'] == fixed['kind']
             if resolution == 'base_node':
                 assert any('matching forcing rehearsal receipt' in v for v in result['violations'])
-                assert result['checks'] == [{**request165['checks'][0], 'node_ids': [FINISHED]}]
+                assert result['checks'] == [{**request165['checks'][0], 'tests': [FINISHED]}]
                 assert result['edits_tests'] == [FINISHED]
                 assert result['checks'][0]['forcing']['environment'] == {}
             else:
@@ -316,9 +316,9 @@ def test_consistency_correction_defaults_off(planner_request, request, monkeypat
         planner_request['inputs']['repair_plan_consistency'] = enabled
     fixed = copy.deepcopy(draft)
     if shape == 'request156':
-        fixed['checks'][0]['node_ids'].append(CONTROL)
+        fixed['checks'][0]['tests'].append(CONTROL)
     else:
-        fixed['checks'][0]['node_ids'] = draft['checks'][0]['node_ids'][:1]
+        fixed['checks'][0]['tests'] = draft['checks'][0]['tests'][:1]
     model = planner_model(monkeypatch, draft, fixed)
     events = []
     runtime.run(planner_request, events.append)
@@ -331,11 +331,11 @@ def test_correction_cannot_expand_draft(planner_request, request156, monkeypatch
     from tl3_workers import runtime
 
     fixed = copy.deepcopy(request156)
-    fixed['checks'][0]['node_ids'].append(CONTROL)
+    fixed['checks'][0]['tests'].append(CONTROL)
     if expansion == 'file':
         fixed['files'].append('tests/test_existing.py')
     elif expansion == 'check':
-        fixed['checks'].append({'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'node_ids': [f'{PBWAIT_TESTS}::test_unrelated'],
+        fixed['checks'].append({"name": 'consistency-338', 'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'tests': [f'{PBWAIT_TESTS}::test_unrelated'],
                                 'goal_ids': [0]})
     elif expansion == 'forcing':
         fixed['checks'][0]['forcing'] = {'symptom': 'A new condition.', 'environment': {},
@@ -347,7 +347,7 @@ def test_correction_cannot_expand_draft(planner_request, request156, monkeypatch
         with Path(planner_request['worktree'], PBWAIT_TESTS).open('a') as stream:
             stream.write('\ndef test_unrelated():\n    assert True\n')
         fixed['edits_tests'].append(unrelated)
-        fixed['checks'][0]['node_ids'].append(unrelated)
+        fixed['checks'][0]['tests'].append(unrelated)
     model = planner_model(monkeypatch, request156, fixed, LEAF)
     events = []
     runtime.run(planner_request, events.append)
@@ -374,7 +374,7 @@ def test_appended_coverage_check_cannot_introduce_forcing(planner_request, reque
         forcing['patches'][0]['value'] = 2
     elif forcing_change == 'environment':
         forcing['environment'] = {'SHIM_DELAY': '1'}
-    fixed['checks'].append({'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'node_ids': [CONTROL], 'goal_ids': [1],
+    fixed['checks'].append({"name": 'consistency-377', 'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'tests': [CONTROL], 'goal_ids': [1],
                             'forcing': forcing})
     model = planner_model(monkeypatch, request156, fixed, LEAF)
     events = []
@@ -399,7 +399,7 @@ def test_missing_exploration_and_consistency_share_one_format_repair(
     del missing['estimated_exploration_turns']
     corrected = copy.deepcopy(request156)
     if fix_consistency:
-        corrected['checks'][0]['node_ids'].append(CONTROL)
+        corrected['checks'][0]['tests'].append(CONTROL)
     model = planner_model(monkeypatch, missing, corrected, LEAF)
     events = []
     if fix_consistency:
@@ -516,7 +516,7 @@ def test_pb2710_correction_freezes_every_other_declaration(planner_request, cove
     if change == 'scope':
         fixed['files'].append('other.py')
     elif change == 'selector':
-        check['node_ids'].append('tests/test_checkout_recovery_1465.py::test_other')
+        check['tests'].append('tests/test_checkout_recovery_1465.py::test_other')
     elif change == 'kind':
         fixed['checks'][1]['kind'] = 'behavior-preserving'
     elif change in {'subjects', 'observers', 'message'}:
@@ -527,7 +527,7 @@ def test_pb2710_correction_freezes_every_other_declaration(planner_request, cove
                             'patches': [{'target': 'shim.DELAY', 'value': 1}]}
     elif change == 'symptom':
         check.pop('proof')
-        check['declared_symptom'] = {'node': check['node_ids'][0], 'exception': 'builtins.RuntimeError',
+        check['declared_symptom'] = {'node': check['tests'][0], 'exception': 'builtins.RuntimeError',
                                      'phase': 'call', 'repeat': 2, 'parallel': 0}
     elif change == 'citations':
         # Goal 1 remains covered elsewhere, so the full recheck alone cannot catch this.
@@ -599,15 +599,15 @@ def test_pb2710_coverage_composes_with_existing_defects(planner_request, coverag
             'source': 'issue.body', 'quote': 'Keep assertion proof on the real _git helper.'}
         draft['checks'][0]['proof']['subjects'] = []
     elif omission == 'selector':
-        draft['checks'][1]['node_ids'] = ['tests/test_existing.py']
+        draft['checks'][1]['tests'] = ['tests/test_existing.py']
     else:
-        node = draft['checks'][1]['node_ids'][0]
+        node = draft['checks'][1]['tests'][0]
         # It is an uncovered edit rather than a frozen regression selection.
         draft['checks'].pop(1)
         fixed = copy.deepcopy(draft)
         draft['edits_tests'] = [node]
         fixed['edits_tests'] = [node]
-        fixed['checks'][0]['node_ids'].append(node)
+        fixed['checks'][0]['tests'].append(node)
         fixed['checks'][0]['goal_ids'] = list(range(6))
     model = planner_model(monkeypatch, draft, fixed)
     events = []
@@ -664,18 +664,18 @@ def test_pb2710_global_coverage_without_rehearsal_stays_terminal(
 
     fixture, draft, fixed = coverage_case
     if defect == 'edit':
-        node = draft['checks'][1]['node_ids'][0]
+        node = draft['checks'][1]['tests'][0]
         draft['checks'].pop(1)
         fixed = copy.deepcopy(draft)
         draft['edits_tests'] = [node]
         fixed['edits_tests'] = [node]
-        fixed['checks'][0]['node_ids'].append(node)
+        fixed['checks'][0]['tests'].append(node)
         fixed['checks'][0]['goal_ids'] = list(range(6))
     else:
         # A forced check without subjects must select a test defined at the base.
         draft['checks'][0]['proof']['subjects'] = []
         fixed['checks'][0]['proof']['subjects'] = []
-        fixed['checks'][0]['node_ids'] = [draft['checks'][1]['node_ids'][0]]
+        fixed['checks'][0]['tests'] = [draft['checks'][1]['tests'][0]]
     for reply in (draft, fixed):
         reply['checks'][0]['forcing'] = copy.deepcopy(PID_FORCING)
     if execution == 'runtime':

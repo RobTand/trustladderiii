@@ -91,9 +91,9 @@ def test_protected_paths_are_rejected(tmp_path, planner_request, monkeypatch, pr
     ({"checks": [LEAF["checks"][0]]}, True),
     ({"checks": [{**LEAF["checks"][0], "goal_ids": [0, 1, 2]}]}, True),
     ({"checks": [{**LEAF["checks"][0], "goal_ids": []}]}, True),
-    ({"checks": [{**LEAF["checks"][0], "node_ids": []}]}, True),
+    ({"checks": [{**LEAF["checks"][0], "tests": []}]}, True),
     ({"checks": [{**LEAF["checks"][0], "kind": "guess"}]}, False),
-    ({"checks": [{**LEAF["checks"][0], "node_ids": ["tests/test_greeting.py"]}]}, True),
+    ({"checks": [{**LEAF["checks"][0], "tests": ["tests/test_greeting.py"]}]}, True),
     ({"files": []}, True),
     ({"files": ["greeting.py", "greeting.py"]}, False),
     ({"no_design_questions": False}, True),
@@ -109,7 +109,7 @@ def test_leaf_rules_are_reported_and_malformed_shapes_fail(tmp_path, planner_req
 
 def test_invalid_node_id_is_reported_to_controller(tmp_path, planner_request):
     proposal = copy.deepcopy(LEAF)
-    proposal["checks"][0]["node_ids"] = ["../test.py::test_escape"]
+    proposal["checks"][0]["tests"] = ["../test.py::test_escape"]
     result = run_reply_in_process(tmp_path, planner_request, proposal)
     assert_rule_report(result)
     diagnostic = result.events[-1]["reply"]["violations"][0]
@@ -240,7 +240,7 @@ def test_t832_q63_proof_message_gets_one_named_repair(planner_request, monkeypat
     if change in {'fixed', 'unrelated'}:
         fixed['checks'][0]['proof']['red_message'] = assertion
     if change == 'unrelated':
-        fixed['checks'][0]['node_ids'] = ['tests/test_greeting.py::test_unrelated']
+        fixed['checks'][0]['tests'] = ['tests/test_greeting.py::test_unrelated']
     if change == 'honest_stop':
         fixed = copy.deepcopy(CANT_MEET)
     model, event = _named_run(planner_request, monkeypatch, draft, fixed)
@@ -317,12 +317,12 @@ def test_843_repairs_only_named_base_absent_selections(planner_request, monkeypa
     control = 'tests/test_existing.py::test_api'
     draft = copy.deepcopy(LEAF)
     draft['checks'][1]['kind'] = kind
-    draft['checks'][1]['node_ids'] = [missing]
+    draft['checks'][1]['tests'] = [missing]
     fixed = copy.deepcopy(draft)
-    fixed['checks'][1]['node_ids'] = [control]
+    fixed['checks'][1]['tests'] = [control]
     if change == 'head_only':
         Path(planner_request['worktree'], 'tests/test_existing.py').write_text(base_source.decode() + 'def test_head_only(): pass\n')
-        fixed['checks'][1]['node_ids'] = ['tests/test_existing.py::test_head_only']
+        fixed['checks'][1]['tests'] = ['tests/test_existing.py::test_head_only']
     elif change == 'kind':
         fixed['checks'][1]['kind'] = 'regression' if kind == 'behavior-preserving' else 'behavior-preserving'
     elif change == 'goals':
@@ -374,7 +374,7 @@ def test_843_live_golden_gets_one_repair_then_typed_stop(planner_request, monkey
     sources = {}
     for check in draft['checks']:
         if check['kind'] in {'regression', 'behavior-preserving'}:
-            for node in check['node_ids']:
+            for node in check['tests']:
                 if node != missing:
                     path, name = node.split('::')
                     sources[path] = sources.get(path, '') + f'def {name}(): assert True\n'
@@ -453,7 +453,7 @@ def test_a1_empty_allowed_set_is_an_explicit_terminal_row(planner_request, monke
     if case == 'proof.omitted':
         draft['checks'][0].pop('proof')
     elif case == 'check.tests_empty':
-        draft['checks'][0]['node_ids'] = []
+        draft['checks'][0]['tests'] = []
     with pytest.raises(planner.PlanConsistencyError) as caught:
         planner.check_reply(inputs, draft)
     error = caught.value
@@ -473,7 +473,7 @@ def _row_case(rule_id):
 
     footprint = inventory()[rule_id]['footprint']
     proof = {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}
-    check = {'kind': 'demonstrating', 'node_ids': ['test.py::test_old'], 'goal_ids': [0], 'proof': proof}
+    check = {"name": 'protocol-476', 'kind': 'demonstrating', 'tests': ['test.py::test_old'], 'goal_ids': [0], 'proof': proof}
     draft = {'kind': 'leaf', 'files': ['pkg.py', 'test.py'], 'checks': [check],
              'evidence_contract': [], 'estimated_exploration_turns': 0}
     inputs = {'must_split': False, 'ingest': {'goals': [{'description': 'The obligation.',
@@ -526,7 +526,7 @@ def _row_case(rule_id):
         proof['subjects'] = ['pkg.py', 'pkg.py']
         items, witness = {'check': 0}, {**proof, 'subjects': ['pkg.py']}
     elif footprint == 'NODE_DEDUP':
-        check['node_ids'] *= 2
+        check['tests'] *= 2
         items, witness = {'check': 0}, ['test.py::test_old']
     elif footprint == 'EDIT_DROP':
         draft['edits_tests'] = ['test.py::test_old']
@@ -535,7 +535,7 @@ def _row_case(rule_id):
         items, witness = {'nodes': ['test.py::test_new']}, ['test.py::test_old', 'test.py::test_new']
     elif footprint == 'FROZEN':
         check['kind'] = 'regression'
-        check['node_ids'].append('test.py::test_control')
+        check['tests'].append('test.py::test_control')
         items, witness = {'node': 'test.py::test_old'}, ['test.py::test_control']
     elif footprint == 'MEMORY_DROP':
         draft['memory_ids'] = ['unknown']
@@ -562,7 +562,7 @@ def _row_case(rule_id):
         items, witness = {'requirement': requirement}, {**requirement, **capability}
     if footprint == 'EDIT_COVER':
         witness = copy.deepcopy(draft)
-        witness['checks'][0]['node_ids'].append('test.py::test_new')
+        witness['checks'][0]['tests'].append('test.py::test_new')
     facts = {'reply': draft, 'draft': copy.deepcopy(draft), 'completed': completed, 'inputs': inputs,
              'diagnostics': [named(rule_id, '', items)], 'base_nodes': {'test.py::test_old'},
              'base_sources': {'test.py': 'def test_new(): assert True\n'}}
@@ -745,10 +745,10 @@ def test_r1_composition(case):
     a, b, kept = ('test.py::test_' + suffix for suffix in ('a', 'b', 'kept'))
     if case == 'edit.base_missing':
         draft['edits_tests'] = [a, b]
-        draft['checks'][0]['node_ids'] = [a, b]
+        draft['checks'][0]['tests'] = [a, b]
         diagnostics = [named(first, '', {'node': node}) for node in (a, b)]
     elif case == 'edit.frozen':
-        draft['checks'][0].update(kind='regression', node_ids=[a, b, kept])
+        draft['checks'][0].update(kind='regression', tests=[a, b, kept])
         diagnostics = [named(first, '', {'node': node}) for node in (a, b)]
     elif case.startswith('memory.'):
         draft['memory_flags'] = [{'id': key, 'claim': 'absent', 'reason': 'keep'} for key in ('a', 'b')]
@@ -762,7 +762,7 @@ def test_r1_composition(case):
         diagnostics = [named(rule, '', {'check': 0}) for rule in ('forcing.extra_keys', 'forcing.patch_mode')]
     else:
         draft['edits_tests'] = [b]
-        draft['checks'][0]['node_ids'] = [a]
+        draft['checks'][0]['tests'] = [a]
         diagnostics = [named('edit.uncovered', '', {'nodes': [b]}),
             named('forced.base_missing' if case == 'coverage.forced' else 'check.selector_inexact',
                   '', {'check': 0, 'nodes': [a]})]
@@ -773,14 +773,14 @@ def test_r1_composition(case):
     if case == 'edit.base_missing':
         after['edits_tests'] = []
     elif case == 'edit.frozen':
-        after['checks'][0]['node_ids'] = [kept]
+        after['checks'][0]['tests'] = [kept]
     elif case.startswith('memory.'):
         after['memory_flags'] = []
     elif case == 'forcing.combined':
         after['checks'][0]['forcing'].pop('extra')
         after['checks'][0]['forcing']['patches'][0].pop('extra')
     else:
-        after['checks'][0]['node_ids'] = [kept, b]
+        after['checks'][0]['tests'] = [kept, b]
     found = violations(facts)
     assert len(found) >= 2 and all(isinstance(v.repair, Edit) for v in found)
     assert permits(found, draft, after, role='planner')
@@ -888,9 +888,9 @@ def test_r1_live_coverage_rendering_fits_and_preserves_membership(request, fixtu
 
     draft = copy.deepcopy(request.getfixturevalue(fixture))
     if fixture == 'request165':
-        draft['checks'][0]['node_ids'].remove(draft['edits_tests'][0])
+        draft['checks'][0]['tests'].remove(draft['edits_tests'][0])
     inputs = request.getfixturevalue('planner_request')['inputs']
-    covered = {node for check in draft['checks'] if check['kind'] == 'demonstrating' for node in check['node_ids']}
+    covered = {node for check in draft['checks'] if check['kind'] == 'demonstrating' for node in check['tests']}
     missing = [node for node in draft['edits_tests'] if node not in covered]
     assert missing
     error = PlanConsistencyError(draft, draft, [named('edit.uncovered', '', {'nodes': missing})], inputs)
@@ -902,7 +902,7 @@ def test_r1_live_coverage_rendering_fits_and_preserves_membership(request, fixtu
                               rendered['append_checks']['maximum_total'], rendered=True)
     assert replay.value == allowed.value
     fixed = copy.deepcopy(draft)
-    fixed['checks'][0]['node_ids'].extend(missing)
+    fixed['checks'][0]['tests'].extend(missing)
     assert allowed.accepts(fixed) and replay.accepts(fixed)
     fixed['files'].append('unrelated.py')
     assert not allowed.accepts(fixed) and not replay.accepts(fixed)

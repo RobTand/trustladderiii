@@ -45,7 +45,7 @@ def file_plan(planner_request, monkeypatch):
     draft['evidence_contract'] = []
     draft['estimated_exploration_turns'] = 7
     draft['estimated_tool_turns'] = 46
-    draft['checks'][2]['node_ids'] = [
+    draft['checks'][2]['tests'] = [
         'tests/test_existing.py::test_api', 'tests/test_existing.py::test_existing', FILE]
     return draft
 
@@ -61,7 +61,7 @@ def model_for(monkeypatch, draft, fixed):
 
 def corrected(draft):
     fixed = copy.deepcopy(draft)
-    fixed['checks'][2]['node_ids'] = draft['checks'][2]['node_ids'][:-1] + NODES
+    fixed['checks'][2]['tests'] = draft['checks'][2]['tests'][:-1] + NODES
     return fixed
 
 
@@ -93,7 +93,7 @@ def test_file_correction_cannot_change_obligations(planner_request, file_plan, m
     from tl3_workers import runtime
     fixed = corrected(file_plan)
     if change == 'unknown':
-        fixed['checks'][2]['node_ids'] = [FILE + '::test_unknown']
+        fixed['checks'][2]['tests'] = [FILE + '::test_unknown']
     elif change == 'kind':
         fixed['checks'][2]['kind'] = 'behavior-preserving'
     elif change == 'goal':
@@ -103,7 +103,7 @@ def test_file_correction_cannot_change_obligations(planner_request, file_plan, m
     elif change == 'estimate':
         fixed['estimated_tool_turns'] = 1
     elif change == 'other_check':
-        fixed['checks'][1]['node_ids'] = ['tests/test_existing.py::test_existing']
+        fixed['checks'][1]['tests'] = ['tests/test_existing.py::test_existing']
     elif change == 'proof':
         fixed['checks'][0]['proof']['red_message'] = 'different message'
     else:
@@ -148,10 +148,10 @@ def test_file_syntax_does_not_repair_substantive_refusals(planner_request, file_
 def test_nonexact_selectors_use_planner_chosen_base_nodes(planner_request, file_plan, monkeypatch, selector):
     from tl3_workers import runtime
 
-    file_plan['checks'][2]['node_ids'][-1] = selector
+    file_plan['checks'][2]['tests'][-1] = selector
     fixed = corrected(file_plan)
     # The planner chooses a subset; code makes no claim about whole-file collection.
-    fixed['checks'][2]['node_ids'] = [NODES[0]]
+    fixed['checks'][2]['tests'] = [NODES[0]]
     model = model_for(monkeypatch, file_plan, fixed)
     events = []
     runtime.run(planner_request, events.append)
@@ -179,11 +179,11 @@ def test_selector_correction_uses_original_base(planner_request, file_plan, monk
         (root / FILE).write_text(SOURCE)
     # Retain this file's original-base observation through an unchanged control.
     # The demonstrating correction may replace only its rejected selector slot.
-    file_plan['checks'][1]['node_ids'].append(NODES[1])
+    file_plan['checks'][1]['tests'].append(NODES[1])
     file_plan['checks'][2].update(kind='demonstrating', proof={
         'subjects': [], 'observer_support': [], 'red_message': 'expected regression'})
     fixed = copy.deepcopy(file_plan)
-    fixed['checks'][2]['node_ids'][-1] = NODES[0]
+    fixed['checks'][2]['tests'][-1] = NODES[0]
     model = model_for(monkeypatch, file_plan, fixed)
     events = []
     runtime.run(planner_request, events.append)

@@ -33,7 +33,7 @@ def test_goal_that_edits_a_frozen_test_is_a_plan_defect(planner_request, digests
 def test_goal_naming_a_frozen_test_in_an_undeclared_file_is_not_flagged(planner_request, digests_plan):
     # The maker can't edit an undeclared file, so freezing its tests is right.
     digests_plan['files'] = ['digests.py']
-    digests_plan['checks'][0]['node_ids'] = ['tests/test_lazy.py::test_lazy_imports_run']
+    digests_plan['checks'][0]['tests'] = ['tests/test_lazy.py::test_lazy_imports_run']
     digests_plan['files'].append('tests/test_lazy.py')
     assert planned(planner_request, digests_plan) == []
 
@@ -44,8 +44,8 @@ def test_declared_edit_may_not_be_frozen(planner_request, digests_plan, frozen, 
     edited = frozen.split('[')[0]
     digests_plan['edits_tests'] = [edited]
     digests_plan['checks'] = [
-        {'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'node_ids': [edited], 'goal_ids': [0, 1]},
-        {'kind': kind, 'node_ids': [frozen], 'goal_ids': [0, 1]},
+        {"name": 'frozen_tests-47', 'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'tests': [edited], 'goal_ids': [0, 1]},
+        {"name": 'frozen_tests-48', 'kind': kind, 'tests': [frozen], 'goal_ids': [0, 1]},
     ]
     violations = planned(planner_request, digests_plan)
     assert any(f'`{edited}` is in edits_tests' in item and 'only in a demonstrating check' in item
@@ -70,7 +70,7 @@ def test_declared_edit_needs_a_demonstrating_check(planner_request, digests_plan
 def test_declared_edits_name_existing_tests_in_declared_files(planner_request, digests_plan, edited, files, reason):
     digests_plan['files'] = files
     digests_plan['edits_tests'] = [edited]
-    digests_plan['checks'] = [{'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'node_ids': [FROZEN], 'goal_ids': [0, 1]}]
+    digests_plan['checks'] = [{"name": 'frozen_tests-73', 'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'tests': [FROZEN], 'goal_ids': [0, 1]}]
     violations = planned(planner_request, digests_plan)
     assert any(item.startswith(reason) for item in violations), violations
 
@@ -78,8 +78,8 @@ def test_declared_edits_name_existing_tests_in_declared_files(planner_request, d
 def test_corrected_plan_declares_its_edit(tmp_path, planner_request, digests_plan):
     digests_plan['edits_tests'] = [FROZEN]
     digests_plan['checks'] = [
-        {'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'node_ids': [FROZEN], 'goal_ids': [0]},
-        {'kind': 'regression', 'node_ids': [SIBLING], 'goal_ids': [1]},
+        {"name": 'frozen_tests-81', 'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'tests': [FROZEN], 'goal_ids': [0]},
+        {"name": 'frozen_tests-82', 'kind': 'regression', 'tests': [SIBLING], 'goal_ids': [1]},
     ]
     assert planned(planner_request, copy.deepcopy(digests_plan)) == []
     result = run_reply(tmp_path, planner_request, digests_plan)
@@ -106,8 +106,8 @@ def test_edit_declaration_uses_original_base(planner_request, digests_plan, at_b
     else:
         (root / DIGESTS).write_text(source)
     digests_plan['edits_tests'] = [FROZEN]
-    digests_plan['checks'] = [{
-        'kind': 'demonstrating', 'node_ids': [FROZEN], 'goal_ids': [0, 1],
+    digests_plan['checks'] = [{"name": 'frozen_tests-109', 
+        'kind': 'demonstrating', 'tests': [FROZEN], 'goal_ids': [0, 1],
         'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'},
     }]
 
@@ -122,8 +122,8 @@ def test_test_only_observer_edits_use_the_source_partition(planner_request, dige
     digests_plan['files'] = [DIGESTS]
     digests_plan['edits_tests'] = [FROZEN]
     digests_plan['checks'] = [
-        {'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'node_ids': [FROZEN], 'goal_ids': [0]},
-        {'kind': 'regression', 'node_ids': [SIBLING], 'goal_ids': [1]},
+        {"name": 'frozen_tests-125', 'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'tests': [FROZEN], 'goal_ids': [0]},
+        {"name": 'frozen_tests-126', 'kind': 'regression', 'tests': [SIBLING], 'goal_ids': [1]},
     ]
     violations = planned(planner_request, digests_plan)
     assert violations == [], violations
@@ -135,14 +135,14 @@ def test_test_only_change_with_a_forcing_still_needs_rehearsal(planner_request, 
     digests_plan['files'] = [DIGESTS]
     digests_plan['edits_tests'] = [FROZEN]
     digests_plan['checks'] = [
-        {'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'node_ids': [FROZEN], 'goal_ids': [0], 'forcing': copy.deepcopy(FORCING)},
-        {'kind': 'regression', 'node_ids': [SIBLING], 'goal_ids': [1]},
+        {"name": 'frozen_tests-138', 'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'tests': [FROZEN], 'goal_ids': [0], 'forcing': copy.deepcopy(FORCING)},
+        {"name": 'frozen_tests-139', 'kind': 'regression', 'tests': [SIBLING], 'goal_ids': [1]},
     ]
     validate('planner-reply', digests_plan)
     assert any('matching forcing rehearsal receipt' in v
                for v in planned(planner_request, copy.deepcopy(digests_plan)))
     # A second assertion observer does not waive the forced check rehearsal.
-    digests_plan['checks'].append({'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'node_ids': [SIBLING], 'goal_ids': [0]})
+    digests_plan['checks'].append({"name": 'frozen_tests-145', 'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'tests': [SIBLING], 'goal_ids': [0]})
     assert any('matching forcing rehearsal receipt' in item
                for item in planned(planner_request, copy.deepcopy(digests_plan)))
     digests_plan['checks'].pop()
@@ -204,7 +204,7 @@ def test_test_file_location_does_not_invent_a_proof_obligation(planner_request, 
     planner_request['inputs']['ingest']['goals'][0]['description'] = (
         f'Identify the cause of the intermittent failure of {NAME} and reproduce it deterministically.')
     digests_plan['files'] = [DIGESTS]
-    digests_plan['checks'] = [{'kind': 'regression', 'node_ids': [FROZEN, SIBLING], 'goal_ids': [0, 1]}]
+    digests_plan['checks'] = [{"name": 'frozen_tests-207', 'kind': 'regression', 'tests': [FROZEN, SIBLING], 'goal_ids': [0, 1]}]
     violations = planned(planner_request, copy.deepcopy(digests_plan))
     assert violations == [], violations
     digests_plan['files'] = ['digests.py', DIGESTS]
@@ -215,8 +215,8 @@ def test_new_test_observer_can_demonstrate_a_test_file_subject(planner_request, 
     # Checking grafts only this observer, preserving all other base definitions.
     digests_plan['files'] = [DIGESTS, 'tests/test_lazy.py']
     digests_plan['checks'] = [
-        {'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'node_ids': ['tests/test_lazy.py::test_lazy_imports_run'], 'goal_ids': [0]},
-        {'kind': 'regression', 'node_ids': [SIBLING], 'goal_ids': [1]},
+        {"name": 'frozen_tests-218', 'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'tests': ['tests/test_lazy.py::test_lazy_imports_run'], 'goal_ids': [0]},
+        {"name": 'frozen_tests-219', 'kind': 'regression', 'tests': [SIBLING], 'goal_ids': [1]},
     ]
     violations = planned(planner_request, digests_plan)
     assert violations == [], violations
@@ -226,7 +226,7 @@ def test_test_only_regression_plan_is_accepted(planner_request, digests_plan):
     # A test refactor guarded by existing tests can pass; only shapes that can't are refused.
     planner_request['inputs']['ingest']['goals'][0]['description'] = 'Share the digest fixtures.'
     digests_plan['files'] = [DIGESTS]
-    digests_plan['checks'] = [{'kind': 'regression', 'node_ids': [FROZEN, SIBLING], 'goal_ids': [0, 1]}]
+    digests_plan['checks'] = [{"name": 'frozen_tests-229', 'kind': 'regression', 'tests': [FROZEN, SIBLING], 'goal_ids': [0, 1]}]
     assert planned(planner_request, digests_plan) == []
 
 
