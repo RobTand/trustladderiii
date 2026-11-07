@@ -29,14 +29,14 @@ if [ ! -f "$release/SOURCE.json" ]; then
     --env PATH=/home/rob/.cargo/bin:/home/rob/.local/bin:/usr/local/bin:/usr/bin:/bin \
     --env CARGO_BUILD_JOBS=2 --env OMP_NUM_THREADS=1 --env MKL_NUM_THREADS=1 \
     --env OPENBLAS_NUM_THREADS=1 --env RAYON_NUM_THREADS=1 \
-    -- bash deploy/dl380g10/build-release.sh "$release" "$sha"
+    -- python3 -I deploy/dl380g10/exact-source.py "$sha" bash deploy/dl380g10/build-release.sh "$release" "$sha"
 fi
 python3 "$tools/pbrun.py" --cwd "$tree" --tag dl380g10 --cpus 1 --demand mem_gb=2 \
   --timeout-s 1800 --wait-s 1800 \
   --env PATH=/home/rob/.local/bin:/usr/local/bin:/usr/bin:/bin --env XDG_RUNTIME_DIR=/run/user/1000 \
   --env TL3_DEPLOY_NONCE="$(date -u +%Y%m%dT%H%M%S%N)" \
   --env OMP_NUM_THREADS=1 --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 \
-  -- python3 -I deploy/dl380g10/deploy.py fresh-init --head "$sha" --lane "$lane" \
+  -- python3 -I deploy/dl380g10/exact-source.py "$sha" python3 -I deploy/dl380g10/deploy.py fresh-init --head "$sha" --lane "$lane" \
       --binaries "$release" --state-manifest "$manifest" --backup "$backup"
 # pbrun's synchronous verdict verifies the terminal outcome and CAS receipt.
 # The selected helper never starts a previous binary after a failure.

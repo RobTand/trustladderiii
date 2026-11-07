@@ -110,3 +110,5 @@ The source contract is recorded at
 `/home/rob/tmp/tl3-build/rust-fv/ctrl-core/batch/fx-s2-file-state-contract.md`,
 SHA-256 `420ee06aa5cb1fd257e746409e05fe101a432059a013aaee06e40b5ba7be33e1`.
 Reconcile it against the chosen integrated FX head before deployment.
+
+The canonical caller runs each admitted action through `exact-source.py`. PrismaBuild seals a child snapshot with a tracked closure stamp; the launcher makes a private temporary clone and checks out the selected qualified commit. Build and deployment retain their strict clean-tree checks. The snapshot itself remains unchanged.

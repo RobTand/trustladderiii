@@ -20,6 +20,21 @@ deploy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(deploy)
 
 
+class ExactSourceTests(unittest.TestCase):
+    def test_pb_snapshot_executes_exact_selected_source(self):
+        source = Path(__file__).resolve().parents[2]
+        # PB seals a child commit with its own tracked stamp. Execute its parent.
+        head = subprocess.check_output(["git", "rev-parse", "HEAD^"], cwd=source, timeout=15).decode().strip()
+        result = subprocess.run([
+            "python3", "-I", str(source / "deploy/dl380g10/exact-source.py"), head,
+            "python3", "-c",
+            "import subprocess,sys; "
+            "assert subprocess.check_output(['git','rev-parse','HEAD']).decode().strip()==sys.argv[1]; "
+            "assert not subprocess.check_output(['git','status','--porcelain'])", head,
+        ], cwd=source, capture_output=True, timeout=90)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+
+
 class FreshInitTests(unittest.TestCase):
     def setUp(self):
         self.scratch = tempfile.TemporaryDirectory(prefix="tl3-fresh-test-")
