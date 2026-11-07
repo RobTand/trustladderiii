@@ -107,11 +107,15 @@ bytes again. Neither the proof source nor the production runner is patched.
 Before preparation and submission, the driver constructs the request with the
 installed stock bbrun serializer and invokes its unchanged size guard. The
 preparation identity records the request size, serialized estimate, limit, and
-client/scanner hashes. If the full manifest does not fit, dynamic programming
-chooses the fewest contiguous ordered batches that fit. Equal-count plans choose
-the longest first batch, then apply the same rule to the remaining selections.
-Gzip sizes need not be monotonic. An impossible partition refuses before Run.
-The stock client repeats its size guard at actual submission.
+client/scanner hashes. A greedy forward pass fills contiguous ordered batches,
+closing each at the first next-selector request that would exceed the stock
+ceiling minus a fixed 2,048-byte fill margin. Gzip sizes need not be monotonic;
+the planner does not look past a rejected prefix or promise the fewest batches.
+A singleton must fit the actual stock ceiling, even if it cannot reserve the
+full fill margin. An oversized singleton refuses before Run and names its target
+and selector. Each final command is rechecked with the unchanged stock guard.
+Planning takes at most `N + 2B - 1` stock serializations for `N` selections and
+`B` batches, at most `3N`. The stock client repeats its size guard at submission.
 
 Each batch has its own config, exact command, preparation receipt, output
 directory, runner log and invocation ID. The root preparation receipt binds the

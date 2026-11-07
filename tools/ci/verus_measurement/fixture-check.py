@@ -7,10 +7,12 @@ import json
 import os
 from pathlib import Path
 import runpy
+import signal
 import stat
 import subprocess
 import tarfile
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 import zipfile
@@ -484,15 +486,86 @@ class Fixtures(unittest.TestCase):
     def test_submission_nonzero_exit_retains_evidence(self):
         self.assert_unidentified_submission('no-id-error', b'FAKE client refused before Run\r\n\xff', 2, [])
 
-    def test_minimum_ordered_batches(self):
-        # Greedy longest-prefix takes three batches; the optimum takes two.
+    def test_greedy_ordered_batches(self):
+        rows = D['loads']((HERE / 'production-selectors.fixture.json').read_bytes())['selections'][:5]
+        config = self.config(mode='frontend-only', selections=rows)
+
+        def plan_for(current, fits, estimate=None):
+            def size(command):
+                index = command.index('-c')
+                decoded = S['unpack_transport'](command[index + 2], command[index + 3])
+                selected = D['loads'](decoded['config.json'])['selections']
+                start, end = rows.index(selected[0]), rows.index(selected[-1]) + 1
+                accepted = fits(start, end)
+                return {'fits': accepted, 'estimated_serialized_bytes': estimate or (100 if accepted else 5000),
+                        'limit_bytes': 4096}
+            with patch.dict(S['batch_plan'].__globals__, {'stock_size': size}):
+                return S['batch_plan'](current, self.evidence / 'greedy.log', None)
+
+        intervals = lambda plan: [(item['start'], item['end']) for item in plan]
+        # Stop at the first overflow even when a later gzip size could fit again.
         allowed = {(0, 1), (0, 2), (1, 4), (2, 3), (3, 4)}
-        self.assertEqual(S['minimal_batches'](4, lambda i, j: (i, j) in allowed), [(0, 1), (1, 4)])
-        fit = lambda i, j: j - i <= 2
-        self.assertEqual(S['minimal_batches'](5, fit), [(0, 2), (2, 4), (4, 5)])
-        self.assertEqual(S['minimal_batches'](5, fit), S['minimal_batches'](5, fit))
-        with self.assertRaisesRegex(ValueError, 'no ordered batch partition'):
-            S['minimal_batches'](1, lambda i, j: False)
+        four = self.config(mode='frontend-only', selections=rows[:4])
+        self.assertEqual(intervals(plan_for(four, lambda i, j: (i, j) in allowed)), [(0, 2), (2, 3), (3, 4)])
+        first = plan_for(config, lambda i, j: j - i <= 2)
+        self.assertEqual(intervals(first), [(0, 2), (2, 4), (4, 5)])
+        self.assertEqual(first, plan_for(config, lambda i, j: j - i <= 2))
+        self.assertEqual(intervals(plan_for(config, lambda i, j: True, estimate=3000)),
+                         [(i, i + 1) for i in range(5)])
+        with self.assertRaisesRegex(ValueError, 'single selector exceeds stock size limit: ' + rows[0]['target']):
+            plan_for(config, lambda i, j: False)
+
+    def test_342_selector_planning_bound(self):
+        # Synthetic inventory, real stock serializer, no network or Run.
+        rows = []
+        for index in range(342):
+            name = D['digest'](str(index).encode())
+            rows.append({'target': '//crates/kernel:verus_synthetic_' + name,
+                         'selector': 'kernel::synthetic#proof_' + name, 'expected': 1})
+        config = self.config(mode='frontend-only', selections=rows)
+        stock_size = S['stock_size']
+        runs, plans = [], []
+
+        def timed_out(signum, frame):
+            raise TimeoutError('342-selector planner exceeded 30-second fixture bound')
+
+        previous = signal.signal(signal.SIGALRM, timed_out)
+        try:
+            for repeat in range(2):
+                calls = 0
+                started = time.monotonic()
+                complete = False
+
+                def counted(command):
+                    nonlocal calls
+                    calls += 1
+                    return stock_size(command)
+
+                signal.setitimer(signal.ITIMER_REAL, 30)
+                try:
+                    with patch.dict(S['batch_plan'].__globals__, {'stock_size': counted}):
+                        plan = S['batch_plan'](config, self.evidence / 'scale.log', None)
+                    complete = True
+                finally:
+                    signal.setitimer(signal.ITIMER_REAL, 0)
+                    runs.append({'repeat': repeat, 'complete': complete, 'seconds': time.monotonic() - started,
+                                 'stock_serializations': calls, 'bound_seconds': 30})
+                    self.evidence.joinpath('planner-scale.json').write_bytes(D['encoded']({
+                        'inventory': '342 deterministic synthetic selectors; no proof execution', 'runs': runs}))
+                self.assertLessEqual(calls, 3 * len(rows))
+                self.assertEqual([row for item in plan for row in item['config']['selections']], rows)
+                self.assertTrue(all(item['size']['fits'] for item in plan))
+                for item in plan:
+                    self.assertEqual(stock_size(item['command']), item['size'])
+                plans.append(plan)
+            self.assertEqual(plans[0], plans[1])
+            self.evidence.joinpath('planner-scale.json').write_bytes(D['encoded']({
+                'inventory': '342 deterministic synthetic selectors; no proof execution',
+                'runs': runs, 'deterministic': True, 'all_final_stock_guards_pass': True,
+                'batches': [{'start': item['start'], 'end': item['end'], 'size': item['size']} for item in plans[0]]}))
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, previous)
 
     def pair_config(self, mode='normal'):
         first = configuration()['selections'][0]
