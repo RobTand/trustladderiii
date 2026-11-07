@@ -376,7 +376,7 @@ impl Name {
     }
 }
 impl Allowed {
-    fn accepts(&self, value: &Value, policy: &Policy<'_>) -> Result<bool, String> {
+    pub fn accepts(&self, value: &Value, policy: &Policy<'_>) -> Result<bool, String> {
         Ok(match self {
             Self::Finite { values } => values.contains(value),
             Self::Schema {

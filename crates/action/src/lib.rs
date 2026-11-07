@@ -1,5 +1,6 @@
 //! The action's implemented policy operations. Execution remains in later slices.
 pub mod plugin;
+mod schema;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tl3_contracts::rules::{self, Policy, RenderContext, Role, TerminalForm, Violation};
@@ -14,6 +15,8 @@ pub struct PolicyRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PolicyOperation {
+    Membership { allowed: rules::Allowed, value: serde_json::Value },
+    AdmitPlan { checks: Vec<tl3_contracts::Check>, goal_count: usize, required_goals: Vec<tl3_contracts::GoalId> },
     Text { value: String, limit: usize },
     Window { value: String, start: usize, end: usize },
     Shape { input_json: String, limit: usize },
@@ -50,11 +53,22 @@ const TERMINALS: &[TerminalForm] = &[
     TerminalForm { role: Role::Planner, predicate: cant_meet, phrase: "Return a reply with kind \"cant_meet\"." },
     TerminalForm { role: Role::Maker, predicate: cant_meet, phrase: "Return a reply with kind \"cant_meet\"." },
 ];
-fn row_policy() -> Policy<'static> { Policy { terminals: TERMINALS, source_editors: &[Role::Maker], schema_membership: None } }
+fn row_policy() -> Policy<'static> { Policy { terminals: TERMINALS, source_editors: &[Role::Maker], schema_membership: Some(schema::membership) } }
 
 pub fn policy(request: PolicyRequest) -> Result<PolicyResponse, String> {
     let mut state = request.state;
     let result = match request.operation {
+        PolicyOperation::Membership { allowed, value } => PolicyResult::Permitted(allowed.accepts(&value, &row_policy())?),
+        PolicyOperation::AdmitPlan { checks, goal_count, required_goals } => {
+            tl3_contracts::checks::admit_plan(&checks, goal_count, &required_goals)?;
+            for check in &checks {
+                for test in &check.tests {
+                    tl3_harness_core::node_id::NodeId::parse(test, tl3_harness_core::node_id::Mode::Exact)
+                        .map_err(|_| "planner checks need exact pytest selectors")?;
+                }
+            }
+            PolicyResult::Valid
+        },
         PolicyOperation::Text { value, limit } => PolicyResult::Text(state.text(&value, limit)?),
         PolicyOperation::Window { value, start, end } => PolicyResult::Text(state.window(&value, start, end)?),
         PolicyOperation::Shape { input_json, limit } => PolicyResult::Shaped(state.shape(&input_json, limit)?),
