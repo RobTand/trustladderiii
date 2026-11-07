@@ -16,13 +16,14 @@ git fetch origin
 git worktree add --detach /home/rob/tmp/t20-go-live COMMIT
 cd /home/rob/tmp/t20-go-live
 export TL3_RELEASE=/home/rob/tmp/tl3-release-COMMIT
+export TL3_COMMIT=$(git rev-parse HEAD)
 python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
   --cwd "$PWD" --tag dl380g10 --cpus 2 --demand mem_gb=6 --priority -10 \
   --env PATH=/home/rob/.cargo/bin:/home/rob/.local/bin:/usr/local/bin:/usr/bin:/bin \
   --env RUSTUP_HOME=/home/rob/.rustup --env CARGO_HOME=/home/rob/.cargo \
   --env CARGO_BUILD_JOBS=2 --env OMP_NUM_THREADS=1 \
   --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 \
-  --detach -- bash deploy/dl380g10/build-release.sh "$TL3_RELEASE"
+  --detach -- bash deploy/dl380g10/build-release.sh "$TL3_RELEASE" "$TL3_COMMIT"
 ```
 
 Save the returned action key as `BUILD_KEY`. Check the terminal record, logs,
@@ -33,9 +34,9 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbwait.py BUILD_KEY --endings
 (cd "$TL3_RELEASE" && sha256sum -c SHA256SUMS)
 ```
 
-Apply the explicit model defaults before installation. Older deployed configs
-have one planner model and fail the new validation. This command saves a private
-backup, preserves the endpoint and key path, and supplies the second planner.
+Choose the operator model settings explicitly before initial installation.
+The model-defaults command saves a private config backup and changes the ladders;
+it is never part of fresh-init deployment.
 Installation preserves the existing model ladders and the webhook port.
 
 ```bash
@@ -49,14 +50,12 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
 
 Save this action key and verify it with `pbwait.py --endings`. `deploy.py install`
 does not enable or start any unit. It copies the release binaries, Python packages,
-unit files and the wrapper. It also adds the operations issue identity expected
-by the looks adapter and fills a missing Hindsight bank, preserving its endpoint.
+unit files and the wrapper. Existing configuration must already contain the current operations identity
+and Hindsight inputs; installation never fills or upgrades them.
 No credential values enter the checkout or build snapshot.
-The database helper applies missing migrations to the prepared, running Postgres
-instance. It refuses historical SQL mismatches. This release adds schema 6's
-nullable worker-wait column. `try-restart` refreshes an already-running status
-service so its reader matches the new schema; it does not start an inactive one.
-The controller remains stopped and the readiness marker stays absent.
+The database service creates database `tl3` if needed. Fresh-state deployment
+initializes the selected revision's complete schema after the verified cold copy
+and exact TL3 reset, before starting the controller and its dependents.
 
 ## Preflight
 
@@ -212,35 +211,9 @@ Success requires `merged=true`, a closed issue and zero questions to Rob.
 The live tracer acceptance and service restart acceptance remain the coordinator's
 work; installing this PR does not complete tickets #19 or #20.
 
-## Roll back
+## Deployment failure
 
-Stop intake and local children first. Preserve database data, App and model
-credentials, worktrees, worker runs and PB records. Submitted fleet actions
-remain PB-owned; inspect and withdraw by their recorded keys if necessary.
-A PR already in Mergify's queue can still merge. Check its upstream record.
-
-```bash
-systemctl --user disable --now tl3d.service
-rm -f "$HOME/.config/tl3/production-ready"
-rm -f "$XDG_RUNTIME_DIR/systemd/user/tl3d.service.d/startup-check.conf"
-systemctl --user daemon-reload
-systemctl --user is-active tl3d.service
-```
-
-Then stop GitHub's deliveries and withdraw the seed:
-
-- **Rob step:** uncheck **Active** in the GitHub App settings, so GitHub stops
-  sending webhooks.
-- Remove the `tl3` label from the seed issue:
-  `gh api -X DELETE repos/RobTand/tl3-sandbox/issues/SEED/labels/tl3`.
-- If the seed's PR is queued, dequeue it as the App with
-  `cargo run --locked -p tl3-mergify --example sandbox_gate -- dequeue PR`.
-  Then close it without merging:
-  `gh api -X PATCH repos/RobTand/tl3-sandbox/pulls/PR -f state=closed`.
-
-Restore the prior release artifacts with `deploy.py install --binaries` and,
-if needed, the timestamped 0600 config backup from this installation. Do not
-start an older binary against a newer store migration. Restore matching code
-or arrange an explicit compatible migration. Leave the marker absent until
-startup is verified again. Stop status and Postgres only if the coordinator
-wants the whole deployment offline. Leave TL2's external connector alone.
+Stop dispatch and diagnose using the retained diagnostic backup. Select another
+qualified build with fresh TL3 state only after reconciling outstanding execution
+and cleanup obligations. Follow [FRESH-INIT.md](FRESH-INIT.md). There is no
+old-state upgrade or rollback deployment lane.

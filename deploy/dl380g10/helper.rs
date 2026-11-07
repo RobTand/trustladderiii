@@ -53,6 +53,52 @@ fn run() -> Result<()> {
         "database" => {
             database(&tl3_config::Config::load_status(path)?)?;
         }
+        "fresh-database" => {
+            let [context] = rest else {
+                return Err("fresh database requires the verified cold-backup context".into());
+            };
+            use std::io::Read;
+            use std::process::Stdio;
+            let mut capability = Vec::new();
+            std::io::stdin().take(65).read_to_end(&mut capability)?;
+            if capability.len() != 65 || capability[64] != b'\n' {
+                return Err("fresh database needs the live orchestrator capability".into());
+            }
+            let mut authorization = std::process::Command::new("timeout")
+                .args([
+                    "3300s",
+                    "python3",
+                    "-I",
+                    "deploy/dl380g10/deploy.py",
+                    "authorize-fresh-database",
+                    "--context",
+                    context,
+                    "--database-config",
+                    path,
+                ])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|_| "fresh database authorization unavailable")?;
+            authorization
+                .stdin
+                .take()
+                .ok_or("authorization pipe missing")?
+                .write_all(&capability)?;
+            let result = authorization.wait_with_output()?;
+            if !result.status.success() {
+                return Err(
+                    "fresh database requires current qualification and verified cold backup".into(),
+                );
+            }
+            let identity: Value = serde_json::from_slice(&result.stdout)
+                .map_err(|_| "cold cluster identity unavailable")?;
+            let identifier = identity["system_identifier"]
+                .as_str()
+                .ok_or("cold cluster identity unavailable")?;
+            fresh_database(&tl3_config::Config::load_status(path)?, identifier)?;
+        }
         "console-role" => console_role(&tl3_config::Config::load_status(path)?)?,
         "store-check" => {
             let config = tl3_config::Config::load_status(path)?;
@@ -107,6 +153,89 @@ fn database(config: &tl3_config::Config) -> Result<()> {
     if let Err(error) = console_role(config) {
         println!("Postgres: console login not granted: {error}");
     }
+    Ok(())
+}
+
+fn fresh_database(config: &tl3_config::Config, identifier: &str) -> Result<()> {
+    // This primitive is called only after deploy.py's authenticated gate and
+    // verified cold copy. Check the controller again at the SQL boundary.
+    for unit in [
+        "tl3d.service",
+        "tl3-mlflow.service",
+        "tl3-status.service",
+        "tl3-console.service",
+    ] {
+        let stopped = std::process::Command::new("timeout")
+            .args([
+                "15s",
+                "systemctl",
+                "--user",
+                "show",
+                unit,
+                "--property=ActiveState",
+                "--value",
+            ])
+            .output()
+            .map_err(|_| "cannot prove database clients stopped")?;
+        if !stopped.status.success() || stopped.stdout != b"inactive\n" {
+            return Err("fresh database requires exactly stopped TL3 clients".into());
+        }
+    }
+    recreate_tl3_database(config, identifier)
+}
+
+fn recreate_tl3_database(config: &tl3_config::Config, identifier: &str) -> Result<()> {
+    let settings = &config.store;
+    if settings.database != "tl3" || settings.user != "tl3" {
+        return Err("fresh database resets only database and user tl3".into());
+    }
+    let mut options = postgres::Config::new();
+    options
+        .host(&settings.host)
+        .port(settings.port)
+        .user(&settings.user)
+        .dbname("postgres")
+        .connect_timeout(Duration::from_secs(10));
+    if let Some(path) = &settings.password_file {
+        let password = fs::read_to_string(path).map_err(|_| "cannot load database credential")?;
+        options.password(password.trim_end());
+    }
+    let mut client = options
+        .connect(postgres::NoTls)
+        .map_err(|_| "database connection failed")?;
+    let actual: String = client
+        .query_one(
+            "SELECT system_identifier::text FROM pg_control_system()",
+            &[],
+        )?
+        .get(0);
+    if actual != identifier {
+        return Err("running cluster differs from the verified cold backup".into());
+    }
+    client.batch_execute("SET statement_timeout = '15s'; SET lock_timeout = '5s'")?;
+    if client
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = 'tl3')",
+            &[],
+        )?
+        .get::<_, bool>(0)
+    {
+        return Err("fresh database refuses live TL3 database sessions".into());
+    }
+    // Constant SQL identifiers. No FORCE, role reset, cluster reset or unrelated DB writes.
+    client
+        .batch_execute("DROP DATABASE IF EXISTS tl3")
+        .map_err(|_| "TL3 database drop refused; diagnose without restoring old state")?;
+    client
+        .batch_execute("CREATE DATABASE tl3 OWNER tl3")
+        .map_err(|_| "fresh TL3 database creation failed")?;
+    let mut owner = tl3_store::Ownership::claim(tl3_store::Store::connect(settings)?)?;
+    // The database is empty. This installs this revision's full schema, never upgrades old state.
+    owner.migrate()?;
+    owner.release()?;
+    console_role(config)?;
+    tl3_store::Reader::open(settings)?;
+    println!("Fresh TL3 database: current schema initialized and verified");
     Ok(())
 }
 
@@ -594,6 +723,152 @@ mod database_support;
 #[cfg(test)]
 mod database_tests {
     use super::*;
+
+    #[test]
+    fn fresh_reset_preserves_unrelated_database_and_refuses_live_sessions() {
+        // An explicitly admitted disposable cluster. Do not use shared fixture
+        // reaping or process discovery for this destructive-boundary test.
+        let scratch = tempfile::tempdir().unwrap();
+        let binary =
+            std::env::var_os("TL3_FRESH_PG_BIN").expect("declare disposable Postgres binaries");
+        let binary = Path::new(&binary);
+        let data = scratch.path().join("data");
+        let socket = scratch.path().join("socket");
+        fs::create_dir(&socket).unwrap();
+        let init = std::process::Command::new(binary.join("initdb"))
+            .args([
+                "-D",
+                data.to_str().unwrap(),
+                "-U",
+                "tl3",
+                "--auth=trust",
+                "--no-locale",
+            ])
+            .output()
+            .unwrap();
+        assert!(init.status.success(), "disposable initdb failed");
+        let start = std::process::Command::new(binary.join("pg_ctl"))
+            .args([
+                "-D",
+                data.to_str().unwrap(),
+                "-l",
+                scratch.path().join("server.log").to_str().unwrap(),
+                "-o",
+                &format!("-k {} -h '' -p 5543", socket.display()),
+                "-w",
+                "start",
+            ])
+            .output()
+            .unwrap();
+        assert!(start.status.success(), "disposable Postgres start failed");
+        struct Stop<'a>(&'a Path, &'a Path);
+        impl Drop for Stop<'_> {
+            fn drop(&mut self) {
+                let _ = std::process::Command::new(self.0.join("pg_ctl"))
+                    .args([
+                        "-D",
+                        self.1.to_str().unwrap(),
+                        "-m",
+                        "immediate",
+                        "-w",
+                        "stop",
+                    ])
+                    .output();
+            }
+        }
+        let _stop = Stop(binary, &data);
+        let mut config =
+            tl3_config::Config::parse(include_str!("../../crates/config/example.toml")).unwrap();
+        config.store.host = socket.to_str().unwrap().into();
+        config.store.port = 5543;
+        config.store.password_file = None;
+        config.console = None;
+        let connect = |database: &str| {
+            postgres::Config::new()
+                .host(&config.store.host)
+                .port(5543)
+                .user("tl3")
+                .dbname(database)
+                .connect_timeout(Duration::from_secs(5))
+                .connect(postgres::NoTls)
+                .unwrap()
+        };
+        let mut admin = connect("postgres");
+        admin.batch_execute("CREATE DATABASE mlflow").unwrap();
+        admin.batch_execute("CREATE DATABASE tl3").unwrap();
+        let oid: u32 = admin
+            .query_one("SELECT oid FROM pg_database WHERE datname='mlflow'", &[])
+            .unwrap()
+            .get(0);
+        let mut unrelated = connect("mlflow");
+        unrelated
+            .batch_execute(
+                "CREATE TABLE sentinel(value integer); INSERT INTO sentinel VALUES (731)",
+            )
+            .unwrap();
+        let mut old = connect("tl3");
+        old.batch_execute("CREATE TABLE old_tl3(value integer)")
+            .unwrap();
+        let identifier: String = admin
+            .query_one(
+                "SELECT system_identifier::text FROM pg_control_system()",
+                &[],
+            )
+            .unwrap()
+            .get(0);
+        assert!(recreate_tl3_database(&config, "wrong-cluster").is_err());
+        assert!(
+            recreate_tl3_database(&config, &identifier).is_err(),
+            "a live TL3 session must refuse before DROP"
+        );
+        assert!(
+            old.query_one("SELECT to_regclass('old_tl3') IS NOT NULL", &[])
+                .unwrap()
+                .get::<_, bool>(0)
+        );
+        drop(old);
+        // Wait only for this known disposable session to close, bounded by statement timeout.
+        for _ in 0..100 {
+            if !admin
+                .query_one(
+                    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname='tl3')",
+                    &[],
+                )
+                .unwrap()
+                .get::<_, bool>(0)
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        recreate_tl3_database(&config, &identifier).unwrap();
+        tl3_store::Reader::open(&config.store).unwrap();
+        assert!(
+            !connect("tl3")
+                .query_one("SELECT to_regclass('old_tl3') IS NOT NULL", &[])
+                .unwrap()
+                .get::<_, bool>(0)
+        );
+        assert_eq!(
+            unrelated
+                .query_one("SELECT value FROM sentinel", &[])
+                .unwrap()
+                .get::<_, i32>(0),
+            731
+        );
+        assert_eq!(
+            admin
+                .query_one("SELECT oid FROM pg_database WHERE datname='mlflow'", &[])
+                .unwrap()
+                .get::<_, u32>(0),
+            oid
+        );
+        for name in ["mlflow", "postgres", "tl3; DROP DATABASE mlflow"] {
+            let mut wrong = config.clone();
+            wrong.store.database = name.into();
+            assert!(recreate_tl3_database(&wrong, &identifier).is_err());
+        }
+    }
 
     fn deployment_config(postgres: &mut database_support::Database) -> tl3_config::Config {
         let admin = postgres.create_uninitialized("deploy_admin");
