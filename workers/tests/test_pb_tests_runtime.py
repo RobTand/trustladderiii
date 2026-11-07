@@ -78,14 +78,27 @@ def test_selected_flux_maker_reaches_activation_hold_without_pb_transport(rehear
     assert not calls
 
 
+@pytest.mark.parametrize('symptom', [False, True])
 @pytest.mark.parametrize('unknown_first', [False, True])
-def test_selected_flux_maker_consumes_verified_payload_and_checkpoints_before_dispatch(rehearsal, monkeypatch, tmp_path, unknown_first):
+def test_selected_flux_maker_consumes_verified_payload_and_checkpoints_before_dispatch(rehearsal, monkeypatch, tmp_path, unknown_first, symptom):
     from tl3_workers import pb_tests, flux_execution
     ledger, _, _, _ = rehearsal
     worktree = ledger.worktree
     worktree.test_settings = pb_tests.TestSettings(image='sha256:' + '1' * 64,
         execution={'backend': 'flux', 'profile': '/fixture/attempt/execution.json'})
     key = 'worker:' + 'a' * 64
+    declaration = ({'node': NODE, 'exception': 'builtins.RuntimeError', 'phase': 'call',
+                    'repeat': 3, 'parallel': 4} if symptom else None)
+    runs = []
+    if symptom:
+        import hashlib
+        for index in range(1, 4):
+            records = [{'diagnostic': 'retained raw evidence ' * 2000}]
+            digest = hashlib.sha256(json.dumps(records, sort_keys=True, separators=(',', ':'),
+                                               ensure_ascii=False).encode()).hexdigest()
+            runs.append({'run': index, 'sha256': digest, 'records': records})
+    refs = [{'path': f'/retained/symptom-{index}', 'sha256': 'e' * 64, 'bytes': 1}
+            for index in range(len(runs))]
     retained = []
     worktree.pb_submitted = lambda key, base, tree: retained.append((key, base, tree))
     monkeypatch.setattr(flux_execution, 'activation', lambda: None)
@@ -104,22 +117,30 @@ def test_selected_flux_maker_consumes_verified_payload_and_checkpoints_before_di
         assert retained == [(key, False, 'b' * 40)]
         if unknown_first and len(attached) == 1:
             raise ValueError('unknown acceptance')
-        return {'kind': 'tests', 'summary': {'status': 'completed', 'note': '',
+        payload = {'kind': 'tests', 'summary': {'status': 'completed', 'note': '',
                 'tests': [{'test': NODE, 'outcome': 'passed'}],
                 'totals': {'passed': 1, 'failed': 0, 'error': 0, 'skipped': 0}},
-                'symptom_runs': [], 'receipts': [{'backend': 'flux', 'receipt_sha256': 'd' * 64}]}
+                'symptom_runs': runs, 'symptom_receipts': refs,
+                'receipts': [{'backend': 'flux', 'receipt_sha256': 'd' * 64}]}
+        if symptom:
+            payload['summary'].update(declared_symptom=declaration,
+                symptom_runs=[{key: value for key, value in item.items() if key != 'records'} for item in runs])
+        return payload
     monkeypatch.setattr(flux_execution, 'execute', execute)
     monkeypatch.setattr(pb_tests, '_json_command', lambda command: pytest.fail('Flux invoked PB'))
     monkeypatch.setattr(pb_tests, 'bounded', lambda value, **kwargs: value)
-    result = pb_tests.make_test_tool(worktree)([NODE], repeat=3, parallel=4)
+    result = pb_tests.make_test_tool(worktree, declared_symptom=declaration)([NODE], repeat=3, parallel=4)
     if unknown_first:
         assert result['status'] == 'infrastructure_error'
         assert worktree.pb_reattach[False]['key'] == key
-        result = pb_tests.make_test_tool(worktree)([NODE], repeat=3, parallel=4)
+        result = pb_tests.make_test_tool(worktree, declared_symptom=declaration)([NODE], repeat=3, parallel=4)
     assert attached == ([False, True] if unknown_first else [False])
     assert result['status'] == 'completed', result
     assert result['tree'] == 'b' * 40
     assert result['receipts'][0]['backend'] == 'flux'
+    if symptom:
+        assert result['symptom_receipts'] == refs
+        assert len(json.dumps(result)) < 10000
 
 
 @pytest.mark.parametrize('response', ['verified', 'changed_blob', 'unknown'])

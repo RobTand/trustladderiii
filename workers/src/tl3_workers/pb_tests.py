@@ -548,7 +548,7 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                     result = _verified_test_summary(payload['summary'], payload['symptom_runs'])
                     result.update(action_key=key, receipts=payload['receipts'])
                     if payload['symptom_runs']:
-                        result['symptom_receipts'] = payload['symptom_runs']
+                        result['symptom_receipts'] = payload['symptom_receipts']
                     result = finish(bounded(model_result(result), limit=SUMMARY_BYTES - 512),
                                     base, base_sha, tree, selected, proof)
                     reattachments.pop(base, None)

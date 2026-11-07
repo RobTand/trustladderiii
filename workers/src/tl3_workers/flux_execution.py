@@ -133,6 +133,7 @@ def execute(plan, *, resumed=False, emit=lambda event: None):
     if payload['kind'] == 'tests':
         return {'kind': 'tests', 'summary': _blob(payload['summary'], plan['bounds']['payload_bytes']),
                 'symptom_runs': [_blob(item, plan['bounds']['payload_bytes']) for item in payload['symptom_runs']],
+                'symptom_receipts': payload['symptom_runs'],
                 'receipts': [receipt]}
     artifact = _blob(payload['artifact'], plan['bounds']['payload_bytes'])
     return {'kind': 'generator', 'artifact': artifact,
