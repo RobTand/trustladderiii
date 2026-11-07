@@ -661,16 +661,44 @@ def cleanup_observations(ownership, *, launch=None, podman, systemctl, cgroup_ro
     if group <= 1 or group == os.getpgrp() or ownership['launcher']['pid'] <= 1:
         raise RuntimeError('cleanup cannot target the helper group or an unsafe identity')
 
+    if not 0 < timeout <= 20:
+        raise ValueError('cleanup total budget must be positive and at most 20 seconds')
+    deadline = time.monotonic() + timeout
+
+    def remaining():
+        seconds = deadline - time.monotonic()
+        if seconds <= 0:
+            raise subprocess.TimeoutExpired('runtime cleanup budget', timeout)
+        return seconds
+
+    def stop_launcher():
+        launcher = _process_observation(ownership['launcher'])
+        if launcher['kind'] != 'present':
+            return
+        handle = os.pidfd_open(ownership['launcher']['pid'])
+        try:
+            if (_process_observation(ownership['launcher'])['kind'] != 'present'
+                    or os.getpgid(ownership['launcher']['pid']) != group):
+                raise RuntimeError('retained launcher/group identity changed')
+            grace = min(remaining() / 4, 1)
+            os.killpg(group, signal.SIGTERM)
+            if not processes_stopped([handle], grace):
+                os.killpg(group, signal.SIGKILL)
+                if not processes_stopped([handle], min(remaining(), grace)):
+                    raise subprocess.TimeoutExpired('owned launcher stop', timeout)
+        finally:
+            os.close(handle)
+
     def capture(arguments):
         result = subprocess.run(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, timeout=timeout, check=True)
+                                stderr=subprocess.DEVNULL, timeout=remaining(), check=True)
         if len(result.stdout) > 65536:
             raise RuntimeError('cleanup metadata exceeds byte bound')
         return result.stdout
 
     def status(arguments):
         return subprocess.run(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                              stderr=subprocess.DEVNULL, timeout=timeout, check=False).returncode
+                              stderr=subprocess.DEVNULL, timeout=remaining(), check=False).returncode
 
     template = '{"Id":{{json .ID}},"Name":{{json .Name}},"Labels":{{json .Config.Labels}},"Pid":{{.State.Pid}}}'
 
@@ -687,6 +715,7 @@ def cleanup_observations(ownership, *, launch=None, podman, systemctl, cgroup_ro
 
     observed = None
     try:
+        stop_launcher()
         container = ownership['container']
         if container is None and launch is not None:
             if launch['launcher'] != ownership:
@@ -695,7 +724,7 @@ def cleanup_observations(ownership, *, launch=None, podman, systemctl, cgroup_ro
             if status([podman, 'container', 'exists', launch['name']]) != 0:
                 raise RuntimeError('unbound launch identity unavailable; cleanup remains unknown')
             actual = inspect(launch['name'], launch['name'], launch['labels'])
-            scope = (scope_identity(actual['Pid'], systemctl=systemctl, timeout=timeout)
+            scope = (scope_identity(actual['Pid'], systemctl=systemctl, timeout=remaining())
                      if launch['mode'] == 'own_scope' else None)
             container = {'id': actual['Id'], 'name': launch['name'], 'labels': launch['labels'],
                          'mode': launch['mode'], 'scope': scope}
@@ -724,32 +753,20 @@ def cleanup_observations(ownership, *, launch=None, podman, systemctl, cgroup_ro
                 raise RuntimeError('container name existence is unknown')
             scope = container['scope']
             if scope is not None:
-                _scope_observation(scope, systemctl=systemctl, cgroup_root=cgroup_root, timeout=timeout)
+                _scope_observation(scope, systemctl=systemctl, cgroup_root=cgroup_root, timeout=remaining())
             removed = status([podman, 'rm', '--force', '--ignore', identifier])
             absent = status([podman, 'container', 'exists', identifier])
             name_absent = status([podman, 'container', 'exists', name])
-            remaining = capture(sweep_command).decode().split()
+            remaining_ids = capture(sweep_command).decode().split()
             observed = {'id': identifier, 'name': name, 'name_exists_exit': name_absent,
                         'remove_exit': removed, 'exists_exit': absent, 'sweep_ids': sweep,
-                        'sweep_exit': 0, 'remaining_ids': remaining,
-                        'scope': _scope_observation(scope, systemctl=systemctl, cgroup_root=cgroup_root, timeout=timeout)
+                        'sweep_exit': 0, 'remaining_ids': remaining_ids,
+                        'scope': _scope_observation(scope, systemctl=systemctl, cgroup_root=cgroup_root, timeout=remaining())
                         if scope is not None else None}
+    except subprocess.TimeoutExpired:
+        # Partial observations cannot certify container cleanup; retain launcher facts.
+        observed = None
     finally:
-        # Query/removal timeouts never skip stopping the exact owned launcher.
-        launcher = _process_observation(ownership['launcher'])
-        if launcher['kind'] == 'present':
-            handle = os.pidfd_open(ownership['launcher']['pid'])
-            try:
-                if (_process_observation(ownership['launcher'])['kind'] != 'present'
-                        or os.getpgid(ownership['launcher']['pid']) != group):
-                    raise RuntimeError('retained launcher/group identity changed')
-                os.killpg(group, signal.SIGTERM)
-                if not processes_stopped([handle], timeout):
-                    os.killpg(group, signal.SIGKILL)
-                    processes_stopped([handle], timeout)
-            finally:
-                os.close(handle)
-        deadline = time.monotonic() + timeout
         while True:
             try:
                 os.killpg(group, 0)
