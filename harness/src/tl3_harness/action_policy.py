@@ -95,6 +95,9 @@ class Redactor:
     def trace(self, request):
         return self._call('trace', request=request)
 
+    def label(self, value, kind):
+        return self.trace({'op': 'label', 'kind': kind, 'value': value})['text']
+
     def payload(self, value, limit=None):
         return json.loads(self._call('payload', input_json=json.dumps(value), limit=limit))
 

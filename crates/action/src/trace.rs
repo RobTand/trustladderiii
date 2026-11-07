@@ -19,6 +19,10 @@ pub struct Entry {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
+    Label {
+        kind: LabelKind,
+        value: String,
+    },
     Retain {
         entries: Vec<Entry>,
         shrinking: bool,
@@ -46,6 +50,13 @@ pub enum Request {
         limits: Vec<Option<usize>>,
     },
 }
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LabelKind {
+    Span,
+    Attribute,
+    Tag,
+}
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PacketEntry {
@@ -55,6 +66,9 @@ pub struct PacketEntry {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum Decision {
+    Label {
+        text: String,
+    },
     Retain {
         keep: Vec<usize>,
         shrink: Option<usize>,
@@ -86,6 +100,11 @@ fn exhausted() -> serde_json::Value {
 }
 pub fn decide(request: Request, redactor: &mut Redactor) -> Result<Decision, String> {
     Ok(match request {
+        Request::Label { kind, value } => {
+            let limit = match kind { LabelKind::Span | LabelKind::Attribute => 256, LabelKind::Tag => 512 };
+            let safe = redactor.text(&value, tl3_redaction::structured::STRING_CHARS)?;
+            Decision::Label { text: safe.chars().take(limit).collect() }
+        }
         Request::Retain { entries, shrinking } => {
             let keep: Vec<_> = (0..entries.len())
                 .filter(|index| {

@@ -189,7 +189,7 @@ class Capture:
                 'tags': self.live_tags()}
 
     def live_tags(self):
-        return {key: self.live.text(value)[:512] for key, value in self.tags.items()}
+        return {key: self.live.label(value, 'tag') for key, value in self.tags.items()}
 
     def live_record(self, entry):
         """Append an ended span to the span log, redacted now within the live budget."""
@@ -203,7 +203,7 @@ class Capture:
             return
         proto = Span()
         proto.CopyFrom(entry.proto)
-        proto.name = self.live.text(entry.name)[:256]
+        proto.name = self.live.label(entry.name, 'span')
         for content, value in zip(entry.contents, decision['values'], strict=True):
             _set_otel_proto_anyvalue(proto.attributes.add(key=content.key).value, value)
         self.live_bytes, self.live_spans = decision['used'], decision['spans']
@@ -253,7 +253,7 @@ class Capture:
         for entry in entries:
             if entry.proto.parent_span_id and entry.proto.parent_span_id not in kept:
                 entry.proto.parent_span_id = root.proto.span_id
-            entry.proto.name = self.redactor.text(entry.name)[:256]
+            entry.proto.name = self.redactor.label(entry.name, 'span')
         usage = {'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0}
         retro = retro_spans(entries)
         for entry in entries:
@@ -272,7 +272,7 @@ class Capture:
             self.log.append({'kind': 'end', 'status': root.proto.status.code, 'tags': self.live_tags()})
         for key, value in self.tags.items():
             root.proto.attributes.add(key='mlflow.traceTag.' + key).value.string_value = \
-                self.redactor.text(value)[:512]
+                self.redactor.label(value, 'tag')
         if self.omitted:
             root.proto.attributes.add(key='tl3.trace.omitted_spans').value.int_value = self.omitted
         truncated = self.allocate(root, entries)
@@ -356,9 +356,9 @@ def span_entry(span, redactor, role, model):
                   start_time_unix_nano=span.start_time, end_time_unix_nano=span.end_time)
     result.status.code = 2 if span.status.status_code.name == 'ERROR' else 1
     result.attributes.add(key='mlflow.spanType').value.string_value = kind
-    result.attributes.add(key='tl3.role').value.string_value = redactor.text(role)[:256]
+    result.attributes.add(key='tl3.role').value.string_value = redactor.label(role, 'attribute')
     if kind in {'LLM', 'CHAT_MODEL'}:
-        result.attributes.add(key='mlflow.llm.model').value.string_value = redactor.text(model)[:256]
+        result.attributes.add(key='mlflow.llm.model').value.string_value = redactor.label(model, 'attribute')
     # Retain only content and usage. Headers, provider metadata, resources and
     # raw exceptions stay local. Content is bounded now and redacted at export.
     if (raw := span.attributes.get('tl3.proxy.usage_chunks')) is not None:
@@ -406,7 +406,7 @@ def safe_span(span, redactor=None, role="unknown", model="unknown", payload_limi
 
     redactor = redactor or Redactor(None)
     entry = span_entry(span, redactor, role, model)
-    entry.proto.name = redactor.text(entry.name)[:256]
+    entry.proto.name = redactor.label(entry.name, 'span')
     decision = redactor.trace({'op': 'clean', 'contents': [content.value.wire for content in entry.contents],
                                'limits': [payload_limit for content in entry.contents]})
     for content, value in zip(entry.contents, decision['values'], strict=True):
