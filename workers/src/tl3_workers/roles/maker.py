@@ -259,7 +259,8 @@ def _validate_reply_schema(inputs, reply, proposal, captured_assertions):
     if reply.get('kind') == 'done':
         candidate = deepcopy(reply)
         missing = False
-        for item in candidate.get('reproductions', []):
+        reproductions = candidate.get('reproductions', [])
+        for item in reproductions if isinstance(reproductions, list) else ():
             if isinstance(item, dict) and 'tests' in item and 'proof' not in item:
                 missing = True
                 item['proof'] = {'subjects': [], 'observer_support': [],
