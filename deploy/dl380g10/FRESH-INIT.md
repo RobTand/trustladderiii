@@ -1,7 +1,22 @@
 # Deploy with fresh TL3 state
 
-The canonical caller is `deploy-main.sh` in this directory. The external
-`/home/rob/tmp/tl3-build/deploy-main.sh` delegates to it after the tooling lands.
+The canonical caller is `deploy-main.sh` in this directory. Install the standalone
+`external-deploy-main.sh` as `/home/rob/tmp/tl3-build/deploy-main.sh` only after
+review and the captain's tooling fast-forward. It requires exactly one full
+qualified release SHA, with no branch or default input. It clones the fixed
+upstream with complete history into a private staging directory beneath
+`/home/rob/.local/share/tl3-deploy-sources`, checks detached HEAD and complete
+porcelain including ignored files, then publishes `<SHA>` atomically. Existing
+dirty, mismatched, shallow or symlinked trees refuse without repair or deletion.
+Clean exact clones may be reused. Git and qualification subprocesses have
+deadlines, and inherited Git overrides cannot redirect repository checks.
+
+The external caller executes the canonical script from that exact clone. The
+canonical script verifies its own source boundary and invokes the existing
+authenticated qualification gate before any release build or service operation.
+Clone identity alone never qualifies a release. No working file or HEAD from
+the shared project checkout participates. Qualification fixtures exercise
+control flow only and do not prove final bundle eligibility.
 Deployment still needs the lead's outage authorization and a selected, qualified
 integrated FX+S2 head. Building this tooling does not authorize a deployment.
 

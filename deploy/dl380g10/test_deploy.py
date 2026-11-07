@@ -1117,5 +1117,155 @@ class DeployTests(unittest.TestCase):
             deploy.run(["sh", "-c", "sleep 10 & wait"], timeout=0.05)
 
 
+class ExternalCallerTests(unittest.TestCase):
+    """Real Git fixtures; fake qualification proves control flow, not eligibility."""
+
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory(prefix="tl3-caller-")
+        self.addCleanup(self.scratch.cleanup)
+        self.base = Path(self.scratch.name)
+        self.source = self.base / "unrelated-checkout"
+        self.source.mkdir()
+        self.env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        self.env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null",
+                        GIT_TERMINAL_PROMPT="0")
+        self.git("init", "-q")
+        self.git("commit", "-q", "--allow-empty", "-m", "unrelated checkout without deploy")
+        self.unrelated = self.git("rev-parse", "HEAD").strip().decode()
+        directory = self.source / "deploy/dl380g10"
+        directory.mkdir(parents=True)
+        (directory / "deploy-main.sh").write_bytes(Path(__file__).with_name("deploy-main.sh").read_bytes())
+        # A harmless qualification command records exact cwd/head/tree then
+        # refuses. Real deploy.py's authoritative gate is exercised separately.
+        (directory / "deploy.py").write_text(
+            "import json,os,subprocess,sys\nfrom pathlib import Path\n"
+            "Path(os.environ['CALLER_RECORD']).write_text(json.dumps({"
+            "'cwd':os.getcwd(),'head':subprocess.check_output(['git','rev-parse','HEAD']).decode().strip(),"
+            "'tree':subprocess.check_output(['git','rev-parse','HEAD^{tree}']).decode().strip(),"
+            "'argv':sys.argv[1:]}))\nraise SystemExit(37)\n")
+        self.git("add", ".")
+        self.git("commit", "-q", "-m", "exact release")
+        self.head = self.git("rev-parse", "HEAD").strip().decode()
+        self.tree = self.git("rev-parse", "HEAD^{tree}").strip().decode()
+        self.git("checkout", "-q", "--detach", self.unrelated)
+        (self.source / "unrelated-dirt").write_text("must never be read or cleaned")
+        self.root = self.base / "owned-sources"
+        self.record = self.base / "record.json"
+        self.env.update(CALLER_RECORD=str(self.record), TL3_FRESH_STATE_MANIFEST="unused",
+                        TL3_COLD_BACKUP="unused", TL3_DEPLOY_DRY_RUN="1")
+        self.caller = self.base / "external.sh"
+        text = Path(__file__).with_name("external-deploy-main.sh").read_text()
+        text = text.replace("https://github.com/RobTand/trustladderiii.git", str(self.source))
+        text = text.replace("/home/rob/.local/share/tl3-deploy-sources", str(self.root))
+        if os.environ.get("TL3_CALLER_RED") == "1":
+            # Committed minimal model of the installed cd22d3b8 caller. The
+            # historical production checkout is never read or executed.
+            text = '#!/bin/bash\nset -euo pipefail\nrepo=' + str(self.source) + '\nexec bash "$repo/deploy/dl380g10/deploy-main.sh" "$@"\n'
+        self.caller.write_text(text)
+
+    def git(self, *args):
+        return subprocess.check_output(["git", "-c", "user.name=Fixture", "-c",
+                                       "user.email=fixture@example.invalid", "-c",
+                                       "commit.gpgsign=false", *args], cwd=self.source,
+                                      env=self.env, stderr=subprocess.PIPE, timeout=15)
+
+    def call(self, *args, overrides=None):
+        return subprocess.run(["bash", str(self.caller), *args], env=self.env | (overrides or {}),
+                              capture_output=True, timeout=90)
+
+    def assert_refused(self, result):
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.record.exists(), result.stderr.decode())
+
+    def test_exact_release_independent_of_absent_unrelated_checkout_target(self):
+        self.assertFalse((self.source / "deploy/dl380g10/deploy-main.sh").exists())
+        result = self.call(self.head, overrides={"GIT_DIR": "/absent", "GIT_WORK_TREE": "/absent",
+                                               "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.bare",
+                                               "GIT_CONFIG_VALUE_0": "true"})
+        self.assertEqual(result.returncode, 37, result.stderr.decode())
+        record = json.loads(self.record.read_text())
+        self.assertEqual(record, {"head": self.head, "tree": self.tree,
+                                "cwd": str(self.root / self.head),
+                                "argv": ["qualify-fresh", "--head", self.head, "--lane", "release"]})
+        self.assertEqual(self.git("rev-parse", "HEAD").strip().decode(), self.unrelated)
+        self.assertTrue((self.source / "unrelated-dirt").exists())
+        self.record.unlink()
+        self.assertEqual(self.call(self.head).returncode, 37)  # safe clean reuse
+
+    def test_missing_short_branch_and_extra_inputs_refuse_before_fetch(self):
+        for args in [(), ("main",), (self.head[:12],), (self.head, "extra")]:
+            with self.subTest(args=args):
+                self.assert_refused(self.call(*args))
+                self.assertFalse(self.root.exists())
+
+    def test_missing_source_object_refuses_without_publication(self):
+        self.assert_refused(self.call("f" * 40))
+        self.assertFalse((self.root / ("f" * 40)).exists())
+
+    def test_tracked_staged_untracked_and_ignored_dirt_refuse(self):
+        self.assertEqual(self.call(self.head).returncode, 37)
+        self.record.unlink()
+        tree = self.root / self.head
+        for kind in ("tracked", "staged", "untracked", "ignored"):
+            with self.subTest(kind=kind):
+                path = tree / ("deploy/dl380g10/deploy.py" if kind in ("tracked", "staged") else "dirt")
+                original = path.read_bytes() if path.exists() else None
+                path.write_text("dirty fixture")
+                if kind == "staged":
+                    subprocess.run(["git", "add", "."], cwd=tree, env=self.env, check=True, timeout=15)
+                if kind == "ignored":
+                    (tree / ".git/info/exclude").write_text("dirt\n")
+                self.assert_refused(self.call(self.head))
+                self.assertEqual(path.read_text(), "dirty fixture")
+                # Fixture-only restoration, never production cleanup.
+                if original is None:
+                    path.unlink()
+                else:
+                    path.write_bytes(original)
+                subprocess.run(["git", "reset", "-q", "HEAD"], cwd=tree, env=self.env, check=True, timeout=15)
+
+    def test_mismatched_existing_tree_and_symlink_refuse(self):
+        self.assertEqual(self.call(self.head).returncode, 37)
+        self.record.unlink()
+        tree = self.root / self.head
+        subprocess.run(["git", "checkout", "-q", "--detach", self.unrelated], cwd=tree,
+                       env=self.env, check=True, timeout=15)
+        self.assert_refused(self.call(self.head))
+        moved = self.root / "moved"
+        tree.rename(moved)
+        tree.symlink_to(moved, target_is_directory=True)
+        self.assert_refused(self.call(self.head))
+
+    def test_canonical_direct_mismatch_and_dirty_refuse_before_gate(self):
+        self.assertEqual(self.call(self.head).returncode, 37)
+        self.record.unlink()
+        tree = self.root / self.head
+        caller = tree / "deploy/dl380g10/deploy-main.sh"
+        result = subprocess.run(["bash", str(caller), self.unrelated], env=self.env,
+                                capture_output=True, timeout=30)
+        self.assert_refused(result)
+        (tree / "dirt").write_text("dirty")
+        result = subprocess.run(["bash", str(caller), self.head], env=self.env,
+                                capture_output=True, timeout=30)
+        self.assert_refused(result)
+
+    def test_shallow_and_wrong_upstream_existing_clones_refuse(self):
+        self.assertEqual(self.call(self.head).returncode, 37)
+        self.record.unlink()
+        tree = self.root / self.head
+        (tree / ".git/shallow").write_text(self.head + "\n")
+        self.assert_refused(self.call(self.head))
+        (tree / ".git/shallow").unlink()
+        subprocess.run(["git", "remote", "set-url", "origin", str(self.base / "absent")],
+                       cwd=tree, env=self.env, check=True, timeout=15)
+        self.assert_refused(self.call(self.head))
+
+    def test_unavailable_upstream_refuses_without_published_tree(self):
+        text = self.caller.read_text().replace(str(self.source), str(self.base / "absent"))
+        self.caller.write_text(text)
+        self.assert_refused(self.call(self.head))
+        self.assertFalse((self.root / self.head).exists())
+
+
 if __name__ == "__main__":
     unittest.main()

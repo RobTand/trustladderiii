@@ -15,6 +15,7 @@ def main(argv):
     source = Path(__file__).resolve().parents[2]
     # Git's inherited repository overrides must not redirect identity checks.
     environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null", GIT_TERMINAL_PROMPT="0")
     with tempfile.TemporaryDirectory(prefix=".tl3-exact-source-", dir=source.parent) as scratch:
         checkout = Path(scratch) / "source"
         subprocess.run(["git", "clone", "--quiet", "--shared", "--no-checkout",
