@@ -432,11 +432,13 @@ fn trace_usage_keeps_only_nonnegative_integer_observations() {
     );
 }
 
-
 #[test]
 fn azure_sas_context_redacts_exact_signature_spans_without_granting_generic_sig_semantics() {
     let signature = format!("TL3FAKE{}+/=", "a".repeat(36));
-    let encoded = signature.replace('+', "%2B").replace('/', "%2F").replace('=', "%3D");
+    let encoded = signature
+        .replace('+', "%2B")
+        .replace('/', "%2F")
+        .replace('=', "%3D");
     for query in [
         format!("sv=2022-11-02&se=2026-12-01&sr=b&sig={signature}"),
         format!("sig={encoded}&ss=b&se=2026-12-01&sv=2022-11-02"),
@@ -462,6 +464,9 @@ fn azure_sas_context_redacts_exact_signature_spans_without_granting_generic_sig_
     ] {
         let result = command(json!({"op":"text","value":source}));
         let text = result["ok"]["result"]["value"].as_str().unwrap();
-        assert!(text.contains(&encoded), "missing Azure context must retain ordinary weak sig semantics");
+        assert!(
+            text.contains(&encoded),
+            "missing Azure context must retain ordinary weak sig semantics"
+        );
     }
 }
