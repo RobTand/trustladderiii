@@ -2095,10 +2095,27 @@ fn startup_capacity_change_refusal_preserves_world_repositories_and_effects() {
         snapshot
             .rows
             .iter()
-            .filter(|row| row.table != "incidents" && row.table != crate::dispatch_liveness::PARKED)
+            .filter(|row| {
+                row.table != "incidents"
+                    && row.table != crate::dispatch_liveness::PARKED
+                    && row.table != crate::dispatch_liveness::QUEUED
+            })
             .cloned()
             .collect::<Vec<_>>()
     };
+    // Reopening parks an acknowledged worker behind the counter halt.
+    assert!(!before
+        .rows
+        .iter()
+        .any(|row| row.table == crate::dispatch_liveness::QUEUED));
+    let queued: Vec<_> = after
+        .rows
+        .iter()
+        .filter(|row| row.table == crate::dispatch_liveness::QUEUED)
+        .collect();
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].id, node.0.to_string());
+    assert_eq!(queued[0].value, json!(true));
     assert_eq!(
         business(&after),
         business(&before),
