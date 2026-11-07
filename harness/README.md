@@ -641,3 +641,6 @@ rows cross the Rust action boundary before validation, rendering or permission.
 `tests/fixtures/subject_observer/proof_verdicts.json` records assembly outcomes
 from the main SHA named in the file. Its replay tests use the current assembly
 implementation and recorded inputs, without historical production source.
+
+Job-side proof row data remains Python-owned until its scheduled migration.
+Regenerate its existing export with `python -m tl3_harness.proof_rules`.

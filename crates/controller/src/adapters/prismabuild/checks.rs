@@ -500,7 +500,7 @@ mod tests {
             &bundle,
             &repository.join("harness/src/tl3_harness"),
             &delivery,
-            "sha256:fixture",
+            &format!("sha256:{}", "1".repeat(64)),
             &[],
             &Default::default(),
         )
@@ -615,7 +615,7 @@ mod tests {
             &staged,
             &harness.path()?,
             &f.delivery(),
-            "sha256:fixture",
+            &format!("sha256:{}", "1".repeat(64)),
             &[],
             &Default::default(),
         )?;
@@ -868,7 +868,7 @@ mod tests {
                     &staged,
                     &harness,
                     &delivery,
-                    "sha256:fixture",
+                    &format!("sha256:{}", "1".repeat(64)),
                     &[],
                     &Default::default(),
                 )

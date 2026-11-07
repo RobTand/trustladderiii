@@ -268,7 +268,7 @@ pub fn decide(request: Request, redactor: &mut Redactor) -> Result<Decision, Str
             let mut values = vec![];
             for (content, limit) in contents.iter().zip(limits) {
                 let limit = limit.unwrap_or(PAYLOAD_BYTES);
-                values.push(if limit < 512 {
+                values.push(if limit == 0 {
                     exhausted()
                 } else {
                     serde_json::from_str(&redactor.clean(content, limit)?)

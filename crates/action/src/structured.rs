@@ -496,6 +496,18 @@ impl Redactor {
         })
     }
     fn clean_value(&mut self, value: &Shaped, limit: usize, depth: usize) -> Result<SummaryValue> {
+        // Source rule: Redactor.walk cleans an already fitting container whole,
+        // then checks its actual redacted bytes before using truncation reserves.
+        if depth <= 20 && limit >= 128
+            && matches!(value, Shaped::Array(_) | Shaped::Object(_))
+            && value.size()? <= limit.saturating_sub(32)
+        {
+            let result = self.clean_value_inner(value, limit, depth, true)?;
+            if measured(&result)? <= limit { return Ok(result); }
+        }
+        self.clean_value_inner(value, limit, depth, false)
+    }
+    fn clean_value_inner(&mut self, value: &Shaped, limit: usize, depth: usize, roomy: bool) -> Result<SummaryValue> {
         if depth > 20 || limit < 128 {
             self.truncated = true;
             return Ok(SummaryValue::String(PythonText::from(BUDGET_NOTE)));
@@ -524,14 +536,14 @@ impl Redactor {
                 let mut remaining = limit.saturating_sub(96);
                 let mut result = vec![];
                 for (index, item) in items.iter().rev().enumerate() {
-                    if remaining < 160 {
+                    if remaining < 160 && !roomy {
                         self.truncated = true;
                         result.push(SummaryValue::String(PythonText::from(
                             "[truncated: earlier items omitted]",
                         )));
                         break;
                     }
-                    let share = remaining.min(ITEM_BYTES.max(remaining / (items.len() - index)));
+                    let share = if roomy { item.size()?.saturating_add(512) } else { remaining.min(ITEM_BYTES.max(remaining / (items.len() - index))) };
                     let item = self.clean_value(item, share, depth + 1)?;
                     remaining = remaining.saturating_sub(measured(&item)?.saturating_add(2));
                     result.push(item);
@@ -543,7 +555,7 @@ impl Redactor {
                 let mut remaining = limit.saturating_sub(96);
                 let mut result = vec![];
                 for (index, (key, value)) in fields.iter().rev().enumerate() {
-                    if remaining < 160 {
+                    if remaining < 160 && !roomy {
                         self.truncated = true;
                         result.push((
                             PythonText::from("tl3.truncated"),
@@ -552,9 +564,9 @@ impl Redactor {
                         break;
                     }
                     let key = self.text(key, 128)?;
-                    let share = remaining
+                    let share = if roomy { value.size()?.saturating_add(512) } else { remaining
                         .saturating_sub(key.len() + 8)
-                        .min(ITEM_BYTES.max(remaining / (fields.len() - index)));
+                        .min(ITEM_BYTES.max(remaining / (fields.len() - index))) };
                     let item = self.clean_value(value, share, depth + 1)?;
                     remaining = remaining.saturating_sub(
                         key.len().saturating_add(measured(&item)?).saturating_add(8),
