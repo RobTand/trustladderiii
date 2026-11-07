@@ -406,6 +406,7 @@ impl World {
                         if let Some(target) = dependency.target.request {
                             let mask = 1u64 << target.0;
                             kernel_proof! {
+                                reveal(active_edge);
                                 assert(active_edge(*self, dependency.node, target));
                                 lemmas::extend(*self, from, dependency.node, target);
                                 assert forall|n: NodeId| n.0 < self.nodes@.len()
@@ -426,6 +427,7 @@ impl World {
                             && seen & (1u64 << n.0) != 0);
                         assert forall|a: NodeId, b: NodeId| cut.contains(a)
                             && active_edge(*self, a, b) implies cut.contains(b) by {
+                            reveal(active_edge);
                             let j = choose|j: int| 0 <= j < self.dependencies@.len()
                                 && self.dependencies@[j].node == a
                                 && self.dependencies@[j].target.request == Some(b)
@@ -470,6 +472,7 @@ impl World {
             kernel_snapshot! { frontier_before = pending@ }
             let Some(node) = pending.pop() else {
                 kernel_proof! {
+                    reveal(explored);
                     let cut = vstd::iset::ISet::new(|n: NodeId| explored(*self, seen@, to, n));
                     lemmas::cut_excludes(*self, from, to, cut);
                 }
@@ -494,11 +497,33 @@ impl World {
                 continue;
             };
             if seen[index] || self.nodes[index].phase.is_closed() {
+                kernel_proof! {
+                    reveal(explored);
+                    assert(explored(*self, seen@, to, node));
+                    assert forall|a: NodeId, b: NodeId| explored(*self, seen@, to, a)
+                        && active_edge(*self, a, b)
+                        implies explored(*self, seen@, to, b) || pending@.contains(b) by {
+                        if !explored(*self, seen@, to, b) {
+                            assert(b != node);
+                            assert(frontier_before@.contains(b));
+                        }
+                    }
+                }
                 continue;
             }
             kernel_proof! { visit_reduces_unseen(seen@, index as int, seen@.len()); }
             seen[index] = true;
             kernel_proof! {
+                reveal(explored);
+                assert(explored(*self, seen@, to, from) || pending@.contains(from));
+                assert forall|a: NodeId, b: NodeId| a != node && explored(*self, seen@, to, a)
+                    && active_edge(*self, a, b)
+                    implies explored(*self, seen@, to, b) || pending@.contains(b) by {
+                    if !explored(*self, seen@, to, b) {
+                        assert(b != node);
+                        assert(frontier_before@.contains(b));
+                    }
+                }
                 assert(unseen_prefix(seen@, seen@.len()) + 1 == before_unseen@);
                 assert(pending@.len() + 1 == before_pending@);
                 let u = unseen_prefix(seen@, seen@.len());
@@ -541,6 +566,7 @@ impl World {
                 {
                     if let Some(target) = dependency.target.request {
                         kernel_proof! {
+                            reveal(active_edge);
                             assert(active_edge(*self, node, target));
                             lemmas::extend(*self, from, node, target);
                         }
@@ -554,6 +580,7 @@ impl World {
                     && active_edge(*self, a, b)
                     implies explored(*self, seen@, to, b) || pending@.contains(b) by {
                     if a == node {
+                        reveal(active_edge);
                         let j = choose|j: int| 0 <= j < self.dependencies@.len()
                             && self.dependencies@[j].node == a
                             && self.dependencies@[j].target.request == Some(b)
@@ -593,7 +620,12 @@ impl World {
             {
                 if let Some(target) = d.target.request {
                     if self.dependency_path(target, d.node) {
-                        kernel_proof! { assert(active_edge(*self, d.node, target)); }
+                        kernel_proof! {
+                            reveal(active_edge);
+                            reveal(acyclic);
+                            assert(active_edge(*self, d.node, target));
+                            assert(!acyclic(*self));
+                        }
                         return false;
                     }
                 }
@@ -603,12 +635,15 @@ impl World {
         kernel_proof! {
             assert forall|a: NodeId, b: NodeId| active_edge(*self, a, b)
                 implies !reachable(*self, b, a) by {
+                reveal(active_edge);
                 let j = choose|j: int| 0 <= j < self.dependencies@.len()
                     && self.dependencies@[j].node == a
                     && self.dependencies@[j].target.request == Some(b)
                     && !self.dependencies@[j].rejected
                     && self.dependencies@[j].status == DependencyStatus::Pending;
             }
+            reveal(acyclic);
+            assert(acyclic(*self));
         }
         true
     }
