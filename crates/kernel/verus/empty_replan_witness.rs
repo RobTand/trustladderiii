@@ -60,7 +60,7 @@ fn planner_entry_fixture(fail_fast: bool) -> (w: World) [
         empty_replan::admitted(w, NodeId(0), 3), empty_replan::admitted(w, NodeId(1), 3),
         w.nodes@.len() == 2, w.next_question == 7, w.fail_fast == fail_fast,
         forall|j: int| 0 <= j < 2 ==> w.nodes@[j].generation == 3
-            && w.nodes@[j].phase == Phase::Planning { must_split: false },
+            && w.nodes@[j].phase == (Phase::Planning { must_split: false }),
 ] proof [reveal(initial_node); reveal(world_checked); reveal(node_checked);
     reveal(world_headroom); reveal(storage_ordered); reveal(footprint::ordered_table);
     reveal(empty_replan::admitted); reveal(open_prefix);] {
