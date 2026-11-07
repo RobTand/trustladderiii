@@ -13,6 +13,10 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_materials(true)
+    }
+
+    fn with_materials(include_materials: bool) -> Self {
         let repo = Repo::new();
         let mut db = Database::start();
         let mut config =
@@ -44,10 +48,12 @@ impl Fixture {
                 labels: vec![],
             })
             .unwrap();
-        controller.store.put_worker_materials("0", &json!({"base_checkout":{"repository":repo.path,"commit":repo.base}, "maker": {
-            "brief":"Return hello.", "goals":[{"id":"greeting","description":"Return hello.","verification":"test"}],
-            "plan":{"files":["README.md"],"checks":[{"name":"hello","kind":"demonstrating","tests":["test_greeting.py::test_hello"],"goal_ids":["greeting"]}]}
-        }})).unwrap();
+        if include_materials {
+            controller.store.put_worker_materials("0", &json!({"base_checkout":{"repository":repo.path,"commit":repo.base}, "maker": {
+                "brief":"Return hello.", "goals":[{"id":"greeting","description":"Return hello.","verification":"test"}],
+                "plan":{"files":["README.md"],"checks":[{"name":"hello","kind":"demonstrating","tests":["test_greeting.py::test_hello"],"goal_ids":["greeting"]}]}
+            }})).unwrap();
+        }
         crate::git_tests::documents(
             &mut controller.store,
             &[
@@ -132,15 +138,19 @@ impl Fixture {
     }
 
     fn observe(&mut self, observation: Observation) {
+        self.try_observe(observation).unwrap();
+    }
+
+    fn try_observe(&mut self, observation: Observation) -> crate::Result<()> {
         let key = format!(
             "failure-{}",
             self.controller.snapshot().unwrap().revision.get()
         );
-        self.controller.observe(&key, observation).unwrap();
+        self.controller.observe(&key, observation)?;
         for _ in 0..32 {
-            assert!(self.controller.drive_once().unwrap());
+            assert!(self.controller.drive_once()?);
             if !crate::input_errors::kernel_backlog(&self.controller.snapshot().unwrap()) {
-                return;
+                return Ok(());
             }
         }
         panic!("the observation must drain through the controller");
@@ -312,6 +322,87 @@ fn failed_checks_reach_the_fix_maker() {
             .iter()
             .any(|r| r.table == "check_reports")
     );
+}
+
+#[test]
+fn failed_round_goal_materials_preserve_unbound_findings_and_nested_precedence() {
+    for (materials, expected) in [
+        (None, json!([])),
+        (Some(json!({})), json!([])),
+        (Some(json!({"goals":[{"id":"flat"}]})), json!(["flat"])),
+        (
+            Some(json!({"goals":[{"id":"flat"}], "maker":{}})),
+            json!([]),
+        ),
+        (
+            Some(json!({"goals":[{"id":"flat"}], "maker":{"goals":[
+                {"id":" nested "}, {"id":"nested"}
+            ]}})),
+            json!([" nested ", "nested"]),
+        ),
+    ] {
+        let mut f = Fixture::with_materials(false);
+        if let Some(materials) = &materials {
+            f.controller
+                .store
+                .put_worker_materials("0", materials)
+                .unwrap();
+        }
+        f.seed(Phase::Publishing, 3);
+        f.observe(Observation::CiFailed {
+            node: NodeId(0),
+            infra: false,
+            checks: vec![],
+        });
+        let snapshot = f.controller.snapshot().unwrap();
+        let document = crate::feedback::read(&snapshot, NodeId(0)).unwrap();
+        assert_eq!(document.maker.len(), 1, "materials: {materials:?}");
+        assert_eq!(
+            json!(document.maker[0])["goal_ids"],
+            expected,
+            "materials: {materials:?}"
+        );
+        assert!(!document.maker[0].report.is_empty());
+    }
+}
+
+#[test]
+fn malformed_goal_materials_reject_failed_round_without_feedback() {
+    for (goals, message) in [
+        (json!([{"id":" "}]), "maker goal needs a string id"),
+        (json!([{"id":7}]), "maker goal needs a string id"),
+        (json!([{}]), "maker goal needs a string id"),
+        (json!({"id":"goal"}), "maker goals must be an array"),
+    ] {
+        let mut f = Fixture::new();
+        f.controller
+            .store
+            .put_worker_materials("0", &json!({"maker":{"goals":goals}}))
+            .unwrap();
+        f.seed(Phase::Publishing, 3);
+        let before = f.controller.world().unwrap();
+        let error = f
+            .try_observe(Observation::CiFailed {
+                node: NodeId(0),
+                infra: false,
+                checks: vec![],
+            })
+            .unwrap_err();
+        assert!(
+            matches!(error, crate::Error::Invalid(actual) if actual == message),
+            "{error:?}"
+        );
+        assert_eq!(f.controller.world().unwrap(), before);
+        assert!(
+            !f.controller
+                .snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|row| row.table == "feedback"),
+            "invalid goal materials must not persist partial feedback"
+        );
+    }
 }
 
 #[test]

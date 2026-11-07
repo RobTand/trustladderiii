@@ -875,7 +875,6 @@ write unused `plan_reports` or `reviews` documents. Review blockers are retained
 in `feedback.maker`; accepted review visits are retained in `reviewer_session`.
 `feedback.planner` includes rejected-plan reasons and reports for the next planner
 run. On re-plan, the feedback module copies the maker reports into that text list.
-Legacy feedback rows are read only when the canonical document is absent.
 
 Every `Ask` notice atomically stores `question_context`, keyed by question ID,
 and carries it as `Delivery.question_context`. `Store::question_context(id)` reads
