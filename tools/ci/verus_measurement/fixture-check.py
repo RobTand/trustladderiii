@@ -87,7 +87,7 @@ class Fixtures(unittest.TestCase):
             self.assertEqual(preview.encode(), self.original)
             self.assertEqual((self.evidence / mode / 'runner.patch').read_bytes(), b'')
             self.assertIn('Toolchain::new', preview)
-            self.assertNotIn('--log-all', preview)
+            self.assertIn('--test_env=TL3_VERUS_RAW_QUERIES=0', config.command())
             self.assertEqual((self.source / D['RUNNER']).read_bytes(), self.original)
             with self.assertRaisesRegex(ValueError, 'exact_submission_argv'):
                 S['check_receipt'](self.source, config, receipt, command + ['stale'])
