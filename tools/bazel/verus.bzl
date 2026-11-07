@@ -1146,7 +1146,7 @@ def verus_proofs():
             "planner_budget_import": ("kernel::empty_replan#ReplanBudget::import", 1),
             "planner_budget_binding": ("kernel::empty_replan#ReplanBudget::bound_to", 1),
             "planner_budget_used": ("kernel::empty_replan#ReplanBudget::used", 1),
-            "empty_replan_witness": ("kernel::empty_replan_witness", 8),
+            "empty_replan_witness": ("kernel::empty_replan_witness", 7),
             "plan_check": ("kernel::plan_check", 1),
             "plan_check_witness": ("kernel::plan_check_witness", 5),
             "t860_retries_stop_for_review": ("kernel::retries#stop_for_review", 1),
