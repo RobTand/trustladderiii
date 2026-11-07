@@ -110,11 +110,16 @@ fn azure_authority_boundaries_match_the_retained_job_engine() {
     let context = format!("sv=v&se=e&sr=b&sig={signature}");
     let inputs = vec![
         format!("https://@st42.blob.core.windows.net/c?{context}"),
-        format!("https://st42.blob.core.windows.net/path@ordinary?{context}&after=user@example.com"),
+        format!(
+            "https://st42.blob.core.windows.net/path@ordinary?{context}&after=user@example.com"
+        ),
     ];
     let job = redaction_support::python_redact(&inputs);
     for (source, expected) in inputs.iter().zip(job) {
         let actual = tl3_controller::redaction::text(source).unwrap();
-        assert!(actual == expected, "Azure authority boundary differs between production engines");
+        assert!(
+            actual == expected,
+            "Azure authority boundary differs between production engines"
+        );
     }
 }

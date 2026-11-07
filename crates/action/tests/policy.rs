@@ -516,8 +516,13 @@ fn azure_sas_rejects_empty_userinfo_but_keeps_at_signs_outside_authority() {
     let result = command(json!({"op":"text","value":source}));
     let text = result["ok"]["result"]["value"].as_str().unwrap();
     assert!(text == source, "empty userinfo acquired SAS semantics");
-    let source = format!("https://st42.blob.core.windows.net/path@ordinary?{context}&after=user@example.com");
+    let source = format!(
+        "https://st42.blob.core.windows.net/path@ordinary?{context}&after=user@example.com"
+    );
     let result = command(json!({"op":"text","value":source}));
     let text = result["ok"]["result"]["value"].as_str().unwrap();
-    assert!(text == source.replace(&signature, "[REDACTED]"), "at sign outside authority changed SAS recognition");
+    assert!(
+        text == source.replace(&signature, "[REDACTED]"),
+        "at sign outside authority changed SAS recognition"
+    );
 }
