@@ -140,6 +140,17 @@
         {
           "type": "object",
           "properties": {
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
             "floor_bytes": {
               "type": "integer",
               "format": "uint",

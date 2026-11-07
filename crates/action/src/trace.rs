@@ -101,9 +101,14 @@ fn exhausted() -> serde_json::Value {
 pub fn decide(request: Request, redactor: &mut Redactor) -> Result<Decision, String> {
     Ok(match request {
         Request::Label { kind, value } => {
-            let limit = match kind { LabelKind::Span | LabelKind::Attribute => 256, LabelKind::Tag => 512 };
+            let limit = match kind {
+                LabelKind::Span | LabelKind::Attribute => 256,
+                LabelKind::Tag => 512,
+            };
             let safe = redactor.text(&value, tl3_redaction::structured::STRING_CHARS)?;
-            Decision::Label { text: safe.chars().take(limit).collect() }
+            Decision::Label {
+                text: safe.chars().take(limit).collect(),
+            }
         }
         Request::Retain { entries, shrinking } => {
             let keep: Vec<_> = (0..entries.len())

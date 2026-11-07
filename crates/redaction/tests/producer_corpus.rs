@@ -55,13 +55,18 @@ fn leaked_fragment(output: &str, secrets: &[Value]) -> Option<usize> {
         let width = chars.len().min(8);
         for (offset, fragment) in chars.windows(width).enumerate() {
             let fragment: String = fragment.iter().collect();
-            if output.contains(&fragment) { return Some(offset); }
+            if output.contains(&fragment) {
+                return Some(offset);
+            }
         }
     }
     None
 }
 fn no_fragments(output: &str, secrets: &[Value], label: &str) {
-    assert!(leaked_fragment(output, secrets).is_none(), "producer secret fragment leaked in {label}");
+    assert!(
+        leaked_fragment(output, secrets).is_none(),
+        "producer secret fragment leaked in {label}"
+    );
 }
 
 fn payload(value: Value) -> String {
@@ -80,7 +85,9 @@ fn every_planted_form_is_safe_through_each_production_carrier() {
         let label = case[0].as_str().unwrap();
         let text = case[1].as_str().unwrap();
         let secrets = case[2].as_array().unwrap();
-        if let Some(offset) = leaked_fragment(&Redactor::default().text(text, 8192).unwrap(), secrets) {
+        if let Some(offset) =
+            leaked_fragment(&Redactor::default().text(text, 8192).unwrap(), secrets)
+        {
             failures.push(format!("{label}/text@{offset}"));
         }
         executed += 1;
@@ -107,7 +114,11 @@ fn every_planted_form_is_safe_through_each_production_carrier() {
         "producer forms={} carrier assertions={executed}; documented unsupported forms excluded by fixture inventory",
         forms.len()
     );
-    assert!(failures.is_empty(), "producer secret fragments leaked: {}", failures.join(", "));
+    assert!(
+        failures.is_empty(),
+        "producer secret fragments leaked: {}",
+        failures.join(", ")
+    );
 }
 #[test]
 fn ordinary_text_usage_and_source_files_keep_their_content() {
@@ -311,10 +322,19 @@ fn adversarial_producer_inputs_stay_bounded() {
 
 #[test]
 fn public_certificate_is_retained_alongside_confidential_redaction() {
-    let case = data()["forms"].as_array().unwrap().iter().find(|case| case[0] == "kubectl_get_secret_json").unwrap();
+    let case = data()["forms"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case[0] == "kubectl_get_secret_json")
+        .unwrap();
     let input: Value = serde_json::from_str(case[1].as_str().unwrap()).unwrap();
     let safe: Value = serde_json::from_str(&payload(input.clone())).unwrap();
     assert_eq!(safe["data"]["ca.crt"], input["data"]["ca.crt"]);
     assert_ne!(safe["data"]["api-token"], input["data"]["api-token"]);
-    no_fragments(&safe.to_string(), case[2].as_array().unwrap(), "public certificate carrier");
+    no_fragments(
+        &safe.to_string(),
+        case[2].as_array().unwrap(),
+        "public certificate carrier",
+    );
 }

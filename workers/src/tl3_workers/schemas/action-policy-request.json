@@ -404,6 +404,14 @@
       "format": "uint64",
       "minimum": 0
     },
+    "LabelKind": {
+      "type": "string",
+      "enum": [
+        "span",
+        "attribute",
+        "tag"
+      ]
+    },
     "Name": {
       "type": "object",
       "properties": {
@@ -1006,6 +1014,27 @@
     },
     "Request": {
       "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "$ref": "#/$defs/LabelKind"
+            },
+            "op": {
+              "type": "string",
+              "const": "label"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "kind",
+            "value"
+          ]
+        },
         {
           "type": "object",
           "properties": {

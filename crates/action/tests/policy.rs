@@ -409,8 +409,10 @@ fn evidence_array_repairs_and_invalid_resolved_repairs_use_the_canonical_boundar
 
 #[test]
 fn trace_labels_are_redacted_and_bounded_before_api_publication() {
-    for (kind, limit) in [("span",256),("attribute",256),("tag",512)] {
-        let result = command(json!({"op":"trace","request":{"op":"label","kind":kind,"value":format!("password=producer-secret-Q7r9T3x6\n{}","é".repeat(1000))}}));
+    for (kind, limit) in [("span", 256), ("attribute", 256), ("tag", 512)] {
+        let result = command(
+            json!({"op":"trace","request":{"op":"label","kind":kind,"value":format!("password=producer-secret-Q7r9T3x6\n{}","é".repeat(1000))}}),
+        );
         let text = result["ok"]["result"]["value"]["text"].as_str().unwrap();
         assert_eq!(text.chars().count(), limit);
         assert!(text.starts_with("password=[REDACTED]"));
