@@ -358,7 +358,7 @@ impl Controller {
         if row.table == "inbox" {
             let observation: Observation = crate::decode_stored(row.value.clone())?;
             match self.translate(snapshot, &mut world, observation.clone(), &mut commit) {
-                Ok(Some(event)) => self.apply(snapshot, world, event, &mut commit)?,
+                Ok(Some(input)) => self.apply_input(snapshot, world, input, &mut commit)?,
                 Ok(None) => {}
                 Err(error) => {
                     // This entire transaction is discarded on an error too;

@@ -1166,9 +1166,9 @@ impl Controller {
         }) {
             value["source"] = source;
         } else {
-            let mut binding = request(snapshot, node)?;
-            binding.source = issue.body.clone();
-            commit.rows.push(put("requests", node.0.to_string(), json!(binding)));
+            let mut binding = crate::planner_input::request_row(snapshot, commit, node)?;
+            binding["source"] = source;
+            commit.rows.push(put("requests", node.0.to_string(), binding));
         }
         let mut link =
             json!({"original": original, "authorized_by": self.bootstrap.rob, "issue": issue});

@@ -1,6 +1,6 @@
 //! Read-only replay verification for #783.
 use serde::{Deserialize, Serialize};
-use tl3_kernel::{Event, World};
+use tl3_kernel::{Event, NodeId, PlannerResult, ReplanBudget, World};
 use tl3_store::EventRecord;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -15,6 +15,34 @@ pub struct ReplayRecord {
     pub before: World,
     pub steps: Vec<StepRecord>,
     pub after: World,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PlannerStepRecord {
+    pub input: World,
+    pub node: NodeId,
+    pub generation: u64,
+    pub result: PlannerResult,
+    pub budget: ReplanBudget,
+    pub after_budget: ReplanBudget,
+    pub after: World,
+}
+
+impl PlannerStepRecord {
+    pub fn check(&self) -> Result<(), String> {
+        if !self.budget.bound_to(self.node) || !self.after_budget.bound_to(self.node) {
+            return Err("planner budget binding diverged".into());
+        }
+        check_world(&self.input)?;
+        let (world, budget, _) = tl3_kernel::step_planner(
+            self.input.clone(), self.budget, self.node, self.generation, self.result,
+        );
+        check_world(&world)?;
+        if world != self.after || budget != self.after_budget {
+            return Err("planner step snapshot or budget diverged".into());
+        }
+        Ok(())
+    }
 }
 
 /// #783: the existing full kernel invariants, used only while reading replay.
@@ -68,6 +96,15 @@ pub fn check_record(
     if result.get("kernel_violation").is_some() {
         return Err(fail("recorded kernel invariant violation"));
     }
+    if let Some(value) = result.get("planner_replay") {
+        let planner: PlannerStepRecord = serde_json::from_value(value.clone())
+            .map_err(|_| fail("invalid planner replay"))?;
+        planner.check().map_err(|error| fail(&error))?;
+        if previous.is_some_and(|world| world != &planner.input) {
+            return Err(fail("planner snapshot chain diverged"));
+        }
+        return Ok(Some(planner.after));
+    }
     let replay = match stored_snapshot(result).map_err(fail)? {
         Some(StoredSnapshot::Anchor(world)) => {
             if previous.is_some() {
@@ -79,6 +116,7 @@ pub fn check_record(
         Some(StoredSnapshot::Replay(replay)) => replay,
         None => {
             if result.get("kernel_event").is_some()
+                || result.get("kernel_planner_input").is_some()
                 || result.get("dependency_events").is_some()
                 || record.payload.get("initialize").is_some()
                 || record.payload.get("gate_capacity").is_some()
