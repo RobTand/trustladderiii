@@ -57,6 +57,7 @@ def main():
         return [sys.executable, '-I', '-B', str(runner), json.dumps(tests), str(tree)]
     execution.container_command = command
     test_tool.container_command = command
+    os.environ['PRISMABUILD_CONTAINER_OWNER'] = 'job-boundary-probe'
     os.environ['PRISMABUILD_ACTION_PROGRESS_PATH'] = str(root / 'probe-progress.json')
     os.environ['PRISMABUILD_ACTION_PROGRESS_TOKEN'] = 'fixture'
     os.chdir(root)

@@ -162,7 +162,7 @@ def test_role_repairs_and_absolute_declaration_pointers(tmp_path):
     assert len(violation.allowed.value) <= 10
     reply = apply_edit(violation.facts['reply'], violation.repair, violation.allowed.value[0])
     assert permits(violation, violation.facts['reply'], reply, role='planner')
-    repaired = model.Check('repair', model.Kind.DEMONSTRATING, tuple(reply['checks'][3]['node_ids']), proof=check.proof)
+    repaired = model.Check('repair', model.Kind.DEMONSTRATING, tuple(reply['checks'][3]['tests']), proof=check.proof)
     proof.assemble_proof(tmp_path / 'before', tmp_path / 'after', tmp_path / 'repaired', repaired, case['config'],
                          role='planner', check_index=3)
     case = partitions()['proof.support.call_allowlist']['bad']

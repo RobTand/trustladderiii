@@ -58,6 +58,11 @@ mod azure_sas {
                 .map_or(text.len(), |offset| start + offset);
             scanned_until = end;
             let raw = &text[start..end];
+            let authority = &raw[colon + 3 - start..];
+            let authority_end = authority.find(['/', '?', '#']).unwrap_or(authority.len());
+            if authority[..authority_end].contains('@') {
+                continue;
+            }
             let Ok(parsed) = url::Url::parse(raw) else {
                 continue;
             };

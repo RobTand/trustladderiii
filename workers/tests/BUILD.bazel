@@ -1278,6 +1278,7 @@ tl3_py_test(
     deps = [
         ":conftest",
         ":redaction_branches",
+        ":tracing_forms3",
         "//harness/src/tl3_harness",
         "//workers/src",
         "@tl3_pip//pytest",
