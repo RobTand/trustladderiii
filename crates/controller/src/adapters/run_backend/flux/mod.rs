@@ -46,7 +46,9 @@ impl Flux {
     }
 
     pub fn cancel_with_cleanup_progress(
-        &self, owner: &Owner, emit: &mut dyn FnMut(&CleanupProgress) -> Result<()>,
+        &self,
+        owner: &Owner,
+        emit: &mut dyn FnMut(&CleanupProgress) -> Result<()>,
     ) -> Result<CancelAck> {
         let record = self.journal.transaction(owner, |dir, current| {
             let mut current =
@@ -75,14 +77,15 @@ impl Flux {
         let _ = self.cleanup_runtime_with_progress(owner, &mut |progress| {
             emit(progress).inspect_err(|error| transport_error = Some(error.clone()))
         });
-        if let Some(error) = transport_error { return Err(error); }
+        if let Some(error) = transport_error {
+            return Err(error);
+        }
         Ok(CancelAck {
             binding,
             acknowledged,
             terminal: None,
         })
     }
-
 
     fn instance(&self, record: &Record) -> Result<()> {
         if record.intent.instance != self.options.instance_generation

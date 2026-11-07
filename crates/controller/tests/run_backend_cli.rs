@@ -42,7 +42,15 @@ fn cli_schema_is_generated_from_rust_and_describes_all_operations() {
         "regenerate the committed launch schema using the Rust CLI"
     );
     let text = schema.to_string();
-    for operation in ["submit", "attach", "cancel", "probe"] {
+    for operation in [
+        "submit",
+        "attach",
+        "cancel",
+        "probe",
+        "cleanup_runtime",
+        "cleanup_limits",
+        "cleanup_progress",
+    ] {
         assert!(text.contains(operation), "missing operation {operation}");
     }
     assert!(text.contains("LaunchContext"));
@@ -1027,7 +1035,22 @@ impl Fixture {
             b"#!/usr/bin/python3.14 -I\n# trusted collector fixture\n",
         )
         .unwrap();
-        fs::write(source.join("cleanup-helper"), b"#!/usr/bin/python3\nimport json,sys,pathlib\nfacts=json.load(sys.stdin)\nowned=facts['ownership']\npath=pathlib.Path('/mnt/shared/flux-out/tl3')/owned['owner']['correlation']/('trusted-stop-'+owned['execution']+'.json')\nprint(path.read_text())\n").unwrap();
+        fs::write(
+            source.join("cleanup-helper"),
+            br#"#!/usr/bin/python3
+import json,sys,pathlib,time
+facts=json.load(sys.stdin)
+owned=facts['ownership']
+root=pathlib.Path('/mnt/shared/flux-out/tl3')/owned['owner']['correlation']
+(root/('helper-called-'+owned['execution'])).write_text(json.dumps(facts))
+control=root/('helper-control-'+owned['execution']+'.json')
+control=json.loads(control.read_text()) if control.exists() else {}
+time.sleep(control.get('delay',0))
+print((root/('trusted-stop-'+owned['execution']+'.json')).read_text(),flush=True)
+sys.exit(control.get('exit_code',0))
+"#,
+        )
+        .unwrap();
         let files = ["lib/tl3_harness/runner.py", "lib/tl3_harness/runtime.py"]
             .into_iter()
             .map(|path| {
@@ -2203,4 +2226,371 @@ fn daytime_collector_preserves_near_eight_mib_complete_refusal_and_refuses_overf
         report,
         "retained complete refusal changed"
     );
+}
+
+#[test]
+fn cleanup_limits_are_config_free_and_bind_both_transport_operations() {
+    let frames = cli(&json!({"op":"cleanup_limits"}));
+    assert_eq!(frames.len(), 1, "{frames:?}");
+    assert_eq!(frames[0]["sequence"], 0);
+    assert_eq!(frames[0]["result"]["op"], "cleanup_limits");
+    let limits: CleanupLimits =
+        serde_json::from_value(frames[0]["result"]["limits"].clone()).unwrap();
+    assert_eq!(limits, cleanup_limits());
+    assert!(limits.helper_budget_seconds < limits.native_timeout_seconds);
+    assert!(limits.native_timeout_seconds < limits.idle_timeout_seconds);
+    assert_eq!(limits.max_progress_frames, 1024);
+    assert!(limits.max_response_bytes >= limits.max_progress_frames * limits.max_frame_bytes);
+}
+
+impl Fixture {
+    fn cleanup_execution(&self, execution: &str, digit: char) -> RuntimeOwnership {
+        let mut owned = self.ownership();
+        owned.execution = execution.into();
+        let frames = self.call(json!({"op":"begin_container_launch","owner":self.intent.owner,"correlation":self.intent.correlation,"launcher":owned}));
+        assert_eq!(frames.last().unwrap()["kind"], "result", "{frames:?}");
+        let launch: ContainerLaunchIntent =
+            serde_json::from_value(frames.last().unwrap()["result"]["launch"].clone()).unwrap();
+        let id = digit.to_string().repeat(64);
+        let unit = format!("libpod-{id}.scope");
+        owned.container = Some(ContainerOwnership {
+            name: launch.name,
+            labels: launch.labels,
+            id,
+            mode: ContainerMode::OwnScope,
+            scope: Some(ScopeIdentity {
+                cgroup: format!("/user.slice/user-1000.slice/user@1000.service/app.slice/{unit}"),
+                unit,
+                invocation_id: digit.to_string().repeat(32),
+            }),
+        });
+        let frames = self.call(json!({"op":"retain_runtime","owner":self.intent.owner,"correlation":self.intent.correlation,"ownership":owned}));
+        assert_eq!(frames.last().unwrap()["kind"], "result", "{frames:?}");
+        self.cleanup_facts(&owned, true);
+        owned
+    }
+
+    fn cleanup_facts(&self, owned: &RuntimeOwnership, stopped: bool) {
+        let container = owned.container.as_ref().unwrap();
+        let facts = CleanupEvidence {
+            schema: "tl3.cleanup_evidence.v1".into(),
+            ownership: owned.clone(),
+            launcher: ProcessStop::Absent,
+            process_group_probe_errno: Some(3),
+            container: Some(ContainerStop {
+                name: container.name.clone(),
+                name_exists_exit: if stopped { 1 } else { 0 },
+                sweep_exit: 0,
+                remaining_ids: if stopped {
+                    vec![]
+                } else {
+                    vec![container.id.clone()]
+                },
+                id: container.id.clone(),
+                remove_exit: 0,
+                exists_exit: if stopped { 1 } else { 0 },
+                sweep_ids: vec![container.id.clone()],
+                scope: Some(ScopeStop {
+                    identity: container.scope.as_ref().unwrap().clone(),
+                    observed_invocation_id: None,
+                    cgroup_events: None,
+                    cgroup_procs: String::new(),
+                    active_state: "not-found".into(),
+                }),
+            }),
+        };
+        fs::write(
+            self.intent
+                .output_dir
+                .join(format!("trusted-stop-{}.json", owned.execution)),
+            serde_json::to_vec(&facts).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn cleanup_control(&self, execution: &str, delay: u64) {
+        fs::write(
+            self.intent
+                .output_dir
+                .join(format!("helper-control-{execution}.json")),
+            json!({"delay":delay}).to_string(),
+        )
+        .unwrap();
+    }
+
+    fn state(&self) -> api::durable::Record {
+        serde_json::from_slice(
+            &fs::read(
+                self.options
+                    .journal_root
+                    .join(&self.intent.correlation)
+                    .join("state.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn spawn_operation(
+        &self,
+        op: &str,
+    ) -> (
+        std::process::Child,
+        std::sync::mpsc::Receiver<Value>,
+        std::thread::JoinHandle<()>,
+    ) {
+        use std::io::{BufRead, BufReader};
+        let mut child = Command::new(env!("CARGO_BIN_EXE_tl3-run-backend"))
+            .args(["--config", self.config.to_str().unwrap()])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        writeln!(
+            child.stdin.take().unwrap(),
+            "{}",
+            json!({"op":op,"owner":self.intent.owner,"correlation":self.intent.correlation})
+        )
+        .unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let (send, receive) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                let frame = serde_json::from_str(&line.unwrap()).unwrap();
+                if send.send(frame).is_err() {
+                    break;
+                }
+            }
+        });
+        (child, receive, reader)
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn cleanup_transport_progress_spans_old_total_deadline_for_cleanup_and_cancel() {
+    use std::time::{Duration, Instant};
+    for op in ["cleanup_runtime", "cancel"] {
+        let mut f = Fixture::new();
+        f.podman(ContainerMode::OwnScope, true);
+        f.submit();
+        let executions = [
+            f.cleanup_execution("first", 'd'),
+            f.cleanup_execution("second", 'e'),
+        ];
+        for owned in &executions {
+            f.cleanup_control(&owned.execution, 16);
+        }
+        let start = Instant::now();
+        let (mut child, receive, reader) = f.spawn_operation(op);
+        let limits = cleanup_limits();
+        let mut frames = vec![];
+        loop {
+            let frame = receive
+                .recv_timeout(Duration::from_secs(limits.idle_timeout_seconds))
+                .expect("bounded transport idle timeout");
+            assert_eq!(frame["sequence"], frames.len() as u64);
+            assert!(serde_json::to_vec(&frame).unwrap().len() <= limits.max_frame_bytes);
+            let done = frame["kind"] == "result" || frame["kind"] == "error";
+            if !done {
+                assert_eq!(frame["kind"], "cleanup_progress", "{frame}");
+                let progress: CleanupProgress =
+                    serde_json::from_value(frame["progress"].clone()).unwrap();
+                let owned = &executions[frames.len()];
+                assert_eq!(progress.owner, owned.owner);
+                assert_eq!(progress.run, owned.run);
+                assert_eq!(progress.request_digest, owned.request_digest);
+                assert_eq!(progress.execution, owned.execution);
+                assert_eq!(progress.helper_budget_seconds, limits.helper_budget_seconds);
+                assert_eq!(progress.idle_timeout_seconds, limits.idle_timeout_seconds);
+                assert!(
+                    f.state().terminal.is_none(),
+                    "progress cannot complete the run"
+                );
+                assert_eq!(f.state().cancel_requested, op == "cancel");
+            }
+            frames.push(frame);
+            if done {
+                break;
+            }
+        }
+        assert!(child.wait().unwrap().success(), "{frames:?}");
+        reader.join().unwrap();
+        assert!(receive.try_recv().is_err(), "only one final frame");
+        assert_eq!(frames.len(), executions.len() + 1, "{frames:?}");
+        assert!(start.elapsed() > Duration::from_secs(limits.native_timeout_seconds));
+        assert_eq!(frames.last().unwrap()["result"]["op"], op);
+        if op == "cleanup_runtime" {
+            assert_eq!(frames.last().unwrap()["result"]["cleanup"]["stopped"], true);
+        }
+        for owned in &executions {
+            let input: CleanupInput = serde_json::from_slice(
+                &fs::read(
+                    f.intent
+                        .output_dir
+                        .join(format!("helper-called-{}", owned.execution)),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(input.budget_seconds, limits.helper_budget_seconds);
+            assert_eq!(input.ownership, *owned);
+        }
+        assert!(
+            f.state().terminal.is_none(),
+            "cleanup/cancel acknowledgement is not terminal"
+        );
+        assert_eq!(f.state().binding.unwrap().id, executions[0].run);
+        assert_eq!(
+            f.calls()
+                .lines()
+                .filter(|line| line.starts_with("cancel "))
+                .count(),
+            usize::from(op == "cancel")
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn cleanup_transport_silence_is_bounded_and_incomplete_evidence_preserves_debt() {
+    use std::time::{Duration, Instant};
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.cleanup_execution("silent", 'd');
+    f.cleanup_control(
+        &owned.execution,
+        cleanup_limits().native_timeout_seconds + 60,
+    );
+    let start = Instant::now();
+    let frames = f.call(
+        json!({"op":"cleanup_runtime","owner":f.intent.owner,"correlation":f.intent.correlation}),
+    );
+    assert!(start.elapsed() < Duration::from_secs(cleanup_limits().idle_timeout_seconds));
+    assert_eq!(frames.len(), 2, "{frames:?}");
+    assert_eq!(frames[0]["kind"], "cleanup_progress");
+    assert_eq!(frames[1]["result"]["cleanup"]["stopped"], false);
+    assert!(f.state().cleanup_evidence.is_empty());
+    f.cleanup_control(&owned.execution, 0);
+    f.cleanup_facts(&owned, false);
+    let frames = f.call(
+        json!({"op":"cleanup_runtime","owner":f.intent.owner,"correlation":f.intent.correlation}),
+    );
+    assert_eq!(
+        frames.last().unwrap()["result"]["cleanup"]["stopped"],
+        false
+    );
+    assert!(f.intent.output_dir.read_dir().unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("cleanup-")
+    }));
+    let debts = f
+        .options
+        .journal_root
+        .join("cleanup-debt")
+        .join(&f.request.runtime.manifest_digest);
+    assert!(
+        debts
+            .join(format!("{}.{}", f.intent.correlation, owned.execution))
+            .exists()
+    );
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn cleanup_transport_callback_failure_starts_no_helper_and_cancel_intent_survives() {
+    use tl3_controller::adapters::run_backend::flux::Flux;
+    for cancel in [false, true] {
+        let mut f = Fixture::new();
+        f.podman(ContainerMode::OwnScope, true);
+        f.submit();
+        let owned = f.cleanup_execution("callback", 'd');
+        let backend = Flux::new(f.options.clone()).unwrap();
+        let mut broken =
+            |_: &CleanupProgress| Err(BackendError::unknown("fixture transport disconnected"));
+        let result = if cancel {
+            backend
+                .cancel_with_cleanup_progress(&owned.owner, &mut broken)
+                .map(|_| ())
+        } else {
+            backend
+                .cleanup_runtime_with_progress(&owned.owner, &mut broken)
+                .map(|_| ())
+        };
+        assert!(result.is_err());
+        assert!(!f.intent.output_dir.join("helper-called-callback").exists());
+        assert_eq!(f.state().cancel_requested, cancel);
+        assert!(f.state().cleanup_evidence.is_empty());
+        assert!(f.state().terminal.is_none());
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn cleanup_transport_separate_cancel_late_writes_preserve_binding_debt_and_terminal() {
+    use std::time::Duration;
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let first = f.cleanup_execution("first", 'd');
+    let second = f.cleanup_execution("second", 'e');
+    f.cleanup_facts(&second, false);
+    f.cleanup_control(&first.execution, 2);
+    let (mut child, receive, reader) = f.spawn_operation("cleanup_runtime");
+    let progress = receive.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(progress["progress"]["execution"], "first");
+    // Separate cancel process fsyncs intent and invokes its own bounded cleanup while the first waits.
+    let cancel =
+        f.call(json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}));
+    assert_eq!(cancel.last().unwrap()["result"]["op"], "cancel");
+    assert!(f.state().cancel_requested);
+    let mut launcher = f.ownership();
+    launcher.execution = "late".into();
+    let late = f.call(json!({"op":"begin_container_launch","owner":f.intent.owner,"correlation":f.intent.correlation,"launcher":launcher}));
+    assert_eq!(late.last().unwrap()["kind"], "error");
+    assert!(child.wait().unwrap().success());
+    reader.join().unwrap();
+    let frames: Vec<_> = receive.try_iter().collect();
+    assert_eq!(
+        frames.last().unwrap()["result"]["cleanup"]["stopped"],
+        false
+    );
+    let state = f.state();
+    assert_eq!(state.binding.as_ref().unwrap().id, first.run);
+    assert_eq!(state.runtime_ownerships.len(), 2);
+    assert!(state.cancel_requested);
+    assert!(state.terminal.is_none());
+    let debt = f
+        .options
+        .journal_root
+        .join("cleanup-debt")
+        .join(&f.request.runtime.manifest_digest)
+        .join(format!("{}.{}", f.intent.correlation, second.execution));
+    assert!(
+        debt.exists(),
+        "first cleanup cannot clear the second execution's debt"
+    );
+    f.cleanup_facts(&second, true);
+    f.call(
+        json!({"op":"cleanup_runtime","owner":f.intent.owner,"correlation":f.intent.correlation}),
+    );
+    f.events(&[
+        json!({"name":"exception","context":{"type":"cancel","severity":0}}),
+        json!({"name":"clean"}),
+    ]);
+    let terminal = f.attach().last().unwrap()["result"]["observation"]["terminal"].clone();
+    assert_eq!(terminal["ending"], "cancelled");
+    f.call(
+        json!({"op":"cleanup_runtime","owner":f.intent.owner,"correlation":f.intent.correlation}),
+    );
+    f.call(json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}));
+    assert_eq!(
+        serde_json::to_value(f.state().terminal.unwrap()).unwrap(),
+        terminal
+    );
+    assert!(f.state().cancel_requested);
 }

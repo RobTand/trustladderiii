@@ -129,7 +129,9 @@ pub enum FrameBody {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum CliResult {
-    CleanupLimits { limits: CleanupLimits },
+    CleanupLimits {
+        limits: CleanupLimits,
+    },
     OutputBounds {
         bounds: OutputBounds,
     },
@@ -246,7 +248,11 @@ pub fn main() -> i32 {
         let command: Command = serde_json::from_slice(&line)
             .map_err(|_| BackendError::invalid("command does not match generated Rust schema"))?;
         if matches!(command, Command::CleanupLimits) {
-            return writer.frame(FrameBody::Result { result: Box::new(CliResult::CleanupLimits { limits: cleanup_limits() }) });
+            return writer.frame(FrameBody::Result {
+                result: Box::new(CliResult::CleanupLimits {
+                    limits: cleanup_limits(),
+                }),
+            });
         }
         if let Command::OutputBounds { suite } = &command {
             writer.frame(FrameBody::Result {
@@ -339,9 +345,10 @@ pub fn main() -> i32 {
                 }
             }
             Command::Cancel { owner, correlation } => CliResult::Cancel {
-                acknowledgement: backend.cancel_with_cleanup_progress(&Owner { owner, correlation }, &mut |progress| {
-                    writer.frame(FrameBody::CleanupProgress { progress: Box::new(progress.clone()) })
-                })?,
+                acknowledgement: backend.cancel_with_cleanup_progress(
+                    &Owner { owner, correlation },
+                    &mut |_progress| Ok(()),
+                )?,
             },
             Command::Liveness { owner, correlation } => CliResult::Liveness {
                 liveness: backend.liveness(&Owner { owner, correlation })?,
@@ -420,9 +427,10 @@ pub fn main() -> i32 {
                 cleanup: backend.retain_cleanup(&Owner { owner, correlation }, &evidence)?,
             },
             Command::CleanupRuntime { owner, correlation } => CliResult::CleanupRuntime {
-                cleanup: backend.cleanup_runtime_with_progress(&Owner { owner, correlation }, &mut |progress| {
-                    writer.frame(FrameBody::CleanupProgress { progress: Box::new(progress.clone()) })
-                })?,
+                cleanup: backend.cleanup_runtime_with_progress(
+                    &Owner { owner, correlation },
+                    &mut |_progress| Ok(()),
+                )?,
             },
             Command::StopWatch => {
                 return Err(BackendError::invalid(

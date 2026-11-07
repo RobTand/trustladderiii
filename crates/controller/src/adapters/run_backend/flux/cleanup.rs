@@ -358,7 +358,9 @@ impl Flux {
         }
         for ownership in &executions(&record) {
             let current = self.journal.load(owner)?;
-            if current.terminal.is_some() { break; }
+            if current.terminal.is_some() {
+                break;
+            }
             if current
                 .cleanup_evidence
                 .get(&ownership.execution)
@@ -375,8 +377,10 @@ impl Flux {
                 launch: record.container_launches.get(&ownership.execution).cloned(),
             })?;
             emit(&CleanupProgress {
-                owner: owner.clone(), run: ownership.run.clone(),
-                request_digest: ownership.request_digest.clone(), execution: ownership.execution.clone(),
+                owner: owner.clone(),
+                run: ownership.run.clone(),
+                request_digest: ownership.request_digest.clone(),
+                execution: ownership.execution.clone(),
                 helper_budget_seconds: CLEANUP_HELPER_BUDGET_SECONDS,
                 idle_timeout_seconds: CLEANUP_IDLE_TIMEOUT_SECONDS,
             })?;
