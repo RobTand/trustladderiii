@@ -230,3 +230,12 @@ Bazel main-repository labels accept exactly `//package:target` and
 aliases do not match. The command explicitly downloads test.log, test.xml and
 undeclared outputs under remote minimal-download settings. Runtime tool identity
 includes both the Verus launcher and its actual `rust_verify` binary.
+
+When the selected Git revision contains the exact intended Python driver bytes,
+transport carries the fixed driver path, byte length and SHA256. The bootstrap
+reads that file from the remote checkout and verifies its identity before copying
+it into the same private temporary layout and executing it. Missing or different
+bytes fail before execution. The complete frontend ticket and inventory remain
+embedded and hash-checked. Explicit tooling/source divergence retains the embedded
+driver transport. The stock size guard, 2,048-byte planning margin, selector
+semantics and own-invocation receipt checks are unchanged.

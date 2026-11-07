@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import functools
 import gzip
 import inspect
 import json
@@ -29,8 +30,9 @@ RESERVED = 'bbrun-wrapper-result.v1.json'
 BATCH_SAFETY_MARGIN = 2048
 
 
-def unpack_transport(payload, expected):
+def unpack_transport(payload, expected, source=None):
     import base64, gzip, hashlib, json
+    from pathlib import Path
     packed = base64.b64decode(payload, validate=True)
     if hashlib.sha256(packed).hexdigest() != expected:
         raise ValueError('packed transport hash mismatch')
@@ -39,26 +41,49 @@ def unpack_transport(payload, expected):
         raise ValueError('invalid transport file set')
     files = {}
     for name, record in records.items():
-        if type(record) is not dict or set(record) != {'bytes', 'sha256', 'data'}:
+        if type(record) is not dict:
             raise ValueError('invalid transport file identity')
-        data = base64.b64decode(record['data'], validate=True)
+        if set(record) == {'bytes', 'sha256', 'path'} and name == 'measure-remote.py':
+            if record['path'] != 'tools/ci/verus_measurement/measure-remote.py':
+                raise ValueError('invalid checkout driver path')
+            path = Path(source or Path.cwd()) / record['path']
+            if path.is_symlink() or not path.is_file():
+                raise ValueError('missing/nonregular checkout driver')
+            data = path.read_bytes()
+        elif set(record) == {'bytes', 'sha256', 'data'}:
+            data = base64.b64decode(record['data'], validate=True)
+        else:
+            raise ValueError('invalid transport file identity')
         if type(record['bytes']) is not int or len(data) != record['bytes'] or hashlib.sha256(data).hexdigest() != record['sha256']:
             raise ValueError('decoded transport hash/length mismatch')
         files[name] = data
     return files
 
 
-def transport_payload(config, frontend):
+@functools.lru_cache(maxsize=32)
+def pinned_driver(source, head):
+    path = 'tools/ci/verus_measurement/measure-remote.py'
+    entry = D['git'](Path(source), 'ls-tree', head, '--', path)
+    if not entry or entry.split()[0] not in (b'100644', b'100755'):
+        return None
+    return D['git'](Path(source), 'show', head + ':' + path)
+
+
+def transport_payload(config, frontend, source=None):
     files = {'measure-remote.py': DRIVER.read_bytes(), 'config.json': encoded(config.json()),
              'frontend.json': encoded(frontend)}
     records = {name: {'bytes': len(data), 'sha256': digest(data), 'data': base64.b64encode(data).decode()}
                for name, data in files.items()}
+    if pinned_driver(str((source or HERE.parents[2]).resolve()), config.head) == files['measure-remote.py']:
+        records['measure-remote.py'] = {'bytes': len(files['measure-remote.py']),
+            'sha256': digest(files['measure-remote.py']),
+            'path': 'tools/ci/verus_measurement/measure-remote.py'}
     packed = gzip.compress(encoded(records), mtime=0)
     return base64.b64encode(packed).decode(), digest(packed)
 
 
-def submission(config, runner_log, frontend=None):
-    payload, packed_hash = transport_payload(config, frontend)
+def submission(config, runner_log, frontend=None, source=None):
+    payload, packed_hash = transport_payload(config, frontend, source)
     bootstrap = ('import os,sys,tempfile,hashlib\nfrom pathlib import Path\n' + inspect.getsource(unpack_transport) +
         '\nfiles=unpack_transport(*sys.argv[1:3])\n' +
         'with tempfile.TemporaryDirectory(prefix="tl3-verus-transport-") as temporary:\n'
@@ -99,13 +124,13 @@ def subset(config, start, end):
     return D['Config'].parse({**config.json(), 'selections': [D['asdict'](row) for row in config.selections[start:end]]})
 
 
-def batch_plan(config, runner_log, prior):
+def batch_plan(config, runner_log, prior, source=None):
     """Fill ordered batches once; no lookahead across a rejected prefix."""
     def item(start, end):
         current = subset(config, start, end)
         ticket = frontend_ticket(prior, current) if prior is not None else None
         log = runner_log.with_name(runner_log.name + f'.batch-{start:04d}')
-        command = submission(current, log, ticket)
+        command = submission(current, log, ticket, source)
         return {'start': start, 'end': end, 'config': current.json(), 'command': command, 'size': stock_size(command)}
 
     def singleton(current):
@@ -400,7 +425,7 @@ def collect_terminal(parent, terminal, output, runner_log, config, expected, *, 
     if config.mode != 'frontend-only':
         argv = expected['exact_submission_argv']
         index = argv.index('-c')
-        ticket = loads(unpack_transport(argv[index + 2], argv[index + 3])['frontend.json'])
+        ticket = loads(unpack_transport(argv[index + 2], argv[index + 3], HERE.parents[2])['frontend.json'])
         require(curated.get('frontend-prerequisite.json') == encoded(ticket), 'missing/mismatched measured frontend prerequisite')
         D['validate_frontend_ticket'](ticket, config, expected)
         for index, frontend_execution in enumerate(ticket['executions']):
@@ -698,7 +723,7 @@ def main():
         args.receipt.unlink(missing_ok=True)
     config = D['Config'].parse(loads(args.config.read_bytes()))
     prior = loads(D['regular_bytes'](args.frontend_receipt)) if args.frontend_receipt is not None else None
-    plan = batch_plan(config, args.runner_log, prior)
+    plan = batch_plan(config, args.runner_log, prior, args.source)
     if len(plan) > 1:
         if args.dry_run:
             result = prepare_batches(args.source, config, args.output, args.receipt, plan)

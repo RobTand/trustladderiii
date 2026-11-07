@@ -683,13 +683,16 @@ class Fixtures(unittest.TestCase):
             stock['check_action_size'](json.dumps(old_body).encode())
         config = D['Config'].parse(D['loads'](saved[saved.index('--config-json') + 1]))
         ticket = D['loads'](saved[saved.index('--frontend-prerequisite-json') + 1])
-        command = S['submission'](config, self.evidence / 'six-helper.log', ticket)
+        # The historical caba head is outside the shallow fixture Git.
+        with patch.dict(S['transport_payload'].__globals__, {'pinned_driver': lambda *_: (HERE / 'measure-remote.py').read_bytes()}):
+            command = S['submission'](config, self.evidence / 'six-helper.log', ticket)
         new_body = stock['run_request'](stock['parse_args'](command[3:]))
         stock['check_action_size'](json.dumps(new_body).encode())
         self.evidence.joinpath('six-helper-size.json').write_bytes(D['encoded']({
             'old': S['stock_size'](saved), 'compact': S['stock_size'](command)}))
-        payload, identity = S['transport_payload'](config, ticket)
-        self.assertEqual(S['transport_payload'](config, ticket), (payload, identity))
+        with patch.dict(S['transport_payload'].__globals__, {'pinned_driver': lambda *_: (HERE / 'measure-remote.py').read_bytes()}):
+            payload, identity = S['transport_payload'](config, ticket)
+            self.assertEqual(S['transport_payload'](config, ticket), (payload, identity))
         decoded = S['unpack_transport'](payload, identity)
         self.assertEqual(decoded['measure-remote.py'], (HERE / 'measure-remote.py').read_bytes())
         self.assertEqual(decoded['config.json'], D['encoded'](config.json()))
@@ -701,6 +704,98 @@ class Fixtures(unittest.TestCase):
         corrupt = gzip.compress(D['encoded'](records), mtime=0)
         with self.assertRaisesRegex(ValueError, 'hash/length mismatch'):
             S['unpack_transport'](base64.b64encode(corrupt).decode(), D['digest'](corrupt))
+
+    def test_checkout_driver_transport(self):
+        config = self.config()
+        ticket = {'FAKE': 'byte-preserved frontend ticket'}
+        payload, identity = S['transport_payload'](config, ticket, self.source)
+        records = D['loads'](gzip.decompress(base64.b64decode(payload)))
+        driver = records['measure-remote.py']
+        self.assertEqual(set(driver), {'path', 'bytes', 'sha256'})
+        self.assertEqual(driver['path'], 'tools/ci/verus_measurement/measure-remote.py')
+        decoded = S['unpack_transport'](payload, identity, self.source)
+        self.assertEqual(decoded['measure-remote.py'], (HERE / 'measure-remote.py').read_bytes())
+        self.assertEqual(decoded['config.json'], D['encoded'](config.json()))
+        self.assertEqual(decoded['frontend.json'], D['encoded'](ticket))
+        missing = self.root / 'missing-driver-checkout'
+        missing.mkdir()
+        with self.assertRaisesRegex(ValueError, 'missing/nonregular checkout driver'):
+            S['unpack_transport'](payload, identity, missing)
+        with self.assertRaises(subprocess.CalledProcessError):
+            S['transport_payload'](self.config(head='f' * 40), ticket, self.source)
+
+    def test_checkout_bootstrap_and_embedded_fallback(self):
+        # Fake driver only: executing it records its copied bytes and identity.
+        driver_bytes = b'''import hashlib,json,os\nfrom pathlib import Path\np=Path(__file__)\nPath(os.environ["BUILDBUDDY_ARTIFACTS_DIRECTORY"],"observed.json").write_text(json.dumps({"sha256":hashlib.sha256(p.read_bytes()).hexdigest(),"identity":__driver_sha256__,"file":str(p),"mode":p.stat().st_mode & 0o777,"argv":__import__("sys").argv}))\n'''
+        driver = self.root / 'fake-measure-remote.py'
+        driver.write_bytes(driver_bytes)
+        cwd = self.root / 'bootstrap-source'
+        target = cwd / 'tools/ci/verus_measurement/measure-remote.py'
+        target.parent.mkdir(parents=True)
+        output = self.root / 'bootstrap-output'
+        output.mkdir()
+        marker = output / 'observed.json'
+        config = self.config()
+        with patch.dict(S['transport_payload'].__globals__, {'DRIVER': driver, 'pinned_driver': lambda *_: driver_bytes}):
+            command = S['submission'](config, self.evidence / 'bootstrap.log', {'FAKE': True}, self.source)
+        args = command[command.index('--') + 1:]
+        env = {**os.environ, 'BUILDBUDDY_ARTIFACTS_DIRECTORY': str(output)}
+        results = {}
+        for name, content in [('missing', None), ('mismatch', b'x' * len(driver_bytes)), ('equal', driver_bytes)]:
+            if content is not None:
+                target.write_bytes(content)
+            run = subprocess.run(args, cwd=cwd, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            results[name] = {'status': run.returncode, 'stdout': run.stdout, 'executed': marker.exists()}
+            if name != 'equal':
+                self.assertNotEqual(run.returncode, 0)
+                self.assertFalse(marker.exists(), 'driver executed before identity verification')
+                self.assertIn('missing/nonregular' if name == 'missing' else 'hash/length mismatch', run.stdout)
+            else:
+                self.assertEqual(run.returncode, 0, run.stdout)
+                observed = D['loads'](marker.read_bytes())
+                self.assertEqual(observed['sha256'], D['digest'](driver_bytes))
+                self.assertEqual(observed['identity'], D['digest'](driver_bytes))
+                self.assertEqual(observed['mode'], 0o600)
+                self.assertIn('--frontend-prerequisite-json', observed['argv'])
+                self.assertEqual(Path(observed['file']).name, 'measure-remote.py')
+                self.assertFalse(Path(observed['file']).exists())
+                marker.unlink()
+        # Explicit driver/source divergence uses the existing embedded path.
+        with patch.dict(S['transport_payload'].__globals__, {'DRIVER': driver}):
+            command = S['submission'](config, self.evidence / 'fallback.log', {'FAKE': True}, self.source)
+        index = command.index('-c')
+        records = D['loads'](gzip.decompress(base64.b64decode(command[index + 2])))
+        self.assertEqual(set(records['measure-remote.py']), {'bytes', 'sha256', 'data'})
+        target.unlink()
+        run = subprocess.run(command[command.index('--') + 1:], cwd=cwd, env=env,
+                             text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self.assertEqual(run.returncode, 0, run.stdout)
+        self.assertEqual(D['loads'](marker.read_bytes())['sha256'], D['digest'](driver_bytes))
+        results['embedded_fallback'] = {'status': run.returncode, 'executed': True}
+        self.evidence.joinpath('checkout-bootstrap.json').write_bytes(D['encoded'](results))
+
+    def test_genuine_clone_singleton_size(self):
+        saved = D['loads'](gzip.decompress((HERE / 'clone-singleton-argv.fixture.json.gz').read_bytes()))
+        self.assertEqual(D['digest'](D['encoded'](saved)), '488c6377a1c2ad68c1a872cc6a58d15c95559ef3c6ad251354e45a6a7d73829e')
+        old = S['stock_size'](saved)
+        self.assertEqual(old['estimated_serialized_bytes'], 127680)
+        self.assertFalse(old['fits'])
+        index = saved.index('-c')
+        decoded = S['unpack_transport'](saved[index + 2], saved[index + 3])
+        self.assertEqual(decoded['measure-remote.py'], (HERE / 'measure-remote.py').read_bytes())
+        config = D['Config'].parse(D['loads'](decoded['config.json']))
+        self.assertEqual(D['asdict'](config.selections[0]), {'target': '//crates/kernel:verus_kernel_clones',
+            'selector': 'kernel#*::clone', 'expected': 33})
+        # The historical head is outside the shallow fixture Git. Live pinned
+        # tree lookup is covered separately without this stub.
+        with patch.dict(S['transport_payload'].__globals__, {'pinned_driver': lambda *_: decoded['measure-remote.py']}):
+            command = S['submission'](config, Path(saved[saved.index('--log-file') + 1]), D['loads'](decoded['frontend.json']))
+        size = S['stock_size'](command)
+        self.assertTrue(size['fits'])
+        self.assertLessEqual(size['estimated_serialized_bytes'], size['limit_bytes'] - S['BATCH_SAFETY_MARGIN'])
+        index = command.index('-c')
+        self.assertEqual(S['unpack_transport'](command[index + 2], command[index + 3], self.source), decoded)
+        self.evidence.joinpath('clone-singleton-size.json').write_bytes(D['encoded']({'red': old, 'green': size}))
 
     def test_same_invocation_and_hold(self):
         parent = '12345678-1234-1234-1234-123456789abc'
