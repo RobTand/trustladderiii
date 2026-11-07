@@ -176,7 +176,12 @@ impl Preparation for Stager {
 }
 
 fn input_root(parent: &Path, delivery: &Delivery) -> Result<PathBuf> {
-    Ok(parent.join(correlation(delivery)))
+    use std::io::Read;
+    let mut nonce = [0u8; 32];
+    File::open("/dev/urandom")?.read_exact(&mut nonce)?;
+    // Each attempt keeps its own immutable publication. Failed or unreferenced
+    // attempts are retained for ownership-checked retention, never overwritten.
+    Ok(parent.join(format!("{}-{}", correlation(delivery), durable::digest(&nonce))))
 }
 
 pub struct PreparedInput {

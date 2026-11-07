@@ -449,6 +449,15 @@ pub fn command(argument: Option<&str>) -> Result<()> {
 mod tests {
     use super::*;
     #[test]
+    fn worker_execution_schema_is_generated_from_rust() {
+        let generated = serde_json::to_value(schemars::schema_for!(Command)).unwrap();
+        let committed: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../../../workers/src/tl3_workers/schemas/worker-execution.json"
+        )).unwrap();
+        assert_eq!(generated, committed, "regenerate with tl3 worker-execution schema");
+    }
+
+    #[test]
     fn input_inventory_is_complete_immutable_and_refuses_symlinks() {
         let temporary = tempfile::tempdir().unwrap();
         let root = temporary.path().join("input");

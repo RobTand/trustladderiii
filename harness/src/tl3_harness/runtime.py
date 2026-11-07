@@ -754,21 +754,30 @@ def cleanup_observations(ownership, *, launch=None, podman, systemctl, cgroup_ro
         return actual
 
     observed = None
+    pending = None
     try:
         stop_launcher()
         container = ownership['container']
         if container is None and launch is not None:
             if launch['launcher'] != ownership:
                 raise RuntimeError('pending launch differs from exact retained launcher')
-            # An absent name after an uncertain launch cannot prove no escaped scope.
-            if status([podman, 'container', 'exists', launch['name']]) != 0:
+            named = status([podman, 'container', 'exists', launch['name']])
+            if named == 1 and launch['mode'] == 'in_job':
+                filters = [arg for key, value in sorted(launch['labels'].items())
+                           for arg in ('--filter', f'label={key}={value}')]
+                if not filters:
+                    raise RuntimeError('pending cleanup requires retained ownership labels')
+                remaining_ids = capture([podman, 'ps', '--all', '--no-trunc', *filters, '--format', '{{.ID}}']).decode().split()
+                pending = {'intent': launch, 'name_exists_exit': named, 'sweep_exit': 0, 'remaining_ids': remaining_ids}
+            elif named == 0:
+                actual = inspect(launch['name'], launch['name'], launch['labels'])
+                scope = (scope_identity(actual['Pid'], systemctl=systemctl, timeout=remaining())
+                         if launch['mode'] == 'own_scope' else None)
+                container = {'id': actual['Id'], 'name': launch['name'], 'labels': launch['labels'],
+                             'mode': launch['mode'], 'scope': scope}
+                ownership = {**ownership, 'container': container}
+            else:
                 raise RuntimeError('unbound launch identity unavailable; cleanup remains unknown')
-            actual = inspect(launch['name'], launch['name'], launch['labels'])
-            scope = (scope_identity(actual['Pid'], systemctl=systemctl, timeout=remaining())
-                     if launch['mode'] == 'own_scope' else None)
-            container = {'id': actual['Id'], 'name': launch['name'], 'labels': launch['labels'],
-                         'mode': launch['mode'], 'scope': scope}
-            ownership = {**ownership, 'container': container}
         if container is not None:
             identifier, name, labels = container['id'], container['name'], container['labels']
             filters = [arg for key, value in sorted(labels.items()) for arg in ('--filter', f'label={key}={value}')]
@@ -806,6 +815,7 @@ def cleanup_observations(ownership, *, launch=None, podman, systemctl, cgroup_ro
     except subprocess.TimeoutExpired:
         # Partial observations cannot certify container cleanup; retain launcher facts.
         observed = None
+        pending = None
     finally:
         while True:
             try:
@@ -818,7 +828,7 @@ def cleanup_observations(ownership, *, launch=None, podman, systemctl, cgroup_ro
             time.sleep(min(0.05, max(0, deadline - time.monotonic())))
         launcher = _process_observation(ownership['launcher'])
     return {'schema': 'tl3.cleanup_evidence.v1', 'ownership': ownership, 'launcher': launcher,
-            'process_group_probe_errno': group_errno, 'container': observed}
+            'process_group_probe_errno': group_errno, 'container': observed, 'pending_launch': pending}
 
 
 def cleanup_main():

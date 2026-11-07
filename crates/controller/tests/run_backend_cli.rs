@@ -358,6 +358,7 @@ text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
         assert_eq!(frames.last().unwrap()["kind"], "result", "{frames:?}");
         let cleanup_bytes = serde_json::to_vec(&CleanupEvidence {
             schema: "tl3.cleanup_evidence.v1".into(),
+            pending_launch: None,
             ownership: owned,
             launcher: ProcessStop::Reaped { status: 0 },
             process_group_probe_errno: Some(3),
@@ -1169,6 +1170,7 @@ fn own_scope_cleanup_requires_exact_generation_absence_and_unpopulated_scope() {
     let scope = container.scope.as_ref().unwrap();
     let mut facts = CleanupEvidence {
         schema: "tl3.cleanup_evidence.v1".into(),
+            pending_launch: None,
         ownership: owned.clone(),
         launcher: ProcessStop::Absent,
         process_group_probe_errno: Some(3),
@@ -1338,6 +1340,7 @@ fn cancellation_uses_independent_cleanup_without_runner_report_after_wrapper_los
     let scope = container.scope.as_ref().unwrap();
     let facts = CleanupEvidence {
         schema: "tl3.cleanup_evidence.v1".into(),
+            pending_launch: None,
         ownership: owned.clone(),
         launcher: ProcessStop::Absent,
         process_group_probe_errno: Some(3),
@@ -1536,6 +1539,7 @@ fn append_only_container_executions_require_every_independent_stop() {
         let scope = container.scope.as_ref().unwrap();
         let facts = CleanupEvidence {
             schema: "tl3.cleanup_evidence.v1".into(),
+            pending_launch: None,
             ownership: owned.clone(),
             launcher: ProcessStop::Absent,
             process_group_probe_errno: Some(3),
@@ -1711,6 +1715,7 @@ fn prelaunch_crash_hang_and_cancel_recover_only_observed_named_container() {
         assert_eq!(none.last().unwrap()["kind"], "error");
         let absent = CleanupEvidence {
             schema: "tl3.cleanup_evidence.v1".into(),
+            pending_launch: None,
             ownership: launcher.clone(),
             launcher: ProcessStop::Absent,
             process_group_probe_errno: Some(3),
@@ -1750,6 +1755,7 @@ fn prelaunch_crash_hang_and_cancel_recover_only_observed_named_container() {
         let scope = container.scope.as_ref().unwrap();
         let mut facts = CleanupEvidence {
             schema: "tl3.cleanup_evidence.v1".into(),
+            pending_launch: None,
             ownership: observed.clone(),
             launcher: ProcessStop::Absent,
             process_group_probe_errno: Some(3),
@@ -2274,6 +2280,7 @@ impl Fixture {
         let container = owned.container.as_ref().unwrap();
         let facts = CleanupEvidence {
             schema: "tl3.cleanup_evidence.v1".into(),
+            pending_launch: None,
             ownership: owned.clone(),
             launcher: ProcessStop::Absent,
             process_group_probe_errno: Some(3),
@@ -2614,8 +2621,8 @@ fn undispatched_cancel_commits_without_runtime_debt_or_native_effect() {
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn pending_injob_launch_requires_exact_stopped_launcher_and_empty_name_and_label_sweep() {
     let mut f = Fixture::new();
-    f.podman(ContainerMode::InJob, false);
-    f.submit();
+    f.podman(ContainerMode::InJob, true);
+    assert_eq!(f.submit()["kind"], "accepted");
     let launcher = f.ownership();
     let frames = f.call(json!({"op":"begin_container_launch","owner":f.intent.owner,"correlation":f.intent.correlation,"launcher":launcher}));
     let launch = frames.last().unwrap()["result"]["launch"].clone();
@@ -2649,4 +2656,28 @@ fn pending_injob_launch_requires_exact_stopped_launcher_and_empty_name_and_label
     f.events(&[json!({"name":"exception","context":{"type":"cancel","severity":0}}),json!({"name":"clean"})]);
     let terminal = f.attach();
     assert_eq!(terminal.last().unwrap()["result"]["observation"]["terminal"]["ending"], "cancelled", "{terminal:?}");
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn injob_no_launch_needs_native_clean_and_does_not_leave_unregistered_debt() {
+    for cancelled in [false, true] {
+        let mut f = Fixture::new();
+        f.podman(ContainerMode::InJob, true);
+        assert_eq!(f.submit()["kind"], "accepted");
+        if cancelled {
+            f.call(json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}));
+        }
+        let before = f.call(json!({"op":"cleanup_runtime","owner":f.intent.owner,"correlation":f.intent.correlation}));
+        assert_eq!(before.last().unwrap()["result"]["cleanup"]["stopped"], false);
+        let events = if cancelled {
+            vec![json!({"name":"exception","context":{"type":"cancel","severity":0}}),json!({"name":"clean"})]
+        } else { completed(256) };
+        f.events(&events);
+        let terminal = f.attach();
+        assert_eq!(terminal.last().unwrap()["result"]["observation"]["terminal"]["ending"],
+            if cancelled { "cancelled" } else { "infra_lost" }, "{terminal:?}");
+        let debt = f.options.journal_root.join("cleanup-debt").join(&f.request.runtime.manifest_digest);
+        assert!(!debt.exists() || fs::read_dir(debt).unwrap().next().is_none());
+    }
 }

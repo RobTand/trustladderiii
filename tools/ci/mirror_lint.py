@@ -223,7 +223,8 @@ def source_paths(value, file, root, production):
 
 def generated_paths(root):
     paths = set()
-    drift_tests = [root / RUN_BACKEND_DRIFT_TEST]
+    drift_tests = [root / RUN_BACKEND_DRIFT_TEST,
+                   root / "crates/controller/src/adapters/workers/execution/inputs.rs"]
     manifest = root / MANIFEST
     if manifest.exists():
         data = json.loads(manifest.read_text())

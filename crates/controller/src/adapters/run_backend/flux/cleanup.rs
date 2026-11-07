@@ -74,13 +74,11 @@ pub(super) fn ownership(record: &Record, owned: &RuntimeOwnership) -> Result<()>
 pub(super) fn stopped(record: &Record, run: &BackendId, reference: &BlobRef) -> Result<bool> {
     let evidence: CleanupEvidence =
         serde_json::from_slice(&checked_blob(reference, &record.intent.output_dir)?)?;
-    let Some(owned) = record
-        .runtime_ownerships
-        .iter()
+    let owned = record.runtime_ownerships.iter()
         .find(|owned| owned.execution == evidence.ownership.execution)
-    else {
-        return Ok(false);
-    };
+        .or_else(|| record.container_launches.get(&evidence.ownership.execution)
+            .map(|intent| &intent.launcher));
+    let Some(owned) = owned else { return Ok(false); };
     ownership(record, owned)?;
     if evidence.schema != "tl3.cleanup_evidence.v1"
         || evidence.ownership != *owned
@@ -95,6 +93,18 @@ pub(super) fn stopped(record: &Record, run: &BackendId, reference: &BlobRef) -> 
             observed_start_ticks,
         } if observed_start_ticks != 0 && observed_start_ticks != owned.launcher.start_ticks => {}
         _ => return Ok(false),
+    }
+    if let Some(pending) = &evidence.pending_launch {
+        return Ok(owned.container.is_none()
+            && evidence.container.is_none()
+            && pending.intent.launcher == *owned
+            && pending.intent.mode == ContainerMode::InJob
+            && matches!(record.request.runtime.runtime,
+                ExecutionRuntime::RootlessPodman { mode: ContainerMode::InJob, .. })
+            && record.container_launches.get(&owned.execution) == Some(&pending.intent)
+            && pending.name_exists_exit == 1
+            && pending.sweep_exit == 0
+            && pending.remaining_ids.is_empty());
     }
     match (&owned.container, &evidence.container) {
         (None, None) => Ok(matches!(
@@ -152,18 +162,16 @@ pub(super) fn stopped(record: &Record, run: &BackendId, reference: &BlobRef) -> 
 }
 
 pub(super) fn all_stopped(record: &Record) -> bool {
-    record.container_launches.values().all(|intent| {
-        record
-            .runtime_ownerships
-            .iter()
-            .any(|owned| super::lifecycle::matches(intent, owned))
-    }) && !record.runtime_ownerships.is_empty()
-        && record.runtime_ownerships.iter().all(|owned| {
-            record
-                .cleanup_evidence
-                .get(&owned.execution)
-                .is_some_and(|reference| stopped(record, &owned.run, reference).unwrap_or(false))
-        })
+    let executions = executions(record);
+    if executions.is_empty() {
+        // InJob Podman cannot be invoked without a durable launch intent. Native
+        // clean stops the wrapper; OwnScope absence remains insufficient.
+        return !record.dispatched || (matches!(record.request.runtime.runtime,
+            ExecutionRuntime::RootlessPodman { mode: ContainerMode::InJob, .. })
+            && record.events.iter().any(|event| matches!(event.fact, NativeFact::Clean)));
+    }
+    executions.iter().all(|owned| record.cleanup_evidence.get(&owned.execution)
+        .is_some_and(|reference| stopped(record, &owned.run, reference).unwrap_or(false)))
 }
 
 fn executions(record: &Record) -> Vec<RuntimeOwnership> {
@@ -269,12 +277,7 @@ impl Flux {
             let current = self.journal.transaction(owner, |dir, current| {
                 let mut current =
                     current.ok_or_else(|| BackendError::unknown("intent disappeared"))?;
-                if current
-                    .runtime_ownerships
-                    .iter()
-                    .find(|owned| owned.execution == execution)
-                    != Some(&evidence.ownership)
-                {
+                if !stopped(&current, &evidence.ownership.run, reference).unwrap_or(false) {
                     return Err(BackendError::unknown(
                         "execution identity changed during cleanup",
                     ));
@@ -288,7 +291,7 @@ impl Flux {
                 Ok(current)
             })?;
             let runtime = debts.join(&record.request.runtime.manifest_digest);
-            for owned in &current.runtime_ownerships {
+            for owned in &executions(&current) {
                 if !current
                     .cleanup_evidence
                     .get(&owned.execution)
@@ -336,6 +339,18 @@ impl Flux {
     ) -> Result<CleanupResult> {
         let record = self.journal.load(owner)?;
         if all_stopped(&record) {
+            self.journal.runtime_gate(|debts| {
+                let current = self.journal.load(owner)?;
+                if all_stopped(&current) {
+                    let runtime = debts.join(&current.request.runtime.manifest_digest);
+                    let path = runtime.join(format!("{}.unregistered", current.intent.correlation));
+                    if path.exists() && serde_json::from_slice::<SubmissionIntent>(&read(&path)?)? == current.intent {
+                        std::fs::remove_file(path)?;
+                        std::fs::File::open(runtime)?.sync_all()?;
+                    }
+                }
+                Ok(())
+            })?;
             return Ok(result(
                 &record,
                 None,

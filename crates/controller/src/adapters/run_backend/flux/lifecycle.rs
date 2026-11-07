@@ -83,6 +83,10 @@ impl Flux {
                 .ok_or_else(|| {
                     BackendError::invalid("observed container lacks its durable prelaunch intent")
                 })?;
+            if current.cleanup_evidence.get(&observed.execution).is_some_and(|reference|
+                cleanup::stopped(&current, &observed.run, reference).unwrap_or(false)) {
+                return Err(BackendError::unknown("stopped execution cannot acquire a late container binding"));
+            }
             if !matches(&intent, &observed) {
                 return Err(BackendError::invalid(
                     "observed container differs from exact prelaunch name/labels/launcher",

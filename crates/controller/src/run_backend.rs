@@ -956,6 +956,19 @@ pub struct CleanupEvidence {
     /// kill(-owned_pgid, 0) must return ESRCH after reap/removal.
     pub process_group_probe_errno: Option<i32>,
     pub container: Option<ContainerStop>,
+    #[serde(default)]
+    pub pending_launch: Option<PendingLaunchStop>,
+}
+
+/// Exact absence facts after stopping an unbound InJob launcher. OwnScope needs
+/// a bound scope identity and cannot be discharged by container absence alone.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PendingLaunchStop {
+    pub intent: ContainerLaunchIntent,
+    pub name_exists_exit: i32,
+    pub sweep_exit: i32,
+    pub remaining_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]

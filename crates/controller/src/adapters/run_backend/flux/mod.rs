@@ -65,6 +65,11 @@ impl Flux {
                 terminal: Some(terminal),
             });
         }
+        if !record.dispatched {
+            let terminal = self.terminal(owner, Ending::Cancelled,
+                "cancelled before durable dispatch; no native or runtime effect", vec![], None)?;
+            return Ok(CancelAck { binding: None, acknowledged: true, terminal: Some(terminal) });
+        }
         self.mark_cleanup_debt(&record)?;
         let binding = self.recover(owner).ok().flatten().or(record.binding);
         let acknowledged = if let Some(binding) = &binding {
