@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Install and inspect TL3 on dl380g10 without printing credentials."""
 import argparse
+import importlib.util
 from datetime import datetime, timezone
 import fnmatch
 import hashlib
@@ -20,6 +21,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import tomllib
 import urllib.request
 import zipfile
@@ -152,7 +154,7 @@ def initdb(home):
         private_file(credential)
     if data.exists():
         if (data / "PG_VERSION").read_text().strip() != "17":
-            raise RuntimeError("existing cluster has another major version; migrate explicitly")
+            raise RuntimeError("existing cluster major version is unsupported; refusing cluster modification")
         return
     with tempfile.TemporaryDirectory(prefix="initdb-", dir=data.parent) as directory:
         stage = Path(directory) / "data"
@@ -259,44 +261,16 @@ def configure(home, listen, state, image=None, primary=None, alternate=None, con
     if not data.get("github", {}).get("repos"):
         raise SystemExit(f"{destination} has no [[github.repos]] entry. Restore it from a "
                          "tl3.toml.*.bak backup, or move the file aside to generate a new one.")
-    text = original
-    # Deployment migrations fill missing fields. Existing values always win.
-    for table, fields in (
-        ("github", {"webhook_listen": "127.0.0.1:8081"}),
-        ("workers", {"tiktoken_cache_dir": str(paths(home)[0] / "tiktoken")}),
-        ("workers", {"launcher": LAUNCHER}),
-        ("hindsight", {"bank": tomllib.loads(defaults)["hindsight"]["bank"]}),
-        ("models", {"writer": tomllib.loads(defaults)["models"]["writer"]}),
-        ("hindsight", {"api_key_file": str(config / "secrets/hindsight-key")}),
-        ("console", console_fields(home, listen, console_listen)),
-    ):
-        missing = {key: toml_value(value) for key, value in fields.items()
-                   if key not in data.get(table, {})}
-        if missing:
-            text = add_fields(text, f"[{table}]", missing)
-    # Before #372 workers ran from app/, which each install overwrote in place.
-    legacy = str(paths(home)[0] / "app/workers/.venv/bin/python")
-    if data.get("workers", {}).get("python") == legacy:
-        current = str(paths(home)[0] / "current/workers/.venv/bin/python")
-        text = text.replace("python = " + json.dumps(legacy), "python = " + json.dumps(current), 1)
-        if tomllib.loads(text)["workers"]["python"] != current:
-            raise RuntimeError(f"{destination}: could not move workers.python from app/ to current/; "
-                               "edit it by hand before installing")
-    if "installation_id" not in data["github"]["repos"][0]:
-        text = add_fields(text, "[[github.repos]]", {"installation_id": state.get("installation_id", 1)})
-    if "operations_issue" in state:
-        operations = {"owner": "RobTand", "repo": "trustladderiii", "issue": state["operations_issue"]}
-        missing = {key: toml_value(value) for key, value in operations.items()
-                   if key not in data.get("operations", {})}
-        if missing:
-            text = add_fields(text, "[operations]", missing)
-    if "operations" not in data["github"] and data.get("operations"):
-        operations = data["operations"]
-        identity = {"owner": operations["owner"], "name": operations["repo"],
-                    "number": operations["issue"], "installation_id": data["github"]["repos"][0].get("installation_id", state.get("installation_id", 1))}
-        text = add_fields(text, "[github]", {"operations": toml_value(identity)})
-    tomllib.loads(text)
-    save_config(destination, original, text)
+    # Existing configuration is operator input, never an upgrade target.
+    required = {"workers": ("python", "runs", "launcher", "tiktoken_cache_dir"),
+                "hindsight": ("bank", "api_key_file"), "models": ("writer",),
+                "github": ("webhook_listen", "operations"),
+                "console": ("listen", "assets", "user", "password_file")}
+    for table, fields in required.items():
+        if any(field not in data.get(table, {}) for field in fields):
+            raise RuntimeError("existing config lacks exact current deployment inputs; edit it explicitly")
+    if data["workers"]["python"] == str(paths(home)[0] / "app/workers/.venv/bin/python"):
+        raise RuntimeError("existing config must select the prepared immutable runtime explicitly")
 
 
 def save_config(destination, original, text):
@@ -330,11 +304,407 @@ def toml_value(value):
 
 def run(command, **kwargs):
     # Commands never carry secret values. Suppress output on failure as well.
-    result = subprocess.run([str(part) for part in command], stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, **kwargs)
-    if result.returncode:
-        raise RuntimeError(f"{Path(command[0]).name} failed with exit {result.returncode}; output suppressed")
-    return result.stdout
+    timeout = kwargs.pop("timeout", 300)
+    with subprocess.Popen([str(part) for part in command], stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, start_new_session=True, **kwargs) as child:
+        try:
+            output, _ = child.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            os.killpg(child.pid, signal.SIGKILL)
+            child.communicate(timeout=5)
+            raise RuntimeError(f"{Path(command[0]).name} timed out; output suppressed") from None
+        if child.returncode:
+            raise RuntimeError(f"{Path(command[0]).name} failed with exit {child.returncode}; output suppressed")
+        return output
+
+
+def unit_state(unit):
+    return run(["systemctl", "--user", "show", unit, "--property=ActiveState", "--value"],
+               timeout=15).decode().strip()
+
+
+def require_stopped(*units):
+    for unit in units or ("tl3d.service", "tl3-postgres.service"):
+        if unit_state(unit) != "inactive":
+            raise RuntimeError(f"{unit} must be exactly stopped (inactive)")
+
+
+def owned_directory(path):
+    path = Path(path)
+    if not path.is_absolute() or any(parent.is_symlink() for parent in (path, *path.parents)):
+        raise RuntimeError("state/backup path must be absolute with no symlink ancestors")
+    info = path.stat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise RuntimeError("state/backup root must be an owner-only directory")
+
+
+def tree_manifest(path, links=None):
+    """Hash regular files without following links; bind metadata and empty directories."""
+    owned_directory(path)
+    links = links or {}
+    result = {}
+    for item in [path, *sorted(path.rglob("*"))]:
+        relative = str(item.relative_to(path))
+        info = item.lstat()
+        row = {"uid": info.st_uid, "mode": stat.S_IMODE(info.st_mode)}
+        if info.st_uid != os.getuid() or (not stat.S_ISLNK(info.st_mode) and info.st_mode & 0o022):
+            raise RuntimeError("backup source must be owned and not writable by others")
+        if stat.S_ISLNK(info.st_mode):
+            if item not in links or item.resolve(strict=True) != links[item][0]:
+                raise RuntimeError("undeclared symlink in backup source")
+            row = {"kind": "tablespace", "target": links[item][1]}
+        elif stat.S_ISDIR(info.st_mode):
+            row["kind"] = "directory"
+        elif stat.S_ISREG(info.st_mode):
+            row["kind"] = "file"
+            digest = hashlib.sha256()
+            with item.open("rb") as stream:
+                for block in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(block)
+            row.update(size=info.st_size, sha256=digest.hexdigest())
+        else:
+            raise RuntimeError("unsupported special file in backup source")
+        result[relative] = row
+    return result
+
+
+def backup_links(sources):
+    return {sources["data"] / "pg_tblspc" / name.removeprefix("tablespace-"): (path, name)
+            for name, path in sources.items() if name.startswith("tablespace-")}
+
+
+def cold_backup(sources, backup):
+    require_stopped()
+    if backup.exists() or backup.is_symlink():
+        raise RuntimeError("backup destination already exists; select a new private directory")
+    links = backup_links(sources)
+    before = {name: tree_manifest(path, links) for name, path in sources.items()}
+    if not (sources["data"] / "PG_VERSION").is_file() or not (sources["data"] / "pg_wal").is_dir():
+        raise RuntimeError("backup requires a complete existing Postgres cluster including WAL")
+    if (sources["data"] / "postmaster.pid").exists():
+        raise RuntimeError("backup cluster still has postmaster.pid; stopped state is not proven")
+    if any(parent.is_symlink() for parent in backup.parents):
+        raise RuntimeError("backup destination has a symlink ancestor")
+    backup.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    owned_directory(backup.parent)
+    backup.mkdir(mode=0o700)
+    for name, path in sources.items():
+        if not re.fullmatch(r"[a-z][a-z0-9-]*", name):
+            raise RuntimeError("invalid backup root name")
+        shutil.copytree(path, backup / name, symlinks=True)
+    for source, (_, name) in links.items():
+        target = backup / "data" / source.relative_to(sources["data"])
+        target.unlink()
+        target.symlink_to(Path("../../") / name)
+    require_stopped()
+    write_file(backup / "manifest.json", json.dumps({"schema": "tl3.cold-backup.v1",
+               "sources": {name: str(path) for name, path in sources.items()}, "trees": before,
+               "stopped": ["tl3d.service", "tl3-postgres.service"]}, sort_keys=True).encode())
+    verify_cold_backup(sources, backup)
+    # Flush the diagnostic copy before making its verified marker durable.
+    for item in backup.rglob("*"):
+        if item.is_symlink():
+            continue
+        descriptor = os.open(item, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    sync_directory(backup)
+
+
+def verify_cold_backup(sources, backup, compare_sources=True):
+    if compare_sources:
+        require_stopped()
+    try:
+        owned_directory(backup)
+        private_file(backup / "manifest.json")
+        manifest = json.loads((backup / "manifest.json").read_text())
+        copies = {name: backup / name for name in sources}
+        if manifest.get("schema") != "tl3.cold-backup.v1" or manifest.get("sources") != {
+                name: str(path) for name, path in sources.items()}:
+            raise RuntimeError("backup source scope mismatch")
+        for roots in (sources, copies) if compare_sources else (copies,):
+            if {name: tree_manifest(path, backup_links(roots)) for name, path in roots.items()} != manifest["trees"]:
+                raise RuntimeError("backup incomplete or mismatched")
+    except (OSError, ValueError, KeyError) as error:
+        raise RuntimeError("backup missing, incomplete or unreadable") from error
+
+
+def reset_file_state(sources, backup, reset):
+    verify_cold_backup(sources, backup)
+    targets = []
+    for name in reset:
+        parts = Path(name).parts
+        if (len(parts) not in (1, 2) or any(part in (".", "..", "/") for part in parts)
+                or parts[0] in ("data", "config") or parts[0].startswith("tablespace-") or parts[0] not in sources):
+            raise RuntimeError("reset must name only manifest-scoped TL3 file state")
+        path = sources[parts[0]].joinpath(*parts[1:])
+        owned_directory(path)
+        targets.append(path)
+    for path in targets:
+        require_stopped()
+        shutil.rmtree(path)
+        path.mkdir(mode=0o700)
+        sync_directory(path.parent)
+
+
+def qualify_fresh(args):
+    """Reuse the operator's authenticated gate, with an unconditional exact-head nightly."""
+    if not re.fullmatch(r"[0-9a-f]{40}", args.head or ""):
+        raise RuntimeError("qualification requires a full exact head")
+    helper = Path("/home/rob/tmp/tl3-build/dev_evidence.py")
+    spec = importlib.util.spec_from_file_location("tl3_deploy_evidence", helper)
+    gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate)
+    check_fresh_qualification(gate, args)
+
+
+def check_fresh_qualification(gate, args):
+    try:
+        if args.lane == "release":
+            if not gate.postmerge_ok(args.head) or gate.commit_inventory(str(SOURCE), gate.BuildBuddy(), args.head):
+                raise RuntimeError("release requires authenticated exact-head full CI and kernel inventory")
+        else:
+            bb = gate.BuildBuddy()
+            _, groups = gate.verify_evidence(str(SOURCE), bb, args.head, args.evidence / f"{args.head}.json")
+            if gate.verus_and_kernel_tests(str(SOURCE), bb, args.head, groups):
+                raise RuntimeError("exact-head qualification lacks required proof/test coverage")
+        proof = gate.nightly_proof(str(SOURCE), gate.fingerprint(str(SOURCE), args.head))
+        if not proof or proof[1] != args.head:
+            raise RuntimeError("one authenticated matching nightly at the chosen exact head is required")
+    except gate.Refuse as error:
+        raise RuntimeError("authenticated deployment qualification refused") from error
+    print(f"Qualified {args.head}; nightly run {proof[0]}")
+
+
+def verify_runtime_inputs(flux, plan):
+    for locator in flux["runtime_bundles"]:
+        manifest = Path(locator)
+        bundle = manifest.parent
+        if (manifest.name != "manifest.json" or bundle.parent != Path("/mnt/shared/flux-out/tl3/.runtime")
+                or not re.fullmatch(r"[0-9a-f]{64}", bundle.name)
+                or not manifest.is_file() or manifest.is_symlink()
+                or any(parent.is_symlink() for parent in manifest.parents)
+                or plan.get("runtime_manifests", {}).get(str(manifest)) != hashlib.sha256(manifest.read_bytes()).hexdigest()):
+            raise RuntimeError("missing or mismatched immutable Flux runtime manifest")
+
+
+def fresh_scope(args):
+    """Bind the operator's explicit archive/reset manifest to supported config paths."""
+    root, config_dir, _ = paths(args.home)
+    config = config_dir / "tl3.toml"
+    private_file(config)
+    private_file(args.state_manifest)
+    plan = json.loads(args.state_manifest.read_text())
+    data = tomllib.loads(config.read_text())
+    if (plan.get("schema") != "tl3.fresh-init.v1" or plan.get("head") != args.head
+            or plan.get("config_sha256") != hashlib.sha256(config.read_bytes()).hexdigest()):
+        raise RuntimeError("fresh-init manifest must bind exact head and existing config")
+    store = data["store"]
+    if (store["database"] != "tl3" or store["user"] != "tl3" or store["port"] != 5543
+            or store["host"] != str(root / "postgres/socket")):
+        raise RuntimeError("fresh-init only resets database tl3 at the configured local TL3 socket")
+    if data.get("execution_backend") != "flux":
+        raise RuntimeError("fresh-init requires the explicitly selected Flux backend")
+    flux = data["flux"]
+    if flux != plan.get("flux") or flux["output_root"] != "/mnt/shared/flux-out/tl3":
+        raise RuntimeError("fresh-init requires exact existing Flux inputs; no rebinding")
+    if not flux["uri"] or not flux["instance_generation"] or not flux["runtime_bundles"]:
+        raise RuntimeError("missing exact Flux runtime inputs")
+    verify_runtime_inputs(flux, plan)
+    owned_directory(args.binaries)
+    for name in RELEASE_BINARIES:
+        info = (args.binaries / name).lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+            raise RuntimeError("selected release binaries must be private owned regular executables")
+    for name in ("SOURCE.json", "SHA256SUMS"):
+        info = (args.binaries / name).lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022:
+            raise RuntimeError("selected release metadata must be owned regular files")
+    selected = json.loads((args.binaries / "SOURCE.json").read_text())
+    if selected.get("head") != args.head or selected.get("binaries") != {
+            name: hashlib.sha256((args.binaries / name).read_bytes()).hexdigest() for name in RELEASE_BINARIES}:
+        raise RuntimeError("selected release provenance or binary hashes mismatch")
+    lines = (args.binaries / "SHA256SUMS").read_text().splitlines()
+    expected_sums = {f"{digest}  {name}" for name, digest in selected["binaries"].items()}
+    if len(lines) != len(RELEASE_BINARIES) or set(lines) != expected_sums:
+        raise RuntimeError("selected release checksum manifest mismatch")
+    actual_tree = run(["git", "rev-parse", "HEAD^{tree}"], cwd=SOURCE, timeout=15)
+    selected_tree = run(["git", "rev-parse", f"{args.head}^{{tree}}"], cwd=SOURCE, timeout=15)
+    if actual_tree.strip() != selected_tree.strip():
+        raise RuntimeError("deployment helper checkout must match the selected exact head's tree")
+    if run(["git", "status", "--porcelain"], cwd=SOURCE, timeout=15).strip():
+        raise RuntimeError("deployment helper checkout must be clean")
+    runs = Path(data["workers"]["runs"])
+    worktrees = Path(data["worktrees_root"])
+    owned_directory(runs)
+    allowed = {"controller": runs / ".controller"}
+    # Retain attempts as evidence. An inventory authorizes copying, never wiping their parent.
+    attempts = plan.get("attempts")
+    if not isinstance(attempts, list) or len(set(attempts)) != len(attempts):
+        raise RuntimeError("manifest must inventory exact attempt directories")
+    actual_attempts = []
+    for run_root in runs.iterdir():
+        if re.fullmatch(r"(?:[0-9a-f]{2})+", run_root.name):
+            if run_root.is_symlink() or not run_root.is_dir():
+                raise RuntimeError("attempt run root must be an owned real directory")
+            for attempt in run_root.iterdir():
+                if attempt.name.startswith("attempt-"):
+                    actual_attempts.append(str(attempt.relative_to(runs)))
+    if set(attempts) != set(actual_attempts):
+        raise RuntimeError("manifest omits or mismatches exact attempt inventory")
+    for index, relative in enumerate(attempts):
+        parts = Path(relative).parts
+        if (len(parts) != 2 or not re.fullmatch(r"(?:[0-9a-f]{2})+", parts[0])
+                or not re.fullmatch(r"attempt-[0-9]{8}", parts[1])):
+            raise RuntimeError("unsupported exact attempt directory")
+        allowed[f"attempt-{index}"] = runs / relative
+    active = [runs / ".controller" / name for name in ("flux-checks", "worker-waits")]
+    if any(path.is_symlink() or (path.exists() and any(path.iterdir())) for path in active):
+        raise RuntimeError("retained FX bindings/waits need separately verified cleanup; fresh-init refuses")
+    if any((path / filename).exists() for name, path in allowed.items() if name.startswith("attempt-")
+           for filename in ("execution.json", "claim.json")):
+        raise RuntimeError("attempt execution bindings need separately verified cleanup; fresh-init refuses")
+    archive = plan.get("archive")
+    reset = plan.get("reset")
+    if not isinstance(archive, dict) or archive != {name: str(path) for name, path in allowed.items()}:
+        raise RuntimeError("archive manifest must enumerate exact supported controller journals and attempts")
+    resettable = {"controller/" + name for name in ("direct-merge", "workers", "writer", "github", "mergify", "prismabuild")}
+    controller = runs / ".controller"
+    known = {name.split("/")[1] for name in resettable} | {"flux-checks", "worker-waits"}
+    if any(path.name not in known for path in controller.iterdir()):
+        raise RuntimeError("unknown controller state requires exact source-contract reconciliation")
+    existing = {name for name in resettable if (runs / ".controller" / name.split("/")[1]).exists()}
+    if not isinstance(reset, list) or len(set(reset)) != len(reset) or set(reset) != existing:
+        raise RuntimeError("reset must inventory exactly the supported existing TL3 adapter journals")
+    sources = {"data": root / "postgres/data", "config": config_dir, **allowed}
+    tablespaces = plan.get("tablespaces")
+    if not isinstance(tablespaces, dict):
+        raise RuntimeError("tablespaces must explicitly declare every external cluster target")
+    for oid, target in tablespaces.items():
+        if not re.fullmatch(r"[1-9][0-9]*", oid):
+            raise RuntimeError("invalid declared tablespace identifier")
+        sources[f"tablespace-{oid}"] = Path(target)
+    for path in sources.values():
+        owned_directory(path)
+    protected = [Path(flux[key]) for key in ("staging_root", "output_root")]
+    protected.append(worktrees)
+    protected.extend(Path(path).parent for path in flux["runtime_bundles"])
+    values = list(sources.values())
+    for index, path in enumerate(values):
+        if any(path.is_relative_to(other) or other.is_relative_to(path)
+               for other in values[index + 1:] + protected):
+            raise RuntimeError("backup/reset scope overlaps another source or retained Flux state")
+        if path.is_relative_to(args.backup) or args.backup.is_relative_to(path):
+            raise RuntimeError("backup destination overlaps source state")
+    return sources, reset, config
+
+
+def listener_ready(address):
+    host, port = address.rsplit(":", 1)
+    connection = http.client.HTTPConnection(host, int(port), timeout=2)
+    try:
+        connection.request("GET", "/github/events")
+        return connection.getresponse().status == 405
+    except OSError:
+        return False
+    finally:
+        connection.close()
+
+
+def fresh_init(args):
+    # Qualification runs in a bounded child, including the authoritative helper's I/O.
+    run([sys.executable, "-I", HERE / "deploy.py", "qualify-fresh", "--head", args.head,
+         "--lane", args.lane, "--evidence", args.evidence], timeout=600)
+    sources, reset, config = fresh_scope(args)
+    helper = args.binaries / "tl3-deploy"
+    run([helper, "validate", config], timeout=30)
+    marker = config.parent / "production-ready"
+    if marker.is_symlink() or not marker.is_file() or marker.stat().st_uid != os.getuid():
+        raise RuntimeError("the existing production readiness marker is required before fresh-init")
+    # Refuse an incomplete selected bundle before the outage.
+    for binary in RELEASE_BINARIES:
+        if not (args.binaries / binary).is_file():
+            raise RuntimeError("selected release is incomplete")
+    run(["systemctl", "--user", "stop", "tl3d.service"], timeout=150)
+    require_stopped("tl3d.service")
+    run(["systemctl", "--user", "stop", "tl3-postgres.service"], timeout=150)
+    require_stopped()
+    cold_backup(sources, args.backup)
+    saved_scope = args.backup / "state-scope.json"
+    write_file(saved_scope, args.state_manifest.read_bytes())
+    args.state_manifest = saved_scope
+    reset_file_state(sources, args.backup, reset)
+    context = args.backup / "reset-context.json"
+    write_file(context, json.dumps({key: str(getattr(args, key)) for key in
+               ("home", "head", "lane", "evidence", "binaries", "state_manifest", "backup")}).encode())
+    root = paths(args.home)[0]
+    for binary in RELEASE_BINARIES:
+        write_file(root / "bin" / binary, (args.binaries / binary).read_bytes(), 0o700)
+    write_file(root / "bin/SHA256SUMS", (args.binaries / "SHA256SUMS").read_bytes())
+    write_file(root / "bin/SOURCE.json", (args.binaries / "SOURCE.json").read_bytes())
+    write_file(root / "deploy/deploy.py", (HERE / "deploy.py").read_bytes())
+    # Never auto-start an old release or restore old state after a failure.
+    run(["systemctl", "--user", "start", "tl3-postgres.service"], timeout=150)
+    if unit_state("tl3-postgres.service") != "active":
+        raise RuntimeError("Postgres did not become active")
+    _, _, postgres_bin = paths(args.home)
+    run([postgres_bin / "bin/pg_isready", "-h", str(root / "postgres/socket"), "-p", "5543"], timeout=15)
+    require_stopped("tl3d.service")
+    run([root / "bin/tl3-deploy", "fresh-database", config, context], cwd=SOURCE, timeout=750)
+    run([root / "bin/tl3-deploy", "store-check", config], timeout=30)
+    run(["systemctl", "--user", "reset-failed", "tl3d.service"], timeout=15)
+    run(["systemctl", "--user", "start", "tl3d.service"], timeout=150)
+    deadline = time.monotonic() + 120
+    address = tomllib.loads(config.read_text())["github"]["webhook_listen"]
+    while True:
+        if unit_state("tl3d.service") != "active":
+            raise RuntimeError("selected tl3d failed startup")
+        if listener_ready(address):
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError("tl3d listener did not become ready")
+        time.sleep(1)
+    run([root / "bin/tl3-deploy", "store-check", config], timeout=30)
+    for unit in ("tl3-mlflow.service", "tl3-status.service", "tl3-console.service"):
+        run(["systemctl", "--user", "start", unit], timeout=150)
+        if unit_state(unit) != "active":
+            raise RuntimeError(f"{unit} failed startup")
+    for _ in range(9):
+        time.sleep(10)
+        restarts = run(["systemctl", "--user", "show", "tl3d.service", "--property=NRestarts", "--value"], timeout=15)
+        if unit_state("tl3d.service") != "active" or restarts.strip() != b"0" or not listener_ready(address):
+            raise RuntimeError("selected tl3d failed bounded startup stability checks")
+    print("Fresh TL3 schema and listener ready; MLflow, status and console explicitly started")
+
+
+def authorize_fresh_database(context, database_config):
+    """SQL helper entry point: recheck the gate and copy, with Postgres now running."""
+    private_file(context)
+    fields = json.loads(context.read_text())
+    from argparse import Namespace
+    args = Namespace(**fields)
+    for name in ("home", "evidence", "binaries", "state_manifest", "backup"):
+        setattr(args, name, Path(getattr(args, name)))
+    if context != args.backup / "reset-context.json":
+        raise RuntimeError("database reset context is outside its diagnostic backup")
+    run([sys.executable, "-I", HERE / "deploy.py", "qualify-fresh", "--head", args.head,
+         "--lane", args.lane, "--evidence", args.evidence], timeout=600)
+    sources, reset, config = fresh_scope(args)
+    require_stopped("tl3d.service")
+    if unit_state("tl3-postgres.service") != "active":
+        raise RuntimeError("database reset requires active, ready Postgres")
+    verify_cold_backup(sources, args.backup, compare_sources=False)
+    manifest = json.loads((args.backup / "manifest.json").read_text())
+    if tree_manifest(sources["config"]) != manifest["trees"]["config"]:
+        raise RuntimeError("configuration changed since the cold backup")
+    for name in reset:
+        root, child = name.split("/")
+        if any((sources[root] / child).iterdir()):
+            raise RuntimeError("file reset no longer matches the fresh-init boundary")
+    if config != database_config:
+        raise RuntimeError("database reset config scope mismatch")
 
 
 def install(args):
@@ -345,7 +715,7 @@ def install(args):
     postgres(home)
     checked_download(TOKENIZER_URL, TOKENIZER_SHA256, root / "tiktoken" / TOKENIZER_KEY)
     print("Tokenizer: pinned o200k_base installed and hash verified")
-    introduced = install_release(home)
+    install_release(home)
     private_dir(root / "bin")
     for binary in RELEASE_BINARIES:
         write_file(root / "bin" / binary, (args.binaries / binary).read_bytes(), 0o700)
@@ -369,7 +739,7 @@ def install(args):
     else:
         managed.unlink(missing_ok=True)
     run(["systemctl", "--user", "daemon-reload"])
-    collect_releases(home, introduced)
+    collect_releases(home)
     print("Units installed; config parses. Run `deploy.py check` for Config::load and the credential checks.")
 
 
@@ -391,7 +761,7 @@ def install_release(home, source=SOURCE):
 
     Running workers keep the release they started from (#372), because the
     controller resolves `current` when it launches them. Returns whether this
-    install introduced releases, replacing the pre-#372 app/ directory."""
+    install introduced the selected immutable release."""
     root = paths(home)[0]
     releases = root / "releases"
     private_dir(releases)
@@ -409,11 +779,7 @@ def install_release(home, source=SOURCE):
         sync_directory(target)
     current = root / "current"
     introduced = not current.is_symlink()
-    before = None if introduced else current.resolve()
     _link(root / "current", target)
-    # A redeploy of the same code keeps the earlier `previous` for rollback.
-    if before is not None and before != target.resolve():
-        _link(root / "previous", before)
     sync_directory(root)
     print(f"Workers: release {target.name} installed; locked Python 3.14 venv synced")
     return introduced
@@ -462,15 +828,8 @@ def live_pythons(runs):
     return found
 
 
-def _workers_python(path):
-    try:
-        return tomllib.loads(path.read_text())["workers"]["python"]
-    except (OSError, KeyError, ValueError):
-        return None
-
-
-def collect_releases(home, introduced=False):
-    """Keep the current release, the previous one and every release a live run uses."""
+def collect_releases(home):
+    """Keep the current release and every release a live run uses."""
     root, config, _ = paths(home)
     releases = root / "releases"
     try:
@@ -482,8 +841,6 @@ def collect_releases(home, introduced=False):
         print("Releases: a live attempt's launch record is unreadable; nothing collected")
         return
     keep = {(root / "current").resolve()}
-    if (root / "previous").is_symlink():
-        keep.add((root / "previous").resolve())
     for python in live - {None}:
         path = Path(python)
         if path.is_relative_to(releases.resolve()):
@@ -492,29 +849,6 @@ def collect_releases(home, introduced=False):
         if release.resolve() not in keep and not release.name.startswith("."):
             shutil.rmtree(release)
             print(f"Releases: removed {release.name}")
-    legacy = root / "app"
-    if not legacy.is_dir() or legacy.is_symlink():
-        return
-    # The tl3d that runs during this install may still launch from app/ until
-    # it restarts, so app/ outlives the install that introduces releases.
-    runtime = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")) / "tl3d/tl3.toml"
-    users = [reason for reason, used in (
-        ("this install introduced releases", introduced),
-        ("a run started before #372 is live", None in live),
-        ("tl3.toml does not run workers from current/ or releases/",
-         not str(_workers_python(config / "tl3.toml")).startswith((str(root / "current") + "/",
-                                                                    str(root / "releases") + "/"))),
-        ("the running tl3d launches workers from app/",
-         str(_workers_python(runtime)).startswith(str(legacy) + "/")),
-        # A tl3d that read tl3.toml but has no readable runtime copy could still use app/.
-        ("tl3d is running without a readable runtime config",
-         _workers_python(runtime) is None and _tl3d_state() in ("activating", "active", "reloading")),
-    ) if used]
-    if users:
-        print(f"Releases: kept the pre-#372 app/ directory: {'; '.join(users)}")
-        return
-    shutil.rmtree(legacy)
-    print("Releases: removed the pre-#372 app/ directory")
 
 
 def _tl3d_state():
@@ -798,7 +1132,7 @@ def check(home):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=["install", "initdb", "start", "check", "service", "model-defaults", "install-mlflow",
-                                            "stop-runs"])
+                                            "stop-runs", "fresh-init", "qualify-fresh", "authorize-fresh-database"])
     parser.add_argument("--home", type=Path, default=Path.home())
     parser.add_argument("--binaries", type=Path, default=SOURCE / "target/release")
     parser.add_argument("--status-listen", default="192.168.1.107:8033")
@@ -808,7 +1142,27 @@ def main():
     parser.add_argument("--primary")
     parser.add_argument("--alternate")
     parser.add_argument("--service", choices=["database", "status", "controller"])
+    parser.add_argument("--head", help="full chosen deployment commit")
+    parser.add_argument("--lane", choices=["release", "dev"], default="release")
+    parser.add_argument("--evidence", type=Path, default=Path("/home/rob/tmp/tl3-build/rust-fv/captain/evidence"))
+    parser.add_argument("--state-manifest", type=Path, help="private exact owned-state scope manifest")
+    parser.add_argument("--backup", type=Path, help="new absolute private cold-backup destination")
+    parser.add_argument("--context", type=Path)
+    parser.add_argument("--database-config", type=Path)
     args = parser.parse_args()
+    if args.command == "authorize-fresh-database":
+        if not args.context or not args.database_config:
+            parser.error("database authorization requires --context and --database-config")
+        authorize_fresh_database(args.context, args.database_config)
+        return 0
+    if args.command == "fresh-init":
+        if not args.state_manifest or not args.backup or not args.backup.is_absolute():
+            parser.error("fresh-init requires --state-manifest and absolute --backup")
+        fresh_init(args)
+        return 0
+    if args.command == "qualify-fresh":
+        qualify_fresh(args)
+        return 0
     if args.command == "check":
         return check(args.home)
     if args.command == "service":

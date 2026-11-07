@@ -12,11 +12,278 @@ import tempfile
 import time
 import tomllib
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("deployment", Path(__file__).with_name("deploy.py"))
 deploy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(deploy)
+
+
+class FreshInitTests(unittest.TestCase):
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory(prefix="tl3-fresh-test-")
+        self.addCleanup(self.scratch.cleanup)
+        self.home = Path(self.scratch.name)
+        self.root, self.config, _ = deploy.paths(self.home)
+        self.cluster = self.root / "postgres/data"
+        for directory in (self.cluster / "pg_wal", self.cluster / "pg_tblspc",
+                          self.root / "world", self.root / "journal", self.config):
+            directory.mkdir(parents=True, mode=0o700, exist_ok=True)
+        (self.cluster / "PG_VERSION").write_text("17\n")
+        (self.cluster / "pg_wal/segment").write_bytes(b"diagnostic WAL")
+        (self.root / "world/snapshot").write_bytes(b"old world")
+        (self.root / "journal/receipt").write_bytes(b"old receipt")
+        deploy.write_file(self.config / "tl3.toml", b"fixture config\n")
+        deploy.write_file(self.config / "production-ready", b"")
+        self.sources = {"data": self.cluster, "world": self.root / "world",
+                        "journal": self.root / "journal", "config": self.config}
+        for path in self.sources.values():
+            path.chmod(0o700)
+            for child in path.rglob("*"):
+                child.chmod(0o700 if child.is_dir() else 0o600)
+        self.backup = self.home / "backups/cold"
+        self.states = {"tl3d.service": "inactive", "tl3-postgres.service": "inactive"}
+        self.calls = []
+        self.transport = patch.object(deploy, "run", side_effect=self.transport_run)
+        self.transport.start()
+        self.addCleanup(self.transport.stop)
+
+    def transport_run(self, command, **kwargs):
+        argv = list(map(str, command))
+        self.calls.append(argv)
+        if argv[:3] == ["systemctl", "--user", "show"]:
+            if "--property=NRestarts" in argv:
+                return b"0\n"
+            return (self.states[argv[3]] + "\n").encode()
+        return b""
+
+    def test_cold_backup_is_complete_and_detects_missing_wal_before_reset(self):
+        deploy.cold_backup(self.sources, self.backup)
+        self.assertEqual((self.backup / "data/pg_wal/segment").read_bytes(), b"diagnostic WAL")
+        deploy.verify_cold_backup(self.sources, self.backup)
+        (self.backup / "data/pg_wal/segment").unlink()
+        with self.assertRaisesRegex(RuntimeError, "backup"):
+            deploy.verify_cold_backup(self.sources, self.backup)
+        self.assertEqual((self.root / "world/snapshot").read_bytes(), b"old world")
+
+    def test_backup_and_reset_refuse_while_controller_runs(self):
+        self.states["tl3d.service"] = "active"
+        with self.assertRaisesRegex(RuntimeError, "stopped"):
+            deploy.cold_backup(self.sources, self.backup)
+        self.assertFalse(self.backup.exists())
+        self.states["tl3d.service"] = "inactive"
+        deploy.cold_backup(self.sources, self.backup)
+        self.states["tl3d.service"] = "active"
+        with self.assertRaisesRegex(RuntimeError, "stopped"):
+            deploy.reset_file_state(self.sources, self.backup, ("world", "journal"))
+        self.assertTrue((self.root / "world/snapshot").exists())
+
+    def test_reset_refuses_missing_or_mismatched_backup(self):
+        with self.assertRaisesRegex(RuntimeError, "backup"):
+            deploy.reset_file_state(self.sources, self.backup, ("world", "journal"))
+        deploy.cold_backup(self.sources, self.backup)
+        (self.root / "journal/receipt").write_bytes(b"changed since backup")
+        with self.assertRaisesRegex(RuntimeError, "backup"):
+            deploy.reset_file_state(self.sources, self.backup, ("world", "journal"))
+        self.assertTrue((self.root / "world/snapshot").exists())
+
+    def test_reset_erases_only_world_and_journal_and_retains_evidence(self):
+        unrelated = self.root / "mlflow"
+        unrelated.write_bytes(b"unrelated database sentinel")
+        deploy.cold_backup(self.sources, self.backup)
+        deploy.reset_file_state(self.sources, self.backup, ("world", "journal"))
+        self.assertEqual(list((self.root / "world").iterdir()), [])
+        self.assertEqual(list((self.root / "journal").iterdir()), [])
+        self.assertEqual(unrelated.read_bytes(), b"unrelated database sentinel")
+        self.assertTrue((self.cluster / "pg_wal/segment").exists())
+        self.assertEqual((self.backup / "world/snapshot").read_bytes(), b"old world")
+
+    def test_backup_refuses_symlink_escape_and_unknown_unit_state(self):
+        (self.cluster / "pg_wal/escape").symlink_to(self.home)
+        with self.assertRaisesRegex(RuntimeError, "symlink"):
+            deploy.cold_backup(self.sources, self.backup)
+        (self.cluster / "pg_wal/escape").unlink()
+        self.states["tl3-postgres.service"] = "failed"
+        with self.assertRaisesRegex(RuntimeError, "stopped"):
+            deploy.cold_backup(self.sources, self.backup)
+
+    def test_declared_external_tablespace_is_copied_and_rebound_inside_backup(self):
+        target = self.home / "external-tablespace"
+        target.mkdir(mode=0o700)
+        (target / "page").write_bytes(b"tablespace data")
+        (target / "page").chmod(0o600)
+        (self.cluster / "pg_tblspc/1234").symlink_to(target)
+        self.sources["tablespace-1234"] = target
+        deploy.cold_backup(self.sources, self.backup)
+        self.assertEqual((self.backup / "data/pg_tblspc/1234/page").read_bytes(), b"tablespace data")
+        self.assertEqual((self.backup / "data/pg_tblspc/1234").resolve(), self.backup / "tablespace-1234")
+        (target / "page").write_bytes(b"changed")
+        with self.assertRaisesRegex(RuntimeError, "backup"):
+            deploy.verify_cold_backup(self.sources, self.backup)
+
+    def test_selected_daemon_is_stopped_before_postgres_and_dependents_start_last(self):
+        args = SimpleNamespace(home=self.home, head="a" * 40, lane="release", evidence=self.home,
+                               binaries=self.home / "release", backup=self.backup,
+                               state_manifest=self.home / "scope.json")
+        args.binaries.mkdir(mode=0o700)
+        for name in deploy.RELEASE_BINARIES:
+            (args.binaries / name).write_bytes(b"selected binary")
+        for name in ("SOURCE.json", "SHA256SUMS"):
+            (args.binaries / name).write_bytes(b"fixture provenance")
+        deploy.write_file(args.state_manifest, b"fixture scope")
+        deploy.write_file(self.config / "tl3.toml", b'[github]\nwebhook_listen="127.0.0.1:8742"\n')
+        self.states.update({unit: "active" for unit in
+                            ("tl3d.service", "tl3-postgres.service", "tl3-mlflow.service",
+                             "tl3-status.service", "tl3-console.service")})
+        original = self.transport_run
+
+        def transport(command, **kwargs):
+            argv = list(map(str, command))
+            if argv[:3] == ["systemctl", "--user", "stop"]:
+                self.states[argv[3]] = "inactive"
+            if argv[:3] == ["systemctl", "--user", "start"]:
+                self.states[argv[3]] = "active"
+            if "fresh-database" in argv:
+                self.assertEqual(self.states["tl3d.service"], "inactive")
+                self.assertEqual((self.backup / "data/pg_wal/segment").read_bytes(), b"diagnostic WAL")
+            return original(command, **kwargs)
+
+        with patch.object(deploy, "fresh_scope", return_value=(self.sources, ("world", "journal"), self.config / "tl3.toml")), \
+             patch.object(deploy, "run", side_effect=transport), \
+             patch.object(deploy, "listener_ready", return_value=True), patch.object(deploy.time, "sleep"):
+            deploy.fresh_init(args)
+        stops = [call[-1] for call in self.calls if call[:3] == ["systemctl", "--user", "stop"]]
+        self.assertEqual(stops, ["tl3d.service", "tl3-postgres.service"])
+        starts = [call[-1] for call in self.calls if call[:3] == ["systemctl", "--user", "start"]]
+        self.assertEqual(starts, ["tl3-postgres.service", "tl3d.service", "tl3-mlflow.service",
+                                  "tl3-status.service", "tl3-console.service"])
+        reset_index = next(i for i, call in enumerate(self.calls) if "fresh-database" in call)
+        controller_index = self.calls.index(["systemctl", "--user", "start", "tl3d.service"])
+        self.assertLess(reset_index, controller_index)
+
+    def test_qualification_refusal_does_not_stop_any_unit(self):
+        args = SimpleNamespace(home=self.home, head="a" * 40, lane="release", evidence=self.home)
+        with patch.object(deploy, "run", side_effect=RuntimeError("qualification refused")):
+            with self.assertRaisesRegex(RuntimeError, "qualification"):
+                deploy.fresh_init(args)
+        self.assertEqual(self.calls, [])
+
+    def test_qualification_requires_authenticated_full_suite_and_exact_head_nightly(self):
+        args = SimpleNamespace(head="a" * 40, lane="release")
+        gate = SimpleNamespace(Refuse=RuntimeError, BuildBuddy=lambda: object(),
+                               postmerge_ok=lambda head: False,
+                               commit_inventory=lambda *args: None,
+                               fingerprint=lambda *args: "matching-inputs",
+                               nightly_proof=lambda *args: (42, "a" * 40))
+        with self.assertRaises(RuntimeError):
+            deploy.check_fresh_qualification(gate, args)
+        gate.postmerge_ok = lambda head: True
+        gate.nightly_proof = lambda *args: (42, "b" * 40)
+        with self.assertRaises(RuntimeError):
+            deploy.check_fresh_qualification(gate, args)
+        gate.nightly_proof = lambda *args: None
+        with self.assertRaises(RuntimeError):
+            deploy.check_fresh_qualification(gate, args)
+        gate.nightly_proof = lambda *args: (42, "a" * 40)
+        deploy.check_fresh_qualification(gate, args)
+
+    def test_dev_qualification_reads_exact_head_evidence_and_refuses_missing_coverage(self):
+        args = SimpleNamespace(head="a" * 40, lane="dev", evidence=self.home)
+        seen = []
+
+        def evidence(repo, bb, head, path):
+            seen.append((head, path.name))
+            return "base", {"tests": []}
+
+        gate = SimpleNamespace(Refuse=RuntimeError, BuildBuddy=lambda: object(), verify_evidence=evidence,
+                               verus_and_kernel_tests=lambda *args: "missing proofs",
+                               fingerprint=lambda *unused: "inputs", nightly_proof=lambda *unused: (42, args.head))
+        with self.assertRaises(RuntimeError):
+            deploy.check_fresh_qualification(gate, args)
+        self.assertEqual(seen, [(args.head, args.head + ".json")])
+        gate.verus_and_kernel_tests = lambda *args: None
+        deploy.check_fresh_qualification(gate, args)
+
+    def test_existing_config_is_never_upgraded_or_rebound(self):
+        destination = self.config / "tl3.toml"
+        original = deploy.render_config(self.home, "192.168.1.107:8033", 987, 123,
+                                        "sha256:" + "a" * 64)
+        deploy.write_file(destination, original.encode())
+        deploy.configure(self.home, "192.168.1.107:8033", {})
+        self.assertEqual(destination.read_text(), original)
+        incomplete = original.replace('bank = "tl3"\n', '')
+        deploy.write_file(destination, incomplete.encode())
+        with self.assertRaisesRegex(RuntimeError, "current deployment inputs"):
+            deploy.configure(self.home, "192.168.1.107:8033", {})
+        self.assertEqual(destination.read_text(), incomplete)
+
+    def scope_fixture(self):
+        args = SimpleNamespace(home=self.home, head="a" * 40, binaries=self.home / "selected",
+                               state_manifest=self.home / "scope.json", backup=self.backup)
+        args.binaries.mkdir(mode=0o700)
+        for name in deploy.RELEASE_BINARIES:
+            (args.binaries / name).write_bytes(b"selected")
+            (args.binaries / name).chmod(0o700)
+        (args.binaries / "SOURCE.json").write_text(json.dumps({"head": args.head, "binaries": {
+            name: hashlib.sha256(b"selected").hexdigest() for name in deploy.RELEASE_BINARIES}}))
+        (args.binaries / "SOURCE.json").chmod(0o600)
+        deploy.write_file(args.binaries / "SHA256SUMS", ''.join(
+            hashlib.sha256(b"selected").hexdigest() + "  " + name + "\n"
+            for name in deploy.RELEASE_BINARIES).encode())
+        runs = self.root / "worker-runs"
+        journal = runs / ".controller/direct-merge"
+        journal.mkdir(parents=True, mode=0o700)
+        runs.chmod(0o700)
+        journal.parent.chmod(0o700)
+        (journal / "delivery.json").write_bytes(b"matching old controller evidence")
+        flux = {"output_root": "/mnt/shared/flux-out/tl3", "staging_root": "/mnt/shared/tl3-inputs",
+                "uri": "local:///fixture", "instance_generation": "fixture-generation",
+                "runtime_bundles": ["/mnt/shared/flux-out/tl3/.runtime/" + "b" * 64 + "/manifest.json"]}
+        text = ('execution_backend="flux"\nworktrees_root=' + json.dumps(str(self.root / "worktrees"))
+                + '\n[store]\ndatabase="tl3"\nuser="tl3"\nport=5543\nhost='
+                + json.dumps(str(self.root / "postgres/socket")) + '\n[workers]\nruns='
+                + json.dumps(str(runs)) + '\n[flux]\n'
+                + ''.join(key + '=' + deploy.toml_value(value) + '\n' for key, value in flux.items()))
+        deploy.write_file(self.config / "tl3.toml", text.encode())
+        plan = {"schema": "tl3.fresh-init.v1", "head": args.head,
+                "config_sha256": hashlib.sha256(text.encode()).hexdigest(), "flux": flux,
+                "archive": {"controller": str(journal.parent)}, "reset": ["controller/direct-merge"],
+                "attempts": [], "tablespaces": {}}
+        deploy.write_file(args.state_manifest, json.dumps(plan).encode())
+        return args, plan, runs
+
+    def test_actual_scope_uses_config_and_refuses_shared_parent_or_active_fx_erasure(self):
+        args, plan, runs = self.scope_fixture()
+
+        def transport(command, **kwargs):
+            if list(map(str, command)) == ["git", "rev-parse", "HEAD"]:
+                return args.head.encode()
+            return b""
+
+        with patch.object(deploy, "run", side_effect=transport), patch.object(deploy, "verify_runtime_inputs"):
+            sources, reset, _ = deploy.fresh_scope(args)
+            self.assertEqual(sources["controller"], runs / ".controller")
+            self.assertEqual(reset, ["controller/direct-merge"])
+            plan["reset"] = ["controller"]
+            deploy.write_file(args.state_manifest, json.dumps(plan).encode())
+            with self.assertRaisesRegex(RuntimeError, "exactly"):
+                deploy.fresh_scope(args)
+            plan["reset"] = ["controller/direct-merge"]
+            deploy.write_file(args.state_manifest, json.dumps(plan).encode())
+            active = runs / ".controller/flux-checks"
+            active.mkdir(mode=0o700)
+            (active / "bound.job").write_bytes(b"unresolved execution ownership")
+            with self.assertRaisesRegex(RuntimeError, "cleanup"):
+                deploy.fresh_scope(args)
+            self.assertEqual((active / "bound.job").read_bytes(), b"unresolved execution ownership")
+
+    def test_actual_scope_refuses_config_change_before_any_stop(self):
+        args, _, _ = self.scope_fixture()
+        (self.config / "tl3.toml").write_text('[store]\ndatabase="mlflow"\n')
+        with self.assertRaisesRegex(RuntimeError, "bind exact"):
+            deploy.fresh_scope(args)
+        self.assertEqual(self.calls, [])
 
 
 class DeployTests(unittest.TestCase):
@@ -166,31 +433,6 @@ class DeployTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             deploy.private_file(self.home)
 
-    def test_config_migration_preserves_operator_settings_and_backs_up_once(self):
-        config, _ = self.config()
-        original = config.read_text().replace('installation_id = 987\n', '')
-        original = original[:original.index('\n[operations]')]
-        original = original.replace('budget_tokens = 128000', 'budget_tokens = 120000')
-        original = original.replace('effort = "max"', 'effort = "xhigh"')
-        destination = self.home / ".config/tl3/tl3.toml"
-        deploy.write_file(destination, original.encode())
-        deploy.configure(self.home, "192.168.1.107:8033", {"installation_id": 987, "operations_issue": 123},
-                         "sha256:" + "b" * 64, "replacement", "replacement")
-        actual = tomllib.loads(destination.read_text())
-        before = tomllib.loads(original)
-        self.assertEqual(actual["models"], before["models"])
-        self.assertEqual(actual["prismabuild"], before["prismabuild"])
-        self.assertEqual(actual["github"]["repos"][0]["installation_id"], 987)
-        self.assertEqual(actual["operations"]["issue"], 123)
-        backups = list(destination.parent.glob("tl3.toml.*.bak"))
-        self.assertEqual(len(backups), 1)
-        self.assertEqual(backups[0].read_text(), original)
-        self.assertEqual(stat.S_IMODE(backups[0].stat().st_mode), 0o600)
-        info = destination.stat()
-        deploy.configure(self.home, "192.168.1.107:8033", {"installation_id": 999, "operations_issue": 999})
-        self.assertEqual(destination.stat().st_mtime_ns, info.st_mtime_ns)
-        self.assertEqual(list(destination.parent.glob("tl3.toml.*.bak")), backups)
-
     def test_configure_says_which_flags_an_existing_config_ignores(self):
         config, _ = self.config()
         destination = self.home / ".config/tl3/tl3.toml"
@@ -203,23 +445,6 @@ class DeployTests(unittest.TestCase):
         self.assertIn("--primary", output.getvalue())
         self.assertNotIn("--alternate", output.getvalue())
         self.assertEqual(destination.read_bytes(), config.read_bytes())
-
-    def test_older_hindsight_config_migrates_without_replacing_endpoint_or_bank(self):
-        config, _ = self.config()
-        destination = self.home / ".config/tl3/tl3.toml"
-        for bank in (None, "operator-bank"):
-            with self.subTest(bank=bank):
-                original = config.read_text().replace('bank = "tl3"\n', '')
-                if bank:
-                    original = original.replace('[hindsight]\n', f'[hindsight]\nbank = "{bank}"\n')
-                before = tomllib.loads(original)["hindsight"]
-                deploy.write_file(destination, original.encode())
-                deploy.configure(self.home, "192.168.1.107:8033", {})
-                parsed = subprocess.run([self.helper, "parse", destination], capture_output=True)
-                self.assertEqual(parsed.returncode, 0, parsed.stderr.decode())
-                actual = tomllib.loads(destination.read_text())["hindsight"]
-                self.assertEqual(actual["endpoint"], before["endpoint"])
-                self.assertEqual(actual["bank"], bank or "tl3")
 
     def test_configure_explains_a_config_without_github_repos(self):
         destination = self.home / ".config/tl3/tl3.toml"
@@ -422,23 +647,6 @@ class DeployTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             deploy.render_config(self.home, "192.168.1.107:8033", console_listen="127.0.0.1:8034")
 
-    def test_config_migration_adds_the_console_and_keeps_operator_values(self):
-        config, _ = self.config()
-        destination = self.home / ".config/tl3/tl3.toml"
-        text = config.read_text()
-        start = text.index("[console]")
-        without = text[:start] + text[text.index("\n[", start) + 1:]
-        for original, listen in ((without, "192.168.1.107:8034"),
-                                 (text.replace('"192.168.1.107:8034"', '"192.168.1.107:9000"'), "192.168.1.107:9000")):
-            with self.subTest(listen=listen):
-                deploy.write_file(destination, original.encode())
-                deploy.configure(self.home, "192.168.1.107:8033", {})
-                actual = tomllib.loads(destination.read_text())["console"]
-                self.assertEqual(actual["listen"], listen)
-                self.assertEqual(actual["assets"], str(self.home / ".local/share/tl3/console"))
-                parsed = subprocess.run([self.helper, "parse", destination], capture_output=True)
-                self.assertEqual(parsed.returncode, 0, parsed.stderr.decode())
-
     def test_fresh_install_uses_the_console_listen_flag(self):
         destination = self.home / ".config/tl3/tl3.toml"
         deploy.configure(self.home, "192.168.1.107:8033", {"installation_id": 987},
@@ -452,13 +660,9 @@ class DeployTests(unittest.TestCase):
         self.assertEqual(data["console"]["password_file"], str(config / "secrets/console-postgres-password"))
         destination = config / "tl3.toml"
         text = self.config()[0].read_text()
-        older = "\n".join(line for line in text.splitlines()
-                          if not line.startswith(("user = \"tl3_console\"", "password_file = \"" + str(config / "secrets/console"))))
-        deploy.write_file(destination, (older + "\n").encode())
+        deploy.write_file(destination, text.encode())
         deploy.configure(self.home, "192.168.1.107:8033", {})
-        console = tomllib.loads(destination.read_text())["console"]
-        self.assertEqual(console["user"], "tl3_console")
-        self.assertEqual(console["password_file"], str(config / "secrets/console-postgres-password"))
+        self.assertEqual(destination.read_text(), text)
         # A missing console credential must never stop Postgres, which tl3d and status require.
         self.assertNotIn("console-postgres-password", (deploy.HERE / "units/tl3-postgres.service").read_text())
 
@@ -536,7 +740,7 @@ class DeployTests(unittest.TestCase):
     def collect(self, introduced=False, runtime=None):
         environment = {"XDG_RUNTIME_DIR": str(runtime or self.home / "no-runtime")}
         with patch.dict(os.environ, environment), contextlib.redirect_stdout(io.StringIO()) as output:
-            deploy.collect_releases(self.home, introduced)
+            deploy.collect_releases(self.home)
         return output.getvalue()
 
     def live_attempt(self, python, *, launch=True):
@@ -560,7 +764,7 @@ class DeployTests(unittest.TestCase):
         self.live_attempt(first / "workers/.venv/bin/python")
         self.assertFalse(self.install_release(self.release_source(2))[0])
         second = (root / "current").resolve()
-        self.assertEqual((root / "previous").resolve(), first)
+        self.assertFalse((root / "previous").exists())
         # The running worker's release is untouched; only `current` moved.
         self.assertEqual((first / "workers/src/tl3_workers/__init__.py").read_text(), "VERSION = 1\n")
         self.assertEqual((second / "workers/src/tl3_workers/__init__.py").read_text(), "VERSION = 2\n")
@@ -568,17 +772,16 @@ class DeployTests(unittest.TestCase):
         self.install_release(self.release_source(3))
         self.collect()
         self.assertEqual({path.resolve() for path in (root / "releases").iterdir()},
-                         {first, second, (root / "current").resolve()},
-                         "keep current, previous and the live run's release")
+                         {first, (root / "current").resolve()},
+                         "keep current and the live run's release")
         for record in (root / "worker-runs").glob("*/attempt-*/claim.json"):
             record.unlink()
-        third = (root / "current").resolve()
         self.install_release(self.release_source(4))
         self.collect()
         self.assertEqual({path.resolve() for path in (root / "releases").iterdir()},
-                         {third, (root / "current").resolve()})
+                         {(root / "current").resolve()})
 
-    def test_redeploying_the_same_code_reuses_its_release_and_keeps_previous(self):
+    def test_redeploying_the_same_code_reuses_its_release(self):
         root = deploy.paths(self.home)[0]
         root.mkdir(parents=True)
         self.install_release(self.release_source(1))
@@ -592,9 +795,9 @@ class DeployTests(unittest.TestCase):
         self.assertEqual(synced, [], "no copy or sync over a running release")
         self.assertEqual((root / "current").resolve(), release)
         self.assertEqual((release / ".installed").stat().st_mtime_ns, before)
-        self.assertEqual((root / "previous").resolve(), first, "a redeploy keeps the real previous release")
+        self.assertFalse((root / "previous").exists())
         self.collect()
-        self.assertTrue(first.is_dir())
+        self.assertFalse(first.exists())
 
     def test_unfinished_release_is_rebuilt_not_used(self):
         root = deploy.paths(self.home)[0]
@@ -608,37 +811,6 @@ class DeployTests(unittest.TestCase):
         self.assertFalse((partial / "workers/stale.py").exists())
         self.assertTrue((partial / ".installed").exists())
 
-    def migrated_config(self, python):
-        _, config_dir, _ = deploy.paths(self.home)
-        config, _ = self.config()
-        text = config.read_text().replace(
-            json.dumps(str(deploy.paths(self.home)[0] / "current/workers/.venv/bin/python")), json.dumps(python))
-        deploy.write_file(config_dir / "tl3.toml", text.encode())
-
-    def test_pre_372_app_directory_outlives_everything_that_can_use_it(self):
-        root = deploy.paths(self.home)[0]
-        (root / "app/workers").mkdir(parents=True)
-        legacy_python = str(root / "app/workers/.venv/bin/python")
-        current_python = str(root / "current/workers/.venv/bin/python")
-        self.install_release(self.release_source(1))
-        self.migrated_config(current_python)
-        self.assertIn("this install introduced releases", self.collect(introduced=True))
-        self.assertTrue((root / "app").is_dir(), "the tl3d running during the first install still uses app/")
-        legacy = self.live_attempt(legacy_python, launch=False)
-        self.assertIn("a run started before #372 is live", self.collect())
-        (legacy / "claim.json").unlink()
-        self.migrated_config(legacy_python)
-        self.assertIn("tl3.toml does not run workers", self.collect())
-        self.migrated_config(current_python)
-        runtime = self.home / "runtime"
-        (runtime / "tl3d").mkdir(parents=True)
-        (runtime / "tl3d/tl3.toml").write_text(f'[workers]\npython = {json.dumps(legacy_python)}\n')
-        self.assertIn("the running tl3d launches workers from app/", self.collect(runtime=runtime))
-        self.assertTrue((root / "app").is_dir())
-        (runtime / "tl3d/tl3.toml").write_text(f'[workers]\npython = {json.dumps(current_python)}\n')
-        self.collect(runtime=runtime)
-        self.assertFalse((root / "app").exists())
-
     def test_supervisors_launch_outside_tl3d_from_the_current_release(self):
         config, _ = self.config()
         workers = tomllib.loads(config.read_text())["workers"]
@@ -648,59 +820,6 @@ class DeployTests(unittest.TestCase):
         self.assertTrue((deploy.HERE / "units" / deploy.WORKER_SLICE).is_file())
         unit = (deploy.HERE / "units/tl3d.service").read_text().splitlines()
         self.assertIn("KillMode=control-group", unit, "tl3d's own cgroup still stops on its own")
-
-    def live_shaped_config(self, python):
-        """A pre-#372 tl3.toml as it is on dl380g10: the app/ line, models and per-repo protection."""
-        config, _ = self.config()
-        launcher = "launcher = " + deploy.toml_value(deploy.LAUNCHER) + "\n"
-        current = 'python = ' + json.dumps(str(deploy.paths(self.home)[0] / "current/workers/.venv/bin/python"))
-        text = config.read_text().replace(launcher, "").replace(current, f'python = {json.dumps(python)}')
-        text = text.replace("[[github.repos]]\n", '[[github.repos]]\nprotected_paths = ["deploy/**", "CHANGELOG.md"]\n', 1)
-        self.assertIn(f'python = {json.dumps(python)}\n', text)
-        self.assertIn("\n[models]\n", text)
-        return text
-
-    def test_config_migration_moves_only_the_deploy_owned_python_and_is_idempotent(self):
-        root, config_dir, _ = deploy.paths(self.home)
-        destination = config_dir / "tl3.toml"
-        legacy = "/home/rob/.local/share/tl3/app/workers/.venv/bin/python".replace("/home/rob", str(self.home))
-        for python, expected in ((legacy, str(root / "current/workers/.venv/bin/python")),
-                                 ("/opt/tl3/python", "/opt/tl3/python")):
-            with self.subTest(python=python):
-                for backup in config_dir.glob("tl3.toml.*.bak"):
-                    backup.unlink()
-                original = self.live_shaped_config(python)
-                deploy.write_file(destination, original.encode())
-                with contextlib.redirect_stdout(io.StringIO()):
-                    deploy.configure(self.home, "192.168.1.107:8033", {"installation_id": 987, "operations_issue": 123})
-                migrated = destination.read_text()
-                workers = tomllib.loads(migrated)["workers"]
-                self.assertEqual(workers["python"], expected)
-                self.assertEqual(workers["launcher"], deploy.LAUNCHER)
-                # Every other line is byte-identical: only the python line and the launcher change.
-                expected_lines = original.replace(f'python = {json.dumps(python)}', f'python = {json.dumps(expected)}')
-                expected_lines = expected_lines.replace("[workers]\n", "[workers]\nlauncher = "
-                                                        + deploy.toml_value(deploy.LAUNCHER) + "\n", 1)
-                self.assertEqual(migrated, expected_lines)
-                self.assertEqual(len(list(config_dir.glob("tl3.toml.*.bak"))), 1)
-                info = destination.stat()
-                with contextlib.redirect_stdout(io.StringIO()):
-                    deploy.configure(self.home, "192.168.1.107:8033", {"installation_id": 987, "operations_issue": 123})
-                self.assertEqual(destination.read_text(), migrated, "a second run changes nothing")
-                self.assertEqual(destination.stat().st_mtime_ns, info.st_mtime_ns)
-                self.assertEqual(len(list(config_dir.glob("tl3.toml.*.bak"))), 1, "and writes no backup")
-
-    def test_config_migration_fails_loudly_when_the_python_line_does_not_match(self):
-        root, config_dir, _ = deploy.paths(self.home)
-        legacy = str(root / "app/workers/.venv/bin/python")
-        original = self.live_shaped_config(legacy).replace(f'python = {json.dumps(legacy)}',
-                                                           f'python={json.dumps(legacy)}')
-        destination = config_dir / "tl3.toml"
-        deploy.write_file(destination, original.encode())
-        with self.assertRaisesRegex(RuntimeError, "could not move workers.python"), \
-             contextlib.redirect_stdout(io.StringIO()):
-            deploy.configure(self.home, "192.168.1.107:8033", {"installation_id": 987, "operations_issue": 123})
-        self.assertEqual(destination.read_text(), original)
 
     def test_stop_runs_refuses_unless_tl3d_is_inactive_or_failed(self):
         for state, allowed in (("active", False), ("activating", False), ("reloading", False),
@@ -715,28 +834,6 @@ class DeployTests(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, "Stop tl3d first"):
                         deploy.stop_runs(self.home)
             self.assertEqual(calls, [["systemctl", "--user", "stop", "tl3-workers.slice"]] if allowed else [])
-
-    def test_app_is_kept_while_tl3d_runs_without_a_readable_runtime_config(self):
-        root = deploy.paths(self.home)[0]
-        (root / "app/workers").mkdir(parents=True)
-        self.install_release(self.release_source(1))
-        self.migrated_config(str(root / "current/workers/.venv/bin/python"))
-        runtime = self.home / "runtime"
-        (runtime / "tl3d").mkdir(parents=True)
-        for state in ("activating", "active", "reloading"):
-            for content in (None, "not = [toml"):
-                path = runtime / "tl3d/tl3.toml"
-                path.unlink(missing_ok=True)
-                if content is not None:
-                    path.write_text(content)
-                with self.subTest(state=state, content=content), \
-                     patch.object(deploy, "_tl3d_state", return_value=state):
-                    self.assertIn("tl3d is running without a readable runtime config", self.collect(runtime=runtime))
-                    self.assertTrue((root / "app").is_dir())
-        (runtime / "tl3d/tl3.toml").unlink()
-        with patch.object(deploy, "_tl3d_state", return_value="inactive"):
-            self.collect(runtime=runtime)
-        self.assertFalse((root / "app").exists(), "a stopped tl3d launches nothing from app/")
 
     def probe_config(self, launcher):
         _, config_dir, _ = deploy.paths(self.home)
@@ -817,6 +914,10 @@ class DeployTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "output suppressed"):
                 deploy.run(["sh", "-c", "echo secret-output; exit 7"])
         self.assertEqual(output.getvalue(), "")
+
+    def test_command_timeout_bounds_the_owned_child_process_group(self):
+        with self.assertRaisesRegex(RuntimeError, "timed out"):
+            deploy.run(["sh", "-c", "sleep 10 & wait"], timeout=0.05)
 
 
 if __name__ == "__main__":
