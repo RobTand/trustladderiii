@@ -265,7 +265,9 @@ mod tests {
             let root = tempfile::tempdir().unwrap();
             let mut c = Controller::open(Store::open(&settings).unwrap(), adapters::simulation(root.path()).unwrap(), bootstrap(fail_fast)).unwrap();
             let mut world = planning(fail_fast);
-            let footprint = world.intern_footprint([FileId(0)]);
+            let repo = c.store.intern_repo("owner", "repo").unwrap();
+            let file = c.store.intern_path(repo, "src/rp.rs").unwrap();
+            let footprint = world.intern_footprint([FileId(file.get() as u64)]);
             seed(&mut c, world.clone(), true);
             let snapshot = c.store.load().unwrap();
             let generation = world.nodes[0].generation;
