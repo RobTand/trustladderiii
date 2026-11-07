@@ -240,7 +240,6 @@ fn changing_key_reads_and_completion_writes_agree() {
 /// CC-E: every read, clock and write in the owned controller slice stays at the
 /// original source position. Only the exhaustively compared pure plan and key
 /// comparison are substituted. This also covers complete's first pending read.
-
 mod full;
 pub(crate) mod executor {
     use tl3_kernel::Ack;

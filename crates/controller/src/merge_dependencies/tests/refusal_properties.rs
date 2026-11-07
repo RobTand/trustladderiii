@@ -2014,23 +2014,46 @@ fn startup_counter_halt_preserves_recovery_input_and_effects() {
     persist_world(&mut c, &world, "startup-exhausted-counter");
     let before = c.snapshot().unwrap();
     // Transfer the claimed session so opening the successor has no unlock race.
-    let Controller { store, bootstrap, .. } = c;
+    let Controller {
+        store, bootstrap, ..
+    } = c;
     let mut c = Controller::open(
         store,
         crate::adapters::simulation(&repo.root.path().join("fakes")).unwrap(),
         bootstrap,
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(c.world().unwrap(), world);
     let after = c.snapshot().unwrap();
-    let business = |snapshot: &Snapshot| snapshot.rows.iter().filter(|row| row.table != "incidents" && row.table != crate::dispatch_liveness::PARKED).cloned().collect::<Vec<_>>();
-    let parked: Vec<_> = after.rows.iter().filter(|row| row.table == crate::dispatch_liveness::PARKED).collect();
+    let business = |snapshot: &Snapshot| {
+        snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table != "incidents" && row.table != crate::dispatch_liveness::PARKED)
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let parked: Vec<_> = after
+        .rows
+        .iter()
+        .filter(|row| row.table == crate::dispatch_liveness::PARKED)
+        .collect();
     assert_eq!(parked.len(), 1);
     assert_eq!(parked[0].id, "headroom");
     assert_eq!(parked[0].value, json!(true));
     assert_eq!(business(&after), business(&before));
     assert_eq!(after.pending_effects, before.pending_effects);
-    let incidents: Vec<_> = after.rows.iter().filter(|row| row.table == "incidents" && row.value["signature"]["class"] == "kernel_counter_headroom").collect();
+    let incidents: Vec<_> = after
+        .rows
+        .iter()
+        .filter(|row| {
+            row.table == "incidents" && row.value["signature"]["class"] == "kernel_counter_headroom"
+        })
+        .collect();
     assert_eq!(incidents.len(), 1);
-    assert_eq!(incidents[0].value["summary"], "kernel counter headroom exhausted: next_seq");
+    assert_eq!(
+        incidents[0].value["summary"],
+        "kernel counter headroom exhausted: next_seq"
+    );
     assert_eq!(incidents[0].value["open"], true);
 }
