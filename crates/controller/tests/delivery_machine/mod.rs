@@ -245,10 +245,7 @@ fn changing_key_reads_and_completion_writes_agree() {
 fn owned_controller_io_shell_remains_verbatim() {
     let source = include_str!("../../src/lib.rs");
     let start = source.find("    fn retire_effect(").unwrap();
-    let end = source[start..]
-        .find("    fn apply(")
-        .unwrap()
-        + start;
+    let end = source[start..].find("    fn apply(").unwrap() + start;
     let restored = source[start..end]
         .replace("Upstream::Delivery", "Upstream::Mergify")
         .replace(

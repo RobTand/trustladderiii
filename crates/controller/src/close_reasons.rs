@@ -47,25 +47,38 @@ pub(crate) fn record(report: &Report, mut details: BTreeMap<String, Value>, comm
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tl3_kernel::{NodeId, ReviewStop, report::{FailedRoundCause, ReplyKind}};
+    use tl3_kernel::{
+        NodeId, ReviewStop,
+        report::{FailedRoundCause, ReplyKind},
+    };
     use tl3_store::{Epoch, Revision, Snapshot};
 
     fn transaction() -> Commit {
-        Commit::new("close-reasons-test", json!(null), &Snapshot {
-            revision: Revision::ZERO,
-            epoch: Epoch::ZERO,
-            rows: Vec::new(),
-            pending_effects: Vec::new(),
-            credit: Vec::new(),
-            interned: Vec::new(),
-        })
+        Commit::new(
+            "close-reasons-test",
+            json!(null),
+            &Snapshot {
+                revision: Revision::ZERO,
+                epoch: Epoch::ZERO,
+                rows: Vec::new(),
+                pending_effects: Vec::new(),
+                credit: Vec::new(),
+                interned: Vec::new(),
+            },
+        )
     }
 
     fn values(commit: &Commit) -> Vec<(&str, &Value)> {
-        commit.rows.iter().map(|row| match row {
-            RowChange::Put { table, id, value } if table == "close_reasons" => (id.as_str(), value),
-            _ => panic!("unexpected close-reason row: {row:?}"),
-        }).collect()
+        commit
+            .rows
+            .iter()
+            .map(|row| match row {
+                RowChange::Put { table, id, value } if table == "close_reasons" => {
+                    (id.as_str(), value)
+                }
+                _ => panic!("unexpected close-reason row: {row:?}"),
+            })
+            .collect()
     }
 
     #[test]
@@ -78,11 +91,19 @@ mod tests {
             (StopCause::Duplicate, json!({"reason":"duplicate"})),
             (StopCause::AlreadyDone, json!({"reason":"already_done"})),
             (StopCause::NotActionable, json!({"reason":"not_actionable"})),
-            (StopCause::ReviewStop(ReviewStop::ChecksFailed), json!({"reason":"review_stop","review_stop":"ChecksFailed"})),
+            (
+                StopCause::ReviewStop(ReviewStop::ChecksFailed),
+                json!({"reason":"review_stop","review_stop":"ChecksFailed"}),
+            ),
         ];
         for (cause, expected) in cases {
             let mut commit = transaction();
-            let report = Report { entries: vec![ReportEntry::Stopped { node: NodeId(7), cause }] };
+            let report = Report {
+                entries: vec![ReportEntry::Stopped {
+                    node: NodeId(7),
+                    cause,
+                }],
+            };
             record(&report, BTreeMap::new(), &mut commit);
             assert_eq!(values(&commit), vec![("7", &expected)], "{cause:?}");
         }
@@ -95,10 +116,16 @@ mod tests {
         commit.rows = vec![
             put("other", "before", json!(1)),
             put("close_reasons", "7", detail.clone()),
-            RowChange::Delete { table: "close_reasons".into(), id: "old".into() },
+            RowChange::Delete {
+                table: "close_reasons".into(),
+                id: "old".into(),
+            },
             put("other", "after", json!(2)),
         ];
-        assert_eq!(take_details(&mut commit), BTreeMap::from([("7".into(), detail)]));
+        assert_eq!(
+            take_details(&mut commit),
+            BTreeMap::from([("7".into(), detail)])
+        );
         assert!(matches!(commit.rows.as_slice(), [
             RowChange::Put { table: a, id: b, value: c },
             RowChange::Delete { table: d, id: e },
@@ -112,16 +139,41 @@ mod tests {
     fn only_matching_not_actionable_stop_uses_staged_details() {
         let detail = json!({"reason":"protected_paths","paths":["private.txt"]});
         let cases = [
-            ("7", detail.clone(), StopCause::NotActionable, detail.clone()),
-            ("8", detail.clone(), StopCause::NotActionable, json!({"reason":"not_actionable"})),
-            ("7", json!({"reason":"other"}), StopCause::NotActionable, json!({"reason":"not_actionable"})),
-            ("7", detail, StopCause::UserStop, json!({"reason":"user_stop"})),
+            (
+                "7",
+                detail.clone(),
+                StopCause::NotActionable,
+                detail.clone(),
+            ),
+            (
+                "8",
+                detail.clone(),
+                StopCause::NotActionable,
+                json!({"reason":"not_actionable"}),
+            ),
+            (
+                "7",
+                json!({"reason":"other"}),
+                StopCause::NotActionable,
+                json!({"reason":"not_actionable"}),
+            ),
+            (
+                "7",
+                detail,
+                StopCause::UserStop,
+                json!({"reason":"user_stop"}),
+            ),
         ];
         for (id, detail, cause, expected) in cases {
             let mut commit = transaction();
             commit.rows.push(put("close_reasons", id, detail));
             let details = take_details(&mut commit);
-            let report = Report { entries: vec![ReportEntry::Stopped { node: NodeId(7), cause }] };
+            let report = Report {
+                entries: vec![ReportEntry::Stopped {
+                    node: NodeId(7),
+                    cause,
+                }],
+            };
             record(&report, details, &mut commit);
             assert_eq!(values(&commit), vec![("7", &expected)]);
         }
@@ -129,12 +181,25 @@ mod tests {
 
     #[test]
     fn non_stop_report_entries_cannot_publish_staged_details() {
-        for entries in [vec![], vec![
-            ReportEntry::Stale { node: NodeId(7), reply_kind: ReplyKind::ProtectedPaths },
-            ReportEntry::FailedRound { node: NodeId(7), cause: FailedRoundCause::RunFailed },
-        ]] {
+        for entries in [
+            vec![],
+            vec![
+                ReportEntry::Stale {
+                    node: NodeId(7),
+                    reply_kind: ReplyKind::ProtectedPaths,
+                },
+                ReportEntry::FailedRound {
+                    node: NodeId(7),
+                    cause: FailedRoundCause::RunFailed,
+                },
+            ],
+        ] {
             let mut commit = transaction();
-            commit.rows.push(put("close_reasons", "7", json!({"reason":"protected_paths"})));
+            commit.rows.push(put(
+                "close_reasons",
+                "7",
+                json!({"reason":"protected_paths"}),
+            ));
             let details = take_details(&mut commit);
             record(&Report { entries }, details, &mut commit);
             assert!(commit.rows.is_empty());
