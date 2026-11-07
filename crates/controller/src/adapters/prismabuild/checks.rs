@@ -488,7 +488,15 @@ mod tests {
             "def test_value():\n    assert True\n",
         )
         .unwrap();
-        crate::git_tests::git(&fixture.path, &["add", "test_value.py"]);
+        fs::write(
+            fixture.path.join("pyproject.toml"),
+            "[tool.tl3.harness]\ncommand = [\"python\", \"-m\", \"pytest\"]\ntest-files = [\"test_value.py\"]\n",
+        )
+        .unwrap();
+        crate::git_tests::git(
+            &fixture.path,
+            &["add", "test_value.py", "pyproject.toml"],
+        );
         crate::git_tests::git(&fixture.path, &["commit", "-qm", "job boundary fixture"]);
         let head = crate::git_tests::git(&fixture.path, &["rev-parse", "HEAD"]);
         let mut delivery = fixture.delivery();
