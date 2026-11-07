@@ -304,8 +304,12 @@ def validate_execution(execution, row, mode, raw_queries=False):
             argv.count('--no-verify') == int(mode == 'frontend-only'), 'mode argv mismatch')
     require(argv.count('--log-all') == argv.count('--log-dir') == int(raw_queries), 'raw query mode mismatch')
     owner, _, function = row.selector.partition('#')
-    require(argv.count('--verify-only-module') == 1 and argv[argv.index('--verify-only-module') + 1] == owner,
-            'argv selection mismatch')
+    if owner == 'root':
+        require(argv.count('--verify-root') == 1 and '--verify-only-module' not in argv,
+                'argv root selection mismatch')
+    else:
+        require('--verify-root' not in argv and argv.count('--verify-only-module') == 1 and
+                argv[argv.index('--verify-only-module') + 1] == owner, 'argv selection mismatch')
     require(argv.count('--verify-function') == int(bool(function)) and
             (not function or argv[argv.index('--verify-function') + 1] == function), 'argv function mismatch')
     tools = execution.get('tools')

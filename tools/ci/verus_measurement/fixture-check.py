@@ -155,6 +155,90 @@ class Fixtures(unittest.TestCase):
         self.assertEqual([row for row in rows if row['parse'] != 'PASS'], [])
         self.config(selections=inventory['selections'])  # Preserve whole-manifest uniqueness checks.
 
+    def production_selection_flags(self, selector):
+        # Bind the audit's case split to the exact production command builder.
+        source = self.original.decode()
+        start = source.index("        let (selected_module, function) = module")
+        end = source.index("        match mode {", start)
+        block = source[start:end]
+        expected = """        let (selected_module, function) = module
+            .split_once('#')
+            .map_or((module, None), |(owner, function)| (owner, Some(function)));
+        if selected_module == "root" {
+            process.arg("--verify-root");
+        } else if !selected_module.is_empty() {
+            process.args(["--verify-only-module", selected_module]);
+        }
+        if let Some(function) = function {
+            process.args(["--verify-function", function]);
+        }
+"""
+        self.assertEqual(block, expected, 'production selector flag convention changed; re-audit all kinds')
+        owner, _, function = selector.partition('#')
+        flags = ['--verify-root'] if owner == 'root' else ['--verify-only-module', owner]
+        return flags + (['--verify-function', function] if function else [])
+
+    def production_execution(self, row, mode):
+        execution = fake_execution(row, mode)
+        argv = execution['argv']
+        begin = argv.index('--verify-only-module')
+        del argv[begin:begin + 2]
+        if '--verify-function' in argv:
+            begin = argv.index('--verify-function')
+            del argv[begin:begin + 2]
+        argv += self.production_selection_flags(row.selector)
+        return execution
+
+    def test_production_root_preparation_and_execution(self):
+        selection = {'target': '//crates/kernel:verus_command_headroom', 'selector': 'root', 'expected': 1}
+        for mode in ('frontend-only', 'normal'):
+            config = self.config(mode=mode, selections=[selection])
+            output = self.evidence / ('root-' + mode)
+            command = S['submission'](config, self.evidence / ('root-' + mode + '.log'))
+            receipt = self.evidence / ('root-' + mode + '-receipt.json')
+            prepared = S['full_dry_run'](self.source, config, output, receipt, command)
+            self.assertEqual(prepared['full_preparation'], 'PASS')
+            S['check_receipt'](self.source, config, receipt, command)
+            self.assertEqual(config.command()[-1], selection['target'])
+            execution = self.production_execution(config.selections[0], mode)
+            self.assertIn('--verify-root', execution['argv'])
+            self.assertNotIn('--verify-only-module', execution['argv'])
+            D['validate_execution'](execution, config.selections[0], mode)
+            for flags in ([], ['--verify-only-module', 'root'], ['--verify-root', '--verify-only-module', 'root'], ['--verify-root', '--verify-root']):
+                bad = copy.deepcopy(execution)
+                bad['argv'].remove('--verify-root')
+                bad['argv'] += flags
+                with self.subTest(mode=mode, flags=flags), self.assertRaises(ValueError):
+                    D['validate_execution'](bad, config.selections[0], mode)
+        row = self.config().selections[0]
+        for flags in (['--verify-root'], ['--verify-root', '--verify-only-module', 'kernel::dependencies'], ['--verify-only-module', 'root']):
+            bad = self.production_execution(row, 'normal')
+            begin = bad['argv'].index('--verify-only-module')
+            del bad['argv'][begin:begin + 2]
+            bad['argv'] += flags
+            with self.subTest(flags=flags), self.assertRaises(ValueError):
+                D['validate_execution'](bad, row, 'normal')
+
+    def test_all_342_production_selection_flags(self):
+        inventory = D['loads']((HERE / 'production-selectors.fixture.json').read_bytes())
+        rows = []
+        for selection in inventory['selections']:
+            row = self.config(selections=[selection]).selections[0]
+            kind = 'root' if row.selector == 'root' else 'function' if '#' in row.selector else 'module'
+            try:
+                execution = self.production_execution(row, 'frontend-only')
+                D['validate_execution'](execution, row, 'frontend-only')
+                rows.append({**selection, 'kind': kind, 'flags': self.production_selection_flags(row.selector), 'validation': 'PASS'})
+            except ValueError as error:
+                rows.append({**selection, 'kind': kind, 'validation': 'FAIL', 'reason': str(error)})
+        self.evidence.joinpath('production-flags-audit.json').write_bytes(D['encoded']({
+            'source_head': inventory['source_head'], 'runner_sha256': D['digest'](self.original),
+            'production_builder_source_guard': True, 'executions': 'synthetic, not Verus runs',
+            'rows': rows, 'validation_passes': sum(row['validation'] == 'PASS' for row in rows)}))
+        self.assertEqual(len(rows), 342)
+        self.assertEqual({row['kind'] for row in rows}, {'root', 'module', 'function'})
+        self.assertEqual([row for row in rows if row['validation'] != 'PASS'], [])
+
     def test_config_and_inventory(self):
         for change in ({'watchdog_seconds': 120}, {'outer_seconds': 45}, {'raw_queries': 1},
                        {'head': 'main'}, {'mode': 'diagnostic', 'watchdog_seconds': 120},
