@@ -1,6 +1,6 @@
 //! #806: fail closed when a kernel function escapes the required Verus selectors.
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, PartialEq, Eq)]
 enum Token {
@@ -425,36 +425,229 @@ fn check(
     }
 }
 
-fn collect(directory: &Path, prefix: &str, result: &mut Vec<Function>) {
+fn source_files(directory: &Path, result: &mut BTreeMap<PathBuf, String>) {
     for entry in std::fs::read_dir(directory).unwrap() {
         let path = entry.unwrap().path();
         if path.is_dir() {
-            let child = format!("{prefix}::{}", path.file_name().unwrap().to_str().unwrap());
-            collect(&path, &child, result);
+            source_files(&path, result);
         } else if path.extension().is_some_and(|ext| ext == "rs") {
-            let name = path.file_stem().unwrap().to_str().unwrap();
-            if matches!(name, "proofs") || (name == "progress" && directory.ends_with("verus")) {
-                continue;
-            }
-            // report.rs is mounted as report::lemmas by src/report.rs.
-            let module = if name == "report" && directory.ends_with("verus") {
-                format!("{prefix}::report::lemmas")
-            } else if matches!(name, "lib" | "mod" | "headroom" | "progress_specs") {
-                prefix.into()
-            } else {
-                format!("{prefix}::{name}")
-            };
-            result.extend(functions(&std::fs::read_to_string(path).unwrap(), &module));
+            result.insert(path.clone(), std::fs::read_to_string(path).unwrap());
         }
     }
+}
+
+#[derive(Debug)]
+struct Mount {
+    module: String,
+    inline: Vec<String>,
+    name: Option<String>,
+    path: Option<String>,
+}
+
+fn mounts(source: &str, module: &str) -> Vec<Mount> {
+    fn walk(ts: &[Token], module: &str, inline: &[String], result: &mut Vec<Mount>) {
+        let mut i = 0;
+        let mut path = None;
+        let mut kani = false;
+        while i < ts.len() {
+            if ts[i] == Token::Punct('#') && ts.get(i + 1) == Some(&Token::Punct('[')) {
+                let start = i + 2;
+                let mut end = start;
+                let mut depth = 1;
+                while depth > 0 {
+                    match ts.get(end).expect("unterminated module attribute") {
+                        Token::Punct('[') => depth += 1,
+                        Token::Punct(']') => depth -= 1,
+                        _ => {}
+                    }
+                    end += 1;
+                }
+                let attribute = &ts[start..end - 1];
+                if attribute.first().and_then(Token::name) == Some("path") {
+                    let [_, Token::Punct('='), Token::Text(value)] = attribute else {
+                        panic!("unresolvable module mount: path must be a literal string");
+                    };
+                    assert!(
+                        path.replace(value.clone()).is_none(),
+                        "duplicate module path"
+                    );
+                }
+                kani |= attribute
+                    == [
+                        Token::Name("cfg".into()),
+                        Token::Punct('('),
+                        Token::Name("kani".into()),
+                        Token::Punct(')'),
+                    ];
+                i = end;
+                continue;
+            }
+            if ts[i].name() == Some("macro_rules") {
+                let start = (i..ts.len()).find(|&j| ts[j] == Token::Punct('{')).unwrap();
+                let end = closing(ts, start);
+                assert!(
+                    !ts[start..end].iter().any(|t| t.name() == Some("mod")),
+                    "unresolvable module mount in macro definition"
+                );
+                i = end + 1;
+                path = None;
+                kani = false;
+                continue;
+            }
+            if ts[i].name() == Some("mod") {
+                let name = ts.get(i + 1).and_then(Token::name).expect("unnamed module");
+                let delimiter = ts.get(i + 2).expect("module without delimiter");
+                assert!(
+                    matches!(delimiter, Token::Punct(';' | '{')),
+                    "unresolvable module mount: {name}"
+                );
+                let child = format!("{module}::{name}");
+                if *delimiter == Token::Punct('{') {
+                    assert!(
+                        path.is_none(),
+                        "unresolvable path attribute on inline module"
+                    );
+                    let end = closing(ts, i + 2);
+                    if !kani {
+                        let mut nested = inline.to_vec();
+                        nested.push(name.into());
+                        walk(&ts[i + 3..end], &child, &nested, result);
+                    }
+                    i = end + 1;
+                } else {
+                    if !kani {
+                        result.push(Mount {
+                            module: child,
+                            inline: inline.to_vec(),
+                            name: Some(name.into()),
+                            path: path.take(),
+                        });
+                    }
+                    i += 3;
+                }
+                path = None;
+                kani = false;
+                continue;
+            }
+            if ts[i].name() == Some("include") && ts.get(i + 1) == Some(&Token::Punct('!')) {
+                let [Token::Punct('('), Token::Text(value), Token::Punct(')')] =
+                    ts.get(i + 2..i + 5).expect("unresolvable include mount")
+                else {
+                    panic!("unresolvable include mount: expected a literal path");
+                };
+                result.push(Mount {
+                    module: module.into(),
+                    inline: inline.to_vec(),
+                    name: None,
+                    path: Some(value.clone()),
+                });
+                i += 5;
+                continue;
+            }
+            if matches!(
+                ts[i].name(),
+                Some("fn" | "struct" | "enum" | "impl" | "const" | "type")
+            ) || ts[i] == Token::Punct(';')
+            {
+                assert!(
+                    path.is_none(),
+                    "path attribute was not resolved to a module"
+                );
+                kani = false;
+            }
+            i += 1;
+        }
+        assert!(path.is_none(), "unresolved module path attribute");
+    }
+    let mut result = Vec::new();
+    walk(&tokens(source), module, &[], &mut result);
+    result
+}
+
+fn normalized(path: &Path) -> PathBuf {
+    let mut result = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => assert!(result.pop(), "module path escapes its root"),
+            other => result.push(other.as_os_str()),
+        }
+    }
+    result
+}
+
+fn collect(sources: &BTreeMap<PathBuf, String>, entry: &Path) -> Vec<Function> {
+    fn visit(
+        sources: &BTreeMap<PathBuf, String>,
+        file: &Path,
+        module: &str,
+        seen: &mut BTreeSet<(PathBuf, String)>,
+        result: &mut Vec<Function>,
+    ) {
+        if !seen.insert((file.into(), module.into())) {
+            return;
+        }
+        let source = sources.get(file).expect("unresolvable inventory source");
+        result.extend(functions(source, module));
+        for mount in mounts(source, module) {
+            let parent = file.parent().unwrap();
+            let nested: PathBuf = mount.inline.iter().collect();
+            let candidates = if let Some(path) = mount.path {
+                vec![normalized(&parent.join(&nested).join(path))]
+            } else {
+                let stem = file.file_stem().unwrap();
+                let directory = if matches!(stem.to_str(), Some("lib" | "mod")) {
+                    parent.to_path_buf()
+                } else {
+                    parent.join(stem)
+                };
+                let name = mount.name.unwrap();
+                vec![
+                    directory.join(&nested).join(format!("{name}.rs")),
+                    directory.join(&nested).join(name).join("mod.rs"),
+                ]
+            };
+            let resolved: Vec<_> = candidates
+                .iter()
+                .filter(|path| sources.contains_key(*path) || path.is_file())
+                .collect();
+            assert_eq!(
+                resolved.len(),
+                1,
+                "unresolvable or ambiguous module mount {} from {}: {candidates:?}",
+                mount.module,
+                file.display()
+            );
+            // Preserve this inventory's src/ and verus/ scope. External test
+            // fixtures are resolved, but remain outside the proof inventory.
+            if sources.contains_key(resolved[0]) {
+                visit(sources, resolved[0], &mount.module, seen, result);
+            }
+        }
+    }
+    let mut result = Vec::new();
+    let mut seen = BTreeSet::new();
+    visit(sources, entry, "kernel", &mut seen, &mut result);
+    for file in sources.keys() {
+        assert!(
+            seen.iter().any(|(mounted, _)| mounted == file),
+            "inventory source has no resolvable module mount: {}",
+            file.display()
+        );
+    }
+    result
 }
 
 #[test]
 fn every_kernel_function_has_exactly_one_selector_or_a_reason() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut fs = Vec::new();
-    collect(&root.join("src"), "kernel", &mut fs);
-    collect(&root.join("verus"), "kernel", &mut fs);
+    let mut sources = BTreeMap::new();
+    source_files(&root.join("src"), &mut sources);
+    source_files(&root.join("verus"), &mut sources);
+    // Kani's proof module and the outer Verus root are outside kernel::.
+    sources.remove(&root.join("src/proofs.rs"));
+    sources.remove(&root.join("verus/progress.rs"));
+    let fs = collect(&sources, &root.join("src/lib.rs"));
     let groups: Vec<_> = selectors(super::VERUS_GROUPS)
         .into_iter()
         .filter(|(_, selector)| {
@@ -472,6 +665,79 @@ fn every_kernel_function_has_exactly_one_selector_or_a_reason() {
         fs.len(),
         groups.len(),
         unverified.len()
+    );
+}
+
+#[test]
+fn module_mounts_preserve_declared_names_and_includes() {
+    let root = Path::new("/inventory-mount-fixture");
+    let sources = BTreeMap::from([
+        (
+            root.join("src/lib.rs"),
+            "#[path = \"../verus/graph.rs\"] mod dependency;
+            mod outer { #[path = \"write.rs\"] mod actual; }
+            include!(\"defs.rs\"); mod normal; mod normal;"
+                .into(),
+        ),
+        (
+            root.join("verus/graph.rs"),
+            "verus! { proof fn verify() {} }".into(),
+        ),
+        (
+            root.join("src/outer/write.rs"),
+            "verus! { proof fn write() {} }".into(),
+        ),
+        (
+            root.join("src/defs.rs"),
+            "verus! { proof fn definition() {} }".into(),
+        ),
+        (root.join("src/normal.rs"), "mod child;".into()),
+        (
+            root.join("src/normal/child.rs"),
+            "verus! { proof fn check() {} }".into(),
+        ),
+    ]);
+    let fs = collect(&sources, &root.join("src/lib.rs"));
+    assert_eq!(
+        fs.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
+        [
+            "kernel::dependency::verify",
+            "kernel::outer::actual::write",
+            "kernel::definition",
+            "kernel::normal::child::check",
+        ]
+    );
+    let groups = vec![
+        ("graph".into(), "kernel::dependency#verify".into()),
+        ("write".into(), "kernel::outer::actual#write".into()),
+        ("definition".into(), "kernel#definition".into()),
+        ("nested".into(), "kernel::normal::child#check".into()),
+    ];
+    assert!(check(&fs, &groups, &BTreeMap::new()).is_ok());
+    assert!(
+        check(&fs, &groups[1..], &BTreeMap::new())
+            .unwrap_err()
+            .contains("kernel::dependency::verify: expected exactly one Verus selector")
+    );
+}
+
+#[test]
+fn unresolvable_mounts_never_fall_back_to_file_names() {
+    let root = Path::new("/inventory-mount-fixture");
+    let sources = BTreeMap::from([(
+        root.join("src/lib.rs"),
+        "#[path = \"missing.rs\"] mod missing;".into(),
+    )]);
+    let failure = std::panic::catch_unwind(|| collect(&sources, &root.join("src/lib.rs")))
+        .expect_err("a missing mount must fail the inventory");
+    let message = failure.downcast_ref::<String>().unwrap();
+    assert!(message.contains("unresolvable or ambiguous module mount kernel::missing"));
+    assert!(
+        std::panic::catch_unwind(|| mounts(
+            "#[path = concat!(\"dynamic\", \".rs\")] mod dynamic;",
+            "kernel"
+        ))
+        .is_err()
     );
 }
 
