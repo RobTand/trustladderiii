@@ -13,7 +13,8 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
                 && settle_shape(old(w).nodes@[j]) && stopping_effect_fits(old(w).nodes@[j])
                 && (old(w).nodes@[j].phase is Closed ==> old(w).nodes@[j].effect.is_none())
                 && footprint::valid_footprint(*old(w), old(w).nodes@[j].footprint),
-    ensures (progress_input(*old(w), event)
+    ensures empty_replan::generic_planner_stop(*old(w), *final(w), event),
+        (progress_input(*old(w), event)
             ==> progress_measure(*final(w)) < progress_measure(*old(w))
                 && dependencies::edges_indexable(*final(w))),
         forall|j: int| 0 <= j < final(w).nodes@.len() ==>
@@ -79,7 +80,8 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox) -> (result: (
                     generation, Reply::AuditDisagrees, *old(out), *final(out)),
             _ => true,
         }),
-] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
+] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands); reveal(empty_replan::generic_planner_stop);
+    reveal(empty_replan::admitted); reveal(empty_replan::planner_review_result);] {
     kernel_snapshot! { before_apply = *w }
     kernel_snapshot! { before_apply_out = *out }
     kernel_proof! { events_lemmas::selected_input(before_apply@, event); }

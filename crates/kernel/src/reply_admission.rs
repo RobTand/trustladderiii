@@ -97,7 +97,8 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         (matches!(reply, Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit)
             && old(w).nodes@[i as int].phase is Planning
             && current_item(old(w).nodes@[i as int]) == Some(Item::Await)
-            && old(w).nodes@[i as int].run == Some(generation) ==> {
+            && (old(w).nodes@[i as int].run == Some(generation)
+                || old(w).nodes@[i as int].job == Some(generation)) ==> {
                 let n = final(w).nodes@[i as int];
                 n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none()
                     && n.review_stop == Some(ReviewStop::PlanCantMeet)
@@ -214,7 +215,8 @@ pub(super) fn on_admitted_reply(w: &mut World, i: usize, _generation: u64, reply
         (matches!(reply, Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit)
             && old(w).nodes@[i as int].phase is Planning
             && current_item(old(w).nodes@[i as int]) == Some(Item::Await)
-            && old(w).nodes@[i as int].run == Some(_generation) ==> {
+            && (old(w).nodes@[i as int].run == Some(_generation)
+                || old(w).nodes@[i as int].job == Some(_generation)) ==> {
                 let n = final(w).nodes@[i as int];
                 n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none()
                     && n.review_stop == Some(ReviewStop::PlanCantMeet)

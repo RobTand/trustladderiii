@@ -42,6 +42,11 @@ CASES = {
         '    if !matches!(n.phase, Phase::Planning { .. }) || n.current() != Some(Item::Await)',
         '    budget.used = true;\n    if !matches!(n.phase, Phase::Planning { .. }) || n.current() != Some(Item::Await)',
         '//crates/kernel:verus_planner_entry'),
+    'empty_allowed_ordinary_mapping': (
+        'crates/kernel/src/empty_replan.rs',
+        '                if accepted && consumed && semantic_failure {',
+        '                if false {',
+        '//crates/kernel:verus_planner_map_reply'),
     'empty_allowed_wrong_key': (
         'crates/kernel/src/empty_replan.rs',
         '    if budget.request != request {',

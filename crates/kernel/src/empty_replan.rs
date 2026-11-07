@@ -101,6 +101,39 @@ pub closed spec fn empty_replan_transition(world: World, next: World,
             && (after.phase is Stopping || after.phase is Closed))
 }
 
+/// Accepted semantic planner failures stop after the request consumed its re-plan.
+pub closed spec fn mapped_planner_reply(w: World, consumed: bool, request: NodeId,
+    generation: u64, reply: Reply) -> Reply {
+    if admitted(w, request, generation) && consumed
+        && port_t860_contracts::admissible(w, w.nodes@[request.0 as int], reply)
+        && match reply {
+            Reply::PlanCantMeet | Reply::PlanSplit => true,
+            Reply::PlanLeaf { footprint, fits } => !fits || footprint::footprint_empty(footprint)
+                || w.nodes@[request.0 as int].phase == Phase::Planning { must_split: true },
+            _ => false,
+        } {
+        Reply::PlanCheckRejected
+    } else { reply }
+}
+
+pub closed spec fn planner_review_result(before: World, after: World, request: NodeId) -> bool {
+    let b = before.nodes@[request.0 as int];
+    let a = after.nodes@[request.0 as int];
+    (a.phase == Phase::Stopping(Outcome::Stopped) || a.phase == Phase::Closed(Outcome::Stopped))
+        && a.review_stop == Some(ReviewStop::PlanCantMeet) && a.question.is_none()
+        && a.credit == b.credit && a.plan_retries == b.plan_retries
+        && after.next_question == before.next_question
+}
+
+/// The existing generic reply path exports its code-owned planner stop through settle.
+pub closed spec fn generic_planner_stop(before: World, after: World, event: Event) -> bool {
+    match event {
+        Event::Reply { node, generation, reply: Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit } =>
+            admitted(before, node, generation) ==> planner_review_result(before, after, node),
+        _ => true,
+    }
+}
+
 /// Settling advances agendas without changing the planner's retry decision.
 pub(super) open spec fn settle_frame(before: Node, after: Node) -> bool {
     after.plan_retries == before.plan_retries && after.replanned == before.replanned
@@ -115,6 +148,34 @@ pub(super) open spec fn settle_frame(before: Node, after: Node) -> bool {
 }
 
 kernel_fn! {
+/// Verify the exact semantic mapping before delegating to the existing step.
+pub(super) fn map_planner_reply(world: &World, consumed: bool, request: NodeId,
+    generation: u64, reply: Reply) -> (mapped: Reply) [
+    ensures mapped == mapped_planner_reply(*world, consumed, request, generation, reply),
+] proof [reveal(mapped_planner_reply); reveal(admitted);] {
+    if let Some(i) = request.index() {
+        if i < world.nodes.len() {
+            let n = &world.nodes[i];
+            if matches!(n.phase, Phase::Planning { .. }) && n.current() == Some(Item::Await)
+                && (n.run == Some(generation) || n.job == Some(generation)) {
+                let accepted = accepts(world, n, &reply);
+                let semantic_failure = match reply {
+                    Reply::PlanCantMeet | Reply::PlanSplit => true,
+                    Reply::PlanLeaf { footprint, fits } => !fits || footprint.is_empty()
+                        || matches!(n.phase, Phase::Planning { must_split: true }),
+                    _ => false,
+                };
+                if accepted && consumed && semantic_failure {
+                    return Reply::PlanCheckRejected;
+                }
+            }
+        }
+    }
+    reply
+}
+}
+
+kernel_fn! {
 /// Request-version planner entry. Kernel code alone consumes the budget.
 /// Request binding precedes consumption. Only re-plans use special admission.
 /// Ordinary replies retain step's stopping, stale-reply and settling behavior.
@@ -122,7 +183,8 @@ pub fn step_planner(mut world: World, mut budget: ReplanBudget, request: NodeId,
     generation: u64, planner_result: PlannerResult)
     -> (result: (World, ReplanBudget, Vec<Out>)) [
     requires world_checked(world), world_headroom(world), storage_ordered(world),
-    ensures result.1.request_version() == budget.request_version(),
+    ensures step_budget(world, result.0),
+        result.1.request_version() == budget.request_version(),
         result.1.consumed() == (budget.consumed() || (budget.request_version() == request
             && admitted(world, request, generation) && planner_result is EmptyAllowedReplan)),
         budget.request_version() != request ==>
@@ -131,32 +193,24 @@ pub fn step_planner(mut world: World, mut budget: ReplanBudget, request: NodeId,
             && planner_result is EmptyAllowedReplan) ==>
                 empty_replan_transition(world, result.0, request, budget.consumed())
                     && planner_question_counter(result.0) == planner_question_counter(world),
+        budget.request_version() == request ==> match planner_result {
+            PlannerResult::Ordinary(reply) => {
+                let mapped = mapped_planner_reply(world, budget.consumed(), request, generation, reply);
+                generic_planner_stop(world, result.0, Event::Reply { node: request, generation, reply: mapped })
+                    && (progress_input(world, Event::Reply { node: request, generation, reply: mapped })
+                        ==> progress_measure(result.0) < progress_measure(world))
+            },
+            _ => true,
+        },
 ] proof [reveal(ReplanBudget::request_version); reveal(ReplanBudget::consumed); reveal(empty_replan_transition);
-    reveal(admitted); reveal(planner_question_counter); reveal(world_headroom); world_checked_definition(world);] {
+    reveal(admitted); reveal(planner_question_counter); reveal(world_headroom); reveal(step_budget);
+    world_checked_definition(world);] {
     if budget.request != request {
         return (world, budget, Vec::new());
     }
     match planner_result {
         PlannerResult::Ordinary(reply) => {
-            let mut mapped = reply;
-            if let Some(i) = request.index() {
-                if i < world.nodes.len() {
-                    let n = &world.nodes[i];
-                    if matches!(n.phase, Phase::Planning { .. }) && n.current() == Some(Item::Await)
-                        && (n.run == Some(generation) || n.job == Some(generation)) {
-                        let accepted = accepts(&world, n, &reply);
-                        let semantic_failure = match reply {
-                            Reply::PlanCantMeet | Reply::PlanSplit => true,
-                            Reply::PlanLeaf { footprint, fits } => !fits || footprint.is_empty()
-                                || matches!(n.phase, Phase::Planning { must_split: true }),
-                            _ => false,
-                        };
-                        if accepted && budget.used && semantic_failure {
-                            mapped = Reply::PlanCheckRejected;
-                        }
-                    }
-                }
-            }
+            let mapped = map_planner_reply(&world, budget.used, request, generation, reply);
             let (world, out) = step(world, Event::Reply { node: request, generation, reply: mapped });
             return (world, budget, out);
         }
@@ -223,6 +277,14 @@ pub fn step_planner(mut world: World, mut budget: ReplanBudget, request: NodeId,
     kernel_proof! {
         reveal(settle_chain);
         assert(settle_frame(after_replan@.nodes@[i as int], world.nodes@[i as int]));
+        assert forall|j: int| 0 <= j < before_replan@.nodes@.len() implies
+            world.nodes@[j].generation as int <= before_replan@.nodes@[j].generation as int + GENERATION_STEP_BUDGET
+                && world.nodes@[j].next_seq as int <= before_replan@.nodes@[j].next_seq as int + EFFECT_STEP_BUDGET
+                && world.nodes@[j].credit.start as int <= before_replan@.nodes@[j].credit.start as int + CREDIT_START_STEP_BUDGET
+                && world.nodes@[j].credit.earned as int <= before_replan@.nodes@[j].credit.earned as int + CREDIT_EARNED_STEP_BUDGET
+                && world.nodes@[j].credit.added as int <= before_replan@.nodes@[j].credit.added as int + CREDIT_ADDED_STEP_BUDGET
+                && world.nodes@[j].credit.spent as int <= before_replan@.nodes@[j].credit.spent as int + CREDIT_SPENT_STEP_BUDGET
+        by { local_capacities(after_replan@.nodes@[j]); }
     }
     (world, budget, out)
 }
@@ -360,7 +422,9 @@ proof [reveal(empty_replan::admitted);] {
 #[cfg(verus_keep_ghost)]
 kernel_fn! {
 /// The actual public entry must export the ordinary post-consumption stop.
-fn check_planner_ordinary_stop(fail_fast: bool) -> (result: ()) [] {
+fn check_planner_ordinary_stop(fail_fast: bool) -> (result: ()) []
+proof [reveal(mapped_planner_reply); reveal(admitted); reveal(port_t860_contracts::admissible);
+    reveal(generic_planner_stop); reveal(planner_review_result);] {
     let w = planner_entry_fixture(fail_fast);
     kernel_snapshot! { before = w }
     let budget = ReplanBudget::import(NodeId(0), true);

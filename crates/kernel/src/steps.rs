@@ -9,6 +9,7 @@ kernel_fn! {
 pub fn step(world: World, event: Event) -> (result: (World, Vec<Out>)) [
     requires world_checked(world), world_headroom(world), storage_ordered(world),
     ensures step_budget(world, result.0),
+        empty_replan::generic_planner_stop(world, result.0, event),
         (progress_input(world, event) ==> progress_measure(result.0) < progress_measure(world)),
 ] {
     kernel_proof! { reveal(storage_ordered); checked_reserves(world); }
@@ -26,6 +27,7 @@ kernel_fn! {
 pub fn step_with_passes(mut world: World, event: Event) -> (result: (World, Vec<Out>, u32)) [
     requires step_scope(world),
     ensures step_budget(world, result.0),
+        empty_replan::generic_planner_stop(world, result.0, event),
         (progress_input(world, event) ==> progress_measure(result.0) < progress_measure(world)),
 ] {
     kernel_snapshot! { before_step = world }
@@ -52,6 +54,8 @@ pub fn step_with_passes(mut world: World, event: Event) -> (result: (World, Vec<
     let passes = settle(&mut world, &mut out, None);
     kernel_proof! {
         reveal(step_budget);
+        reveal(empty_replan::generic_planner_stop); reveal(empty_replan::admitted);
+        reveal(empty_replan::planner_review_result); reveal(settle_chain);
         if progress_input(before_step@, event) {
             progress::settle_measure(after_apply@, world);
         }
