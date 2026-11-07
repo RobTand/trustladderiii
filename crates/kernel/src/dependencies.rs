@@ -643,6 +643,13 @@ impl World {
             decreases self.dependencies.len() - index,
         ] {
             let d = &self.dependencies[index];
+            kernel_proof! {
+                reveal(edges_indexable);
+                vstd::std_specs::vec::axiom_spec_len(&self.nodes);
+                assert(d.node.0 < self.nodes@.len());
+                assert(d.node.0 <= usize::MAX);
+                assert(d.node.0 as usize == d.node.0);
+            }
             if !self.nodes[d.node.0 as usize].phase.is_closed()
                 && !d.rejected && d.status == DependencyStatus::Pending
             {
@@ -655,6 +662,20 @@ impl World {
                             assert(!acyclic(*self));
                         }
                         return false;
+                    }
+                    kernel_proof! { assert(!reachable(*self, target, d.node)); }
+                }
+            }
+            kernel_proof! {
+                assert forall|j: int| 0 <= j < index + 1
+                    && !(self.nodes@[self.dependencies@[j].node.0 as int].phase is Closed)
+                    && !self.dependencies@[j].rejected
+                    && self.dependencies@[j].status == DependencyStatus::Pending
+                    && self.dependencies@[j].target.request.is_some()
+                    implies !reachable(*self, self.dependencies@[j].target.request.unwrap(),
+                        self.dependencies@[j].node) by {
+                    if j == index {
+                        assert(self.dependencies@[j] == *d);
                     }
                 }
             }
