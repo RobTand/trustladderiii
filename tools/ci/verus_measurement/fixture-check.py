@@ -231,7 +231,8 @@ class Fixtures(unittest.TestCase):
     def test_same_invocation_and_hold(self):
         parent = '12345678-1234-1234-1234-123456789abc'
         verdict = 'verdict: ' + json.dumps({'invocationId': parent, 'invocationStatus': 'COMPLETE_INVOCATION_STATUS', 'success': True})
-        replies = [subprocess.CompletedProcess([], 2, 'https://app.buildbuddy.io/invocation/' + parent + '\n'),
+        replies = [subprocess.CompletedProcess([], 2, 'https://app.buildbuddy.io/invocation/' + parent + '\n' +
+                   'still running: ' + parent + '; resume with: bbrun.py wait ' + parent + '\n'),
                    subprocess.CompletedProcess([], 0, verdict + '\n'),
                    subprocess.CompletedProcess([], 0, 'FAKE retained runner, no wrapper authority\n')]
         output = D['owned_directory'](self.root / 'fake-wait')
@@ -252,6 +253,134 @@ class Fixtures(unittest.TestCase):
                 S['wait_own'](['fake-sentinel-no-Bazel'], output, self.config(), {})
             mocked.assert_not_called()
 
+    def test_review_wrapper_reasons(self):
+        parent = '12345678-1234-1234-1234-123456789abc'
+        for stage, values in (
+                ('artifact_handoff', {'status': 'unknown', 'reason': 'handoff_not_observed'}),
+                ('cleanup', {'status': 'unknown', 'targets_present': None, 'reason': 'cleanup_not_observed'}),
+                ('scanner', {'status': 'fail', 'first_exit_code': 1, 'exit_code': 1,
+                             'reason': 'receipt_scan_rejected'})):
+            wrapper = fake_wrapper()
+            wrapper[stage] = values
+            wrapper['wrapper'] = {'original_exit_code': None, 'exit_code': None}
+            checked = S['validate_wrapper'](wrapper, parent)
+            self.assertEqual(checked[stage], values)
+
+    def test_review_terminal_failure_and_unavailability(self):
+        parent = '12345678-1234-1234-1234-123456789abc'
+        empty = subprocess.CompletedProcess([], 0, '')
+        with patch.object(subprocess, 'run', return_value=empty):
+            result = S['collect_terminal'](parent, 'FAIL', D['owned_directory'](self.root / 'failed-no-namespace'),
+                                           '', self.config(), {})
+        self.assertEqual(result['overall'], 'FAIL')
+        verdict = 'verdict: ' + json.dumps({'invocationId': parent,
+                   'invocationStatus': 'COMPLETE_INVOCATION_STATUS', 'success': True})
+        for tag, error, overall, code in [('unavailable', OSError('unavailable'), 'UNKNOWN', 3),
+                                           ('invalid', ValueError('contradiction'), 'FAIL', 1)]:
+            output = D['owned_directory'](self.root / ('review-' + tag))
+            replies = [subprocess.CompletedProcess([], 0, 'https://app.buildbuddy.io/invocation/' + parent + '\n' + verdict),
+                       subprocess.CompletedProcess([], 0, '')]
+            with patch.object(subprocess, 'run', side_effect=replies), \
+                    patch.dict(S['wait_own'].__globals__, {'collect_terminal': lambda *a, exc=error: (_ for _ in ()).throw(exc)}):
+                self.assertEqual(S['wait_own'](['fake-sentinel'], output, self.config(), {}), code)
+            self.assertEqual(D['loads']((output / 'terminal-attribution.json').read_bytes())['overall'], overall)
+
+    def test_review_wait_refusal_and_malformed_verdict(self):
+        parent = '12345678-1234-1234-1234-123456789abc'
+        for tag, code, body in [('usage', 2, 'usage error'), ('malformed', 0, 'verdict: {bad JSON}')]:
+            output = D['owned_directory'](self.root / ('review-wait-' + tag))
+            replies = [subprocess.CompletedProcess([], code, 'https://app.buildbuddy.io/invocation/' + parent + '\n' + body),
+                       subprocess.CompletedProcess([], 0, '')]
+            with patch.object(subprocess, 'run', side_effect=replies) as mocked:
+                self.assertEqual(S['wait_own'](['fake-sentinel'], output, self.config(), {}), 3)
+            self.assertFalse(any('wait' in call.args[0] for call in mocked.call_args_list))
+            self.assertEqual(D['loads']((output / 'terminal-attribution.json').read_bytes())['overall'], 'UNKNOWN')
+
+    def test_review_wait_cap(self):
+        parent = '12345678-1234-1234-1234-123456789abc'
+        pending = ('https://app.buildbuddy.io/invocation/' + parent + '\n'
+                   'still running: ' + parent + '; resume with: bbrun.py wait ' + parent + '\n')
+        def remote(command, **kwargs):
+            return subprocess.CompletedProcess(command, 0, '') if 'bb_logs.py' in command[2] else subprocess.CompletedProcess(command, 2, pending)
+        output = D['owned_directory'](self.root / 'review-wait-cap')
+        with patch.object(subprocess, 'run', side_effect=remote) as mocked:
+            self.assertEqual(S['wait_own'](['fake-sentinel', 'no', 'Bazel'], output, self.config(), {}), 3)
+        waits = [call.args[0] for call in mocked.call_args_list if 'wait' in call.args[0]]
+        self.assertEqual(len(waits), 3)
+        self.assertTrue(all(command[4] == parent for command in waits))
+        self.assertEqual(D['loads']((output / 'terminal-attribution.json').read_bytes())['reason'], 'same_invocation_wait_limit')
+
+    def test_review_exact_remote_preparation(self):
+        # Execute the precise embedded Python, not only compile it. This stops
+        # before Bazel; fixtures run only inside the admitted producer action.
+        artifact_root = self.root / 'remote-dry-run'
+        artifact_root.mkdir()
+        config = self.config()
+        command = S['submission'](config, self.evidence / 'remote.log')
+        code_index = command.index('-c')
+        code = command[code_index + 1]
+        argv = ['python3', '-I', '-c', code, *command[code_index + 2:], '--dry-run', '--source', str(self.source)]
+        env = {**os.environ, 'BUILDBUDDY_ARTIFACTS_DIRECTORY': str(artifact_root)}
+        run = subprocess.run(argv, cwd=self.source, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        self.assertEqual(run.returncode, 0, run.stdout[-2000:])
+        self.assertEqual((self.source / D['RUNNER']).read_bytes(), self.original)
+        self.assertTrue((artifact_root / 'verus-measurement' / 'runner-preview.rs').is_file())
+        inside = self.source / 'must-not-create'
+        bad = subprocess.run(['python3', '-I', '-c', code, *command[code_index + 2:], '--dry-run',
+                              '--source', str(self.source), '--output', str(inside)], cwd=self.source,
+                             env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        self.assertNotEqual(bad.returncode, 0)
+        self.assertFalse(inside.exists())
+
+    def test_review_current_main_clone_selector(self):
+        config = self.config(selections=[{'target': '//crates/kernel:verus_kernel_clones',
+                                         'selector': 'kernel#*::clone', 'expected': 33}])
+        prepared, _, _ = D['prepare'](self.source, config, D['owned_directory'](self.root / 'unsplit-clone-preparation'))
+        self.assertEqual(prepared['preparation'], 'PASS')
+
+    def test_review_collect_preserves_failed_children(self):
+        source = self.root / 'collect-fixture'
+        source.mkdir()
+        logs = source / 'actual-testlogs'
+        logs.mkdir()
+        (source / 'bazel-testlogs').symlink_to(logs, target_is_directory=True)
+        config = self.config(selections=[configuration()['selections'][0],
+            {'target': '//crates/kernel:verus_dependencies_clone',
+             'selector': 'kernel::dependencies#Dependency::clone', 'expected': 1}])
+        for selection in config.selections:
+            directory = logs / selection.target[2:].replace(':', '/')
+            directory.mkdir(parents=True)
+            (directory / 'test.log').write_bytes(b'FAKE failed verifier output\n')
+            (directory / 'test.xml').write_bytes(b'<testsuite tests="1" failures="1" errors="0"><testcase><failure/></testcase></testsuite>')
+        output = D['owned_directory'](self.root / 'collect-failures')
+        result = D['collect'](source, config, output, 1)
+        self.assertEqual(len(result['rows']), 2)
+        self.assertEqual(result['child'], 'FAIL')
+        self.assertEqual(result['resources'], 'UNKNOWN')
+        for index in range(2):
+            self.assertIn(b'<failure/>', (output / f'{index}-test.xml').read_bytes())
+
+    def test_review_stage_tree(self):
+        source = self.root / 'raw-tree'
+        source.mkdir()
+        child = source / 'nested'
+        child.mkdir()
+        (child / 'one.air').write_bytes(b'FAKE raw query')
+        (child / 'one.air').chmod(0o444)
+        child.chmod(0o555)
+        output = D['owned_directory'](self.root / 'raw-stage')
+        manifest = []
+        try:
+            D['stage_tree'](source, output, 'query-', manifest)
+            self.assertEqual((output / 'query-nested__one.air').read_bytes(), b'FAKE raw query')
+            self.assertEqual(stat.S_IMODE((output / 'query-nested__one.air').stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(child.stat().st_mode), 0o555)
+        finally:
+            child.chmod(0o700)
+        (source / 'escape').symlink_to(child, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, 'symlink'):
+            D['stage_tree'](source, output, 'another-', [])
+
     def test_terminal_cas_collector_fake_wrapper(self):
         parent = '12345678-1234-1234-1234-123456789abc'
         summary = {k: 'PASS' for k in ('preparation', 'child', 'resources', 'collection', 'restoration')}
@@ -259,6 +388,8 @@ class Fixtures(unittest.TestCase):
         config = self.config()
         row = config.selections[0]
         summary['rows'] = [D['asdict'](row)]
+        summary['rows'][0]['rlimit_run'] = 999  # Untrusted summary must not supply metrics.
+        summary['rlimit_run_sum'] = 999
         expected = D['loads']((self.evidence / 'normal-receipt.json').read_bytes())
         objects = {p.name: p.read_bytes() for p in (self.evidence / 'normal').iterdir()
                    if not p.name.endswith('pyc') and p.name != 'submission-argv.json'}
@@ -287,15 +418,25 @@ class Fixtures(unittest.TestCase):
         with patch.object(subprocess, 'run', side_effect=remote):
             result = S['collect_terminal'](parent, 'PASS', D['owned_directory'](self.root / 'fake-cas'), '', config, expected)
             self.assertEqual(result['overall'], 'PASS')
+            self.assertEqual(result['driver']['rlimit_run_sum'], 0)
+            self.assertEqual(result['driver']['rows'][0]['rlimit_run'], 0)
             self.assertTrue(all(a['parent_invocation_id'] == parent for a in result['cas']))
             self.assertEqual(len(result['cas']), 3 + len(manifest))
             files.pop(S['RESERVED'])
             result = S['collect_terminal'](parent, 'PASS', D['owned_directory'](self.root / 'missing-v1'), '', config, expected)
             self.assertEqual(result['overall'], 'UNKNOWN')
-            # Own terminal runner fallback, same fake object, no real scanner.
+            # A complete parent log is not a proven final wrapper-step body.
             result = S['collect_terminal'](parent, 'PASS', D['owned_directory'](self.root / 'fake-line'),
                                           S['MARKER'] + json.dumps(fake_wrapper()), config, expected)
+            self.assertEqual(result['overall'], 'UNKNOWN')
+            # Expressly fake, separately attributed wrapper-step stdout body.
+            result = S['collect_terminal'](parent, 'PASS', D['owned_directory'](self.root / 'fake-wrapper-body'),
+                S['MARKER'] + json.dumps(fake_wrapper()) + '\nRemote run completed', config, expected,
+                wrapper_step_stdout=S['MARKER'] + json.dumps(fake_wrapper()))
             self.assertEqual(result['overall'], 'PASS')
+            with self.assertRaisesRegex(ValueError, 'unambiguous final'):
+                S['collect_terminal'](parent, 'PASS', D['owned_directory'](self.root / 'fake-untrusted-body'),
+                    '', config, expected, wrapper_step_stdout=S['MARKER'] + json.dumps(fake_wrapper()) + '\nfooter')
             summary['reserved_name_collision'] = True
             files['verus-measurement/measurement-summary.json'] = D['encoded'](summary)
             with self.assertRaisesRegex(ValueError, 'collision'):

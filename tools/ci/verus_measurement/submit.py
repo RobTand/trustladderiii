@@ -33,7 +33,7 @@ def submission(config, runner_log):
             '--commit', config.head, '--branch', config.branch,
             '--timeout', str(config.coordinator_minutes), '--max-wait', '600',
             '--log-file', str(runner_log), '--', 'python3', '-I', '-c',
-            output + '\n' + code.replace('from __future__ import annotations\n', ''),
+            'from __future__ import annotations\n' + output + '\n' + code.replace('from __future__ import annotations\n', ''),
             '--config-json', json.dumps(config.json(), sort_keys=True)]
 
 
@@ -98,14 +98,7 @@ def check_receipt(source, config, receipt, command):
 
 
 # Consumer checks only. Ops owns the authoritative schema, scanner and publication.
-REASONS = {
-    'command': {'command_succeeded', 'command_failed', 'command_not_observed', 'unknown'},
-    'artifact_handoff': {'handoff_succeeded', 'handoff_failed', 'unknown'},
-    'scanner': {'scan_clean', 'scan_rejected', 'scan_incomplete', 'scanner_exception',
-                'scanner_not_run', 'scan_reason_unknown', 'unknown'},
-    'cleanup': {'cleanup_complete', 'no_cleanup_targets', 'cleanup_permission_denied',
-                'cleanup_io_error', 'unknown'},
-}
+REASON_STAGES = ('command', 'artifact_handoff', 'scanner', 'cleanup')
 
 
 def integer_or_null(value, wrapper=False):
@@ -122,38 +115,32 @@ def validate_wrapper(value, parent):
               'cleanup': ('status', 'targets_present', 'reason'), 'wrapper': ('original_exit_code', 'exit_code')}
     for stage, keys in fields.items():
         exact_keys(value[stage], keys)
-    for stage in REASONS:
-        require(value[stage]['reason'] in REASONS[stage], 'unknown wrapper-owned sanitized reason code')
+    for stage in REASON_STAGES:
+        reason = value[stage]['reason']
+        require(type(reason) is str and re.fullmatch(r'[a-z][a-z0-9_]{0,95}', reason),
+                'invalid wrapper-owned sanitized reason code')
     c, h, s, clean, w = (value[k] for k in fields)
     for code in (c['exit_code'], s['first_exit_code'], s['exit_code']):
         integer_or_null(code)
     for code in w.values():
         integer_or_null(code, wrapper=True)
     require(c['status'] == ('unknown' if c['exit_code'] is None else 'pass' if c['exit_code'] == 0 else 'fail'), 'contradictory command status')
-    require(c['reason'] == {'pass': 'command_succeeded', 'fail': 'command_failed', 'unknown': 'command_not_observed'}[c['status']] or
-            (c['status'] == 'unknown' and c['reason'] == 'unknown'), 'contradictory command reason')
+    if c['status'] == 'pass':
+        require(c['reason'] == 'command_succeeded', 'contradictory command pass reason')
     require(h['status'] in ('pass', 'fail', 'unknown'), 'invalid handoff status')
-    require(h['reason'] == {'pass': 'handoff_succeeded', 'fail': 'handoff_failed', 'unknown': 'unknown'}[h['status']], 'contradictory handoff reason')
+    if h['status'] == 'pass':
+        require(h['reason'] == 'handoff_succeeded', 'contradictory handoff pass reason')
     require(s['status'] in ('pass', 'fail', 'error', 'unknown'), 'invalid scanner status')
     if s['status'] == 'pass':
         require(s['exit_code'] == 0 and s['first_exit_code'] is not None and s['reason'] == 'scan_clean', 'contradictory scanner pass')
     elif s['status'] == 'fail':
-        require(s['exit_code'] not in (None, 0) and s['first_exit_code'] is not None and
-                s['reason'] in ('scan_rejected', 'scan_incomplete', 'scan_reason_unknown'), 'contradictory scanner fail')
-    elif s['status'] == 'error':
-        require(s['reason'] == 'scanner_exception', 'contradictory scanner error')
-    else:
-        require(s['reason'] in ('unknown', 'scanner_not_run', 'scan_incomplete', 'scan_reason_unknown'), 'contradictory scanner unknown')
+        require(s['exit_code'] not in (None, 0) and s['first_exit_code'] is not None, 'contradictory scanner fail')
     require(clean['status'] in ('pass', 'not_needed', 'fail', 'unknown') and
             (clean['targets_present'] is None or type(clean['targets_present']) is bool), 'invalid cleanup')
     if clean['status'] == 'pass':
         require(clean['targets_present'] is True and clean['reason'] == 'cleanup_complete', 'contradictory cleanup pass')
     elif clean['status'] == 'not_needed':
         require(clean['targets_present'] is False and clean['reason'] == 'no_cleanup_targets', 'contradictory cleanup not_needed')
-    elif clean['status'] == 'fail':
-        require(clean['reason'] in ('cleanup_permission_denied', 'cleanup_io_error'), 'contradictory cleanup fail')
-    else:
-        require(clean['reason'] == 'unknown', 'contradictory cleanup unknown')
     upstream = c['status'] == h['status'] == s['status'] == 'pass'
     if w['original_exit_code'] == 0:
         require(upstream, 'wrapper original zero contradicts stages')
@@ -214,18 +201,20 @@ def cas_artifact(parent, metadata, output, local_name):
     D['put'](output, local_name, b'')
     fetched = subprocess.run([*BB, 'artifacts', parent, '--fetch', metadata['name'], '--out', str(path)],
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    require(fetched.returncode == 0, 'own-parent CAS artifact fetch failed')
+    if fetched.returncode != 0:
+        raise OSError('own-parent CAS artifact unavailable')
     data = D['regular_bytes'](path)
     require(digest(data) == match[1] and len(data) == int(match[2]), 'CAS hash/length mismatch')
     return data, {'parent_invocation_id': parent, 'name': metadata['name'], 'uri': uri,
                   'sha256': match[1], 'bytes': len(data)}
 
 
-def collect_terminal(parent, terminal, output, runner_log, config, expected):
+def collect_terminal(parent, terminal, output, runner_log, config, expected, *, wrapper_step_stdout=None):
     require(terminal in ('PASS', 'FAIL'), 'own parent must be independently terminal')
     listed = subprocess.run([*BB, 'artifacts', parent], stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True)
-    require(listed.returncode == 0, 'own-parent artifact enumeration failed')
+    if listed.returncode != 0:
+        raise OSError('own-parent artifact enumeration unavailable')
     metadata = [loads(line) for line in listed.stdout.splitlines() if line.startswith('{')]
     D['put'](output, 'own-parent-artifacts.json', encoded(metadata))
     def named(name):
@@ -239,7 +228,7 @@ def collect_terminal(parent, terminal, output, runner_log, config, expected):
     # A terminal parent without the driver's namespace/collision evidence cannot
     # establish that a reserved artifact or log marker came from the wrapper.
     if summary_meta is None or manifest_meta is None:
-        return {'parent': terminal, 'wrapper': 'UNKNOWN', 'overall': 'UNKNOWN',
+        return {'parent': terminal, 'wrapper': 'UNKNOWN', 'overall': 'FAIL' if terminal == 'FAIL' else 'UNKNOWN',
                 'reason': 'missing_driver_namespace_evidence', 'cas': audits}
     summary_bytes, audit = cas_artifact(parent, summary_meta, output, 'remote-measurement-summary.json')
     audits.append(audit)
@@ -280,17 +269,35 @@ def collect_terminal(parent, terminal, output, runner_log, config, expected):
     require(len(summary.get('rows', [])) == len(config.selections), 'missing/duplicate measurement rows')
     for row, selection in zip(summary['rows'], config.selections):
         require(all(row.get(k) == v for k, v in D['asdict'](selection).items()), 'summary selection/count/bijection mismatch')
-    if not all(row['resources'] == 'PASS' for row in rows):
-        summary['resources'] = 'UNKNOWN'
+    # Only verified raw receipts determine the returned metrics. Summary values
+    # cannot supply a measurement that is absent from the child evidence.
+    summary['rows'] = [{**D['asdict'](selection), **row} for selection, row in zip(config.selections, rows)]
+    summary['resources'] = 'PASS' if all(row['resources'] == 'PASS' for row in rows) else 'UNKNOWN'
+    runs = [row['rlimit_run'] for row in rows]
+    summary['rlimit_run_sum'] = sum(runs) if all(value is not None for value in runs) else None
+    summary['init_included_in_sum'] = False
+    for stage in ('parent', 'scanner', 'cleanup', 'overall', 'artifacts'):
+        summary.pop(stage, None)
     wrapper_bytes = None
     if wrapper_meta is not None:
         wrapper_bytes, audit = cas_artifact(parent, wrapper_meta, output, RESERVED)
         audits.append(audit)
     lines = [line for line in runner_log.splitlines() if MARKER in line]
     require(len(lines) <= 1 and all(line.startswith(MARKER) for line in lines), 'forged/repeated/ambiguous wrapper markers')
-    # Namespace and own terminal runner attribution are both required for fallback.
+    # The full parent log includes BuildBuddy footers and command stdout. It is
+    # not a proven wrapper-step body and cannot independently authorize fallback.
+    trusted_line = None
+    if wrapper_step_stdout is not None:
+        body = [line for line in wrapper_step_stdout.splitlines() if line.strip()]
+        markers = [line for line in body if MARKER in line]
+        require(len(markers) == 1 and markers[0].startswith(MARKER) and body[-1] == markers[0],
+                'wrapper body lacks an unambiguous final result line')
+        trusted_line = markers[0]
     wrapper = wrapper_evidence(parent=parent, terminal=terminal, trusted_artifact=wrapper_bytes,
-                               trusted_runner_line=lines[0] if lines else None)
+                               trusted_runner_line=trusted_line)
+    if wrapper is not None and lines:
+        require(validate_wrapper(loads(lines[0][len(MARKER):]), parent) == wrapper,
+                'wrapper artifact/body and parent-log line disagree')
     return {'parent': terminal, 'wrapper': wrapper if wrapper is not None else 'UNKNOWN',
             'driver': summary, 'overall': qualify(summary, wrapper, terminal), 'cas': audits}
 
@@ -304,31 +311,63 @@ def wait_own(command, output, config, expected):
     require(len(ids) == 1, 'submission lacks unique own invocation; UNKNOWN, do not resubmit')
     parent = ids.pop()
     D['put'](output, 'submission-client.txt', transcript.encode())
+    waits = 0
+    wait_limit = max(1, (config.coordinator_minutes * 60 + 599) // 600)
+    wait_reason = None
     while result.returncode == 2:
+        pending = re.search(r'(?m)^still running: ' + re.escape(parent) + r'; resume with: bbrun\.py wait ' + re.escape(parent) + r'\s*$', result.stdout)
+        if pending is None:
+            wait_reason = 'client_wait_not_resumable'
+            break
+        if waits >= wait_limit:
+            wait_reason = 'same_invocation_wait_limit'
+            break
+        waits += 1
         result = subprocess.run([*BB, 'wait', parent, '--max-wait', '600'],
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         transcript += result.stdout
     D['put'](output, 'terminal-client.txt', transcript.encode())
     # Inspect using the approved scrubbed result reader. Installed wrappers
     # without v1 remain UNKNOWN even when the command and children passed.
-    inspected = subprocess.run(['python3', '-I', '/home/rob/tmp/tl3-build/bb_logs.py', parent, '--runner', '200'],
-                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    D['put'](output, 'terminal-runner.txt', inspected.stdout.encode())
     observation = {'parent_invocation_id': parent, 'client_exit': result.returncode,
                    'parent': 'UNKNOWN',
                    'wrapper': 'UNKNOWN', 'overall': 'UNKNOWN',
                    'reason': 'trusted_wrapper_cas_collection_required'}
-    verdicts = [loads(line[len('verdict: '):]) for line in transcript.splitlines() if line.startswith('verdict: ')]
-    own = [v for v in verdicts if v.get('invocationId') == parent]
-    if own and own[-1].get('invocationStatus') == 'COMPLETE_INVOCATION_STATUS':
-        observation['parent'] = 'PASS' if own[-1].get('success') is True else 'FAIL'
-    if observation['parent'] != 'UNKNOWN' and inspected.returncode == 0:
+    malformed = False
+    for line in transcript.splitlines():
+        if line.startswith('verdict: '):
+            try:
+                require(len(line) <= 16384, 'oversized terminal verdict')
+                verdict = loads(line[len('verdict: '):])
+                require(type(verdict) is dict, 'malformed terminal verdict')
+                if verdict.get('invocationId') == parent and verdict.get('invocationStatus') == 'COMPLETE_INVOCATION_STATUS':
+                    require(type(verdict.get('success')) is bool, 'missing terminal success verdict')
+                    if observation['parent'] != 'FAIL':
+                        observation['parent'] = 'PASS' if verdict['success'] else 'FAIL'
+            except (ValueError, TypeError):
+                malformed = True
+    if observation['parent'] == 'FAIL':
+        observation['overall'] = 'FAIL'
+    try:
+        inspected = subprocess.run(['python3', '-I', '/home/rob/tmp/tl3-build/bb_logs.py', parent, '--runner', '200'],
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        D['put'](output, 'terminal-runner.txt', inspected.stdout.encode())
+    except OSError:
+        inspected = None
+    if wait_reason or malformed:
+        observation.update(collection='UNKNOWN', reason=wait_reason or 'invalid_terminal_verdict')
+    elif observation['parent'] != 'UNKNOWN' and inspected is not None and inspected.returncode == 0:
         try:
             observation.update(collect_terminal(parent, observation['parent'], output, inspected.stdout, config, expected))
-        except (ValueError, OSError, KeyError, TypeError, D['ET'].ParseError):
-            observation.update(collection='FAIL', overall='FAIL', reason='terminal_evidence_invalid_or_incomplete')
+        except OSError:
+            observation.update(collection='UNKNOWN', overall='FAIL' if observation['parent'] == 'FAIL' else 'UNKNOWN',
+                               reason='terminal_evidence_unavailable')
+        except (ValueError, KeyError, TypeError, D['ET'].ParseError):
+            observation.update(collection='FAIL', overall='FAIL', reason='terminal_evidence_invalid')
+    else:
+        observation.update(collection='UNKNOWN', reason='terminal_evidence_unavailable')
     D['put'](output, 'terminal-attribution.json', encoded(observation))
-    return 0 if observation['overall'] == 'PASS' else result.returncode or 3
+    return {'PASS': 0, 'FAIL': 1, 'UNKNOWN': 3}[observation['overall']]
 
 
 def main():

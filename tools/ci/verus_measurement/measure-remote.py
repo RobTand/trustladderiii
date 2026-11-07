@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import sys
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -115,7 +116,7 @@ class Config:
         for row in value['selections']:
             exact_keys(row, Selection.__dataclass_fields__)
             require(type(row['target']) is str and re.fullmatch(r'//crates/kernel:verus_[a-z0-9_]+', row['target']), 'unsupported target')
-            require(type(row['selector']) is str and re.fullmatch(r'[A-Za-z0-9_:]+(?:#[A-Za-z0-9_:]+)?', row['selector']), 'invalid selector')
+            require(type(row['selector']) is str and re.fullmatch(r'[A-Za-z0-9_:]+(?:#(?:\*::)?[A-Za-z0-9_:]+)?', row['selector']), 'invalid selector')
             require(type(row['expected']) is int and row['expected'] > 0, 'expected must be a positive integer')
             rows.append(Selection(**row))
         require(len({r.target for r in rows}) == len(rows) == len({r.selector for r in rows}), 'target/selector bijection violated')
@@ -308,33 +309,60 @@ def stage_tree(source, output, prefix, manifest):
 def collect(root, config, output, batch_exit):
     rows, files = [], []
     for index, selection in enumerate(config.selections):
-        # Bazel itself owns the testlogs link. Resolve that one boundary only.
-        directory = (root / 'bazel-testlogs').resolve(strict=True)
-        for component in selection.target[2:].replace(':', '/').split('/'):
-            directory = directory / component
-            require(not directory.is_symlink() and directory.is_dir(), 'unexpected testlog directory link/type')
-        for name in ('test.log', 'test.xml'):
-            data = regular_bytes(directory / name)
-            require(data, 'missing/empty selected child log/XML')
-            if name == 'test.xml':
-                check_test_xml(data)
-            files.append(put(output, f'{index}-{name}', data))
+        row = {**asdict(selection), 'proof': 'UNKNOWN', 'resources': 'UNKNOWN',
+               'collection': 'PASS', 'rlimit_run': None, 'rlimit_init': None,
+               'total_ms': None, 'threads': None, 'wall_seconds': None, 'wall_warning': None}
         objects = {}
-        for name in ('inventory.json', 'measurement.json', 'verifier.json'):
-            data = output_bytes(directory, name)
-            files.append(put(output, f'{index}-{name}', data))
-            objects[name] = loads(data)
-        rows.append({**asdict(selection), **child_verdict(objects['verifier.json'], objects['inventory.json'], objects['measurement.json'], selection)})
-        if config.raw_queries:
-            stage_tree(directory / 'test.outputs' / 'raw-queries', output, f'{index}-query-', files)
+        invalid, unavailable = False, False
+        try:
+            # Bazel itself owns the testlogs link. Resolve that one boundary only.
+            directory = (root / 'bazel-testlogs').resolve(strict=True)
+            for component in selection.target[2:].replace(':', '/').split('/'):
+                directory = directory / component
+                require(not directory.is_symlink() and directory.is_dir(), 'unexpected testlog directory link/type')
+            for name in ('test.log', 'test.xml', 'inventory.json', 'measurement.json', 'verifier.json'):
+                try:
+                    data = regular_bytes(directory / name) if name in ('test.log', 'test.xml') else output_bytes(directory, name)
+                    # Retain the actual failing XML/log/JSON before validation.
+                    files.append(put(output, f'{index}-{name}', data))
+                    require(data, 'empty selected child evidence')
+                    if name == 'test.xml':
+                        check_test_xml(data)
+                    elif name.endswith('.json'):
+                        objects[name] = loads(data)
+                except OSError:
+                    unavailable = True
+                except (ValueError, ET.ParseError, zipfile.BadZipFile):
+                    invalid = True
+            if len(objects) == 3:
+                try:
+                    row.update(child_verdict(objects['verifier.json'], objects['inventory.json'], objects['measurement.json'], selection))
+                except (ValueError, KeyError, TypeError):
+                    invalid = True
+            if config.raw_queries:
+                stage_tree(directory / 'test.outputs' / 'raw-queries', output, f'{index}-query-', files)
+        except OSError:
+            unavailable = True
+        except ValueError:
+            invalid = True
+        if invalid:
+            row.update(proof='FAIL', collection='FAIL', reason='invalid_child_evidence')
+        elif unavailable:
+            row.update(collection='UNKNOWN', reason='child_evidence_unavailable')
+        rows.append(row)
     run_values = [r['rlimit_run'] for r in rows]
-    return {'child': 'PASS' if batch_exit == 0 else 'FAIL', 'rows': rows,
+    child = 'FAIL' if batch_exit != 0 or any(r['proof'] == 'FAIL' for r in rows) else (
+        'PASS' if all(r['proof'] == 'PASS' for r in rows) else 'UNKNOWN')
+    collection = 'FAIL' if any(r['collection'] == 'FAIL' for r in rows) else (
+        'PASS' if all(r['collection'] == 'PASS' for r in rows) else 'UNKNOWN')
+    return {'child': child, 'rows': rows,
             'resources': 'PASS' if all(r['resources'] == 'PASS' for r in rows) else 'UNKNOWN',
             'rlimit_run_sum': sum(run_values) if None not in run_values else None,
-            'init_included_in_sum': False, 'collection': 'PASS', 'artifacts': files}
+            'init_included_in_sum': False, 'collection': collection, 'artifacts': files}
 
 
 def main():
+    require(sys.version_info >= (3, 10), 'measurement driver requires Python 3.10 or later')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config-json', required=True)
     parser.add_argument('--source', type=Path, default=Path.cwd())
@@ -342,14 +370,15 @@ def main():
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
     config = Config.parse(loads(args.config_json))
+    require(not args.output.resolve().is_relative_to(args.source.resolve()),
+            'evidence output must be outside the clean source checkout')
     output = owned_directory(args.output)
     prepared, original, changed = prepare(args.source, config, output)
     if args.dry_run:
         print(json.dumps(prepared))
         return
     summary = {'preparation': 'PASS', 'restoration': 'UNKNOWN', 'collection': 'UNKNOWN',
-               'child': 'UNKNOWN', 'resources': 'UNKNOWN', 'overall': 'UNKNOWN',
-               'parent': 'UNKNOWN', 'scanner': 'UNKNOWN', 'cleanup': 'UNKNOWN',
+               'child': 'UNKNOWN', 'resources': 'UNKNOWN',
                'command_artifact_namespace': 'verus-measurement',
                'reserved_name_collision': False}
     try:

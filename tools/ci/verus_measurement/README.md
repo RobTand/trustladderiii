@@ -64,7 +64,9 @@ evidence.
 To submit an independently authorized measurement, omit `--dry-run` and choose
 a new submission output directory. Keep the config, source, receipt, and runner
 log arguments identical. Submission checks BB-HOLD immediately before its one
-BB submission. Timeouts wait on that invocation; they never submit a replacement.
+BB submission. Exit 2 resumes only with the client's exact own-invocation
+`still running` marker. Waits are bounded to the coordinator duration rounded
+up in ten-minute waits; exhaustion records UNKNOWN and never resubmits.
 
 The exact BB command uses the approved `python3 -I .../bbrun.py` client. Terminal
 inspection uses `python3 -I .../bb_logs.py`. Named CAS downloads use the approved
@@ -89,23 +91,38 @@ Terminal collection checks the same own parent, verifies all curated CAS bytes,
 rechecks preparation identities and raw child verdicts, and retains attribution
 in `terminal-attribution.json`. Command, artifact handoff, scanner, cleanup,
 wrapper, parent, driver collection, and source restoration remain separate.
-A successful child or client exit cannot establish overall success. Exit 3 means
-qualification is UNKNOWN. Invalid terminal evidence fails collection.
+A successful child or client exit cannot establish overall success. Exit 0 means
+PASS, 1 means FAIL, and 3 means UNKNOWN. A known failed parent always means FAIL,
+even without published driver artifacts. Unavailable evidence stays UNKNOWN;
+retrieved contradictory evidence fails collection. Malformed terminal verdicts
+are retained as UNKNOWN with attribution instead of bypassing its record.
+Raw failed-child XML/logs are staged before validation, and collection continues
+across selections. Returned group metrics and their sum are reconstructed from
+verified raw receipts, excluding init, rather than accepted from the summary.
 
 The consumer uses ops wrapper-result v1, `tl3.bbrun.wrapper-result`, version 1.
 Ops owns `bbrun-wrapper-result.v1.json`, its authoritative schema, sanitized
 reason vocabulary, scanner, and cleanup. This directory defines no competing
 schema and installs no wrapper. The consumer rejects duplicate keys, unknown
-versions or reasons, extra or missing fields, booleans as exit codes,
+versions, malformed sanitized reason codes, extra or missing fields, booleans as exit codes,
 contradictory stages, and a mismatched parent ID. A nonzero first scan followed
 by a genuinely clean final scan is allowed.
+Qualifying PASS reasons and `no_cleanup_targets` are pinned exactly. Non-PASS
+reason codes follow ops' schema pattern and are retained, including
+`handoff_not_observed`, `cleanup_not_observed` and `receipt_scan_rejected`.
 
 A receipt is read only after the own parent is independently terminal. Own CAS
 attribution and driver namespace evidence are required. The remote command
 checks that the wrapper's reserved name is absent before and after its work.
-A single wrapper-owned fallback line from the retained own terminal runner log
-is supported; repeated, embedded, or disagreeing markers fail. Missing namespace
-evidence prevents log recovery. A missing v1 producer stays UNKNOWN.
+A fallback needs a separately proven wrapper-step stdout body, whose final
+nonempty line is the unique result marker. A complete parent runner log also
+contains command output and BuildBuddy footer lines and cannot prove that
+boundary. The automatic collector currently has only that complete log, so
+log-only evidence remains UNKNOWN. It never promotes an arbitrary earlier
+marker into wrapper authority. A supplied receipt and any visible parent-log
+marker must agree; repeated, embedded, or conflicting markers fail. Dedicated
+body recovery is exercised with explicitly fake fixtures only. A missing v1
+producer stays UNKNOWN.
 
 `fixture-check.py` uses expressly fake wrapper verdicts and fake CAS responses.
 They exercise the consumer, not the scanner. They never upgrade retained RP
@@ -113,3 +130,9 @@ results. Retained parent `d765f39c-35dd-4dcd-b013-3005b046c59c` remains FAILED,
 and its initial scanner reason remains UNKNOWN. Real scanner regression belongs
 to ops. Actual verifier qualification and captain merged-head tooling gates are
 outside this producer fixture scope.
+
+The precise embedded remote Python is executed through full pre-Bazel
+preparation in the admitted fixture. Python 3.10 or later is required. Output
+inside the clean source checkout is refused before directory creation. The
+instrumented Rust runner has not been compiled in this producer unit; its
+compilation and actual remote verifier/scanner qualification remain UNKNOWN.
