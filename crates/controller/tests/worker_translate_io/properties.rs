@@ -33,6 +33,7 @@ fn production_and_reference_sources_are_pinned() {
     assert_eq!(format!("{:x}", Sha256::digest(legacy)), pins["legacy_quota_clear"]["sha256"]);
     // The moved feedback writes are covered through intake and maker inputs in
     // adapters::workers::feedback_tests. Retain the unchanged historical checks.
+    let source = include_str!("../../src/lib.rs");
     let historical_current = include_str!("current.rs");
     for (copy, expected) in [
         (include_str!("reference.rs"), base),
