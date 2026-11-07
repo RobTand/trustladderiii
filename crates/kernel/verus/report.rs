@@ -56,23 +56,6 @@ pub(in super::super) proof fn work_kind(reply: Reply)
     reveal(work_failure);
 }
 
-pub(in super::super) proof fn ci_kind(phase: Phase, current: Option<Item>, infra: bool)
-    ensures ci_failure(phase, current, infra) == if !infra && (phase == Phase::Queued
-        || phase == Phase::Publishing && current == Some(Item::Do(EffectKind::Enqueue))) {
-        Some(FailedRoundCause::CiFailed)
-    } else { None },
-{
-    reveal(ci_failure);
-}
-
-pub(in super::super) proof fn fact_kind(phase: Phase, current: Option<Item>, fact: Fact)
-    ensures fact_failure(phase, current, fact) == match fact {
-        Fact::CiFailed { infra } => ci_failure(phase, current, infra), _ => None,
-    },
-{
-    reveal(fact_failure);
-}
-
 pub(in super::super) proof fn round_delta(r0: Seq<ReportEntry>, r1: Seq<ReportEntry>, node: NodeId,
     cause: Option<FailedRoundCause>)
     requires forwards(r0, r1, round_entries(node, cause)),
@@ -239,5 +222,92 @@ pub(in super::super) proof fn settle_result(before: Seq<Phase>, after: Seq<Phase
         forall|i: int| 0 <= i < before.len() ==> terminal_phase_frame(before[i], after[i]),
     ensures settled_forwards(before, after, r0, r1),
 { reveal(settled_forwards); unchanged(r0); }
+
+pub(in super::super) proof fn stop_kind_value(phase: Phase, review: Option<ReviewStop>,
+    pr_closed: bool, user_stop: bool)
+    ensures stop_kind(phase, review, pr_closed, user_stop) == match phase {
+            Phase::Stopping(Outcome::Merged) | Phase::Closed(Outcome::Merged) => StopCause::Merged,
+            Phase::Stopping(Outcome::Replaced) | Phase::Closed(Outcome::Replaced) => StopCause::Replaced,
+            Phase::Stopping(Outcome::Duplicate) | Phase::Closed(Outcome::Duplicate) => StopCause::Duplicate,
+            Phase::Stopping(Outcome::AlreadyDone) | Phase::Closed(Outcome::AlreadyDone) => StopCause::AlreadyDone,
+            Phase::Stopping(Outcome::NotActionable) | Phase::Closed(Outcome::NotActionable) => StopCause::NotActionable,
+            _ => if pr_closed { StopCause::PrClosed } else if user_stop { StopCause::UserStop }
+                else { match review { Some(kind) => StopCause::ReviewStop(kind), None => StopCause::UserStop } },
+        },
+{ reveal(stop_kind); }
+
+pub(in super::super) proof fn entries_for_event(event: Event, input: ReplyInput)
+    ensures event_entries(event, input) == match event {
+        Event::Reply { node, generation, reply } => reply_entries(node, input.phase,
+            input.current, input.run, input.job, generation, reply, input.accepted),
+        _ => Seq::empty(),
+    },
+{ reveal(event_entries); }
+
+pub(in super::super) proof fn observe(event: Event, before: Seq<Phase>, after: Seq<Phase>,
+    input: ReplyInput, review: Option<ReviewStop>, r0: Seq<ReportEntry>, middle: Seq<ReportEntry>,
+    r1: Seq<ReportEntry>)
+    requires event is Fact ==> before.len() == after.len(),
+        before.len() <= after.len() <= before.len() + 1
+        && (forall|j: int| 0 <= j < before.len() && event_target(event) != Some(NodeId(j as u64))
+            ==> terminal_phase_frame(before[j], after[j]))
+        && (forall|j: int| before.len() <= j < after.len() ==> !(after[j] is Stopping || after[j] is Closed))
+        && (!(event is Fact) ==> match event_target(event) {
+            Some(node) if node.0 < before.len() =>
+                forwards(r0, middle, event_entries(event, input))
+                && stop_cause(middle, r1, node, before[node.0 as int], after[node.0 as int],
+                    stop_kind(after[node.0 as int], review, false, user_stop(event))),
+            _ => forwards(r0, r1, Seq::empty()),
+        }),
+    ensures agrees_except_fact_stops_and_ci_failed(event, before, after, input, r0, r1, (after, r1)),
+{
+    reveal(agrees_except_fact_stops_and_ci_failed);
+    if event is Fact {
+        assert forall|j: int| 0 <= j < after.len()
+            implies terminal_phase_frame(after[j], after[j]) by { phase_refl(after[j]); }
+        settle_result(after, after, r1, r1);
+        assert(before.len() == after.len());
+    } else {
+        if let Some(node) = event_target(event) {
+            if node.0 < before.len() {
+                phase_refl(after[node.0 as int]);
+                assert(stop_trace((after[node.0 as int], review, middle), event, node,
+                    before[node.0 as int], after[node.0 as int], input, r0, r1));
+            }
+        }
+    }
+}
+
+pub(in super::super) proof fn through_settle(event: Event, before: Seq<Phase>, applied: Seq<Phase>,
+    after: Seq<Phase>, input: ReplyInput, r0: Seq<ReportEntry>, r1: Seq<ReportEntry>, r2: Seq<ReportEntry>)
+    requires agrees_except_fact_stops_and_ci_failed(event, before, applied, input, r0, r1, (applied, r1)),
+        settled_forwards(applied, after, r1, r2),
+    ensures agrees_except_fact_stops_and_ci_failed(event, before, after, input, r0, r2, (applied, r1)),
+{
+    reveal(agrees_except_fact_stops_and_ci_failed);
+    reveal(settled_forwards);
+    read_forwards(r1, r2, Seq::empty());
+    assert(r1 + Seq::empty() =~= r1);
+    {
+        assert forall|j: int| 0 <= j < before.len()
+            && event_target(event) != Some(NodeId(j as u64))
+            implies terminal_phase_frame(before[j], after[j]) by {
+            phase_trans(before[j], applied[j], after[j]);
+        }
+        assert forall|j: int| before.len() <= j < after.len()
+            implies !(after[j] is Stopping || after[j] is Closed) by {
+            reveal(terminal_phase_frame);
+        }
+        if !(event is Fact) { if let Some(node) = event_target(event) {
+            if node.0 < before.len() {
+                let witness = choose|witness: (Phase, Option<ReviewStop>, Seq<ReportEntry>)|
+                    stop_trace(witness, event, node, before[node.0 as int], applied[node.0 as int], input, r0, r1);
+                phase_trans(witness.0, applied[node.0 as int], after[node.0 as int]);
+                assert(stop_trace(witness, event, node, before[node.0 as int], after[node.0 as int], input, r0, r2));
+            }
+        }
+        }
+    }
+}
 
 }

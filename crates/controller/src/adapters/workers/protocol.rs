@@ -166,12 +166,36 @@ fn ordinary_planner_reply(reply: &Value) -> Result<Reply> {
 }
 
 pub(crate) fn relative_file(path: &str) -> bool {
-    !path.is_empty()
-        && !path.starts_with('/')
-        && !path.contains(['\\', '\0'])
-        && path
-            .split('/')
-            .all(|part| !matches!(part, "" | "." | ".." | ".git"))
+    tl3_contracts::footprint::Footprint::new(vec![path.into()]).is_ok()
+}
+
+#[cfg(test)]
+mod footprint_path_tests {
+    use super::*;
+
+    #[test]
+    fn footprint_shared_vectors_and_byte_limits_at_reply_boundary() {
+        let cases: Vec<Value> = serde_json::from_str(include_str!(
+            "../../../../../workers/tests/fixtures/footprint-paths.json"
+        ))
+        .unwrap();
+        for case in cases {
+            assert_eq!(
+                relative_file(case["path"].as_str().unwrap()),
+                case["canonical"].is_string(),
+                "{case}"
+            );
+        }
+        for path in [
+            "x\n.py".into(),
+            "x\r.py".into(),
+            "é".repeat(128),
+            vec!["x".repeat(255); 12].join("/") + "/x",
+        ] {
+            assert!(!relative_file(&path), "accepted {path:?}");
+        }
+        assert!(relative_file(&"x".repeat(255)));
+    }
 }
 
 include!(concat!(env!("OUT_DIR"), "/worker_schemas.rs"));

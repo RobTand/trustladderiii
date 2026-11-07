@@ -113,6 +113,17 @@ pub enum Error {
     WorkerDispatchMissing,
     #[error("{0}")]
     Invalid(&'static str),
+    #[error(
+        "TL3 invariant: invalid footprint path {path:?} from planner request {request} node {node} attempt {attempt} run {run}: {reason}"
+    )]
+    FootprintInvariant {
+        path: String,
+        request: String,
+        node: u64,
+        attempt: u8,
+        run: String,
+        reason: &'static str,
+    },
     #[error("merge prerequisite update is missing its issue or pull request number")]
     PrerequisiteNumber,
     #[error("{0}")]
@@ -2730,15 +2741,34 @@ impl Controller {
         paths: &[String],
     ) -> Result<tl3_kernel::Footprint> {
         let request = request(snapshot, node)?;
+        let paths = tl3_contracts::footprint::Footprint::new(paths.to_vec()).map_err(|reason| {
+            let n = &world.nodes[node.0 as usize];
+            Error::FootprintInvariant {
+                path: paths
+                    .iter()
+                    .find(|path| {
+                        tl3_contracts::footprint::Footprint::new(vec![(*path).clone()]).is_err()
+                    })
+                    .expect("Footprint rejects an invalid individual path")
+                    .clone(),
+                request: format!(
+                    "{}/{}#{}",
+                    request.repo.owner, request.repo.name, request.issue
+                ),
+                node: node.0,
+                attempt: n.attempt,
+                run: n
+                    .run
+                    .map_or_else(|| "<absent>".into(), |run| run.to_string()),
+                reason,
+            }
+        })?;
         let repo = self
             .store
             .intern_repo(&request.repo.owner, &request.repo.name)?;
         let files = paths
             .iter()
             .map(|p| {
-                if p.is_empty() {
-                    return Err(Error::Invalid("footprint path must be nonempty"));
-                }
                 self.store
                     .intern_path(repo, p)
                     .map_err(Error::from)
@@ -3653,7 +3683,10 @@ impl Controller {
                     .take(findings::MAX_FAILED_TESTS)
                     .map(|test| findings::FailedTest {
                         test: findings::clipped(&test.test, 4096),
-                        message: findings::clipped(&test.message, findings::MAX_MESSAGE_CHARS),
+                        message: findings::clipped(
+                            &test.message,
+                            tl3_contracts::report::PROOF_MESSAGE_CHARS,
+                        ),
                     })
                     .collect();
                 Event::Reply {
@@ -3994,6 +4027,8 @@ impl Controller {
                         }
                     }
                     adapters::workers::protocol::MappedReply::NeedsFiles { paths, fits } => {
+                        let paths = tl3_contracts::footprint::Footprint::new(paths)
+                            .map_err(Error::Invalid)?;
                         let request = request(snapshot, node)?;
                         let repo = self
                             .store
@@ -4002,9 +4037,9 @@ impl Controller {
                             .files(n.footprint)
                             .ok_or(Error::Invalid("unknown footprint"))?
                             .collect::<Vec<_>>();
-                        for path in paths {
+                        for path in paths.iter() {
                             files.push(tl3_kernel::FileId(
-                                self.store.intern_path(repo, &path)?.get() as u64,
+                                self.store.intern_path(repo, path)?.get() as u64,
                             ));
                         }
                         Reply::MakerNeedsFiles {

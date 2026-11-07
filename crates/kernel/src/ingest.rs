@@ -80,42 +80,130 @@ pub(super) fn reply_ingest(w: &mut World, i: usize, reply: Reply,
                     && final(w).next_question == old(w).next_question
                     && *final(out) == *old(out)
             }),
-] proof [reveal(port_t860_contracts::transition_post); reveal(reply_bounds);] {
+] {
+    kernel_snapshot! { ingest_before = *w }
+    kernel_snapshot! { ingest_out = *out }
     match reply {
         Reply::IngestDone { size } => {
             finish_ingest(w, i, size, None);
+            kernel_proof! { ingest_facts::output_bound(ingest_before@, *w, i as int, ingest_out@.len, out.len); }
+            kernel_proof! { reveal(port_t860_contracts::transition_post); }
         }
         Reply::IngestEarlyEnd(e) => {
             finish_ingest(w, i, 1, Some(e));
+            kernel_proof! { ingest_facts::output_bound(ingest_before@, *w, i as int, ingest_out@.len, out.len); }
+            kernel_proof! { reveal(port_t860_contracts::transition_post); }
         }
         Reply::AuditAgrees => {
-            kernel_proof! { reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); }
-            match w.nodes[i].early_end {
-            Some(e) => enter_stopping(&mut w.nodes[i], e.outcome()),
-            None => {
-                notice(out, i, Notice::MeasuresPosted);
-                set_phase(&mut w.nodes[i], Phase::Unplanned);
-            }
-            }
+            reply_audit_agrees(w, i, out);
+            kernel_proof! { reveal(port_t860_contracts::transition_post); }
         },
         Reply::AuditDisagrees => {
-            kernel_snapshot! { before_audit = w.nodes@[i as int] }
-            let m = &mut w.nodes[i];
-            m.audit_rounds = m.audit_rounds.saturating_add(1);
-            if m.audit_rounds < 2 {
-                // Ingest revises once with the audit's objections.
-                set_phase(m, Phase::Ingesting);
-            } else {
-                // Q27, #832-A: intake cannot split. The one repair is spent.
-                stop_for_review(m, ReviewStop::AuditDisagreement);
+            reply_audit_disagrees(w, i, out);
+            kernel_proof! {
+                ingest_facts::audit_result(ingest_before@.nodes@[i as int], w.nodes@[i as int]);
+                reveal(port_t860_contracts::transition_post);
             }
-            kernel_proof! { port_t860_link::audit_finished(before_audit@, w.nodes@[i as int]); }
-        }
+        },
         Reply::ProtectedPaths => {
             kernel_proof! { reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); }
             enter_stopping(&mut w.nodes[i], Outcome::NotActionable);
+            kernel_proof! { reveal(port_t860_contracts::transition_post); reveal(reply_bounds); }
         },
         _ => {}
     }
 }
 }
+
+kernel_fn! {
+/// Auditing: private verbatim agreement branch.
+fn reply_audit_agrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures (successful_reply_input(old(w).nodes@[i as int], Reply::AuditAgrees)
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds);] {
+    match w.nodes[i].early_end {
+        Some(e) => enter_stopping(&mut w.nodes[i], e.outcome()),
+        None => {
+            notice(out, i, Notice::MeasuresPosted);
+            set_phase(&mut w.nodes[i], Phase::Unplanned);
+        }
+    }
+}
+}
+
+kernel_fn! {
+/// Auditing: private verbatim disagreement branch and isolated counter update.
+fn reply_audit_disagrees(w: &mut World, i: usize, _out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(_out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures final(w).nodes@.len() == old(w).nodes@.len(),
+        final(w).next_question == old(w).next_question,
+        final(w).file_sets@ == old(w).file_sets@,
+        *final(_out) == *old(_out),
+        ingest_facts::audit_post(old(w).nodes@[i as int], final(w).nodes@[i as int]),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        reply_bounds(*old(w), *final(w), i as int, old(_out).len, final(_out).len),
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+] {
+    kernel_snapshot! { before_node = w.nodes@[i as int] }
+    audit_disagreement_node(&mut w.nodes[i]);
+    kernel_proof! {
+        ingest_facts::audit_result(before_node@, w.nodes@[i as int]);
+        reveal(reply_bounds);
+    }
+}
+}
+
+kernel_fn! {
+/// Audit disagreement: isolate the verbatim node update from mutable world frames.
+#[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
+fn audit_disagreement_node(m: &mut Node) -> (result: ()) [
+    requires old(m).generation < u64::MAX,
+    ensures ingest_facts::audit_post(*old(m), *final(m)),
+] {
+    kernel_snapshot! { before_audit = *m }
+    increment_audit(m);
+    kernel_snapshot! { before_phase = *m }
+    if m.audit_rounds < 2 {
+        // Ingest revises once with the audit's objections.
+        set_phase(m, Phase::Ingesting);
+        kernel_proof! { ingest_facts::audit_first(before_audit@, before_phase@, *m); }
+    } else {
+        // Intake cannot split. The one repair is spent.
+        stop_for_review(m, ReviewStop::AuditDisagreement);
+        kernel_proof! { ingest_facts::audit_spent(before_audit@, before_phase@, *m); }
+    }
+}
+}
+
+kernel_fn! {
+/// Audit disagreement: verbatim saturation isolated from world frames.
+fn increment_audit(m: &mut Node) -> (result: ()) [
+    ensures ingest_facts::incremented(*old(m), *final(m)),
+        final(m).audit_rounds == if old(m).audit_rounds < u8::MAX {
+            (old(m).audit_rounds + 1) as u8
+        } else { u8::MAX },
+        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+        settle_shape(*old(m)) == settle_shape(*final(m)),
+        final(m).generation == old(m).generation,
+        final(m).next_seq == old(m).next_seq, final(m).last_cmd == old(m).last_cmd,
+        final(m).credit == old(m).credit,
+] proof [reveal(ingest_facts::incremented);] {
+    m.audit_rounds = m.audit_rounds.saturating_add(1);
+}
+}
+
+#[cfg(test)]
+#[path = "ingest_equivalence/mod.rs"]
+mod reply_ingest_equivalence;

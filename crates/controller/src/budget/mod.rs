@@ -680,7 +680,7 @@ fn validate_restore(state: &Value) -> Result<()> {
     if (!state["last_progress_kind"].is_null() && !state["last_progress_kind"].is_string())
         || !matches!(
             state["last_progress_kind"].as_str(),
-            None | Some("read" | "grep" | "glob" | "write" | "edit" | "run_tests")
+            None | Some("read" | "grep" | "glob" | "write" | "edit" | "delete" | "run_tests")
         )
     {
         return Err("invalid maker progress checkpoint");
@@ -885,7 +885,8 @@ fn tool_policy(
                 [None, Some(false), Some(true)].map(|evidence| {
                     maker
                         && window != 0
-                        && evidence.unwrap_or(changed != 0 && matches!(name, "write" | "edit"))
+                        && evidence
+                            .unwrap_or(changed != 0 && matches!(name, "write" | "edit" | "delete"))
                         && (fresh != 0 || name == "run_tests")
                 })
             })
@@ -901,11 +902,27 @@ fn tool_policy(
             "run_tests",
             "write",
             "edit",
+            "delete",
         ]
         .into_iter()
         .map(|name| (name.into(), rule(name)))
         .collect(),
         other: rule(""),
+    }
+}
+
+#[cfg(test)]
+mod deletion_tests {
+    /// #895: a fresh successful removal is implementation progress, like an edit.
+    #[test]
+    fn deletion_is_progress_but_cannot_bypass_finalization() {
+        let policy = super::tool_policy(true, 16, false, false, false);
+        let value = serde_json::to_value(policy).unwrap();
+        assert_eq!(value["tools"]["delete"]["progress"][1][1][0], true);
+        assert_eq!(value["tools"]["delete"]["progress"][1][0][0], false);
+        let reserve =
+            serde_json::to_value(super::tool_policy(true, 16, true, false, false)).unwrap();
+        assert_eq!(reserve["tools"]["delete"]["permission"], "reserve");
     }
 }
 #[derive(Serialize, Deserialize, JsonSchema)]

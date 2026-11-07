@@ -58,6 +58,35 @@ def test_invalid_forcing_is_a_planner_violation(planner_request, deflake_worktre
                for item in deflake_worktree['violations'])
 
 
+def test_forcing_repair_names_the_actual_check_index(planner_request, deflake_worktree, monkeypatch):
+    from tl3_harness import Forcing, ProofRefusal
+    from tl3_workers.roles.planner import check_reply
+
+    class CapturedRefusal(Exception):
+        pass
+
+    parse = Forcing.parse
+
+    def capture(*args, **kwargs):
+        try:
+            return parse(*args, **kwargs)
+        except ProofRefusal as error:
+            # Stop at the real validation boundary, before unrelated Rust forecasts.
+            raise CapturedRefusal(error) from None
+
+    monkeypatch.setattr(Forcing, 'parse', staticmethod(capture))
+    check = deflake_worktree['checks'][0]
+    deflake_worktree['checks'] = [copy.deepcopy(check) for _ in range(4)]
+    deflake_worktree['checks'][3]['forcing']['patches'][0]['raises'] = 'AssertionError'
+    with pytest.raises(CapturedRefusal) as caught:
+        check_reply(planner_request['inputs'], deflake_worktree)
+    error = caught.value.args[0]
+    assert error.rule == 'forcing.raise_class'
+    refusal = str(error)
+    assert '/checks/3/forcing/patches/0/raises' in refusal
+    assert '/checks/0/forcing/patches/0/raises' not in refusal
+
+
 @pytest.mark.parametrize('change', [
     {'code': 'print(1)'},
     {'symptom': ''},

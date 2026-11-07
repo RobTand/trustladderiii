@@ -82,6 +82,12 @@ use allocation::*;
 mod reply_admission;
 use reply_admission::*;
 mod ingest;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/ingest_facts.rs"]
+mod ingest_facts;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/teardown_facts.rs"]
+mod teardown_facts;
 use ingest::*;
 mod work_replies;
 use work_replies::*;
@@ -120,7 +126,9 @@ use settling::settle;
 mod steps;
 pub use steps::{step, step_checked, step_with_passes};
 pub mod report;
-pub use report::{FailedRoundCause, Report, ReportEntry, ReplyKind, StepRefusal, StepResult, StopCause};
+pub use report::{
+    FailedRoundCause, ReplyKind, Report, ReportEntry, StepRefusal, StepResult, StopCause,
+};
 #[cfg(verus_keep_ghost)]
 mod progress_pool;
 #[cfg(verus_keep_ghost)]
@@ -1636,7 +1644,7 @@ pub enum Broken {
 }
 
 // proof map start
-// proof gap: CiFailed report conjunct, owner K3 #907
+// proof gap: fact-path report proofs (facts stops + CiFailed), owner K3 #907
 /// The proof-map entry that covers each event variant. The match is exhaustive, so
 /// a new variant without a proof doesn't compile, and a test checks that each
 /// named proof exists.
@@ -1730,9 +1738,9 @@ pub fn proofs_of_phase(phase: Phase) -> &'static [&'static str] {
             "progress_from_rebasing",
             "apply_rebase_progress_gate",
         ],
-        Phase::AwaitingRob => &["advance_awaiting_rob", "progress_from_awaiting_rob"],
+        Phase::AwaitingRob => &["progress_from_awaiting_rob"],
         Phase::Stopping(_) => &["advance_stopping", "progress_from_stopping"],
-        Phase::Closed(_) => &["advance_closed", "progress_from_closed"],
+        Phase::Closed(_) => &["progress_from_closed"],
     }
 }
 // proof map end
@@ -1997,6 +2005,35 @@ proof fn movable_frame(before: World, after: World, i: int)
 pub open spec fn phase_view(nodes: Seq<Node>) -> Seq<Phase> {
     Seq::new(nodes.len(), |i: int| nodes[i].phase)
 }
+
+/// Public projection of the phase field group, without exposing World storage.
+pub closed spec fn world_phases(w: World) -> Seq<Phase> { phase_view(w.nodes@) }
+
+/// Project only the admission fields used by report agreement.
+pub closed spec fn report_input(w: World, event: Event) -> report::ReplyInput {
+    match event {
+        Event::Reply { node, generation: _, reply } if node.0 < w.nodes@.len() => {
+            let n = w.nodes@[node.0 as int];
+            report::ReplyInput { phase: n.phase, current: current_item(n),
+                run: n.run, job: n.job, accepted: port_t860_contracts::admissible(w, n, reply) }
+        }
+        _ => report::ReplyInput { phase: Phase::Unplanned, current: None,
+            run: None, job: None, accepted: false },
+    }
+}
+
+proof fn report_projection(w: World, event: Event)
+    ensures world_phases(w) == phase_view(w.nodes@),
+        report_input(w, event) == match event {
+            Event::Reply { node, reply, .. } if node.0 < w.nodes@.len() => {
+                let n = w.nodes@[node.0 as int];
+                report::ReplyInput { phase: n.phase, current: current_item(n),
+                    run: n.run, job: n.job, accepted: port_t860_contracts::admissible(w, n, reply) }
+            }
+            _ => report::ReplyInput { phase: Phase::Unplanned, current: None,
+                run: None, job: None, accepted: false },
+        },
+{ reveal(world_phases); reveal(report_input); }
 
 spec fn settle_chain(before: World, after: World) -> bool {
     after.nodes@.len() == before.nodes@.len()
@@ -2285,3 +2322,11 @@ mod port_t860_link;
 
 #[cfg(all(test, not(verus_keep_ghost)))]
 mod reply_equivalence;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/retries_facts.rs"]
+mod retries_facts;
+
+#[cfg(all(test, not(verus_keep_ghost)))]
+#[path = "../tests/mark_handled_equivalence/cases.rs"]
+mod mark_handled_equivalence;

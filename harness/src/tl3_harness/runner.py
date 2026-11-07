@@ -35,6 +35,9 @@ spec.loader.exec_module(limits)
 spec = importlib.util.spec_from_file_location("tl3_red_message", Path(__file__).with_name("red_message.py"))
 red_message = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(red_message)
+spec = importlib.util.spec_from_file_location("tl3_source_reads", Path(__file__).with_name("source_reads.py"))
+source_reads = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(source_reads)
 
 
 def module_candidates(module):
@@ -353,7 +356,7 @@ def describe(error):
 
 class Reporter:
     def __init__(self, tests, descriptor, summary=False, parallel=False, patches=(), selection=None,
-                 declared_symptom=None, worker=False, expected_red_message=None):
+                 declared_symptom=None, worker=False, expected_red_message=None, proof_subjects=None):
         self.tests = tests
         self.descriptor = descriptor
         self.summary = summary
@@ -364,6 +367,8 @@ class Reporter:
         self.declared_symptom = declared_symptom
         self.worker = worker
         self.expected_red_message = expected_red_message
+        self.proof_subjects = proof_subjects or {}
+        self.source_reads = source_reads.SourceReads(Path.cwd()) if self.proof_subjects and not parallel else None
         self.failures = {}
         self.target_hits = {}
         self.delay_budget = {}
@@ -379,6 +384,20 @@ class Reporter:
         self.accounting_owner = os.getpid()
         self.accounting_directory = (tempfile.mkdtemp(prefix='tl3-forcing-', dir='/tmp')
                                      if any('delay_seconds' in patch for patch in patches) else None)
+
+    @pytest.hookimpl(wrapper=True, tryfirst=True)
+    def pytest_runtest_call(self, item):
+        if self.source_reads is None:
+            return (yield)
+        subjects = {subject for selector, files in self.proof_subjects.items()
+                    if selects(selector, item.nodeid) for subject in files}
+        self.source_reads.begin(item.nodeid, subjects)
+        try:
+            return (yield)
+        finally:
+            # Record first, then raise outside repository code. A caught read
+            # exception or a different assertion cannot conceal the violation.
+            self.source_reads.finish()
 
     @pytest.fixture(autouse=True)
     def _tl3_scratch(self, tmp_path):
@@ -532,6 +551,12 @@ class Reporter:
         message = str(report.longrepr) if report.failed else ""
         if call.excinfo and isinstance(call.excinfo.value, ForcingTampered):
             message = str(call.excinfo.value) + '\n' + message
+        source_read = bool(call.excinfo and isinstance(call.excinfo.value, source_reads.SubjectSourceRead))
+        if source_read:
+            # The test may have raised an added-name error after reading. Its
+            # exception context must not turn this guard violation into RED.
+            missing = None
+            message = str(call.excinfo.value) + '\n' + message
         if self.summary:
             if self.declared_symptom is not None and report.failed and call.excinfo:
                 error = call.excinfo.value
@@ -540,10 +565,11 @@ class Reporter:
                 # A forcing that raises an exception itself is never the old test's symptom.
                 injected = bool(frames and Path(str(frames[-1].path)).resolve() == Path(__file__).resolve())
                 failure = {'exception': type(error).__module__ + '.' + type(error).__qualname__,
-                           'phase': call.when, 'source': own and not injected}
+                           'phase': call.when, 'source': own and not injected and not source_read}
                 self.failures.setdefault(item.nodeid, []).append(failure)
                 report.tl3_symptom_failure = failure
             report.tl3_assertion = bool(assertion)
+            report.tl3_source_read = str(call.excinfo.value) if source_read else ''
             if report.when == 'teardown':
                 report.tl3_target_hits = self.target_hits.get(item.nodeid, {})
                 report.tl3_delay_budget = self.delay_budget.get(item.nodeid)
@@ -589,6 +615,8 @@ class Reporter:
                         self.forcing_refusals[report.nodeid] = refusal
             outcome = "skipped" if hasattr(report, "wasxfail") else report.outcome
             message = str(report.longrepr) if report.failed else ""
+            if source_read := getattr(report, 'tl3_source_read', ''):
+                message = source_read + '\n' + message
             self.phases.setdefault(report.nodeid, []).append(
                 (report.when, outcome, message[:1000], len(message) > 1000, assertion))
         # xdist reports a crashed worker's test once, outside the three phases.
@@ -631,14 +659,16 @@ class Reporter:
     @pytest.hookimpl(optionalhook=True)
     def pytest_configure_node(self, node):
         node.workerinput['tl3_symptom'] = {'tests': self.tests, 'patches': self.patches,
-                                          'declared_symptom': self.declared_symptom}
+                                          'declared_symptom': self.declared_symptom,
+                                          'proof_subjects': self.proof_subjects}
 
 
 def pytest_configure(config):
     data = getattr(config, 'workerinput', {}).get('tl3_symptom')
-    if data and data['declared_symptom'] is not None:
+    if data and (data['declared_symptom'] is not None or data['proof_subjects']):
         config.pluginmanager.register(Reporter(data['tests'], -1, summary=True, patches=data['patches'],
-                                               declared_symptom=data['declared_symptom'], worker=True))
+                                               declared_symptom=data['declared_symptom'], worker=True,
+                                               proof_subjects=data['proof_subjects']))
 
 
 def worker_teardown_exhausted(error):
@@ -667,11 +697,13 @@ def main():
     selection = None
     declared_symptom = None
     expected_red_message = None
+    proof_subjects = None
     if isinstance(tests, dict):
         # A forced check's selection carries the plan's forcing, which the host validated (#393).
         selection = tests.get("selection")
         declared_symptom = tests.get('declared_symptom')
         expected_red_message = tests.get('red_message')
+        proof_subjects = tests.get('proof_subjects')
         tests, forcing = tests["tests"], tests.get("forcing", {})
         os.environ.update(forcing.get("environment", {}))
     descriptor = os.dup(1)
@@ -687,7 +719,8 @@ def main():
     sys.path.insert(0, str(Path.cwd()))
     reporter = Reporter(tests, descriptor, summary, parallel=bool(summary and parallel),
                         patches=tuple(forcing.get("patches", ())), selection=selection,
-                        declared_symptom=declared_symptom, expected_red_message=expected_red_message)
+                        declared_symptom=declared_symptom, expected_red_message=expected_red_message,
+                        proof_subjects=proof_subjects)
     # Start before pytest loads the checkout's conftest files, ini options and
     # plugins. Any exit after this point may come from the code under test.
     reporter.pytest_sessionstart()
@@ -700,7 +733,7 @@ def main():
             reporter.pytest_sessionfinish(0)
             return 0
         worker_plugin = []
-        if declared_symptom is not None:
+        if declared_symptom is not None or proof_subjects:
             harness = Path(__file__).resolve().parent
             sys.path.insert(0, str(harness.parent))
             # Pytest owns the short plugin name "runner". Use the mounted package's name.

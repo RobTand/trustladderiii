@@ -57,9 +57,18 @@ pub enum ReplyKind {
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReportEntry {
-    FailedRound { node: NodeId, cause: FailedRoundCause },
-    Stopped { node: NodeId, cause: StopCause },
-    Stale { node: NodeId, reply_kind: ReplyKind },
+    FailedRound {
+        node: NodeId,
+        cause: FailedRoundCause,
+    },
+    Stopped {
+        node: NodeId,
+        cause: StopCause,
+    },
+    Stale {
+        node: NodeId,
+        reply_kind: ReplyKind,
+    },
 }
 
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
@@ -73,6 +82,9 @@ pub struct StepResult {
     pub world: World,
     pub outputs: Vec<Out>,
     pub report: Report,
+    /// Verification-only observation of the actual input to settlement.
+    #[cfg(verus_keep_ghost)]
+    pub settlement_input: Ghost<(Seq<Phase>, Seq<ReportEntry>)>,
 }
 
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
@@ -83,6 +95,79 @@ pub struct StepRefusal {
 
 #[cfg(verus_keep_ghost)]
 verus! {
+/// Admission field group captured before applying the event.
+pub struct ReplyInput {
+    pub phase: Phase,
+    pub current: Option<Item>,
+    pub run: Option<u64>,
+    pub job: Option<u64>,
+    pub accepted: bool,
+}
+
+pub open spec fn event_target(event: Event) -> Option<NodeId> {
+    match event {
+        Event::Reply { node, .. } | Event::Ack { node, .. }
+        | Event::Fact { node, .. } | Event::Command { node, .. } => Some(node),
+        _ => None,
+    }
+}
+
+pub open spec fn user_stop(event: Event) -> bool {
+    match event {
+        Event::Command { command: Command::Stop, .. }
+        | Event::Command { command: Command::Answer { answer: Answer::Stop, .. }, .. } => true,
+        _ => false,
+    }
+}
+
+#[verifier::opaque]
+pub closed spec fn event_entries(event: Event, input: ReplyInput) -> Seq<ReportEntry> {
+    match event {
+        Event::Reply { node, generation, reply } => reply_entries(node, input.phase,
+            input.current, input.run, input.job, generation, reply, input.accepted),
+        _ => Seq::empty(),
+    }
+}
+
+/// A stop's phase and review cause are observed together at the event transition.
+/// Settlement can finish teardown but preserves that outcome and report entry.
+pub open spec fn stop_trace(witness: (Phase, Option<ReviewStop>, Seq<ReportEntry>),
+    event: Event, node: NodeId, before: Phase, after: Phase, input: ReplyInput,
+    r0: Seq<ReportEntry>, r1: Seq<ReportEntry>) -> bool {
+    terminal_phase_frame(witness.0, after)
+        && forwards(r0, witness.2, event_entries(event, input))
+        && stop_cause(witness.2, r1, node, before, witness.0,
+            stop_kind(witness.0, witness.1, false, user_stop(event)))
+}
+
+/// Excludes exactly the report behavior owned by the fact path: its stop
+/// entries and CiFailed failed-round entry. Neither exclusion covers replies,
+/// commands, acknowledgements, or settlement. A Fact event retains the length,
+/// new-node, and other-node phase frames. Its unconstrained post-fact report
+/// is the actual boundary input to the proven settlement relation, retained
+/// in StepResult's erased ghost observation rather than existentially chosen.
+#[verifier::opaque]
+pub closed spec fn agrees_except_fact_stops_and_ci_failed(event: Event,
+    before: Seq<Phase>, after: Seq<Phase>, input: ReplyInput,
+    r0: Seq<ReportEntry>, r1: Seq<ReportEntry>,
+    settlement_input: (Seq<Phase>, Seq<ReportEntry>)) -> bool {
+    before.len() <= after.len() <= before.len() + 1
+        && (forall|j: int| 0 <= j < before.len()
+            && event_target(event) != Some(NodeId(j as u64))
+            ==> terminal_phase_frame(before[j], after[j]))
+        && (forall|j: int| before.len() <= j < after.len()
+            ==> !(after[j] is Stopping || after[j] is Closed))
+        && if event is Fact {
+            settlement_input.0.len() == before.len()
+                && settled_forwards(settlement_input.0, after, settlement_input.1, r1)
+        } else { match event_target(event) {
+            Some(node) if node.0 < before.len() =>
+                exists|witness: (Phase, Option<ReviewStop>, Seq<ReportEntry>)|
+                    stop_trace(witness, event, node, before[node.0 as int], after[node.0 as int], input, r0, r1),
+            _ => forwards(r0, r1, Seq::empty()),
+        } }
+}
+
 #[verifier::opaque]
 pub closed spec fn forwards(r0: Seq<ReportEntry>, r1: Seq<ReportEntry>,
     entries: Seq<ReportEntry>) -> bool {
@@ -116,6 +201,20 @@ pub closed spec fn counter_exhausted(headroom: bool, refused: bool) -> bool {
 }
 
 #[verifier::opaque]
+pub closed spec fn stop_kind(phase: Phase, review: Option<ReviewStop>,
+    pr_closed: bool, user_stop: bool) -> StopCause {
+match phase {
+            Phase::Stopping(Outcome::Merged) | Phase::Closed(Outcome::Merged) => StopCause::Merged,
+            Phase::Stopping(Outcome::Replaced) | Phase::Closed(Outcome::Replaced) => StopCause::Replaced,
+            Phase::Stopping(Outcome::Duplicate) | Phase::Closed(Outcome::Duplicate) => StopCause::Duplicate,
+            Phase::Stopping(Outcome::AlreadyDone) | Phase::Closed(Outcome::AlreadyDone) => StopCause::AlreadyDone,
+            Phase::Stopping(Outcome::NotActionable) | Phase::Closed(Outcome::NotActionable) => StopCause::NotActionable,
+            _ => if pr_closed { StopCause::PrClosed } else if user_stop { StopCause::UserStop }
+                else { match review { Some(kind) => StopCause::ReviewStop(kind), None => StopCause::UserStop } },
+        }
+}
+
+#[verifier::opaque]
 pub(super) closed spec fn round_entries(node: NodeId, cause: Option<FailedRoundCause>) -> Seq<ReportEntry> {
     match cause {
         Some(cause) => seq![ReportEntry::FailedRound { node, cause }],
@@ -146,20 +245,6 @@ pub(super) closed spec fn work_failure(reply: Reply) -> Option<FailedRoundCause>
 }
 
 #[verifier::opaque]
-pub(super) closed spec fn ci_failure(phase: Phase, current: Option<Item>, infra: bool)
-    -> Option<FailedRoundCause> {
-    if !infra && (phase == Phase::Queued
-        || phase == Phase::Publishing && current == Some(Item::Do(EffectKind::Enqueue))) {
-        Some(FailedRoundCause::CiFailed)
-    } else { None }
-}
-
-#[verifier::opaque]
-pub(super) closed spec fn fact_failure(phase: Phase, current: Option<Item>, fact: Fact)
-    -> Option<FailedRoundCause> {
-    match fact { Fact::CiFailed { infra } => ci_failure(phase, current, infra), _ => None }
-}
-#[verifier::opaque]
 pub closed spec fn reply_kind(reply: Reply) -> ReplyKind {
 match reply {
             Reply::IngestDone { .. } => ReplyKind::IngestDone,
@@ -187,7 +272,7 @@ match reply {
 }
 
 #[verifier::opaque]
-pub(super) closed spec fn reply_entries(node: NodeId, phase: Phase, current: Option<Item>,
+pub closed spec fn reply_entries(node: NodeId, phase: Phase, current: Option<Item>,
     run: Option<u64>, job: Option<u64>, generation: u64, reply: Reply, accepted: bool)
     -> Seq<ReportEntry> {
     if phase is Stopping { Seq::empty() }
@@ -198,7 +283,7 @@ pub(super) closed spec fn reply_entries(node: NodeId, phase: Phase, current: Opt
 }
 
 #[verifier::opaque]
-pub(super) closed spec fn terminal_phase_frame(before: Phase, after: Phase) -> bool {
+pub closed spec fn terminal_phase_frame(before: Phase, after: Phase) -> bool {
     match before {
         Phase::Stopping(o) => after == Phase::Stopping(o) || after == Phase::Closed(o),
         Phase::Closed(o) => after == Phase::Closed(o),
@@ -225,6 +310,7 @@ pub(super) closed spec fn settled_forwards(before: Seq<Phase>, after: Seq<Phase>
 
 kernel_fn! {
 impl Report {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> (result: Self) [
         ensures result.entries@ == Seq::<ReportEntry>::empty(),
     ] {
@@ -313,16 +399,9 @@ kernel_fn! {
 impl StopCause {
     pub(super) fn from_phase(phase: Phase, review: Option<ReviewStop>,
         pr_closed: bool, user_stop: bool) -> (result: Self) [
-        ensures result == match phase {
-            Phase::Stopping(Outcome::Merged) | Phase::Closed(Outcome::Merged) => StopCause::Merged,
-            Phase::Stopping(Outcome::Replaced) | Phase::Closed(Outcome::Replaced) => StopCause::Replaced,
-            Phase::Stopping(Outcome::Duplicate) | Phase::Closed(Outcome::Duplicate) => StopCause::Duplicate,
-            Phase::Stopping(Outcome::AlreadyDone) | Phase::Closed(Outcome::AlreadyDone) => StopCause::AlreadyDone,
-            Phase::Stopping(Outcome::NotActionable) | Phase::Closed(Outcome::NotActionable) => StopCause::NotActionable,
-            _ => if pr_closed { StopCause::PrClosed } else if user_stop { StopCause::UserStop }
-                else { match review { Some(kind) => StopCause::ReviewStop(kind), None => StopCause::UserStop } },
-        },
+        ensures result == stop_kind(phase, review, pr_closed, user_stop),
     ] {
+        kernel_proof! { lemmas::stop_kind_value(phase, review, pr_closed, user_stop); }
         match phase {
             Phase::Stopping(Outcome::Merged) | Phase::Closed(Outcome::Merged) => StopCause::Merged,
             Phase::Stopping(Outcome::Replaced) | Phase::Closed(Outcome::Replaced) => StopCause::Replaced,
@@ -332,6 +411,39 @@ impl StopCause {
             _ => if pr_closed { StopCause::PrClosed } else if user_stop { StopCause::UserStop }
                 else { match review { Some(kind) => StopCause::ReviewStop(kind), None => StopCause::UserStop } },
         }
+    }
+}
+}
+
+kernel_fn! {
+/// Fact reporting is isolated from the fact handlers' world frames.
+#[allow(clippy::collapsible_if)]
+pub(super) fn record_fact(report: &mut Report, node: NodeId, before: Phase, after: Phase,
+    fact: Fact, ci: Option<FailedRoundCause>) -> (result: ()) [
+
+] {
+    if matches!(fact, Fact::CiFailed { .. }) {
+        if let Some(cause) = ci {
+            report.record_failed_round(node, cause);
+        }
+    }
+    let review = if matches!(fact, Fact::CiFailed { .. }) { Some(ReviewStop::CiFailed) } else { None };
+    let cause = StopCause::from_phase(after, review, matches!(fact, Fact::PrClosedByPerson), false);
+    report.record_stop(node, before, after, cause);
+
+}
+}
+
+kernel_fn! {
+/// Runtime evidence for the fact-path proof gap, owned by K3 #907.
+pub(super) fn ci_failure_cause(phase: Phase, current: Option<Item>, fact: Fact)
+    -> (result: Option<FailedRoundCause>) [] {
+    match fact {
+        Fact::CiFailed { infra: false } if phase == Phase::Queued
+            || phase == Phase::Publishing && current == Some(Item::Do(EffectKind::Enqueue)) => {
+            Some(FailedRoundCause::CiFailed)
+        }
+        _ => None,
     }
 }
 }

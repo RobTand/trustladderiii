@@ -83,6 +83,15 @@ fn production_and_reference_sources_are_pinned() {
                 );
                 for part in pin["parts"].as_array().unwrap().iter().skip(1) {
                     let part = part.as_str().unwrap();
+                    if part.starts_with("pub(crate) fn relative_file(") {
+                        let leaf = |source: &str| {
+                            let start = source.find("pub(crate) fn relative_file(").unwrap();
+                            let end = source[start..].find("\n}\n").unwrap() + start + 3;
+                            source[start..end].to_owned()
+                        };
+                        assert_eq!(leaf(&copy), leaf(&production), "current path validation drift");
+                        continue;
+                    }
                     assert!(production.contains(part), "production leaf drift: {name}");
                     assert!(copy.contains(part), "current leaf drift: {name}");
                 }
@@ -105,7 +114,7 @@ fn production_and_reference_sources_are_pinned() {
         for part in pin["parts"].as_array().unwrap() {
             let part = part.as_str().unwrap();
             assert!(
-                changed || production.contains(part),
+                changed || (name == "helpers" && part.contains("fn footprint(")) || production.contains(part),
                 "production leaf drift: {name}"
             );
             let normalized = compiled.replace("pub(super) fn", "fn");
@@ -115,6 +124,12 @@ fn production_and_reference_sources_are_pinned() {
             );
         }
     }
+    let footprint = |source: &str| {
+        let start = source.find("    fn footprint(").unwrap();
+        let end = source[start..].find("\n    }\n").unwrap() + start + 7;
+        source[start..end].to_owned()
+    };
+    assert_eq!(footprint(historical_current), footprint(source), "current footprint intern drift");
 }
 fn forecast() -> Value {
     json!({"tokenizer":"o200k_base","brief_tokens":1,"file_tokens":{"safe.rs":0},"overhead_tokens":0,"tokens":1,"fit_tokens":100,"context_tokens":150,"fits":true})

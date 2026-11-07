@@ -34,7 +34,11 @@ impl Run {
     }
 
     fn send(&mut self, event: Event) {
-        let tl3_kernel::StepResult { world: w, outputs: out, .. } = step(self.w.clone(), event);
+        let tl3_kernel::StepResult {
+            world: w,
+            outputs: out,
+            ..
+        } = step(self.w.clone(), event);
         assert!(w.valid(), "invalid world after {event:?}:\n{w:#?}");
         assert!(w.is_settled(), "unsettled world after {event:?}");
         for o in out {
@@ -478,14 +482,15 @@ fn two_requests_share_one_slot_first_come_first_served() {
                 repo: RepoId(0),
                 priority: Priority::Unranked,
             },
-        ).world;
+        )
+        .world;
     }
     // Drive both with the witness. The world must stay valid, the measure must
     // fall, and the two leaves must never hold the slot at once.
     for _ in 0..400 {
         let Some(e) = w.witness() else { break };
         let before = w.measure();
-        let tl3_kernel::StepResult { world: next, outputs: _, .. } = step(w, e);
+        let tl3_kernel::StepResult { world: next, .. } = step(w, e);
         assert!(next.valid() && next.is_settled());
         assert!(next.measure() < before);
         assert!(next.nodes.iter().filter(|n| n.holds).count() <= 1);
@@ -621,7 +626,8 @@ fn repo_and_node_ids_do_not_truncate() {
             repo: RepoId(299),
             priority: Priority::Unranked,
         },
-    ).world;
+    )
+    .world;
     assert_eq!(w.nodes[0].repo, RepoId(299));
     let before = w.clone();
     w = step(
@@ -631,7 +637,8 @@ fn repo_and_node_ids_do_not_truncate() {
             id: 1,
             command: Command::Stop,
         },
-    ).world;
+    )
+    .world;
     assert_eq!(w, before);
     w = step(
         w,
@@ -639,7 +646,8 @@ fn repo_and_node_ids_do_not_truncate() {
             repo: RepoId(u64::MAX),
             priority: Priority::Unranked,
         },
-    ).world;
+    )
+    .world;
     assert_eq!(w, before);
 }
 
@@ -655,7 +663,8 @@ fn file_locks_cover_large_footprints_and_stay_within_the_repo() {
                     seq: e.seq,
                     ack: Ack::Confirmed,
                 },
-            ).world;
+            )
+            .world;
         }
         *w = step(
             w.clone(),
@@ -664,7 +673,8 @@ fn file_locks_cover_large_footprints_and_stay_within_the_repo() {
                 generation: w.nodes[i].generation,
                 reply,
             },
-        ).world;
+        )
+        .world;
         assert!(w.valid());
     }
     let mut w = World::new(&[2, 1], 3);
@@ -675,7 +685,8 @@ fn file_locks_cover_large_footprints_and_stay_within_the_repo() {
                 repo,
                 priority: Priority::Unranked,
             },
-        ).world;
+        )
+        .world;
     }
     let files = w.intern_footprint((0..300).map(|i| FileId((1 << 40) + i)));
     for node in [NodeId(0), NodeId(1), NodeId(2)] {
@@ -700,7 +711,8 @@ fn file_locks_cover_large_footprints_and_stay_within_the_repo() {
             id: 1,
             command: Command::Stop,
         },
-    ).world;
+    )
+    .world;
     while let Some(e) = w.nodes[0].effect {
         w = step(
             w,
@@ -709,7 +721,8 @@ fn file_locks_cover_large_footprints_and_stay_within_the_repo() {
                 seq: e.seq,
                 ack: Ack::Confirmed,
             },
-        ).world;
+        )
+        .world;
     }
     assert_eq!(w.nodes[1].phase, Phase::Making);
     assert!(w.nodes[1].holds && w.nodes[2].holds);
@@ -1128,7 +1141,8 @@ fn settle_world_grants_reconciled_capacity_and_is_idempotent() {
                     seq: effect.seq,
                     ack: Ack::Confirmed,
                 },
-            ).world;
+            )
+            .world;
         }
         panic!("effects did not settle");
     }
@@ -1141,7 +1155,8 @@ fn settle_world_grants_reconciled_capacity_and_is_idempotent() {
                     repo: RepoId(0),
                     priority: Priority::Unranked,
                 },
-            ).world,
+            )
+            .world,
         );
     }
     for i in 0..3 {
@@ -1155,7 +1170,8 @@ fn settle_world_grants_reconciled_capacity_and_is_idempotent() {
                         generation,
                         reply,
                     },
-                ).world,
+                )
+                .world,
             );
         }
     }
@@ -1173,7 +1189,8 @@ fn settle_world_grants_reconciled_capacity_and_is_idempotent() {
                         fits: true,
                     },
                 },
-            ).world,
+            )
+            .world,
         );
     }
     assert_eq!(world.nodes.iter().filter(|n| n.holds).count(), 1);
@@ -1306,7 +1323,8 @@ fn admit(w: World, priority: Priority) -> World {
                 repo: RepoId(0),
                 priority,
             },
-        ).world,
+        )
+        .world,
     )
 }
 
@@ -1320,7 +1338,7 @@ fn confirm_all(mut w: World) -> World {
         else {
             return w;
         };
-        let tl3_kernel::StepResult { world: next, outputs: _, .. } = step(
+        let tl3_kernel::StepResult { world: next, .. } = step(
             w,
             Event::Ack {
                 node: NodeId(i as u64),
@@ -1343,7 +1361,7 @@ fn running(w: &World) -> Vec<usize> {
 /// takes a new, younger ticket for its audit.
 fn end_ingest(w: World, i: usize) -> World {
     let generation = w.nodes[i].generation;
-    let tl3_kernel::StepResult { world: next, outputs: _, .. } = step(
+    let tl3_kernel::StepResult { world: next, .. } = step(
         w,
         Event::Reply {
             node: NodeId(i as u64),
@@ -1386,7 +1404,7 @@ fn finish(w: World, i: usize) -> World {
         return end_ingest(w, i);
     }
     let generation = w.nodes[i].generation;
-    let tl3_kernel::StepResult { world: next, outputs: _, .. } = step(
+    let tl3_kernel::StepResult { world: next, .. } = step(
         w,
         Event::Reply {
             node: NodeId(i as u64),
@@ -1435,7 +1453,7 @@ fn a_waiting_p3_yields_to_every_better_priority_however_long_it_waits() {
 fn a_priority_fact_refreshes_an_open_request_and_leaves_a_closed_one() {
     let mut w = admit(pool_world(), Priority::Unranked);
     w = admit(w, Priority::P3);
-    let tl3_kernel::StepResult { world: next, outputs: _, .. } = step(
+    let tl3_kernel::StepResult { world: next, .. } = step(
         w,
         Event::Fact {
             node: NodeId(1),
@@ -1452,11 +1470,12 @@ fn a_priority_fact_refreshes_an_open_request_and_leaves_a_closed_one() {
                 id: 1,
                 command: Command::Stop,
             },
-        ).world,
+        )
+        .world,
     );
     let closed = w.nodes[0];
     assert!(closed.phase.is_closed());
-    let tl3_kernel::StepResult { world: after, outputs: _, .. } = step(
+    let tl3_kernel::StepResult { world: after, .. } = step(
         w,
         Event::Fact {
             node: NodeId(0),

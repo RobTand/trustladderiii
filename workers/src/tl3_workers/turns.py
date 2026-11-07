@@ -23,9 +23,6 @@ def validation_message(error):
 
 
 def repair_message(error):
-    from tl3_workers.roles.planner import PlanConsistencyError
-    if isinstance(error, PlanConsistencyError) and hasattr(error, 'repair_text'):
-        return error.repair_text
     from tl3_workers.rules import render_all
     from tl3_workers.contracts import schema_violations
     role = getattr(error, 'rule_role', 'schema')
@@ -136,6 +133,9 @@ def repaired(control, history, ask, check):
     except Unrepairable:
         raise
     except (ValueError, ValidationError) as first:
+        from tl3_harness.rules import SourceEdit
+        if any(isinstance(item.repair, SourceEdit) for item in getattr(first, 'rule_violations', ())):
+            raise first
         try:
             with control.repair(history, first):
                 control.repair_attempts = 1
@@ -145,7 +145,9 @@ def repaired(control, history, ask, check):
             control.repair_unavailable = 'input_allowance'
             raise first from None
         try:
-            violations = getattr(first, 'rule_violations', ())
+            deferred = getattr(first, 'guard_after_check', False)
+            result = check(text) if deferred else None
+            violations = () if deferred else getattr(first, 'rule_violations', ())
             if violations:
                 from tl3_workers.contracts import read_reply
                 from tl3_workers.rules import permits
@@ -153,6 +155,6 @@ def repaired(control, history, ask, check):
                 after = read_reply(text) if isinstance(text, str) else text
                 if not permits(violations, before, after, role=getattr(first, 'rule_role', 'schema')):
                     raise RepairScopeError()
-            return check(text)
+            return result if deferred else check(text)
         except (ValueError, ValidationError) as second:
             raise InvalidReply(first, second) from second

@@ -162,6 +162,17 @@ def commit(repo, files, message):
                           capture_output=True, text=True).stdout.strip()
 
 
+# #899: the complete shared rows use the additive v3 proof_refusal field.
+SCENARIOS['proof-refusal'] = dict(
+    base={'product.py': PRODUCT.format(value=0), 'tests/test_value.py': 'def test_value(): assert True\n'},
+    head={'product.py': PRODUCT.format(value=1), 'tests/test_value.py':
+          'def first(value): return sorted(value)\ndef second(box): box["x"] = 1\ndef test_value(): assert True\n'},
+    plan=[plan_check('complete proof rows', 'demonstrating', ['tests/test_value.py::test_value'],
+                    proof={'subjects': ['product.py::value'],
+                           'observer_support': ['tests/test_value.py::first', 'tests/test_value.py::second'],
+                           'red_message': 'regression'})])
+
+
 @pytest.fixture
 def produce(tmp_path, monkeypatch):
     command = lambda tree, container, tests: [sys.executable, '-I', '-B', str(RUNNER), '-', str(tree)]
@@ -195,6 +206,11 @@ def produce(tmp_path, monkeypatch):
 @pytest.mark.parametrize('name', sorted(SCENARIOS))
 def test_committed_vector_matches_the_harness(produce, name):
     produced = produce(name)
+    if name == 'proof-refusal':
+        test = produced['results'][0]['tests'][0]
+        assert len(test['message']) <= 1000
+        assert 'proof.support.call_allowlist' in test['proof_refusal']
+        assert 'proof.support.member_write' in test['proof_refusal']
     path = VECTORS / f'{name}.json'
     if os.environ.get('TL3_WRITE_CONTRACT_VECTORS') == '1':
         VECTORS.mkdir(exist_ok=True)

@@ -122,7 +122,11 @@ impl Run {
 fn failed_checks_report_the_round() {
     let mut run = Run::new();
     run.checking();
-    run.reply(Reply::ChecksDone { report: true, pass: false, in_footprint: true });
+    run.reply(Reply::ChecksDone {
+        report: true,
+        pass: false,
+        in_footprint: true,
+    });
     run.failed(FailedRoundCause::ChecksFailed);
 }
 
@@ -156,9 +160,68 @@ fn ci_failure_reports_only_a_work_failure() {
     infra.fact(Fact::CiFailed { infra: true });
     assert!(infra.report.entries.is_empty());
     run.fact(Fact::CiFailed { infra: false });
-    assert_eq!(run.report.entries, vec![ReportEntry::FailedRound {
-        node: NodeId(0), cause: FailedRoundCause::CiFailed,
-    }]);
+    assert_eq!(
+        run.report.entries,
+        vec![ReportEntry::FailedRound {
+            node: NodeId(0),
+            cause: FailedRoundCause::CiFailed,
+        }]
+    );
+}
+
+#[test]
+fn ci_failure_before_enqueue_reports_exactly_one_failed_round() {
+    let mut run = Run::new();
+    run.reviewing();
+    run.reply(Reply::Approved { head: HEAD });
+    for _ in 0..64 {
+        let effect = run.world.nodes[0].effect.expect("publishing effect");
+        if effect.kind == EffectKind::Enqueue {
+            assert_eq!(run.world.nodes[0].phase, Phase::Publishing);
+            run.fact(Fact::CiFailed { infra: false });
+            assert_eq!(
+                run.report.entries,
+                vec![ReportEntry::FailedRound {
+                    node: NodeId(0),
+                    cause: FailedRoundCause::CiFailed,
+                }]
+            );
+            return;
+        }
+        run.send(Event::Ack {
+            node: NodeId(0),
+            seq: effect.seq,
+            ack: Ack::Confirmed,
+        });
+    }
+    panic!("publishing never reached Enqueue");
+}
+
+#[test]
+fn ci_failure_reports_its_fact_path_review_stop() {
+    let mut run = Run::new();
+    run.queued();
+    run.fact(Fact::CiFailed { infra: false });
+    run.reply(Reply::MakerDone { head: HEAD });
+    run.reply(PASS);
+    run.reply(Reply::Approved { head: HEAD });
+    run.confirm();
+    assert_eq!(run.world.nodes[0].phase, Phase::Queued);
+    run.world.fail_fast = true;
+    run.fact(Fact::CiFailed { infra: false });
+    assert_eq!(
+        run.report.entries,
+        vec![
+            ReportEntry::FailedRound {
+                node: NodeId(0),
+                cause: FailedRoundCause::CiFailed,
+            },
+            ReportEntry::Stopped {
+                node: NodeId(0),
+                cause: StopCause::ReviewStop(ReviewStop::CiFailed),
+            },
+        ]
+    );
 }
 
 #[test]
@@ -213,7 +276,10 @@ fn pr_closed_is_distinct_from_a_user_stop() {
 fn merge_reports_the_stop_even_when_settle_closes_immediately() {
     let mut run = Run::new();
     run.queued();
-    run.fact(Fact::PrMerged { head: HEAD, checks_passed: true });
+    run.fact(Fact::PrMerged {
+        head: HEAD,
+        checks_passed: true,
+    });
     run.stopped(StopCause::Merged);
 }
 
@@ -261,10 +327,13 @@ fn stale_admission_reports_the_reply_kind_without_changing_the_node() {
         reply: Reply::MakerDone { head: HEAD },
     });
     assert_eq!(run.world.nodes[0], before);
-    assert_eq!(run.report.entries, [ReportEntry::Stale {
-        node: NodeId(0),
-        reply_kind: ReplyKind::MakerDone,
-    }]);
+    assert_eq!(
+        run.report.entries,
+        [ReportEntry::Stale {
+            node: NodeId(0),
+            reply_kind: ReplyKind::MakerDone,
+        }]
+    );
 }
 
 #[test]
@@ -273,22 +342,35 @@ fn checked_step_refuses_before_any_change() {
     run.making();
     run.world.nodes[0].generation = u64::MAX;
     let before = run.world.clone();
-    let refusal = match step_checked(run.world, Event::Command {
-        node: NodeId(0), id: 1, command: Command::Stop,
-    }) {
+    let refusal = match step_checked(
+        run.world,
+        Event::Command {
+            node: NodeId(0),
+            id: 1,
+            command: Command::Stop,
+        },
+    ) {
         Ok(_) => panic!("exhausted world was accepted"),
         Err(refusal) => refusal,
     };
     assert_eq!(refusal.world, before);
-    assert_eq!(refusal.exhaustion, CounterExhaustion {
-        node: Some(NodeId(0)), counter: "generation",
-    });
+    assert_eq!(
+        refusal.exhaustion,
+        CounterExhaustion {
+            node: Some(NodeId(0)),
+            counter: "generation",
+        }
+    );
 }
 
 #[test]
 fn checked_step_returns_the_same_success_as_step() {
     let run = Run::new();
-    let event = Event::Command { node: NodeId(0), id: 1, command: Command::Stop };
+    let event = Event::Command {
+        node: NodeId(0),
+        id: 1,
+        command: Command::Stop,
+    };
     let direct = step(run.world.clone(), event);
     let checked = match step_checked(run.world, event) {
         Ok(result) => result,
