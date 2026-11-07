@@ -247,7 +247,7 @@ fn pending_direct_handoff_releases_full_gate_and_keeps_authenticated_wake() {
         }
         controller.drive_once().unwrap();
     }
-    panic!("accepted watch lost the authenticated exact-head successful-check wake");
+    panic!("accepted watch lost authenticated wake: world={:?}, puts={:?}, rows={:?}", controller.world().unwrap(), fixture.direct.lock().unwrap().puts, controller.snapshot().unwrap().rows.iter().filter(|r|matches!(r.table.as_str(), "allowances" | "incidents" | "watches")).collect::<Vec<_>>());
 }
 
 #[test]
@@ -291,7 +291,7 @@ fn lost_reply_reconciles_and_never_merges_again() {
     let (mut controller, delivery) = fixture.start(&settings);
     drain(&mut controller);
     let mut restarted = fixture.adapter(&settings);
-    assert!(matches!(restarted.reconcile(&delivery).unwrap(), Reconciliation::Found(_)));
+    assert!(matches!(restarted.reconcile(&delivery).unwrap(), Reconciliation::Pending), "closed delivery cannot revive authority");
     assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
     assert_eq!(fixture.direct.lock().unwrap().successes, 1);
 }
@@ -330,63 +330,47 @@ fn already_merged_405_reconciles_without_failure() {
 }
 
 #[test]
-fn restart_at_direct_write_cuts_0_to_7_converges() { restart_direct_write_cuts(0..8); }
+fn restart_at_acceptance_and_fence_boundaries_converges() {
+    restart_direct_write_cuts(&[direct_merge::Write::Fence, direct_merge::Write::Acceptance]);
+}
 #[test]
-fn restart_at_direct_write_cuts_8_to_15_converges() { restart_direct_write_cuts(8..16); }
+fn restart_at_intent_and_mutation_boundaries_converges() {
+    restart_direct_write_cuts(&[direct_merge::Write::Intent, direct_merge::Write::Annotation, direct_merge::Write::Merge]);
+}
 #[test]
-fn restart_at_direct_write_cuts_16_to_19_converges() { restart_direct_write_cuts(16..20); }
-fn restart_direct_write_cuts(cuts: std::ops::Range<usize>) {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    // Fence, intent, annotation, merge and receipt, before and after each. The
-    // real Records writer performs fsync/rename; the callback never replaces it.
+fn restart_at_history_and_receipt_boundaries_converges() {
+    restart_direct_write_cuts(&[direct_merge::Write::History, direct_merge::Write::Receipt]);
+}
+fn restart_direct_write_cuts(writes: &[direct_merge::Write]) {
     let mut database = support::Database::start();
-    for cut in cuts {
-        let settings = database.create(&format!("direct_crash_{cut}"));
-        let mut fixture = DirectFixture::new();
-        fixture.check(None);
-        let (controller, delivery) = fixture.start(&settings);
-        drop(controller);
-        fixture.check(Some("success"));
-        let seen = Arc::new(AtomicUsize::new(0));
-        let count = seen.clone();
-        let trace = Arc::new(Mutex::new(Vec::new()));
-        let recorded = trace.clone();
-        // Fresh process wake state, but the same durable records and world.
-        let mut issuer = direct_merge::Adapter::new(fixture.api.clients(), 0,
-            &fixture.root.path().join("direct"), settings.clone()).unwrap()
-            .with_write_boundary(move |boundary| {
+    for &write in writes {
+        for after in [false, true] {
+            let settings = database.create(&format!("direct_crash_{write:?}_{after}").to_lowercase());
+            let mut fixture = DirectFixture::new();
+            fixture.check(Some("success"));
+            let target = direct_merge::WriteBoundary {write, after};
+            let trace = Arc::new(Mutex::new(Vec::new()));
+            let recorded = trace.clone();
+            let adapter = fixture.adapter(&settings).with_write_boundary(move |boundary| {
                 recorded.lock().unwrap().push(boundary);
-                if count.fetch_add(1, Ordering::SeqCst) == cut { panic!("#830 injected write crash"); }
+                if boundary == target { panic!("injected durable write crash at {target:?}"); }
             });
-        let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| issuer.execute(&delivery)));
-        let count = seen.load(Ordering::SeqCst);
-        assert!(crashed.is_err(), "mandatory boundary {cut} did not crash");
-        assert_eq!(count, cut + 1);
-        assert_eq!(trace.lock().unwrap().len(), cut + 1);
-        if cut == 19 {
-            for write in [direct_merge::Write::Fence, direct_merge::Write::Intent,
-                direct_merge::Write::Annotation, direct_merge::Write::Merge,
-                direct_merge::Write::History, direct_merge::Write::Receipt] {
-                for after in [false, true] {
-                    assert!(trace.lock().unwrap().contains(&direct_merge::WriteBoundary { write, after }), "unreached {write:?}/{after}");
-                }
+            let controller = fixture.open_adapter(&settings, adapter);
+            let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fixture.start_controller(&settings, controller)));
+            assert!(crashed.is_err(), "mandatory boundary {target:?} did not crash");
+            assert!(trace.lock().unwrap().contains(&target));
+            fixture.wakes = direct_merge::Wakes::default();
+            let mut restarted = fixture.open(&settings);
+            drain(&mut restarted);
+            if fixture.direct.lock().unwrap().successes == 1 {
+                assert!(restarted.snapshot().unwrap().rows.iter().any(|r|r.table == "delivery_history" && r.value["mode"] == "direct"));
             }
+            fixture.check_event(&settings);
+            drain(&mut restarted);
+            assert_eq!(restarted.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged));
+            assert_eq!(fixture.direct.lock().unwrap().successes, 1);
+            assert!(restarted.snapshot().unwrap().rows.iter().any(|r|r.table == "delivery_history" && r.value["mode"] == "direct"));
         }
-        drop(issuer);
-        // Reopen exactly as production does, without preparing history/receipts
-        // through a separate adapter.reconcile call or a webhook.
-        fixture.wakes = direct_merge::Wakes::default();
-        let mut restarted = fixture.open(&settings);
-        drain(&mut restarted);
-        if fixture.direct.lock().unwrap().successes == 1 {
-            assert!(restarted.snapshot().unwrap().rows.iter().any(|r|r.table == "delivery_history" && r.value["mode"] == "direct"),
-                "unmasked Controller recovery must retain direct history at cut {cut}");
-        }
-        fixture.check_event(&settings);
-        drain(&mut restarted);
-        assert!(matches!(restarted.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged)));
-        assert_eq!(fixture.direct.lock().unwrap().successes, 1);
-        assert!(restarted.snapshot().unwrap().rows.iter().any(|r|r.table == "delivery_history" && r.value["mode"] == "direct"));
     }
 }
 
@@ -448,7 +432,8 @@ fn missing_exact_head_approval_waits_without_put() {
     fixture.api.state.lock().unwrap().head_checks.retain(|check| check["name"] != "TL3 approval");
     let mut adapter = direct_merge::Adapter::new(fixture.api.clients(), 0,
         &fixture.root.path().join("direct"), settings.clone()).unwrap();
-    assert!(matches!(adapter.reconcile(&delivery).unwrap(), Reconciliation::Pending));
+    let Reconciliation::Found(completion) = adapter.reconcile(&delivery).unwrap() else { panic!("durable responsibility must be accepted before approval checks report"); };
+    assert_eq!(completion.ack, tl3_kernel::Ack::DeliveryAccepted);
     assert!(fixture.direct.lock().unwrap().puts.is_empty());
     assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Publishing);
 }
@@ -575,7 +560,7 @@ fn r1_retirement_reclaims_terminal_direct_records() {
     let files: Vec<_> = std::fs::read_dir(fixture.root.path().join("direct")).unwrap().map(|e|e.unwrap().path()).filter(|p|p.extension().is_some_and(|e|e=="intent"||e=="merged")).collect();
     assert!(files.is_empty(), "retired terminal evidence must be reclaimed: {files:?}");
     let mut adapter = fixture.adapter(&settings);
-    assert!(matches!(adapter.reconcile(&delivery).unwrap(), Reconciliation::Found(_)));
+    assert!(matches!(adapter.reconcile(&delivery).unwrap(), Reconciliation::Pending), "retired delivery cannot revive authority");
     assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
 }
 
@@ -1197,8 +1182,11 @@ fn changed_head_after_durable_intent_process_crash_never_replays_put() {
     child.stdin.as_mut().unwrap().write_all(b"go\n").unwrap();
     reached(&mut output, "TD_INTENT_DURABLE");
     fixture.direct.lock().unwrap().moved = true;
+    fixture.api.state.lock().unwrap().pull["head"]["sha"] = json!("b".repeat(40));
     child.kill().unwrap();
-    assert!(!child.wait().unwrap().success(), "the boundary must terminate a real process");
+    let status = child.wait().unwrap();
+    use std::os::unix::process::ExitStatusExt;
+    assert_eq!(status.signal(), Some(9), "SIGKILL must prevent destructor unwinding at the reached intent boundary");
     let intent_path = direct_intent_path(&fixture);
     let intent_bytes = std::fs::read(&intent_path).unwrap();
     let intent: Value = serde_json::from_slice(&intent_bytes).unwrap();

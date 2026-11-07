@@ -1192,6 +1192,7 @@ fn publishing_enqueue() -> Run {
     run.pass(&mut HeadId(0));
     let node = &mut run.w.nodes[0];
     node.phase = Phase::Publishing;
+    node.holds = true;
     node.pos = 3;
     node.effect = Some(InFlight {
         seq: node.next_seq,
