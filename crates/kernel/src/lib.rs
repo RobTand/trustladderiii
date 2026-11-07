@@ -2010,14 +2010,19 @@ pub open spec fn phase_view(nodes: Seq<Node>) -> Seq<Phase> {
 pub closed spec fn world_phases(w: World) -> Seq<Phase> { phase_view(w.nodes@) }
 
 /// Project only the admission fields used by report agreement.
-pub closed spec fn report_input(w: World, event: Event) -> report::ReplyInput {
+pub closed spec fn report_input(w: World, event: Event) -> report::ReportInput {
     match event {
         Event::Reply { node, generation: _, reply } if node.0 < w.nodes@.len() => {
             let n = w.nodes@[node.0 as int];
-            report::ReplyInput { phase: n.phase, current: current_item(n),
+            report::ReportInput { phase: n.phase, current: current_item(n),
                 run: n.run, job: n.job, accepted: port_t860_contracts::admissible(w, n, reply) }
         }
-        _ => report::ReplyInput { phase: Phase::Unplanned, current: None,
+        Event::Fact { node, .. } if node.0 < w.nodes@.len() => {
+                let n = w.nodes@[node.0 as int];
+                report::ReportInput { phase: n.phase, current: current_item(n),
+                    run: None, job: None, accepted: false }
+            }
+            _ => report::ReportInput { phase: Phase::Unplanned, current: None,
             run: None, job: None, accepted: false },
     }
 }
@@ -2027,10 +2032,15 @@ proof fn report_projection(w: World, event: Event)
         report_input(w, event) == match event {
             Event::Reply { node, reply, .. } if node.0 < w.nodes@.len() => {
                 let n = w.nodes@[node.0 as int];
-                report::ReplyInput { phase: n.phase, current: current_item(n),
+                report::ReportInput { phase: n.phase, current: current_item(n),
                     run: n.run, job: n.job, accepted: port_t860_contracts::admissible(w, n, reply) }
             }
-            _ => report::ReplyInput { phase: Phase::Unplanned, current: None,
+            Event::Fact { node, .. } if node.0 < w.nodes@.len() => {
+                let n = w.nodes@[node.0 as int];
+                report::ReportInput { phase: n.phase, current: current_item(n),
+                    run: None, job: None, accepted: false }
+            }
+            _ => report::ReportInput { phase: Phase::Unplanned, current: None,
                 run: None, job: None, accepted: false },
         },
 { reveal(world_phases); reveal(report_input); }

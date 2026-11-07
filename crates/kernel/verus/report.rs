@@ -236,32 +236,68 @@ pub(in super::super) proof fn stop_kind_value(phase: Phase, review: Option<Revie
         },
 { reveal(stop_kind); }
 
-pub(in super::super) proof fn entries_for_event(event: Event, input: ReplyInput)
+/// State-table CI rows: the executable cause is exactly the pre-fact decision.
+pub(in super::super) proof fn ci_cause_value(phase: Phase, current: Option<Item>, fact: Fact)
+    ensures ci_cause(phase, current, fact) == match fact {
+        Fact::CiFailed { infra: false } if phase == Phase::Queued
+            || phase == Phase::Publishing && current == Some(Item::Do(EffectKind::Enqueue)) =>
+            Some(FailedRoundCause::CiFailed),
+        _ => None,
+    },
+{ reveal(ci_cause); }
+
+/// Fact reporting: compose the real failed-round push and subsequent stop push.
+pub(in super::super) proof fn fact_record_result(r0: Seq<ReportEntry>, middle: Seq<ReportEntry>,
+    r1: Seq<ReportEntry>, node: NodeId, before: Phase, after: Phase,
+    fact: Fact, ci: Option<FailedRoundCause>)
+    requires middle == if fact is CiFailed {
+            match ci { Some(cause) => r0.push(ReportEntry::FailedRound { node, cause }), None => r0 }
+        } else { r0 },
+        stop_cause(middle, r1, node, before, after,
+            stop_kind(after, if fact is CiFailed { Some(ReviewStop::CiFailed) } else { None },
+                fact is PrClosedByPerson, false)),
+    ensures fact_record(r0, r1, node, before, after, fact, ci),
+{ reveal(fact_record); }
+
+/// Fact rows: bind the report contract to its sampled pre-state cause.
+pub(in super::super) proof fn bind_fact_cause(r0: Seq<ReportEntry>, r1: Seq<ReportEntry>,
+    node: NodeId, before: Phase, current: Option<Item>, after: Phase, fact: Fact)
+    requires fact_record(r0, r1, node, before, after, fact, ci_cause(before, current, fact)),
+    ensures fact_report(r0, r1, node, before, current, after, fact),
+{ reveal(fact_report); }
+
+pub(in super::super) proof fn entries_for_event(event: Event, input: ReportInput)
     ensures event_entries(event, input) == match event {
         Event::Reply { node, generation, reply } => reply_entries(node, input.phase,
             input.current, input.run, input.job, generation, reply, input.accepted),
+        Event::Fact { node, fact } => round_entries(node, ci_cause(input.phase, input.current, fact)),
         _ => Seq::empty(),
     },
 { reveal(event_entries); }
 
 pub(in super::super) proof fn observe(event: Event, before: Seq<Phase>, after: Seq<Phase>,
-    input: ReplyInput, review: Option<ReviewStop>, r0: Seq<ReportEntry>, middle: Seq<ReportEntry>,
+    input: ReportInput, review: Option<ReviewStop>, r0: Seq<ReportEntry>, middle: Seq<ReportEntry>,
     r1: Seq<ReportEntry>)
     requires event is Fact ==> before.len() == after.len(),
         before.len() <= after.len() <= before.len() + 1
         && (forall|j: int| 0 <= j < before.len() && event_target(event) != Some(NodeId(j as u64))
             ==> terminal_phase_frame(before[j], after[j]))
         && (forall|j: int| before.len() <= j < after.len() ==> !(after[j] is Stopping || after[j] is Closed))
-        && (!(event is Fact) ==> match event_target(event) {
+        && (if let Event::Fact { node, fact } = event {
+            if node.0 < before.len() {
+                input.phase == before[node.0 as int]
+                    && fact_report(r0, r1, node, input.phase, input.current, after[node.0 as int], fact)
+            } else { forwards(r0, r1, Seq::empty()) }
+        } else { match event_target(event) {
             Some(node) if node.0 < before.len() =>
                 forwards(r0, middle, event_entries(event, input))
                 && stop_cause(middle, r1, node, before[node.0 as int], after[node.0 as int],
                     stop_kind(after[node.0 as int], review, false, user_stop(event))),
             _ => forwards(r0, r1, Seq::empty()),
-        }),
-    ensures agrees_except_fact_stops_and_ci_failed(event, before, after, input, r0, r1, (after, r1)),
+        } }),
+    ensures agrees(event, before, after, input, r0, r1, (after, r1)),
 {
-    reveal(agrees_except_fact_stops_and_ci_failed);
+    reveal(agrees);
     if event is Fact {
         assert forall|j: int| 0 <= j < after.len()
             implies terminal_phase_frame(after[j], after[j]) by { phase_refl(after[j]); }
@@ -279,12 +315,12 @@ pub(in super::super) proof fn observe(event: Event, before: Seq<Phase>, after: S
 }
 
 pub(in super::super) proof fn through_settle(event: Event, before: Seq<Phase>, applied: Seq<Phase>,
-    after: Seq<Phase>, input: ReplyInput, r0: Seq<ReportEntry>, r1: Seq<ReportEntry>, r2: Seq<ReportEntry>)
-    requires agrees_except_fact_stops_and_ci_failed(event, before, applied, input, r0, r1, (applied, r1)),
+    after: Seq<Phase>, input: ReportInput, r0: Seq<ReportEntry>, r1: Seq<ReportEntry>, r2: Seq<ReportEntry>)
+    requires agrees(event, before, applied, input, r0, r1, (applied, r1)),
         settled_forwards(applied, after, r1, r2),
-    ensures agrees_except_fact_stops_and_ci_failed(event, before, after, input, r0, r2, (applied, r1)),
+    ensures agrees(event, before, after, input, r0, r2, (applied, r1)),
 {
-    reveal(agrees_except_fact_stops_and_ci_failed);
+    reveal(agrees);
     reveal(settled_forwards);
     read_forwards(r1, r2, Seq::empty());
     assert(r1 + Seq::empty() =~= r1);

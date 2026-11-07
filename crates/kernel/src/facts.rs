@@ -11,7 +11,10 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox, rep
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         dependencies::edges_indexable(*old(w)), old(w).next_question < u64::MAX,
-    ensures (fact_progress_input(*old(w), i as int, fact)
+    ensures report::fact_report(old(report).entries@, final(report).entries@, NodeId(i as u64),
+            old(w).nodes@[i as int].phase, current_item(old(w).nodes@[i as int]),
+            final(w).nodes@[i as int].phase, fact),
+        (fact_progress_input(*old(w), i as int, fact)
             ==> progress_measure(*final(w)) < progress_measure(*old(w))
                 && dependencies::edges_indexable(*final(w))),
         (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
@@ -62,6 +65,7 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox, rep
 ] proof [reveal(dependencies::dependency_frame);] {
 
     kernel_snapshot! { before_fact = *w }
+    kernel_snapshot! { report_before = report.entries@ }
     let before_phase = w.nodes[i].phase;
     kernel_proof! {
         if fact_progress_input(*w, i as int, fact) { fact_witness_premises(*w, i as int, fact); }
@@ -87,6 +91,8 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox, rep
         }
     }
     report::record_fact(report, NodeId(i as u64), before_phase, w.nodes[i].phase, fact, ci);
+    kernel_proof! { report::lemmas::bind_fact_cause(report_before@, report.entries@, NodeId(i as u64),
+        before_phase, current_item(before_fact@.nodes@[i as int]), w.nodes@[i as int].phase, fact); }
 
 }
 }
