@@ -2754,7 +2754,11 @@ fn failed_pending_injob_launch(late_cancel: bool) {
     )
     .unwrap();
     let frames = f.call(json!({"op":"retain_cleanup","owner":f.intent.owner,"correlation":f.intent.correlation,"evidence":reference}));
-    assert_eq!(frames.last().unwrap()["result"]["cleanup"]["stopped"], true, "{frames:?}");
+    assert_eq!(
+        frames.last().unwrap()["result"]["cleanup"]["stopped"],
+        true,
+        "{frames:?}"
+    );
     let mut events = completed(256);
     if late_cancel {
         events.push(json!({"name":"exception","context":{"type":"cancel","severity":0}}));

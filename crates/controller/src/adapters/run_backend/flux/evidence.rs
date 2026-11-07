@@ -844,7 +844,6 @@ fn classify(
         ));
     }
     if report.is_none()
-        && record.container_launches.is_empty()
         && record.runtime_ownerships.is_empty()
         && matches!(
             record.request.runtime.runtime,
@@ -857,7 +856,7 @@ fn classify(
     {
         return Some((
             Ending::InfraLost,
-            "native wrapper failed before any durable container launch",
+            "native wrapper failed before any container binding; all pending launchers stopped",
         ));
     }
     let report = report?;
