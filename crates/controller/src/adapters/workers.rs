@@ -1234,7 +1234,7 @@ impl Supervisor {
         }
         let attempt = root.join(format!("attempt-{attempt_number:08}"));
         fs::create_dir(&attempt)?;
-        self.tests.bind_attempt(&mut request, &attempt, delivery)?;
+        self.tests.bind_attempt(&mut request, &attempt, delivery, &self.records_root)?;
         // Every run needs the diagnostic sidecar, including postmortems whose
         // failed exit is reconciled from its safe cause in memory.json (#687).
         request["memory"] = json!({

@@ -3,7 +3,9 @@ use super::*;
 use crate::run_backend::{self as backend, durable};
 use serde::{Deserialize, Serialize};
 mod waits;
+mod inputs;
 pub use waits::Waits;
+pub use inputs::command;
 
 #[derive(Clone)]
 pub(super) enum Selected {
@@ -52,6 +54,7 @@ impl Selected {
         request: &mut Value,
         attempt: &Path,
         delivery: &Delivery,
+        records: &Path,
     ) -> Result<()> {
         let Self::Flux(flux) = self else {
             return Ok(());
@@ -74,6 +77,7 @@ impl Selected {
             staging_root: flux.staging_root.clone(),
             runtime_bundles: flux.runtime_bundles.clone(),
             container_mode: flux.container_mode,
+            waits_root: records.parent().ok_or(Error::Invalid("worker records need parent"))?.join("worker-waits"),
         };
         let path = profile.attempt.join("execution.json");
         private_create(&path, &serde_json::to_vec(&profile)?)?;
@@ -94,6 +98,7 @@ pub struct Profile {
     pub staging_root: PathBuf,
     pub runtime_bundles: Vec<PathBuf>,
     pub container_mode: tl3_config::ContainerMode,
+    pub waits_root: PathBuf,
 }
 
 fn private_create(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -258,7 +263,7 @@ mod tests {
         let mut worker = json!({"worktree": repo.path, "inputs": {"tests": selected.inputs(&flux.container_image,
             tl3_config::TestDemand::default(), &attempt.join("execution.json"))}});
         selected
-            .bind_attempt(&mut worker, &attempt, &repo.delivery())
+            .bind_attempt(&mut worker, &attempt, &repo.delivery(), &root.join("records/workers"))
             .unwrap();
         write(&attempt.join("request.json"), &worker).unwrap();
         let options = crate::production::flux_options(&flux);

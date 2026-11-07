@@ -54,6 +54,38 @@ def test_selected_flux_maker_reaches_explicit_hold_without_pb_transport(rehearsa
     assert not calls
 
 
+def test_selected_flux_maker_consumes_verified_payload_and_checkpoints_before_dispatch(rehearsal, monkeypatch, tmp_path):
+    from tl3_workers import pb_tests, flux_execution
+    ledger, _, _, _ = rehearsal
+    worktree = ledger.worktree
+    worktree.test_settings = pb_tests.TestSettings(image='sha256:' + '1' * 64,
+        execution={'backend': 'flux', 'profile': '/fixture/attempt/execution.json'})
+    key = 'worker:' + 'a' * 64
+    retained = []
+    worktree.pb_submitted = lambda key, base, tree: retained.append((key, base, tree))
+    monkeypatch.setattr(flux_execution, 'activation', lambda: None)
+    monkeypatch.setattr(flux_execution, 'allocate', lambda settings: ('a' * 64, tmp_path))
+    monkeypatch.setattr(pb_tests, '_stage', lambda *args, **kwargs: 'b' * 40)
+    monkeypatch.setattr(pb_tests, '_git', lambda *args: 'c' * 40)
+    def prepare(settings, call, root, tree, contract, **kwargs):
+        assert kwargs['parallel'] == 4
+        assert contract['repeat'] == 3
+        return {'key': key}
+    monkeypatch.setattr(flux_execution, 'prepare', prepare)
+    def execute(plan, **kwargs):
+        assert retained == [(key, False, 'b' * 40)]
+        return {'kind': 'tests', 'summary': {'status': 'completed', 'note': '',
+                'tests': [{'test': NODE, 'outcome': 'passed'}],
+                'totals': {'passed': 1, 'failed': 0, 'error': 0, 'skipped': 0}},
+                'symptom_runs': [], 'receipts': [{'backend': 'flux', 'receipt_sha256': 'd' * 64}]}
+    monkeypatch.setattr(flux_execution, 'execute', execute)
+    monkeypatch.setattr(pb_tests, '_json_command', lambda command: pytest.fail('Flux invoked PB'))
+    result = pb_tests.make_test_tool(worktree)([NODE], repeat=3, parallel=4)
+    assert result['status'] == 'completed', result
+    assert result['tree'] == 'b' * 40
+    assert result['receipts'][0]['backend'] == 'flux'
+
+
 @pytest.mark.parametrize('reached', [False, True])
 def test_real_planner_tool_loop_refuses_or_binds_handoff(rehearsal, monkeypatch, reached):
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel

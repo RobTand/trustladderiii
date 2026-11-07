@@ -10,7 +10,9 @@ fn main() {
         }
         return;
     }
-    let result = if std::env::args().nth(1).as_deref() == Some("check-budget") {
+    let result = if std::env::args().nth(1).as_deref() == Some("worker-execution") {
+        tl3_controller::adapters::workers::execution::command(std::env::args().nth(2).as_deref())
+    } else if std::env::args().nth(1).as_deref() == Some("check-budget") {
         tl3_controller::budget::check()
     } else if std::env::args().nth(1).as_deref() == Some("check-inputs") {
         tl3_controller::input_check::check(std::env::args().nth(2).as_deref())

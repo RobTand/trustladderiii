@@ -29,7 +29,7 @@ def _reject_constant(_constant):
     raise ValueError("nonstandard validator constant")
 
 
-def run_check(command, document, *, name="reply", binary=None):
+def run_check(command, document, *, name="reply", binary=None, timeout=TIMEOUT_SECONDS):
     """One process boundary and strict JSON reader for every Rust validator."""
     binary = os.environ.get("TL3_BINARY") if binary is None else binary
     if not binary:
@@ -39,7 +39,7 @@ def run_check(command, document, *, name="reply", binary=None):
             [binary, *command],
             input=json.dumps(document, allow_nan=False),
             text=True, encoding="utf-8", capture_output=True, check=True,
-            timeout=TIMEOUT_SECONDS,
+            timeout=timeout,
         )
     except subprocess.TimeoutExpired:
         raise ReplyCheckInfrastructureError(f"{name} validator timed out") from None
