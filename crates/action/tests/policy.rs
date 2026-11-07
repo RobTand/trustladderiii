@@ -433,6 +433,28 @@ fn trace_usage_keeps_only_nonnegative_integer_observations() {
 }
 
 #[test]
+fn small_trace_content_keeps_its_fields_within_the_allocated_budget() {
+    let value = json!({"note":"ordinary","messages":["small"]});
+    let shaped = command(json!({"op":"shape","input_json":value.to_string()}));
+    let shaped = shaped["ok"]["result"]["value"].clone();
+    let size = command(json!({"op":"size","shaped":shaped}));
+    let size = size["ok"]["result"]["value"].as_u64().unwrap();
+    let allocation = command(json!({"op":"trace","request":{"op":"allocate","entries":[
+        {"root":true,"kind":"CHAIN","proto_bytes":64,"sizes":[size],"shrunk":false}]}}));
+    let limit = allocation["ok"]["result"]["value"]["limits"][0][0]
+        .as_u64()
+        .unwrap();
+    assert!(limit > 0 && limit < 512);
+    let cleaned = command(json!({"op":"trace","request":{"op":"clean",
+        "contents":[shaped.clone()],"limits":[limit]}}));
+    assert_eq!(cleaned["ok"]["result"]["value"]["values"], json!([value]));
+    let exhausted = command(json!({"op":"trace","request":{"op":"clean",
+        "contents":[shaped],"limits":[0]}}));
+    assert_eq!(exhausted["ok"]["result"]["value"]["values"],
+        json!([{"truncated":true,"note":"trace content budget exhausted"}]));
+}
+
+#[test]
 fn azure_sas_context_redacts_exact_signature_spans_without_granting_generic_sig_semantics() {
     let signature = format!("TL3FAKE{}+/=", "a".repeat(36));
     let encoded = signature
