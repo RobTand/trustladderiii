@@ -2,30 +2,6 @@
 use super::*;
 
 verus! {
-/// Reply schema rows / #860: the existing executable accepts table, opaque to callers.
-#[verifier::opaque]
-pub(super) open spec fn admissible(w: World, n: Node, reply: Reply) -> bool {
-    match (n.phase, reply) {
-        (Phase::Ingesting | Phase::Auditing | Phase::Planning { .. }, Reply::ProtectedPaths) => true,
-        (Phase::Ingesting, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_)) => true,
-        (Phase::Auditing, Reply::AuditAgrees | Reply::AuditDisagrees) => true,
-        (Phase::Planning { .. }, Reply::PlanLeaf { footprint, .. }) =>
-            footprint::valid_footprint(w, footprint),
-        (Phase::Planning { .. }, Reply::PlanSplit | Reply::PlanCantMeet
-            | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit) => true,
-        (Phase::Making, Reply::MakerDone { .. }) => true,
-        (Phase::Making, Reply::MakerNeedsFiles { files, .. }) =>
-            footprint::valid_footprint(w, files),
-        (Phase::Making, Reply::MakerCantMeet | Reply::MakerOutOfRoom) => true,
-        (Phase::Checking, Reply::ChecksDone { report, .. }) => report,
-        (Phase::Reviewing, Reply::Approved { head }) =>
-            n.head == Some(head) && n.checked == Some(head),
-        (Phase::Reviewing, Reply::ChangesRequested | Reply::ReviewerOutOfRoom) => true,
-        (Phase::Rebasing, Reply::RebaseClean { .. } | Reply::RebaseNeedsChanges) => true,
-        _ => false,
-    }
-}
-
 /// Q30 / #860: successful completion ends the actual operation and resets failures.
 #[verifier::opaque]
 pub(super) open spec fn ended(n: Node) -> Node {

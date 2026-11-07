@@ -2015,7 +2015,7 @@ pub closed spec fn report_input(w: World, event: Event) -> report::ReportInput {
         Event::Reply { node, generation: _, reply } if node.0 < w.nodes@.len() => {
             let n = w.nodes@[node.0 as int];
             report::ReportInput { phase: n.phase, current: current_item(n),
-                run: n.run, job: n.job, accepted: port_t860_contracts::admissible(w, n, reply) }
+                run: n.run, job: n.job, accepted: reply_schema::allows(reply_schema::input(w, n, reply), reply) }
         }
         Event::Fact { node, .. } if node.0 < w.nodes@.len() => {
             let n = w.nodes@[node.0 as int];
@@ -2033,7 +2033,7 @@ proof fn report_projection(w: World, event: Event)
             Event::Reply { node, reply, .. } if node.0 < w.nodes@.len() => {
                 let n = w.nodes@[node.0 as int];
                 report::ReportInput { phase: n.phase, current: current_item(n),
-                    run: n.run, job: n.job, accepted: port_t860_contracts::admissible(w, n, reply) }
+                    run: n.run, job: n.job, accepted: reply_schema::allows(reply_schema::input(w, n, reply), reply) }
             }
             Event::Fact { node, .. } if node.0 < w.nodes@.len() => {
                 let n = w.nodes@[node.0 as int];
@@ -2305,6 +2305,10 @@ mod facts_ci_failed_lemmas;
 
 #[cfg(verus_keep_ghost)]
 mod facts_merge_lemmas;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/reply_schema.rs"]
+mod reply_schema;
 
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/port_t860_contracts.rs"]

@@ -4,27 +4,8 @@ use super::*;
 kernel_fn! {
 /// Reply rows / #771: phase, schema and commit identity use the executable checks.
 pub(super) fn accepts(w: &World, n: &Node, reply: &Reply) -> (result: bool) [
-    ensures result == port_t860_contracts::admissible(*w, *n, *reply),
-        result == match (n.phase, *reply) {
-        (Phase::Ingesting | Phase::Auditing | Phase::Planning { .. }, Reply::ProtectedPaths) => true,
-        (Phase::Ingesting, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_)) => true,
-        (Phase::Auditing, Reply::AuditAgrees | Reply::AuditDisagrees) => true,
-        (Phase::Planning { .. }, Reply::PlanLeaf { footprint, .. }) =>
-            footprint::valid_footprint(*w, footprint),
-        (Phase::Planning { .. }, Reply::PlanSplit | Reply::PlanCantMeet
-            | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit) => true,
-        (Phase::Making, Reply::MakerDone { .. }) => true,
-        (Phase::Making, Reply::MakerNeedsFiles { files, .. }) =>
-            footprint::valid_footprint(*w, files),
-        (Phase::Making, Reply::MakerCantMeet | Reply::MakerOutOfRoom) => true,
-        (Phase::Checking, Reply::ChecksDone { report, .. }) => report,
-        (Phase::Reviewing, Reply::Approved { head }) =>
-            n.head == Some(head) && n.checked == Some(head),
-        (Phase::Reviewing, Reply::ChangesRequested | Reply::ReviewerOutOfRoom) => true,
-        (Phase::Rebasing, Reply::RebaseClean { .. } | Reply::RebaseNeedsChanges) => true,
-        _ => false,
-    },
-] proof [reveal(port_t860_contracts::admissible);] {
+    ensures result == reply_schema::allows(reply_schema::input(*w, *n, *reply), *reply),
+] proof [reveal(reply_schema::allows);] {
     match (n.phase, reply) {
         (Phase::Ingesting | Phase::Auditing | Phase::Planning { .. }, Reply::ProtectedPaths) => {
             true
@@ -63,7 +44,7 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         footprint::valid_footprint(*old(w), old(w).nodes@[i as int].footprint),
         footprint::ordered_table(*old(w)),
     ensures report::forwards(old(report).entries@, final(report).entries@,
-            report::reply_entries(NodeId(i as u64), old(w).nodes@[i as int].phase, current_item(old(w).nodes@[i as int]), old(w).nodes@[i as int].run, old(w).nodes@[i as int].job, generation, reply, port_t860_contracts::admissible(*old(w), old(w).nodes@[i as int], reply))),
+            report::reply_entries(NodeId(i as u64), old(w).nodes@[i as int].phase, current_item(old(w).nodes@[i as int]), old(w).nodes@[i as int].run, old(w).nodes@[i as int].job, generation, reply, reply_schema::allows(reply_schema::input(*old(w), old(w).nodes@[i as int], reply), reply))),
         port_t860_contracts::reply_post(*old(w), *final(w), i as int, generation, reply, *old(out), *final(out)),
         progress_gate_contracts::maker_reply(*old(w), *final(w), i as int,
             generation, reply, *old(out), *final(out)),
@@ -129,7 +110,7 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         kernel_proof! { report::lemmas::reply_result(before_report@, report.entries@, NodeId(i as u64),
             before_reply@.nodes@[i as int].phase, current_item(before_reply@.nodes@[i as int]),
             before_reply@.nodes@[i as int].run, before_reply@.nodes@[i as int].job,
-            generation, reply, port_t860_contracts::admissible(before_reply@, before_reply@.nodes@[i as int], reply)); }
+            generation, reply, reply_schema::allows(reply_schema::input(before_reply@, before_reply@.nodes@[i as int], reply), reply)); }
         return;
     }
     if n.current() != Some(Item::Await) || (n.run != Some(generation) && n.job != Some(generation))
@@ -149,7 +130,7 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         kernel_proof! { report::lemmas::reply_result(before_report@, report.entries@, NodeId(i as u64),
             before_reply@.nodes@[i as int].phase, current_item(before_reply@.nodes@[i as int]),
             before_reply@.nodes@[i as int].run, before_reply@.nodes@[i as int].job,
-            generation, reply, port_t860_contracts::admissible(before_reply@, before_reply@.nodes@[i as int], reply)); }
+            generation, reply, reply_schema::allows(reply_schema::input(before_reply@, before_reply@.nodes@[i as int], reply), reply)); }
         return; // stale
     }
     // A reply that breaks its schema or names the wrong commit counts as a failed run.
@@ -167,10 +148,12 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         kernel_proof! { report::lemmas::reply_result(before_report@, report.entries@, NodeId(i as u64),
             before_reply@.nodes@[i as int].phase, current_item(before_reply@.nodes@[i as int]),
             before_reply@.nodes@[i as int].run, before_reply@.nodes@[i as int].job,
-            generation, reply, port_t860_contracts::admissible(before_reply@, before_reply@.nodes@[i as int], reply)); }
+            generation, reply, reply_schema::allows(reply_schema::input(before_reply@, before_reply@.nodes@[i as int], reply), reply)); }
         return;
     }
     kernel_proof! {
+        reply_schema::accepted_payload(*w, w.nodes@[i as int], reply);
+        reply_schema::audit_phase(*w, w.nodes@[i as int]);
         if reply == Reply::AuditDisagrees {
             assert(w.nodes@[i as int].phase == Phase::Auditing);
         }
@@ -182,7 +165,7 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         report::lemmas::reply_result(before_report@, report.entries@, NodeId(i as u64),
             before_reply@.nodes@[i as int].phase, current_item(before_reply@.nodes@[i as int]),
             before_reply@.nodes@[i as int].run, before_reply@.nodes@[i as int].job,
-            generation, reply, port_t860_contracts::admissible(before_reply@, before_reply@.nodes@[i as int], reply)); }
+            generation, reply, reply_schema::allows(reply_schema::input(before_reply@, before_reply@.nodes@[i as int], reply), reply)); }
 
 }
 }
@@ -461,7 +444,7 @@ pub(super) fn on_rejected_reply(w: &mut World, i: usize, _generation: u64, _repl
         footprint::ordered_table(*old(w)),
         !(old(w).nodes@[i as int].phase is Stopping),
         port_t860_contracts::active(old(w).nodes@[i as int], _generation),
-        !port_t860_contracts::admissible(*old(w), old(w).nodes@[i as int], _reply),
+        !reply_schema::allows(reply_schema::input(*old(w), old(w).nodes@[i as int], _reply), _reply),
     ensures report::forwards(old(report).entries@, final(report).entries@,
             report::round_entries(NodeId(i as u64), Some(FailedRoundCause::RunFailed))),
         port_t860_contracts::reply_post(*old(w), *final(w), i as int, _generation, _reply, *old(out), *final(out)),
@@ -523,11 +506,17 @@ pub(super) fn on_rejected_reply(w: &mut World, i: usize, _generation: u64, _repl
     kernel_snapshot! { before_report = report.entries@ }
     kernel_snapshot! { before_reply = *w }
     kernel_snapshot! { before_outputs = *out }
-    kernel_proof! { reveal(port_t860_contracts::admissible);
-        if successful_reply_input(w.nodes@[i as int], _reply) {
+    kernel_proof! {
+        reply_schema::audit_phase(*w, w.nodes@[i as int]);
+        if let Reply::MakerDone { head } = _reply {
+            reply_schema::maker_phase(*w, w.nodes@[i as int], head);
+        }
+        if node_checked(*w, w.nodes@[i as int])
+            && successful_reply_input(w.nodes@[i as int], _reply) {
             if let Reply::PlanLeaf { footprint, .. } = _reply {
                 if footprint::footprint_empty(w.nodes@[i as int].footprint) { footprint::inline_is_valid(*w, 1); }
             }
+            reply_schema::successful(*w, w.nodes@[i as int], _reply);
         }
     }
         run_failed(w, i, out, report);
