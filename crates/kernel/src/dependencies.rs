@@ -1128,6 +1128,7 @@ impl World {
     /// This separates the unchanged writes from cycle-query validation.
     // The pinned Verus frontend needs an explicit match to retain the exact wait number.
     #[allow(clippy::manual_map)]
+    #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
     #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
     fn record_dependency(&mut self, i: usize, existing: Option<usize>,
         dependency: Dependency, out: &mut Outbox) -> (result: ()) [
