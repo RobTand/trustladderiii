@@ -105,3 +105,56 @@ def test_harness_policy_matches_the_verified_worker_policy():
     from tl3_harness import redaction
     from tl3_workers import tracing
     assert redaction.POLICY == tracing.load_policy()
+
+
+def test_contextual_azure_sas_is_secret_in_real_job_text_windows_and_payloads():
+    from tl3_harness.redaction import Redactor
+    import tracing_forms3
+
+    _, secrets = next((text, secrets) for name, text, secrets, _ in tracing_forms3.FORMS
+                           if name == 'presigned_azure_sas_sig')
+    signature = secrets[0]
+    for query in [
+        'sv=2022-11-02&se=2026-12-01&sr=b&sig=' + signature,
+        'sig=' + signature + '&ss=b&se=2026-12-01&sv=2022-11-02',
+        '%73v=2022-11-02&%73e=2026-12-01&%73r=b&%73ig=' + signature,
+    ]:
+        source = 'https://st42.blob.core.windows.net/c/b?' + query + '&after=ordinary'
+        expected = source.replace(signature, '[REDACTED]')
+        redactor = Redactor(None)
+        matches = redactor.text(source) == expected
+        assert matches, "SAS text/context mismatch"
+        start = source.index(signature) + 3
+        matches = redactor.window(source, start, start + 16) == '[REDACTED]'
+        assert matches, 'SAS window mismatch'
+        matches = redactor.payload({'note': source}) == {'note': expected}
+        assert matches, 'SAS payload mismatch'
+        for offset in range(len(signature) - 8 + 1):
+            survives = signature[offset:offset + 8] in expected
+            assert not survives, f"SAS fragment offset {offset}"
+
+
+def test_generic_or_incomplete_urls_do_not_acquire_azure_sas_semantics():
+    from tl3_harness.redaction import Redactor, azure_sas_spans
+
+    signature = 'TL3FAKE' + 'a' * 36 + '%2B%2F%3D'
+    sources = [
+        'ordinary sig=' + signature,
+        'https://example.com/c?sv=v&se=e&sr=b&sig=' + signature,
+        'https://st42.blob.core.windows.net.evil.example/c?sv=v&se=e&sr=b&sig=' + signature,
+        'https://st42.blob.core.windows.net/c?sv=v&sr=b&sig=' + signature,
+        'https://st42.blob.core.windows.net/c?sv=v&se=&sr=b&sig=' + signature,
+        'https://st42.blob.core.windows.net/c#?sv=v&se=e&sr=b&sig=' + signature,
+        'https://st42.blob.core.windows.net@evil.example/c?sv=v&se=e&sr=b&sig=' + signature,
+        'https://@st42.blob.core.windows.net/c?sv=v&se=e&sr=b&sig=' + signature,
+        'https://st42.blob.core.windows.net/c?sv=v&%73v=w&se=e&sr=b&sig=' + signature,
+        'https://st42.blob.core.windows.net/c?sv=%GG&se=e&sr=b&sig=' + signature,
+    ]
+    for source in sources:
+        assert list(azure_sas_spans(source)) == []
+        unchanged = Redactor(None).text(source) == source
+        assert unchanged, "generic context changed"
+    # The policy bounds raw UTF8 bytes, including unrelated query pairs.
+    for value in ['x' * 4097, 'é' * 2049]:
+        source = 'https://st42.blob.core.windows.net/c?sv=v&se=e&sr=b&sig=' + signature + '&extra=' + value
+        assert list(azure_sas_spans(source)) == []
