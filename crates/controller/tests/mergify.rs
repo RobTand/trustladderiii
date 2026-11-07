@@ -2873,6 +2873,22 @@ fn main() {
         println!("6 Mergify scenarios passed; no skips; no live upstream calls");
         return;
     }
+    if std::env::args().nth(1).as_deref() == Some("--ci1-diagnostics") {
+        let mut database = support::Database::start();
+        let modes: Vec<_> = ci_evidence::MODES
+            .iter()
+            .filter(|mode| mode.starts_with("diagnostics-"))
+            .collect();
+        for mode in &modes {
+            ci_evidence::scenario(&database.create(&format!("ci1_{mode}")), mode);
+        }
+        database.stop();
+        println!(
+            "{} Mergify scenarios passed; no skips; no live upstream calls",
+            modes.len()
+        );
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some("--ci-evidence") {
         let mut database = support::Database::start();
         for mode in ci_evidence::MODES {
@@ -2927,6 +2943,7 @@ fn main() {
         let mut database = support::Database::start();
         ci_evidence::scenario(&database.create("ci_evidence"), &mode);
         database.stop();
+        println!("1 Mergify scenarios passed; no skips; no live upstream calls");
         return;
     }
     if let Some(mode) = std::env::args()
@@ -3141,9 +3158,11 @@ fn main() {
         10, 4, 13, 4, 3, 5, 8, 3, 10, 3, 13, 7, 9, 28, 69, 44, 139, 19, 18, 14, 29, 1, 20,
     ];
     let tail = seconds.len() - 11;
-    let groups: Vec<_> = seconds[..tail]
+    let groups: Vec<_> = seconds[..27]
         .iter()
         .copied()
+        .chain(std::iter::repeat_n(10, 6))
+        .chain(seconds[27..tail].iter().copied())
         .chain(std::iter::repeat_n(10, queue_entry::MODES.len()))
         .chain(std::iter::repeat_n(10, queue_cause::MODES.len()))
         .chain(std::iter::repeat_n(10, queue_cause::REVIEW_MODES.len()))
