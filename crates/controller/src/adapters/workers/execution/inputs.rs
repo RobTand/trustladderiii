@@ -453,8 +453,12 @@ mod tests {
         let generated = serde_json::to_value(schemars::schema_for!(Command)).unwrap();
         let committed: serde_json::Value = serde_json::from_str(include_str!(
             "../../../../../../workers/src/tl3_workers/schemas/worker-execution.json"
-        )).unwrap();
-        assert_eq!(generated, committed, "regenerate with tl3 worker-execution schema");
+        ))
+        .unwrap();
+        assert_eq!(
+            generated, committed,
+            "regenerate with tl3 worker-execution schema"
+        );
     }
 
     #[test]

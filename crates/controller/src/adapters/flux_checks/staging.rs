@@ -181,7 +181,11 @@ fn input_root(parent: &Path, delivery: &Delivery) -> Result<PathBuf> {
     File::open("/dev/urandom")?.read_exact(&mut nonce)?;
     // Each attempt keeps its own immutable publication. Failed or unreferenced
     // attempts are retained for ownership-checked retention, never overwritten.
-    Ok(parent.join(format!("{}-{}", correlation(delivery), durable::digest(&nonce))))
+    Ok(parent.join(format!(
+        "{}-{}",
+        correlation(delivery),
+        durable::digest(&nonce)
+    )))
 }
 
 pub struct PreparedInput {
@@ -475,7 +479,9 @@ mod tests {
         fs::create_dir(&partial).unwrap();
         fs::write(partial.join("retained"), b"partial before crash").unwrap();
         let tests = crate::adapters::images::AdditionalTests {
-            selected: None, always: vec![], generated: vec![],
+            selected: None,
+            always: vec![],
+            generated: vec![],
         };
         let next = input_root(root.path(), &delivery).unwrap();
         let staged = stage_input(&delivery, &next, &harness, "image", &[], &tests)
@@ -484,12 +490,20 @@ mod tests {
         let again = stage_input(&delivery, &retry, &harness, "image", &[], &tests)
             .expect("publication before job save must permit a fresh attempt");
         assert_ne!(staged.tree.root, again.tree.root);
-        assert_eq!(fs::read(partial.join("retained")).unwrap(), b"partial before crash");
+        assert_eq!(
+            fs::read(partial.join("retained")).unwrap(),
+            b"partial before crash"
+        );
         for input in [staged, again] {
-            assert_eq!(durable::digest(&fs::read(&input.tree.manifest).unwrap()), input.tree.input_digest);
-            assert_eq!(input.run.base_sha, delivery.checks.as_ref().unwrap().base_sha);
+            assert_eq!(
+                durable::digest(&fs::read(&input.tree.manifest).unwrap()),
+                input.tree.input_digest
+            );
+            assert_eq!(
+                input.run.base_sha,
+                delivery.checks.as_ref().unwrap().base_sha
+            );
         }
         writable(root.path());
     }
-
 }

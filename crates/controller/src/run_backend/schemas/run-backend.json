@@ -362,6 +362,17 @@
         "ownership": {
           "$ref": "#/$defs/RuntimeOwnership"
         },
+        "pending_launch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PendingLaunchStop"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "process_group_probe_errno": {
           "description": "kill(-owned_pgid, 0) must return ESRCH after reap/removal.",
           "type": [
@@ -2855,6 +2866,36 @@
       "required": [
         "owner",
         "correlation"
+      ]
+    },
+    "PendingLaunchStop": {
+      "description": "Exact absence facts after stopping an unbound InJob launcher. OwnScope needs\na bound scope identity and cannot be discharged by container absence alone.",
+      "type": "object",
+      "properties": {
+        "intent": {
+          "$ref": "#/$defs/ContainerLaunchIntent"
+        },
+        "name_exists_exit": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "remaining_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sweep_exit": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "intent",
+        "name_exists_exit",
+        "sweep_exit",
+        "remaining_ids"
       ]
     },
     "PhaseEvidence": {

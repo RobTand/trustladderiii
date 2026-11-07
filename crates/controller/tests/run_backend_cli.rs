@@ -1170,7 +1170,7 @@ fn own_scope_cleanup_requires_exact_generation_absence_and_unpopulated_scope() {
     let scope = container.scope.as_ref().unwrap();
     let mut facts = CleanupEvidence {
         schema: "tl3.cleanup_evidence.v1".into(),
-            pending_launch: None,
+        pending_launch: None,
         ownership: owned.clone(),
         launcher: ProcessStop::Absent,
         process_group_probe_errno: Some(3),
@@ -1340,7 +1340,7 @@ fn cancellation_uses_independent_cleanup_without_runner_report_after_wrapper_los
     let scope = container.scope.as_ref().unwrap();
     let facts = CleanupEvidence {
         schema: "tl3.cleanup_evidence.v1".into(),
-            pending_launch: None,
+        pending_launch: None,
         ownership: owned.clone(),
         launcher: ProcessStop::Absent,
         process_group_probe_errno: Some(3),
@@ -2609,12 +2609,26 @@ fn undispatched_cancel_commits_without_runtime_debt_or_native_effect() {
     fs::write(f.root.path().join("jobspec.py"), "raise SystemExit(1)\n").unwrap();
     assert_eq!(f.submit()["kind"], "unknown");
     assert!(!f.state().dispatched);
-    let frames = f.call(json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}));
-    assert_eq!(frames.last().unwrap()["result"]["acknowledgement"]["terminal"]["ending"], "cancelled", "{frames:?}");
+    let frames =
+        f.call(json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}));
+    assert_eq!(
+        frames.last().unwrap()["result"]["acknowledgement"]["terminal"]["ending"],
+        "cancelled",
+        "{frames:?}"
+    );
     assert_eq!(f.state().terminal.unwrap().ending, Ending::Cancelled);
-    let debt = f.options.journal_root.join("cleanup-debt").join(&f.request.runtime.manifest_digest);
+    let debt = f
+        .options
+        .journal_root
+        .join("cleanup-debt")
+        .join(&f.request.runtime.manifest_digest);
     assert!(!debt.exists() || fs::read_dir(debt).unwrap().next().is_none());
-    assert!(!fs::read_to_string(f.root.path().join("calls")).unwrap().lines().any(|line| line.starts_with("cancel ")));
+    assert!(
+        !fs::read_to_string(f.root.path().join("calls"))
+            .unwrap()
+            .lines()
+            .any(|line| line.starts_with("cancel "))
+    );
 }
 
 #[test]
@@ -2630,7 +2644,9 @@ fn pending_injob_launch_requires_exact_stopped_launcher_and_empty_name_and_label
     let facts = json!({"schema":"tl3.cleanup_evidence.v1","ownership":launcher,"launcher":{"kind":"absent"},
         "process_group_probe_errno":3,"container":null,
         "pending_launch":{"intent":launch,"name_exists_exit":1,"sweep_exit":0,"remaining_ids":[]}});
-    for defect in ["name", "sweep", "remaining", "launcher", "group", "intent", "mode", "missing", "valid"] {
+    for defect in [
+        "name", "sweep", "remaining", "launcher", "group", "intent", "mode", "missing", "valid",
+    ] {
         let mut evidence = facts.clone();
         match defect {
             "name" => evidence["pending_launch"]["name_exists_exit"] = json!(125),
@@ -2640,29 +2656,62 @@ fn pending_injob_launch_requires_exact_stopped_launcher_and_empty_name_and_label
             "group" => evidence["process_group_probe_errno"] = Value::Null,
             "intent" => evidence["pending_launch"]["intent"]["name"] = json!("another-name"),
             "mode" => evidence["pending_launch"]["intent"]["mode"] = json!("own_scope"),
-            "missing" => { evidence.as_object_mut().unwrap().remove("pending_launch"); },
-            _ => {},
+            "missing" => {
+                evidence.as_object_mut().unwrap().remove("pending_launch");
+            }
+            _ => {}
         }
-        let reference = api::durable::blob(&f.intent.output_dir.join(format!("pending-{defect}.json")), &serde_json::to_vec(&evidence).unwrap()).unwrap();
+        let reference = api::durable::blob(
+            &f.intent.output_dir.join(format!("pending-{defect}.json")),
+            &serde_json::to_vec(&evidence).unwrap(),
+        )
+        .unwrap();
         let frames = f.call(json!({"op":"retain_cleanup","owner":f.intent.owner,"correlation":f.intent.correlation,"evidence":reference}));
         if defect == "valid" {
-            assert_eq!(frames.last().unwrap()["result"]["cleanup"]["stopped"], true, "{frames:?}");
+            assert_eq!(
+                frames.last().unwrap()["result"]["cleanup"]["stopped"],
+                true,
+                "{frames:?}"
+            );
         } else {
-            assert_ne!(frames.last().unwrap()["result"]["cleanup"]["stopped"], true, "{defect}: {frames:?}");
+            assert_ne!(
+                frames.last().unwrap()["result"]["cleanup"]["stopped"],
+                true,
+                "{defect}: {frames:?}"
+            );
         }
     }
-    let debt = f.options.journal_root.join("cleanup-debt").join(&f.request.runtime.manifest_digest);
+    let debt = f
+        .options
+        .journal_root
+        .join("cleanup-debt")
+        .join(&f.request.runtime.manifest_digest);
     assert!(fs::read_dir(debt).unwrap().next().is_none());
     let mut late = launcher.clone();
-    late.container = Some(ContainerOwnership { name: launch["name"].as_str().unwrap().into(),
-        id: "c".repeat(64), mode: ContainerMode::InJob,
-        labels: serde_json::from_value(launch["labels"].clone()).unwrap(), scope: None });
+    late.container = Some(ContainerOwnership {
+        name: launch["name"].as_str().unwrap().into(),
+        id: "c".repeat(64),
+        mode: ContainerMode::InJob,
+        labels: serde_json::from_value(launch["labels"].clone()).unwrap(),
+        scope: None,
+    });
     let frames = f.call(json!({"op":"bind_container_launch","owner":f.intent.owner,"correlation":f.intent.correlation,"observed":late}));
-    assert_eq!(frames.last().unwrap()["kind"], "error", "stopped pending intent must not acquire a late binding");
+    assert_eq!(
+        frames.last().unwrap()["kind"],
+        "error",
+        "stopped pending intent must not acquire a late binding"
+    );
     f.call(json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}));
-    f.events(&[json!({"name":"exception","context":{"type":"cancel","severity":0}}),json!({"name":"clean"})]);
+    f.events(&[
+        json!({"name":"exception","context":{"type":"cancel","severity":0}}),
+        json!({"name":"clean"}),
+    ]);
     let terminal = f.attach();
-    assert_eq!(terminal.last().unwrap()["result"]["observation"]["terminal"]["ending"], "cancelled", "{terminal:?}");
+    assert_eq!(
+        terminal.last().unwrap()["result"]["observation"]["terminal"]["ending"],
+        "cancelled",
+        "{terminal:?}"
+    );
 }
 
 #[test]
@@ -2673,18 +2722,35 @@ fn injob_no_launch_needs_native_clean_and_does_not_leave_unregistered_debt() {
         f.podman(ContainerMode::InJob, true);
         assert_eq!(f.submit()["kind"], "accepted");
         if cancelled {
-            f.call(json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}));
+            f.call(
+                json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}),
+            );
         }
         let before = f.call(json!({"op":"cleanup_runtime","owner":f.intent.owner,"correlation":f.intent.correlation}));
-        assert_eq!(before.last().unwrap()["result"]["cleanup"]["stopped"], false);
+        assert_eq!(
+            before.last().unwrap()["result"]["cleanup"]["stopped"],
+            false
+        );
         let events = if cancelled {
-            vec![json!({"name":"exception","context":{"type":"cancel","severity":0}}),json!({"name":"clean"})]
-        } else { completed(256) };
+            vec![
+                json!({"name":"exception","context":{"type":"cancel","severity":0}}),
+                json!({"name":"clean"}),
+            ]
+        } else {
+            completed(256)
+        };
         f.events(&events);
         let terminal = f.attach();
-        assert_eq!(terminal.last().unwrap()["result"]["observation"]["terminal"]["ending"],
-            if cancelled { "cancelled" } else { "infra_lost" }, "{terminal:?}");
-        let debt = f.options.journal_root.join("cleanup-debt").join(&f.request.runtime.manifest_digest);
+        assert_eq!(
+            terminal.last().unwrap()["result"]["observation"]["terminal"]["ending"],
+            if cancelled { "cancelled" } else { "infra_lost" },
+            "{terminal:?}"
+        );
+        let debt = f
+            .options
+            .journal_root
+            .join("cleanup-debt")
+            .join(&f.request.runtime.manifest_digest);
         assert!(!debt.exists() || fs::read_dir(debt).unwrap().next().is_none());
     }
 }

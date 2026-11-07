@@ -545,7 +545,10 @@ impl Flux {
         };
         let record = self.journal.load(owner)?;
         let cleanup_complete = super::cleanup::all_stopped(&record);
-        if cleanup_complete && record.runtime_ownerships.is_empty() && record.container_launches.is_empty() {
+        if cleanup_complete
+            && record.runtime_ownerships.is_empty()
+            && record.container_launches.is_empty()
+        {
             // A queued cancel or wrapper failure may have retained unregistered
             // debt before native clean arrived. Retire only that exact intent.
             self.run_cleanup(owner)?;
@@ -840,10 +843,22 @@ fn classify(
             "cancel intent, native cancel exception, clean and trusted stopped-scope evidence",
         ));
     }
-    if report.is_none() && record.container_launches.is_empty() && record.runtime_ownerships.is_empty()
-        && matches!(record.request.runtime.runtime, ExecutionRuntime::RootlessPodman { mode: ContainerMode::InJob, .. })
-        && finish.is_some_and(|(_, status)| !matches!(status, WaitStatus::Exited { code: 0, .. })) {
-        return Some((Ending::InfraLost, "native wrapper failed before any durable container launch"));
+    if report.is_none()
+        && record.container_launches.is_empty()
+        && record.runtime_ownerships.is_empty()
+        && matches!(
+            record.request.runtime.runtime,
+            ExecutionRuntime::RootlessPodman {
+                mode: ContainerMode::InJob,
+                ..
+            }
+        )
+        && finish.is_some_and(|(_, status)| !matches!(status, WaitStatus::Exited { code: 0, .. }))
+    {
+        return Some((
+            Ending::InfraLost,
+            "native wrapper failed before any durable container launch",
+        ));
     }
     let report = report?;
     if report.outcome == ReportOutcome::RefusedBeforeTests && report.tests_started == 0 {
