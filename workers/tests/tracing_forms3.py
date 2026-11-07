@@ -18,9 +18,15 @@ FORMS = []   # (name, text, [secrets], category)
 
 def r(n, alpha=ALNUM):
     # Fixed-seed synthetic values carry a fake marker where their alphabet permits.
-    value = ''.join(rng.choice(alpha) for _ in range(n))
     marker = 'TL3FAKE'
-    return marker + value[len(marker):] if n >= len(marker) and set(marker) <= set(alpha) else value
+    if n < len(marker) or not set(marker) <= set(alpha):
+        return ''.join(rng.choice(alpha) for _ in range(n))
+    # Retain mixed random character classes after the fixed marker. A predictable
+    # marker must not turn high-entropy carrier cases into ordinary identifiers.
+    groups = [group for chars in (string.ascii_lowercase, string.ascii_uppercase, string.digits)
+              if (group := ''.join(char for char in chars if char in alpha))]
+    return marker + ''.join(rng.choice(groups[index % len(groups)])
+                            for index in range(n - len(marker)))
 
 
 def b64(s, urlsafe=False):

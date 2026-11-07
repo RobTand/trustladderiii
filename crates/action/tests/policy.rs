@@ -377,3 +377,24 @@ fn composite_reference_repairs_keep_local_definitions_and_every_independent_row(
         );
     }
 }
+
+#[test]
+fn evidence_array_repairs_and_invalid_resolved_repairs_use_the_canonical_boundary() {
+    let source = json!({"type":"object","properties":{"evidence_contract":{"type":"array"}},"required":["evidence_contract"]});
+    let result = command(json!({"op":"schema_rows","errors":[schema_fact("required",json!(["evidence_contract"]),
+        source.clone(),json!({}),json!([]))],"root_schema":source,"role":"ingest"}));
+    let rows = &result["ok"]["result"]["value"];
+    assert_eq!(rows.as_array().unwrap().len(), 1);
+    let rendered = command(json!({"op":"render","rows":rows,"role":"ingest","context":"reply"}));
+    let text = rendered["ok"]["result"]["value"].as_str().unwrap();
+    assert!(text.contains("/evidence_contract") && text.contains("array") && text.contains("add"));
+    for (candidate, expected) in [(json!([]),true),(json!("not an array"),false)] {
+        let result = command(json!({"op":"permits","rows":rows,"before":{},"after":{"evidence_contract":candidate},"role":"ingest"}));
+        assert_eq!(result["ok"]["result"]["value"], expected);
+    }
+    let mut row = serde_json::to_value(row()).unwrap();
+    for repair in [json!(null),json!({"kind":"cant_meet","reason":""})] {
+        row["repair"] = repair;
+        assert!(command(json!({"op":"validate","rows":[row.clone()],"role":"maker"})).get("error").is_some());
+    }
+}

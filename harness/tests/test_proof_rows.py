@@ -371,3 +371,35 @@ def test_source_repairs_respect_the_shared_generated_header_rule(tmp_path):
         proof.assemble_proof(tmp_path / 'before', tmp_path / 'after', tmp_path / 'staged', check, case['config'], footprint=('tests/test_observer.py',))
     assert caught.value.rule == 'proof.support.call_allowlist'
     assert caught.value.as_json()[0]['repair']['kind'] == 'cant_meet'
+
+
+def test_unreplaced_callback_registration_rechecks_the_full_witness():
+    """Callback execution stays Python until slice 3; row decisions call Rust."""
+    from dataclasses import replace
+    from tl3_harness.rules import Rule, register_rows
+    allowed = {'kind': 'schema', 'keyword': 'type', 'value': 'array'}
+    row = Rule('evidence.contract_missing',
+               lambda facts: ({},) if 'evidence_contract' not in facts['reply'] else (),
+               lambda facts: ({'kind': 'field', 'value': '/evidence_contract'},),
+               allowed, {'kind': 'edit', 'pointer': '/evidence_contract', 'op': 'add', 'allowed': allowed},
+               example={'reply': {}}, witness={'evidence_contract': []})
+    assert register_rows(row, roles=('ingest',)).id == row.id
+    with pytest.raises(ValueError, match='witness'):
+        register_rows(replace(row, witness={'evidence_contract': 'not an array'}), roles=('ingest',))
+    with pytest.raises(ValueError, match='still violates'):
+        register_rows(replace(row, check=lambda facts: ({},)), roles=('ingest',))
+
+
+def test_unreplaced_callback_gating_keeps_all_current_violations_and_stops_later_callbacks():
+    from tl3_harness.rules import Rule, evaluate_rows
+    calls = []
+    row = Rule('proof.subject', lambda facts: ({}, {}),
+               lambda facts: ({'kind': 'path', 'value': 'tests/test_x.py'},),
+               {'kind': 'finite', 'values': []},
+               {'kind': 'cant_meet', 'reason': 'Subject identity differs.'},
+               gating=True, roles=frozenset(('maker',)))
+    later = Rule('proof.later', lambda facts: calls.append(True) or (), row.names,
+                 row.allowed, row.repair, roles=row.roles)
+    found = evaluate_rows((row, later), {}, role='maker')
+    assert not calls and len(found) == 2
+    assert all(item['gating'] and item['rule_id'] == 'proof.subject' for item in found)
