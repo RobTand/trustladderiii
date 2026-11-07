@@ -64,22 +64,54 @@ fn write(path: &Path, value: &impl serde::Serialize) -> Result<()> {
     Ok(())
 }
 
-fn fixture(root: &Path) -> Result<Delivery> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FixtureKind {
+    Success,
+    Cancel,
+}
+
+impl FixtureKind {
+    fn parse(value: &str) -> Result<Self> {
+        match value {
+            "success" => Ok(Self::Success),
+            "cancel" => Ok(Self::Cancel),
+            _ => Err("fixture kind must be success or cancel".into()),
+        }
+    }
+
+    fn metadata(self) -> serde_json::Value {
+        match self {
+            Self::Success => json!({"kind":"success", "wait_seconds":0}),
+            Self::Cancel => json!({"kind":"cancel", "wait_seconds":12}),
+        }
+    }
+
+    fn value_source(self, value: u8) -> String {
+        match self {
+            Self::Success => format!("def value(): return {value}\n"),
+            Self::Cancel => {
+                format!("def value():\n    import time\n    time.sleep(12)\n    return {value}\n")
+            }
+        }
+    }
+}
+
+fn fixture(root: &Path, kind: FixtureKind) -> Result<Delivery> {
     fs::create_dir(root)?;
     git(root, &["init", "--quiet", "--template=", "-b", "main"])?;
     fs::write(
         root.join("pyproject.toml"),
         "[tool.tl3.harness]\ncommand = ['python', '-m', 'pytest']\ntest-files = ['test_*.py']\n",
     )?;
-    fs::write(root.join("value.py"), "def value(): return 1\n")?;
+    fs::write(root.join("value.py"), kind.value_source(1))?;
     fs::write(
         root.join("test_value.py"),
-        "from value import value\ndef test_value(): assert value() == 2\n",
+        "from value import value\ndef test_value(): assert value() == 2, 'sandbox value must be 2'\n",
     )?;
     git(root, &["add", "."])?;
     git(root, &["commit", "--quiet", "-m", "sandbox canary base"])?;
     let base = git(root, &["rev-parse", "HEAD"])?;
-    fs::write(root.join("value.py"), "def value(): return 2\n")?;
+    fs::write(root.join("value.py"), kind.value_source(2))?;
     git(root, &["add", "."])?;
     git(root, &["commit", "--quiet", "-m", "sandbox canary head"])?;
     let head = git(root, &["rev-parse", "HEAD"])?;
@@ -90,7 +122,8 @@ fn fixture(root: &Path) -> Result<Delivery> {
         "repository":{"owner":"RobTand","name":"tl3-sandbox","installation":1},
         "issue":1,"pull_request":null,"paths":["value.py"],"attempt":1,"round":0,
         "checks":{"repository":root,"base_sha":base,"reviewed_sha":base,
-            "plan":[{"name":"sandbox value changes","kind":"demonstrating","tests":["test_value.py::test_value"]}]}
+            "plan":[{"name":"sandbox value changes","kind":"demonstrating","tests":["test_value.py::test_value"],
+                "proof":{"subjects":["value.py::value"],"observer_support":[],"red_message":"sandbox value must be 2"}}]}
     }))?)
 }
 
@@ -107,6 +140,7 @@ fn prepare(
     context: &Path,
     source: &Path,
     expected_generation: &str,
+    kind: FixtureKind,
 ) -> Result<()> {
     if !api::absolute(root) || !root.starts_with("/mnt/shared/flux-out/tl3") || root.exists() {
         return Err("a fresh absolute shared packet destination is required".into());
@@ -182,7 +216,7 @@ fn prepare(
         container_image: image.reference.clone(),
     });
     config.validate()?; // Syntax only. No store, secrets, scheduler or container access.
-    let delivery = fixture(&root.join("served"))?;
+    let delivery = fixture(&root.join("served"), kind)?;
     write(&root.join("delivery.json"), &delivery)?;
     let prepared = Stager::new(&config)?.prepare_request(&delivery)?;
     let mut request = prepared.request;
@@ -264,6 +298,7 @@ fn prepare(
             "executable":identity(&std::env::current_exe()?)?, "canonical_bundle":identity(bundle)?,
             "context_input":identity(context)?, "context_copy":identity(&options.bootstrap.config)?,
             "generation":options.instance_generation,"uri":options.uri,
+            "fixture":kind.metadata(),
             "served":{"base":run.base_sha,"head":head,"reviewed":run.reviewed_sha,"plan":run.plan,"suite":request.suite},
             "transport":request.tree,"runner_argv_unexecuted":argv,
             "request":identity(&root.join("request.json"))?,"delivery":identity(&root.join("delivery.json"))?,
@@ -280,25 +315,120 @@ fn prepare(
     Ok(())
 }
 
+fn fixture_kind(arguments: &[std::ffi::OsString]) -> Result<FixtureKind> {
+    match arguments.len() {
+        5 => Ok(FixtureKind::Success),
+        7 if arguments[5] == "--fixture-kind" => {
+            FixtureKind::parse(arguments[6].to_str().ok_or("UTF-8 fixture kind required")?)
+        }
+        _ => {
+            Err("expected five positional inputs and optional --fixture-kind success|cancel".into())
+        }
+    }
+}
+
 fn main() -> Result<()> {
     let arguments: Vec<_> = std::env::args_os().skip(1).collect();
     if arguments.len() == 1 && arguments[0] == "--help" {
         println!(
-            "fx-stage-packet DESTINATION CANONICAL_SANDBOX_MANIFEST CONTEXT_OPTIONS SOURCE_ROOT EXPECTED_GENERATION\nPreparation only; no native backend or container operations. Fresh shared destination required."
+            "fx-stage-packet DESTINATION CANONICAL_SANDBOX_MANIFEST CONTEXT_OPTIONS SOURCE_ROOT EXPECTED_GENERATION [--fixture-kind success|cancel]\nPreparation only; no native backend or container operations. Fresh shared destination required."
         );
         return Ok(());
     }
-    if arguments.len() != 5 {
-        return Err("expected destination, canonical sandbox manifest, context options, source root, explicit generation".into());
-    }
+    let kind = fixture_kind(&arguments)?;
     let generation = arguments[4].to_str().ok_or("UTF-8 generation required")?;
     let paths: Vec<PathBuf> = arguments[..4].iter().map(PathBuf::from).collect();
-    prepare(&paths[0], &paths[1], &paths[2], &paths[3], generation)
+    prepare(&paths[0], &paths[1], &paths[2], &paths[3], generation, kind)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires admitted PrismaBuild action and FX_FIXTURE_EVIDENCE; run with --include-ignored"]
+    fn served_fixture_verdicts_and_wait() {
+        assert_eq!(FixtureKind::parse("success").unwrap(), FixtureKind::Success);
+        assert_eq!(FixtureKind::parse("cancel").unwrap(), FixtureKind::Cancel);
+        assert!(FixtureKind::parse("arbitrary-command").is_err());
+        let mut arguments = vec![std::ffi::OsString::from("input"); 5];
+        assert_eq!(fixture_kind(&arguments).unwrap(), FixtureKind::Success);
+        arguments.extend(["--fixture-kind".into(), "cancel".into()]);
+        assert_eq!(fixture_kind(&arguments).unwrap(), FixtureKind::Cancel);
+        arguments[6] = "success".into();
+        assert_eq!(fixture_kind(&arguments).unwrap(), FixtureKind::Success);
+        arguments[6] = "arbitrary-command".into();
+        assert!(fixture_kind(&arguments).is_err());
+        arguments.pop();
+        assert!(fixture_kind(&arguments).is_err());
+        let temporary = tempfile::tempdir().unwrap();
+        for kind in [FixtureKind::Success, FixtureKind::Cancel] {
+            let name = kind.metadata()["kind"].as_str().unwrap().to_owned();
+            let delivery = fixture(&temporary.path().join(&name), kind).unwrap();
+            write(&temporary.path().join(format!("{name}.json")), &delivery).unwrap();
+        }
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let status = Command::new(std::env::var("FX_FIXTURE_PYTHON").unwrap_or("python3".into()))
+            .arg(source.join("tools/verify_fx_fixtures.py"))
+            .arg(temporary.path())
+            .status()
+            .unwrap();
+        assert!(
+            status.success(),
+            "served fixture production-path verification failed"
+        );
+        use tl3_contracts::report::{CheckReport, Outcome, RedMessageMatch, Verdict};
+        use tl3_harness_core::judge as shared;
+        let evidence = PathBuf::from(std::env::var_os("FX_FIXTURE_EVIDENCE").unwrap());
+        let mut judgments = Vec::new();
+        for name in ["red-original", "green-success", "green-cancel"] {
+            let stdout = fs::read_to_string(evidence.join(name).join("stdout.log")).unwrap();
+            let report: CheckReport = serde_json::from_str(
+                stdout
+                    .lines()
+                    .find_map(|line| line.strip_prefix("TL3_CHECKS "))
+                    .unwrap(),
+            )
+            .unwrap();
+            let result = &report.results[0];
+            let test = &result.tests[0];
+            assert_eq!(test.base, Outcome::Assertion);
+            assert_eq!(test.head, Outcome::Passed);
+            let proof = result.proof.as_ref().unwrap();
+            let reason = if proof.declaration.is_none() {
+                shared::Reason::Undeclared
+            } else {
+                assert_eq!(
+                    proof.red_message_matches.as_ref().unwrap()["test_value.py::test_value"],
+                    RedMessageMatch::Message
+                );
+                shared::Reason::Matched
+            };
+            let input = shared::Input {
+                kind: shared::Kind::Demonstrating,
+                base: shared::Outcome::Assertion,
+                head: shared::Outcome::Passed,
+                forced: None,
+                reason,
+            };
+            let decision = shared::judge(input);
+            assert_eq!(decision.passed, result.verdict == Verdict::Pass);
+            assert_eq!(decision.passed, name != "red-original");
+            let message = shared::message(input, "", "", None, &[], "");
+            if !decision.passed {
+                assert_eq!(
+                    message,
+                    "Assertion RED needs a declared assertion reason in proof.red_message."
+                );
+            }
+            judgments.push(json!({"fixture":name,"passed":decision.passed,"message":message}));
+        }
+        write(&evidence.join("rust-judge.json"), &judgments).unwrap();
+        println!(
+            "FX_RUST_JUDGE {}",
+            serde_json::to_string(&judgments).unwrap()
+        );
+    }
 
     #[test]
     fn staging_namespace_survives_consumer_argument_validation() {
