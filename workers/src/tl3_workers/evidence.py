@@ -28,24 +28,109 @@ CONTRACT_MISSING = register(Rule(
 
 # #931/Q27: this one row owns the conservative prose fallback. Full clauses
 # must be known execution mechanics; an unknown or mixed clause stays mandatory.
-_ROUTE_CLAUSES = (
-    r"run (?:any required development checks|development tests|validation) "
-    r"(?:only )?through (?:admitted prismabuild with the published entrypoints|"
-    r"prismabuild at priority -10|tl3's normal admitted prismabuild `run_tests`)",
-    r"no checks were run during this issue-only triage",
-    r"no actual tests have run for this source scope analysis",
-    r"free remote compute exceptions and ci ownership remain rob's policy",
-    r"read the execution policy and operating guide first",
-    r"reserve aggregate demand, bound native threads, preserve assigned affinity, "
-    r"and allow portable work on any eligible worker",
-    r"declare aggregate cpu/memory demand and bound native threads",
-    r"read each run's own verdict and log",
-    r"record skips",
-    r"print only allowlisted status, returncode, hashes, sizes and timestamps",
-    r"read the actual terminal verdict, logs and cas receipts with allowlisted fields only",
-    r"acknowledgement is not a pass",
-    r"verify terminal records, logs and cas receipts",
-)
+_ROUTE_CLAUSES = {
+    'execution': {
+        'clauses': (
+            r"run (?:any required development checks|development tests|development pytest|validation) "
+            r"(?:only )?through (?:admitted prismabuild with the published entrypoints|"
+            r"prismabuild|tl3's normal admitted prismabuild `run_tests`)",
+            r"execute the development test suite via (?:buildbuddy|prismabuild)",
+            r"no checks were run during this issue-only triage",
+            r"no actual tests have run for this source scope analysis",
+            r"free remote compute exceptions and ci ownership remain rob's policy",
+            r"read the execution policy and operating guide first",
+        ),
+    },
+    'priority': {
+        'clauses': (r"(?:keep |use scheduling )?priority -?[0-9]+",),
+        'runner_features': (r"priority(?:[ _]-?[0-9]+)?",),
+    },
+    'admission': {
+        'clauses': (
+            r"admitted cpu and memory",
+            r"reserve cpu and ram before dispatch",
+            r"declare aggregate cpu/memory demand",
+            r"reserve aggregate demand",
+        ),
+        'runner_features': (r"resource_admission", r"admitted cpu and memory"),
+    },
+    'bounds': {
+        'clauses': (
+            r"bounded workers(?: and (?:bounded )?native threads)?",
+            r"bound native threads",
+            r"limit worker count and native thread count",
+            r"preserve assigned affinity",
+            r"allow portable work on any eligible worker",
+            r"use the configured two-thread native bound",
+            r"use native_threads_[1-9][0-9]*",
+        ),
+        'runner_features': (r"native_threads_[1-9][0-9]*", r"worker_bound", r"bounded workers"),
+    },
+    'records': {
+        'clauses': (
+            r"read each run's own verdict and log",
+            r"(?:record|report) (?:exit status|return codes|logs|run logs|terminal records|cas receipts|"
+            r"receipts|skips|skipped checks|missing tools|unavailable tools)"
+            r"(?:(?:, (?:and )?| and )(?:exit status|return codes|logs|run logs|terminal records|"
+            r"cas receipts|receipts|skips|skipped checks|missing tools|unavailable tools))*",
+            r"print only allowlisted status, returncode, hashes, sizes and timestamps",
+            r"read the actual terminal verdict, logs and cas receipts with allowlisted fields only",
+            r"acknowledgement is not a pass",
+            r"verify terminal records, logs and cas receipts",
+            r"retain (?:all requested records|the requested records|the action key and requested execution records)",
+            r"report (?:these gaps|unsupported(?: resource details and artifact capabilities| details) as gaps)",
+            r"do not claim that a receipt proves those details",
+            r"(?:the supplied|available) capabilities do not expose (?:priority|resource admission|a worker bound)"
+            r"(?:(?:, | or )(?:priority|resource admission|a worker bound))*",
+            r"they do not list (?:exit status|skips|missing tools|separate terminal records)"
+            r"(?:(?:, | or )(?:exit status|skips|missing tools|separate terminal records))* as artifact capabilities",
+        ),
+        'artifacts': (r"(?:exit[ _]status|terminal[ _]records|skips|missing[ _]tools)",),
+        'context_artifacts': (r"(?:logs|terminal_verdict|cas_receipt|sha|action_key)",),
+    },
+}
+
+
+def _route_dimension(dimension, value, *, context=False, categories=None, unknown_clauses=()):
+    keywords = {word.rstrip('s') for word in re.findall(r'[a-z]+', value.lower())}
+    if any(keywords & {word.rstrip('s') for word in re.findall(r'[a-z]+', clause)}
+           for clause in unknown_clauses):
+        return False
+    return any(re.fullmatch(pattern, value.lower()) for name, category in _ROUTE_CLAUSES.items()
+               if categories is None or name in categories
+               for pattern in (*category.get(dimension, ()),
+                               *(category.get('context_artifacts', ()) if context and dimension == 'artifacts' else ())))
+
+
+def _route_categories(text):
+    if not isinstance(text, str):
+        return ()
+    clauses = []
+    for clause in re.split(r'[.;]\s*', text.lower()):
+        remaining = clause.strip()
+        if not remaining:
+            continue
+        categories = set()
+        while remaining:
+            matches = [(match.end(), name) for name, category in _ROUTE_CLAUSES.items()
+                       for pattern in category['clauses']
+                       if (match := re.match(pattern, remaining))]
+            if not matches:
+                categories = None
+                break
+            end, name = max(matches)
+            categories.add(name)
+            remaining = remaining[end:]
+            if remaining == ' as source requirements':
+                remaining = ''
+            if remaining:
+                separator = re.match(r'(?:, (?:and )?| and | with | at )', remaining)
+                if separator is None or separator.end() == len(remaining):
+                    categories = None
+                    break
+                remaining = remaining[separator.end():]
+        clauses.append(categories)
+    return clauses
 
 
 def _route_only(text, entry=None, inputs=None):
@@ -60,14 +145,11 @@ def _route_only(text, entry=None, inputs=None):
         executors = {'prismabuild_pytest'} | {item['executor'] for item in capabilities}
         if entry.get('tool') != 'run_tests' or entry.get('executor') not in executors:
             return False
-        if any(not re.fullmatch(r'native_threads_[1-9][0-9]*', value)
-               for value in entry.get('runner_features', [])):
+        if any(not _route_dimension(dimension, value, context=True)
+               for dimension in ('runner_features', 'artifacts') for value in entry.get(dimension, [])):
             return False
-        if set(entry.get('artifacts', [])) - {'cas_receipt', 'terminal_verdict', 'logs', 'sha'}:
-            return False
-    clauses = [part.strip() for part in re.split(r'[.;]\s*', text.lower()) if part.strip()]
-    return bool(clauses) and all(any(re.fullmatch(pattern, clause) for pattern in _ROUTE_CLAUSES)
-                                 for clause in clauses)
+    clauses = _route_categories(text)
+    return bool(clauses) and all(clauses)
 
 
 def _route_context(facts):
@@ -322,8 +404,8 @@ def preflight(inputs, reply, *, planning=False, objections=None):
                                     (True, inputs.get('audit_evidence_contract', [])),
                                     (False, reply['evidence_contract'])):
         for requirement in requirements:
-            if inherited and (requirement.get('provenance', {}).get('kind') == 'method'
-                              or ('verdict' in reply and _route_only(requirement.get('requirement'), requirement, inputs))):
+            if ((inherited and requirement.get('provenance', {}).get('kind') == 'method')
+                    or _route_only(requirement.get('requirement'), requirement, inputs)):
                 continue
             if requirement not in contract:
                 contract.append(requirement)
@@ -333,13 +415,24 @@ def preflight(inputs, reply, *, planning=False, objections=None):
             if method in ('helper_target_observer', 'helper_target_observer.setup_function'):
                 errors.append(named('evidence.removed_method', f'Unsupported evidence requirement: {requirement["requirement"]} '
                               f'(removed proof encoding {method}; source obligation retained).', dict(requirement=requirement, method=method)))
+        # A familiar field name alone cannot turn an unknown substantive duty into
+        # reporting context. Only categories present in complete known clauses apply.
+        clauses = [clause.strip() for clause in re.split(r'[.;]\s*', requirement['requirement'].lower())
+                   if clause.strip()]
+        classified = _route_categories(requirement['requirement'])
+        administrative = set().union(*(part for part in classified if part))
+        unknown = [clause for clause, category in zip(clauses, classified) if not category]
         candidates = []
         for capability in inputs['tool_capabilities']:
             missing = [f'{key}={requirement[key]}' for key in ('tool', 'executor')
                        if requirement[key] != capability[key]]
+            # Administrative metadata is context even within a mixed entry. Keep
+            # the entry and compare every substantive dimension without rewriting it.
             for key in DIMENSIONS:
                 missing.extend(f'{key}={value}' for value in requirement[key]
-                               if value not in capability[key])
+                               if value not in capability[key]
+                               and not (not requirement['methods'] and not requirement['protected_files']
+                                        and _route_dimension(key, value, categories=administrative, unknown_clauses=unknown)))
             candidates.append(missing)
         if not candidates or all(candidates):
             missing = min(candidates, key=len) if candidates else [
