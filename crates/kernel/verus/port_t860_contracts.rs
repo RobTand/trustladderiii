@@ -12,7 +12,7 @@ pub(super) open spec fn admissible(w: World, n: Node, reply: Reply) -> bool {
         (Phase::Planning { .. }, Reply::PlanLeaf { footprint, .. }) =>
             footprint::valid_footprint(w, footprint),
         (Phase::Planning { .. }, Reply::PlanSplit | Reply::PlanCantMeet
-            | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit | Reply::PlanCheckReplan) => true,
+            | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit) => true,
         (Phase::Making, Reply::MakerDone { .. }) => true,
         (Phase::Making, Reply::MakerNeedsFiles { files, .. }) =>
             footprint::valid_footprint(w, files),
@@ -130,7 +130,7 @@ pub(super) open spec fn permitted_stop(b: Node, n: Node, event: Event, i: int) -
         Event::Reply { node, generation, reply: Reply::AuditDisagrees } => node.0 == i
             && b.phase == Phase::Auditing && b.audit_rounds >= 1 && active(b, generation)
             && n.review_stop == Some(ReviewStop::AuditDisagreement),
-        Event::Reply { node, generation, reply: Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit | Reply::PlanCheckReplan } =>
+        Event::Reply { node, generation, reply: Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit } =>
             node.0 == i && b.phase is Planning && active(b, generation)
                 && n.review_stop == Some(ReviewStop::PlanCantMeet),
         _ => false,

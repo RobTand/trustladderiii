@@ -49,7 +49,7 @@ mod events;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/events_lemmas.rs"]
 mod events_lemmas;
-use empty_replan::reply_empty_replan;
+pub use empty_replan::{PlannerResult, ReplanBudget, step_planner};
 mod plan_check;
 use plan_check::reply_plan_check;
 #[cfg(verus_keep_ghost)]
@@ -675,9 +675,6 @@ pub struct Node {
     pub attempt: u8,
     pub round: u8,
     pub replanned: bool,
-    /// Durable one-use counter for Q27's empty-allowed re-plan, per request version.
-    #[cfg_attr(all(feature = "serde", not(kani)), serde(default))]
-    pub empty_allowed_replanned: bool,
     pub plan_retries: u8,
     pub audit_rounds: u8,
     pub early_end: Option<EarlyEnd>,
@@ -754,7 +751,7 @@ pub closed spec fn initial_node(n: Node, repo: RepoId) -> bool {
         && !n.incident_needs_rob && n.proposed.is_none() && !n.adopted
         && n.head.is_none() && n.checked.is_none() && n.approved.is_none() && n.merged.is_none()
         && !n.pr_open && !n.had_pr && !n.worktree && n.review_stop.is_none()
-        && n.attempt == 0 && n.round == 0 && !n.replanned && !n.empty_allowed_replanned && n.plan_retries == 0
+        && n.attempt == 0 && n.round == 0 && !n.replanned && n.plan_retries == 0
         && n.audit_rounds == 0 && n.early_end.is_none() && n.rechecks == 0
         && !n.review_restarted && n.priority == Priority::Unranked && !n.planning_started
         && n.waiting_prerequisite.is_none()
@@ -787,7 +784,6 @@ impl Node {
             attempt: 0,
             round: 0,
             replanned: false,
-            empty_allowed_replanned: false,
             plan_retries: 0,
             audit_rounds: 0,
             early_end: None,
@@ -956,8 +952,6 @@ pub enum Reply {
     PlanCheckRejected,
     /// #832 part 1: record required decomposition and stop without a question.
     PlanCheckNeedsSplit,
-    /// Q27: one fresh tool-enabled planner generation after an impossible correction.
-    PlanCheckReplan,
     ProtectedPaths,
     MakerDone {
         head: HeadId,
@@ -1668,7 +1662,6 @@ pub fn proof_of_event(event: &Event) -> &'static str {
             Reply::PlanCantMeet => "apply_plan_cant_meet",
             Reply::PlanCheckRejected => "apply_plan_check_rejected",
             Reply::PlanCheckNeedsSplit => "apply_plan_check_needs_split",
-            Reply::PlanCheckReplan => "apply_empty_allowed_replan",
             Reply::ProtectedPaths => "apply_protected_paths",
             Reply::MakerDone { .. } => "apply_maker_done",
             Reply::MakerNeedsFiles { .. } => "apply_maker_needs_files",

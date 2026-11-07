@@ -105,7 +105,6 @@ fn node(x: &[u64; 64]) -> Node {
         attempt: x[25] as u8,
         round: x[26] as u8,
         replanned: x[27] & 1 != 0,
-        empty_allowed_replanned: x[27] & 2 != 0,
         plan_retries: x[28] as u8,
         audit_rounds: x[29] as u8,
         early_end: option(x[30], early[x[31] as usize % early.len()]),

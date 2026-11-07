@@ -120,7 +120,6 @@ fn arbitrary_node() -> impl Strategy<Value = Node> {
             attempt: b[8],
             round: b[9],
             replanned: f[32],
-            empty_allowed_replanned: f[40],
             plan_retries: b[10],
             audit_rounds: b[11],
             early_end: f[33].then_some(

@@ -19,20 +19,23 @@ proof [reveal(initial_node); reveal(node_headroom); reveal(arithmetic_consistent
     let mut w = World { nodes, gates, pool_capacity: 1, next_ticket: 0,
         next_question: 7, file_sets: Vec::new(), dependencies: Vec::new(), fail_fast };
     let mut out = Outbox::new();
-    reply_empty_replan(&mut w, 0, &mut out);
+    let mut budget = ReplanBudget::new(NodeId(0));
+    empty_replan::reply_empty_replan(&mut w, 0, &mut budget, &mut out);
+    let consumed = budget.used();
     kernel_proof! {
         assert(w.nodes@[0].phase == Phase::Planning { must_split: false });
         assert(w.nodes@[0].generation == 1);
-        assert(w.nodes@[0].empty_allowed_replanned);
+        assert(consumed);
         assert(w.nodes@[0].credit == n.credit);
         assert(w.nodes@[0].question.is_none());
         assert(w.next_question == 7);
         assert(empty_outbox(out));
     }
-    reply_empty_replan(&mut w, 0, &mut out);
+    empty_replan::reply_empty_replan(&mut w, 0, &mut budget, &mut out);
+    let consumed = budget.used();
     kernel_proof! {
         assert(w.nodes@[0].phase == Phase::Stopping(Outcome::Stopped));
-        assert(w.nodes@[0].empty_allowed_replanned);
+        assert(consumed);
         assert(w.nodes@[0].credit == n.credit);
         assert(w.nodes@[0].question.is_none());
         assert(w.next_question == 7);
