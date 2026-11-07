@@ -107,7 +107,7 @@ pub fn decide(f: Facts) -> Plan {
     let outcome = if f.merged || f.recorded_merge {
         Outcome::Merged
     } else if f.observed.upper != f.approved.upper || f.observed.lower != f.approved.lower {
-        Outcome::Moved
+        Outcome::Wait
     } else if !f.open {
         Outcome::Closed
     } else if f.held {
