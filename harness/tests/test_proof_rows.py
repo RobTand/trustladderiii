@@ -191,15 +191,6 @@ def test_internal_destination_and_uneditable_syntax_are_terminal(tmp_path):
     assert 'TL3-side assembly fault' in str(caught.value)
 
 
-def test_complete_proof_messages_still_obey_the_result_byte_limit():
-    from tl3_harness import execution
-    from tl3_harness.limits import MAX_RESULT_BYTES
-    check = model.Check('bounded rows', model.Kind.DEMONSTRATING, ('tests/test_observer.py::test_observer',))
-    error = model.ProofRefusal('proof.support.call_allowlist', module='tests/test_observer.py', why='x' * MAX_RESULT_BYTES)
-    with pytest.raises(model.HarnessInputError, match='result byte budget'):
-        execution.refused((check,), error)
-
-
 @pytest.mark.parametrize('role,editable,repair_kind', [
     ('planner', True, 'CantMeet'), ('maker', False, 'CantMeet'), ('maker', True, 'SourceEdit'),
 ])

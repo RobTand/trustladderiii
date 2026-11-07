@@ -206,3 +206,22 @@ fn every_row_boundary_rejects_unsupported_constraints_before_publication() {
         }
     }
 }
+
+#[test]
+fn trace_retention_and_allocation_are_action_owned() {
+    let entries: Vec<_> = (0..4100).map(|index| json!({"root":index==0,"kind":"TOOL","proto_bytes":16,"sizes":[1024],"shrunk":false})).collect();
+    let result = command(json!({"op":"trace","request":{"op":"retain","entries":entries,"shrinking":false}}));
+    let decision = &result["ok"]["result"]["value"];
+    let keep=decision["keep"].as_array().unwrap();
+    assert_eq!(keep.len(),4096);
+    assert_eq!(keep[0],0); assert_eq!(keep[1023],1023); assert_eq!(keep[1024],1028); assert_eq!(keep[4095],4099);
+    let result = command(json!({"op":"trace","request":{"op":"allocate","entries":[
+        {"root":true,"kind":"AGENT","proto_bytes":100,"sizes":[65536],"shrunk":false},
+        {"root":false,"kind":"CHAIN","proto_bytes":100,"sizes":[65536],"shrunk":false},
+        {"root":false,"kind":"TOOL","proto_bytes":100,"sizes":[65536],"shrunk":false}
+    ]}}));
+    let limits=result["ok"]["result"]["value"]["limits"].as_array().unwrap();
+    assert_eq!(limits[0][0],65536);
+    assert!(limits[2][0].as_u64().unwrap() >= limits[1][0].as_u64().unwrap());
+    assert!(limits.iter().flat_map(|items| items.as_array().unwrap()).map(|v|v.as_u64().unwrap()).sum::<u64>() < 1024*1024);
+}

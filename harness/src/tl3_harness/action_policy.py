@@ -42,7 +42,7 @@ def _close():
 atexit.register(_close)
 
 
-def _request(operation, state=None):
+def _request(operation, state=None, *, rejection=RuntimeError):
     with _lock:
         process = _process()
         try:
@@ -53,7 +53,7 @@ def _request(operation, state=None):
         except (OSError, ValueError):
             raise RuntimeError('Rust action policy transport failed') from None
         if 'error' in response:
-            raise RuntimeError(response['error'])
+            raise rejection(response['error'])
         return response['ok']
 
 
@@ -125,7 +125,7 @@ def permits_rows(rows, before, after, *, role):
 
 def admit_plan(checks, goal_count, required_goals):
     _request({'op': 'admit_plan', 'checks': checks, 'goal_count': goal_count,
-              'required_goals': required_goals})
+              'required_goals': required_goals}, rejection=ValueError)
 
 
 def row_membership(allowed, value):
