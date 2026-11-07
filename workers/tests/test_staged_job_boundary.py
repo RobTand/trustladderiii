@@ -49,3 +49,30 @@ def test_import_time_action_call_is_rejected_by_the_isolated_probe(tmp_path):
     result = probe(bundle, tmp_path)
     assert result.returncode != 0
     assert 'tl3-action' in result.stderr and 'FileNotFoundError' in result.stderr
+
+
+def test_model_worker_policy_entrypoints_run_without_action_discovery(tmp_path):
+    import tl3_harness
+    import tl3_workers
+
+    trusted = tmp_path / 'trusted'
+    shutil.copytree(Path(tl3_harness.__file__).parent, trusted / 'tl3_harness',
+                    ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+    shutil.copytree(Path(tl3_workers.__file__).parent, trusted / 'tl3_workers',
+                    ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+    tools = tmp_path / 'job-tools'
+    tools.mkdir()
+    source = Path(__file__).resolve().parents[2] / 'harness/tools/job_worker_probe.py'
+    command = [sys.executable, '-I', '-B', str(source), str(trusted)]
+    environment = {'PATH': str(tools), 'HOME': str(tmp_path), 'LANG': 'C.UTF-8',
+                   'OMP_NUM_THREADS': '1', 'OPENBLAS_NUM_THREADS': '1'}
+    result = subprocess.run(command, env=environment, cwd=tmp_path,
+                            capture_output=True, text=True, timeout=90)
+    assert result.returncode == 0, result.stderr
+    assert len(json.loads(result.stdout)['entrypoints']) == 12
+    init = trusted / 'tl3_workers/__init__.py'
+    init.write_text('import subprocess\nsubprocess.run(["tl3-action", "policy"], check=True)\n' + init.read_text())
+    rejected = subprocess.run(command, env=environment, cwd=tmp_path,
+                              capture_output=True, text=True, timeout=90)
+    assert rejected.returncode != 0
+    assert 'FileNotFoundError' in rejected.stderr and 'tl3-action' in rejected.stderr
