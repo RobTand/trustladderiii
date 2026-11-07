@@ -362,7 +362,7 @@ fn failed_round_goal_materials_preserve_unbound_findings_and_nested_precedence()
             expected,
             "materials: {materials:?}"
         );
-        assert!(!document.maker[0].report.is_empty());
+        assert!(!document.maker[0].report.as_str().is_empty());
     }
 }
 
