@@ -89,6 +89,26 @@ def test_guarded_reclamation_retains_manifest_before_first_mutation(scratch, mon
     retain('reclaimed', result, output)
 
 
+def test_wrong_executing_uid_rejects_before_scratch_authority(scratch, monkeypatch):
+    request, root, output, guards = scratch
+    with monkeypatch.context() as wrong_account:
+        wrong_account.setattr(runtime.os, 'getuid', lambda: 1001)
+        wrong_account.setattr(runtime.os, 'open', lambda *args, **kwargs: pytest.fail('open before uid guard'))
+        wrong_account.setattr(runtime.os, 'stat', lambda *args, **kwargs: pytest.fail('stat before uid guard'))
+        wrong_account.setattr(runtime, '_external_generation', lambda *args: pytest.fail('generation before uid guard'))
+        for entry in (lambda: runtime.scratch_cleanup(request, systemctl='/must-not-execute'),
+                      lambda: runtime._scratch_cleanup_bound(request, request['run']['instance'].split('/'),
+                                                             root.parent, systemctl='/must-not-execute')):
+            with pytest.raises(ValueError, match='executing uid1000'):
+                entry()
+    assert root.joinpath('payload/file').read_text() == 'owned fixture bytes'
+    assert not (output / 'scratch-reclamation.manifest.json').exists()
+    assert not (output / 'scratch-reclamation.complete.json').exists()
+    assert guards == []
+    retain('wrong-executing-uid', {'rejected_before_open_stat_generation': True,
+                                 'scratch_untouched': True, 'manifest_absent': True}, output)
+
+
 @pytest.mark.parametrize('case', ['ordinary', 'symlink-root', 'symlink-child', 'wrong-owner',
                                  'cross-filesystem', 'unreadable', 'failed-removal', 'over-bound',
                                  'generation-before', 'generation-pre-removal', 'foreign-host'])

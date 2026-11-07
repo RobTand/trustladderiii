@@ -1362,6 +1362,8 @@ def scratch_cleanup(request, *, systemctl):
     import hashlib
     import re
 
+    if os.getuid() != 1000:
+        raise ValueError('scratch cleanup requires executing uid1000')
     expected = {'schema', 'run', 'owner', 'request_digest', 'host', 'nonce', 'budget_seconds',
                 'reclamation'}
     if set(request) != expected or request['schema'] != 'tl3.scratch_cleanup_input.v1':
@@ -1415,6 +1417,8 @@ def scratch_cleanup(request, *, systemctl):
 def _scratch_cleanup_bound(request, instance, approved, *, systemctl):
     import time
 
+    if os.getuid() != 1000:
+        raise ValueError('scratch cleanup requires executing uid1000')
     run, owner = request['run'], request['owner']
     started = time.monotonic_ns()
     deadline = time.monotonic() + request['budget_seconds']
