@@ -45,9 +45,7 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox, report: &mut
     if m.run_failures >= 2 {
         // Every second failure raises an incident. Only Rob can clear the second one.
         m.run_failures = 0;
-        kernel_snapshot! { before_count = *m }
-        increment_run_incidents(m);
-        kernel_proof! { retries_facts::read_incident_count(before_count@, *m); }
+        m.run_incidents = (m.run_incidents + 1).min(2);
         let needs_rob = m.run_incidents >= 2;
         kernel_proof! {
             assert(retirement::incident(*m, needs_rob) == retries_facts::failed_run(before_failed@)) by {
@@ -336,18 +334,5 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
         assert(w.next_question as int <= before_recheck@.next_question as int + 1);
     }
 
-}
-}
-
-
-kernel_fn! {
-/// Isolate generic ordering from the world node-write sequence.
-fn increment_run_incidents(m: &mut Node) -> (result: ()) [
-    requires old(m).run_incidents <= 2,
-    ensures retries_facts::incident_count_update(*old(m), *final(m)),
-] {
-    kernel_snapshot! { before_count = *m }
-    m.run_incidents = (m.run_incidents + 1).min(2);
-    kernel_proof! { retries_facts::write_incident_count(before_count@, *m); }
 }
 }
