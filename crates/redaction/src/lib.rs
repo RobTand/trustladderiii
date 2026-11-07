@@ -896,7 +896,6 @@ print(json.dumps(out))
     #[test]
     fn generated_policy_matches_the_authoritative_source() {
         assert_eq!(super::generated_policy(), include_str!("policy.json"));
-
     }
 }
 

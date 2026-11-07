@@ -16,7 +16,9 @@ pub struct PolicyRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PolicyOperation {
-    Trace { request: trace::Request },
+    Trace {
+        request: trace::Request,
+    },
     RepairPrompt {
         message: String,
     },
@@ -131,16 +133,22 @@ fn row_policy() -> Policy<'static> {
 
 pub fn policy(request: PolicyRequest) -> Result<PolicyResponse, String> {
     // Schema constraints are checked before validation, rendering or permission can publish a row.
-    if let PolicyOperation::Render { rows, .. } | PolicyOperation::Validate { rows, .. }
-        | PolicyOperation::Permits { rows, .. } = &request.operation {
+    if let PolicyOperation::Render { rows, .. }
+    | PolicyOperation::Validate { rows, .. }
+    | PolicyOperation::Permits { rows, .. } = &request.operation
+    {
         for row in rows {
             schema::validate_allowed(&row.allowed)?;
-            if let rules::Repair::Edit { allowed, .. } = &row.repair { schema::validate_allowed(allowed)?; }
+            if let rules::Repair::Edit { allowed, .. } = &row.repair {
+                schema::validate_allowed(allowed)?;
+            }
         }
     }
     let mut state = request.state;
     let result = match request.operation {
-        PolicyOperation::Trace { request } => PolicyResult::Trace(trace::decide(request, &mut state)?),
+        PolicyOperation::Trace { request } => {
+            PolicyResult::Trace(trace::decide(request, &mut state)?)
+        }
         PolicyOperation::RepairPrompt { message } => {
             let complete = format!(
                 "Your reply failed validation: {message}\nTools are unavailable for this turn. Return one corrected JSON object matching your reply schema and nothing else."
@@ -176,22 +184,28 @@ pub fn policy(request: PolicyRequest) -> Result<PolicyResponse, String> {
             }
             PolicyResult::Valid
         }
-        PolicyOperation::Text { value, limit } => PolicyResult::Text(state.text(&value, limit.unwrap_or(tl3_redaction::structured::STRING_CHARS))?),
+        PolicyOperation::Text { value, limit } => PolicyResult::Text(state.text(
+            &value,
+            limit.unwrap_or(tl3_redaction::structured::STRING_CHARS),
+        )?),
         PolicyOperation::Window { value, start, end } => {
             PolicyResult::Text(state.window(&value, start, end)?)
         }
-        PolicyOperation::Shape { input_json, limit } => {
-            PolicyResult::Shaped(state.shape(&input_json, limit.unwrap_or(tl3_redaction::structured::PAYLOAD_BYTES))?)
-        }
+        PolicyOperation::Shape { input_json, limit } => PolicyResult::Shaped(state.shape(
+            &input_json,
+            limit.unwrap_or(tl3_redaction::structured::PAYLOAD_BYTES),
+        )?),
         PolicyOperation::Reshape { shaped, limit } => {
             PolicyResult::Shaped(state.reshape(&shaped, limit)?)
         }
-        PolicyOperation::Clean { shaped, limit } => {
-            PolicyResult::Json(state.clean(&shaped, limit.unwrap_or(tl3_redaction::structured::PAYLOAD_BYTES))?)
-        }
-        PolicyOperation::Payload { input_json, limit } => {
-            PolicyResult::Json(state.payload(&input_json, limit.unwrap_or(tl3_redaction::structured::PAYLOAD_BYTES))?)
-        }
+        PolicyOperation::Clean { shaped, limit } => PolicyResult::Json(state.clean(
+            &shaped,
+            limit.unwrap_or(tl3_redaction::structured::PAYLOAD_BYTES),
+        )?),
+        PolicyOperation::Payload { input_json, limit } => PolicyResult::Json(state.payload(
+            &input_json,
+            limit.unwrap_or(tl3_redaction::structured::PAYLOAD_BYTES),
+        )?),
         PolicyOperation::Size { shaped } => PolicyResult::Size(shaped.size()?),
         PolicyOperation::MeasureJson { input_json } => {
             PolicyResult::Size(tl3_redaction::structured::measure_json(&input_json)?)

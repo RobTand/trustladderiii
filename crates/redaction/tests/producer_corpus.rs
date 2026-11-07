@@ -9,8 +9,13 @@ fn data() -> &'static Value {
             .args(["-I"])
             .arg(root.join("../../workers/tests/tracing_policy_cases.py"))
             .arg(root.join("tests/fixtures/generator-inputs.json"))
-            .output().unwrap();
-        assert!(output.status.success(), "fixture generator failed: {}", String::from_utf8_lossy(&output.stderr));
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "fixture generator failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         serde_json::from_slice(&output.stdout).unwrap()
     })
 }
@@ -19,11 +24,22 @@ fn committed_corpus_has_no_secret_values_even_after_json_decoding() {
     fn inspect(value: &Value) {
         match value {
             Value::String(text) => {
-                assert_eq!(tl3_redaction::text(text).unwrap(), *text, "committed corpus contains a secret pattern");
-                if let Ok(decoded) = serde_json::from_str::<Value>(text) { inspect(&decoded); }
+                assert_eq!(
+                    tl3_redaction::text(text).unwrap(),
+                    *text,
+                    "committed corpus contains a secret pattern"
+                );
+                if let Ok(decoded) = serde_json::from_str::<Value>(text) {
+                    inspect(&decoded);
+                }
             }
             Value::Array(items) => items.iter().for_each(inspect),
-            Value::Object(fields) => { for (key, value) in fields { inspect(&json!(key)); inspect(value); } }
+            Value::Object(fields) => {
+                for (key, value) in fields {
+                    inspect(&json!(key));
+                    inspect(value);
+                }
+            }
             _ => (),
         }
     }

@@ -17,7 +17,10 @@ fn scheme_folding_and_literal_hyphens_protect_controller_output() {
         for suffix in ["", "-tail"] {
             let secret = format!("TL3FAKEzE9p-R4cV7x{suffix}");
             let input = format!("{scheme} {secret}");
-            assert_eq!(tl3_controller::redaction::text(&input).unwrap(), format!("{scheme} [REDACTED]"));
+            assert_eq!(
+                tl3_controller::redaction::text(&input).unwrap(),
+                format!("{scheme} [REDACTED]")
+            );
         }
     }
 }

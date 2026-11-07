@@ -94,7 +94,7 @@ pub(super) fn membership(
 }
 
 pub(super) fn validate_allowed(allowed: &tl3_contracts::rules::Allowed) -> Result<(), String> {
-    if let tl3_contracts::rules::Allowed::Schema {keyword, value} = allowed {
+    if let tl3_contracts::rules::Allowed::Schema { keyword, value } = allowed {
         membership(*keyword, value, &Value::Null)?;
     }
     Ok(())
@@ -186,7 +186,9 @@ pub(super) fn refusal_rows(
         }
         value
     }
-    if let Some(source) = source { membership(SchemaKeyword::Schema, source, &Value::Null)?; }
+    if let Some(source) = source {
+        membership(SchemaKeyword::Schema, source, &Value::Null)?;
+    }
     let mut rows = Vec::new();
     let mut required = std::collections::BTreeSet::new();
     for parent in errors {

@@ -253,40 +253,67 @@ impl Redactor {
     // authoritative TOKEN_CHAR/NOT_TOKEN/PRIVATE_HEADER grammar, never rescan a huge
     // omitted prefix through every secret matcher just to choose a window.
     fn settle(&self, source: &str, cut: usize, end: usize) -> Result<usize> {
-        let stop = byte_at(source,end);
-        let mut position = byte_at(source,cut);
+        let stop = byte_at(source, end);
+        let mut position = byte_at(source, cut);
         if let Some(begin) = source[..position].rfind("-----BEGIN ") {
-            let header = rule("PRIVATE_HEADER")?.find(&source[begin..stop]).map_err(|error|error.to_string())?;
-            if header.is_some_and(|matched|matched.start()==0)
-                && !source[begin..position].contains("-----END ") {
-                position = source[position..stop].find("-----END ")
-                    .and_then(|close| {let close=position+close+9; source[close..stop].find("-----").map(|tail|close+tail+5)})
+            let header = rule("PRIVATE_HEADER")?
+                .find(&source[begin..stop])
+                .map_err(|error| error.to_string())?;
+            if header.is_some_and(|matched| matched.start() == 0)
+                && !source[begin..position].contains("-----END ")
+            {
+                position = source[position..stop]
+                    .find("-----END ")
+                    .and_then(|close| {
+                        let close = position + close + 9;
+                        source[close..stop]
+                            .find("-----")
+                            .map(|tail| close + tail + 5)
+                    })
                     .unwrap_or(stop);
             }
         }
         for secret in &self.secrets {
-            if secret.is_empty() {continue;}
-            let mut low=position.saturating_sub(secret.len());
-            while !source.is_char_boundary(low) {low+=1;}
-            let mut high=position.saturating_add(secret.len()).min(stop);
-            while !source.is_char_boundary(high) {high-=1;}
-            for (first,_) in source[low..high].match_indices(secret) {
-                let first=low+first;
-                if first<position && first+secret.len()>position {position=first+secret.len();}
+            if secret.is_empty() {
+                continue;
+            }
+            let mut low = position.saturating_sub(secret.len());
+            while !source.is_char_boundary(low) {
+                low += 1;
+            }
+            let mut high = position.saturating_add(secret.len()).min(stop);
+            while !source.is_char_boundary(high) {
+                high -= 1;
+            }
+            for (first, _) in source[low..high].match_indices(secret) {
+                let first = low + first;
+                if first < position && first + secret.len() > position {
+                    position = first + secret.len();
+                }
             }
         }
-        if position>0 && position<stop {
-            let before=source[..position].chars().next_back().ok_or("missing cut context")?;
-            let after=source[position..stop].chars().next().ok_or("missing cut context")?;
-            if full_rule("TOKEN_CHAR", &before.to_string())? && full_rule("TOKEN_CHAR", &after.to_string())? {
-                position = rule("NOT_TOKEN")?.find(&source[position..stop]).map_err(|error|error.to_string())?
-                    .map_or(stop,|matched|position+matched.start());
+        if position > 0 && position < stop {
+            let before = source[..position]
+                .chars()
+                .next_back()
+                .ok_or("missing cut context")?;
+            let after = source[position..stop]
+                .chars()
+                .next()
+                .ok_or("missing cut context")?;
+            if full_rule("TOKEN_CHAR", &before.to_string())?
+                && full_rule("TOKEN_CHAR", &after.to_string())?
+            {
+                position = rule("NOT_TOKEN")?
+                    .find(&source[position..stop])
+                    .map_err(|error| error.to_string())?
+                    .map_or(stop, |matched| position + matched.start());
             }
         }
         Ok(source[..position].chars().count())
     }
     fn cut(&self, source: &str, start: usize, end: usize, limit: usize) -> Result<usize> {
-        self.settle(source,end.saturating_sub(limit).max(start),end)
+        self.settle(source, end.saturating_sub(limit).max(start), end)
     }
     fn clip(&self, value: &str, limit: usize) -> Result<Clip> {
         let end = value.chars().count();
@@ -301,7 +328,10 @@ impl Redactor {
             if let Some(newline) = tail.find('\n')
                 && tail[newline..].chars().count() > limit / 2
             {
-                parts = vec![(self.settle(value, cut + tail[..newline + 1].chars().count(), end)?, end)];
+                parts = vec![(
+                    self.settle(value, cut + tail[..newline + 1].chars().count(), end)?,
+                    end,
+                )];
                 lead = true;
             } else {
                 let head = limit / 4;
@@ -516,12 +546,22 @@ impl Redactor {
                 Shaped::Array(result)
             }
             SummaryValue::Object(fields) => {
-                let mut path=None;
-                for (key,value) in fields {
-                    if has("PATH_KEYS", &scalar(key)?)? && let Some(candidate)=as_text(value)
-                        && sensitive_file(&candidate)? {path=Some(candidate);break;}
+                let mut path = None;
+                for (key, value) in fields {
+                    if has("PATH_KEYS", &scalar(key)?)?
+                        && let Some(candidate) = as_text(value)
+                        && sensitive_file(&candidate)?
+                    {
+                        path = Some(candidate);
+                        break;
+                    }
                 }
-                let path=path.or_else(|| value.field("tool_call_id").and_then(as_text).and_then(|id|self.calls.get(&id).cloned()));
+                let path = path.or_else(|| {
+                    value
+                        .field("tool_call_id")
+                        .and_then(as_text)
+                        .and_then(|id| self.calls.get(&id).cloned())
+                });
                 let named = ["name", "key", "Name", "Key"]
                     .iter()
                     .find_map(|key| value.field(key).and_then(as_text))
@@ -547,8 +587,14 @@ impl Redactor {
                         label_kind(&key)?
                     };
                     let weak_secret = if kind == Some(Kind::Weak) {
-                        if let Some(text)=as_text(value) {plausible(Some(Kind::Weak),&key,&text,"","",false)?} else {false}
-                    } else {false};
+                        if let Some(text) = as_text(value) {
+                            plausible(Some(Kind::Weak), &key, &text, "", "", false)?
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
                     let substitute = if let Some(path) = &path
                         && has("CONTENT_KEYS", &key)?
                     {

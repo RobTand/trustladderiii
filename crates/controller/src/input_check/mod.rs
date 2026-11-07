@@ -40,21 +40,38 @@ pub fn maker(inputs: &Value) -> crate::Result<Vec<String>> {
         .find_map(|path| declared_file(path).err())
     {
         Some(message)
-    } else if inputs.feedback.iter().any(|item| item.goal_ids.iter().any(|id| !goals.contains(id.as_str()))) {
+    } else if inputs
+        .feedback
+        .iter()
+        .any(|item| item.goal_ids.iter().any(|id| !goals.contains(id.as_str())))
+    {
         Some("unknown feedback goal id")
     } else {
         None
     };
-    if let Some(violation) = violation { return Ok(vec![violation.into()]); }
-    let required: Vec<_> = inputs.goals.iter().enumerate()
+    if let Some(violation) = violation {
+        return Ok(vec![violation.into()]);
+    }
+    let required: Vec<_> = inputs
+        .goals
+        .iter()
+        .enumerate()
         .filter(|(_, goal)| goal.stage.as_deref() != Some("publishing"))
-        .map(|(index, _)| tl3_contracts::GoalId(index as u64)).collect();
-    if let Err(error) = tl3_contracts::checks::admit_plan(&inputs.plan.checks, inputs.goals.len(), &required) {
+        .map(|(index, _)| tl3_contracts::GoalId(index as u64))
+        .collect();
+    if let Err(error) =
+        tl3_contracts::checks::admit_plan(&inputs.plan.checks, inputs.goals.len(), &required)
+    {
         return Ok(vec![error]);
     }
     for check in &inputs.plan.checks {
         for test in &check.tests {
-            if tl3_harness_core::node_id::NodeId::parse(test, tl3_harness_core::node_id::Mode::Exact).is_err() {
+            if tl3_harness_core::node_id::NodeId::parse(
+                test,
+                tl3_harness_core::node_id::Mode::Exact,
+            )
+            .is_err()
+            {
                 return Ok(vec!["checks need exact pytest selectors".into()]);
             }
         }
@@ -138,21 +155,38 @@ mod tests {
                 "tests":["tests/test_a.py::test_a"],"goal_ids":[0,1]}]}, "feedback":[{"goal_ids":["b"]}]});
         assert!(maker(&base).unwrap().is_empty());
         for (path, replacement) in [
-            ("/goals/1/id",json!("a")), ("/feedback/0/goal_ids",json!(["unknown"])),
-            ("/plan/checks/0/goal_ids",json!([0])), ("/plan/checks/0/goal_ids",json!([0,3])),
-            ("/plan/checks/0/goal_ids",json!([])), ("/plan/checks/0/name",json!(" ")),
-            ("/plan/checks/0/tests",json!(["tests/test_a.py"])),
+            ("/goals/1/id", json!("a")),
+            ("/feedback/0/goal_ids", json!(["unknown"])),
+            ("/plan/checks/0/goal_ids", json!([0])),
+            ("/plan/checks/0/goal_ids", json!([0, 3])),
+            ("/plan/checks/0/goal_ids", json!([])),
+            ("/plan/checks/0/name", json!(" ")),
+            ("/plan/checks/0/tests", json!(["tests/test_a.py"])),
         ] {
-            let mut candidate=base.clone(); *candidate.pointer_mut(path).unwrap()=replacement;
+            let mut candidate = base.clone();
+            *candidate.pointer_mut(path).unwrap() = replacement;
             assert!(!maker(&candidate).unwrap().is_empty(), "{candidate}");
         }
-        for path in [".","x/../y","x/.git/HEAD","/x",&"x".repeat(256),&"é".repeat(128)] {
-            let mut candidate=base.clone(); candidate["plan"]["files"]=json!([path]);
+        for path in [
+            ".",
+            "x/../y",
+            "x/.git/HEAD",
+            "/x",
+            &"x".repeat(256),
+            &"é".repeat(128),
+        ] {
+            let mut candidate = base.clone();
+            candidate["plan"]["files"] = json!([path]);
             assert!(!maker(&candidate).unwrap().is_empty());
         }
-        let mut omitted=base.clone(); omitted["plan"]["checks"][0].as_object_mut().unwrap().remove("goal_ids");
+        let mut omitted = base.clone();
+        omitted["plan"]["checks"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("goal_ids");
         assert!(maker(&omitted).is_err());
-        let mut strings=base.clone(); strings["plan"]["checks"][0]["goal_ids"]=json!(["a","b"]);
+        let mut strings = base.clone();
+        strings["plan"]["checks"][0]["goal_ids"] = json!(["a", "b"]);
         assert!(maker(&strings).is_err());
     }
 

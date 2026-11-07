@@ -16,7 +16,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for path in paths {
         // These files contain named schema bundles, not JSON Schema resource roots.
         // They are not row constraints; references to them remain unavailable.
-        if matches!(path.file_name().and_then(|name| name.to_str()), Some("budget-wire.json" | "harness-wire.json")) {
+        if matches!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("budget-wire.json" | "harness-wire.json")
+        ) {
             continue;
         }
         source.push_str(&format!(
