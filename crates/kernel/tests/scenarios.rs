@@ -71,7 +71,7 @@ impl Run {
             self.send(Event::Ack {
                 node: NodeId(0),
                 seq: e.seq,
-                ack: Ack::Confirmed,
+                ack: if e.kind == EffectKind::Enqueue { Ack::DeliveryAccepted } else { Ack::Confirmed },
             });
         }
         panic!("effects never stopped");
@@ -255,7 +255,7 @@ fn every_slice_one_phase_is_reachable() {
         "Checking",
         "Reviewing",
         "Publishing",
-        "Queued",
+        "AwaitingDelivery",
         "Rebasing",
         "AwaitingRob",
         "Stopping",
@@ -661,7 +661,7 @@ fn file_locks_cover_large_footprints_and_stay_within_the_repo() {
                 Event::Ack {
                     node,
                     seq: e.seq,
-                    ack: Ack::Confirmed,
+                ack: if e.kind == EffectKind::Enqueue { Ack::DeliveryAccepted } else { Ack::Confirmed },
                 },
             )
             .world;
@@ -719,7 +719,7 @@ fn file_locks_cover_large_footprints_and_stay_within_the_repo() {
             Event::Ack {
                 node: NodeId(0),
                 seq: e.seq,
-                ack: Ack::Confirmed,
+                ack: if e.kind == EffectKind::Enqueue { Ack::DeliveryAccepted } else { Ack::Confirmed },
             },
         )
         .world;
@@ -786,37 +786,6 @@ fn an_unknown_footprint_handle_is_a_failed_reply() {
     assert_eq!(run.node().run_failures, 1);
 }
 
-#[test]
-fn queue_stalls_raise_incidents_and_later_incidents_need_rob() {
-    let mut run = Run::new();
-    let before = run.node();
-    run.fact(Fact::UpstreamStalled);
-    assert_eq!(run.node(), before, "stalls outside Queued are ignored");
-    run.start_making();
-    let before = run.node();
-    run.fact(Fact::UpstreamStalled);
-    assert_eq!(run.node(), before);
-    run.pass(&mut HeadId(0));
-    run.fact(Fact::UpstreamStalled);
-    assert!(run.node().waiting_incident && !run.node().incident_needs_rob);
-    let before = run.node();
-    let notices = run.notices.len();
-    run.fact(Fact::UpstreamStalled);
-    assert_eq!(
-        run.node(),
-        before,
-        "an open incident absorbs repeated stalls"
-    );
-    assert_eq!(run.notices.len(), notices);
-    run.fact(Fact::IncidentCleared { by_rob: false });
-    assert!(!run.node().waiting_incident);
-    run.fact(Fact::UpstreamStalled);
-    assert!(run.node().waiting_incident && run.node().incident_needs_rob);
-    run.fact(Fact::IncidentCleared { by_rob: false });
-    assert!(run.node().waiting_incident);
-    run.fact(Fact::IncidentCleared { by_rob: true });
-    assert!(!run.node().waiting_incident);
-}
 
 fn q44_review() -> Run {
     let mut run = Run::new();
@@ -1052,7 +1021,7 @@ fn publishing_conflict_rebases_at_every_publication_step() {
             r.send(Event::Ack {
                 node: NodeId(0),
                 seq: effect.seq,
-                ack: Ack::Confirmed,
+                ack: if effect.kind == EffectKind::Enqueue { Ack::DeliveryAccepted } else { Ack::Confirmed },
             });
         }
         let generation = r.node().generation;
@@ -1139,7 +1108,7 @@ fn settle_world_grants_reconciled_capacity_and_is_idempotent() {
                 Event::Ack {
                     node: NodeId(i as u64),
                     seq: effect.seq,
-                    ack: Ack::Confirmed,
+                ack: if effect.kind == EffectKind::Enqueue { Ack::DeliveryAccepted } else { Ack::Confirmed },
                 },
             )
             .world;
@@ -1284,7 +1253,7 @@ fn publishing_ci_infrastructure_retries_once_then_raises_incident() {
         run.send(Event::Ack {
             node: NodeId(0),
             seq: enqueue.seq,
-            ack: Ack::Confirmed,
+                ack: if enqueue.kind == EffectKind::Enqueue { Ack::DeliveryAccepted } else { Ack::Confirmed },
         });
         assert_eq!(
             run.phase(),
@@ -1343,7 +1312,7 @@ fn confirm_all(mut w: World) -> World {
             Event::Ack {
                 node: NodeId(i as u64),
                 seq: e.seq,
-                ack: Ack::Confirmed,
+                ack: if e.kind == EffectKind::Enqueue { Ack::DeliveryAccepted } else { Ack::Confirmed },
             },
         );
         assert!(next.valid() && next.is_settled());
@@ -1506,4 +1475,81 @@ fn protected_paths_close_from_ingest_audit_or_planning_without_credit_or_questio
                 .contains(&Notice::Summary(Outcome::NotActionable))
         );
     }
+}
+
+fn publishing_before_handoff() -> Run {
+    let mut run = Run::new();
+    run.start_making();
+    run.reply(Reply::MakerDone { head: HeadId(9) });
+    run.reply(CHECKS_PASS);
+    let generation = run.node().generation;
+    run.send(Event::Reply { node: NodeId(0), generation, reply: Reply::Approved { head: HeadId(9) } });
+    assert_eq!(run.phase(), Phase::Publishing);
+    run
+}
+
+fn live_handoff() -> Run {
+    let mut run = publishing_before_handoff();
+    for _ in 0..32 {
+        let effect = run.node().effect.expect("publication emits its next effect");
+        if effect.kind == EffectKind::Enqueue { return run; }
+        run.send(Event::Ack { node: NodeId(0), seq: effect.seq, ack: Ack::Confirmed });
+    }
+    panic!("publication did not reach its handoff");
+}
+
+#[test]
+fn typed_delivery_acceptance_releases_resources_and_preserves_evidence() {
+    let mut run = live_handoff();
+    let before = run.node();
+    assert!(before.holds);
+    let effect = before.effect.unwrap();
+    run.send(Event::Ack { node: NodeId(0), seq: effect.seq, ack: Ack::DeliveryAccepted });
+    let after = run.node();
+    run.w.check().unwrap();
+    assert_eq!(after.phase, Phase::AwaitingDelivery);
+    assert_eq!(after.generation, before.generation + 1);
+    assert!(!after.holds && !after.pool);
+    assert!(after.ticket.is_none() && after.run.is_none() && after.job.is_none() && after.effect.is_none());
+    assert_eq!((after.head, after.checked, after.approved), (before.head, before.checked, before.approved));
+    assert_eq!((after.footprint, after.worktree, after.pr_open, after.had_pr), (before.footprint, before.worktree, before.pr_open, before.had_pr));
+    assert_eq!((after.credit, after.attempt, after.round, after.replanned), (before.credit, before.attempt, before.round, before.replanned));
+    let accepted = run.w.clone();
+    run.send(Event::Ack { node: NodeId(0), seq: effect.seq, ack: Ack::DeliveryAccepted });
+    assert_eq!(run.w, accepted, "duplicate acceptance is inert");
+}
+
+#[test]
+fn stale_and_ordinary_handoff_acknowledgements_are_inert() {
+    let mut run = live_handoff();
+    let before = run.w.clone();
+    let effect = run.node().effect.unwrap();
+    run.send(Event::Ack { node: NodeId(0), seq: effect.seq + 1, ack: Ack::DeliveryAccepted });
+    assert_eq!(run.w, before);
+    run.send(Event::Ack { node: NodeId(0), seq: effect.seq, ack: Ack::Confirmed });
+    assert_eq!(run.w, before, "ordinary confirmation cannot accept durable responsibility");
+}
+
+#[test]
+fn typed_acceptance_cannot_confirm_another_effect() {
+    let mut run = publishing_before_handoff();
+    let effect = run.node().effect.unwrap();
+    assert_ne!(effect.kind, EffectKind::Enqueue);
+    let before = run.w.clone();
+    run.send(Event::Ack { node: NodeId(0), seq: effect.seq, ack: Ack::DeliveryAccepted });
+    assert_eq!(run.w, before);
+}
+
+#[test]
+fn cancelling_delivery_acceptance_cannot_revive_the_request() {
+    let mut run = live_handoff();
+    let effect = run.node().effect.unwrap();
+    run.send(Event::Command { node: NodeId(0), id: 1, command: Command::Stop });
+    assert!(run.node().effect.unwrap().cancelling);
+    let stopped = run.node();
+    run.send(Event::Ack { node: NodeId(0), seq: effect.seq, ack: Ack::DeliveryAccepted });
+    assert!(matches!(run.phase(), Phase::Stopping(_) | Phase::Closed(_)));
+    assert_ne!(run.phase(), Phase::AwaitingDelivery);
+    assert!(run.node().generation >= stopped.generation);
+    run.w.check().unwrap();
 }

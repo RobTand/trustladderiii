@@ -66,7 +66,8 @@ fn random_event(w: &mut World, pool: &[u64; 4], rng: &mut Rng) -> Event {
                 let ack = match rng.below(12) {
                     0 => Ack::Retryable,
                     1 => Ack::Permanent,
-                    _ => Ack::Confirmed,
+                    2 => Ack::Confirmed,
+                    _ => if e.kind == EffectKind::Enqueue { Ack::DeliveryAccepted } else { Ack::Confirmed },
                 };
                 Event::Ack {
                     node,
@@ -143,13 +144,13 @@ fn random_event(w: &mut World, pool: &[u64; 4], rng: &mut Rng) -> Event {
                     checks_passed: rng.below(4) != 0,
                 },
                 1 => Fact::PrClosedByPerson,
-                2 => Fact::PrDequeuedByPerson,
+                2 => Fact::Priority(Priority::P0),
                 3 => Fact::PushByOther { head },
                 4 => Fact::CiFailed {
                     infra: rng.below(2) == 0,
                 },
                 5 => Fact::Conflict,
-                6 => Fact::UpstreamStalled,
+                6 => Fact::Priority(Priority::P3),
                 _ => Fact::IncidentCleared {
                     by_rob: rng.below(2) == 0,
                 },

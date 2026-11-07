@@ -400,7 +400,7 @@ pub enum RequiredState {
     },
 ))]
 pub fn required_check(check: super::CheckView, runner_failure: bool) -> RequiredState {
-    use super::{App, Conclusion};
+    use super::{App, Conclusion, Status};
     if check.status != Status::Completed
         || matches!(
             check.conclusion,

@@ -43,7 +43,7 @@ impl Run {
             self.send(Event::Ack {
                 node: NodeId(0),
                 seq: effect.seq,
-                ack: Ack::Confirmed,
+                ack: if effect.kind == EffectKind::Enqueue { Ack::DeliveryAccepted } else { Ack::Confirmed },
             });
         }
         panic!("effects did not settle");
@@ -191,7 +191,7 @@ fn ci_failure_before_enqueue_reports_exactly_one_failed_round() {
         run.send(Event::Ack {
             node: NodeId(0),
             seq: effect.seq,
-            ack: Ack::Confirmed,
+                ack: if effect.kind == EffectKind::Enqueue { Ack::DeliveryAccepted } else { Ack::Confirmed },
         });
     }
     panic!("publishing never reached Enqueue");
@@ -308,11 +308,15 @@ fn review_stop_keeps_the_failing_step() {
 }
 
 #[test]
-fn dequeue_pauses_without_a_stop_report() {
+fn delivery_wait_conflict_enters_ready_rebasing_without_a_stop_report() {
     let mut run = Run::new();
     run.queued();
-    run.fact(Fact::PrDequeuedByPerson);
-    assert_eq!(run.world.nodes[0].phase, Phase::Ready(Resume::Publishing));
+    let before = run.world.nodes[0];
+    run.fact(Fact::Conflict);
+    assert_eq!(run.world.nodes[0].phase, Phase::Ready(Resume::Rebasing));
+    assert_eq!(run.world.nodes[0].generation, before.generation + 1);
+    assert_eq!(run.world.nodes[0].credit, before.credit);
+    assert!(!run.world.nodes[0].holds);
     assert!(run.report.entries.is_empty());
 }
 
@@ -402,13 +406,11 @@ fn unknown_fact_targets_leave_reports_empty_for_every_fact_variant() {
             checks_passed: true,
         },
         Fact::PrClosedByPerson,
-        Fact::PrDequeuedByPerson,
         Fact::PushByOther { head: HEAD },
         Fact::CiFailed { infra: false },
         Fact::CiFailed { infra: true },
         Fact::Conflict,
         Fact::IncidentCleared { by_rob: true },
-        Fact::UpstreamStalled,
         Fact::Priority(Priority::P0),
     ];
     for fact in facts {
