@@ -74,6 +74,8 @@ impl Controller {
         if paths.is_empty() {
             return Ok(None);
         }
+        // Staged detail only. apply removes this before any refusal and publishes
+        // it only for a NotActionable stop in the kernel report.
         commit.rows.push(put(
             "close_reasons",
             node.0.to_string(),
