@@ -66,43 +66,4 @@ pub(super) proof fn failed_result(before: Node, after: Node, bo: Outbox, ao: Out
     reveal(port_t860_contracts::failed_node);
     reveal(failed_run);
 }
-
-/// Keep the sequence write and incident result behind one private boundary.
-#[verifier::opaque]
-pub(super) open spec fn incident_write(b: Seq<Node>, a: Seq<Node>,
-    i: int, needs_rob: bool) -> bool {
-    a == node_writes::write(b, i, retirement::incident(b[i], needs_rob))
-}
-
-pub(super) proof fn pack_incident_write(b: Seq<Node>, a: Seq<Node>,
-    i: int, needs_rob: bool)
-    requires 0 <= i < b.len(), a.len() == b.len(),
-        forall|j: int| 0 <= j < b.len() && j != i ==> a[j] == b[j],
-        a[i] == retirement::incident(b[i], needs_rob),
-    ensures incident_write(b, a, i, needs_rob),
-{
-    node_writes::write_from_frame(b, a, i);
-    reveal(incident_write);
-}
-
-/// Supply only the failed-result and storage facts needed by run_failed.
-pub(super) proof fn finish_failed_incident(before: Node,
-    ready: Seq<Node>, after: Seq<Node>, i: int, needs_rob: bool,
-    bo: Outbox, ao: Outbox)
-    requires 0 <= i < ready.len(), before.run_failures <= 1,
-        incident_write(ready, after, i, needs_rob),
-        retirement::incident(ready[i], needs_rob) == failed_run(before),
-        retirement::notices_only(bo) ==> retirement::notices_only(ao),
-    ensures port_t860_contracts::failed_post(before, after[i], bo, ao),
-        after.len() == ready.len(),
-        forall|j: int| 0 <= j < ready.len() && j != i
-            ==> after[j] == ready[j],
-{
-    reveal(incident_write);
-    let value = retirement::incident(ready[i], needs_rob);
-    node_writes::write_length(ready, i, value);
-    node_writes::write_index(ready, i, value);
-    node_writes::write_other(ready, i, value);
-    failed_result(before, after[i], bo, ao);
-}
 }
