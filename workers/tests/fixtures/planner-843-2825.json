@@ -64,9 +64,9 @@
       "tools/BUILD.bazel"
     ],
     "checks": [
-      {
+      {"name": "843-2825-check-1", 
         "kind": "demonstrating",
-        "node_ids": [
+        "tests": [
           "tests/test_pbstatus_reader_failures.py::test_a_non_finite_finish_time_falls_back_to_mtime"
         ],
         "goal_ids": [
@@ -86,9 +86,9 @@
           "red_message": "an unusable finish time entered the ending order"
         }
       },
-      {
+      {"name": "843-2825-check-2", 
         "kind": "demonstrating",
-        "node_ids": [
+        "tests": [
           "tests/test_pbstatus_reader_failures.py::test_an_oversized_finish_time_falls_back_to_mtime"
         ],
         "goal_ids": [
@@ -114,9 +114,9 @@
           "parallel": 0
         }
       },
-      {
+      {"name": "843-2825-check-3", 
         "kind": "regression",
-        "node_ids": [
+        "tests": [
           "tests/test_pbstatus.py::test_a_record_that_cannot_be_parsed_is_a_row_not_a_silence",
           "tests/test_pbstatus.py::test_a_readable_ending_carries_no_unreadable_note",
           "tests/test_pbstatus.py::test_endings_name_their_transport_and_their_slurm_state",
@@ -130,9 +130,9 @@
           3
         ]
       },
-      {
+      {"name": "843-2825-check-4", 
         "kind": "regression",
-        "node_ids": [
+        "tests": [
           "tests/test_duplication_baseline.py::test_near_duplicate_pairs_only_shrink",
           "tests/test_duplication_baseline.py::test_same_name_helpers_only_shrink"
         ],

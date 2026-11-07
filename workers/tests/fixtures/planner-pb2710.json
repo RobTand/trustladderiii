@@ -37,9 +37,9 @@
     }
   ],
   "checks": [
-    {
+    {"name": "pb2710-check-1", 
       "kind": "demonstrating",
-      "node_ids": [
+      "tests": [
         "tests/test_checkout_recovery_1465.py::test_git_helper_disables_automatic_maintenance_and_gc"
       ],
       "goal_ids": [
@@ -55,9 +55,9 @@
         "red_message": "_git must run every Git call with maintenance.auto=false and gc.auto=0"
       }
     },
-    {
+    {"name": "pb2710-check-2", 
       "kind": "regression",
-      "node_ids": [
+      "tests": [
         "tests/test_checkout_recovery_1465.py::test_missing_or_conflicting_action_snapshot_and_ending_proof_keeps_original"
       ],
       "goal_ids": [
