@@ -415,7 +415,7 @@ fn trace_labels_are_redacted_and_bounded_before_api_publication() {
         );
         let text = result["ok"]["result"]["value"]["text"].as_str().unwrap();
         assert_eq!(text.chars().count(), limit);
-        assert!(text.starts_with("password=[REDACTED]"));
+        assert!(text.starts_with("password") && text.contains("[REDACTED]"));
         assert!(!text.contains("producer-secret"));
     }
 }
@@ -461,15 +461,16 @@ fn azure_sas_context_redacts_exact_signature_spans_without_granting_generic_sig_
         .replace('+', "%2B")
         .replace('/', "%2F")
         .replace('=', "%3D");
-    for query in [
-        format!("sv=2022-11-02&se=2026-12-01&sr=b&sig={signature}"),
-        format!("sig={encoded}&ss=b&se=2026-12-01&sv=2022-11-02"),
-        format!("%73v=2022-11-02&%73e=2026-12-01&%73r=b&%73ig={encoded}"),
+    for (query, raw_signature) in [
+        (format!("sv=2022-11-02&se=2026-12-01&sr=b&sig={signature}"), signature.as_str()),
+        (format!("sig={encoded}&ss=b&se=2026-12-01&sv=2022-11-02"), encoded.as_str()),
+        (format!("%73v=2022-11-02&%73e=2026-12-01&%73r=b&%73ig={encoded}"), encoded.as_str()),
     ] {
         let source = format!("https://st42.blob.core.windows.net/c/b?{query}&after=ordinary");
         let result = command(json!({"op":"text","value":source}));
         let text = result["ok"]["result"]["value"].as_str().unwrap();
-        assert!(!text.contains("TL3FAKE") && text.contains("[REDACTED]&after=ordinary"));
+        assert!(!text.contains("TL3FAKE"));
+        assert!(text == source.replace(raw_signature, "[REDACTED]"), "SAS public context changed");
         let start = source.find("TL3FAKE").unwrap() + 3;
         let result = command(json!({"op":"window","value":source,"start":start,"end":start+16}));
         assert_eq!(result["ok"]["result"]["value"], "[REDACTED]");

@@ -615,7 +615,7 @@ mod tests {
             &staged,
             &harness.path()?,
             &f.delivery(),
-            &format!("sha256:{}", "1".repeat(64)),
+            "sha256:fixture",
             &[],
             &Default::default(),
         )?;
@@ -868,7 +868,7 @@ mod tests {
                     &staged,
                     &harness,
                     &delivery,
-                    &format!("sha256:{}", "1".repeat(64)),
+                    "sha256:fixture",
                     &[],
                     &Default::default(),
                 )

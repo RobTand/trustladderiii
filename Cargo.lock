@@ -3174,11 +3174,9 @@ dependencies = [
  "fancy-regex 0.18.0",
  "regex",
  "regex-syntax",
- "schemars",
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "tl3-harness-core",
  "url",
 ]
 

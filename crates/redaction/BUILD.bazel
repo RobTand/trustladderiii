@@ -6,5 +6,4 @@ package(default_visibility = ["//visibility:public"])
 tl3_crate(
     package = "tl3-redaction",
     crate = "tl3_redaction",
-    local_deps = ["//crates/harness-core:tl3_harness_core"],
 )
