@@ -114,13 +114,13 @@ mod tests {
         let mut commit = transaction();
         let detail = json!({"reason":"protected_paths","paths":["private.txt"]});
         commit.rows = vec![
-            put("other", "before", json!(1)),
-            put("close_reasons", "7", detail.clone()),
+            put("other", "before".into(), json!(1)),
+            put("close_reasons", "7".into(), detail.clone()),
             RowChange::Delete {
                 table: "close_reasons".into(),
                 id: "old".into(),
             },
-            put("other", "after", json!(2)),
+            put("other", "after".into(), json!(2)),
         ];
         assert_eq!(
             take_details(&mut commit),
@@ -166,7 +166,7 @@ mod tests {
         ];
         for (id, detail, cause, expected) in cases {
             let mut commit = transaction();
-            commit.rows.push(put("close_reasons", id, detail));
+            commit.rows.push(put("close_reasons", id.into(), detail));
             let details = take_details(&mut commit);
             let report = Report {
                 entries: vec![ReportEntry::Stopped {
@@ -197,7 +197,7 @@ mod tests {
             let mut commit = transaction();
             commit.rows.push(put(
                 "close_reasons",
-                "7",
+                "7".into(),
                 json!({"reason":"protected_paths"}),
             ));
             let details = take_details(&mut commit);
