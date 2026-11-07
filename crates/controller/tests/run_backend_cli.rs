@@ -2759,11 +2759,8 @@ fn failed_pending_injob_launch(late_cancel: bool) {
         true,
         "{frames:?}"
     );
-    let mut events = completed(256);
-    if late_cancel {
-        events.push(json!({"name":"exception","context":{"type":"cancel","severity":0}}));
-    }
-    f.events(&events);
+    // A cancel after native Clean does not add an exception to the completed job log.
+    f.events(&completed(256));
     let frames = f.attach();
     assert_eq!(
         frames.last().unwrap()["result"]["observation"]["terminal"]["ending"],
