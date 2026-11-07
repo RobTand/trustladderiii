@@ -1,0 +1,488 @@
+{
+  "allocation_verified": true,
+  "cleanup_verified": true,
+  "ending": "cancelled",
+  "evidence": {
+    "artifacts": [],
+    "checks": [
+      {
+        "evidence": [
+          {
+            "bytes": 16186,
+            "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-cancel/receipt.json",
+            "sha256": "80ec51ce5ea39edfcf67b837747c4e48efe92d938f77b83498a3b1d3b118522c"
+          }
+        ],
+        "name": "typed_ending",
+        "pass": true
+      },
+      {
+        "evidence": [],
+        "name": "instance_receipts_complete",
+        "pass": true
+      },
+      {
+        "evidence": [
+          {
+            "bytes": 16186,
+            "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-cancel/receipt.json",
+            "sha256": "80ec51ce5ea39edfcf67b837747c4e48efe92d938f77b83498a3b1d3b118522c"
+          }
+        ],
+        "name": "clean_event",
+        "pass": true
+      },
+      {
+        "evidence": [
+          {
+            "bytes": 1588,
+            "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-cancel/cleanup-a336db207459a1eae87c192b2ddd7a4c8b1915aff1dccaeeab6d90c95d41ba71.json",
+            "sha256": "a336db207459a1eae87c192b2ddd7a4c8b1915aff1dccaeeab6d90c95d41ba71"
+          }
+        ],
+        "name": "verified_cleanup",
+        "pass": true
+      },
+      {
+        "evidence": [
+          {
+            "bytes": 515,
+            "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-cancel/scratch-absence-e06154609c3a4549d328d5d7313283c16d740d6e241b4ef13fefb4aa79e36083.input.json",
+            "sha256": "2af6ca4e2715af460289d35a9634b2e39e8263663bcd42c70bb17e27895a0c09"
+          },
+          {
+            "bytes": 896,
+            "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-cancel/scratch-absence-e06154609c3a4549d328d5d7313283c16d740d6e241b4ef13fefb4aa79e36083.stdout",
+            "sha256": "1a10acf6d92997ba50be7e4f01430d12861471f5f669147422159289d14ee9ee"
+          },
+          {
+            "bytes": 0,
+            "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-cancel/scratch-absence-e06154609c3a4549d328d5d7313283c16d740d6e241b4ef13fefb4aa79e36083.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "bytes": 24,
+            "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-cancel/scratch-absence-e06154609c3a4549d328d5d7313283c16d740d6e241b4ef13fefb4aa79e36083.status.json",
+            "sha256": "1aff36f796932c34d424461078ea28c3b7feef0b4538624958a98e8dc7e4bca4"
+          }
+        ],
+        "name": "scratch_absence",
+        "pass": true
+      },
+      {
+        "evidence": [
+          {
+            "bytes": 1811,
+            "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-cancel/allocation-96ef1622c4e4bf06dae6b4343aeada8aa7f661e9089a72a36a5ffe84eaa3114e.json",
+            "sha256": "96ef1622c4e4bf06dae6b4343aeada8aa7f661e9089a72a36a5ffe84eaa3114e"
+          }
+        ],
+        "name": "shape_allocation",
+        "pass": true
+      },
+      {
+        "evidence": [],
+        "name": "owned_cancel_after_readiness",
+        "pass": true
+      },
+      {
+        "evidence": [
+          {
+            "bytes": 313,
+            "path": "/mnt/shared/flux-out/tl3/x3-qualification-b47bbc8ee833-20261110T194627Z-r19/canary-cancel/cgroup-absence.json",
+            "sha256": "343faa751bdaa1ab91bb8c6431d3b292d734cb8c1682b7333af1f0b87cd49b07"
+          }
+        ],
+        "name": "job_cgroup_absent",
+        "pass": true
+      }
+    ],
+    "cleanup": {
+      "accepted_execution": null,
+      "evidence": [
+        {
+          "bytes": 1588,
+          "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-cancel/cleanup-a336db207459a1eae87c192b2ddd7a4c8b1915aff1dccaeeab6d90c95d41ba71.json",
+          "sha256": "a336db207459a1eae87c192b2ddd7a4c8b1915aff1dccaeeab6d90c95d41ba71"
+        }
+      ],
+      "pending_executions": [],
+      "reason": "all retained execution cleanup already verified",
+      "stopped": true
+    },
+    "ending": "cancelled",
+    "executions": [
+      {
+        "id": "tl3-test-e69188eae2564f53878ab7335b785bdb",
+        "journal": {
+          "bytes": 12854,
+          "mode": 436,
+          "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-cancel/tl3-test-e69188eae2564f53878ab7335b785bdb.runtime.jsonl",
+          "sha256": "32e50ac00811ef5b4e98ef84846bce2e84b440814170189f79c574d9613c962c"
+        }
+      }
+    ],
+    "job": {
+      "allocation_R": {
+        "bytes": 1811,
+        "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-cancel/allocation-96ef1622c4e4bf06dae6b4343aeada8aa7f661e9089a72a36a5ffe84eaa3114e.json",
+        "sha256": "96ef1622c4e4bf06dae6b4343aeada8aa7f661e9089a72a36a5ffe84eaa3114e"
+      },
+      "events": [
+        {
+          "digest": "07738511a527af7aaaa5ce2926f90a7ffcae3a0cb69beb05ef37098a98c7933e",
+          "fact": {
+            "kind": "other",
+            "name": "submit"
+          },
+          "progress": {
+            "authority": "historical",
+            "cursor": {
+              "digest": "07738511a527af7aaaa5ce2926f90a7ffcae3a0cb69beb05ef37098a98c7933e",
+              "sequence": 0
+            },
+            "owner": {
+              "correlation": "x3-84458fa182d5d12c9c967cd3-cancel",
+              "owner": "x3-qualification"
+            },
+            "phase": "queued",
+            "run": {
+              "backend": "flux",
+              "instance": "runtime",
+              "job": "fmMbSVy1no",
+              "uri": "local:///home/rob/flux-vanilla/0.91.0-0.56.0/runs/fv1-model/run/local-0"
+            }
+          },
+          "sequence": 0
+        },
+        {
+          "digest": "9f6194c1b53830b060c97bce188e38e94bbc177134844310509ef121460ffd08",
+          "fact": {
+            "kind": "other",
+            "name": "validate"
+          },
+          "progress": {
+            "authority": "historical",
+            "cursor": {
+              "digest": "9f6194c1b53830b060c97bce188e38e94bbc177134844310509ef121460ffd08",
+              "sequence": 1
+            },
+            "owner": {
+              "correlation": "x3-84458fa182d5d12c9c967cd3-cancel",
+              "owner": "x3-qualification"
+            },
+            "phase": "queued",
+            "run": {
+              "backend": "flux",
+              "instance": "runtime",
+              "job": "fmMbSVy1no",
+              "uri": "local:///home/rob/flux-vanilla/0.91.0-0.56.0/runs/fv1-model/run/local-0"
+            }
+          },
+          "sequence": 1
+        },
+        {
+          "digest": "7446e49006f264510175b417b59cec90f833a9e6240f98334ebf45ddf5c10bd8",
+          "fact": {
+            "kind": "other",
+            "name": "depend"
+          },
+          "progress": {
+            "authority": "historical",
+            "cursor": {
+              "digest": "7446e49006f264510175b417b59cec90f833a9e6240f98334ebf45ddf5c10bd8",
+              "sequence": 2
+            },
+            "owner": {
+              "correlation": "x3-84458fa182d5d12c9c967cd3-cancel",
+              "owner": "x3-qualification"
+            },
+            "phase": "queued",
+            "run": {
+              "backend": "flux",
+              "instance": "runtime",
+              "job": "fmMbSVy1no",
+              "uri": "local:///home/rob/flux-vanilla/0.91.0-0.56.0/runs/fv1-model/run/local-0"
+            }
+          },
+          "sequence": 2
+        },
+        {
+          "digest": "fe923f5fa84dd1f41edfdfcfc879b56371b98ef7bcd71fe25bde50423c26fafe",
+          "fact": {
+            "kind": "other",
+            "name": "priority"
+          },
+          "progress": {
+            "authority": "historical",
+            "cursor": {
+              "digest": "fe923f5fa84dd1f41edfdfcfc879b56371b98ef7bcd71fe25bde50423c26fafe",
+              "sequence": 3
+            },
+            "owner": {
+              "correlation": "x3-84458fa182d5d12c9c967cd3-cancel",
+              "owner": "x3-qualification"
+            },
+            "phase": "queued",
+            "run": {
+              "backend": "flux",
+              "instance": "runtime",
+              "job": "fmMbSVy1no",
+              "uri": "local:///home/rob/flux-vanilla/0.91.0-0.56.0/runs/fv1-model/run/local-0"
+            }
+          },
+          "sequence": 3
+        },
+        {
+          "digest": "427cc07e1a13b9aa3bae2fd250ffa76c41c0913b8515b431dfa8975d784e80e4",
+          "fact": {
+            "kind": "other",
+            "name": "alloc"
+          },
+          "progress": {
+            "authority": "historical",
+            "cursor": {
+              "digest": "427cc07e1a13b9aa3bae2fd250ffa76c41c0913b8515b431dfa8975d784e80e4",
+              "sequence": 4
+            },
+            "owner": {
+              "correlation": "x3-84458fa182d5d12c9c967cd3-cancel",
+              "owner": "x3-qualification"
+            },
+            "phase": "queued",
+            "run": {
+              "backend": "flux",
+              "instance": "runtime",
+              "job": "fmMbSVy1no",
+              "uri": "local:///home/rob/flux-vanilla/0.91.0-0.56.0/runs/fv1-model/run/local-0"
+            }
+          },
+          "sequence": 4
+        },
+        {
+          "digest": "1c166e81bad4eb0f171b82af3560575a4b51887647e43bb99c185a47a3e88169",
+          "fact": {
+            "kind": "start"
+          },
+          "progress": {
+            "authority": "historical",
+            "cursor": {
+              "digest": "1c166e81bad4eb0f171b82af3560575a4b51887647e43bb99c185a47a3e88169",
+              "sequence": 5
+            },
+            "owner": {
+              "correlation": "x3-84458fa182d5d12c9c967cd3-cancel",
+              "owner": "x3-qualification"
+            },
+            "phase": "running",
+            "run": {
+              "backend": "flux",
+              "instance": "runtime",
+              "job": "fmMbSVy1no",
+              "uri": "local:///home/rob/flux-vanilla/0.91.0-0.56.0/runs/fv1-model/run/local-0"
+            }
+          },
+          "sequence": 5
+        },
+        {
+          "digest": "6afe3982e4554ab58d73e23abe6ba765d99e404b03af06270bfb09fbea2824e4",
+          "fact": {
+            "exception_type": "cancel",
+            "kind": "exception",
+            "note": "",
+            "severity": 0
+          },
+          "progress": {
+            "authority": "historical",
+            "cursor": {
+              "digest": "6afe3982e4554ab58d73e23abe6ba765d99e404b03af06270bfb09fbea2824e4",
+              "sequence": 6
+            },
+            "owner": {
+              "correlation": "x3-84458fa182d5d12c9c967cd3-cancel",
+              "owner": "x3-qualification"
+            },
+            "phase": "unknown",
+            "run": {
+              "backend": "flux",
+              "instance": "runtime",
+              "job": "fmMbSVy1no",
+              "uri": "local:///home/rob/flux-vanilla/0.91.0-0.56.0/runs/fv1-model/run/local-0"
+            }
+          },
+          "sequence": 6
+        },
+        {
+          "digest": "c744c7ef731f958b7b0d96296bb15182e3751c3a010dab81d7aada46e2d82a1f",
+          "fact": {
+            "kind": "finish",
+            "status": {
+              "code": 143,
+              "kind": "exited",
+              "raw": 36608
+            }
+          },
+          "progress": {
+            "authority": "historical",
+            "cursor": {
+              "digest": "c744c7ef731f958b7b0d96296bb15182e3751c3a010dab81d7aada46e2d82a1f",
+              "sequence": 7
+            },
+            "owner": {
+              "correlation": "x3-84458fa182d5d12c9c967cd3-cancel",
+              "owner": "x3-qualification"
+            },
+            "phase": "finishing",
+            "run": {
+              "backend": "flux",
+              "instance": "runtime",
+              "job": "fmMbSVy1no",
+              "uri": "local:///home/rob/flux-vanilla/0.91.0-0.56.0/runs/fv1-model/run/local-0"
+            }
+          },
+          "sequence": 7
+        },
+        {
+          "digest": "dcb27eb0e724b84361646bb2dcf06f9cfab06bfea88a7fbd7199fd989e2ae302",
+          "fact": {
+            "kind": "other",
+            "name": "release"
+          },
+          "progress": {
+            "authority": "historical",
+            "cursor": {
+              "digest": "dcb27eb0e724b84361646bb2dcf06f9cfab06bfea88a7fbd7199fd989e2ae302",
+              "sequence": 8
+            },
+            "owner": {
+              "correlation": "x3-84458fa182d5d12c9c967cd3-cancel",
+              "owner": "x3-qualification"
+            },
+            "phase": "unknown",
+            "run": {
+              "backend": "flux",
+              "instance": "runtime",
+              "job": "fmMbSVy1no",
+              "uri": "local:///home/rob/flux-vanilla/0.91.0-0.56.0/runs/fv1-model/run/local-0"
+            }
+          },
+          "sequence": 8
+        },
+        {
+          "digest": "1b3818a35579fb0321bb75ab62ad3dcd8ee04b7466b479fad08593458f00f961",
+          "fact": {
+            "kind": "other",
+            "name": "free"
+          },
+          "progress": {
+            "authority": "historical",
+            "cursor": {
+              "digest": "1b3818a35579fb0321bb75ab62ad3dcd8ee04b7466b479fad08593458f00f961",
+              "sequence": 9
+            },
+            "owner": {
+              "correlation": "x3-84458fa182d5d12c9c967cd3-cancel",
+              "owner": "x3-qualification"
+            },
+            "phase": "unknown",
+            "run": {
+              "backend": "flux",
+              "instance": "runtime",
+              "job": "fmMbSVy1no",
+              "uri": "local:///home/rob/flux-vanilla/0.91.0-0.56.0/runs/fv1-model/run/local-0"
+            }
+          },
+          "sequence": 9
+        },
+        {
+          "digest": "ac0502cd49e9cbb5510a6525d1dd153b44c402e0b25d1ca2780ffd443ccc66c6",
+          "fact": {
+            "kind": "clean"
+          },
+          "progress": {
+            "authority": "historical",
+            "cursor": {
+              "digest": "ac0502cd49e9cbb5510a6525d1dd153b44c402e0b25d1ca2780ffd443ccc66c6",
+              "sequence": 10
+            },
+            "owner": {
+              "correlation": "x3-84458fa182d5d12c9c967cd3-cancel",
+              "owner": "x3-qualification"
+            },
+            "phase": "finishing",
+            "run": {
+              "backend": "flux",
+              "instance": "runtime",
+              "job": "fmMbSVy1no",
+              "uri": "local:///home/rob/flux-vanilla/0.91.0-0.56.0/runs/fv1-model/run/local-0"
+            }
+          },
+          "sequence": 10
+        }
+      ],
+      "exit": {
+        "code": 143,
+        "kind": "exited",
+        "raw": 36608
+      },
+      "id": "fmMbSVy1no",
+      "instance_receipts": [
+        {
+          "endpoint": "local:///home/rob/flux-vanilla/0.91.0-0.56.0/runs/fv1-model/run/local-0",
+          "observation": {
+            "broker_starttime": "1794024934.96",
+            "config_sha256": "09f177350725364de77510023c248793fed2604effa3180d08760917106ef027",
+            "loaded_config": {
+              "bytes": 649,
+              "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-cancel/observed-loaded-config.json",
+              "sha256": "09f177350725364de77510023c248793fed2604effa3180d08760917106ef027"
+            }
+          }
+        }
+      ],
+      "jobspec": {
+        "bytes": 2739,
+        "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-cancel/original-jobspec.json",
+        "sha256": "6c7c607ee3e2d76870b91c7ddfcf1e9d5843dad3a369d044c434604a42c71f00"
+      },
+      "logs": [
+        {
+          "bytes": 0,
+          "mode": 420,
+          "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-cancel/stdout",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "bytes": 0,
+          "mode": 420,
+          "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-cancel/stderr",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "owner": {
+        "correlation": "x3-84458fa182d5d12c9c967cd3-cancel",
+        "owner": "x3-qualification"
+      },
+      "request": {
+        "bytes": 3962,
+        "mode": 384,
+        "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-cancel/request.json",
+        "sha256": "40f329d6cd55fa524c22e04dee25cda0bb5e3ef55073729eca816d083100ad9d"
+      },
+      "request_sha256": "40f329d6cd55fa524c22e04dee25cda0bb5e3ef55073729eca816d083100ad9d"
+    },
+    "kind": "cancel",
+    "status": "PASS",
+    "terminal_receipt": {
+      "bytes": 16186,
+      "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-cancel/receipt.json",
+      "sha256": "80ec51ce5ea39edfcf67b837747c4e48efe92d938f77b83498a3b1d3b118522c"
+    }
+  },
+  "job_id": "fmMbSVy1no",
+  "kind": "cancel",
+  "receipt_sha256": "80ec51ce5ea39edfcf67b837747c4e48efe92d938f77b83498a3b1d3b118522c",
+  "schema": "tl3.fx_canary_acceptance.v1",
+  "source": "b47bbc8ee8339278c8a9bcc97702a29cbea45442",
+  "status": "PASS"
+}

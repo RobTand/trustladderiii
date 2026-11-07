@@ -1,0 +1,8 @@
+{
+  "fault_input": {
+    "value": "/opt/tl3/bin/python-canary2-absent"
+  },
+  "observed_interpreter_claim": false,
+  "only_intended_fault": "container interpreter absent",
+  "source": "b47bbc8ee8339278c8a9bcc97702a29cbea45442"
+}

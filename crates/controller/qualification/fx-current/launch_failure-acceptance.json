@@ -1,0 +1,510 @@
+{
+  "allocation_verified": true,
+  "cleanup_verified": true,
+  "ending": "infra-lost",
+  "evidence": {
+    "artifacts": [],
+    "checks": [
+      {
+        "evidence": [
+          {
+            "bytes": 18446,
+            "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-launch_failure/receipt.json",
+            "sha256": "74921a8d1a7ff75acf4750cb937badcad8bdfbf3470a40f8f3e19cd3b162e6f9"
+          }
+        ],
+        "name": "typed_ending",
+        "pass": true
+      },
+      {
+        "evidence": [],
+        "name": "instance_receipts_complete",
+        "pass": true
+      },
+      {
+        "evidence": [
+          {
+            "bytes": 18446,
+            "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-launch_failure/receipt.json",
+            "sha256": "74921a8d1a7ff75acf4750cb937badcad8bdfbf3470a40f8f3e19cd3b162e6f9"
+          }
+        ],
+        "name": "clean_event",
+        "pass": true
+      },
+      {
+        "evidence": [
+          {
+            "bytes": 1976,
+            "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-launch_failure/cleanup-eca029074e35d1d7adca0fed61d4246e0dc0f4664d8abbfce53f5dd3a4b77264.json",
+            "sha256": "eca029074e35d1d7adca0fed61d4246e0dc0f4664d8abbfce53f5dd3a4b77264"
+          },
+          {
+            "bytes": 1976,
+            "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-launch_failure/cleanup-a939b8cb9859ec1c3ad6dd8361e042f826d6969f7f40016ce64b2fb96fe3d634.json",
+            "sha256": "a939b8cb9859ec1c3ad6dd8361e042f826d6969f7f40016ce64b2fb96fe3d634"
+          }
+        ],
+        "name": "verified_cleanup",
+        "pass": true
+      },
+      {
+        "evidence": [
+          {
+            "bytes": 554,
+            "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-launch_failure/scratch-absence-78b186d4a4084e0e51608dd30bda6eafba6d9c7ef7e8e9449a6fcf0d27054162.input.json",
+            "sha256": "88c28ca890b76f0544114956d31b56a485f914b0891546c9a7818726c6f12a18"
+          },
+          {
+            "bytes": 1166,
+            "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-launch_failure/scratch-absence-78b186d4a4084e0e51608dd30bda6eafba6d9c7ef7e8e9449a6fcf0d27054162.stdout",
+            "sha256": "03106b8252cc83261e95f8b2a0558d7935cdb93c9441cb908a9038f87b39af68"
+          },
+          {
+            "bytes": 0,
+            "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-launch_failure/scratch-absence-78b186d4a4084e0e51608dd30bda6eafba6d9c7ef7e8e9449a6fcf0d27054162.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "bytes": 24,
+            "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-launch_failure/scratch-absence-78b186d4a4084e0e51608dd30bda6eafba6d9c7ef7e8e9449a6fcf0d27054162.status.json",
+            "sha256": "1aff36f796932c34d424461078ea28c3b7feef0b4538624958a98e8dc7e4bca4"
+          }
+        ],
+        "name": "scratch_absence",
+        "pass": true
+      },
+      {
+        "evidence": [
+          {
+            "bytes": 1811,
+            "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-launch_failure/allocation-fcb068ef51cd5204f966e47ba5877c5fcbb9e22268aba0bfd779b021773b79ea.json",
+            "sha256": "fcb068ef51cd5204f966e47ba5877c5fcbb9e22268aba0bfd779b021773b79ea"
+          }
+        ],
+        "name": "shape_allocation",
+        "pass": true
+      },
+      {
+        "evidence": [
+          {
+            "bytes": 5513,
+            "path": "/mnt/shared/flux-out/tl3/.runtime/6562f47f42a723cbd47533e77090f145b3122dcc3b35415454f3d889b80d3a13/manifest.json",
+            "sha256": "6562f47f42a723cbd47533e77090f145b3122dcc3b35415454f3d889b80d3a13"
+          },
+          {
+            "bytes": 70,
+            "path": "/mnt/shared/flux-out/tl3/x3-qualification-b47bbc8ee833-20261110T194627Z-r19/prepared/absent-interpreter-preflight.stdout",
+            "sha256": "7afa0d364fba81b6a75e777cec653469169842af9d6d665be7bdc28fc0b83427"
+          },
+          {
+            "bytes": 3286,
+            "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-launch_failure/retained-report.json",
+            "sha256": "a28db312b585b7e2bfd0052f0c36692b791bfc5de4146ae4e1e134e4762b93d0"
+          },
+          {
+            "bytes": 1465,
+            "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-launch_failure/retained-payload.json",
+            "sha256": "fe7a81fa3d3339a1b6651c0f2b9ae4289f90626bd27518b7ff059580d048dfc1"
+          },
+          {
+            "bytes": 7116,
+            "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-launch_failure/tl3-test-b209cf1474f24b2388ceaf319795614a.runtime.jsonl",
+            "sha256": "52d79a689996b24b98ef15a0a1032ab1fb83652f059e1bcf0dc2076101bbc90d"
+          },
+          {
+            "bytes": 7846,
+            "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-launch_failure/tl3-test-e195d84a4a104872a7b345658bb1dc34.runtime.jsonl",
+            "sha256": "acc7e9f025e12bca7e575b808786b42ce2b0c3e83877a5b6686459aaf95f33b2"
+          }
+        ],
+        "name": "post_begin_launch_failure",
+        "pass": true
+      },
+      {
+        "evidence": [
+          {
+            "bytes": 313,
+            "path": "/mnt/shared/flux-out/tl3/x3-qualification-b47bbc8ee833-20261110T194627Z-r19/canary-launch_failure/cgroup-absence.json",
+            "sha256": "0380b4e9e1227007067ae9e42d06c8459a33b4a74336f2fb02d8ea54e062f336"
+          }
+        ],
+        "name": "job_cgroup_absent",
+        "pass": true
+      }
+    ],
+    "cleanup": {
+      "accepted_execution": null,
+      "evidence": [
+        {
+          "bytes": 1976,
+          "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-launch_failure/cleanup-eca029074e35d1d7adca0fed61d4246e0dc0f4664d8abbfce53f5dd3a4b77264.json",
+          "sha256": "eca029074e35d1d7adca0fed61d4246e0dc0f4664d8abbfce53f5dd3a4b77264"
+        },
+        {
+          "bytes": 1976,
+          "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-launch_failure/cleanup-a939b8cb9859ec1c3ad6dd8361e042f826d6969f7f40016ce64b2fb96fe3d634.json",
+          "sha256": "a939b8cb9859ec1c3ad6dd8361e042f826d6969f7f40016ce64b2fb96fe3d634"
+        }
+      ],
+      "pending_executions": [],
+      "reason": "all retained execution cleanup already verified",
+      "stopped": true
+    },
+    "ending": "infra-lost",
+    "executions": [
+      {
+        "id": "tl3-test-b209cf1474f24b2388ceaf319795614a",
+        "journal": {
+          "bytes": 7116,
+          "mode": 436,
+          "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-launch_failure/tl3-test-b209cf1474f24b2388ceaf319795614a.runtime.jsonl",
+          "sha256": "52d79a689996b24b98ef15a0a1032ab1fb83652f059e1bcf0dc2076101bbc90d"
+        }
+      },
+      {
+        "id": "tl3-test-e195d84a4a104872a7b345658bb1dc34",
+        "journal": {
+          "bytes": 7846,
+          "mode": 436,
+          "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-launch_failure/tl3-test-e195d84a4a104872a7b345658bb1dc34.runtime.jsonl",
+          "sha256": "acc7e9f025e12bca7e575b808786b42ce2b0c3e83877a5b6686459aaf95f33b2"
+        }
+      }
+    ],
+    "job": {
+      "allocation_R": {
+        "bytes": 1811,
+        "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-launch_failure/allocation-fcb068ef51cd5204f966e47ba5877c5fcbb9e22268aba0bfd779b021773b79ea.json",
+        "sha256": "fcb068ef51cd5204f966e47ba5877c5fcbb9e22268aba0bfd779b021773b79ea"
+      },
+      "events": [
+        {
+          "digest": "f3413afb91e122b99959fde5f658c2983534ddab9866cece99d8013378eca514",
+          "fact": {
+            "kind": "other",
+            "name": "submit"
+          },
+          "progress": {
+            "authority": "historical",
+            "cursor": {
+              "digest": "f3413afb91e122b99959fde5f658c2983534ddab9866cece99d8013378eca514",
+              "sequence": 0
+            },
+            "owner": {
+              "correlation": "x3-84458fa182d5d12c9c967cd3-launch_failure",
+              "owner": "x3-qualification"
+            },
+            "phase": "queued",
+            "run": {
+              "backend": "flux",
+              "instance": "runtime",
+              "job": "fmMUPdB5zw",
+              "uri": "local:///home/rob/flux-vanilla/0.91.0-0.56.0/runs/fv1-model/run/local-0"
+            }
+          },
+          "sequence": 0
+        },
+        {
+          "digest": "87ae1fdacb04f8892d718581daa35c1fe3513c6c5bf4c6536f78328d89bb7854",
+          "fact": {
+            "kind": "other",
+            "name": "validate"
+          },
+          "progress": {
+            "authority": "historical",
+            "cursor": {
+              "digest": "87ae1fdacb04f8892d718581daa35c1fe3513c6c5bf4c6536f78328d89bb7854",
+              "sequence": 1
+            },
+            "owner": {
+              "correlation": "x3-84458fa182d5d12c9c967cd3-launch_failure",
+              "owner": "x3-qualification"
+            },
+            "phase": "queued",
+            "run": {
+              "backend": "flux",
+              "instance": "runtime",
+              "job": "fmMUPdB5zw",
+              "uri": "local:///home/rob/flux-vanilla/0.91.0-0.56.0/runs/fv1-model/run/local-0"
+            }
+          },
+          "sequence": 1
+        },
+        {
+          "digest": "90571a4af6cf470c69d3471dfba77caff19b02e4c73f86ed8dcddeda238e82d2",
+          "fact": {
+            "kind": "other",
+            "name": "depend"
+          },
+          "progress": {
+            "authority": "historical",
+            "cursor": {
+              "digest": "90571a4af6cf470c69d3471dfba77caff19b02e4c73f86ed8dcddeda238e82d2",
+              "sequence": 2
+            },
+            "owner": {
+              "correlation": "x3-84458fa182d5d12c9c967cd3-launch_failure",
+              "owner": "x3-qualification"
+            },
+            "phase": "queued",
+            "run": {
+              "backend": "flux",
+              "instance": "runtime",
+              "job": "fmMUPdB5zw",
+              "uri": "local:///home/rob/flux-vanilla/0.91.0-0.56.0/runs/fv1-model/run/local-0"
+            }
+          },
+          "sequence": 2
+        },
+        {
+          "digest": "b20c121e54e9431a4cd144d2e8dc59d894bfb5dd15570e4a6db31972eb675436",
+          "fact": {
+            "kind": "other",
+            "name": "priority"
+          },
+          "progress": {
+            "authority": "historical",
+            "cursor": {
+              "digest": "b20c121e54e9431a4cd144d2e8dc59d894bfb5dd15570e4a6db31972eb675436",
+              "sequence": 3
+            },
+            "owner": {
+              "correlation": "x3-84458fa182d5d12c9c967cd3-launch_failure",
+              "owner": "x3-qualification"
+            },
+            "phase": "queued",
+            "run": {
+              "backend": "flux",
+              "instance": "runtime",
+              "job": "fmMUPdB5zw",
+              "uri": "local:///home/rob/flux-vanilla/0.91.0-0.56.0/runs/fv1-model/run/local-0"
+            }
+          },
+          "sequence": 3
+        },
+        {
+          "digest": "aa396471628a05eca3ace02a048af1b53671ac8e1c37db230e5fc220e3edae70",
+          "fact": {
+            "kind": "other",
+            "name": "alloc"
+          },
+          "progress": {
+            "authority": "historical",
+            "cursor": {
+              "digest": "aa396471628a05eca3ace02a048af1b53671ac8e1c37db230e5fc220e3edae70",
+              "sequence": 4
+            },
+            "owner": {
+              "correlation": "x3-84458fa182d5d12c9c967cd3-launch_failure",
+              "owner": "x3-qualification"
+            },
+            "phase": "queued",
+            "run": {
+              "backend": "flux",
+              "instance": "runtime",
+              "job": "fmMUPdB5zw",
+              "uri": "local:///home/rob/flux-vanilla/0.91.0-0.56.0/runs/fv1-model/run/local-0"
+            }
+          },
+          "sequence": 4
+        },
+        {
+          "digest": "f86acd6b8169c4c861d4232592443bd66a9645c74e3cff683688532c0f4a37f3",
+          "fact": {
+            "kind": "start"
+          },
+          "progress": {
+            "authority": "historical",
+            "cursor": {
+              "digest": "f86acd6b8169c4c861d4232592443bd66a9645c74e3cff683688532c0f4a37f3",
+              "sequence": 5
+            },
+            "owner": {
+              "correlation": "x3-84458fa182d5d12c9c967cd3-launch_failure",
+              "owner": "x3-qualification"
+            },
+            "phase": "running",
+            "run": {
+              "backend": "flux",
+              "instance": "runtime",
+              "job": "fmMUPdB5zw",
+              "uri": "local:///home/rob/flux-vanilla/0.91.0-0.56.0/runs/fv1-model/run/local-0"
+            }
+          },
+          "sequence": 5
+        },
+        {
+          "digest": "3adb8fe8b5d98ea6d27bf930479ce0a95495c96ec526176c72af3f577b281463",
+          "fact": {
+            "kind": "finish",
+            "status": {
+              "code": 0,
+              "kind": "exited",
+              "raw": 0
+            }
+          },
+          "progress": {
+            "authority": "historical",
+            "cursor": {
+              "digest": "3adb8fe8b5d98ea6d27bf930479ce0a95495c96ec526176c72af3f577b281463",
+              "sequence": 6
+            },
+            "owner": {
+              "correlation": "x3-84458fa182d5d12c9c967cd3-launch_failure",
+              "owner": "x3-qualification"
+            },
+            "phase": "finishing",
+            "run": {
+              "backend": "flux",
+              "instance": "runtime",
+              "job": "fmMUPdB5zw",
+              "uri": "local:///home/rob/flux-vanilla/0.91.0-0.56.0/runs/fv1-model/run/local-0"
+            }
+          },
+          "sequence": 6
+        },
+        {
+          "digest": "a859b57f36ec7eaf24172b673b5f73a6f46f9a04e5ee8548a8bb0902bef68a42",
+          "fact": {
+            "kind": "other",
+            "name": "release"
+          },
+          "progress": {
+            "authority": "historical",
+            "cursor": {
+              "digest": "a859b57f36ec7eaf24172b673b5f73a6f46f9a04e5ee8548a8bb0902bef68a42",
+              "sequence": 7
+            },
+            "owner": {
+              "correlation": "x3-84458fa182d5d12c9c967cd3-launch_failure",
+              "owner": "x3-qualification"
+            },
+            "phase": "unknown",
+            "run": {
+              "backend": "flux",
+              "instance": "runtime",
+              "job": "fmMUPdB5zw",
+              "uri": "local:///home/rob/flux-vanilla/0.91.0-0.56.0/runs/fv1-model/run/local-0"
+            }
+          },
+          "sequence": 7
+        },
+        {
+          "digest": "d31c8186bc8f381f73f36fffc6351b325ada9f1706215519f713b9adc08b9eec",
+          "fact": {
+            "kind": "other",
+            "name": "free"
+          },
+          "progress": {
+            "authority": "historical",
+            "cursor": {
+              "digest": "d31c8186bc8f381f73f36fffc6351b325ada9f1706215519f713b9adc08b9eec",
+              "sequence": 8
+            },
+            "owner": {
+              "correlation": "x3-84458fa182d5d12c9c967cd3-launch_failure",
+              "owner": "x3-qualification"
+            },
+            "phase": "unknown",
+            "run": {
+              "backend": "flux",
+              "instance": "runtime",
+              "job": "fmMUPdB5zw",
+              "uri": "local:///home/rob/flux-vanilla/0.91.0-0.56.0/runs/fv1-model/run/local-0"
+            }
+          },
+          "sequence": 8
+        },
+        {
+          "digest": "fe041eef61f23f03bdd2f3a04423599162e22928194a7bac8b39905b5a81e89d",
+          "fact": {
+            "kind": "clean"
+          },
+          "progress": {
+            "authority": "historical",
+            "cursor": {
+              "digest": "fe041eef61f23f03bdd2f3a04423599162e22928194a7bac8b39905b5a81e89d",
+              "sequence": 9
+            },
+            "owner": {
+              "correlation": "x3-84458fa182d5d12c9c967cd3-launch_failure",
+              "owner": "x3-qualification"
+            },
+            "phase": "finishing",
+            "run": {
+              "backend": "flux",
+              "instance": "runtime",
+              "job": "fmMUPdB5zw",
+              "uri": "local:///home/rob/flux-vanilla/0.91.0-0.56.0/runs/fv1-model/run/local-0"
+            }
+          },
+          "sequence": 9
+        }
+      ],
+      "exit": {
+        "code": 0,
+        "kind": "exited",
+        "raw": 0
+      },
+      "id": "fmMUPdB5zw",
+      "instance_receipts": [
+        {
+          "endpoint": "local:///home/rob/flux-vanilla/0.91.0-0.56.0/runs/fv1-model/run/local-0",
+          "observation": {
+            "broker_starttime": "1794024934.96",
+            "config_sha256": "09f177350725364de77510023c248793fed2604effa3180d08760917106ef027",
+            "loaded_config": {
+              "bytes": 649,
+              "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-launch_failure/observed-loaded-config.json",
+              "sha256": "09f177350725364de77510023c248793fed2604effa3180d08760917106ef027"
+            }
+          }
+        }
+      ],
+      "jobspec": {
+        "bytes": 2803,
+        "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-launch_failure/original-jobspec.json",
+        "sha256": "a27e2fd74a73336cc230d075e5cd17725d7978fac5ac3a9d3ef772186519761b"
+      },
+      "logs": [
+        {
+          "bytes": 0,
+          "mode": 420,
+          "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-launch_failure/stdout",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "bytes": 0,
+          "mode": 420,
+          "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-launch_failure/stderr",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "owner": {
+        "correlation": "x3-84458fa182d5d12c9c967cd3-launch_failure",
+        "owner": "x3-qualification"
+      },
+      "request": {
+        "bytes": 3976,
+        "mode": 384,
+        "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-launch_failure/request.json",
+        "sha256": "1edaf7dcba33d82a6f67c48072147edf6b069ba819a7b383ce4eb42184d08ce1"
+      },
+      "request_sha256": "1edaf7dcba33d82a6f67c48072147edf6b069ba819a7b383ce4eb42184d08ce1"
+    },
+    "kind": "launch_failure",
+    "status": "PASS",
+    "terminal_receipt": {
+      "bytes": 18446,
+      "path": "/mnt/shared/flux-out/tl3/x3-84458fa182d5d12c9c967cd3-launch_failure/receipt.json",
+      "sha256": "74921a8d1a7ff75acf4750cb937badcad8bdfbf3470a40f8f3e19cd3b162e6f9"
+    }
+  },
+  "job_id": "fmMUPdB5zw",
+  "kind": "launch_failure",
+  "receipt_sha256": "74921a8d1a7ff75acf4750cb937badcad8bdfbf3470a40f8f3e19cd3b162e6f9",
+  "schema": "tl3.fx_canary_acceptance.v1",
+  "source": "b47bbc8ee8339278c8a9bcc97702a29cbea45442",
+  "status": "PASS"
+}

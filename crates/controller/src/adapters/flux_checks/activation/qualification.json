@@ -1,23 +1,23 @@
 {
-  "acceptance_source": "42b68e30fcb3d37cc03c0a70166af9e912b25dc6",
+  "acceptance_source": "b47bbc8ee8339278c8a9bcc97702a29cbea45442",
   "files": [
     {
-      "bytes": 4279,
+      "bytes": 4280,
       "mode": 256,
       "path": "collector-manifest.json",
-      "sha256": "ad6c810811ecbe15c7195d7e896f146371c6fe6886f6185de16793f50e268c34"
+      "sha256": "f5c0729032dabb22269fb384cdd408feeeaac2f45889068a19bf7303f2a0a12a"
     },
     {
       "bytes": 911,
       "mode": 320,
       "path": "host-cleanup",
-      "sha256": "832af19d22520f415bc5bcc75334962842cdeb5c994c1f40489282759cf70136"
+      "sha256": "1601bd3f151ab4c6e038519f025ef44380c14463380d59e5afc49ee622819a7c"
     },
     {
       "bytes": 830,
       "mode": 320,
       "path": "host-collector",
-      "sha256": "9731909a08225335d49797ceb7d9b62daa617ce0e5213bcea4f0c345d8b167b6"
+      "sha256": "0c20f5f51bf6801b27e9fd4b24b9b9bbfa11755e993b4c8a162a80cd2f316db5"
     },
     {
       "bytes": 307,
@@ -32,10 +32,10 @@
       "sha256": "064a184313e2e7498c2ca4995efd6fcf5e67673914918cb95b5c4590dddc4a7e"
     },
     {
-      "bytes": 46555,
+      "bytes": 43527,
       "mode": 256,
       "path": "lib/tl3_harness/execution.py",
-      "sha256": "05b5ea647a68cc79fb545b9caf17c5990a69802626388c0185fc5092adae7435"
+      "sha256": "797ad568a71412405c1ecd40bfcdaf67dd2b86932af4b39697c32276397e46a6"
     },
     {
       "bytes": 7149,
@@ -44,10 +44,10 @@
       "sha256": "a6e62507b6f5d9a49d5a21e1fd0ae51f0fffc32d1418224a853caed7d353873f"
     },
     {
-      "bytes": 15892,
+      "bytes": 18314,
       "mode": 256,
       "path": "lib/tl3_harness/generator.py",
-      "sha256": "c449fea4a5487bc9285bb6cfef9f866af4e8d6444c0b00ac48a7b847bd42c1b6"
+      "sha256": "b93d549bb27fb599c7f3e244d6188e249282665d4fe23193850b0a4847c04039"
     },
     {
       "bytes": 4025,
@@ -116,16 +116,16 @@
       "sha256": "ecd0fb1561c01efe649ab38fd1bbbc9be1f1344e6c156513ee785de523ba4f47"
     },
     {
-      "bytes": 80192,
+      "bytes": 82286,
       "mode": 256,
       "path": "lib/tl3_harness/runtime.py",
-      "sha256": "5b29ea9553dff9a2d05020c1da7f0abb572aede34f7a8d2f951416e3d98fb3c9"
+      "sha256": "ad70fee76ec510f968fe626dfd99b0a409948bafceb5dfcfc8ed905f831bf0b6"
     },
     {
-      "bytes": 899,
+      "bytes": 2811,
       "mode": 256,
       "path": "lib/tl3_harness/runtime_evidence.py",
-      "sha256": "22deb7c2c7ada7389afd532e20b1bd0b55b334ab645dd27ace8784367abe6835"
+      "sha256": "6636da0e205612f306241ff822e4e664dc4e2baf7e34ce35200efe619b9effe9"
     },
     {
       "bytes": 177,
@@ -152,10 +152,10 @@
       "sha256": "9e822f4d8fbd9e90b8fd4106f27dea177ab5d108fa56b2c87b42278b2f4c671f"
     },
     {
-      "bytes": 3529,
+      "bytes": 1578,
       "mode": 256,
       "path": "lib/tl3_harness/scratch.py",
-      "sha256": "5e73949c27075edee826895f5a9a9d70f8b2381e15cff5549105a337e8a0c690"
+      "sha256": "3f269f1b5c62732bfa3072a850d82d5efaa3badcbd0567613bcf17268a6064bc"
     },
     {
       "bytes": 8397,
@@ -176,10 +176,10 @@
       "sha256": "61d6f3b925d038dac6dcd857d485d78a3e6b482964c83d4d913c1f5f9c18aea9"
     },
     {
-      "bytes": 23851,
+      "bytes": 23117,
       "mode": 256,
       "path": "lib/tl3_harness/supervision.py",
-      "sha256": "59401deb0bbee5fd435a0f57fcd286aa5ff63ce06cf7101095f25a23bf0aadf3"
+      "sha256": "02bc20aa20ae333cef186a42eaefba40401720b5b1d058f33f7e0d507cee29fc"
     },
     {
       "bytes": 3592,
@@ -194,10 +194,10 @@
       "sha256": "c318b5325246764be74a8d91d7da6e4d11fa3ed29eb27715b9565f377aa30c38"
     },
     {
-      "bytes": 22087,
+      "bytes": 22091,
       "mode": 256,
       "path": "lib/tl3_harness/test_tool.py",
-      "sha256": "563b71d694b3f6c54741b47018e5c3f214a82fd81d31ab5ffae4c0b1e407d5ed"
+      "sha256": "8d899e7ea92ebd33adce6c5fa44a909846f0f8a453118f19321844ff2bf748af"
     },
     {
       "bytes": 10784,
@@ -208,48 +208,25 @@
   ],
   "historical_runs": [
     {
-      "acceptance_sha256": "e32cfdccf2a284c5446a53fbaf9699aba2e9937c7bd0aa0c9d1999ae78a08cbf",
-      "citations": [
-        "/mnt/shared/flux-out/tl3/fxr-canary2-42b-final-retained-audit-20261107T234000Z/acceptance.json:145",
-        "/mnt/shared/flux-out/tl3/fxr-canary2-42b-final-retained-audit-20261107T234000Z/acceptance.json:146",
-        "/mnt/shared/flux-out/tl3/.runtime/640fe3b8b535b1db142ad099e0bf115f6255f90923b3dd73fc681eaca7e93391/manifest.json:1",
-        "/mnt/shared/flux-out/tl3/fxr-canary2-42b-final-retained-audit-20261107T234000Z/journal/fxr-canary2-42b-20261107t230607z/state.json:1"
-      ],
-      "container_interpreter": "/opt/tl3/bin/python-canary2-absent",
-      "manifest_sha256": "640fe3b8b535b1db142ad099e0bf115f6255f90923b3dd73fc681eaca7e93391",
-      "parent_audit_sha256": "f339f5bb17c9f48c77ed07a9a72348777f01397de260d55df35a18813aeca47a",
-      "producer_commit": "10a06385ce91404961e6b0d2894d0e75a7b24f21",
-      "run": "canary2"
+      "acceptance_sha256": "d54fdca09bac55b07bd60367125e50110c0b3ae63615991dbf40ff3b891355f8",
+      "manifest_sha256": "6562f47f42a723cbd47533e77090f145b3122dcc3b35415454f3d889b80d3a13",
+      "producer_commit": "b47bbc8ee8339278c8a9bcc97702a29cbea45442",
+      "run": "launch_failure"
     },
     {
-      "acceptance_sha256": "765f75dcc517039a31bdc73ae8846f1b3902c41725d4edfa3c06849c54943179",
-      "citations": [
-        "/mnt/shared/flux-out/tl3/fxr-canary3-42b-native-execution-20261107T233714Z-final-retained-audit/acceptance.json:101",
-        "/mnt/shared/flux-out/tl3/fxr-canary3-42b-native-execution-20261107T233714Z-final-retained-audit/acceptance.json:102",
-        "/mnt/shared/flux-out/tl3/.runtime/4fbf54b83553eaaafc0ea6376bd4e1c1382d3fd58e84a5c44e85c1d73dea61c3/manifest.json:1",
-        "/mnt/shared/flux-out/tl3/fxr-canary3-42b-native-execution-20261107T233714Z-final-retained-audit/journal/fxr-canary3-42b-20261107t230846z/state.json:1"
-      ],
-      "container_interpreter": "/opt/tl3/bin/python",
-      "manifest_sha256": "4fbf54b83553eaaafc0ea6376bd4e1c1382d3fd58e84a5c44e85c1d73dea61c3",
-      "parent_audit_sha256": "f8577888c7db9cbc6b927adc501d899f5df5b746ff4775775bf044d43b175a09",
-      "producer_commit": "2a332ed2f7a6afbc6619e82802d378b6c9fb867a",
-      "run": "canary3"
+      "acceptance_sha256": "21d805a621d25f8f5f12380814a8cb6cca5843301947c6a6015a4fd2198c84c6",
+      "manifest_sha256": "dc2c238ea5476648e532819a0e3180e77587b5039f8ae5910258c4bb858786a6",
+      "producer_commit": "b47bbc8ee8339278c8a9bcc97702a29cbea45442",
+      "run": "cancel"
     },
     {
-      "acceptance_sha256": "34515eb786c02fd1d1b14af5ddcc751d4b7e5f9f0ff3bdbf0451ed69e0707866",
-      "citations": [
-        "/mnt/shared/flux-out/tl3/fxr-success-42b-native-execution-20261107T234940Z-final-retained-audit/acceptance.json:197",
-        "/mnt/shared/flux-out/tl3/fxr-success-42b-native-execution-20261107T234940Z-final-retained-audit/acceptance.json:198",
-        "/mnt/shared/flux-out/tl3/.runtime/294d58f0b5feb517d7b70426e0b292b74b91aad03b55483bb9a84e57feb9930a/manifest.json:1",
-        "/mnt/shared/flux-out/tl3/fxr-success-42b-native-execution-20261107T234940Z-final-retained-audit/journal/fxr-success-42b-20261107t230950z/state.json:1"
-      ],
-      "container_interpreter": "/opt/tl3/bin/python",
-      "manifest_sha256": "294d58f0b5feb517d7b70426e0b292b74b91aad03b55483bb9a84e57feb9930a",
-      "parent_audit_sha256": "f95dde156917aa7012e5c090e945e9ceb3748094724f5890adab49c9af7b17a4",
-      "producer_commit": "63da5ca7776ced528d6817e3dde46d52ce4634d5",
+      "acceptance_sha256": "7bda7f65eb9f1624f303e6730bd1f2996d8711314aec8ee2a16c8ff162eb94a5",
+      "manifest_sha256": "dc2c238ea5476648e532819a0e3180e77587b5039f8ae5910258c4bb858786a6",
+      "producer_commit": "b47bbc8ee8339278c8a9bcc97702a29cbea45442",
       "run": "success"
     }
   ],
+  "inputs_sha256": "52937207759620a8a864883a40cb607977304a7ef161dd9b0e6365b4cc6f2441",
   "metadata": {
     "cleanup": "host-cleanup",
     "cleanup_arguments": [],
@@ -267,6 +244,5 @@
     "image-map.json",
     "preflight.json"
   ],
-  "reconciliation_sha256": "0623e1deacca0adddba501822e433be68e7c5f1abcaeaa3fcfe8d96d485c03be",
   "schema": "tl3.fx_qualification.v1"
 }

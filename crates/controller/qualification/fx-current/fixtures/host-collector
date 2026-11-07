@@ -1,0 +1,18 @@
+#!/usr/bin/python3.14 -I
+from pathlib import Path
+import sys, hashlib, json
+sys.dont_write_bytecode = True
+root = Path(__file__).resolve().parent
+raw = (root / "collector-manifest.json").read_bytes()
+if hashlib.sha256(raw).hexdigest() != 'f5c0729032dabb22269fb384cdd408feeeaac2f45889068a19bf7303f2a0a12a':
+    raise SystemExit("trusted runtime manifest changed")
+for entry in json.loads(raw)["files"]:
+    path = (root / entry["path"]).resolve()
+    if not path.is_relative_to(root):
+        raise SystemExit("trusted runtime path changed")
+    data = path.read_bytes()
+    if len(data) != entry["bytes"] or hashlib.sha256(data).hexdigest() != entry["sha256"]:
+        raise SystemExit("trusted runtime imported bytes changed")
+sys.path.insert(0, str(root / "lib"))
+from tl3_harness.runtime import collector_main
+collector_main()
