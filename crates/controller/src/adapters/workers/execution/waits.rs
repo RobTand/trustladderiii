@@ -144,6 +144,13 @@ impl Waits {
                 continue;
             };
             let wait = shared.load(&format!("worker:{id}"))?;
+            // A pre-dispatch crash retains private intent/input but establishes no native job.
+            // Keep that held reference without starting an observer or blocking other workers.
+            let submitted = durable::Journal::new(shared.options.journal_root.clone())
+                .map_err(backend_error)?
+                .transaction(&wait.owner, |_, record| Ok(record.is_some()))
+                .map_err(backend_error)?;
+            if !submitted { continue; }
             let (_, _, profile) = shared.owned(&wait.owner)?;
             subscriptions
                 .entry(durable::digest(&serde_json::to_vec(&profile.delivery)?))

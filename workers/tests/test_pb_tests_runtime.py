@@ -60,7 +60,8 @@ def test_selected_flux_maker_reaches_activation_hold_without_pb_transport(rehear
     assert not calls
 
 
-def test_selected_flux_maker_consumes_verified_payload_and_checkpoints_before_dispatch(rehearsal, monkeypatch, tmp_path):
+@pytest.mark.parametrize('unknown_first', [False, True])
+def test_selected_flux_maker_consumes_verified_payload_and_checkpoints_before_dispatch(rehearsal, monkeypatch, tmp_path, unknown_first):
     from tl3_workers import pb_tests, flux_execution
     ledger, _, _, _ = rehearsal
     worktree = ledger.worktree
@@ -78,8 +79,13 @@ def test_selected_flux_maker_consumes_verified_payload_and_checkpoints_before_di
         assert contract['repeat'] == 3
         return {'key': key}
     monkeypatch.setattr(flux_execution, 'prepare', prepare)
+    attached = []
+    monkeypatch.setattr(flux_execution, 'resume', lambda settings, reference, tree, contract: {'key': reference})
     def execute(plan, **kwargs):
+        attached.append(kwargs['resumed'])
         assert retained == [(key, False, 'b' * 40)]
+        if unknown_first and len(attached) == 1:
+            raise ValueError('unknown acceptance')
         return {'kind': 'tests', 'summary': {'status': 'completed', 'note': '',
                 'tests': [{'test': NODE, 'outcome': 'passed'}],
                 'totals': {'passed': 1, 'failed': 0, 'error': 0, 'skipped': 0}},
@@ -88,6 +94,11 @@ def test_selected_flux_maker_consumes_verified_payload_and_checkpoints_before_di
     monkeypatch.setattr(pb_tests, '_json_command', lambda command: pytest.fail('Flux invoked PB'))
     monkeypatch.setattr(pb_tests, 'bounded', lambda value, **kwargs: value)
     result = pb_tests.make_test_tool(worktree)([NODE], repeat=3, parallel=4)
+    if unknown_first:
+        assert result['status'] == 'infrastructure_error'
+        assert worktree.pb_reattach[False]['key'] == key
+        result = pb_tests.make_test_tool(worktree)([NODE], repeat=3, parallel=4)
+    assert attached == ([False, True] if unknown_first else [False])
     assert result['status'] == 'completed', result
     assert result['tree'] == 'b' * 40
     assert result['receipts'][0]['backend'] == 'flux'

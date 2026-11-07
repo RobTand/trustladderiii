@@ -538,6 +538,8 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                         plan = flux_execution.prepare(settings, call, root, tree, contract,
                             parallel=parallel, walltime=timeout_seconds or 86400, arguments=arguments)
                         key = plan['key']
+                        reattachments[base] = {'backend': 'flux', 'key': key, 'tree': tree, 'identity': identity}
+                        worktree.pb_reattach = reattachments
                         getattr(worktree, 'pb_submitted', lambda key, base, tree: None)(key, base, tree)
                     phase = 'retrieval'
                     payload = flux_execution.execute(plan, resumed=resumed, emit=emit)
@@ -547,8 +549,10 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                     result.update(action_key=key, receipts=payload['receipts'])
                     if payload['symptom_runs']:
                         result['symptom_receipts'] = payload['symptom_runs']
-                    return finish(bounded(model_result(result), limit=SUMMARY_BYTES - 512),
-                                  base, base_sha, tree, selected, proof)
+                    result = finish(bounded(model_result(result), limit=SUMMARY_BYTES - 512),
+                                    base, base_sha, tree, selected, proof)
+                    reattachments.pop(base, None)
+                    return result
                 if isinstance(reattach, dict) and reattach.get("identity") == identity and reattach.get("tree") == tree:
                     key = reattach["key"]
                     if not isinstance(key, str) or not re.fullmatch("[0-9a-f]{64}", key):
