@@ -122,6 +122,15 @@ mod tests {
             let root = tempfile::tempdir().unwrap();
             let mut c = Controller::open(Store::open(&settings).unwrap(), adapters::simulation(root.path()).unwrap(), bootstrap(fail_fast)).unwrap();
             seed(&mut c, planning(fail_fast), false);
+            let snapshot = c.store.load().unwrap();
+            let generation = snapshot::decode(&snapshot).unwrap().nodes[0].generation;
+            let cases: Vec<Value> = serde_json::from_str(include_str!("../tests/fixtures/pq-2648-empty-replan.json")).unwrap();
+            let mut queue = Commit::new("race-input", json!({}), &snapshot);
+            queue.rows.push(put("inbox", "race-delivery".into(), json!({"WorkerReply": {
+                "node":0,"generation":generation,"role":"planner","reply":cases[0]["reply"],"model":null,
+                "plan_check":{"objections":[{"allowed_empty":true,"class":"other","rule":"proof.omitted","items":["proof"],"diagnostic":"missing proof"}],"repair":{"status":"attempted"}}
+            }})));
+            c.store.commit(&queue).unwrap();
             let start = c.store.load().unwrap();
             let before = snapshot::decode(&start).unwrap();
             let generation = before.nodes[0].generation;
@@ -129,6 +138,11 @@ mod tests {
             let losing = prepare(&mut c, &start, "losing", generation, PlannerResult::EmptyAllowedReplan);
             c.store.commit(&first).unwrap();
             assert!(matches!(c.store.commit(&losing), Err(tl3_store::Error::Stale { .. })));
+            let row = start.rows.iter().find(|r| r.table == "inbox" && r.id == "race-delivery").unwrap();
+            assert!(!c.consume_kernel_input(&start, row).unwrap());
+            let fresh = c.store.load().unwrap();
+            let row = fresh.rows.iter().find(|r| r.table == "inbox" && r.id == "race-delivery").unwrap();
+            assert!(c.consume_kernel_input(&fresh, row).unwrap());
             let persisted = c.store.load().unwrap();
             let budget = load_budget(&persisted, &Commit::new("read", json!({}), &persisted), NodeId(0)).unwrap();
             assert!(budget.used());

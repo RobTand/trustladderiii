@@ -288,6 +288,11 @@ impl Controller {
             self.held_effects = holds;
             self.postmortem_since = postmortem_since;
         }
+        // A losing revision retains the input. The next pass reloads both
+        // World and request budget and runs translation and the kernel again.
+        if matches!(&result, Err(Error::Store(tl3_store::Error::Stale { .. }))) {
+            return Ok(false);
+        }
         // Q39 accepts contention starvation. Rollback has retained the input;
         // the next pass uses fresh evidence, without an incident or retry timer.
         if let Err(Error::Store(tl3_store::Error::Database(error))) = &result

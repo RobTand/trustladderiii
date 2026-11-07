@@ -88,7 +88,7 @@ fn ordinary_entry_preserves_acceptance_and_stale_settling() {
         }
         for reply in [Reply::ProtectedPaths, Reply::RunFailed, Reply::AuditAgrees,
             Reply::PlanLeaf { footprint, fits: true },
-            Reply::PlanLeaf { footprint: serde_json::from_str("{\"Interned\":999}").unwrap(), fits: true }] {
+            Reply::PlanLeaf { footprint: World::new(&[1], 1).intern_footprint([FileId(1000)]), fits: true }] {
             let expected = step(w.clone(), Event::Reply { node: NodeId(0), generation, reply });
             let (actual, budget, out) = step_planner(w.clone(), ReplanBudget::import(NodeId(0), true), NodeId(0), generation, PlannerResult::Ordinary(reply));
             assert_eq!((actual, out), expected, "{reply:?}");
