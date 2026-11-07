@@ -132,7 +132,7 @@ def make_generator_tool(worktree, *, restore_only=False):
         state_path = getattr(worktree, "generator_state", None)
         nonlocal transient_state
         state = json.loads(state_path.read_text()) if state_path and state_path.exists() else transient_state
-        if state.get('phase') in ('submitted', 'importing') and state.get('backend', 'prismabuild') != settings.backend:
+        if state.get('phase') in ('submitted', 'importing', 'applied', 'failed') and state.get('backend', 'prismabuild') != settings.backend:
             raise ValueError("Generator checkpoint belongs to another execution backend; retain its binding for resolution.")
 
         def record():

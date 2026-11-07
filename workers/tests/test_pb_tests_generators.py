@@ -16,11 +16,12 @@ from worker_process import generator_backend  # noqa: F401
 from worker_process import generator_repo  # noqa: F401
 
 
-def test_selected_flux_generator_holds_without_pb_tools_or_checkpoint_loss(generator_repo, tmp_path):
+@pytest.mark.parametrize('phase', ['submitted', 'importing', 'applied', 'failed'])
+def test_selected_flux_generator_holds_without_pb_tools_or_checkpoint_loss(generator_repo, tmp_path, phase):
     tree, generate = configured_generator(generator_repo, tmp_path)
     tree.test_settings = TestSettings(image=IMAGE,
         execution={'backend': 'flux', 'profile': '/fixture/attempt/execution.json'})
-    original = {'phase': 'submitted', 'backend': 'prismabuild', 'key': KEY, 'contract': {}}
+    original = {'phase': phase, 'backend': 'prismabuild', 'key': KEY, 'contract': {}}
     tree.generator_state.write_text(json.dumps(original))
     with tree:
         result = generate()
