@@ -242,6 +242,7 @@ fn observe(
                         reproducing_unavailable: None,
                         selected_failures: Vec::new(),
                         plan: vec![adapters::prismabuild::Check {
+                            goal_ids: vec![],
                             name: "hello".into(),
                             kind: adapters::prismabuild::Kind::Demonstrating,
                             tests: vec!["test_greeting.py::test_hello".into()],

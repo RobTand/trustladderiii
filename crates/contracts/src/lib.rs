@@ -14,7 +14,7 @@ pub mod prerequisites;
 pub mod report;
 pub mod rules;
 
-pub use checks::{Check, CheckKind, CheckRequest, DeclaredSymptom, Forcing, ProofDeclaration};
+pub use checks::{Check, CheckKind, CheckRequest, DeclaredSymptom, Forcing, GoalId, ProofDeclaration};
 pub use report::{CheckReport, CheckResult, MESSAGE_CHARS, ProofReceipt, TestResult};
 
 use schemars::generate::SchemaSettings;
@@ -53,6 +53,7 @@ pub fn generated() -> Vec<Generated> {
             ("classifier", roles::classifier_reply::schema_text()),
             ("maker", roles::maker_reply::schema_text()),
             ("writer", roles::writer_reply::schema_text()),
+            ("planner", roles::planner_reply::schema_text()),
         ]
         .into_iter()
         .map(|(role, text)| Generated {

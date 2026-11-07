@@ -446,7 +446,7 @@ def selectors(f):
     check = f['draft']['checks'][index]
     rejected = f['items'].get('nodes', [f['items'].get('node')])
     changes = []
-    for slot, node in enumerate(check['node_ids']):
+    for slot, node in enumerate(check['tests']):
         if node not in rejected:
             continue
         path = node.split('::')[0]
@@ -465,7 +465,7 @@ def selectors(f):
                                    if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)))
         if not choices:
             return cannot_repair(f)
-        changes.append(edit(f, f'/checks/{index}/node_ids/{slot}', Allowed('enum', choices)))
+        changes.append(edit(f, f'/checks/{index}/tests/{slot}', Allowed('enum', choices)))
     return changes or cannot_repair(f)
 
 
@@ -566,7 +566,7 @@ def lossless_split(f):
         'required': ['brief', 'goal_ids', 'files', 'estimated_exploration_turns'], 'additionalProperties': False}
     requirements = [({'files': [path], 'goal_ids': []}) for path in paths]
     for check in draft.get('checks', []):
-        required_paths = unique([node.split('::')[0] for node in check['node_ids']] + [
+        required_paths = unique([node.split('::')[0] for node in check['tests']] + [
             unit.split('::')[0] for field in ('subjects', 'observer_support') for unit in check.get('proof', {}).get(field, [])])
         requirements.append({'files': required_paths, 'goal_ids': check['goal_ids']})
     requirements.append({'files': [], 'goal_ids': []})
@@ -586,14 +586,14 @@ def deduplicate(f):
         return cannot_repair(f)
     check = f['draft']['checks'][index]
     if f['footprint'] == 'NODE_DEDUP':
-        return [edit(f, f'/checks/{index}/node_ids', fixed(unique(check['node_ids'])))]
+        return [edit(f, f'/checks/{index}/tests', fixed(unique(check['tests'])))]
     return proof_fill(f)
 
 
 def drop_edits(f):
     nodes = unique(node for item in f['diagnostics'] if inventory()[item.rule]['footprint'] == 'EDIT_DROP'
                    for node in ([item.items['node']] if 'node' in item.items else item.items.get('nodes', [])))
-    covered = {node for check in f['draft'].get('checks', []) if check['kind'] == 'demonstrating' for node in check['node_ids']}
+    covered = {node for check in f['draft'].get('checks', []) if check['kind'] == 'demonstrating' for node in check['tests']}
     if not set(nodes) <= covered:
         return cannot_repair(f)
     return [edit(f, '/edits_tests', fixed([node for node in f['draft'].get('edits_tests', []) if node not in nodes]))]
@@ -620,24 +620,25 @@ def edit_coverage(f):
                     repair.allowed.value if repair.allowed.keyword == 'schema' else {repair.allowed.keyword: repair.allowed.value})
     for index, check in enumerate(draft.get('checks', [])):
         if check['kind'] == 'demonstrating':
-            pointer = f'/checks/{index}/node_ids'
-            slots = [changes.get(pointer + f'/{slot}', {'const': node}) for slot, node in enumerate(check['node_ids'])]
+            pointer = f'/checks/{index}/tests'
+            slots = [changes.get(pointer + f'/{slot}', {'const': node}) for slot, node in enumerate(check['tests'])]
             if any(pointer + f'/{slot}' in changes for slot in range(len(slots))):
                 changes[pointer] = {'type': 'array', 'prefixItems': slots, 'minItems': len(slots),
                                     'maxItems': len(slots) + len(nodes), 'items': {'enum': nodes}, 'uniqueItems': True}
             else:
-                retained = changes.get(pointer, {}).get('const', check['node_ids'])
+                retained = changes.get(pointer, {}).get('const', check['tests'])
                 changes[pointer] = append_constraint(retained, nodes)
 
     original_checks = draft.get('checks', [])
     goals = unique(g for check in original_checks for g in check['goal_ids'])
     new_check = {'type': 'object', 'properties': {
+        'name': {'type': 'string', 'minLength': 1},
         'kind': {'const': 'demonstrating'},
-        'node_ids': {'type': 'array', 'items': {'enum': nodes}, 'minItems': 1, 'uniqueItems': True},
+        'tests': {'type': 'array', 'items': {'enum': nodes}, 'minItems': 1, 'uniqueItems': True},
         'goal_ids': {'type': 'array', 'items': {'enum': goals}, 'minItems': 1},
         'proof': {'enum': unique(check['proof'] for check in original_checks if 'proof' in check)},
         'forcing': {'enum': unique(check['forcing'] for check in original_checks if 'forcing' in check)}},
-        'required': ['kind', 'node_ids', 'goal_ids'], 'additionalProperties': False}
+        'required': ['name', 'kind', 'tests', 'goal_ids'], 'additionalProperties': False}
     if 'edits_tests' in draft:
         changes['/edits_tests'] = ordered_constraint(draft['edits_tests'], removable=nodes)
     allowed = coverage_allowed(draft, changes, new_check, len(original_checks) + len(nodes))
@@ -648,9 +649,9 @@ def frozen_nodes(f):
     nodes = {item.items.get('node') for item in f['diagnostics'] if inventory()[item.rule]['footprint'] == 'FROZEN'}
     repairs = []
     for index, check in enumerate(f['draft'].get('checks', [])):
-        remaining = [value for value in check['node_ids'] if value not in nodes]
-        if check['kind'] in {'regression', 'behavior-preserving'} and remaining and remaining != check['node_ids']:
-            repairs.append(edit(f, f'/checks/{index}/node_ids', fixed(remaining)))
+        remaining = [value for value in check['tests'] if value not in nodes]
+        if check['kind'] in {'regression', 'behavior-preserving'} and remaining and remaining != check['tests']:
+            repairs.append(edit(f, f'/checks/{index}/tests', fixed(remaining)))
     return repairs or cannot_repair(f)
 
 
@@ -676,8 +677,8 @@ def sanitize(f):
     if f['footprint'] == 'SYMPTOM_FIELDS':
         field = 'declared_symptom'
         result = {key: value for key, value in check.get(field, {}).items() if key in {'node', 'exception', 'phase', 'repeat', 'parallel'}}
-        if 'node' not in result and len(check['node_ids']) == 1:
-            result['node'] = check['node_ids'][0]
+        if 'node' not in result and len(check['tests']) == 1:
+            result['node'] = check['tests'][0]
     else:
         field = 'forcing'
         result = deepcopy(check.get(field, {}))
@@ -693,7 +694,7 @@ def sanitize(f):
                             del patch[key]
     try:
         if field == 'declared_symptom':
-            validate_symptom(result, check['node_ids'])
+            validate_symptom(result, check['tests'])
         else:
             Forcing.parse(result)
     except HarnessInputError:
@@ -777,7 +778,7 @@ def row_names(f):
     names = [f['subject']]
     items = f['items']
     values = [*items.get('nodes', []), *items.get('subjects', []), items.get('node'), items.get('path')]
-    if re.fullmatch(r'/checks/\d+/node_ids/\d+', f['subject'].value):
+    if re.fullmatch(r'/checks/\d+/tests/\d+', f['subject'].value):
         values = [at(f['draft'], f['subject'].value)]
     for value in values:
         if not isinstance(value, str):
@@ -862,7 +863,7 @@ class PlanConsistencyError(ValueError):
                     'parent_estimates': {k: original[k] for k in ('estimated_tool_turns', 'estimated_exploration_turns') if k in original},
                     'mapping': [{'check': index, 'pieces': [i for i, piece in enumerate(candidate['pieces'])
                                  if set(check['goal_ids']) <= set(piece['goal_ids']) and
-                                 {node.split('::')[0] for node in check['node_ids']} <= set(piece['files'])]}
+                                 {node.split('::')[0] for node in check['tests']} <= set(piece['files'])]}
                                 for index, check in enumerate(original.get('checks', []))]}
             return []
         changed = ['/' + key for key in sorted(self.raw_draft.keys() | candidate.keys())
@@ -957,6 +958,10 @@ def check_reply(inputs, reply, *, rehearsals=None, plan_errors=None):
             base_nodes.add(node)
         return definition
     if reply["kind"] == "leaf":
+        from tl3_harness.action_policy import admit_plan
+        admit_plan(reply['checks'], len(inputs['ingest']['goals']),
+                   [index for index, goal in enumerate(inputs['ingest']['goals'])
+                    if goal.get('stage', 'maker') != 'publishing'])
         if inputs["must_split"]:
             violations.append(named('leaf.must_split', "Must split after running out of room.", dict(must_split=inputs["must_split"])))
         if not reply["files"]:
@@ -993,11 +998,11 @@ def check_reply(inputs, reply, *, rehearsals=None, plan_errors=None):
                 except HarnessInputError as error:
                     cause = contextual(error, check=index, declaration=check["forcing"])
                     violations.append(named(cause.rule, f"Invalid forcing: {error}", cause.items))
-            if not check["node_ids"]:
+            if not check["tests"]:
                 violations.append(named('check.tests_empty', "Every check must name at least one test.", dict(check=index, goal_ids=check["goal_ids"])))
             if not check["goal_ids"]:
-                violations.append(named('check.goals_empty', "Every check must cite at least one goal.", dict(check=index, nodes=check["node_ids"])))
-            for node_id in check["node_ids"]:
+                violations.append(named('check.goals_empty', "Every check must cite at least one goal.", dict(check=index, nodes=check["tests"])))
+            for node_id in check["tests"]:
                 try:
                     Check("planned", Kind(check["kind"]), (node_id,))
                 except HarnessInputError as error:
@@ -1025,7 +1030,7 @@ def check_reply(inputs, reply, *, rehearsals=None, plan_errors=None):
                 violations.append(named('check.goal_unknown', "A check cites an unknown goal.", dict(check=index, unknown=sorted(cited-goals))))
             covered.update(cited)
         applicable = [(index, check) for index, check in enumerate(reply['checks'])
-                      if set(check['node_ids']) <= exact_nodes]
+                      if set(check['tests']) <= exact_nodes]
         omissions = {}
         applicability_errors = proof_applicability(inputs['ingest']['goals'], [check for _, check in applicable],
             lambda node: observed_base(node)[1], missing_subjects=omissions)
@@ -1038,10 +1043,10 @@ def check_reply(inputs, reply, *, rehearsals=None, plan_errors=None):
         violations.extend(edit_errors)
         planned_checks = []
         for i, check in enumerate(reply['checks']):
-            if not check['node_ids']:
+            if not check['tests']:
                 continue
             try:
-                planned_checks.append(Check(f'check-{i + 1}', Kind(check['kind']), tuple(check['node_ids']),
+                planned_checks.append(Check(check['name'], Kind(check['kind']), tuple(check['tests']),
                                             forcings.get(i) if check['kind'] == 'demonstrating' else None,
                                             Proof.parse(proof_for_validation(check))
                                             if 'proof' in check or i in missing_proof else None,
@@ -1278,7 +1283,7 @@ def edit_violations(goals, reply, base_sha=None, *, observed=None):
     uncovered = []
     frozen, demonstrated = {}, set()
     for index, check in enumerate(reply["checks"]):
-        for node_id in check["node_ids"]:
+        for node_id in check["tests"]:
             if check["kind"] == "demonstrating":
                 demonstrated.add(function(node_id))
             else:

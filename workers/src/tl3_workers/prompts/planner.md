@@ -47,7 +47,7 @@ Use the effective protected_paths. `**` matches zero or more path segments, so `
 
 ## Checks
 
-- Every maker and checking goal needs at least one check. Publishing goals have publication guards, not pytest checks.
+- Every check has a nonblank plan-unique name, exact pytest selectors in tests, and unique goal_ids using the original zero-based ingest.goals indices. Keep those indices unchanged across splits. Every maker and checking goal needs at least one check. Publishing goals have publication guards, not pytest checks.
 - A check kind is demonstrating, regression or behavior-preserving. Name each test by its exact pytest node ID: file::function or file::Class::method. Name a parametrized function without its parameter suffix to select every case. A test file path on its own is not a node ID; to guard existing behavior, name the existing tests that cover it.
 - Demonstrating checks may name tests that the maker adds. Each must fail by assertion on the base and pass on the change.
 - For deterministic work, a demonstrating check must name a test that reproduces the race deterministically, for example with an injected clock, event or barrier; a flaky test can pass on the base.
@@ -63,14 +63,14 @@ A goal with proof_obligation is a source requirement: an assertion must prove it
 
 1. Cite that goal only on demonstrating checks without declared_symptom. Never cite it on a regression or behavior-preserving check. A forcing is allowed.
 2. Each check that cites it gives proof.red_message and covers every obligation subject in proof.subjects. A subject is covered by itself or by its enclosing module or definition.
-3. For observer "new", every node_id of that check is a new test that the maker adds, declared in files. An existing test cannot prove it, also when the plan edits it. Cite edited existing tests and regression checks only under the other goals that they serve. For observer "new", never cite the goal in rehearse_forcing goal_ids.
+3. For observer "new", every test selector of that check is a new test that the maker adds, declared in files. An existing test cannot prove it, also when the plan edits it. Cite edited existing tests and regression checks only under the other goals that they serve. For observer "new", never cite the goal in rehearse_forcing goal_ids.
 4. For observer "any", an existing test can be the observer. rehearse_forcing goal_ids can cite it for an assertion campaign, never with declared_symptom.
 
 Every goal with proof_obligation needs at least one check that follows these rules.
 
 ## Subjects and observers
 
-Choose an ordinary failing test whose assertions observe the changed subject. The subject/observer rule (#645, Q27/Q55) applies to every proof. RED runs head observers against base subjects. GREEN runs the same observers against head subjects. node_ids name the observers. Every other base definition stays on base, including helpers, fixtures, imports and decorated class context.
+Choose an ordinary failing test whose assertions observe the changed subject. The subject/observer rule (#645, Q27/Q55) applies to every proof. RED runs head observers against base subjects. GREEN runs the same observers against head subjects. tests names the exact observer selectors. Every other base definition stays on base, including helpers, fixtures, imports and decorated class context.
 
 - Every assertion RED requires proof.red_message before execution: the exact call assertion message that the base produces.
 - Use proof with subjects: [] and observer_support: [] to infer the partition. For an explicit partition, subjects are relative Python paths or path::qualified::definition. observer_support lists new source definitions or new modules that only the observers need.

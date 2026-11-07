@@ -43,6 +43,10 @@ const COMMITTED: &[(&str, &str)] = &[
         include_str!("../../../workers/src/tl3_workers/schemas/writer-reply.json"),
     ),
     (
+        "workers/src/tl3_workers/schemas/planner-reply.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/planner-reply.json"),
+    ),
+    (
         "workers/src/tl3_workers/schemas/reviewer-input.json",
         include_str!("../../../workers/src/tl3_workers/schemas/reviewer-input.json"),
     ),
@@ -204,4 +208,54 @@ fn action_request_schema_reuses_checks_and_excludes_embedded_python() {
     assert!(schema["$defs"]["CheckRequest"].is_object());
     assert!(schema["$defs"].get("Check").is_some());
     assert!(!file.text.contains("embedded_python"));
+}
+
+#[test]
+fn canonical_check_requires_original_goal_indices_and_keeps_expected_proof() {
+    use serde_json::json;
+    use contracts::{Check, GoalId};
+    let value = json!({"name":"observes the change", "tests":["tests/test_a.py::test_a"],
+        "kind":"demonstrating", "goal_ids":[2, 0], "proof":{
+            "subjects":["a.py::value"],"observer_support":[],"red_message":"expected assertion"}});
+    let check: Check = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(check.goal_ids, vec![GoalId(2), GoalId(0)]);
+    assert_eq!(serde_json::to_value(&check).unwrap(), value);
+    for field in ["observed_message", "matches", "receipt", "captured"] {
+        let mut untrusted = value.clone();
+        untrusted["proof"][field] = json!("fabricated");
+        assert!(serde_json::from_value::<Check>(untrusted).is_err(), "{field}");
+    }
+    let mut absent = value.clone();
+    absent.as_object_mut().unwrap().remove("goal_ids");
+    assert!(serde_json::from_value::<Check>(absent).is_err());
+    for ids in [json!([-1]), json!([0,0]), json!(["goal-1"]), json!(null)] {
+        let mut invalid = value.clone(); invalid["goal_ids"] = ids;
+        assert!(serde_json::from_value::<Check>(invalid).is_err());
+    }
+    let mut alias = value.clone();
+    alias.as_object_mut().unwrap().remove("tests");
+    alias["node_ids"] = json!(["tests/test_a.py::test_a"]);
+    assert!(serde_json::from_value::<Check>(alias).is_err());
+    assert!(contracts::checks::admit_plan(&[check.clone()], 3, &[GoalId(0), GoalId(2)]).is_ok());
+    assert!(contracts::checks::admit_plan(&[check.clone()], 3, &[GoalId(1)]).is_err());
+    assert!(contracts::checks::admit_plan(&[check.clone(),check.clone()],3,&[]).is_err());
+    assert!(contracts::checks::admit_plan(&[check.clone()],2,&[]).is_err());
+    let mut other = check.clone(); other.name = "another observation".into();
+    assert!(contracts::checks::admit_plan(&[check.clone(),other],3,&[GoalId(0)]).is_ok());
+    let mut control = check; control.goal_ids.clear();
+    assert!(contracts::checks::admit_plan(&[control],3,&[]).is_err());
+}
+
+#[test]
+fn model_schema_reuses_check_and_excludes_observed_evidence() {
+    use serde_json::json;
+    let schema = contracts::roles::planner_reply::schema_value();
+    let check = &schema["$defs"]["Check"];
+    assert!(check["required"].as_array().unwrap().contains(&json!("goal_ids")));
+    assert!(check["required"].as_array().unwrap().contains(&json!("name")));
+    assert_eq!(check["properties"]["kind"]["enum"], json!(["demonstrating","regression","behavior-preserving"]));
+    assert!(schema["$defs"]["ProofDeclaration"]["required"].as_array().unwrap().contains(&json!("red_message")));
+    for absent in ["ProofReceipt", "RedMessageMatch", "CheckDeclaration", "ProofSelection"] {
+        assert!(schema["$defs"].get(absent).is_none(), "{absent}");
+    }
 }

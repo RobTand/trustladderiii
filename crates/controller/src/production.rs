@@ -328,22 +328,20 @@ pub(crate) fn maker_inputs(
         return Err(Error::Invalid("making requires an accepted leaf plan"));
     }
     let goals = crate::goals::identified(&brief["goals"])?;
-    let checks = plan["checks"].as_array().ok_or(Error::Invalid("accepted plan needs checks"))?.iter().enumerate().map(|(index, check)| {
-        let ids = check["goal_ids"].as_array().ok_or(Error::Invalid("plan check needs goal indexes"))?.iter().map(|id| {
-            id.as_u64().and_then(|id| usize::try_from(id).ok()).and_then(|id| goals.get(id)).map(|g| g["id"].clone()).ok_or(Error::Invalid("plan check names an unknown goal"))
-        }).collect::<Result<Vec<_>>>()?;
-        let mut planned = json!({"name":format!("check-{}",index + 1), "kind":check["kind"], "tests":check["node_ids"], "goal_ids":ids});
-        if let Some(forcing) = check.get("forcing") {
-            planned["forcing"] = forcing.clone();
+    let checks = plan["checks"].as_array().ok_or(Error::Invalid("accepted plan needs checks"))?
+        .iter().map(|value| serde_json::from_value::<tl3_contracts::Check>(value.clone()).map_err(Error::from))
+        .collect::<Result<Vec<_>>>()?;
+    let required: Vec<_> = goals.iter().enumerate()
+        .filter(|(_, goal)| goal["stage"] != "publishing")
+        .map(|(index, _)| tl3_contracts::GoalId(index as u64)).collect();
+    tl3_contracts::checks::admit_plan(&checks, goals.len(), &required)
+        .map_err(|_| Error::Invalid("accepted plan violates check goal admission"))?;
+    for check in &checks {
+        for test in &check.tests {
+            tl3_harness_core::node_id::NodeId::parse(test, tl3_harness_core::node_id::Mode::Exact)
+                .map_err(|_| Error::Invalid("accepted plan needs exact pytest selectors"))?;
         }
-        if let Some(symptom) = check.get("declared_symptom") {
-            planned["declared_symptom"] = symptom.clone();
-        }
-        if let Some(evidence) = check.get("proof") {
-            planned["proof"] = evidence.clone();
-        }
-        Ok(planned)
-    }).collect::<Result<Vec<Value>>>()?;
+    }
     Ok(
         json!({"brief":brief["brief"], "goals":goals, "plan":{"files":plan["files"], "checks":checks}}),
     )
@@ -443,15 +441,15 @@ mod tests {
     #[test]
     fn accepted_plan_supplies_maker_goals_and_named_checks() {
         let brief = json!({"brief":"Return a greeting", "goals":[{"description":"Say hello","verification":"test"}]});
-        let plan = json!({"kind":"leaf","files":["greeting.py"],"checks":[{"kind":"demonstrating","node_ids":["tests/test_greeting.py::test_hello"],"goal_ids":[0]}]});
+        let plan = json!({"kind":"leaf","files":["greeting.py"],"checks":[{"name":"demonstrating observation","kind":"demonstrating","tests":["tests/test_greeting.py::test_hello"],"goal_ids":[0]}]});
         let inputs = maker_inputs(&brief, &plan).unwrap();
         assert_eq!(inputs["goals"][0]["id"], "goal-1");
-        assert_eq!(inputs["plan"]["checks"][0]["goal_ids"], json!(["goal-1"]));
+        assert_eq!(inputs["plan"]["checks"][0]["goal_ids"], json!([0]));
         assert_eq!(
             inputs["plan"]["checks"][0]["tests"],
             json!(["tests/test_greeting.py::test_hello"])
         );
-        let invalid = json!({"kind":"leaf","files":[],"checks":[{"kind":"regression","node_ids":["test.py::test_it"],"goal_ids":[9]}]});
+        let invalid = json!({"kind":"leaf","files":[],"checks":[{"name":"regression observation","kind":"regression","tests":["test.py::test_it"],"goal_ids":[9]}]});
         assert!(maker_inputs(&brief, &invalid).is_err());
     }
 
@@ -461,8 +459,8 @@ mod tests {
         let brief = json!({"brief":"Deflake", "goals":[{"description":"State the departure","verification":"test"}]});
         let forcing = json!({"symptom":"PID 4242 is live.","environment":{},"patches":[{"target":"sampler.process_in_scope","raises":"ValueError"}]});
         let plan = json!({"kind":"leaf","files":["tests/test_sampler.py"],"checks":[
-            {"kind":"demonstrating","node_ids":["tests/test_sampler.py::test_departed"],"goal_ids":[0],"forcing":forcing},
-            {"kind":"regression","node_ids":["tests/test_sampler.py::test_other"],"goal_ids":[0]}]});
+            {"name":"demonstrating observation","kind":"demonstrating","tests":["tests/test_sampler.py::test_departed"],"goal_ids":[0],"forcing":forcing},
+            {"name":"regression observation","kind":"regression","tests":["tests/test_sampler.py::test_other"],"goal_ids":[0]}]});
         let inputs = maker_inputs(&brief, &plan).unwrap();
         assert_eq!(inputs["plan"]["checks"][0]["forcing"], forcing);
         assert!(inputs["plan"]["checks"][1].get("forcing").is_none());
@@ -473,7 +471,7 @@ mod tests {
         let brief = json!({"brief":"Improve diagnostics", "goals":[{"description":"Explain failure", "verification":"test"}]});
         let declaration = json!({"subjects":["test_helper.py::_execute"], "observer_support":[], "red_message":"diagnostic missing"});
         let plan = json!({"kind":"leaf","files":["test_helper.py"],"checks":[
-            {"kind":"demonstrating","node_ids":["test_helper.py::test_diagnostic"],"goal_ids":[0],"proof":declaration}]});
+            {"name":"demonstrating observation","kind":"demonstrating","tests":["test_helper.py::test_diagnostic"],"goal_ids":[0],"proof":declaration}]});
         assert_eq!(
             maker_inputs(&brief, &plan).unwrap()["plan"]["checks"][0]["proof"],
             declaration
@@ -650,10 +648,10 @@ mod reply_defects {
     #[test]
     fn maker_preserves_goal_identity_used_by_review() {
         let brief = json!({"brief":"hello", "goals":[{"id":"greeting", "description":"hello", "verification":"test"}]});
-        let plan = json!({"kind":"leaf", "files":["a.py"], "checks":[{"kind":"regression", "node_ids":["test_a.py::test_a"], "goal_ids":[0]}]});
+        let plan = json!({"kind":"leaf", "files":["a.py"], "checks":[{"name":"regression observation", "kind":"regression", "tests":["test_a.py::test_a"], "goal_ids":[0]}]});
         let inputs = maker_inputs(&brief, &plan).unwrap();
         assert_eq!(inputs["goals"][0]["id"], "greeting");
-        assert_eq!(inputs["plan"]["checks"][0]["goal_ids"], json!(["greeting"]));
+        assert_eq!(inputs["plan"]["checks"][0]["goal_ids"], json!([0]));
     }
     #[test]
     fn malformed_goal_returns_invalid_instead_of_panicking() {

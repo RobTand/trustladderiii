@@ -306,7 +306,7 @@ def proof_applicability(goals, checks, defined=None, *, campaign=False, missing_
                         errors.append(named('proof.subject_identify', prefix + ' must identify its subjects in proof.subjects: ' + ', '.join(obligation['subjects']), dict(check=check_index, goal=index, description=goals[index]["description"], subjects=obligation["subjects"])))
                     else:
                         missing_subjects.setdefault(check_index, set()).update(missing)
-                if obligation['observer'] == 'new' and any(defined(node) for node in check['node_ids']):
+                if obligation['observer'] == 'new' and any(defined(node) for node in check['tests']):
                     errors.append(named('proof.new_observer', prefix + ' requires a new deterministic observer; an existing base test is insufficient.', dict(check=check_index, goal=index, description=goals[index]["description"], nodes=check["node_ids"])))
     return errors
 

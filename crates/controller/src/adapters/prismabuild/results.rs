@@ -435,6 +435,7 @@ fn parse(raw: &[u8], job: &Job) -> serde_json::Result<Option<Report>> {
     let mut plan = job.run.plan.clone();
     if !job.always_tests.is_empty() {
         plan.push(super::Check {
+            goal_ids: vec![],
             name: "Repository always tests".into(),
             kind: Kind::Regression,
             tests: job.always_tests.clone(),

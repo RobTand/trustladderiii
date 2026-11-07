@@ -12,20 +12,20 @@ struct Goal {
     stage: Option<String>,
 }
 #[derive(Deserialize)]
-struct Check {
+struct FeedbackGoalReferences {
     goal_ids: Vec<String>,
 }
 #[derive(Deserialize)]
 struct Plan {
     files: Vec<String>,
-    checks: Vec<Check>,
+    checks: Vec<tl3_contracts::Check>,
 }
 #[derive(Deserialize)]
 struct Maker {
     goals: Vec<Goal>,
     plan: Plan,
     #[serde(default)]
-    feedback: Vec<Check>,
+    feedback: Vec<FeedbackGoalReferences>,
 }
 
 pub fn maker(inputs: &Value) -> crate::Result<Vec<String>> {
@@ -44,8 +44,8 @@ pub fn maker(inputs: &Value) -> crate::Result<Vec<String>> {
         .plan
         .checks
         .iter()
-        .chain(&inputs.feedback)
-        .any(|check| check.goal_ids.iter().any(|id| !goals.contains(id.as_str())))
+        .any(|check| check.goal_ids.iter().any(|id| usize::try_from(id.0).ok().is_none_or(|index| index >= inputs.goals.len())))
+        || inputs.feedback.iter().any(|item| item.goal_ids.iter().any(|id| !goals.contains(id.as_str())))
     {
         Some("unknown goal id")
     } else {
@@ -53,12 +53,13 @@ pub fn maker(inputs: &Value) -> crate::Result<Vec<String>> {
             .plan
             .checks
             .iter()
-            .flat_map(|check| check.goal_ids.iter())
+            .flat_map(|check| check.goal_ids.iter().map(|id| id.0))
             .collect();
         inputs
             .goals
             .iter()
-            .any(|goal| goal.stage.as_deref() != Some("publishing") && !covered.contains(&goal.id))
+            .enumerate()
+            .any(|(index, goal)| goal.stage.as_deref() != Some("publishing") && !covered.contains(&(index as u64)))
             .then_some("checks must cover every maker and checking goal")
     };
     Ok(violation.into_iter().map(str::to_owned).collect())

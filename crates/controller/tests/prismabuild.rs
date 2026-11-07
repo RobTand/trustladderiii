@@ -136,6 +136,7 @@ fn run(root: &Path, outside: bool) -> Delivery {
             reproducing_unavailable: None,
             selected_failures: Vec::new(),
             plan: vec![Check {
+                goal_ids: vec![],
                 name: "value".into(),
                 kind: Kind::Demonstrating,
                 tests: vec!["test_value.py::test_value".into()],
@@ -4664,6 +4665,7 @@ fn result_budget_rejects_repeated_checks() {
     let mut delivery = run(root.path(), false);
     delivery.checks.as_mut().unwrap().plan = (0..40000)
         .map(|i| Check {
+            goal_ids: vec![],
             name: format!("check-{i}"),
             kind: Kind::Regression,
             tests: vec!["test_value.py::test_value".into()],

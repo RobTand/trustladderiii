@@ -1159,6 +1159,7 @@ fn stage_owned_handover_keeps_fail_fast_and_independent_checking() {
                         reproducing_unavailable: None,
                         selected_failures: Vec::new(),
                         plan: vec![adapters::prismabuild::Check {
+                            goal_ids: vec![],
                             name: "forced-deep-path".into(),
                             kind: adapters::prismabuild::Kind::Demonstrating,
                             tests: vec!["test_deep.py::test_deep_path".into()],

@@ -121,3 +121,8 @@ def validate_rows(rows, *, role):
 def permits_rows(rows, before, after, *, role):
     return _request({'op': 'permits', 'rows': rows, 'before': before, 'after': after,
                      'role': role})['result']['value']
+
+
+def admit_plan(checks, goal_count, required_goals):
+    _request({'op': 'admit_plan', 'checks': checks, 'goal_count': goal_count,
+              'required_goals': required_goals})

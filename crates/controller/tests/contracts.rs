@@ -166,9 +166,9 @@ fn plan_declarations_are_the_planners_definitions() {
     .unwrap();
     let generated = contracts::check_report_schema();
     for (ours, planners) in [
-        ("Forcing", "forcing"),
-        ("ProofDeclaration", "proof"),
-        ("DeclaredSymptom", "declared_symptom"),
+        ("Forcing", "Forcing"),
+        ("ProofDeclaration", "ProofDeclaration"),
+        ("DeclaredSymptom", "DeclaredSymptom"),
     ] {
         assert_eq!(
             normalized(&generated["$defs"][ours], &generated["$defs"]),
