@@ -719,3 +719,35 @@ def test_pending_launch_recovers_exact_observed_identity_for_rust_reconciliation
     assert result['container']['name_exists_exit'] == 1
     assert result['container']['sweep_exit'] == 0
     assert result['container']['remaining_ids'] == []
+
+
+def test_cleanup_query_failure_still_stops_exact_retained_launcher(cleanup_fixture):
+    import subprocess
+    from tl3_harness import runtime
+
+    root, podman, systemctl, owned = cleanup_fixture
+    child = subprocess.Popen([sys.executable, '-I', '-c', 'import time;time.sleep(60)'], start_new_session=True)
+    observation = runtime._process_observation({'pid': child.pid, 'start_ticks': 0})
+    owned = {**owned, 'launcher': {'pid': child.pid, 'start_ticks': observation['observed_start_ticks']},
+             'process_group': child.pid}
+    (root / 'sweep').write_text('f' * 64)
+    try:
+        with pytest.raises(RuntimeError, match='sweep'):
+            runtime.cleanup_observations(owned, podman=podman, systemctl=systemctl,
+                                         cgroup_root=root / 'cgroups', timeout=1)
+        assert child.wait(timeout=5) < 0
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=5)
+
+
+def test_raw_prepared_inventory_includes_explicit_runtime_tools(tmp_path):
+    from tl3_harness import runtime
+
+    collector, inventory, trusted = runtime.stage_host_runtime(tmp_path / 'raw', interpreter=sys.executable,
+        producer_commit='a' * 40, podman='/explicit/podman', systemctl='/explicit/systemctl')
+    assert json.loads((trusted / 'runtime-tools.json').read_bytes()) == {
+        'podman': '/explicit/podman', 'systemctl': '/explicit/systemctl'}
+    assert str((trusted / 'runtime-tools.json').relative_to(collector.parent)) in {
+        entry['path'] for entry in json.loads(inventory.read_bytes())['files']}

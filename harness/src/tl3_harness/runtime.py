@@ -676,9 +676,13 @@ def cleanup_observations(ownership, *, launch=None, podman, systemctl, cgroup_ro
 
     def inspect(identifier, name, labels):
         actual = json.loads(capture([podman, 'container', 'inspect', '--format', template, identifier]))
-        if (actual['Name'].lstrip('/') != name
+        import re
+        if (not isinstance(actual, dict) or not isinstance(actual.get('Name'), str)
+                or not isinstance(actual.get('Labels'), dict)
+                or not isinstance(actual.get('Id'), str) or not re.fullmatch('[0-9a-f]{64}', actual['Id'])
+                or actual['Name'].lstrip('/') != name
                 or any(actual['Labels'].get(key) != value for key, value in labels.items())):
-            raise RuntimeError('exact container ownership name/labels changed')
+            raise RuntimeError('exact container ownership name/labels/ID changed')
         return actual
 
     observed = None
