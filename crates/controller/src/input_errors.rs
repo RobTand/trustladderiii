@@ -615,15 +615,7 @@ impl Controller {
             Ok(result) => Ok(Some(result)),
             Err(refusal) => {
                 *world = refusal.world;
-                self.counter_exhausted(
-                    snapshot,
-                    commit,
-                    refusal.exhaustion.node,
-                    format!(
-                        "kernel counter headroom exhausted: {}",
-                        refusal.exhaustion.counter
-                    ),
-                )?;
+                self.kernel_counter_refused(snapshot, refusal.exhaustion, commit)?;
                 Ok(None)
             }
         }
@@ -641,6 +633,20 @@ impl Controller {
         Ok(self
             .checked_kernel_step(snapshot, &mut world, settlement_event(), commit)?
             .is_some())
+    }
+
+    pub(crate) fn kernel_counter_refused(
+        &self,
+        snapshot: &Snapshot,
+        exhaustion: tl3_kernel::CounterExhaustion,
+        commit: &mut Commit,
+    ) -> Result<()> {
+        self.counter_exhausted(
+            snapshot,
+            commit,
+            exhaustion.node,
+            format!("kernel counter headroom exhausted: {}", exhaustion.counter),
+        )
     }
 
     pub(crate) fn counter_exhausted(
