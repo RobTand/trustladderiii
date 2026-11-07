@@ -102,11 +102,13 @@ fn transition_table_conforms_to_store() {
     }
 }
 
+// The retained mock kernel boundary predates feedback evidence. Both delivery
+// acknowledgements carry no evidence; the real feedback path has interface tests.
 fn delivery_source() -> String {
     let source = include_str!("../../src/lib.rs");
-    let current = "Event::Ack { node, seq, ack },\n                &mut commit,\n                None,";
-    assert_eq!(source.matches(current).count(), 1);
-    source.replace(current, "Event::Ack { node, seq, ack },\n                &mut commit,")
+    let argument = "                &mut commit,\n                None,\n            )?;";
+    assert_eq!(source.matches(argument).count(), 2);
+    source.replace(argument, "                &mut commit,\n            )?;")
 }
 
 /// CC-E extraction: the complete original method is retained verbatim. The only

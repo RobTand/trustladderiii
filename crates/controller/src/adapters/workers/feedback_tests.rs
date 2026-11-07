@@ -181,21 +181,6 @@ impl Fixture {
             .clone()
     }
 
-    fn documents(&mut self, rows: &[(&str, Value)]) {
-        let snapshot = self.controller.snapshot().unwrap();
-        let mut commit = Commit::new(
-            format!("feedback-documents-{}", snapshot.revision.get()),
-            json!(null),
-            &snapshot,
-        );
-        for (table, value) in rows {
-            commit
-                .rows
-                .push(crate::put(table, "0".into(), value.clone()));
-        }
-        self.controller.store.commit(&commit).unwrap();
-    }
-
     fn worker(&mut self, role: &str, reply: Value) {
         self.observe(Observation::WorkerReply {
             node: NodeId(0),
