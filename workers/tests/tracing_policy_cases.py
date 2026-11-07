@@ -170,7 +170,14 @@ def main():
               'sensitive_paths': SENSITIVE_PATHS, 'adversarial': ADVERSARIAL}
     path = Path('crates/redaction/tests/fixtures/producer-cases.json')
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(result, indent=2, ensure_ascii=False) + '\n')
+    # Keep synthetic token fixtures escaped at rest; JSON decoding restores exact inputs.
+    import re
+    import struct
+    def escaped(match):
+        value = json.loads(match[0]).encode('utf-16-be')
+        return '"' + ''.join(f'\\u{unit:04x}' for unit in struct.unpack(f'>{len(value) // 2}H', value)) + '"'
+    wire = re.sub(r'"(?:[^"\\]|\\.)*"', escaped, json.dumps(result, indent=2, ensure_ascii=True))
+    path.write_text(wire + '\n')
 
 
 if __name__ == '__main__':

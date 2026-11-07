@@ -323,7 +323,7 @@ pub(crate) fn maker_inputs(
     plan: &serde_json::Value,
 ) -> Result<serde_json::Value> {
     use crate::Error;
-    use serde_json::{Value, json};
+    use serde_json::json;
     if plan["kind"] != "leaf" {
         return Err(Error::Invalid("making requires an accepted leaf plan"));
     }
