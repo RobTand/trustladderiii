@@ -110,14 +110,7 @@ impl Stager {
             .for_repository(&delivery.repository, &self.global_protected)?;
         let tests = self.images.additional_tests(&delivery.repository);
         fs::create_dir_all(&self.config.staging_root)?;
-        let input = stage_input(
-            delivery,
-            &root,
-            trusted_root,
-            image,
-            &protected,
-            &tests,
-        )?;
+        let input = stage_input(delivery, &root, trusted_root, image, &protected, &tests)?;
         let head = delivery
             .head_sha
             .as_ref()
@@ -153,8 +146,7 @@ impl Stager {
     }
 }
 
-/// The current collector publishes null binding/cleanup. Never activate it from production.
-/// This gate must be replaced only with the shared qualified-profile contract and its evidence.
+/// Activate only after the prepared profile has binding and cleanup qualification evidence.
 pub(crate) fn require_runtime_activation() -> Result<()> {
     Err(Error::Invalid(
         "Flux runtime preparation requires qualified binding and cleanup evidence before activation",
