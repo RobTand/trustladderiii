@@ -236,6 +236,7 @@ fn pending_direct_handoff_releases_full_gate_and_keeps_authenticated_wake() {
     assert!(overlapping, "overlapping Ready work must acquire the released slot");
     fixture.check(Some("success"));
     fixture.check_event(&settings);
+    ingress::drain(&mut controller).unwrap();
     for _ in 0..100 {
         let world = controller.world().unwrap();
         world.check().unwrap();
