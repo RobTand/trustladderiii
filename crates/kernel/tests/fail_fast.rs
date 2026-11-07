@@ -15,6 +15,42 @@ const CHECKS_FAIL: Reply = Reply::ChecksDone {
     in_footprint: true,
 };
 
+#[test]
+fn planner_ordinary_reply_releases_stopping_run() {
+    for fail_fast in [false, true] {
+        let mut run = Run::new(fail_fast);
+        run.start_planning();
+        let generation = run.node().run.expect("planner owns its run");
+        assert!(run.node().pool);
+        run.send(Event::Command {
+            node: NodeId(0),
+            id: run.node().last_cmd + 1,
+            command: Command::Stop,
+        });
+        assert!(matches!(run.phase(), Phase::Stopping(_)));
+        assert_eq!(run.node().run, Some(generation));
+        let reply = Reply::PlanCantMeet;
+        let (expected, expected_out) = step(
+            run.w.clone(),
+            Event::Reply { node: NodeId(0), generation, reply },
+        );
+        assert!(expected.nodes[0].run.is_none());
+        assert!(!expected.nodes[0].pool);
+        let (actual, budget, out) = step_planner(
+            run.w,
+            ReplanBudget::new(NodeId(0)),
+            NodeId(0),
+            generation,
+            PlannerResult::Ordinary(reply),
+        );
+        assert!(actual.nodes[0].run.is_none(), "stopping reply must release the run");
+        assert!(!actual.nodes[0].pool, "stopping reply must release the pool grant");
+        assert_eq!(actual, expected);
+        assert_eq!(out, expected_out);
+        assert!(!budget.used());
+    }
+}
+
 /// Auditing / #832-A Q27: one repair then a free stop, under either flag.
 #[test]
 fn second_audit_disagreement_never_asks_or_spends() {
