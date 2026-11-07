@@ -1,6 +1,9 @@
 # Planner slice 1 preparation
 
-Status: design preparation, blocked before Rust implementation and registration.
+Status: design preparation only. The final one-Check ruling below supersedes
+the earlier CheckDeclaration sketch. Raw binding is authorized when harness
+publishes the API; shared registration still requires harness landing and
+explicit lease release.
 Found by: spec-writing.
 
 This directory reserves planner-owned proposal and evaluation work. It contains
@@ -38,11 +41,10 @@ in the current reply. Reject it.
 The selected design gives the model one proposal root with `leaf`, `split`, and
 `cant_meet` variants. Rust stores observations and decisions separately. Model
 JSON rejects unknown fields, including fields belonging to observations or
-decisions. This design still needs agreement on raw check declarations before a
-complete proposal can be implemented. No partial proposal type or generic check
-placeholder stands in for that agreement.
+decisions. Its checks use the final canonical Check boundary below. No partial
+proposal type or generic check placeholder stands in for the published API.
 
-## Proposal fields and the unresolved check binding
+## Proposal fields and the final Check ruling
 
 | Variant | Model declarations |
 | --- | --- |
@@ -61,36 +63,39 @@ memory-flag and source-quote types. Source quotes in a proposal are claims for
 Rust to check against source, not accepted observations. Paths used as an
 accepted footprint must pass the existing canonical footprint boundary.
 
-The final program-lead ruling is one type per trust level. Harness publishes
-`CheckDeclaration` for model output in slice 1. It carries goal association,
-exact selectors, planner-only kinds, and model-safe proof subject and support
-selection. It has no `Reproducing`, `red_message`, or captured evidence fields.
-The owner has the required `goal_ids` semantics, but the final canonical API
-is not published at this preparation's base.
+The final program-lead ruling is ONE canonical `contracts::Check`. There is no
+`CheckDeclaration`, `ProofSelection`, cloned planner-kind enum, or separate
+admitted type. Harness owns the shared Check API and its publication.
 
-Existing `Check` is trusted and admitted. Only Rust validation or
-controller-owned sources produce it. Never parse it from model output.
-Proof declarations have the same trust split. Captured `red_message` and
-evidence come only from actual runs. This ruling supersedes the earlier direct
-raw-model `Check` proposal; that earlier proposal is not an implementation path.
+Check retains `name`, `tests`, canonical `CheckKind`, required
+`goal_ids: Vec<GoalId>`, `proof: Option<ProofDeclaration>`, `forcing`, and
+`declared_symptom`. Name is nonblank and unique within the plan. `tests` contains
+exact selectors. The Rust planner gate admits only `Demonstrating`, `Regression`,
+and `BehaviorPreserving` from the canonical kind enum.
 
-The remaining check binding is a dependency STOP:
+Goal IDs index authoritative `request.inputs.ingest.goals`. They are required,
+unique within each check, and stable against the original request, version, and
+base across split pieces. IDs may recur across checks. The Rust gate rejects
+empty, unknown, or out-of-range associations and requires union coverage of
+required non-publishing goals. Publishing goals may be referenced without
+requiring a maker check. Controller-origin controls do not weaken model rules.
 
-- Bind the raw proposal only after the owner publishes canonical
-  `CheckDeclaration` and the model-safe proof declaration API. Do not copy
-  either type, introduce a nested Check or wrapper, or add selector aliases.
-- Preserve planner subject-selection ability and exact required goal
-  association semantics through the published types. Keep planner kinds to
-  `Demonstrating`, `Regression`, and `BehaviorPreserving`.
-- Represent missing declarations explicitly so the Rust session can offer the
-  existing bounded correction. Never create a valid-looking proof placeholder.
-- Rust admits checks using authoritative validation and actual observations.
-  Model declarations never establish captured RED output, execution, a verified
-  proof, or a receipt.
+`ProofDeclaration` keeps `subjects`, `observer_support`, and `red_message`.
+The model declares the EXPECTED call-phase assertion message in `red_message`,
+as required by state-table sections 1069-1076 and #592. RED matching compares
+the actual observed failure against that declaration. Proposing the expected
+message supplies no actual-run evidence.
 
-The trust boundary is final, not another design exploration. The raw-model
-binding remains held until its canonical API is published. This unit neither
-implements the superseded direct-Check shape nor changes shared types.
+Observed failure text, match results, and receipts come exclusively from actual
+runs through runner output and `report::ProofReceipt`. They appear in no model
+reply schema. Rust validation followed by the controller constitutes admission;
+admission creates no new type. Missing required observations remain fail-closed.
+
+The earlier declaration-split ruling is superseded. No semantic Check hold
+remains. Raw-model binding proceeds once harness publishes the canonical API,
+including required `goal_ids`. Harness retains the sole shared-file lease;
+shared registration still waits for its landing and explicit release. This
+preparation implements no Check boundary and changes no shared types.
 
 ## Session facts preserve inherited evidence obligations
 
@@ -192,7 +197,8 @@ After harness landing and explicit lease release, qualification needs:
 - Guard/render agreement using the canonical resolved rows, terminal-role
   restrictions, exact instruction and multibyte excerpt boundaries, and
   persisted omission markers.
-- #592/Q49 actual-run evidence, #809 bounded coverage repair, and EP/EP2
+- #592 expected-message matching and actual-run evidence, #809 bounded coverage
+  repair, and EP/EP2
   context-versus-verification and exact source/method preservation cases at
   their owning semantic slices. No accepted proof may use a declared message
   as its actual run result.
@@ -200,8 +206,15 @@ After harness landing and explicit lease release, qualification needs:
   counts, and SHA/length CAS receipts. Existing proved coverage is retained or
   replaced and qualified in the same change, without new out-of-scope proofs.
 
-At the caller switch, delete the replaced planner Python logic and its tests
-in the same final slice. Until then the active Python path stays intact. This
+The evaluator-used Python `Name`, `Allowed`, `Edit`, `Violation`, and Allowed
+subclasses stay untouched through harness slice 1. They are explicitly
+UNREPLACED and planner-owned. Planner slice 2 deletes them when the Rust engine
+replaces the evaluator with typed captured constraints for ordered additions
+and removals, frozen memory flags and claims, draft references, coverage edits,
+and split coherence. Harness does not acquire a second evaluator.
+
+At that caller switch, delete the replaced planner Python logic and its tests
+in the same slice. Until then the active Python path stays intact. This
 preparation removes zero Python code lines and zero Python test lines. It is
 neither a completed slice nor permission to land independently.
 
