@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import runpy
 import shutil
+import signal
+import threading
 import subprocess
 import sys
 import time
@@ -28,6 +30,15 @@ def main():
                 for owned in state['runtime_ownerships']:
                     facts = runtime.cleanup_observations(owned, podman=str(root / 'podman'),
                         systemctl='/unused-fixture', timeout=1)
+                    if mode in ('cancel-kill', 'timeout-kill'):
+                        # This admitted fixture is the local subreaper. Model native init
+                        # reaping only its adopted, exact recorded launcher group.
+                        before_reap = facts
+                        runtime._reap_owned_group(owned['process_group'], 1)
+                        facts = runtime.cleanup_observations(owned, podman=str(root / 'podman'),
+                            systemctl='/unused-fixture', timeout=1)
+                        (output / ('external-fixture-reap-' + owned['execution'] + '.json')).write_text(
+                            json.dumps({'before': before_reap, 'after': facts, 'attribution': 'admitted fixture subreaper'}))
                     (output / ('trusted-stop-' + owned['execution'] + '.json')).write_text(json.dumps(facts))
                 for launch in state['container_launches'].values():
                     owned = launch['launcher']
@@ -56,6 +67,7 @@ def main():
     runtime.backend_request = timed_request
 
     if mode == 'action':
+        (output / 'action-pid.json').write_text(json.dumps({'pid': os.getpid()}))
         # The native CLI and journal are real. Only the host observation and
         # container executable are deterministic fixture boundaries.
         original = runtime.command
@@ -87,7 +99,9 @@ def main():
 
     git('init', '-q', '--template=')
     (repo / 'pyproject.toml').write_text('[tool.tl3.harness]\ncommand=["python","-m","pytest"]\ntest-files=["test_*.py"]\n')
-    (repo / 'test_value.py').write_text('def test_value():\n    assert True\n')
+    (repo / 'test_value.py').write_text(
+        'import time\ndef test_value():\n    time.sleep(12)\n    assert True\n'
+        if mode in ('cancel-term', 'cancel-kill', 'timeout-kill') else 'def test_value():\n    assert True\n')
     git('add', '.')
     git('commit', '-qm', 'fixture')
     head = git('rev-parse', 'HEAD')
@@ -202,7 +216,70 @@ if args[:2] == ['container','exists']:
 sys.exit(0)
 ''')
     (root / 'podman').chmod(0o700)
-    faulthandler.dump_traceback_later(3, repeat=True)
+    original_popen = subprocess.Popen
+    def observed_popen(command, *args, **kwargs):
+        child = original_popen(command, *args, **kwargs)
+        if isinstance(command, list) and command[-1:] == ['action']:
+            wait = child.wait
+            def observed_wait(*wait_args, **wait_kwargs):
+                code = wait(*wait_args, **wait_kwargs)
+                (output / 'action-process-status.json').write_text(json.dumps({'pid': child.pid, 'returncode': code}))
+                return code
+            child.wait = observed_wait
+        return child
+    subprocess.Popen = observed_popen
+    signal_errors = []
+    witness_handles = []
+    def cancel_qualified():
+        try:
+            deadline = time.monotonic() + 30
+            state_path = root / 'journal' / os.environ['TL3_RUN_CORRELATION'] / 'state.json'
+            while time.monotonic() < deadline:
+                state = json.loads(state_path.read_text())
+                for owned in state['runtime_ownerships']:
+                    execution = owned['execution']
+                    launch = state['container_launches'][execution]
+                    assert owned['run'] == launch['launcher']['run']
+                    assert owned['request_digest'] == launch['launcher']['request_digest']
+                    assert owned['owner'] == launch['launcher']['owner']
+                    assert owned['container']['name'] == launch['name']
+                    assert owned['container']['labels'] == launch['labels']
+                    for path in output.glob('*.runtime.jsonl'):
+                        rows = [json.loads(line) for line in path.read_text().splitlines()]
+                        context = next((r['context'] for r in rows if r['event'] == 'launch'), None)
+                        if context is None or context['run'] != owned['run']:
+                            continue
+                        process = next((r for r in rows if r['event'] == 'container_processes'
+                                        and r['Id'] == owned['container']['id']), None)
+                        bound = next((r for r in rows if r['event'] == 'launch_binding'
+                                      and r['payload_allowed']), None)
+                        qualified = next((r for r in rows if r['event'] == 'qualification' and r['qualified']), None)
+                        bindings = runtime.binding_observations(output)
+                        if not (process and bound and qualified and any(
+                                r['execution'] == execution and r['container_id'] == process['Id']
+                                and r['run'] == owned['run'] and r['request_digest'] == owned['request_digest']
+                                for r in bindings)):
+                            continue
+                        assert process['Pid'] > 1 and process['ConmonPid'] > 1
+                        pid = json.loads((output / 'action-pid.json').read_text())['pid']
+                        number = signal.SIGKILL if mode in ('cancel-kill', 'timeout-kill') else signal.SIGTERM
+                        trigger = {'signal': number, 'pid': pid, 'execution': execution,
+                                   'process': process, 'owned': owned, 'bound': bound,
+                                   'qualified': qualified, 'bindings': bindings,
+                                   'monotonic_ns': time.monotonic_ns(), 'signals_sent': 1}
+                        (output / 'signal-trigger.json').write_text(json.dumps(trigger))
+                        witness_handles.extend(os.pidfd_open(process[key]) for key in ('Pid', 'ConmonPid'))
+                        os.kill(pid, number)
+                        return
+                time.sleep(0.01)
+            raise AssertionError('owned process capture and durable qualification never reached')
+        except BaseException as error:
+            signal_errors.append(repr(error))
+    watcher = None
+    if mode in ('cancel-term', 'cancel-kill', 'timeout-kill'):
+        watcher = threading.Thread(target=cancel_qualified)
+        watcher.start()
+    faulthandler.dump_traceback_later(10, repeat=True)
     started = time.monotonic()
     try:
         code, result = runtime.collect_host_payload(
@@ -215,9 +292,32 @@ sys.exit(0)
         elapsed = time.monotonic() - started
         (output / 'reproduction-timing.json').write_text(json.dumps({'seconds': elapsed}))
         print(f'collector_seconds={elapsed:.3f}', flush=True)
+    if watcher is not None:
+        watcher.join(timeout=35)
+        assert not watcher.is_alive() and not signal_errors, signal_errors
+        assert (output / 'signal-trigger.json').exists()
+        assert runtime.processes_stopped(witness_handles, 2), 'fixture captured processes did not cease'
+        for handle in witness_handles:
+            os.close(handle)
+        absent = not Path(settings['scratch']).exists()
+        facts = {'signal': 9 if mode in ('cancel-kill', 'timeout-kill') else 15, 'scratch': settings['scratch'],
+                 'scratch_absent': absent, 'handler_record': (output / 'action-sigterm.json').exists(),
+                 'finally_record': (output / 'action-scratch-absence.json').exists(),
+                 'elapsed': elapsed, 'external_fixture_pidfd_cessation': True,
+                 'process_status': json.loads((output / 'action-process-status.json').read_text())}
+        (output / 'cancellation-assertions.json').write_text(json.dumps(facts))
+        if mode == 'cancel-term':
+            assert facts['process_status']['returncode'] in (-15, 143), facts
+            assert absent, 'actual generated TERM action left own job scratch'
+            assert facts['handler_record'] and facts['finally_record'], facts
+        else:
+            assert facts['process_status']['returncode'] == -9, facts
+            assert not absent and not facts['handler_record'] and not facts['finally_record'], facts
+        assert runtime._backend_session is None
+        return
     raw = (output / 'host.stdout').read_text()
     assert elapsed < 15, f'action took {elapsed:.3f}s'
-    if mode == 'success':
+    if mode in ('success', 'success-retained'):
         assert '"verdict":"pass"' in raw, raw + (output / 'host.stderr').read_text()
         assert (root / 'payload-started').exists()
     else:
@@ -254,7 +354,7 @@ sys.exit(0)
             assert 'container' not in names
             assert names.index('launcher_exit') < names.index('no_container_observed')
             assert next(event['exit_code'] for event in log if event['event'] == 'launcher_exit') == 127
-    elif mode in ('success', 'binding-mismatch'):
+    elif mode in ('success', 'success-retained', 'binding-mismatch'):
         for event_log in events:
             names = [event['event'] for event in event_log]
             assert names.index('allocation_grant') < names.index('launch_intent') < names.index('container')
@@ -264,7 +364,7 @@ sys.exit(0)
             assert grant['os_pus'] == cpus and grant['rank'] == 0
         assert operations.index('observe_allocation') < operations.index('validate_allocation') < operations.index('begin_container_launch')
         assert 'bind_container_launch' in operations
-        if mode == 'success':
+        if mode in ('success', 'success-retained'):
             assert operations.index('bind_container_launch') < operations.index('validate_runtime_binding')
             assert (output / 'runtime-bindings.jsonl').stat().st_size
     elif mode == 'begin-response-lost':

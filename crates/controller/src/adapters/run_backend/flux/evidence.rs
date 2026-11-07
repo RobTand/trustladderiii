@@ -602,13 +602,42 @@ impl Flux {
                         .into(),
             });
         };
+        let launch_failure = report
+            .as_ref()
+            .is_some_and(|r| r.outcome == ReportOutcome::PostBeginLaunchFailure);
+        let exceptional = ending == Ending::InfraLost && record.events.iter().any(|e| matches!(&e.fact, NativeFact::Exception { exception_type, severity: 0, .. } if exception_type != "cancel"));
+        let reclamation = if launch_failure {
+            Some("external scratch reclamation after validated launch failure")
+        } else if ending == Ending::Cancelled || exceptional {
+            Some("external scratch reclamation")
+        } else {
+            None
+        };
         let report_ref = if report.is_some() {
             let path = record.intent.output_dir.join("retained-report.json");
             Some(blob(&path, &read(&path)?)?)
         } else {
             None
         };
-        let terminal = self.terminal(owner, ending, reason, evidence, report_ref)?;
+        let terminal = match self.commit_scratch_terminal(
+            owner,
+            &record,
+            reclamation,
+            (ending, reason),
+            evidence,
+            report_ref,
+        ) {
+            Ok(Some(terminal)) => terminal,
+            _ => {
+                self.scratch_debt(&record)?;
+                return Ok(Observation::Unknown {
+                    binding: Some(binding),
+                    reason: "exact own scratch absence unproven; scratch cleanup debt retained"
+                        .into(),
+                });
+            }
+        };
+        self.retire_scratch_debt(owner, &terminal)?;
         if report
             .as_ref()
             .is_some_and(|report| report.outcome == ReportOutcome::PostBeginLaunchFailure)

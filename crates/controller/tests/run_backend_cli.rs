@@ -107,6 +107,13 @@ fn generated_action_post_begin_launch_failure_with_cancel_retires_debt() {
             .any(|item| { item["path"].as_str().unwrap().contains("unit-absence-") })
     );
     assert!(fs::read_dir(&debt).unwrap().next().is_none());
+    assert!(!f.request.scratch_root.join("fABC").exists());
+    assert!(
+        f.intent
+            .output_dir
+            .join("scratch-reclamation.manifest.json")
+            .exists()
+    );
     let repeated = f.attach();
     assert_eq!(
         repeated.last().unwrap()["result"]["observation"]["terminal"],
@@ -162,10 +169,287 @@ fn action_session_rechecks_generation_owner_and_live_allocation() {
     generated_action_case("session");
 }
 
+#[test]
+#[ignore = "requires admitted PB actual-action fixture"]
+fn generated_action_sigterm_unwinds_workspace() {
+    let f = generated_action_case("cancel-term");
+    finish_cancel_fixture(&f, false);
+}
+
+#[test]
+#[ignore = "requires admitted PB actual-action fixture"]
+fn generated_action_sigkill_reclaims_after_cancel_and_timeout() {
+    for timeout in [false, true] {
+        let f = generated_action_case(if timeout {
+            "timeout-kill"
+        } else {
+            "cancel-kill"
+        });
+        finish_cancel_fixture(&f, timeout);
+    }
+}
+
+fn finish_cancel_fixture(f: &Fixture, timeout: bool) {
+    if !timeout {
+        let frames = f
+            .call(json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}));
+        assert_eq!(
+            frames.last().unwrap()["result"]["acknowledgement"]["acknowledged"],
+            true
+        );
+    }
+    f.events(&[
+        json!({"name":"start","context":{}}),
+        json!({"name":"exception","context":{"type":if timeout {"timeout"} else {"cancel"},"severity":0}}),
+        json!({"name":"finish","context":{"status":9}}),
+        json!({"name":"clean"}),
+    ]);
+    let frames = f.attach();
+    assert_eq!(
+        frames.last().unwrap()["result"]["observation"]["terminal"]["ending"],
+        if timeout { "infra-lost" } else { "cancelled" },
+        "{frames:?}"
+    );
+    assert!(!f.request.scratch_root.join("fABC").exists());
+    let repeated = f.attach();
+    assert_eq!(
+        repeated.last().unwrap()["result"]["observation"]["terminal"],
+        frames.last().unwrap()["result"]["observation"]["terminal"]
+    );
+    let debt = f
+        .options
+        .journal_root
+        .join("cleanup-debt")
+        .join(&f.request.runtime.manifest_digest);
+    assert!(fs::read_dir(debt).unwrap().next().is_none());
+    if let Ok(destination) = std::env::var("FX_E2E_EVIDENCE") {
+        let destination = Path::new(&destination).join(if timeout {
+            "timeout-terminal"
+        } else {
+            "cancel-terminal"
+        });
+        fs::create_dir_all(&destination).unwrap();
+        for entry in fs::read_dir(&f.intent.output_dir).unwrap().flatten() {
+            if entry.file_type().unwrap().is_file() {
+                fs::copy(entry.path(), destination.join(entry.file_name())).unwrap();
+            }
+        }
+        fs::write(
+            destination.join("attach.json"),
+            serde_json::to_vec(&frames).unwrap(),
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+#[ignore = "requires admitted PB actual-action fixture"]
+fn scratch_reclamation_serializes_begin_until_terminal_and_rejects_late_begin() {
+    let f = generated_action_case("success-retained");
+    let root = f.request.scratch_root.join("fABC");
+    fs::create_dir(&root).unwrap();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::write(root.join("leftover"), b"admitted timeout scratch").unwrap();
+    f.events(&[
+        json!({"name":"start","context":{}}),
+        json!({"name":"exception","context":{"type":"timeout","severity":0}}),
+        json!({"name":"finish","context":{"status":9}}),
+        json!({"name":"clean"}),
+    ]);
+    let state: Value = serde_json::from_slice(
+        &fs::read(
+            f.options
+                .journal_root
+                .join(&f.intent.correlation)
+                .join("state.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let mut launcher: RuntimeOwnership =
+        serde_json::from_value(state["runtime_ownerships"][0].clone()).unwrap();
+    launcher.execution = "waiting-launch".into();
+    launcher.container = None;
+    let command = json!({"op":"begin_container_launch","owner":f.intent.owner,"correlation":f.intent.correlation,"launcher":launcher});
+    fs::write(
+        f.intent.output_dir.join("scratch-pause"),
+        b"pause before tree operation",
+    )
+    .unwrap();
+    std::thread::scope(|scope| {
+        let attach = scope.spawn(|| f.attach());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !f.intent.output_dir.join("scratch-entered").exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "helper did not reach pause"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(root.join("leftover").exists());
+        assert!(!f.intent.output_dir.join("receipt.json").exists());
+        let gate = fs::File::open(f.options.journal_root.join("runtime-lock")).unwrap();
+        assert!(gate.try_lock().is_err(), "reclamation must own launch gate");
+        let (send, receive) = std::sync::mpsc::channel();
+        let waiting_command = command.clone();
+        let fixture = &f;
+        scope.spawn(move || {
+            send.send(fixture.call(waiting_command)).unwrap();
+        });
+        assert!(
+            receive
+                .recv_timeout(std::time::Duration::from_millis(200))
+                .is_err(),
+            "begin escaped reclamation gate"
+        );
+        fs::write(
+            f.intent.output_dir.join("scratch-release"),
+            b"release own fixture helper",
+        )
+        .unwrap();
+        let terminal = attach.join().unwrap();
+        assert_eq!(
+            terminal.last().unwrap()["result"]["observation"]["terminal"]["ending"],
+            "infra-lost",
+            "{terminal:?}"
+        );
+        assert!(!root.exists());
+        let waiting = receive
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        assert_eq!(waiting.last().unwrap()["kind"], "error", "{waiting:?}");
+        assert!(
+            waiting.last().unwrap()["message"]
+                .as_str()
+                .unwrap()
+                .contains("after cancellation or terminal")
+        );
+        let late = f.call(command.clone());
+        assert_eq!(late.last().unwrap()["kind"], "error", "{late:?}");
+        assert!(
+            late.last().unwrap()["message"]
+                .as_str()
+                .unwrap()
+                .contains("after cancellation or terminal")
+        );
+        let final_state: Value = serde_json::from_slice(
+            &fs::read(
+                f.options
+                    .journal_root
+                    .join(&f.intent.correlation)
+                    .join("state.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(final_state["container_launches"]["waiting-launch"].is_null());
+        if let Ok(destination) = std::env::var("FX_E2E_EVIDENCE") {
+            let destination = Path::new(&destination).join("scratch-launch-race");
+            fs::create_dir_all(&destination).unwrap();
+            fs::write(destination.join("assertions.json"), json!({"helper_paused_before_mutation":true,"gate_held":true,"waiting_begin_blocked":true,"terminal":terminal,"waiting_begin":waiting,"late_begin":late,"final_state":final_state}).to_string()).unwrap();
+        }
+    });
+}
+
+#[test]
+#[ignore = "requires admitted PB actual-action fixture"]
+fn terminal_scratch_guards_keep_ordinary_leftovers_and_reject_bad_external_evidence() {
+    let f = generated_action_case("success-retained");
+    let root = f.request.scratch_root.join("fABC");
+    fs::create_dir(&root).unwrap();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::write(
+        root.join("leftover"),
+        b"ordinary action cleanup bug fixture",
+    )
+    .unwrap();
+    f.events(&completed(0));
+    let frames = f.attach();
+    assert_eq!(
+        frames.last().unwrap()["result"]["observation"]["kind"],
+        "unknown",
+        "{frames:?}"
+    );
+    assert!(root.join("leftover").exists());
+    assert!(
+        !f.intent
+            .output_dir
+            .join("scratch-reclamation.manifest.json")
+            .exists()
+    );
+    let debt = f
+        .options
+        .journal_root
+        .join("cleanup-debt")
+        .join(&f.request.runtime.manifest_digest)
+        .join(format!("{}.scratch", f.intent.correlation));
+    assert!(debt.exists());
+    fs::remove_dir_all(&root).unwrap(); // Remove only this admitted fixture's injected tree.
+    let bad_generation = json!({"exit_code":0,"stdout":"wrong-generation","stderr":""});
+    for (name, replacement) in [
+        ("host", json!({"host":"foreign"})),
+        (
+            "owner",
+            json!({"owner":{"owner":"foreign","correlation":f.intent.correlation}}),
+        ),
+        (
+            "correlation",
+            json!({"owner":{"owner":f.intent.owner,"correlation":"foreign"}}),
+        ),
+        ("request", json!({"request_digest":"d".repeat(64)})),
+        ("nonce", json!({"nonce":"d".repeat(64)})),
+        ("path", json!({"path":"/tmp/foreign"})),
+        ("uid", json!({"uid":0})),
+        (
+            "generation-before",
+            json!({"generation_before":bad_generation}),
+        ),
+        (
+            "generation-after",
+            json!({"generation_after":bad_generation}),
+        ),
+        (
+            "stale",
+            json!({"started_monotonic_ns":0,"finished_monotonic_ns":0}),
+        ),
+        (
+            "duration",
+            json!({"started_monotonic_ns":1,"finished_monotonic_ns":20_000_000_000_u64}),
+        ),
+        (
+            "run",
+            json!({"run":{"backend":"flux","instance":"foreign","uri":"local:///fixture","job":"fABC"}}),
+        ),
+        ("attribution", json!({"attribution":"action cleanup"})),
+    ] {
+        fs::write(
+            f.intent.output_dir.join("scratch-control.json"),
+            json!({"replace":replacement}).to_string(),
+        )
+        .unwrap();
+        let frames = f.attach();
+        assert_eq!(
+            frames.last().unwrap()["result"]["observation"]["kind"],
+            "unknown",
+            "{name}: {frames:?}"
+        );
+        assert!(debt.exists() && !f.intent.output_dir.join("receipt.json").exists());
+    }
+    fs::remove_file(f.intent.output_dir.join("scratch-control.json")).unwrap();
+    let frames = f.attach();
+    assert_eq!(
+        frames.last().unwrap()["result"]["observation"]["terminal"]["ending"],
+        "passed",
+        "{frames:?}"
+    );
+    assert!(!debt.exists());
+}
+
 fn generated_action_case(mode: &str) -> Fixture {
     let mut f = Fixture::new();
     f.podman(ContainerMode::InJob, true);
     let scratch = tempfile::tempdir().unwrap();
+    fs::set_permissions(scratch.path(), fs::Permissions::from_mode(0o700)).unwrap();
     f.request.scratch_root = scratch.path().to_owned();
     f.request.reservation.cpus = 1.try_into().unwrap();
     f.request.reservation.parallelism = 1.try_into().unwrap();
@@ -206,6 +490,7 @@ fn generated_action_case(mode: &str) -> Fixture {
         serde_json::to_vec(&json!({
             "environment": environment, "output_dir": f.intent.output_dir,
             "scratch": scratch.path().join("fABC"), "mode": mode,
+            "source": Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap(),
         }))
         .unwrap(),
     )
@@ -215,10 +500,13 @@ fn generated_action_case(mode: &str) -> Fixture {
         .unwrap()
         .parent()
         .unwrap();
+    let action_source = std::env::var_os("FX_ACTION_SOURCE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| source.to_owned());
     let output = Command::new("/home/rob/venvs/pb-cpu/bin/python")
         .arg(source.join("harness/tests/fx_action_e2e.py"))
         .arg(f.root.path())
-        .arg(source)
+        .arg(action_source)
         .arg(mode)
         .output()
         .unwrap();
@@ -287,6 +575,7 @@ fn generated_action_case(mode: &str) -> Fixture {
             .unwrap();
         }
     }
+    f.scratch = Some(scratch);
     f
 }
 
@@ -343,6 +632,10 @@ fn launch_failure_acceptance_matrix(f: &Fixture) {
     let cleanup_path = PathBuf::from(proofs[0]["cleanup"]["path"].as_str().unwrap());
     let cleanup_raw = fs::read(&cleanup_path).unwrap();
     let unknown = |case: &str| {
+        assert!(
+            f.request.scratch_root.join("fABC").exists(),
+            "candidate scratch disappeared before {case}"
+        );
         let frames = f.attach();
         assert_eq!(
             frames.last().unwrap()["result"]["observation"]["kind"],
@@ -362,6 +655,11 @@ fn launch_failure_acceptance_matrix(f: &Fixture) {
             fs::read_dir(debt).unwrap().next().is_some(),
             "{case} lost cleanup debt"
         );
+        assert!(
+            f.request.scratch_root.join("fABC").exists(),
+            "UNKNOWN {case} reclaimed scratch"
+        );
+        assert!(!out.join("scratch-reclamation.manifest.json").exists());
         if let Ok(destination) = std::env::var("FX_E2E_EVIDENCE") {
             let destination = Path::new(&destination).join("acceptance-matrix").join(case);
             fs::create_dir_all(&destination).unwrap();
@@ -626,6 +924,8 @@ fn launch_failure_acceptance_matrix(f: &Fixture) {
     let receipt: Value =
         serde_json::from_slice(&fs::read(out.join("receipt.json")).unwrap()).unwrap();
     assert_eq!(receipt["report"].as_object().unwrap().len(), 3);
+    assert!(!f.request.scratch_root.join("fABC").exists());
+    assert!(out.join("scratch-reclamation.manifest.json").exists());
     assert!(
         receipt["evidence"]
             .as_array()
@@ -669,6 +969,7 @@ struct Fixture {
     config: PathBuf,
     membership: Vec<u8>,
     bundles: Vec<PathBuf>,
+    scratch: Option<tempfile::TempDir>,
 }
 
 fn immutable(path: &Path, bytes: &[u8], executable: bool) {
@@ -760,6 +1061,12 @@ impl Fixture {
             }],
         })
         .unwrap();
+        let native_cleanup = p.join("native-cleanup");
+        immutable(
+            &native_cleanup,
+            include_str!("python/fx_native_scratch_helper.py").as_bytes(),
+            true,
+        );
         let request = Request {
             repo: "fixture/repo".into(),
             tree: TreeIdentity {
@@ -806,7 +1113,11 @@ impl Fixture {
                     reason: "fixture of the provisioned amd64 image dependency".into(),
                 }),
                 image: None,
-                cleanup: None,
+                cleanup: Some(CleanupProgram {
+                    executable: native_cleanup.clone(),
+                    executable_digest: digest(&fs::read(&native_cleanup).unwrap()),
+                    arguments: vec![],
+                }),
             },
             scratch_root: "/var/tmp/flux-vanilla".into(),
             no_progress_seconds: None,
@@ -856,10 +1167,17 @@ job)
     *) exit 9;; esac;;
 *) exit 9;; esac
 "#).unwrap();
-        fs::write(p.join("jobspec.py"), r#"import json,sys,pathlib
+        fs::write(p.join("jobspec.py"), r#"import json,sys,pathlib,os
 root=pathlib.Path(sys.argv[1]);args=sys.argv[2:]
+# Read only the owned fake-native process initial environment, never the test caller.
+initial=dict(item.decode().split('=',1) for item in pathlib.Path(f'/proc/{os.getppid()}/environ').read_bytes().split(b'\0') if item)
+(root/'native-access-environment.json').write_text(json.dumps(initial))
 def option(prefix): return next(item[len(prefix):] for item in args if item.startswith(prefix))
-environment=dict(item[6:].split('=',1) for item in args if item.startswith('--env=') and '=' in item[6:])
+environment=dict(os.environ)
+for item in args:
+    if item == '--env=-*': environment.clear()
+    elif item.startswith('--env=') and '=' in item[6:]:
+        key,value=item[6:].split('=',1);environment[key]=value
 user=dict(item[15:].split('=',1) for item in args if item.startswith('--setattr=user.'))
 runner=next(i for i,item in enumerate(args) if not item.startswith('-') and item.startswith('/mnt/shared/'))
 spec={'tasks':[{'command':args[runner:]}], 'resources':[{'type':'node','count':1,'with':[{'type':'slot','count':1,'label':'task','with':[{'type':'core','count':int(args[args.index('-c')+1])}]}]}], 'attributes':{'user':user,'system':{'duration':option('-t') if any(item.startswith('-t=') for item in args) else args[args.index('-t')+1], 'constraints':option('--requires='), 'cwd':option('--cwd='),'environment':environment,'job':{'name':option('--job-name=')}, 'shell':{'options':{'output':{'stdout':{'path':option('--output=')},'stderr':{'path':option('--error=')}}}}}}}
@@ -897,6 +1215,7 @@ text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
             config,
             membership,
             bundles: vec![],
+            scratch: None,
         }
     }
 
@@ -1034,6 +1353,18 @@ text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
+        if let Ok(destination) = std::env::var("FX_E2E_EVIDENCE") {
+            let destination =
+                Path::new(&destination).join(format!("retained-{}", self.intent.correlation));
+            let _ = fs::create_dir_all(&destination);
+            if let Ok(entries) = fs::read_dir(&self.intent.output_dir) {
+                for entry in entries.flatten() {
+                    if entry.file_type().is_ok_and(|t| t.is_file()) {
+                        let _ = fs::copy(entry.path(), destination.join(entry.file_name()));
+                    }
+                }
+            }
+        }
         let _ = fs::remove_dir_all(&self.intent.output_dir);
         fn release(path: &Path) {
             if path.is_dir() {
@@ -1058,6 +1389,123 @@ fn completed(status: u32) -> Vec<Value> {
         json!({"timestamp":2.0,"name":"finish","context":{"status":status}}),
         json!({"timestamp":3.0,"name":"clean","context":{}}),
     ]
+}
+
+#[test]
+#[ignore = "requires admitted PB CLI child fixture"]
+fn jobspec_and_native_access_environment_are_exact_and_exclude_caller_sentinels() {
+    let f = Fixture::new();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tl3-run-backend"))
+        .args(["--config", f.config.to_str().unwrap()])
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("TL3_TEST_CALLER_API_TOKEN", "synthetic-secret-sentinel")
+        .env("TL3_TEST_CALLER_BENIGN", "synthetic-benign-sentinel")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writeln!(
+        child.stdin.take().unwrap(),
+        "{}",
+        json!({"op":"submit","request":f.request,"intent":f.intent})
+    )
+    .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let frames: Vec<Value> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|r| serde_json::from_str(r).unwrap())
+        .collect();
+    assert_eq!(
+        frames.last().unwrap()["result"]["submission"]["kind"],
+        "accepted",
+        "{frames:?}"
+    );
+    let expected = json!({
+        "PATH":"/usr/bin:/bin", "OMP_NUM_THREADS":"1", "MKL_NUM_THREADS":"1", "OPENBLAS_NUM_THREADS":"1",
+        "TORCH_NUM_THREADS":"1", "NUMEXPR_NUM_THREADS":"1", "VECLIB_MAXIMUM_THREADS":"1", "BLIS_NUM_THREADS":"1",
+        "OUT":f.intent.output_dir, "TL3_RUN_DIAGNOSTIC_DIR":f.intent.output_dir,
+        "FLUX_SCRATCH":"/var/tmp/flux-vanilla", "TL3_RUN_BACKEND":"flux", "TL3_RUN_INSTANCE":f.intent.instance,
+        "TL3_RUN_OWNER":f.intent.owner, "TL3_RUN_CORRELATION":f.intent.correlation,
+        "TL3_RUN_REQUEST_DIGEST":f.intent.request_digest, "TL3_EXECUTION_BACKEND":"flux", "TL3_RUN_BACKEND_SESSION":"1",
+        "TL3_RUN_BACKEND_CLI":env!("CARGO_BIN_EXE_tl3-run-backend"), "TL3_RUN_BACKEND_CONFIG":f.config,
+    });
+    for path in [
+        f.root.path().join("jobspec.json"),
+        f.intent.output_dir.join("original-jobspec.json"),
+    ] {
+        let spec: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(spec["attributes"]["system"]["environment"], expected);
+    }
+    let access: Value = serde_json::from_slice(
+        &fs::read(f.root.path().join("native-access-environment.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        access,
+        json!({"PATH":"/usr/bin:/bin","FLUX_URI":"local:///fixture"})
+    );
+    for key in ["TL3_TEST_CALLER_API_TOKEN", "TL3_TEST_CALLER_BENIGN"] {
+        assert!(expected.get(key).is_none() && access.get(key).is_none());
+    }
+    if let Ok(destination) = std::env::var("FX_E2E_EVIDENCE") {
+        let destination = Path::new(&destination).join("environment-gate");
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(
+            destination.join("expected-job-environment.json"),
+            expected.to_string(),
+        )
+        .unwrap();
+        fs::write(
+            destination.join("actual-native-access-environment.json"),
+            access.to_string(),
+        )
+        .unwrap();
+        fs::copy(
+            f.root.path().join("jobspec.json"),
+            destination.join("submitted-jobspec.json"),
+        )
+        .unwrap();
+        fs::copy(
+            f.intent.output_dir.join("original-jobspec.json"),
+            destination.join("retained-original-jobspec.json"),
+        )
+        .unwrap();
+    }
+    // Demonstrate this producer models inheritance and ordered clearing independently.
+    let args = fs::read_to_string(f.root.path().join("args"))
+        .unwrap()
+        .lines()
+        .skip(1)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let without_clear = args
+        .iter()
+        .filter(|a| a.as_str() != "--env=-*")
+        .cloned()
+        .collect::<Vec<_>>();
+    let inherited = Command::new("/usr/bin/python3")
+        .arg(f.root.path().join("jobspec.py"))
+        .arg(f.root.path())
+        .args(&without_clear)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("TL3_TEST_CALLER_BENIGN", "synthetic-benign-sentinel")
+        .output()
+        .unwrap();
+    assert!(
+        inherited.status.success(),
+        "{}",
+        String::from_utf8_lossy(&inherited.stderr)
+    );
+    let unisolated: Value = serde_json::from_slice(&inherited.stdout).unwrap();
+    assert_ne!(unisolated["attributes"]["system"]["environment"], expected);
+    assert_eq!(
+        unisolated["attributes"]["system"]["environment"]["TL3_TEST_CALLER_BENIGN"],
+        "synthetic-benign-sentinel"
+    );
 }
 
 #[test]
@@ -1736,9 +2184,13 @@ impl Fixture {
         .unwrap();
         fs::write(
             source.join("cleanup-helper"),
-            br#"#!/usr/bin/python3
+            r#"#!/usr/bin/python3
 import json,sys,pathlib,time
+__SCRATCH_FIXTURE__
 facts=json.load(sys.stdin)
+if facts['schema']=='tl3.scratch_cleanup_input.v1':
+    fixture_scratch(facts)
+    sys.exit(0)
 if facts['schema']=='tl3.job_unit_absence_input.v1':
     output=pathlib.Path('/mnt/shared/flux-out/tl3')/facts['owner']['correlation']
     control=output/'unit-control.json'
@@ -1763,7 +2215,7 @@ control=json.loads(control.read_text()) if control.exists() else {}
 time.sleep(control.get('delay',0))
 print((root/('trusted-stop-'+owned['execution']+'.json')).read_text(),flush=True)
 sys.exit(control.get('exit_code',0))
-"#,
+"#.replace("__SCRATCH_FIXTURE__", include_str!("python/fx_scratch_helper.py")),
         )
         .unwrap();
         let files = ["lib/tl3_harness/runner.py", "lib/tl3_harness/runtime.py"]

@@ -838,6 +838,39 @@ def cache_owner():
             os.environ['PRISMABUILD_CONTAINER_OWNER'])
 
 
+def _action_record(context, name, facts):
+    if context is None:
+        return
+    with (Path(context['output_dir']) / name).open('x') as retained:
+        json.dump(facts, retained, sort_keys=True)
+        retained.flush()
+        os.fsync(retained.fileno())
+
+
+@contextmanager
+def cancellation_unwind():
+    """Give the generated action's workspace finally the existing TERM grace."""
+    import signal
+    import time
+
+    context = launch_context()
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def terminate(number, frame):
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        try:
+            _action_record(context, 'action-sigterm.json',
+                           {'signal': number, 'monotonic_ns': time.monotonic_ns()})
+        finally:
+            raise SystemExit(128 + number)
+
+    signal.signal(signal.SIGTERM, terminate)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
 def temporary_root():
     context = launch_context()
     return Path(context['scratch']['leaf']) if context is not None else None
@@ -846,6 +879,7 @@ def temporary_root():
 @contextmanager
 def workspace(prefix):
     root = temporary_root()
+    context = launch_context()
     if root is None:
         with tempfile.TemporaryDirectory(prefix=prefix) as directory:
             yield directory
@@ -865,6 +899,10 @@ def workspace(prefix):
             # This outer workspace owns the job root; remove only an empty root.
             if not any(root.iterdir()):
                 root.rmdir()
+                import time
+                _action_record(context, 'action-scratch-absence.json',
+                               {'path': str(root), 'kind': 'absent', 'attribution': 'action workspace finally',
+                                'monotonic_ns': time.monotonic_ns()})
 
 
 def journal_path(path):
@@ -1185,6 +1223,9 @@ def cleanup_main():
     if request['schema'] == 'tl3.job_unit_absence_input.v1':
         print(json.dumps(job_unit_absence(request, systemctl=args.systemctl), sort_keys=True))
         return
+    if request['schema'] == 'tl3.scratch_cleanup_input.v1':
+        print(json.dumps(scratch_cleanup(request, systemctl=args.systemctl), sort_keys=True))
+        return
     if request['schema'] != 'tl3.cleanup_input.v1':
         raise ValueError('unsupported Rust cleanup input')
     budget = request['budget_seconds']
@@ -1223,9 +1264,7 @@ def post_exit_launch_absence(evidence, references, exited_ns):
 def job_unit_absence(request, *, systemctl):
     """External, read-only observation. A present unit never proves no survivors."""
     import re
-    import selectors
     import stat
-    import subprocess
     import time
 
     if set(request) != {'schema', 'run', 'owner', 'request_digest', 'host', 'nonce', 'budget_seconds'}:
@@ -1246,47 +1285,13 @@ def job_unit_absence(request, *, systemctl):
     started = time.monotonic_ns()
     deadline = time.monotonic() + request['budget_seconds']
 
-    def guard():
-        from .redaction import Redactor
-
-        process = subprocess.Popen([systemctl, '--user', 'show', f'flux-vanilla-{instance[0]}.service',
-                                    '-p', 'InvocationID', '--value'], stdin=subprocess.DEVNULL,
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
-        streams = {process.stdout: bytearray(), process.stderr: bytearray()}
-        try:
-            with selectors.DefaultSelector() as ready:
-                for pipe in streams:
-                    ready.register(pipe, selectors.EVENT_READ)
-                while ready.get_map():
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise RuntimeError('generation observation timed out')
-                    for key, _ in ready.select(remaining):
-                        chunk = os.read(key.fd, 4096)
-                        streams[key.fileobj].extend(chunk)
-                        if len(streams[key.fileobj]) > 16384:
-                            raise RuntimeError('generation observation exceeds byte bound')
-                        if not chunk:
-                            ready.unregister(key.fileobj)
-            code = process.wait(timeout=max(0.001, deadline - time.monotonic()))
-            return {'exit_code': code, 'stdout': streams[process.stdout].decode(errors='replace'),
-                    'stderr': Redactor(None).text(streams[process.stderr].decode(errors='replace'), limit=16384)}
-        finally:
-            import signal
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.wait(timeout=1)
-            process.stdout.close()
-            process.stderr.close()
 
     path = '/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/' + f"shell-{run['job']}:sys.service"
     control_path = path.rsplit('/', 2)[0]
     result = {'schema': 'tl3.job_unit_absence.v1', 'run': run, 'owner': request['owner'],
               'request_digest': request['request_digest'], 'nonce': request['nonce'],
               'host': os.uname().nodename, 'path': path, 'started_monotonic_ns': started,
-              'generation_before': guard(), 'observation': {'kind': 'unknown'},
+              'generation_before': _external_generation(systemctl, instance, deadline), 'observation': {'kind': 'unknown'},
               'control': {'path': control_path, 'observation': {'kind': 'unknown'}}}
     if (result['host'] == request['host'] and result['generation_before']['exit_code'] == 0
             and result['generation_before']['stdout'].strip() == instance[1]):
@@ -1308,6 +1313,288 @@ def job_unit_absence(request, *, systemctl):
             result['observation'] = {'kind': 'unknown', 'errno': error.errno}
         else:
             result['observation'] = {'kind': 'present'}
-    result['generation_after'] = guard()
+    result['generation_after'] = _external_generation(systemctl, instance, deadline)
     result['finished_monotonic_ns'] = time.monotonic_ns()
+    return result
+
+
+def _external_generation(systemctl, instance, deadline):
+    import selectors
+    import subprocess
+    import time
+    from .redaction import Redactor
+
+    process = subprocess.Popen([systemctl, '--user', 'show', f'flux-vanilla-{instance[0]}.service',
+                                '-p', 'InvocationID', '--value'], stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+    streams = {process.stdout: bytearray(), process.stderr: bytearray()}
+    try:
+        with selectors.DefaultSelector() as ready:
+            for pipe in streams:
+                ready.register(pipe, selectors.EVENT_READ)
+            while ready.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RuntimeError('generation observation timed out')
+                for key, _ in ready.select(remaining):
+                    chunk = os.read(key.fd, 4096)
+                    streams[key.fileobj].extend(chunk)
+                    if len(streams[key.fileobj]) > 16384:
+                        raise RuntimeError('generation observation exceeds byte bound')
+                    if not chunk:
+                        ready.unregister(key.fileobj)
+        code = process.wait(timeout=max(0.001, deadline - time.monotonic()))
+        return {'exit_code': code, 'stdout': streams[process.stdout].decode(errors='replace'),
+                'stderr': Redactor(None).text(streams[process.stderr].decode(errors='replace'), limit=16384)}
+    finally:
+        import signal
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=1)
+        process.stdout.close()
+        process.stderr.close()
+
+
+def scratch_cleanup(request, *, systemctl):
+    """Post-Clean exact-root check; only the Rust caller grants reclamation."""
+    import hashlib
+    import re
+
+    expected = {'schema', 'run', 'owner', 'request_digest', 'host', 'nonce', 'budget_seconds',
+                'reclamation'}
+    if set(request) != expected or request['schema'] != 'tl3.scratch_cleanup_input.v1':
+        raise ValueError('invalid scratch input fields')
+    run, owner = request['run'], request['owner']
+    instance = run['instance'].split('/')
+    if (len(instance) != 2 or not re.fullmatch(r'[A-Za-z0-9_-]+', instance[0])
+            or not re.fullmatch(r'[0-9a-f]{32}', instance[1])
+            or run['backend'] != 'flux' or not run['uri'].startswith('local:///')
+            or not re.fullmatch(r'f[1-9A-HJ-NP-Za-km-z]+', run['job'])
+            or not re.fullmatch(r'[0-9a-f]{64}', request['request_digest'])
+            or not re.fullmatch(r'[0-9a-f]{64}', request['nonce'])
+            or set(owner) != {'owner', 'correlation'}
+            or any(not re.fullmatch(r'[A-Za-z0-9_-]+', value) for value in owner.values())
+            or request['host'] != 'dl380g10'
+            or type(request['budget_seconds']) is not int or not 0 < request['budget_seconds'] <= 10
+            or request['reclamation'] not in (None, 'external scratch reclamation',
+                                             'external scratch reclamation after validated launch failure')):
+        raise ValueError('unqualified exact scratch identity')
+    output = Path('/mnt/shared/flux-out/tl3') / owner['correlation']
+    output_fd = os.open(output, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    def retained(name):
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=output_fd)
+        with os.fdopen(fd, 'rb') as source:
+            info = os.fstat(source.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_size > 1024 * 1024:
+                raise ValueError('unsafe retained scratch authority')
+            return source.read(1024 * 1024 + 1)
+    try:
+        if os.fstat(output_fd).st_uid != os.getuid():
+            raise ValueError('foreign retained scratch output')
+        raw = retained('request.json')
+        intent = json.loads(retained('intent.json'))
+        original = json.loads(retained('scratch-absence-' + request['nonce'] + '.input.json'))
+    finally:
+        os.close(output_fd)
+    if (hashlib.sha256(raw).hexdigest() != request['request_digest'] or original != request
+            or intent['request_digest'] != request['request_digest']
+            or intent['owner'] != owner['owner'] or intent['correlation'] != owner['correlation']
+            or intent['instance'] != run['instance'] or intent['uri'] != run['uri']
+            or intent['backend'] != run['backend'] or intent['output_dir'] != str(output)):
+        raise ValueError('scratch input differs from retained Rust authority')
+    approved_text = json.loads(raw)['scratch_root']
+    approved = Path(approved_text)
+    if (not approved.is_absolute() or str(approved) != approved_text or '..' in approved.parts
+            or len(approved.parts) < 3 or approved == Path('/mnt/shared') or Path('/mnt/shared') in approved.parents):
+        raise ValueError('unqualified retained scratch root')
+    return _scratch_cleanup_bound(request, instance, approved, systemctl=systemctl)
+
+
+def _scratch_cleanup_bound(request, instance, approved, *, systemctl):
+    import time
+
+    run, owner = request['run'], request['owner']
+    started = time.monotonic_ns()
+    deadline = time.monotonic() + request['budget_seconds']
+    root = approved / run['job']
+    result = {key: request[key] for key in ('run', 'owner', 'request_digest', 'host', 'nonce')}
+    result.update(schema='tl3.scratch_cleanup.v1', path=str(root), uid=os.getuid(),
+                  started_monotonic_ns=started, observation={'kind': 'unknown'},
+                  attribution=None, manifest=None)
+    result['host'] = os.uname().nodename
+    result['generation_before'] = _external_generation(systemctl, instance, deadline)
+    descriptors = []
+    output = Path('/mnt/shared/flux-out/tl3') / owner['correlation']
+    manifest_path = output / 'scratch-reclamation.manifest.json'
+    completion_path = output / 'scratch-reclamation.complete.json'
+
+    def bounded():
+        if time.monotonic() >= deadline:
+            raise RuntimeError('scratch observation budget exhausted')
+
+    def identity(info):
+        return {'dev': info.st_dev, 'ino': info.st_ino, 'uid': info.st_uid,
+                'mode': info.st_mode, 'size': info.st_size, 'mtime_ns': info.st_mtime_ns,
+                'ctime_ns': info.st_ctime_ns}
+
+    def directory(name, parent=None):
+        bounded()
+        fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+        descriptors.append(fd)
+        return fd
+
+    def own(info, device, *, private=False):
+        if (info.st_uid != os.getuid() or info.st_dev != device
+                or not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode))
+                or (private and info.st_mode & 0o022)):
+            raise RuntimeError('scratch uid, device, type or writable access is unsafe')
+
+    def persist(path, value):
+        fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            parent_info = os.fstat(fd)
+            if parent_info.st_uid != os.getuid():
+                raise RuntimeError('retained scratch manifest directory has another owner')
+            target = os.open(path.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd)
+            with os.fdopen(target, 'w') as retained:
+                json.dump(value, retained, sort_keys=True)
+                retained.flush()
+                os.fsync(retained.fileno())
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+    try:
+        if (result['host'] != request['host'] or result['generation_before']['exit_code'] != 0
+                or result['generation_before']['stdout'].strip() != instance[1]):
+            raise RuntimeError('scratch host or generation changed')
+        if manifest_path.exists() and not completion_path.exists():
+            raise RuntimeError('prior scratch reclamation incomplete; no retry')
+        parent = directory('/')
+        for part in approved.parts[1:]:
+            parent = directory(part, parent)
+        parent_info = os.fstat(parent)
+        own(parent_info, parent_info.st_dev, private=True)
+        try:
+            info = os.stat(run['job'], dir_fd=parent, follow_symlinks=False)
+        except FileNotFoundError:
+            result['observation'] = {'kind': 'absent', 'errno': 2}
+        else:
+            own(info, parent_info.st_dev, private=True)
+            if not stat.S_ISDIR(info.st_mode):
+                raise RuntimeError('scratch root is not an owned directory')
+            result['observation'] = {'kind': 'present'}
+            if request['reclamation'] is not None:
+                root_fd = directory(run['job'], parent)
+                if identity(os.fstat(root_fd)) != identity(info):
+                    raise RuntimeError('scratch root changed during open')
+                entries, total = [], 0
+
+                def inventory(fd, prefix):
+                    nonlocal total
+                    bounded()
+                    if len(prefix) > 32:
+                        raise RuntimeError('scratch inventory depth bound exceeded')
+                    # Bound enumeration itself, including a huge single directory.
+                    with os.scandir(fd) as children:
+                        names = []
+                        for child in children:
+                            bounded()
+                            if len(entries) + len(names) >= 4096:
+                                raise RuntimeError('scratch inventory entry bound exceeded')
+                            names.append(child.name)
+                    for name in sorted(names):
+                        bounded()
+                        current = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                        own(current, info.st_dev)
+                        total += current.st_size if stat.S_ISREG(current.st_mode) else 0
+                        if total > 2 * 1024 ** 3 or len(entries) >= 4096:
+                            raise RuntimeError('scratch inventory byte or entry bound exceeded')
+                        path = prefix + [name]
+                        entries.append({'parts': path, **identity(current)})
+                        if stat.S_ISDIR(current.st_mode):
+                            child_fd = directory(name, fd)
+                            if identity(os.fstat(child_fd)) != identity(current):
+                                raise RuntimeError('scratch child changed during open')
+                            inventory(child_fd, path)
+                            os.close(descriptors.pop())
+
+                inventory(root_fd, [])
+                manifest = {key: result[key] for key in ('run', 'owner', 'request_digest', 'path', 'uid')}
+                manifest.update(schema='tl3.scratch_manifest.v1', root=identity(info), entries=entries,
+                                total_bytes=total, attribution=request['reclamation'])
+                if len(json.dumps(manifest).encode()) > 1024 * 1024:
+                    raise RuntimeError('scratch manifest byte bound exceeded')
+                # An existing attempt is never retried, even after a partial failed removal.
+                persist(manifest_path, manifest)
+                result['manifest'] = str(manifest_path)
+                # A fresh generation guard must also precede the first mutation.
+                result['generation_pre_removal'] = _external_generation(systemctl, instance, deadline)
+                if (result['generation_pre_removal']['exit_code'] != 0
+                        or result['generation_pre_removal']['stdout'].strip() != instance[1]):
+                    raise RuntimeError('generation changed before scratch removal')
+                by_path = {tuple(entry['parts']): entry for entry in entries}
+
+                def remove(fd, prefix):
+                    bounded()
+                    expected_names = {parts[-1] for parts in by_path if list(parts[:-1]) == prefix}
+                    current_names = set()
+                    with os.scandir(fd) as children:
+                        for child in children:
+                            bounded()
+                            if child.name not in expected_names or child.name in current_names:
+                                raise RuntimeError('scratch entries changed before removal')
+                            current_names.add(child.name)
+                    if current_names != expected_names:
+                        raise RuntimeError('scratch entries changed before removal')
+                    for name in sorted(expected_names):
+                        bounded()
+                        parts = prefix + [name]
+                        prior = by_path[tuple(parts)]
+                        current = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                        own(current, info.st_dev)
+                        if identity(current) != {key: prior[key] for key in identity(current)}:
+                            raise RuntimeError('scratch identity changed before removal')
+                        if stat.S_ISDIR(current.st_mode):
+                            child_fd = directory(name, fd)
+                            if identity(os.fstat(child_fd)) != identity(current):
+                                raise RuntimeError('scratch child changed before removal')
+                            remove(child_fd, parts)
+                            os.close(descriptors.pop())
+                            again = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                            if (again.st_dev, again.st_ino, again.st_uid) != (current.st_dev, current.st_ino, current.st_uid):
+                                raise RuntimeError('scratch directory replaced before unlink')
+                            os.rmdir(name, dir_fd=fd)
+                        else:
+                            os.unlink(name, dir_fd=fd)
+                # Recheck root path and parent identity before traversing retained fds.
+                if identity(os.stat(run['job'], dir_fd=parent, follow_symlinks=False)) != identity(info):
+                    raise RuntimeError('scratch root replaced before removal')
+                remove(root_fd, [])
+                current = os.stat(run['job'], dir_fd=parent, follow_symlinks=False)
+                own(current, info.st_dev)
+                if (current.st_dev, current.st_ino) != (info.st_dev, info.st_ino):
+                    raise RuntimeError('scratch root replaced before rmdir')
+                os.rmdir(run['job'], dir_fd=parent)
+                os.fsync(parent)
+                try:
+                    os.stat(run['job'], dir_fd=parent, follow_symlinks=False)
+                except FileNotFoundError:
+                    result['observation'] = {'kind': 'absent', 'errno': 2}
+                    result['attribution'] = request['reclamation']
+                else:
+                    raise RuntimeError('scratch root remains after removal')
+    except (OSError, RuntimeError) as error:
+        result['observation'] = {'kind': 'unknown', 'reason': str(error)[:256]}
+    finally:
+        for fd in reversed(descriptors):
+            os.close(fd)
+    result['generation_after'] = _external_generation(systemctl, instance, deadline)
+    result['finished_monotonic_ns'] = time.monotonic_ns()
+    if result['attribution'] is not None and result['observation']['kind'] == 'absent':
+        if (result['generation_after']['exit_code'] == 0
+                and result['generation_after']['stdout'].strip() == instance[1]):
+            persist(completion_path, result)
     return result

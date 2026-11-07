@@ -7,6 +7,7 @@ mod placement;
 mod process;
 mod progress;
 mod resources;
+mod scratch;
 mod validate;
 mod worker_protocol;
 
@@ -635,6 +636,7 @@ impl Flux {
         let record = self.journal.load(owner)?;
         self.instance(&record)?;
         if let Some(terminal) = record.terminal {
+            self.retire_scratch_debt(owner, &terminal)?;
             if terminal.ending == Ending::InfraLost {
                 self.retire_launch_failure_debt(owner, &terminal)?;
             }

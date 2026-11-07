@@ -113,6 +113,8 @@ def test_staged_cleanup_mode_is_bound_to_the_imported_source_hash(tmp_path):
     row = next(row for row in inventory['files'] if row['path'] == 'lib/tl3_harness/runtime.py')
     assert row['sha256'] == hashlib.sha256(module.read_bytes()).hexdigest()
     assert b'def job_unit_absence(' in module.read_bytes()
+    assert b'def scratch_cleanup(' in module.read_bytes()
+    assert b'tl3.scratch_cleanup_input.v1' in module.read_bytes()
     cleanup = cleanup_manifest.parent / 'host-cleanup'
     if destination := os.environ.get('FX_HELPER_EVIDENCE'):
         destination = Path(destination) / 'staged-pin'
