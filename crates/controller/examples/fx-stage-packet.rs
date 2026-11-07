@@ -302,16 +302,19 @@ mod tests {
 
     #[test]
     fn staging_namespace_survives_consumer_argument_validation() {
-        let root = Path::new(
-            "/mnt/shared/flux-out/tl3/fx2-staging-c2e2db3250-f107a7b0-20261107T045211Z",
-        );
+        let root =
+            Path::new("/mnt/shared/flux-out/tl3/fx2-staging-c2e2db3250-f107a7b0-20261107T045211Z");
         let staging = staging_destination(root).unwrap();
         assert_eq!(staging, staging_destination(root).unwrap());
         assert_ne!(
             staging,
             staging_destination(&root.with_extension("next")).unwrap()
         );
-        let action = staging.join(format!("{}-{}/tree/action.py", "a".repeat(64), "b".repeat(64)));
+        let action = staging.join(format!(
+            "{}-{}/tree/action.py",
+            "a".repeat(64),
+            "b".repeat(64)
+        ));
         let argument = action.to_str().unwrap();
         assert!(argument.len() < 16_384 && !argument.chars().any(char::is_control));
         assert_eq!(api::durable::safe(argument).unwrap(), argument);
