@@ -306,12 +306,26 @@ class Supervised:
         self.child.stderr.close()
         if self.evidence is not None and self.evidence.context is not None:
             context = self.evidence.context
+            runtime_stopped = False
             try:
                 result = runtime.backend_request({'op': 'cleanup_runtime', 'owner': context['owner'],
                                                   'correlation': context['correlation']})['cleanup']
                 self.evidence.record('cleanup_result', result)
-                self.cleanup_confirmed = result['stopped']
+                runtime_stopped = result['stopped']
             except (RuntimeError, OSError, ValueError, KeyError, subprocess.SubprocessError):
+                pass
+            started = time.monotonic_ns()
+            try:
+                # Observe the captured identities even when Rust cleanup is unconfirmed.
+                # A pending launch may have failed before any container was observed.
+                processes_stopped = (runtime.processes_stopped(self.process_handles, self.cleanup_seconds)
+                                     if self.process_handles else not self.evidence.container_seen)
+                self.evidence.record('container_processes_stopped', {
+                    'confirmed': processes_stopped, 'captured': len(self.process_handles),
+                    'started_monotonic_ns': started, 'finished_monotonic_ns': time.monotonic_ns(),
+                })
+                self.cleanup_confirmed = runtime_stopped and processes_stopped
+            except (RuntimeError, OSError, ValueError, KeyError):
                 self.cleanup_confirmed = False
             finally:
                 for handle in self.process_handles:
