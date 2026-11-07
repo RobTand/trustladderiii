@@ -62,6 +62,8 @@ fn prepare(root: &Path, bundle: &Path, context: &Path, source: &Path) -> Result<
     if !api::absolute(root) || !root.starts_with("/mnt/shared/flux-out/tl3") || root.exists() {
         return Err("a fresh absolute shared packet destination is required".into());
     }
+    let staging = Path::new("/mnt/shared/flux-out/fx2-inputs").join(root.file_name().ok_or("packet basename required")?);
+    if staging.exists() { return Err("a fresh disjoint staging destination is required".into()); }
     let mut options: Options = serde_json::from_slice(&fs::read(context)?)?;
     // The retained context is deliberately not refreshed or queried.
     if options.instance_generation != "fv1-model/61f47a7f95af46d794ca89c3a71f0654" {
@@ -95,7 +97,7 @@ fn prepare(root: &Path, bundle: &Path, context: &Path, source: &Path) -> Result<
         instance_generation: options.instance_generation.clone(), uri: options.uri.clone(),
         executable: "/no-native-execution/flux".into(), backend_cli: "/no-native-execution/tl3-run-backend".into(),
         environment: production::flux_job_environment(), container_mode: mode, runtime_bundles: vec![bundle.to_owned()],
-        staging_root: root.join("inputs"), output_root: "/mnt/shared/flux-out/tl3".into(), container_image: image.reference.clone(),
+        staging_root: staging, output_root: "/mnt/shared/flux-out/tl3".into(), container_image: image.reference.clone(),
     });
     config.validate()?; // Syntax only. No store, secrets, scheduler or container access.
     let delivery = fixture(&root.join("served"))?;
