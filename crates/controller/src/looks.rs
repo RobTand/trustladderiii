@@ -1308,7 +1308,7 @@ impl Controller {
                         .get(Upstream::PrismaBuild)?
                         .wait_record(&wait.key, &checkout)
                 } else {
-                    Err(crate::Error::Invalid("unrecognized external wait backend"))
+                    Ok(crate::executor::WaitRecord::Ended)
                 };
                 match state_decisions::wait_action(wait_status(&record), state.wait_ended) {
                     state_decisions::WaitAction::WatchAlive => {
