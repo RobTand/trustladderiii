@@ -864,7 +864,10 @@ fn missing_prompt_holds_launch(settings: &tl3_config::Store) {
     assert!(
         events
             .iter()
-            .all(|e| (e.receipt.result["kernel_event"]["Reply"].get("reply").or_else(|| e.receipt.result["kernel_planner_input"]["result"].get("Ordinary"))) != Some(&serde_json::json!("RunFailed"))),
+            .all(|e| (e.receipt.result["kernel_event"]["Reply"]
+                .get("reply")
+                .or_else(|| e.receipt.result["kernel_planner_input"]["result"].get("Ordinary")))
+                != Some(&serde_json::json!("RunFailed"))),
         "no failed run was reported"
     );
 }
@@ -1241,11 +1244,12 @@ fn simulation(settings: &tl3_config::Store) {
         "replayed progress must not refresh liveness"
     );
     let events = store.events_after(tl3_store::Revision::ZERO, 1000).unwrap();
-    assert!(
-        events
-            .iter()
-            .any(|e| (e.receipt.result["kernel_event"]["Reply"].get("reply").or_else(|| e.receipt.result["kernel_planner_input"]["result"].get("Ordinary"))) == Some(&serde_json::json!("AuditAgrees")))
-    );
+    assert!(events.iter().any(|e| {
+        (e.receipt.result["kernel_event"]["Reply"]
+            .get("reply")
+            .or_else(|| e.receipt.result["kernel_planner_input"]["result"].get("Ordinary")))
+            == Some(&serde_json::json!("AuditAgrees"))
+    }));
     assert_recorded_runs(root.path(), 2);
     let runs = recorded_runs(root.path());
     let prompt = |role: &str| {
@@ -2751,7 +2755,12 @@ fn confirmed_absence(settings: &tl3_config::Store) {
             .events_after(tl3_store::Revision::ZERO, 1000)
             .unwrap()
             .iter()
-            .filter(|e| (e.receipt.result["kernel_event"]["Reply"].get("reply").or_else(|| e.receipt.result["kernel_planner_input"]["result"].get("Ordinary"))) == Some(&serde_json::json!("RunFailed")))
+            .filter(|e| {
+                (e.receipt.result["kernel_event"]["Reply"]
+                    .get("reply")
+                    .or_else(|| e.receipt.result["kernel_planner_input"]["result"].get("Ordinary")))
+                    == Some(&serde_json::json!("RunFailed"))
+            })
             .count()
     };
     assert_eq!(failures(&mut store), 1);

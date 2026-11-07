@@ -45,9 +45,9 @@ pub mod memory;
 pub mod merge_dependencies;
 mod narrowing;
 mod notices;
+mod planner_input;
 pub mod postmortem_reply;
 mod postmortems;
-mod planner_input;
 use planner_input::KernelInput;
 pub mod quota;
 mod quota_wake;
@@ -2108,13 +2108,13 @@ impl Controller {
         });
         let mut dependency_outputs = Vec::new();
         if let KernelInput::Event(event) = input {
-        self.declare_merge_dependencies(
-            snapshot,
-            &mut world,
-            event,
-            &mut dependency_outputs,
-            commit,
-        )?;
+            self.declare_merge_dependencies(
+                snapshot,
+                &mut world,
+                event,
+                &mut dependency_outputs,
+                commit,
+            )?;
         }
         if !self.kernel_headroom(snapshot, &world, commit)? {
             return Ok(());
@@ -2127,33 +2127,61 @@ impl Controller {
             return Ok(());
         }
         let planner_before = match input {
-            KernelInput::Planner { node, generation, result } => {
-                Some((node, generation, result, planner_input::load_budget(snapshot, commit, node)?, world.clone()))
-            }
+            KernelInput::Planner {
+                node,
+                generation,
+                result,
+            } => Some((
+                node,
+                generation,
+                result,
+                planner_input::load_budget(snapshot, commit, node)?,
+                world.clone(),
+            )),
             KernelInput::Event(_) => None,
         };
         let (mut world, mut outputs) = match planner_before {
             Some((node, generation, result, budget, ref before)) => {
-                let (next, after_budget, outputs) = tl3_kernel::step_planner(world, budget, node, generation, result);
+                let (next, after_budget, outputs) =
+                    tl3_kernel::step_planner(world, budget, node, generation, result);
                 planner_input::save_budget(snapshot, commit, node, after_budget)?;
-                if after_budget.used() && next.nodes.get(node.0 as usize).is_some_and(|n|
-                    n.review_stop == Some(tl3_kernel::ReviewStop::PlanCantMeet)) {
+                if after_budget.used()
+                    && next.nodes.get(node.0 as usize).is_some_and(|n| {
+                        n.review_stop == Some(tl3_kernel::ReviewStop::PlanCantMeet)
+                    })
+                {
                     let plan = commit.rows.iter_mut().rev().find_map(|row| match row {
-                        RowChange::Put { table, id, value } if table == "plans" && *id == node.0.to_string() => Some(value),
+                        RowChange::Put { table, id, value }
+                            if table == "plans" && *id == node.0.to_string() =>
+                        {
+                            Some(value)
+                        }
                         _ => None,
                     });
                     if let Some(plan) = plan {
-                        plan["empty_allowed_replan_stop"] = json!("Planning failed after the one empty-allowed re-plan for this request version; stop for TL3 review.");
+                        plan["empty_allowed_replan_stop"] = json!(
+                            "Planning failed after the one empty-allowed re-plan for this request version; stop for TL3 review."
+                        );
                     }
                 }
-                if !commit.result.is_object() { commit.result = json!({}); }
+                if !commit.result.is_object() {
+                    commit.result = json!({});
+                }
                 commit.result["planner_replay"] = json!(replay::PlannerStepRecord {
-                    input: before.clone(), node, generation, result, budget, after_budget, after: next.clone(),
+                    input: before.clone(),
+                    node,
+                    generation,
+                    result,
+                    budget,
+                    after_budget,
+                    after: next.clone(),
                 });
                 (next, outputs)
             }
             None => {
-                let KernelInput::Event(event) = input else { unreachable!() };
+                let KernelInput::Event(event) = input else {
+                    unreachable!()
+                };
                 tl3_kernel::step(world, event)
             }
         };
@@ -2188,8 +2216,13 @@ impl Controller {
         }
         match input {
             KernelInput::Event(event) => commit.result["kernel_event"] = json!(event),
-            KernelInput::Planner { node, generation, result } => {
-                commit.result["kernel_planner_input"] = json!({"node":node,"generation":generation,"result":result});
+            KernelInput::Planner {
+                node,
+                generation,
+                result,
+            } => {
+                commit.result["kernel_planner_input"] =
+                    json!({"node":node,"generation":generation,"result":result});
             }
         }
         Ok(())
@@ -2209,7 +2242,8 @@ impl Controller {
             let budget = planner_input::load_budget(snapshot, commit, node)?;
             let row = planner_input::request_row(snapshot, commit, node)?;
             if row.get("replan_budget") != Some(&serde_json::to_value(budget)?)
-                || row.get("replan_budget_format") != Some(&json!(1)) {
+                || row.get("replan_budget_format") != Some(&json!(1))
+            {
                 planner_input::save_budget(snapshot, commit, node, budget)?;
             }
         }
@@ -3163,7 +3197,9 @@ impl Controller {
                 return Ok(None);
             }
             Observation::Classified { key, reply } => {
-                return self.classified(snapshot, world, &key, reply, commit).map(|event| event.map(KernelInput::Event));
+                return self
+                    .classified(snapshot, world, &key, reply, commit)
+                    .map(|event| event.map(KernelInput::Event));
             }
             Observation::Postmortem {
                 key,
@@ -3179,7 +3215,9 @@ impl Controller {
                 issue,
                 original,
             } => {
-                return self.linked_request(snapshot, repository, issue, original, commit).map(|event| event.map(KernelInput::Event));
+                return self
+                    .linked_request(snapshot, repository, issue, original, commit)
+                    .map(|event| event.map(KernelInput::Event));
             }
             Observation::Queue(mut fact) => {
                 if let adapters::mergify::Evidence::Gate(gate) = &fact.evidence {
@@ -3461,7 +3499,9 @@ impl Controller {
                 return Ok(None);
             }
             Observation::Steering { node, command } => {
-                return self.command_event(snapshot, world, node, command, commit).map(|event| event.map(KernelInput::Event));
+                return self
+                    .command_event(snapshot, world, node, command, commit)
+                    .map(|event| event.map(KernelInput::Event));
             }
             Observation::Kernel(event) => {
                 kernel_boundary::validate_raw_event(event).map_err(Error::Invalid)?
@@ -3809,7 +3849,9 @@ impl Controller {
                     .get(node.0 as usize)
                     .copied()
                     .ok_or(Error::Invalid("worker node missing"))?;
-                if role != "planner" && worker::worker_failed(n.run, n.generation, generation) == worker::Failure::Ignore
+                if role != "planner"
+                    && worker::worker_failed(n.run, n.generation, generation)
+                        == worker::Failure::Ignore
                 {
                     return Ok(None);
                 }
@@ -3841,8 +3883,11 @@ impl Controller {
                     Ok(reply) if valid_role => reply,
                     _ => {
                         if role == "planner" {
-                            return Ok(Some(KernelInput::Planner { node, generation,
-                                result: tl3_kernel::PlannerResult::Ordinary(Reply::RunFailed) }));
+                            return Ok(Some(KernelInput::Planner {
+                                node,
+                                generation,
+                                result: tl3_kernel::PlannerResult::Ordinary(Reply::RunFailed),
+                            }));
                         }
                         return Ok(Some(KernelInput::Event(Event::Reply {
                             node,
@@ -3851,14 +3896,20 @@ impl Controller {
                         })));
                     }
                 };
-                if role == "planner" && (!matches!(n.phase, tl3_kernel::Phase::Planning { .. })
-                    || n.generation != generation
-                    || (n.run != Some(generation) && n.job != Some(generation))) {
+                if role == "planner"
+                    && (!matches!(n.phase, tl3_kernel::Phase::Planning { .. })
+                        || n.generation != generation
+                        || (n.run != Some(generation) && n.job != Some(generation)))
+                {
                     let result = match mapped {
                         adapters::workers::protocol::MappedReply::Planner(result) => result,
                         _ => unreachable!("planner mapper"),
                     };
-                    return Ok(Some(KernelInput::Planner { node, generation, result }));
+                    return Ok(Some(KernelInput::Planner {
+                        node,
+                        generation,
+                        result,
+                    }));
                 }
                 // Q53 / #828: unknown legacy identity/order is not success evidence.
                 // Only model_success_evidence can clear ordered quota; reset and
@@ -4052,19 +4103,19 @@ impl Controller {
                     commit
                         .rows
                         .push(put("findings", node.0.to_string(), findings));
-                    if let adapters::workers::protocol::MappedReply::Planner(tl3_kernel::PlannerResult::Ordinary(Reply::PlanLeaf {
-                        fits,
-                        ..
-                    })) = mapped
+                    if let adapters::workers::protocol::MappedReply::Planner(
+                        tl3_kernel::PlannerResult::Ordinary(Reply::PlanLeaf { fits, .. }),
+                    ) = mapped
                     {
                         let paths = adapters::workers::protocol::reply_field::<Vec<String>>(
                             &reply, "files",
                         )?;
-                        mapped =
-                            adapters::workers::protocol::MappedReply::Planner(tl3_kernel::PlannerResult::Ordinary(Reply::PlanLeaf {
+                        mapped = adapters::workers::protocol::MappedReply::Planner(
+                            tl3_kernel::PlannerResult::Ordinary(Reply::PlanLeaf {
                                 footprint: self.footprint(snapshot, world, node, &paths)?,
                                 fits,
-                            }));
+                            }),
+                        );
                     }
                 }
                 let checkpoint = commit.rows.len();
@@ -4118,17 +4169,35 @@ impl Controller {
                 }
                 let mapped = match mapped {
                     adapters::workers::protocol::MappedReply::Planner(result) => {
-                        if !matches!(result, tl3_kernel::PlannerResult::Ordinary(Reply::RunFailed)) {
-                            commit.rows.push(RowChange::Delete { table: "worker_failures".into(), id: node.0.to_string() });
+                        if !matches!(
+                            result,
+                            tl3_kernel::PlannerResult::Ordinary(Reply::RunFailed)
+                        ) {
+                            commit.rows.push(RowChange::Delete {
+                                table: "worker_failures".into(),
+                                id: node.0.to_string(),
+                            });
                         }
-                        return Ok(Some(KernelInput::Planner { node, generation, result }));
+                        return Ok(Some(KernelInput::Planner {
+                            node,
+                            generation,
+                            result,
+                        }));
                     }
-                    adapters::workers::protocol::MappedReply::Kernel(reply) if role == "planner" => {
+                    adapters::workers::protocol::MappedReply::Kernel(reply)
+                        if role == "planner" =>
+                    {
                         if reply != Reply::RunFailed {
-                            commit.rows.push(RowChange::Delete { table: "worker_failures".into(), id: node.0.to_string() });
+                            commit.rows.push(RowChange::Delete {
+                                table: "worker_failures".into(),
+                                id: node.0.to_string(),
+                            });
                         }
-                        return Ok(Some(KernelInput::Planner { node, generation,
-                            result: tl3_kernel::PlannerResult::Ordinary(reply) }));
+                        return Ok(Some(KernelInput::Planner {
+                            node,
+                            generation,
+                            result: tl3_kernel::PlannerResult::Ordinary(reply),
+                        }));
                     }
                     adapters::workers::protocol::MappedReply::Kernel(reply) => reply,
                     adapters::workers::protocol::MappedReply::Made(sha) => {
@@ -4259,10 +4328,18 @@ impl Controller {
                     reply: mapped,
                 }
             }
-            Observation::Plan { node, generation, paths, fits } => {
-                return Ok(Some(KernelInput::Planner { node, generation,
+            Observation::Plan {
+                node,
+                generation,
+                paths,
+                fits,
+            } => {
+                return Ok(Some(KernelInput::Planner {
+                    node,
+                    generation,
                     result: tl3_kernel::PlannerResult::Ordinary(Reply::PlanLeaf {
-                        footprint: self.footprint(snapshot, world, node, &paths)?, fits,
+                        footprint: self.footprint(snapshot, world, node, &paths)?,
+                        fits,
                     }),
                 }));
             }
@@ -4505,7 +4582,9 @@ impl Controller {
                 .rows
                 .push(put("maker_findings", node.0.to_string(), findings));
         }
-        Ok(Some(KernelInput::Event(self.priority_reserve(snapshot, event)?)))
+        Ok(Some(KernelInput::Event(
+            self.priority_reserve(snapshot, event)?,
+        )))
     }
 
     /// #416: the kernel starts credit at the ingest size plus its reserve of 3.

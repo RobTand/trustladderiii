@@ -76,13 +76,13 @@
         });
         let mut dependency_outputs = Vec::new();
         if let KernelInput::Event(event) = input {
-        self.declare_merge_dependencies(
-            snapshot,
-            &mut world,
-            event,
-            &mut dependency_outputs,
-            commit,
-        )?;
+            self.declare_merge_dependencies(
+                snapshot,
+                &mut world,
+                event,
+                &mut dependency_outputs,
+                commit,
+            )?;
         }
         if !self.kernel_headroom(snapshot, &world, commit)? {
             return Ok(());
@@ -95,33 +95,61 @@
             return Ok(());
         }
         let planner_before = match input {
-            KernelInput::Planner { node, generation, result } => {
-                Some((node, generation, result, planner_input::load_budget(snapshot, commit, node)?, world.clone()))
-            }
+            KernelInput::Planner {
+                node,
+                generation,
+                result,
+            } => Some((
+                node,
+                generation,
+                result,
+                planner_input::load_budget(snapshot, commit, node)?,
+                world.clone(),
+            )),
             KernelInput::Event(_) => None,
         };
         let (mut world, mut outputs) = match planner_before {
             Some((node, generation, result, budget, ref before)) => {
-                let (next, after_budget, outputs) = tl3_kernel::step_planner(world, budget, node, generation, result);
+                let (next, after_budget, outputs) =
+                    tl3_kernel::step_planner(world, budget, node, generation, result);
                 planner_input::save_budget(snapshot, commit, node, after_budget)?;
-                if after_budget.used() && next.nodes.get(node.0 as usize).is_some_and(|n|
-                    n.review_stop == Some(tl3_kernel::ReviewStop::PlanCantMeet)) {
+                if after_budget.used()
+                    && next.nodes.get(node.0 as usize).is_some_and(|n| {
+                        n.review_stop == Some(tl3_kernel::ReviewStop::PlanCantMeet)
+                    })
+                {
                     let plan = commit.rows.iter_mut().rev().find_map(|row| match row {
-                        RowChange::Put { table, id, value } if table == "plans" && *id == node.0.to_string() => Some(value),
+                        RowChange::Put { table, id, value }
+                            if table == "plans" && *id == node.0.to_string() =>
+                        {
+                            Some(value)
+                        }
                         _ => None,
                     });
                     if let Some(plan) = plan {
-                        plan["empty_allowed_replan_stop"] = json!("Planning failed after the one empty-allowed re-plan for this request version; stop for TL3 review.");
+                        plan["empty_allowed_replan_stop"] = json!(
+                            "Planning failed after the one empty-allowed re-plan for this request version; stop for TL3 review."
+                        );
                     }
                 }
-                if !commit.result.is_object() { commit.result = json!({}); }
+                if !commit.result.is_object() {
+                    commit.result = json!({});
+                }
                 commit.result["planner_replay"] = json!(replay::PlannerStepRecord {
-                    input: before.clone(), node, generation, result, budget, after_budget, after: next.clone(),
+                    input: before.clone(),
+                    node,
+                    generation,
+                    result,
+                    budget,
+                    after_budget,
+                    after: next.clone(),
                 });
                 (next, outputs)
             }
             None => {
-                let KernelInput::Event(event) = input else { unreachable!() };
+                let KernelInput::Event(event) = input else {
+                    unreachable!()
+                };
                 tl3_kernel::step(world, event)
             }
         };
@@ -156,8 +184,13 @@
         }
         match input {
             KernelInput::Event(event) => commit.result["kernel_event"] = json!(event),
-            KernelInput::Planner { node, generation, result } => {
-                commit.result["kernel_planner_input"] = json!({"node":node,"generation":generation,"result":result});
+            KernelInput::Planner {
+                node,
+                generation,
+                result,
+            } => {
+                commit.result["kernel_planner_input"] =
+                    json!({"node":node,"generation":generation,"result":result});
             }
         }
         Ok(())

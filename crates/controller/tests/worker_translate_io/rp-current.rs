@@ -1,14 +1,36 @@
 use super::*;
 struct Shell<'a>(&'a mut Controller);
-impl std::ops::Deref for Shell<'_> { type Target=Controller; fn deref(&self)->&Controller { self.0 } }
-impl std::ops::DerefMut for Shell<'_> { fn deref_mut(&mut self)->&mut Controller { self.0 } }
+impl std::ops::Deref for Shell<'_> {
+    type Target = Controller;
+    fn deref(&self) -> &Controller {
+        self.0
+    }
+}
+impl std::ops::DerefMut for Shell<'_> {
+    fn deref_mut(&mut self) -> &mut Controller {
+        self.0
+    }
+}
 impl Shell<'_> {
-    fn translate(&mut self, snapshot: &Snapshot, world: &mut World, observation: Observation, commit: &mut Commit) -> Result<(Option<KernelInput>, bool)> {
+    fn translate(
+        &mut self,
+        snapshot: &Snapshot,
+        world: &mut World,
+        observation: Observation,
+        commit: &mut Commit,
+    ) -> Result<(Option<KernelInput>, bool)> {
         let mut detailed_review = false;
         let event = self.arm(snapshot, world, observation, commit, &mut detailed_review)?;
         Ok((event, detailed_review))
     }
-    fn arm(&mut self, snapshot: &Snapshot, world: &mut World, observation: Observation, commit: &mut Commit, detail: &mut bool) -> Result<Option<KernelInput>> {
+    fn arm(
+        &mut self,
+        snapshot: &Snapshot,
+        world: &mut World,
+        observation: Observation,
+        commit: &mut Commit,
+        detail: &mut bool,
+    ) -> Result<Option<KernelInput>> {
         let mut detailed_review = false;
         let event = match observation {
             Observation::WorkerFailed {
@@ -54,7 +76,9 @@ impl Shell<'_> {
                     .get(node.0 as usize)
                     .copied()
                     .ok_or(Error::Invalid("worker node missing"))?;
-                if role != "planner" && worker::worker_failed(n.run, n.generation, generation) == worker::Failure::Ignore
+                if role != "planner"
+                    && worker::worker_failed(n.run, n.generation, generation)
+                        == worker::Failure::Ignore
                 {
                     return Ok(None);
                 }
@@ -86,8 +110,11 @@ impl Shell<'_> {
                     Ok(reply) if valid_role => reply,
                     _ => {
                         if role == "planner" {
-                            return Ok(Some(KernelInput::Planner { node, generation,
-                                result: tl3_kernel::PlannerResult::Ordinary(Reply::RunFailed) }));
+                            return Ok(Some(KernelInput::Planner {
+                                node,
+                                generation,
+                                result: tl3_kernel::PlannerResult::Ordinary(Reply::RunFailed),
+                            }));
                         }
                         return Ok(Some(KernelInput::Event(Event::Reply {
                             node,
@@ -96,14 +123,20 @@ impl Shell<'_> {
                         })));
                     }
                 };
-                if role == "planner" && (!matches!(n.phase, tl3_kernel::Phase::Planning { .. })
-                    || n.generation != generation
-                    || (n.run != Some(generation) && n.job != Some(generation))) {
+                if role == "planner"
+                    && (!matches!(n.phase, tl3_kernel::Phase::Planning { .. })
+                        || n.generation != generation
+                        || (n.run != Some(generation) && n.job != Some(generation)))
+                {
                     let result = match mapped {
                         adapters::workers::protocol::MappedReply::Planner(result) => result,
                         _ => unreachable!("planner mapper"),
                     };
-                    return Ok(Some(KernelInput::Planner { node, generation, result }));
+                    return Ok(Some(KernelInput::Planner {
+                        node,
+                        generation,
+                        result,
+                    }));
                 }
                 // Legacy quota rows have no ordering identity. Preserve their
                 // once-only reply consumption until fresh quota facts replace them.
@@ -306,19 +339,19 @@ impl Shell<'_> {
                     commit
                         .rows
                         .push(put("findings", node.0.to_string(), findings));
-                    if let adapters::workers::protocol::MappedReply::Planner(tl3_kernel::PlannerResult::Ordinary(Reply::PlanLeaf {
-                        fits,
-                        ..
-                    })) = mapped
+                    if let adapters::workers::protocol::MappedReply::Planner(
+                        tl3_kernel::PlannerResult::Ordinary(Reply::PlanLeaf { fits, .. }),
+                    ) = mapped
                     {
                         let paths = adapters::workers::protocol::reply_field::<Vec<String>>(
                             &reply, "files",
                         )?;
-                        mapped =
-                            adapters::workers::protocol::MappedReply::Planner(tl3_kernel::PlannerResult::Ordinary(Reply::PlanLeaf {
+                        mapped = adapters::workers::protocol::MappedReply::Planner(
+                            tl3_kernel::PlannerResult::Ordinary(Reply::PlanLeaf {
                                 footprint: self.footprint(snapshot, world, node, &paths)?,
                                 fits,
-                            }));
+                            }),
+                        );
                     }
                 }
                 let checkpoint = commit.rows.len();
@@ -372,17 +405,35 @@ impl Shell<'_> {
                 }
                 let mapped = match mapped {
                     adapters::workers::protocol::MappedReply::Planner(result) => {
-                        if !matches!(result, tl3_kernel::PlannerResult::Ordinary(Reply::RunFailed)) {
-                            commit.rows.push(RowChange::Delete { table: "worker_failures".into(), id: node.0.to_string() });
+                        if !matches!(
+                            result,
+                            tl3_kernel::PlannerResult::Ordinary(Reply::RunFailed)
+                        ) {
+                            commit.rows.push(RowChange::Delete {
+                                table: "worker_failures".into(),
+                                id: node.0.to_string(),
+                            });
                         }
-                        return Ok(Some(KernelInput::Planner { node, generation, result }));
+                        return Ok(Some(KernelInput::Planner {
+                            node,
+                            generation,
+                            result,
+                        }));
                     }
-                    adapters::workers::protocol::MappedReply::Kernel(reply) if role == "planner" => {
+                    adapters::workers::protocol::MappedReply::Kernel(reply)
+                        if role == "planner" =>
+                    {
                         if reply != Reply::RunFailed {
-                            commit.rows.push(RowChange::Delete { table: "worker_failures".into(), id: node.0.to_string() });
+                            commit.rows.push(RowChange::Delete {
+                                table: "worker_failures".into(),
+                                id: node.0.to_string(),
+                            });
                         }
-                        return Ok(Some(KernelInput::Planner { node, generation,
-                            result: tl3_kernel::PlannerResult::Ordinary(reply) }));
+                        return Ok(Some(KernelInput::Planner {
+                            node,
+                            generation,
+                            result: tl3_kernel::PlannerResult::Ordinary(reply),
+                        }));
                     }
                     adapters::workers::protocol::MappedReply::Kernel(reply) => reply,
                     adapters::workers::protocol::MappedReply::Made(sha) => {
@@ -518,7 +569,15 @@ impl Shell<'_> {
         Ok(Some(KernelInput::Event(event)))
     }
 }
-pub(super) fn translate(c: &mut Controller, s: &Snapshot, w: &mut World, o: Observation, commit: &mut Commit) -> Result<(Option<KernelInput>, bool)> { Shell(c).translate(s,w,o,commit) }
+pub(super) fn translate(
+    c: &mut Controller,
+    s: &Snapshot,
+    w: &mut World,
+    o: Observation,
+    commit: &mut Commit,
+) -> Result<(Option<KernelInput>, bool)> {
+    Shell(c).translate(s, w, o, commit)
+}
 // The current arm resolves `adapters::workers::reproducing` to the current
 // production body (#824 moved node-id parsing to tl3-harness-core). The
 // reference arm keeps the frozen pre-#824 copy in reproducing.rs, so no shared

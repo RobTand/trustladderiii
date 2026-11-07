@@ -30,7 +30,10 @@ fn production_and_reference_sources_are_pinned() {
     // Q53 / #828: preserve the historical extraction comparison, including its
     // obsolete legacy clear. The real-store upgrade test asserts the new rule.
     let legacy = include_str!("legacy-quota-clear.rs.txt");
-    assert_eq!(format!("{:x}", Sha256::digest(legacy)), pins["legacy_quota_clear"]["sha256"]);
+    assert_eq!(
+        format!("{:x}", Sha256::digest(legacy)),
+        pins["legacy_quota_clear"]["sha256"]
+    );
     let source = include_str!("../../src/lib.rs");
     let historical_current = include_str!("current.rs");
     let normalized = historical_current.replace(legacy, "                // Q53 / #828: unknown legacy identity/order is not success evidence.\n                // Only model_success_evidence can clear ordered quota; reset and\n                // operator clear remain available for pre-upgrade holds.\n");
@@ -44,7 +47,13 @@ fn production_and_reference_sources_are_pinned() {
     assert!(!normalized_arm[..normalized_end].contains("empty_allowed_replanned"));
     for (copy, expected) in [
         (include_str!("reference.rs"), base),
-        (include_str!("current.rs"), arm(historical_current).split("        };\n        *detail").next().unwrap()),
+        (
+            include_str!("current.rs"),
+            arm(historical_current)
+                .split("        };\n        *detail")
+                .next()
+                .unwrap(),
+        ),
     ] {
         let a = copy
             .find("            Observation::WorkerFailed {")
@@ -99,7 +108,9 @@ fn production_and_reference_sources_are_pinned() {
                 }
             } else {
                 let body = if name == "plan-size" {
-                    let start = production.find("pub(crate) fn validate_plan_size(").unwrap();
+                    let start = production
+                        .find("pub(crate) fn validate_plan_size(")
+                        .unwrap();
                     let helper = production[start..].find("fn ascii_json_bytes(").unwrap() + start;
                     let end = production[helper..].find("\n}\n").unwrap() + helper + 3;
                     &production[start..end]
@@ -171,8 +182,14 @@ fn mandatory_roles_and_staleness() {
             assert!(r.calls.is_empty());
             if role == "planner" {
                 assert!(r.result.get("planner_input").is_some());
-                assert!(r.result["planner_input"]["result"].get("Ordinary").is_some());
-            } else { assert_eq!(r.result["event"], Value::Null); }
+                assert!(
+                    r.result["planner_input"]["result"]
+                        .get("Ordinary")
+                        .is_some()
+                );
+            } else {
+                assert_eq!(r.result["event"], Value::Null);
+            }
         }
     }
     for role in ["writer", "classifier", "postmortem", "unknown"] {
@@ -187,8 +204,11 @@ fn mandatory_role_validation_and_error_classes() {
         let mut s = schedule(role, reply(role));
         s.phase = tl3_kernel::Phase::Queued;
         let route = routed(&s);
-        if role == "planner" { assert!(route.result.get("planner_input").is_some()); }
-        else { assert!(route.result.to_string().contains("RunFailed")); }
+        if role == "planner" {
+            assert!(route.result.get("planner_input").is_some());
+        } else {
+            assert!(route.result.to_string().contains("RunFailed"));
+        }
         assert!(
             routed(&schedule(role, json!({})))
                 .result

@@ -3,7 +3,10 @@ use super::*;
 
 /// Kernel state persisted in the existing requests/<NodeId> row, outside World.
 /// Only creation of a new request version may call `new`; generations reuse it.
-#[cfg_attr(all(feature = "serde", not(kani)), derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
@@ -62,7 +65,10 @@ impl ReplanBudget {
 
 /// Separate from Reply and Event, so dependency-reachable types carry no budget.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(all(feature = "serde", not(kani)), derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    all(feature = "serde", not(kani)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub enum PlannerResult {
@@ -258,7 +264,6 @@ pub(super) fn reply_empty_replan(w: &mut World, i: usize, budget: &mut ReplanBud
     }
 }
 }
-
 
 #[cfg(verus_keep_ghost)]
 kernel_fn! {

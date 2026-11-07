@@ -33,15 +33,17 @@ pub(crate) fn map_reply_with_plan_check(
         if provenance.empty_allowed_replan() {
             return Ok(MappedReply::Planner(PlannerResult::EmptyAllowedReplan));
         }
-        return Ok(MappedReply::Planner(PlannerResult::Ordinary(if provenance
-            .objections
-            .iter()
-            .any(|objection| objection.class != ObjectionClass::SizeExecutionFit)
-        {
-            Reply::PlanCheckRejected
-        } else {
-            Reply::PlanCheckNeedsSplit
-        })));
+        return Ok(MappedReply::Planner(PlannerResult::Ordinary(
+            if provenance
+                .objections
+                .iter()
+                .any(|objection| objection.class != ObjectionClass::SizeExecutionFit)
+            {
+                Reply::PlanCheckRejected
+            } else {
+                Reply::PlanCheckNeedsSplit
+            },
+        )));
     }
     if role == "maker" {
         return Ok(match reply["kind"].as_str().unwrap() {
@@ -85,7 +87,9 @@ pub(crate) fn map_reply_with_plan_check(
         });
     }
     if role == "planner" {
-        return Ok(MappedReply::Planner(PlannerResult::Ordinary(ordinary_planner_reply(reply)?)));
+        return Ok(MappedReply::Planner(PlannerResult::Ordinary(
+            ordinary_planner_reply(reply)?,
+        )));
     }
     Ok(MappedReply::Kernel(match role {
         "ingest" if reply["kind"] == "brief" => {
@@ -258,4 +262,3 @@ pub(crate) fn reply_field<T: serde::de::DeserializeOwned>(reply: &Value, field: 
         .ok_or(Error::Invalid("worker reply field missing"))?;
     serde_json::from_value(value.clone()).map_err(|_| Error::Invalid("invalid worker reply field"))
 }
-

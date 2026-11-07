@@ -341,7 +341,8 @@ fn execute(schedule: &Schedule, current: bool, cut: Option<Cut>) -> Run {
                 &mut world,
                 schedule.observation.clone(),
                 &mut commit,
-            ).map(|(event, detail)| (event.map(KernelInput::Event), detail))
+            )
+            .map(|(event, detail)| (event.map(KernelInput::Event), detail))
         }
     }));
     let mut recording = ACTIVE.with(|r| r.borrow_mut().take().unwrap());
@@ -351,9 +352,17 @@ fn execute(schedule: &Schedule, current: bool, cut: Option<Cut>) -> Run {
             recording.run.persisted = recording.run.pending.clone();
             recording.run.committed = recording.run.rows.clone();
             match event {
-                Some(KernelInput::Planner { node, generation, result }) => {
+                Some(KernelInput::Planner {
+                    node,
+                    generation,
+                    result,
+                }) => {
                     let event = match result {
-                        PlannerResult::Ordinary(reply) => json!(Event::Reply { node, generation, reply }),
+                        PlannerResult::Ordinary(reply) => json!(Event::Reply {
+                            node,
+                            generation,
+                            reply
+                        }),
                         PlannerResult::EmptyAllowedReplan => Value::Null,
                     };
                     json!({"event":event,"detailed_review":detail,"planner_input":{"node":node,"generation":generation,"result":result}})
@@ -371,11 +380,20 @@ fn execute(schedule: &Schedule, current: bool, cut: Option<Cut>) -> Run {
 pub(super) fn compare(s: &Schedule) -> Run {
     let old = execute(s, false, None);
     let new = execute(s, true, None);
-    let project = |mut run: Run| { run.result.as_object_mut().map(|result| result.remove("planner_input")); run };
+    let project = |mut run: Run| {
+        run.result
+            .as_object_mut()
+            .map(|result| result.remove("planner_input"));
+        run
+    };
     let planner_changed = matches!(&s.observation, Observation::WorkerReply { role, .. } if role == "planner")
         && (s.run != Some(7) || s.generation != 7 || !matches!(s.phase, Phase::Planning { .. }));
     if planner_changed && !s.missing {
-        assert!(new.result.get("planner_input").is_some() || new.result.to_string().contains("RunFailed"), "planner delivery must reach real boundary: {new:?}");
+        assert!(
+            new.result.get("planner_input").is_some()
+                || new.result.to_string().contains("RunFailed"),
+            "planner delivery must reach real boundary: {new:?}"
+        );
         assert!(new.calls.is_empty());
         assert!(new.rows.is_empty());
         assert!(new.committed.is_empty());

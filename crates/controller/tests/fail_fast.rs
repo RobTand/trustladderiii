@@ -1644,8 +1644,13 @@ impl Executor for RpHeldPlans {
 }
 
 fn request_budget(snapshot: &tl3_store::Snapshot, node: u64) -> tl3_kernel::ReplanBudget {
-    let row = snapshot.rows.iter().find(|r| r.table == "requests" && r.id == node.to_string()).unwrap();
-    let budget: tl3_kernel::ReplanBudget = serde_json::from_value(row.value["replan_budget"].clone()).unwrap();
+    let row = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "requests" && r.id == node.to_string())
+        .unwrap();
+    let budget: tl3_kernel::ReplanBudget =
+        serde_json::from_value(row.value["replan_budget"].clone()).unwrap();
     assert!(budget.bound_to(tl3_kernel::NodeId(node)));
     budget
 }

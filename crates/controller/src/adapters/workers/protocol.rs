@@ -69,15 +69,17 @@ pub(crate) fn map_reply_with_plan_check(
         if provenance.empty_allowed_replan() {
             return Ok(MappedReply::Planner(PlannerResult::EmptyAllowedReplan));
         }
-        return Ok(MappedReply::Planner(PlannerResult::Ordinary(if provenance
-            .objections
-            .iter()
-            .any(|objection| objection.class != ObjectionClass::SizeExecutionFit)
-        {
-            Reply::PlanCheckRejected
-        } else {
-            Reply::PlanCheckNeedsSplit
-        })));
+        return Ok(MappedReply::Planner(PlannerResult::Ordinary(
+            if provenance
+                .objections
+                .iter()
+                .any(|objection| objection.class != ObjectionClass::SizeExecutionFit)
+            {
+                Reply::PlanCheckRejected
+            } else {
+                Reply::PlanCheckNeedsSplit
+            },
+        )));
     }
     if role == "maker" {
         return Ok(match reply["kind"].as_str().unwrap() {
@@ -121,7 +123,9 @@ pub(crate) fn map_reply_with_plan_check(
         });
     }
     if role == "planner" {
-        return Ok(MappedReply::Planner(PlannerResult::Ordinary(ordinary_planner_reply(reply)?)));
+        return Ok(MappedReply::Planner(PlannerResult::Ordinary(
+            ordinary_planner_reply(reply)?,
+        )));
     }
     Ok(MappedReply::Kernel(match role {
         "ingest" if reply["kind"] == "brief" => {
@@ -665,7 +669,9 @@ mod reply_contract_tests {
         match value {
             Ok(MappedReply::Kernel(reply)) => format!("kernel:{reply:?}"),
             Ok(MappedReply::Planner(PlannerResult::Ordinary(reply))) => format!("kernel:{reply:?}"),
-            Ok(MappedReply::Planner(PlannerResult::EmptyAllowedReplan)) => "planner:empty-allowed-replan".into(),
+            Ok(MappedReply::Planner(PlannerResult::EmptyAllowedReplan)) => {
+                "planner:empty-allowed-replan".into()
+            }
             Ok(MappedReply::Made(head)) => format!("made:{head}"),
             Ok(MappedReply::NeedsFiles { paths, fits }) => format!("files:{paths:?}:{fits}"),
             Err(error) => format!("error:{error}"),

@@ -35,7 +35,11 @@ impl PlannerStepRecord {
         }
         check_world(&self.input)?;
         let (world, budget, _) = tl3_kernel::step_planner(
-            self.input.clone(), self.budget, self.node, self.generation, self.result,
+            self.input.clone(),
+            self.budget,
+            self.node,
+            self.generation,
+            self.result,
         );
         check_world(&world)?;
         if world != self.after || budget != self.after_budget {
@@ -65,8 +69,12 @@ pub(crate) enum StoredSnapshot {
 pub(crate) fn stored_snapshot(
     result: &serde_json::Value,
 ) -> Result<Option<StoredSnapshot>, &'static str> {
-    if ["kernel_anchor", "kernel_replay", "planner_replay"].iter()
-        .filter(|key| result.get(**key).is_some()).count() > 1 {
+    if ["kernel_anchor", "kernel_replay", "planner_replay"]
+        .iter()
+        .filter(|key| result.get(**key).is_some())
+        .count()
+        > 1
+    {
         return Err("ambiguous replay record");
     }
     if let Some(anchor) = result.get("kernel_anchor") {
@@ -77,7 +85,9 @@ pub(crate) fn stored_snapshot(
     }
     if let Some(value) = result.get("planner_replay") {
         return serde_json::from_value(value.clone())
-            .map(StoredSnapshot::Planner).map(Some).map_err(|_| "invalid planner replay");
+            .map(StoredSnapshot::Planner)
+            .map(Some)
+            .map_err(|_| "invalid planner replay");
     }
     result
         .get("kernel_replay")
@@ -111,7 +121,9 @@ pub fn check_record(
             check_prepared(world, &planner.input).map_err(|reason| fail(&reason))?;
         }
         if let Some(metadata) = result.get("kernel_planner_input")
-            && *metadata != serde_json::json!({"node":planner.node,"generation":planner.generation,"result":planner.result}) {
+            && *metadata
+                != serde_json::json!({"node":planner.node,"generation":planner.generation,"result":planner.result})
+        {
             return Err(fail("planner input metadata diverged"));
         }
         return Ok(Some(planner.after));
@@ -181,19 +193,31 @@ pub fn check_record(
 /// Translation may append interned footprints before either public entry.
 fn check_prepared(world: &World, input: &World) -> Result<(), String> {
     let mut prepared = serde_json::to_value(world).map_err(|_| "cannot encode baseline")?;
-    prepared["file_sets"] = serde_json::to_value(input.file_sets()).map_err(|_| "cannot encode footprints")?;
+    prepared["file_sets"] =
+        serde_json::to_value(input.file_sets()).map_err(|_| "cannot encode footprints")?;
     if !input.file_sets().starts_with(world.file_sets())
-        || prepared != serde_json::to_value(input).map_err(|_| "cannot encode input")? {
+        || prepared != serde_json::to_value(input).map_err(|_| "cannot encode input")?
+    {
         return Err("step input snapshot diverged".into());
     }
     Ok(())
 }
 
-fn check_budget_chain(record: &EventRecord, budgets: &mut std::collections::BTreeMap<u64, ReplanBudget>) -> Result<(), String> {
+fn check_budget_chain(
+    record: &EventRecord,
+    budgets: &mut std::collections::BTreeMap<u64, ReplanBudget>,
+) -> Result<(), String> {
     if let Some(value) = record.receipt.result.get("planner_replay") {
-        let planner: PlannerStepRecord = serde_json::from_value(value.clone()).map_err(|_| "invalid planner replay")?;
-        if budgets.get(&planner.node.0).is_some_and(|budget| *budget != planner.budget) {
-            return Err(format!("event {}: planner budget chain diverged", record.key));
+        let planner: PlannerStepRecord =
+            serde_json::from_value(value.clone()).map_err(|_| "invalid planner replay")?;
+        if budgets
+            .get(&planner.node.0)
+            .is_some_and(|budget| *budget != planner.budget)
+        {
+            return Err(format!(
+                "event {}: planner budget chain diverged",
+                record.key
+            ));
         }
         budgets.insert(planner.node.0, planner.after_budget);
     }
@@ -299,10 +323,21 @@ pub fn run(reader: &mut tl3_store::Reader, from: Option<&str>) -> crate::Result<
     let read = tl3_store::Commit::new("replay-read", serde_json::json!({}), &snapshot);
     for index in 0..expected.nodes.len() {
         let node = NodeId(index as u64);
-        let budget = crate::planner_input::load_budget(&snapshot, &read, node)
-            .map_err(|error| Error::Replay(format!("event {last_key}: final budget {}: {error}", node.0)))?;
-        if budgets.get(&node.0).is_some_and(|expected| *expected != budget) {
-            return Err(Error::Replay(format!("event {last_key}: final planner budget {} diverged", node.0)));
+        let budget =
+            crate::planner_input::load_budget(&snapshot, &read, node).map_err(|error| {
+                Error::Replay(format!(
+                    "event {last_key}: final budget {}: {error}",
+                    node.0
+                ))
+            })?;
+        if budgets
+            .get(&node.0)
+            .is_some_and(|expected| *expected != budget)
+        {
+            return Err(Error::Replay(format!(
+                "event {last_key}: final planner budget {} diverged",
+                node.0
+            )));
         }
     }
     tx.commit().map_err(tl3_store::Error::from)?;
@@ -336,7 +371,6 @@ pub fn command() -> crate::Result<()> {
     Ok(())
 }
 
-
 #[cfg(test)]
 mod planner_tests {
     use super::*;
@@ -347,13 +381,19 @@ mod planner_tests {
         let input = World::new(&[1], 1);
         let budget = ReplanBudget::import(NodeId(0), consumed);
         let result = PlannerResult::Ordinary(tl3_kernel::Reply::PlanCantMeet);
-        let (after, after_budget, _) = tl3_kernel::step_planner(input.clone(), budget, NodeId(0), 7, result);
-        EventRecord { key: "planner-record".into(), payload: json!({}), receipt: CommitReceipt {
-            revision: Revision::try_from(1).unwrap(), epoch: Epoch::ZERO,
-            result: json!({"planner_replay":PlannerStepRecord { input, node:NodeId(0), generation:7,
+        let (after, after_budget, _) =
+            tl3_kernel::step_planner(input.clone(), budget, NodeId(0), 7, result);
+        EventRecord {
+            key: "planner-record".into(),
+            payload: json!({}),
+            receipt: CommitReceipt {
+                revision: Revision::try_from(1).unwrap(),
+                epoch: Epoch::ZERO,
+                result: json!({"planner_replay":PlannerStepRecord { input, node:NodeId(0), generation:7,
                 result, budget, after_budget, after },
                 "kernel_planner_input":{"node":0,"generation":7,"result":result}}),
-        }}
+            },
+        }
     }
 
     #[test]
@@ -364,17 +404,33 @@ mod planner_tests {
         check_record(&reset, None).unwrap();
         let mut budgets = std::collections::BTreeMap::new();
         check_budget_chain(&first, &mut budgets).unwrap();
-        assert!(check_budget_chain(&reset, &mut budgets).unwrap_err().contains("budget chain"));
-        for pointer in ["/planner_replay/budget/request", "/planner_replay/after_budget/request",
-            "/kernel_planner_input/node"] {
+        assert!(
+            check_budget_chain(&reset, &mut budgets)
+                .unwrap_err()
+                .contains("budget chain")
+        );
+        for pointer in [
+            "/planner_replay/budget/request",
+            "/planner_replay/after_budget/request",
+            "/kernel_planner_input/node",
+        ] {
             let mut corrupt = first.clone();
             *corrupt.receipt.result.pointer_mut(pointer).unwrap() = json!(1);
             assert!(check_record(&corrupt, None).is_err(), "{pointer}");
         }
         let mut corrupt = first.clone();
         corrupt.receipt.result["planner_replay"]["after_budget"]["used"] = json!(false);
-        assert!(check_record(&corrupt, None).unwrap_err().contains("budget diverged"));
-        corrupt.receipt.result.as_object_mut().unwrap().remove("planner_replay");
+        assert!(
+            check_record(&corrupt, None)
+                .unwrap_err()
+                .contains("budget diverged")
+        );
+        corrupt
+            .receipt
+            .result
+            .as_object_mut()
+            .unwrap()
+            .remove("planner_replay");
         assert!(check_record(&corrupt, None).is_err());
     }
 }

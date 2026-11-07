@@ -445,13 +445,19 @@ fn emission_coverage(
     let mut budgets = BTreeMap::new();
     for record in store.events_after(Revision::ZERO, u32::MAX).unwrap() {
         let (next, outputs) = if let Some(value) = record.receipt.result.get("planner_replay") {
-            let planner: tl3_controller::replay::PlannerStepRecord = serde_json::from_value(value.clone()).unwrap();
+            let planner: tl3_controller::replay::PlannerStepRecord =
+                serde_json::from_value(value.clone()).unwrap();
             planner.check().unwrap();
             if let Some(previous) = budgets.get(&planner.node.0) {
                 assert_eq!(*previous, planner.budget, "planner budget chain");
             }
-            let (next, budget, outputs) = tl3_kernel::step_planner(world, planner.budget,
-                planner.node, planner.generation, planner.result);
+            let (next, budget, outputs) = tl3_kernel::step_planner(
+                world,
+                planner.budget,
+                planner.node,
+                planner.generation,
+                planner.result,
+            );
             assert_eq!(budget, planner.after_budget);
             budgets.insert(planner.node.0, budget);
             (next, outputs)
@@ -459,7 +465,10 @@ fn emission_coverage(
             let event: Event = serde_json::from_value(value.clone()).unwrap();
             tl3_kernel::step(world, event)
         } else {
-            assert!(record.receipt.result.get("kernel_planner_input").is_none(), "missing planner replay");
+            assert!(
+                record.receipt.result.get("kernel_planner_input").is_none(),
+                "missing planner replay"
+            );
             continue;
         };
         world = next;
