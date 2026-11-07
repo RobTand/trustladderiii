@@ -2609,6 +2609,17 @@ fn undispatched_cancel_commits_without_runtime_debt_or_native_effect() {
     fs::write(f.root.path().join("jobspec.py"), "raise SystemExit(1)\n").unwrap();
     assert_eq!(f.submit()["kind"], "unknown");
     assert!(!f.state().dispatched);
+    let legacy_debt = f
+        .options
+        .journal_root
+        .join("cleanup-debt")
+        .join(&f.request.runtime.manifest_digest);
+    fs::create_dir_all(&legacy_debt).unwrap();
+    fs::write(
+        legacy_debt.join(format!("{}.unregistered", f.intent.correlation)),
+        serde_json::to_vec(&f.intent).unwrap(),
+    )
+    .unwrap();
     let frames =
         f.call(json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}));
     assert_eq!(

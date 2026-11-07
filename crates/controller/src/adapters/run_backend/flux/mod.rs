@@ -66,6 +66,8 @@ impl Flux {
             });
         }
         if !record.dispatched {
+            // Also retire exact unregistered debt retained by earlier versions.
+            self.run_cleanup(owner)?;
             let terminal = self.terminal(
                 owner,
                 Ending::Cancelled,
