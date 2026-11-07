@@ -26,15 +26,19 @@ def main():
     parser.add_argument("manifest", type=Path)
     parser.add_argument("context", type=Path)
     parser.add_argument("expected_generation")
+    parser.add_argument("--fixture-kind", choices=("success", "cancel"), default="success")
     args = parser.parse_args()
     if identity(args.binary)["sha256"] != args.binary_sha256:
         raise RuntimeError("BuildBuddy binary digest mismatch")
     source = Path(__file__).resolve().parent.parent
     subprocess.run([str(args.binary), str(args.destination), str(args.manifest),
-                    str(args.context), str(source), args.expected_generation], check=True, timeout=180)
+                    str(args.context), str(source), args.expected_generation,
+                    "--fixture-kind", args.fixture_kind], check=True, timeout=180)
     packet_path = args.destination / "packet.json"
     packet = json.loads(packet_path.read_bytes())
     assert packet["status"] == "HELD_NOT_RELEASED_NOT_EXECUTED"
+    assert packet["fixture"] == {"kind": args.fixture_kind,
+                                 "wait_seconds": 12 if args.fixture_kind == "cancel" else 0}
     assert packet["runtime_qualified"] is False
     assert packet["generation"] == args.expected_generation
     # Independent reader checks every staged identity recorded by the Rust entrypoint.
@@ -54,7 +58,7 @@ def main():
     verify(packet)
     result = {"status": "PASS_PREPARATION_ONLY_HELD", "packet": identity(packet_path),
               "verified_identities": checked, "source_snapshot": packet["source_snapshot"],
-              "driver": identity(__file__), "cpu_affinity": sorted(os.sched_getaffinity(0)),
+              "fixture": packet["fixture"], "driver": identity(__file__), "cpu_affinity": sorted(os.sched_getaffinity(0)),
               "native_calls": 0, "container_calls": 0, "runtime_qualified": False}
     result_path = args.destination / "preparation-verdict.json"
     with result_path.open("x") as stream:
