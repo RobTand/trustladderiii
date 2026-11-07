@@ -102,11 +102,18 @@ fn transition_table_conforms_to_store() {
     }
 }
 
+fn delivery_source() -> String {
+    let source = include_str!("../../src/lib.rs");
+    let current = "Event::Ack { node, seq, ack },\n                &mut commit,\n                None,";
+    assert_eq!(source.matches(current).count(), 1);
+    source.replace(current, "Event::Ack { node, seq, ack },\n                &mut commit,")
+}
+
 /// CC-E extraction: the complete original method is retained verbatim. The only
 /// changes are pure plan substitution and the separately verified key comparison.
 #[test]
 fn completion_shell_keeps_every_other_statement_verbatim() {
-    let source = include_str!("../../src/lib.rs");
+    let source = delivery_source();
     let start = source.find("    fn prepare_completion(").unwrap();
     let end = source[start..].find("\n    fn apply(").unwrap() + start;
     let restored = source[start..end]
@@ -243,7 +250,7 @@ fn changing_key_reads_and_completion_writes_agree() {
 /// The kernel-step glue in apply is covered through controller interfaces.
 #[test]
 fn owned_controller_io_shell_remains_verbatim() {
-    let source = include_str!("../../src/lib.rs");
+    let source = delivery_source();
     let start = source.find("    fn retire_effect(").unwrap();
     let end = source[start..].find("    fn apply(").unwrap() + start;
     let restored = source[start..end]

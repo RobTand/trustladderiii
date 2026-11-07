@@ -1257,7 +1257,7 @@ mod tests {
             json!(event),
             &snapshot,
         );
-        c.apply(&snapshot, world, event, &mut commit).unwrap();
+        c.apply(&snapshot, world, event, &mut commit, None).unwrap();
         c.store.commit(&commit).unwrap();
     }
 
@@ -1300,11 +1300,19 @@ mod tests {
             json!(observation),
             &snapshot,
         );
+        let mut feedback = crate::feedback::Evidence::default();
         if let Some(event) = c
-            .translate(&snapshot, &mut world, observation, &mut commit)
+            .translate(
+                &snapshot,
+                &mut world,
+                observation,
+                &mut commit,
+                &mut feedback,
+            )
             .unwrap()
         {
-            c.apply(&snapshot, world, event, &mut commit).unwrap();
+            c.apply(&snapshot, world, event, &mut commit, Some(&feedback))
+                .unwrap();
         }
         c.store.commit(&commit).unwrap();
     }
@@ -1508,6 +1516,7 @@ mod tests {
                 priority: tl3_kernel::Priority::Unranked,
             },
             &mut commit,
+            None,
         )
         .unwrap();
         c.store.commit(&commit).unwrap();

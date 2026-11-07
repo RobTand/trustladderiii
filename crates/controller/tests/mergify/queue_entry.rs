@@ -236,7 +236,8 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             // maker's feedback is exactly these stored findings.
             let findings = Store::open(settings)
                 .unwrap()
-                .worker_document("0", "maker_findings")
+                .worker_document("0", "feedback")
+                .map(|document| document.map(|value| value["maker"].clone()))
                 .unwrap()
                 .expect("#862: a D2 repair round needs maker feedback (/feedback required)")
                 .to_string();

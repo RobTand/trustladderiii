@@ -1337,12 +1337,11 @@ impl Store {
                 | "goals"
                 | "audits"
                 | "maker_replies"
-                | "maker_findings"
+                | "feedback"
                 | "review_fixes"
                 | "maker_session"
                 | "reviewer_session"
                 | "plans"
-                | "findings"
         ) {
             return Err(Error::Invalid("unknown worker document"));
         }

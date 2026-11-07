@@ -303,13 +303,14 @@ pub(crate) fn case_file(
             .map(|row| bounded(&row.value))
             .collect()
     };
-    let document = |table: &str| {
+    let stored = |table: &str| {
         snapshot
             .rows
             .iter()
             .find(|row| row.table == table && row.id == key)
-            .map_or(Value::Null, |row| bounded(&row.value))
+            .map(|row| row.value.clone())
     };
+    let document = |table: &str| stored(table).map_or(Value::Null, |value| bounded(&value));
     let release = snapshot
         .rows
         .iter()
@@ -340,7 +341,7 @@ pub(crate) fn case_file(
             "plan": document("plans"),
             "brief": document("briefs"),
             "audit": document("audits"),
-            "findings": document("findings"),
+            "findings": bounded(&crate::feedback::planner_from(&stored)),
             "release": release,
         },
         "rubric": serde_json::from_str::<Value>(include_str!("rubric.json"))?,

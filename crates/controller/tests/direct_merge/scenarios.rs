@@ -1029,7 +1029,7 @@ fn fake_and_production_ci_outcomes_have_identical_findings() {
                 .events_after(tl3_store::Revision::ZERO, 2000).unwrap().into_iter()
                 .filter_map(|event| event.receipt.result["kernel_event"]["Fact"]["fact"].get("CiFailed").cloned()).collect();
             let findings: Vec<_> = controller.snapshot().unwrap().rows.into_iter()
-                .filter(|row| matches!(row.table.as_str(), "maker_findings" | "findings"))
+                .filter(|row| row.table == "feedback")
                 .map(|row| (row.table, row.id, row.value)).collect();
             // Production has an external check identity and retains precisely its queue receipt.
             // The legacy fake has no such identity, so it has no receipt. Neither retains inbox rows.

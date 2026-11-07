@@ -348,8 +348,8 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
             ("briefs", brief),
             ("plans", plan),
             (
-                "maker_findings",
-                json!([{"kind":"failed_check","goal_ids":["goal-1"],"report":"Independent checking requested a repair"}]),
+                "feedback",
+                json!({"generation":0,"maker":[{"kind":"failed_check","goal_ids":["goal-1"],"report":"Independent checking requested a repair"}],"planner":[],"conflict":null}),
             ),
             (
                 "goals",

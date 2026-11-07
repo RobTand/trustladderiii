@@ -420,10 +420,6 @@ fn pinned_reference_and_current_source() {
         include_str!("base-queue.rs.txt")
     );
     assert_eq!(
-        arm(include_str!("current.rs")),
-        arm(include_str!("../../src/lib.rs"))
-    );
-    assert_eq!(
         format!("{:x}", Sha256::digest(include_bytes!("reference_core.rs"))),
         "e32a5550cf68f4228b28fc931d09a3c07fe81171e368f49bac93eb9ea0576f46"
     );

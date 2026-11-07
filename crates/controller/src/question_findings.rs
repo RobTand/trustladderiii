@@ -333,10 +333,11 @@ fn rung(sources: &Sources, decision: &str) -> Option<Value> {
 
 /// Only the findings this step appended; earlier rounds were already resolved.
 fn failures(sources: &Sources, decision: &str) -> Option<Value> {
-    let fresh = (sources.fresh)("maker_findings")?;
+    let fresh = crate::feedback::maker_from(sources.fresh);
     let fresh = fresh.as_array()?;
-    let before = (sources.previous)("maker_findings")
-        .and_then(|value| value.as_array().map(Vec::len))
+    let before = crate::feedback::maker_from(sources.previous)
+        .as_array()
+        .map(Vec::len)
         .filter(|len| *len <= fresh.len())
         .unwrap_or(0);
     let reports: Vec<_> = fresh[before..]
@@ -769,6 +770,22 @@ mod tests {
         );
         assert_eq!(found["outcome"], "duplicate");
         assert_eq!(found["objections"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn canonical_feedback_reports_only_the_new_failure() {
+        let old = json!({"report":"already resolved"});
+        let fresh = json!({"feedback":{"maker":[old, {"report":"new failure"}]}});
+        let stored = json!({"feedback":{"maker":[old]}});
+        let found = run(
+            &question(QKind::OutOfCredit, MAKING),
+            &fresh,
+            &stored,
+            &[],
+            Phase::Reviewing,
+        )
+        .unwrap();
+        assert_eq!(found["report"], "new failure");
     }
 
     #[test]
