@@ -69,7 +69,7 @@ pub(crate) const HARNESS_UNAVAILABLE: &str =
 const PARTIAL: &str = ".partial-";
 
 impl Harness {
-    pub(super) fn load(configured: &Path, copies: &Path) -> Self {
+    pub(crate) fn load(configured: &Path, copies: &Path) -> Self {
         Self::load_observed(configured, copies, &mut |_| {})
     }
 
@@ -127,7 +127,7 @@ impl Harness {
     }
 
     /// The copy staging reads. Called only while staging, so only by the owning controller.
-    pub(super) fn path(&mut self) -> Result<PathBuf> {
+    pub(crate) fn path(&mut self) -> Result<PathBuf> {
         self.path_with(&mut |_| Ok(()))
     }
 
@@ -362,7 +362,7 @@ fn ascii_json_bytes(value: &serde_json::Value) -> Result<usize> {
 /// head descends from it. A plan can keep an older base, as a restarted request
 /// once inherited its predecessor's; checks must compare the head with the base
 /// it actually sits on (#326). Rebases move the recorded base with the head.
-pub(super) fn descended_base(delivery: &Delivery) -> Result<CheckRun> {
+pub(crate) fn descended_base(delivery: &Delivery) -> Result<CheckRun> {
     let mut run = delivery
         .checks
         .clone()
@@ -382,7 +382,7 @@ pub(super) fn descended_base(delivery: &Delivery) -> Result<CheckRun> {
     Ok(run)
 }
 
-pub(super) fn stage(
+pub(crate) fn stage(
     root: &Path,
     harness: &Path,
     delivery: &Delivery,

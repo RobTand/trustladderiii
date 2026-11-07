@@ -5,6 +5,188 @@ use toml::Value;
 const EXAMPLE: &str = include_str!("../example.toml");
 
 #[test]
+fn execution_backend_preserves_legacy_pb_and_accepts_explicit_pb() {
+    Config::parse(EXAMPLE).unwrap();
+    Config::parse(&format!("execution_backend = 'prismabuild'\n{EXAMPLE}")).unwrap();
+}
+
+#[test]
+fn execution_backend_never_falls_back_from_missing_flux_settings() {
+    for backend in ["flux", "unknown", "", "Flux"] {
+        assert!(Config::parse(&format!("execution_backend = '{backend}'\n{EXAMPLE}")).is_err());
+    }
+}
+
+fn flux_document() -> Value {
+    let mut document: Value = EXAMPLE.parse().unwrap();
+    document.as_table_mut().unwrap().insert("execution_backend".into(), "flux".into());
+    document.as_table_mut().unwrap().insert("flux".into(), toml::toml! {
+        instance_generation = "disposable-test-generation"
+        executable = "/opt/flux/bin/flux"
+        backend_cli = "/opt/tl3/bin/tl3-run-backend"
+        container_mode = "own_scope"
+        runtime_bundles = ["/mnt/shared/flux-out/tl3/.runtime/0000000000000000000000000000000000000000000000000000000000000000/manifest.json"]
+        uri = "local:///run/flux/local-0"
+        environment = { PATH = "/opt/flux/bin:/usr/bin:/bin", LD_LIBRARY_PATH = "/opt/flux/lib", HOME = "/home/rob", XDG_RUNTIME_DIR = "/run/user/1000" }
+        staging_root = "/mnt/shared/tl3-inputs"
+        output_root = "/mnt/shared/flux-out/tl3"
+        container_image = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    }.into());
+    document
+}
+
+#[test]
+fn selected_flux_requires_unique_canonical_runtime_bundle_locators() {
+    let locator = format!("/mnt/shared/flux-out/tl3/.runtime/{}/manifest.json", "a".repeat(64));
+    for locators in [vec![], vec![locator.clone(), locator.clone()], vec!["relative/manifest.json".into()],
+        vec![locator.replace(&"a".repeat(64), &"A".repeat(64))],
+        vec![locator.replace("/manifest.json", "/../manifest.json")], vec![format!("{locator}/")],
+        vec![locator.replace(".runtime/", ".runtime//")], vec![locator.replace("manifest.json", "options.json")]] {
+        let mut document = flux_document();
+        document["flux"]["runtime_bundles"] = Value::Array(locators.into_iter().map(Value::String).collect());
+        let error = Config::parse(&toml::to_string(&document).unwrap()).unwrap_err().to_string();
+        assert!(error.contains("flux.runtime_bundles"), "{error}");
+        document["execution_backend"] = "prismabuild".into();
+        Config::parse(&toml::to_string(&document).unwrap()).unwrap();
+    }
+    let mut document = flux_document();
+    document["flux"].as_table_mut().unwrap().remove("runtime_bundles");
+    assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
+    document["flux"].as_table_mut().unwrap().insert("runtime_bundles".into(), Value::Array(vec![locator.clone().into()]));
+    let config = Config::parse(&toml::to_string(&document).unwrap()).unwrap();
+    assert_eq!(config.flux.unwrap().runtime_bundles, [std::path::PathBuf::from(locator)]);
+}
+
+#[test]
+fn flux_requires_an_explicit_backend_cli() {
+    let mut document = flux_document();
+    document["flux"].as_table_mut().unwrap().remove("backend_cli");
+    assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
+}
+
+#[test]
+fn flux_requires_explicit_container_mode_without_fallback() {
+    use tl3_config::ContainerMode;
+    for (wire, expected) in [("in_job", ContainerMode::InJob), ("own_scope", ContainerMode::OwnScope)] {
+        let mut document = flux_document();
+        document["flux"]["container_mode"] = wire.into();
+        let config = Config::parse(&toml::to_string(&document).unwrap()).unwrap();
+        assert_eq!(config.flux.unwrap().container_mode, expected);
+        assert_eq!(serde_json::to_value(expected).unwrap(), wire);
+    }
+    let mut document = flux_document();
+    document["flux"].as_table_mut().unwrap().remove("container_mode");
+    assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
+    for invalid in ["", "auto", "in-job", "OwnScope"] {
+        document["flux"].as_table_mut().unwrap().insert("container_mode".into(), invalid.into());
+        assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
+    }
+}
+
+#[test]
+fn execution_selection_validates_only_the_selected_backend() {
+    use tl3_config::{ExecutionBackend, SelectedExecution};
+    let legacy = Config::parse(EXAMPLE).unwrap();
+    assert_eq!(legacy.execution_backend, ExecutionBackend::PrismaBuild);
+    assert!(matches!(legacy.selected_execution().unwrap(), SelectedExecution::PrismaBuild(_)));
+    assert_eq!(serde_json::to_value(legacy.execution_backend).unwrap(), "prismabuild");
+    let mut document = flux_document();
+    document.as_table_mut().unwrap().remove("prismabuild");
+    let config = Config::parse(&toml::to_string(&document).unwrap()).unwrap();
+    assert_eq!(config.execution_backend, ExecutionBackend::Flux);
+    let SelectedExecution::Flux(flux) = config.selected_execution().unwrap() else { panic!("selected PB") };
+    assert_eq!(flux.instance_generation, "disposable-test-generation");
+    assert_eq!(serde_json::to_value(config.execution_backend).unwrap(), "flux");
+    document["execution_backend"] = "prismabuild".into();
+    assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
+    document.as_table_mut().unwrap().insert("prismabuild".into(), EXAMPLE.parse::<Value>().unwrap()["prismabuild"].clone());
+    document["flux"]["executable"] = "unavailable-relative-tool".into();
+    assert!(Config::parse(&toml::to_string(&document).unwrap()).is_ok());
+    document["execution_backend"] = "flux".into();
+    assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
+}
+
+#[test]
+fn flux_access_requires_explicit_generation_shared_roots_and_immutable_image() {
+    for (field, value) in [
+        ("instance_generation", ""),
+        ("instance_generation", "stable URI is not a generation"),
+        ("instance_generation", "../61f47a7f95af46d794ca89c3a71f0654"),
+        ("instance_generation", "fv1-model/not-an-invocation"),
+        ("instance_generation", "fv1-model/61f47a7f95af46d794ca89c3a71f0654/extra"),
+        ("executable", "flux"),
+        ("backend_cli", "tl3-run-backend"),
+        ("backend_cli", "/opt/tl3/../unprovisioned"),
+        ("uri", "local:///"),
+        ("uri", "local:/run/flux/local-0"),
+        ("uri", "ssh://remote/instance"),
+        ("uri", "local:///run/flux?secret=fixture"),
+        ("staging_root", "/mnt/shared"),
+        ("staging_root", "/mnt/shared/../private"),
+        ("staging_root", "/mnt/shared/flux-out"),
+        ("output_root", "/mnt/shared/other-output"),
+        ("output_root", "/mnt/shared/flux-out/tl3/nested"),
+        ("output_root", "/mnt/shared/flux-out/tl3/../other"),
+        ("container_image", "registry.example/harness:latest"),
+    ] {
+        let mut document = flux_document();
+        document["flux"][field] = value.into();
+        assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err(), "accepted invalid {field}");
+    }
+    let mut document = flux_document();
+    document["flux"]["staging_root"] = "/mnt/shared/tl3-inputs".into();
+    document["flux"]["container_image"] = format!("dl380g10:5000/tl3/harness@sha256:{}", "a".repeat(64)).into();
+    document["flux"]["output_root"] = "/mnt/shared/flux-out/tl3".into();
+    Config::parse(&toml::to_string(&document).unwrap()).unwrap();
+    document["flux"]["instance_generation"] = "fv1-model/61f47a7f95af46d794ca89c3a71f0654".into();
+    let config = Config::parse(&toml::to_string(&document).unwrap()).unwrap();
+    assert_eq!(config.flux.unwrap().instance_generation, "fv1-model/61f47a7f95af46d794ca89c3a71f0654");
+}
+
+#[test]
+fn flux_environment_rejects_reserved_variables_and_never_displays_values() {
+    for name in ["FLUX_URI", "FLUX_JOB_ID", "FLUX_SCRATCH", "OUT", "TL3_EXECUTION_BACKEND", "UNREVIEWED_SECRET"] {
+        let mut document = flux_document();
+        document["flux"]["environment"].as_table_mut().unwrap().insert(name.into(), "private-fixture-value".into());
+        let error = Config::parse(&toml::to_string(&document).unwrap()).unwrap_err().to_string();
+        assert!(error.contains("flux.environment"));
+        assert!(!error.contains("private-fixture-value"));
+    }
+    for value in ["", "relative", "/bin:", ":/bin", "/bin:.:/usr/bin", "/bin/../private", "/bin\nprivate"] {
+        let mut document = flux_document();
+        document["flux"]["environment"]["PATH"] = value.into();
+        assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
+    }
+    let mut document = flux_document();
+    document["flux"]["environment"].as_table_mut().unwrap().remove("PATH");
+    assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
+    let mut config = Config::parse(&toml::to_string(&flux_document()).unwrap()).unwrap();
+    config.flux.as_mut().unwrap().environment.insert("PATH".into(), "/private-fixture-value".into());
+    assert!(!format!("{config:?}").contains("private-fixture-value"));
+}
+
+#[test]
+fn flux_access_environment_accepts_only_provisioned_home_and_runtime_dir() {
+    let mut document = flux_document();
+    let environment = document["flux"]["environment"].as_table_mut().unwrap();
+    environment.insert("HOME".into(), "/home/rob".into());
+    environment.insert("XDG_RUNTIME_DIR".into(), "/run/user/1000".into());
+    Config::parse(&toml::to_string(&document).unwrap()).unwrap();
+    for missing in ["HOME", "XDG_RUNTIME_DIR"] {
+        let mut wrong = document.clone();
+        wrong["flux"]["environment"].as_table_mut().unwrap().remove(missing);
+        assert!(Config::parse(&toml::to_string(&wrong).unwrap()).is_err(), "accepted missing {missing}");
+    }
+    for (name, value) in [("HOME", "/unprovisioned-home"), ("XDG_RUNTIME_DIR", "/run/user/another-user"), ("DBUS_SESSION_BUS_ADDRESS", "unprovisioned-bus")] {
+        let mut wrong = document.clone();
+        wrong["flux"]["environment"].as_table_mut().unwrap().insert(name.into(), value.into());
+        let error = Config::parse(&toml::to_string(&wrong).unwrap()).unwrap_err().to_string();
+        assert!(error.contains("flux.environment"));
+        assert!(!error.contains(value), "validation printed an environment value");
+    }
+}
+
+#[test]
 fn repository_test_demand_is_optional_and_bounded() {
     assert!(
         Config::parse(EXAMPLE).unwrap().github.repos[0]

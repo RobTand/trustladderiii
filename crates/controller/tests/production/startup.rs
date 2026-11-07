@@ -107,7 +107,7 @@ fn auxiliary_open_does_not_apply_pending_migrations() {
     database.stop();
 }
 
-fn terminate_claim(settings: &tl3_config::Store) {
+pub(super) fn terminate_claim(settings: &tl3_config::Store) {
     let mut client = raw(settings);
     let pid: i32 = client.query_one("SELECT pid FROM pg_locks WHERE locktype='advisory' AND classid::bigint=1414280003 AND objid::bigint=1330533458 AND objsubid=1 AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND granted", &[]).unwrap().get(0);
     assert!(

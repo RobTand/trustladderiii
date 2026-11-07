@@ -444,7 +444,8 @@ def run(model, request, worktree, emit):
         for call in pending:
             if call["name"] == "run_tests":
                 inflight.setdefault(call["id"], []).append({"base": base, "key": key, "tree": tree,
-                                                           "identity": worktree.pb_identity})
+                                                           "identity": worktree.pb_identity,
+                                                           "backend": worktree.test_settings.backend})
         checkpoint(pending)
 
     worktree.pb_submitted = submitted
