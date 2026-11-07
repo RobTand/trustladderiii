@@ -6,6 +6,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    CleanupLimits,
     OutputBounds {
         suite: Suite,
     },
@@ -120,6 +121,7 @@ pub enum FrameSchema {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FrameBody {
+    CleanupProgress { progress: Box<CleanupProgress> },
     Event { event: Box<Event> },
     Result { result: Box<CliResult> },
     Error { code: ErrorCode, message: String },
@@ -127,6 +129,9 @@ pub enum FrameBody {
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum CliResult {
+    CleanupLimits {
+        limits: CleanupLimits,
+    },
     OutputBounds {
         bounds: OutputBounds,
     },
@@ -242,6 +247,13 @@ pub fn main() -> i32 {
         }
         let command: Command = serde_json::from_slice(&line)
             .map_err(|_| BackendError::invalid("command does not match generated Rust schema"))?;
+        if matches!(command, Command::CleanupLimits) {
+            return writer.frame(FrameBody::Result {
+                result: Box::new(CliResult::CleanupLimits {
+                    limits: cleanup_limits(),
+                }),
+            });
+        }
         if let Command::OutputBounds { suite } = &command {
             writer.frame(FrameBody::Result {
                 result: Box::new(CliResult::OutputBounds {
@@ -259,6 +271,7 @@ pub fn main() -> i32 {
             serde_json::from_slice(&durable::read(PathBuf::from(&args[1]).as_path())?)?;
         let backend = Flux::new(options)?;
         let result = match command {
+            Command::CleanupLimits => unreachable!("handled before access config"),
             Command::OutputBounds { suite } => CliResult::OutputBounds {
                 bounds: output_bounds(&suite),
             },
@@ -332,7 +345,14 @@ pub fn main() -> i32 {
                 }
             }
             Command::Cancel { owner, correlation } => CliResult::Cancel {
-                acknowledgement: backend.cancel(&Owner { owner, correlation })?,
+                acknowledgement: backend.cancel_with_cleanup_progress(
+                    &Owner { owner, correlation },
+                    &mut |progress| {
+                        writer.frame(FrameBody::CleanupProgress {
+                            progress: Box::new(progress.clone()),
+                        })
+                    },
+                )?,
             },
             Command::Liveness { owner, correlation } => CliResult::Liveness {
                 liveness: backend.liveness(&Owner { owner, correlation })?,
@@ -411,7 +431,14 @@ pub fn main() -> i32 {
                 cleanup: backend.retain_cleanup(&Owner { owner, correlation }, &evidence)?,
             },
             Command::CleanupRuntime { owner, correlation } => CliResult::CleanupRuntime {
-                cleanup: backend.cleanup_runtime(&Owner { owner, correlation })?,
+                cleanup: backend.cleanup_runtime_with_progress(
+                    &Owner { owner, correlation },
+                    &mut |progress| {
+                        writer.frame(FrameBody::CleanupProgress {
+                            progress: Box::new(progress.clone()),
+                        })
+                    },
+                )?,
             },
             Command::StopWatch => {
                 return Err(BackendError::invalid(

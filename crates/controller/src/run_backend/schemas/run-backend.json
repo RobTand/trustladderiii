@@ -385,6 +385,11 @@
       "description": "One bounded JSON stdin request to the trusted independent runtime cleanup entry.",
       "type": "object",
       "properties": {
+        "budget_seconds": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
         "launch": {
           "anyOf": [
             {
@@ -405,7 +410,53 @@
       "additionalProperties": false,
       "required": [
         "schema",
+        "budget_seconds",
         "ownership"
+      ]
+    },
+    "CleanupLimits": {
+      "description": "Query once before cleanup/cancel to set the initial idle deadline without guessing.",
+      "type": "object",
+      "properties": {
+        "helper_budget_seconds": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "idle_timeout_seconds": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "max_frame_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "max_progress_frames": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "max_response_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "native_timeout_seconds": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "helper_budget_seconds",
+        "native_timeout_seconds",
+        "idle_timeout_seconds",
+        "max_progress_frames",
+        "max_frame_bytes",
+        "max_response_bytes"
       ]
     },
     "CleanupProgram": {
@@ -429,6 +480,43 @@
         "executable",
         "executable_digest",
         "arguments"
+      ]
+    },
+    "CleanupProgress": {
+      "description": "Transport allowance only. Never a stopped result or native liveness observation.",
+      "type": "object",
+      "properties": {
+        "execution": {
+          "type": "string"
+        },
+        "helper_budget_seconds": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "idle_timeout_seconds": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "owner": {
+          "$ref": "#/$defs/Owner"
+        },
+        "request_digest": {
+          "type": "string"
+        },
+        "run": {
+          "$ref": "#/$defs/BackendId"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "owner",
+        "run",
+        "request_digest",
+        "execution",
+        "helper_budget_seconds",
+        "idle_timeout_seconds"
       ]
     },
     "CleanupResult": {
@@ -469,6 +557,22 @@
     },
     "CliResult": {
       "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "limits": {
+              "$ref": "#/$defs/CleanupLimits"
+            },
+            "op": {
+              "type": "string",
+              "const": "cleanup_limits"
+            }
+          },
+          "required": [
+            "op",
+            "limits"
+          ]
+        },
         {
           "type": "object",
           "properties": {
@@ -892,6 +996,19 @@
     },
     "Command": {
       "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "cleanup_limits"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op"
+          ]
+        },
         {
           "type": "object",
           "properties": {
@@ -1951,6 +2068,22 @@
         }
       },
       "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "cleanup_progress"
+            },
+            "progress": {
+              "$ref": "#/$defs/CleanupProgress"
+            }
+          },
+          "required": [
+            "kind",
+            "progress"
+          ]
+        },
         {
           "type": "object",
           "properties": {

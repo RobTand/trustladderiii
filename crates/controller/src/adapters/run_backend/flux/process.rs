@@ -140,7 +140,7 @@ impl Flux {
             .ok_or_else(|| BackendError::unknown("native stderr unavailable"))?;
         let stdout = std::thread::spawn(move || bounded(stdout));
         let stderr = std::thread::spawn(move || bounded(stderr));
-        let deadline = Instant::now() + Duration::from_secs(30);
+        let deadline = Instant::now() + Duration::from_secs(NATIVE_COMMAND_TIMEOUT_SECONDS);
         let status = loop {
             if self.stop.is_stopped() || Instant::now() >= deadline {
                 break None;
