@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bbrun wrapper result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "version", "parent_invocation_id", "command", "artifact_handoff", "scanner", "cleanup", "wrapper"],
+  "properties": {
+    "schema": {"const": "tl3.bbrun.wrapper-result"},
+    "version": {"const": 1},
+    "parent_invocation_id": {"type": ["string", "null"], "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+    "command": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "exit_code", "reason"],
+      "properties": {
+        "status": {"enum": ["pass", "fail", "unknown"]},
+        "exit_code": {"type": ["integer", "null"]},
+        "reason": {"$ref": "#/$defs/reason"}
+      }
+    },
+    "artifact_handoff": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "reason"],
+      "properties": {
+        "status": {"enum": ["pass", "fail", "unknown"]},
+        "reason": {"$ref": "#/$defs/reason"}
+      }
+    },
+    "scanner": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "first_exit_code", "exit_code", "reason"],
+      "properties": {
+        "status": {"enum": ["pass", "fail", "error", "unknown"]},
+        "first_exit_code": {"type": ["integer", "null"]},
+        "exit_code": {"type": ["integer", "null"]},
+        "reason": {"$ref": "#/$defs/reason"}
+      }
+    },
+    "cleanup": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "targets_present", "reason"],
+      "properties": {
+        "status": {"enum": ["pass", "not_needed", "fail", "unknown"]},
+        "targets_present": {"type": ["boolean", "null"]},
+        "reason": {"$ref": "#/$defs/reason"}
+      }
+    },
+    "wrapper": {
+      "type": "object", "additionalProperties": false,
+      "required": ["original_exit_code", "exit_code"],
+      "properties": {
+        "original_exit_code": {"$ref": "#/$defs/wrapper_exit"},
+        "exit_code": {"$ref": "#/$defs/wrapper_exit"}
+      }
+    }
+  },
+  "$defs": {
+    "reason": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,95}$"},
+    "wrapper_exit": {"type": ["integer", "null"], "minimum": 0, "maximum": 255}
+  }
+}

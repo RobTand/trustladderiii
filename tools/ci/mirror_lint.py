@@ -353,15 +353,33 @@ def scan(root, files):
     return offenders
 
 
-def ratchet(offenders, entries):
+def ratchet(offenders, entries, root=ROOT):
     """Return errors for malformed entries, new offenders and stale exceptions."""
     allowed = set()
     errors = []
     for entry in entries:
-        if not isinstance(entry, dict) or set(entry) != {'path', 'detector', 'owner'} \
+        if not isinstance(entry, dict) or set(entry) not in (
+                {'path', 'detector', 'owner'}, {'path', 'detector', 'owner', 'sha256'}) \
                 or not all(isinstance(value, str) and value for value in entry.values()):
-            errors.append('invalid allowlist entry: expected path, detector, owner strings')
+            errors.append('invalid allowlist entry: expected path, detector, owner strings and optional sha256')
             continue
+        if 'sha256' in entry:
+            path = Path(entry['path'])
+            if path.is_absolute() or '..' in path.parts or any(c in entry['path'] for c in '*?[]') \
+                    or not path.parts or not (root / path).resolve().is_relative_to(root.resolve()):
+                errors.append(f'{entry["path"]}: unsafe pinned path')
+                continue
+            if not re.fullmatch(r'[0-9a-f]{64}', entry['sha256']):
+                errors.append(f'{entry["path"]}: invalid sha256 pin')
+                continue
+            try:
+                digest = hashlib.sha256((root / path).read_bytes()).hexdigest()
+            except OSError:
+                errors.append(f'{entry["path"]}: pinned file unavailable')
+                continue
+            if digest != entry['sha256']:
+                errors.append(f'{entry["path"]}: sha256 mismatch')
+                continue
         key = (entry['path'], entry['detector'])
         if entry['owner'] == 'unassigned' or not re.search(r'#\d+\b', entry['owner']):
             errors.append(f'{entry["path"]}: owner must name an issue with #<number>')
@@ -389,7 +407,7 @@ def main(argv=None):
         entries = json.loads(allowlist.read_text()) if allowlist.exists() else []
         if not isinstance(entries, list):
             raise ValueError(f'{ALLOWLIST}: expected a list')
-        errors = ratchet(offenders, entries)
+        errors = ratchet(offenders, entries, args.root)
     except (ValueError, OSError, KeyError) as error:
         print(f'mirror-lint: {error}')
         return 1
