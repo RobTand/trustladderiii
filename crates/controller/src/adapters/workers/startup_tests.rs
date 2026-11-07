@@ -204,7 +204,13 @@ fn maker_input_stays_bounded_after_five_review_rounds() {
             "outside_paths_total": 0,
         }));
     }
-    let snapshot = documents(&mut store, &[("feedback", json!({"generation":0,"maker":stored,"planner":[],"conflict":null}))]);
+    let snapshot = documents(
+        &mut store,
+        &[(
+            "feedback",
+            json!({"generation":0,"maker":stored,"planner":[],"conflict":null}),
+        )],
+    );
     let mut delivery = f.delivery();
     delivery.round = 1;
     delivery.attempt = 1;

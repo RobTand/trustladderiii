@@ -2409,7 +2409,15 @@ fn closure_discards_rebase_context(settings: &tl3_config::Store, stopped: bool) 
             Phase::Stopping(Outcome::Merged)
         ));
         assert!(
-            controller.snapshot().unwrap().rows.iter().find(|r| r.table == "feedback").unwrap().value["conflict"].is_null(),
+            controller
+                .snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .find(|r| r.table == "feedback")
+                .unwrap()
+                .value["conflict"]
+                .is_null(),
             "a merge must discard rebase context before teardown finishes"
         );
     }
@@ -2423,7 +2431,15 @@ fn closure_discards_rebase_context(settings: &tl3_config::Store, stopped: bool) 
         })
     );
     assert!(
-        controller.snapshot().unwrap().rows.iter().find(|r| r.table == "feedback").unwrap().value["conflict"].is_null(),
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .find(|r| r.table == "feedback")
+            .unwrap()
+            .value["conflict"]
+            .is_null(),
         "a closed node must not retain rebase context"
     );
 }

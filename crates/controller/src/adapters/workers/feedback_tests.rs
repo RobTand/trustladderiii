@@ -467,7 +467,17 @@ fn rebase_conflict_is_head_scoped_and_cleared_on_rebased() {
             .to_string()
             .contains("Resolve the merge")
     );
-    assert!(f.controller.snapshot().unwrap().rows.iter().find(|row| row.table == "feedback").unwrap().value["conflict"].is_null());
+    assert!(
+        f.controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .find(|row| row.table == "feedback")
+            .unwrap()
+            .value["conflict"]
+            .is_null()
+    );
 }
 
 #[test]
@@ -636,7 +646,17 @@ fn malformed_feedback_on_closed_nodes_does_not_poison_later_steps() {
             command: tl3_kernel::Command::Stop,
         });
         assert!(f.controller.world().unwrap().nodes[0].phase.is_closed());
-        assert!(f.controller.snapshot().unwrap().rows.iter().find(|row| row.table == "feedback").unwrap().value["conflict"].is_null());
+        assert!(
+            f.controller
+                .snapshot()
+                .unwrap()
+                .rows
+                .iter()
+                .find(|row| row.table == "feedback")
+                .unwrap()
+                .value["conflict"]
+                .is_null()
+        );
         {
             let snapshot = f.controller.snapshot().unwrap();
             let document = snapshot
