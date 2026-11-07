@@ -600,6 +600,7 @@ impl Controller {
 
     /// Refusals have one incident projection. The kernel returns the unchanged
     /// input world; dependency callers must keep it rather than commit a prefix.
+    /// On success callers use the returned result world, not the input reference.
     pub(crate) fn checked_kernel_step(
         &self,
         snapshot: &Snapshot,
@@ -629,6 +630,10 @@ impl Controller {
         snapshot: &Snapshot,
         commit: &mut Commit,
     ) -> Result<bool> {
+        if deferred(commit) || snapshot.rows.iter().any(counter_incident) {
+            retain_input(commit);
+            return Ok(false);
+        }
         let mut world = crate::snapshot::decode(snapshot)?;
         Ok(self
             .checked_kernel_step(snapshot, &mut world, settlement_event(), commit)?
@@ -1015,7 +1020,7 @@ pub(crate) fn observation_context(
     Ok((None, "An incoming update".into(), None))
 }
 
-/// Facts for missing nodes are ignored by apply; step_checked still settles.
+/// World::index ignores missing node IDs; step_checked still settles.
 pub(crate) fn settlement_event() -> tl3_kernel::Event {
     tl3_kernel::Event::Fact {
         node: NodeId(u64::MAX),

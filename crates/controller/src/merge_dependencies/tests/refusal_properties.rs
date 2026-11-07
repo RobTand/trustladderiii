@@ -2057,3 +2057,41 @@ fn startup_counter_halt_preserves_recovery_input_and_effects() {
     );
     assert_eq!(incidents[0].value["open"], true);
 }
+
+
+#[test]
+fn startup_capacity_change_refusal_preserves_world_repositories_and_effects() {
+    let mut db = Database::start();
+    let (repo, mut c, repository, _) = fixture_with_settings(&mut db, "startup_capacity_refusal");
+    let node = intake(&mut c, &repository, 42);
+    let mut world = c.world().unwrap();
+    world.nodes[node.0 as usize].next_seq = u64::MAX;
+    persist_world(&mut c, &world, "startup-capacity-exhausted");
+    let before = c.snapshot().unwrap();
+    assert!(!before.rows.iter().any(|row| row.table == "incidents"
+        && row.value["signature"]["class"] == "kernel_counter_headroom"));
+    let Controller { store, mut bootstrap, .. } = c;
+    bootstrap.pool += 1;
+    bootstrap.slots += 1;
+    let mut addition = repository.clone();
+    addition.name.push_str("-new");
+    bootstrap.repos.push(addition);
+    let mut c = Controller::open(
+        store,
+        crate::adapters::simulation(&repo.root.path().join("fakes")).unwrap(),
+        bootstrap,
+    ).unwrap();
+    assert_eq!(c.world().unwrap(), world, "capacity reconciliation must refuse before persisting changed gates or pool");
+    let after = c.snapshot().unwrap();
+    let business = |snapshot: &Snapshot| snapshot.rows.iter()
+        .filter(|row| row.table != "incidents" && row.table != crate::dispatch_liveness::PARKED)
+        .cloned().collect::<Vec<_>>();
+    assert_eq!(business(&after), business(&before), "repository and gate rows must not be written on refusal");
+    assert_eq!(after.interned, before.interned, "new repositories must not be interned on refusal");
+    assert_eq!(after.pending_effects, before.pending_effects);
+    let incidents: Vec<_> = after.rows.iter().filter(|row| row.table == "incidents"
+        && row.value["signature"]["class"] == "kernel_counter_headroom").collect();
+    assert_eq!(incidents.len(), 1);
+    assert_eq!(incidents[0].value["summary"], "kernel counter headroom exhausted: next_seq");
+    assert_eq!(incidents[0].value["open"], true);
+}

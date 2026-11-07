@@ -237,9 +237,21 @@ fn changing_key_reads_and_completion_writes_agree() {
         .unwrap();
 }
 
-/// CC-E: every read, clock and write in the owned controller slice stays at the
-/// original source position. Only the exhaustively compared pure plan and key
-/// comparison are substituted. This also covers complete's first pending read.
+/// Approval I/O stays at its original source positions around pure decisions.
+#[test]
+fn approval_delivery_io_shell_remains_verbatim() {
+    let restored = include_str!("../../src/approval_delivery.rs")
+        .replace(
+            include_str!("new-authorization.rs.txt"),
+            include_str!("old-authorization.rs.txt"),
+        )
+        .replace(
+            include_str!("new-accounting.rs.txt"),
+            include_str!("old-accounting.rs.txt"),
+        );
+    assert_eq!(restored, include_str!("base-approval.rs.txt"));
+}
+
 mod full;
 pub(crate) mod executor {
     use tl3_kernel::Ack;

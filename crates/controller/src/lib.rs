@@ -683,6 +683,26 @@ impl Controller {
     /// title and labels. The stored request keeps the priority read at intake,
     /// which sets its credit reserve (#416).
     pub fn issue_changed(&mut self, change: &IssueChange) -> Result<()> {
+        let snapshot = self.store.load()?;
+        // A retained intake has no request row yet. Only the path without a
+        // backlog or halt may discard an edit to an issue TL3 does not track.
+        // Untracked edits never enter the kernel; its next input or dispatch
+        // scan raises any counter halt.
+        if !input_errors::kernel_backlog(&snapshot)
+            && !snapshot.rows.iter().any(|r| {
+                r.table == "incidents"
+                    && r.value["open"] == true
+                    && r.value["signature"]["class"] == input_errors::COUNTER_HEADROOM
+            })
+            && !stored_repositories(&snapshot)?.iter().any(|repo| {
+                repo.owner.eq_ignore_ascii_case(&change.owner)
+                    && repo.name.eq_ignore_ascii_case(&change.repo)
+                    && repo.installation == change.installation
+                    && latest_request(&snapshot, repo, change.number).is_some()
+            })
+        {
+            return Ok(());
+        }
         self.submit_kernel_input(
             format!("github-issue:{}", change.delivery),
             input_errors::PendingKernelInput::IssueChange(change.clone()),
