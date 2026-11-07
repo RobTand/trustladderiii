@@ -54,8 +54,13 @@ def symbol_name(module, selector):
 
 def names(facts):
     source = repair_for(facts, facts.get('role', 'maker'), {'kind': 'schema', 'keyword': 'const', 'value': None}, 'Source correction')
-    result = ([] if source['kind'] == 'source_edit' else
-              [{'kind': 'field', 'value': facts.get('field', declaration_pointer('/proof', facts.get('check_index', 0)))}])
+    if source['kind'] == 'source_edit':
+        result = [{'kind': 'path', 'value': source['path']}]
+        if facts.get('module') == source['path'] and (symbol := facts.get('symbol')):
+            if name := symbol_name(source['path'], symbol):
+                result.append(name)
+        return tuple(result)
+    result = [{'kind': 'field', 'value': facts.get('field', declaration_pointer('/proof', facts.get('check_index', 0)))}]
     if module := facts.get('module'):
         result.append({'kind': 'path', 'value': module})
         if symbol := facts.get('symbol'):

@@ -196,12 +196,18 @@ def _route_context(facts):
 
 
 _ROUTE_EXAMPLE = {'inputs': {}, 'role': 'audit', 'reply': {
+    'kind': 'brief', 'brief': 'Original summary.',
     'verdict': 'disagree', 'objections': ['Read each run\'s own verdict and log.']}}
+_ROUTE_WITNESSES = {
+    'audit': {**_ROUTE_EXAMPLE['reply'], 'verdict': 'agree', 'objections': []},
+    'ingest': {**_ROUTE_EXAMPLE['reply'], 'objections': [],
+               'brief': 'Original summary.\n\nRead each run\'s own verdict and log.'},
+}
 ROUTE_CONTEXT = register(Rule(
     'evidence.route_context', _route_context, lambda facts: facts['subjects'],
     lambda facts: {'kind': 'schema', 'keyword': 'const', 'value': facts['value']},
     lambda facts: {'kind': 'edit', 'pointer': facts['pointer']['value'], 'op': 'replace', 'allowed': {'kind': 'schema', 'keyword': 'const', 'value': facts['value']}},
-    example=_ROUTE_EXAMPLE, witness={'verdict': 'agree', 'objections': []}), roles=('ingest', 'audit'))
+    example=_ROUTE_EXAMPLE, witness=_ROUTE_WITNESSES), roles=('ingest', 'audit'))
 
 
 def contract_violations(inputs, reply, *, role='ingest'):
