@@ -10,6 +10,7 @@ use tempfile::TempDir;
 
 mod cache;
 mod scratch;
+mod stop_diagnostics;
 
 pub struct Database {
     postgres: PostgreSQL,
@@ -192,7 +193,12 @@ impl Database {
     }
 
     pub fn stop(&self) {
-        self.runtime.block_on(self.postgres.stop()).unwrap();
+        if let Err(error) = self.runtime.block_on(self.postgres.stop()) {
+            panic!(
+                "{}",
+                stop_diagnostics::failure(&error, &self.postgres.settings().data_dir)
+            );
+        }
         assert!(self.scratch.path().exists());
     }
 }
