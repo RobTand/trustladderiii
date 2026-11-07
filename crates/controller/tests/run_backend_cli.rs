@@ -414,9 +414,45 @@ fn scratch_preflight_requires_helper_and_retained_host_authority() {
         let report: Value =
             serde_json::from_slice(&fs::read(f.intent.output_dir.join("report.json")).unwrap())
                 .unwrap();
-        assert_eq!(
-            report["outcome"], "refused_before_tests",
-            "{case}: {report}"
+        assert_eq!(report["outcome"], "checks_completed", "{case}: {report}");
+        let stdout = fs::read_to_string(f.intent.output_dir.join("host.stdout")).unwrap();
+        let failures = stdout
+            .lines()
+            .filter_map(|line| line.strip_prefix("TL3_EXECUTION_FAILURE "))
+            .map(|raw| serde_json::from_str::<Value>(raw).unwrap())
+            .collect::<Vec<_>>();
+        assert!(!failures.is_empty());
+        assert!(
+            failures
+                .iter()
+                .all(|failure| failure["outcome"] == "setup_failure"
+                    && failure["termination_reason"] == "prelaunch_refused")
+        );
+        let refusals = fs::read_dir(&f.intent.output_dir)
+            .unwrap()
+            .flatten()
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".runtime.jsonl")
+            })
+            .flat_map(|entry| {
+                fs::read_to_string(entry.path())
+                    .unwrap()
+                    .lines()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .map(|raw| serde_json::from_str::<Value>(&raw).unwrap())
+            .filter(|event| event["event"] == "prelaunch_refusal")
+            .collect::<Vec<_>>();
+        assert!(!refusals.is_empty());
+        assert!(
+            refusals
+                .iter()
+                .all(|refusal| refusal["command_released"] == false
+                    && refusal["launcher_started"] == false)
         );
         let state: Value = serde_json::from_slice(
             &fs::read(
@@ -460,49 +496,6 @@ fn scratch_preflight_requires_helper_and_retained_host_authority() {
             .unwrap();
         }
     }
-}
-
-#[test]
-#[ignore = "requires admitted PB actual-action fixture"]
-fn rust_scratch_input_reaches_real_staged_cleanup_front_door() {
-    let f = generated_action_case("front-door");
-    f.events(&completed(0));
-    let frames = f.attach();
-    assert_eq!(
-        frames.last().unwrap()["result"]["observation"]["terminal"]["ending"],
-        "passed",
-        "{frames:?}"
-    );
-    let input = fs::read_dir(&f.intent.output_dir)
-        .unwrap()
-        .flatten()
-        .find(|entry| {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            name.starts_with("scratch-absence-") && name.ends_with(".input.json")
-        })
-        .unwrap()
-        .path();
-    let destination = std::env::var_os("FX_E2E_EVIDENCE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| f.root.path().join("evidence"))
-        .join("front-door-pin");
-    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
-    let output = Command::new("/home/rob/venvs/pb-cpu/bin/python")
-        .arg(source.join("harness/tests/fx_scratch_front_door.py"))
-        .arg(&input)
-        .arg(&destination)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
 }
 
 #[test]
@@ -707,11 +700,6 @@ fn terminal_scratch_guards_keep_ordinary_leftovers_and_reject_bad_external_evide
 fn generated_action_case(mode: &str) -> Fixture {
     let mut f = Fixture::new();
     f.podman(ContainerMode::InJob, true);
-    if mode == "front-door" {
-        f.options.instance_generation = format!("fv1-model/{}", "a".repeat(32));
-        f.intent.instance = f.options.instance_generation.clone();
-        fs::write(&f.config, serde_json::to_vec(&f.options).unwrap()).unwrap();
-    }
     if mode == "no-helper" {
         f.request.runtime.runtime = ExecutionRuntime::Native {
             interpreter: "/usr/bin/python3".into(),
@@ -759,7 +747,7 @@ fn generated_action_case(mode: &str) -> Fixture {
         f.root.path().join("action-fixture.json"),
         serde_json::to_vec(&json!({
             "environment": environment, "output_dir": f.intent.output_dir,
-            "scratch": scratch.path().join("fABC"), "mode": if mode == "front-door" { "success-retained" } else { mode },
+            "scratch": scratch.path().join("fABC"), "mode": mode,
             "source": Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap(),
         }))
         .unwrap(),

@@ -327,7 +327,7 @@ sys.exit(0)
         return
     raw = (output / 'host.stdout').read_text()
     assert elapsed < 15, f'action took {elapsed:.3f}s'
-    if mode in ('success', 'success-retained', 'front-door'):
+    if mode in ('success', 'success-retained'):
         assert '"verdict":"pass"' in raw, raw + (output / 'host.stderr').read_text()
         assert (root / 'payload-started').exists()
     else:
@@ -364,7 +364,7 @@ sys.exit(0)
             assert 'container' not in names
             assert names.index('launcher_exit') < names.index('no_container_observed')
             assert next(event['exit_code'] for event in log if event['event'] == 'launcher_exit') == 127
-    elif mode in ('success', 'success-retained', 'front-door', 'binding-mismatch'):
+    elif mode in ('success', 'success-retained', 'binding-mismatch'):
         for event_log in events:
             names = [event['event'] for event in event_log]
             assert names.index('allocation_grant') < names.index('launch_intent') < names.index('container')
@@ -374,7 +374,7 @@ sys.exit(0)
             assert grant['os_pus'] == cpus and grant['rank'] == 0
         assert operations.index('observe_allocation') < operations.index('validate_allocation') < operations.index('begin_container_launch')
         assert 'bind_container_launch' in operations
-        if mode in ('success', 'success-retained', 'front-door'):
+        if mode in ('success', 'success-retained'):
             assert operations.index('bind_container_launch') < operations.index('validate_runtime_binding')
             assert (output / 'runtime-bindings.jsonl').stat().st_size
     elif mode == 'begin-response-lost':
