@@ -430,6 +430,7 @@ if __name__ == '__main__':
                 raise SystemExit(1)
         subprocess.run(['/home/rob/.local/bin/uv', 'tool', 'run', '--from', 'ruff==0.14.14', 'ruff', 'check',
                         '--isolated', '--select', 'E9,F', 'tools/ci/bbrun.py',
-                        'tools/ci/test_bbrun_cleanup.py', 'tools/ci/test_bbrun_cancel.py'], check=True)
+                        'tools/ci/test_bbrun_cleanup.py', 'tools/ci/test_bbrun_cancel.py',
+                        'tools/ci/test_bbrun_scan_diagnostics.py'], check=True)
     else:
         unittest.main()
