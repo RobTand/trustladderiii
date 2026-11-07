@@ -385,6 +385,16 @@
       "description": "One bounded JSON stdin request to the trusted independent runtime cleanup entry.",
       "type": "object",
       "properties": {
+        "launch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ContainerLaunchIntent"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "ownership": {
           "$ref": "#/$defs/RuntimeOwnership"
         },
@@ -459,6 +469,54 @@
     },
     "CliResult": {
       "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "bounds": {
+              "$ref": "#/$defs/OutputBounds"
+            },
+            "op": {
+              "type": "string",
+              "const": "output_bounds"
+            }
+          },
+          "required": [
+            "op",
+            "bounds"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "launch": {
+              "$ref": "#/$defs/ContainerLaunchIntent"
+            },
+            "op": {
+              "type": "string",
+              "const": "begin_container_launch"
+            }
+          },
+          "required": [
+            "op",
+            "launch"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "binding": {
+              "$ref": "#/$defs/ContainerLaunchBinding"
+            },
+            "op": {
+              "type": "string",
+              "const": "bind_container_launch"
+            }
+          },
+          "required": [
+            "op",
+            "binding"
+          ]
+        },
         {
           "type": "object",
           "properties": {
@@ -811,6 +869,17 @@
             "$ref": "#/$defs/RuntimeBindingInput"
           }
         },
+        "stderr": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BlobRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "stdout": {
           "$ref": "#/$defs/BlobRef"
         }
@@ -823,6 +892,73 @@
     },
     "Command": {
       "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "output_bounds"
+            },
+            "suite": {
+              "$ref": "#/$defs/Suite"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "suite"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "correlation": {
+              "type": "string"
+            },
+            "launcher": {
+              "$ref": "#/$defs/RuntimeOwnership"
+            },
+            "op": {
+              "type": "string",
+              "const": "begin_container_launch"
+            },
+            "owner": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "owner",
+            "correlation",
+            "launcher"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "correlation": {
+              "type": "string"
+            },
+            "observed": {
+              "$ref": "#/$defs/RuntimeOwnership"
+            },
+            "op": {
+              "type": "string",
+              "const": "bind_container_launch"
+            },
+            "owner": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "owner",
+            "correlation",
+            "observed"
+          ]
+        },
         {
           "type": "object",
           "properties": {
@@ -1259,6 +1395,58 @@
         }
       ]
     },
+    "ContainerLaunchBinding": {
+      "type": "object",
+      "properties": {
+        "intent": {
+          "$ref": "#/$defs/ContainerLaunchIntent"
+        },
+        "ownership": {
+          "$ref": "#/$defs/RuntimeOwnership"
+        },
+        "payload_allowed": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "intent",
+        "ownership",
+        "payload_allowed"
+      ]
+    },
+    "ContainerLaunchIntent": {
+      "description": "Durable before Podman invocation. Observed ID/scope are retained separately.",
+      "type": "object",
+      "properties": {
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "launcher": {
+          "$ref": "#/$defs/RuntimeOwnership"
+        },
+        "mode": {
+          "$ref": "#/$defs/ContainerMode"
+        },
+        "name": {
+          "type": "string"
+        },
+        "schema": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "launcher",
+        "name",
+        "mode",
+        "labels"
+      ]
+    },
     "ContainerMode": {
       "type": "string",
       "enum": [
@@ -1281,6 +1469,9 @@
         "mode": {
           "$ref": "#/$defs/ContainerMode"
         },
+        "name": {
+          "type": "string"
+        },
         "scope": {
           "anyOf": [
             {
@@ -1294,6 +1485,7 @@
       },
       "additionalProperties": false,
       "required": [
+        "name",
         "mode",
         "id",
         "labels"
@@ -1354,6 +1546,19 @@
         "id": {
           "type": "string"
         },
+        "name": {
+          "type": "string"
+        },
+        "name_exists_exit": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "remaining_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "remove_exit": {
           "type": "integer",
           "format": "int32"
@@ -1368,6 +1573,10 @@
             }
           ]
         },
+        "sweep_exit": {
+          "type": "integer",
+          "format": "int32"
+        },
         "sweep_ids": {
           "description": "Label-filtered sweep may only account for the retained exact container.",
           "type": "array",
@@ -1378,6 +1587,10 @@
       },
       "additionalProperties": false,
       "required": [
+        "name",
+        "name_exists_exit",
+        "sweep_exit",
+        "remaining_ids",
         "id",
         "remove_exit",
         "exists_exit",
@@ -1929,6 +2142,9 @@
           "format": "uint32",
           "minimum": 1
         },
+        "output_bounds": {
+          "$ref": "#/$defs/OutputBounds"
+        },
         "output_dir": {
           "type": "string"
         },
@@ -1973,7 +2189,8 @@
         "native_threads",
         "runtime",
         "runtime_identity",
-        "placement"
+        "placement",
+        "output_bounds"
       ]
     },
     "LaunchPlacement": {
@@ -2412,6 +2629,69 @@
         "no-report"
       ]
     },
+    "OutputBounds": {
+      "description": "Scalar transport limits. Stdout and stderr have independent accounting.",
+      "type": "object",
+      "properties": {
+        "artifact_file_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "artifact_files": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "cli_envelope_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "cli_result_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "decoded_artifact_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "frame_overhead_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "payload_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "stderr_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "stdout_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "payload_bytes",
+        "decoded_artifact_bytes",
+        "artifact_file_bytes",
+        "artifact_files",
+        "frame_overhead_bytes",
+        "stdout_bytes",
+        "stderr_bytes",
+        "cli_envelope_bytes",
+        "cli_result_bytes"
+      ]
+    },
     "OwnedScratch": {
       "type": "object",
       "properties": {
@@ -2550,6 +2830,12 @@
         "cleanup": {
           "type": "string"
         },
+        "cleanup_arguments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "code_inventory": {
           "type": "string"
         },
@@ -2593,6 +2879,7 @@
         "trusted_root",
         "producer_commit",
         "container_interpreter",
+        "cleanup_arguments",
         "image_inventory",
         "image_inspect",
         "profile",
@@ -3013,6 +3300,12 @@
             "$ref": "#/$defs/BlobRef"
           }
         },
+        "container_launches": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContainerLaunchIntent"
+          }
+        },
         "ending": {
           "$ref": "#/$defs/Ending"
         },
@@ -3087,6 +3380,7 @@
         "native_events",
         "evidence",
         "runtime_ownerships",
+        "container_launches",
         "cleanup"
       ]
     },
@@ -3166,7 +3460,8 @@
       "type": "string",
       "enum": [
         "tl3.checks.v1",
-        "tl3.checks.v2"
+        "tl3.checks.v2",
+        "tl3.checks.v3"
       ]
     },
     "Request": {
@@ -3394,6 +3689,17 @@
         },
         "schema": {
           "type": "string"
+        },
+        "stderr": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BlobRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "stdout": {
           "anyOf": [
@@ -4501,6 +4807,12 @@
         },
         "pre_existing": {
           "type": "boolean"
+        },
+        "proof_refusal": {
+          "title": "899: additive v3 diagnostic; older reports retain the ordinary message.",
+          "type": "string",
+          "maxLength": 65536,
+          "minLength": 1
         },
         "test": {
           "type": "string",

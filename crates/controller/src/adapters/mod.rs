@@ -5,8 +5,8 @@ pub mod github;
 mod images;
 pub mod mergify;
 pub mod prismabuild;
-pub mod run_backend;
 mod record;
+pub mod run_backend;
 pub mod workers;
 pub mod worktrees;
 
