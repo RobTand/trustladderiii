@@ -13,6 +13,8 @@ pub use evidence::check_ingest_reply;
 mod facts;
 mod fake;
 #[cfg(test)]
+mod feedback_tests;
+#[cfg(test)]
 mod input_contract_tests;
 pub(crate) mod json;
 pub(crate) mod ladder;
@@ -413,37 +415,14 @@ impl Supervisor {
             } else if let Some(base) = materials["check_run"].get("base_sha") {
                 inputs["check_base_sha"] = base.clone();
             }
-            if let Some(findings) = store.worker_document(&node, "maker_findings")? {
-                let mut feedback = inputs.get("feedback").cloned().unwrap_or(json!([]));
-                feedback
-                    .as_array_mut()
-                    .ok_or(Error::Invalid("invalid maker feedback"))?
-                    .extend(
-                        findings
-                            .as_array()
-                            .ok_or(Error::Invalid("invalid maker findings"))?
-                            .iter()
-                            .cloned(),
-                    );
-                if !feedback.as_array().unwrap().is_empty() {
-                    let head = delivery.head_sha.as_deref().filter(|_| delivery.round == 1);
-                    let items = feedback.as_array_mut().map(std::mem::take).unwrap();
-                    inputs["feedback"] = json!(crate::findings::bounded_feedback(items, head));
-                }
-            }
-            if let Some(conflict) = snapshot
-                .rows
-                .iter()
-                .find(|row| row.table == "rebase_conflicts" && row.id == node)
-                .map(|row| &row.value)
-                && conflict["head"].as_str() == delivery.head_sha.as_deref()
-            {
-                let mut feedback = inputs.get("feedback").cloned().unwrap_or(json!([]));
-                feedback.as_array_mut().ok_or(Error::Invalid("invalid maker feedback"))?.push(json!({
-                    "kind":"failed_check", "goal_ids":[],
-                    "report":crate::findings::clipped(&format!("Resolve the merge onto main {} in these files: {}. The checkout contains the pending merge, both sides in the index, and conflict markers. Preserve the request and upstream changes. Complete the resolution; worker code commits the merge. Do not abort the merge or return to the old base.", conflict["target"], conflict["files"]), crate::findings::MAX_REPORT_CHARS)
-                }));
-                inputs["feedback"] = feedback;
+            let feedback = crate::feedback::read(snapshot, delivery.node())?;
+            let items = feedback.maker_input(
+                inputs.get("feedback"),
+                delivery.round,
+                delivery.head_sha.as_deref(),
+            )?;
+            if !items.is_empty() {
+                inputs["feedback"] = json!(items);
             }
             inputs["attempt"] = json!(delivery.attempt);
             inputs["round"] = json!(delivery.round);
@@ -519,9 +498,7 @@ impl Supervisor {
             let ingest = store
                 .worker_document(&node, "briefs")?
                 .ok_or(Error::Invalid("planner needs a brief"))?;
-            let findings = store
-                .worker_document(&node, "findings")?
-                .unwrap_or(json!([]));
+            let findings = crate::feedback::read(snapshot, delivery.node())?.planner;
             inputs = json!({"always_tests": self.images.additional_tests(&delivery.repository).always, "ingest": ingest, "must_split": matches!(n.phase, tl3_kernel::Phase::Planning { must_split: true }), "findings": findings, "protected_paths": self.protected_paths.for_repository(&delivery.repository, &self.planning.protected_paths)?, "forecast": forecast});
             let closures = crate::merge_dependencies::closures(snapshot, delivery.node())?;
             if !closures.is_empty() {

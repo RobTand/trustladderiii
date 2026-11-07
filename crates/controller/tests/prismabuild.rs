@@ -2590,7 +2590,8 @@ fn through_controller(settings: &tl3_config::Store, outside: bool, cancel: bool,
     if outside {
         let findings = tl3_store::Store::open(settings)
             .unwrap()
-            .worker_document("0", "maker_findings")
+            .worker_document("0", "feedback")
+            .map(|document| document.map(|value| value["maker"].clone()))
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -4759,8 +4760,8 @@ fn proof_rows_survive_check_observation(settings: &tl3_config::Store) {
             controller.drive_once().unwrap(),
             "checks must reach feedback"
         );
-        if let Some(findings) = store.worker_document("0", "maker_findings").unwrap() {
-            let finding = &findings[0];
+        if let Some(findings) = store.worker_document("0", "feedback").unwrap() {
+            let finding = &findings["maker"][0];
             assert_eq!(
                 finding["failed_tests"][0]["message"], expected,
                 "the observation path must preserve the complete proof diagnostic"
@@ -4842,7 +4843,11 @@ fn oversized_planner_reply_reaches_plan_feedback(settings: &tl3_config::Store) {
     );
     assert_eq!(world.nodes[0].run_incidents, 0);
     let mut store = tl3_store::Store::open(settings).unwrap();
-    let findings = store.worker_document("0", "findings").unwrap().unwrap();
+    let findings = store
+        .worker_document("0", "feedback")
+        .map(|document| document.map(|value| value["planner"].clone()))
+        .unwrap()
+        .unwrap();
     assert!(
         findings
             .as_array()

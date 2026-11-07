@@ -1,8 +1,10 @@
 # Worker translate I/O equivalence
 
 This seam compiles the WorkerFailed and WorkerReply arms verbatim from base
-`6ba8d25035` and from current production. `base-arms.rs.txt` is SHA-256 pinned;
-the source guard compares both copies against their authoritative source.
+`6ba8d25035` and from the historical current copy. `base-arms.rs.txt` is SHA-256
+pinned. R2 removed the comparison of the moved production arms against that
+copy. These arm comparisons are historical until R4a deletes the suite. The
+controller feedback interface tests exercise the moved production writes.
 The two copies share no changed production logic. Only the arms are changed
 in `Controller::translate`; its prologue and common finding/feedback tail are
 outside the seam.
@@ -55,7 +57,7 @@ trace for invalid maker paths and known request-scope citations without a quote.
 
 #832 adds the optional plan-check provenance field to the test observation. The
 reference arm ignores exactly that field; its original arm bytes and all frozen
-leaf hashes remain pinned. The current arm and its protocol mapping are copied
+leaf hashes remain pinned. The historical current arm and its protocol mapping were copied
 from production by `sync.py`, which runs on BuildBuddy. Only the current arm uses
 `protocol-current.rs`; the reference keeps the original protocol implementation.
 The differential schedules supply no provenance, so they check the dormant
@@ -63,11 +65,8 @@ fallback and preserve the existing I/O and failure order. Semantic-provenance
 cases run through the real controller acceptance tests.
 
 #828 keeps the reviewed historical WorkerReply arm from
-683829169d577b921a1bc93e446b49399886a092 for extraction conformance. The only
-intentional difference from production is the legacy model-only quota clear,
-which is now forbidden. Its exact bytes and SHA256 are pinned separately in
-legacy-quota-clear.rs.txt and pins.json. The source check strips only that block
-before comparing all remaining code to
-production. Original differential schedules, I/O assertions and references stay
+683829169d577b921a1bc93e446b49399886a092 for extraction conformance. That historical copy includes the legacy model-only quota clear,
+which is now forbidden in production. Its exact bytes and SHA256 are pinned separately in
+legacy-quota-clear.rs.txt and pins.json. R2 removed the remaining arm comparison against production. Original differential schedules, I/O assertions and references stay
 unchanged. The real-store quota_hold upgrade regression proves that an older or
 other-family success preserves unknown legacy quota after restart.

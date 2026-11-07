@@ -10,7 +10,10 @@ RebaseConflict and Rebased share a current-phase/current-generation decision in
 `controller-core::translate_arms::rebase_reply`. Each arm has its own verbatim
 old source and current source, compiled in separate modules. `pins.json` records
 the SHA-256 of each arm and the source commit c3e6fbbb. The source guard compares
-the references to the pinned blobs and the current copies to production.
+the references to the pinned blobs and the historical current copies to their
+pinned hashes. R2 removed the comparisons of the moved arms against production.
+This suite is historical until R4b deletes it. Production conflict handling is
+covered by the controller interface tests in adapters::workers::feedback_tests.
 Both sides compile the actual unchanged `Controller::head` body, also pinned.
 No shared shim covers a changed arm or the head helper.
 

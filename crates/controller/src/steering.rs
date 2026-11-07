@@ -869,17 +869,7 @@ impl Controller {
             ));
         }
         if reply["answer"] == "try_again" {
-            let mut findings = self
-                .store
-                .worker_document(&node.0.to_string(), "findings")?
-                .unwrap_or(json!([]));
-            findings
-                .as_array_mut()
-                .ok_or(Error::Invalid("invalid findings"))?
-                .push(reply["guidance"].clone());
-            commit
-                .rows
-                .push(put("findings", node.0.to_string(), findings));
+            crate::feedback::guidance(snapshot, commit, node, n.generation, &reply["guidance"])?;
         }
         Ok(Some(event))
     }

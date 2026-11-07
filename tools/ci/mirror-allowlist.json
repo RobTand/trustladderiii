@@ -675,11 +675,6 @@
     "owner": "#915"
   },
   {
-    "path": "crates/controller/tests/rebase_translate_io/conflict_current.rs",
-    "detector": "frozen-copy",
-    "owner": "#923"
-  },
-  {
     "path": "crates/controller/tests/rebase_translate_io/pass_current.rs",
     "detector": "frozen-copy",
     "owner": "#923"
@@ -697,11 +692,6 @@
   {
     "path": "crates/controller/tests/rebase_translate_io/properties.rs",
     "detector": "source-include",
-    "owner": "#923"
-  },
-  {
-    "path": "crates/controller/tests/rebase_translate_io/rebased_current.rs",
-    "detector": "frozen-copy",
     "owner": "#923"
   },
   {
@@ -753,36 +743,6 @@
     "path": "crates/controller/tests/translate_misc_io/properties.rs",
     "detector": "source-include",
     "owner": "#923"
-  },
-  {
-    "path": "crates/controller/tests/translate_tail_io/base-tail.rs.txt",
-    "detector": "frozen-copy",
-    "owner": "#921"
-  },
-  {
-    "path": "crates/controller/tests/translate_tail_io/current.rs",
-    "detector": "frozen-copy",
-    "owner": "#921"
-  },
-  {
-    "path": "crates/controller/tests/translate_tail_io/findings-current.rs",
-    "detector": "frozen-copy",
-    "owner": "#921"
-  },
-  {
-    "path": "crates/controller/tests/translate_tail_io/findings.rs",
-    "detector": "frozen-copy",
-    "owner": "#921"
-  },
-  {
-    "path": "crates/controller/tests/translate_tail_io/properties.rs",
-    "detector": "source-include",
-    "owner": "#921"
-  },
-  {
-    "path": "crates/controller/tests/translate_tail_io/reference.rs",
-    "detector": "frozen-copy",
-    "owner": "#921"
   },
   {
     "path": "crates/controller/tests/worker_events_io/base-source.rs.txt",
