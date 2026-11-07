@@ -54,3 +54,13 @@ verification loop for --no-verify without --build-sst. Frontend stats therefore
 retain configured thread count 1. Empty SMT samples and explicit zero counters,
 with the pinned control flow, establish no SMT execution; a zero thread count
 is not fabricated as evidence.
+
+The sole authorized live frontend smoke on e2a1a7b79cfbee8f3c38593fe8892aa171b07369
+passed the actual no-SMT child but failed driver collection. The failure remains
+FAIL. It exposed Bazel's @@// main-repository label spelling, minimal-download
+omission of test.xml, and an omitted rust_verify identity in the producer.
+The adapter now accepts only exact // and @@// spellings, retains the raw label,
+requests test.log/XML and undeclared outputs explicitly, and reports the actual
+rust_verify binary hash. A process-level fake runner test exercises that producer
+receipt. Fixtures verify the label/download boundaries. No live retry is part of
+this producer unit, so corrected end-to-end qualification remains UNKNOWN.

@@ -187,9 +187,9 @@ class Fixtures(unittest.TestCase):
                  'encountered-vir-error': False, 'is-verifying-entire-crate': False},
                  'times-ms': {'total': 1, 'num-threads': 1, 'smt': {**{k: 0 for k in ('total', 'smt-init', 'smt-run', 'rlimit-init', 'rlimit-run')},
                      'smt-init-module-times': [], 'smt-run-module-times': []}}}
-        proof = {'proofs': {row.target: {'kind': 'FRONTEND_ONLY', 'module': row.selector, 'verified': 0,
+        proof = {'proofs': {'@@' + row.target: {'kind': 'FRONTEND_ONLY', 'module': row.selector, 'verified': 0,
                  'expected_obligations': row.expected, 'threads': 1, 'seconds': 1}}}
-        metrics = {'label': row.target, 'mode': 'FRONTEND_ONLY', 'no_smt': True,
+        metrics = {'label': '@@' + row.target, 'mode': 'FRONTEND_ONLY', 'no_smt': True,
                    'proof': 'NOT_RUN', 'resource_acceptance': 'NOT_APPLICABLE'}
         execution = fake_execution(row, 'frontend-only')
         result = D['child_verdict'](stats, proof, metrics, row, 'frontend-only', execution)
@@ -219,6 +219,19 @@ class Fixtures(unittest.TestCase):
             locator.write_bytes(D['encoded'](prior))
             with self.assertRaisesRegex(ValueError, 'failed/stale'):
                 S['check_frontend'](self.source, self.config(), locator, self.evidence)
+
+    def test_bazel_main_repository_label_and_required_downloads(self):
+        row = self.config().selections[0]
+        for label in (row.target, '@@' + row.target):
+            self.assertEqual(D['inventory_label']({'proofs': {label: {}}}, row), label)
+        for label in ('@external' + row.target, '@' + row.target, '@@@' + row.target, '//wrong:target'):
+            with self.assertRaises(ValueError):
+                D['inventory_label']({'proofs': {label: {}}}, row)
+        regex = next(arg.split('=', 1)[1] for arg in self.config().command() if arg.startswith('--remote_download_regex='))
+        import re
+        for name in ('/testlogs/test.xml', '/testlogs/test.log', '/testlogs/test.outputs/outputs.zip'):
+            self.assertIsNotNone(re.fullmatch(regex, name))
+        self.assertIsNone(re.fullmatch(regex, '/execroot/unused_object.o'))
 
     def test_frontend_ticket_and_stale_mode_source_argv(self):
         config = self.config()

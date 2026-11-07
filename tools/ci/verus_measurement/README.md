@@ -181,3 +181,9 @@ text but no JSON verdict. Collection records this single source echo separately.
 Changed/repeated source echoes and embedded/repeated emitted JSON results fail.
 This distinction provides no fallback authority; own scanned receipt validation
 and emitted result agreement remain mandatory.
+
+Bazel main-repository labels accept exactly `//package:target` and
+`@@//package:target`; receipts retain the raw spelling. External-repository
+aliases do not match. The command explicitly downloads test.log, test.xml and
+undeclared outputs under remote minimal-download settings. Runtime tool identity
+includes both the Verus launcher and its actual `rust_verify` binary.

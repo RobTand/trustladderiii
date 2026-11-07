@@ -130,6 +130,7 @@ class Config:
         return ['bazel', 'test', '--config=remote', '--config=ci', '--jobs=16',
                 f'--test_timeout={self.outer_seconds}', '--keep_going',
                 '--noremote_accept_cached', '--nocache_test_results',
+                r'--remote_download_regex=.*/(test\.outputs/.*|test\.(log|xml))',
                 f'--test_env=TL3_VERUS_MODE={self.mode}',
                 f'--test_env=TL3_VERUS_RAW_QUERIES={int(self.raw_queries)}',
                 *[s.target for s in self.selections]]
@@ -252,8 +253,8 @@ def child_verdict(stats, proof, measurement, row, mode="normal", execution=None,
             verdict.get('encountered-error') is False and verdict.get('encountered-vir-error') is False and
             verdict.get('is-verifying-entire-crate') is False and
             ('success' not in verdict or verdict['success'] is True), 'child verdict/count/selection failed')
-    require(type(proof.get('proofs')) is dict and set(proof['proofs']) == {row.target}, 'wrong/duplicate proof row')
-    p = proof['proofs'][row.target]
+    actual_label = inventory_label(proof, row)
+    p = proof['proofs'][actual_label]
     require(type(p) is dict, 'invalid proof row')
     require(p.get('kind') == 'verus' and p.get('module') == row.selector and
             type(p.get('verified')) is int and p['verified'] == row.expected and
@@ -267,7 +268,7 @@ def child_verdict(stats, proof, measurement, row, mode="normal", execution=None,
     require(type(smt) is dict, 'invalid SMT metrics object')
     resources = {'rlimit_run': metric(smt.get('rlimit-run')), 'rlimit_init': metric(smt.get('rlimit-init')),
                  'total_ms': metric(times.get('total')), 'threads': metric(times.get('num-threads'))}
-    require(measurement.get('label') == row.target and type(measurement.get('verified')) is int and measurement['verified'] == row.expected and
+    require(measurement.get('label') == actual_label and type(measurement.get('verified')) is int and measurement['verified'] == row.expected and
             measurement.get('seconds') == wall and measurement.get('rlimit_budget') == 30,
             'measurement identity/budget mismatch')
     require(measurement.get('rlimit_run') == resources['rlimit_run'] and
@@ -285,7 +286,7 @@ def child_verdict(stats, proof, measurement, row, mode="normal", execution=None,
             measurement.get('function_count') == len(functions) and
             measurement.get('max_function_rlimit') == max(functions), 'expanded/raw resource disagreement')
     validate_execution(execution, row, mode, raw_queries)
-    return {'proof': 'PASS', 'function_rlimit_sum': sum(functions), 'function_count': len(functions), 'resources': 'PASS' if None not in resources.values() and resources['threads'] == 1 else 'UNKNOWN',
+    return {'proof': 'PASS', 'bazel_label': actual_label, 'function_rlimit_sum': sum(functions), 'function_count': len(functions), 'resources': 'PASS' if None not in resources.values() and resources['threads'] == 1 else 'UNKNOWN',
             **resources, 'wall_seconds': wall, 'wall_warning': wall > 20}
 
 
@@ -326,6 +327,16 @@ def validate_execution(execution, row, mode, raw_queries=False):
     return execution
 
 
+def inventory_label(inventory, row):
+    labels = inventory.get('proofs')
+    require(type(labels) is dict and len(labels) == 1, 'wrong/duplicate inventory row')
+    label = next(iter(labels))
+    # Bazel 9 renders the main repository as @@//. No external repository alias
+    # or arbitrary stripping is allowed, and the raw spelling stays in receipts.
+    require(label in (row.target, '@@' + row.target), 'wrong main-repository inventory label')
+    return label
+
+
 def frontend_verdict(stats, inventory, measurement, row, execution):
     validate_execution(execution, row, 'frontend-only')
     v = stats.get('verification-results', {})
@@ -339,17 +350,17 @@ def frontend_verdict(stats, inventory, measurement, row, execution):
     smt = times.get('smt', {})
     require(all(metric(smt.get(k)) == 0 for k in ('total', 'smt-init', 'smt-run', 'rlimit-init', 'rlimit-run')) and
             all(smt.get(k) == [] for k in ('smt-init-module-times', 'smt-run-module-times')), 'missing/conflicting no-SMT evidence')
-    require(type(inventory.get('proofs')) is dict and set(inventory['proofs']) == {row.target}, 'wrong frontend inventory')
-    p = inventory['proofs'][row.target]
+    actual_label = inventory_label(inventory, row)
+    p = inventory['proofs'][actual_label]
     require(p.get('kind') == 'FRONTEND_ONLY' and p.get('module') == row.selector and
             type(p.get('expected_obligations')) is int and p['expected_obligations'] == row.expected and
             type(p.get('verified')) is int and p['verified'] == 0 and type(p.get('threads')) is int and p['threads'] == 1,
             'frontend positive inventory is metadata only')
     wall = p.get('seconds')
     require(type(wall) in (int, float) and math.isfinite(wall) and wall >= 0, 'missing frontend wall')
-    require(measurement == {'label': row.target, 'mode': 'FRONTEND_ONLY', 'no_smt': True,
+    require(measurement == {'label': actual_label, 'mode': 'FRONTEND_ONLY', 'no_smt': True,
                            'proof': 'NOT_RUN', 'resource_acceptance': 'NOT_APPLICABLE'}, 'frontend/proof conflation')
-    return {'frontend': 'PASS', 'mode': 'FRONTEND_ONLY', 'proof': 'NOT_RUN', 'no_smt': True,
+    return {'frontend': 'PASS', 'bazel_label': actual_label, 'mode': 'FRONTEND_ONLY', 'proof': 'NOT_RUN', 'no_smt': True,
             'resources': 'NOT_APPLICABLE', 'rlimit_run': None, 'rlimit_init': None,
             'wall_seconds': wall, 'wall_warning': wall > 20}
 
