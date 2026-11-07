@@ -39,7 +39,9 @@ if args[:2] == ['container', 'inspect']:
     pid = int(pathlib.Path({str(tmp_path / 'run-pid')!r}).read_text())
     launch_path = pathlib.Path({str(tmp_path / 'launch.json')!r})
     launch = json.loads(launch_path.read_text()) if launch_path.exists() else {{}}
-    print(json.dumps({{'Id': 'a' * 64, 'Pid': pid, 'ConmonPid': pid,
+    conmon_path = pathlib.Path({str(tmp_path / 'conmon-pid')!r})
+    conmon = int(conmon_path.read_text()) if conmon_path.exists() else pid
+    print(json.dumps({{'Id': 'a' * 64, 'Pid': pid, 'ConmonPid': conmon,
                       'Name': launch.get('name'), 'Labels': launch.get('labels')}}))
     sys.exit(0)
 if args[:2] == ['container', 'exists']:
@@ -738,8 +740,12 @@ def test_collector_refuses_independent_stream_overflow(tmp_path, monkeypatch, st
     assert not any(request['op'].startswith('collect_') for request in requests)
 
 
-@pytest.mark.parametrize('allowed', [True, False])
-def test_durable_launch_precedes_podman_and_binding_gates_payload(launcher, monkeypatch, allowed):
+@pytest.mark.parametrize(('allowed', 'live_conmon'), [(True, False), (False, False), (True, True)],
+                         ids=['allowed', 'refused', 'survivor'])
+def test_durable_launch_precedes_podman_and_binding_gates_payload(launcher, monkeypatch, allowed, live_conmon):
+    import os
+    import subprocess
+
     from tl3_harness import runtime
     from tl3_harness.runtime_evidence import PREFIX
 
@@ -777,22 +783,58 @@ def test_durable_launch_precedes_podman_and_binding_gates_payload(launcher, monk
             return {'cleanup': {'stopped': True}}
         raise AssertionError(op)
     monkeypatch.setattr(runtime, 'backend_request', backend)
-    with calls.with_suffix('.stdin').open('w+b') as selection:
-        selection.write(b'["private-test"]')
-        selection.seek(0)
-        if allowed:
-            with Supervised([str(executable), 'run', 'fixture'], selection, ()) as process:
-                list(process.records())
-            assert (executable.parent / 'payload').read_bytes() == b'["private-test"]'
-            assert operations.index('bind_container_launch') < operations.index('validate_runtime_binding')
-        else:
-            with pytest.raises(ExecutionFailure):
+    survivor = None
+    original_record = runtime.Evidence.record
+    def record(evidence, event, facts):
+        if event == 'container_processes_stopped':
+            for handle in process.process_handles:
+                os.fstat(handle)  # Evidence must be retained while these identities are still held.
+        original_record(evidence, event, facts)
+    monkeypatch.setattr(runtime.Evidence, 'record', record)
+    try:
+        if live_conmon:
+            survivor = subprocess.Popen([sys.executable, '-I', '-c',
+                'import sys; print("ready", flush=True); sys.stdin.buffer.read()'],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            assert survivor.stdout.readline() == b'ready\n'
+            (executable.parent / 'conmon-pid').write_text(str(survivor.pid))
+        with calls.with_suffix('.stdin').open('w+b') as selection:
+            selection.write(b'["private-test"]')
+            selection.seek(0)
+            if allowed and not live_conmon:
                 with Supervised([str(executable), 'run', 'fixture'], selection, ()) as process:
                     list(process.records())
+                assert process.cleanup_confirmed
+            else:
+                with pytest.raises(ExecutionFailure) as failed:
+                    with Supervised([str(executable), 'run', 'fixture'], selection, ()) as process:
+                        list(process.records())
+                if live_conmon:
+                    assert failed.value.termination_reason == 'container_cleanup_unconfirmed'
+                    assert not process.cleanup_confirmed
+                    assert survivor.poll() is None
+        if allowed:
+            assert (executable.parent / 'payload').read_bytes() == b'["private-test"]'
+            assert operations.index('bind_container_launch') < operations.index('validate_runtime_binding')
+            records = [json.loads(line) for line in process.evidence.path.read_text().splitlines()]
+            stopped = next(row for row in records if row['event'] == 'container_processes_stopped')
+            assert stopped['confirmed'] is not live_conmon
+            assert stopped['captured'] == 2
+            assert stopped['finished_monotonic_ns'] >= stopped['started_monotonic_ns']
+            for handle in process.process_handles:
+                with pytest.raises(OSError):
+                    os.fstat(handle)
+        else:
             assert not (executable.parent / 'payload').exists()
             assert 'validate_runtime_binding' not in operations
-    assert operations[0] == 'begin_container_launch'
-    assert operations[-1] == 'cleanup_runtime'
+        assert operations[0] == 'begin_container_launch'
+        assert operations[-1] == 'cleanup_runtime'
+    finally:
+        if survivor is not None:
+            survivor.kill()
+            survivor.wait(timeout=5)
+            survivor.stdin.close()
+            survivor.stdout.close()
 
 
 def test_pending_launch_without_observed_identity_never_certifies_cleanup(cleanup_fixture):
