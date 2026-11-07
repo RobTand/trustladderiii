@@ -2066,7 +2066,7 @@ fn worker_frames_and_verified_terminal_preserve_symptom_and_owner_identity() {
         match field {
             "tree" => wrong["tree"]["head"] = json!("d".repeat(40)),
             "suite" => wrong["suite"]["input_digest"] = json!("d".repeat(64)),
-            "run" => wrong["run"]["job"] = json!("fOTHER"),
+            "run" => wrong["run"]["job"] = json!("fABD"),
             _ => wrong[field] = json!("d".repeat(64)),
         }
         fs::write(&retained_report, wrong.to_string()).unwrap();
@@ -2133,7 +2133,7 @@ fn worker_collector_rejects_missing_duplicate_malformed_and_misbound_protocols()
     )
     .unwrap();
     let mut run = f.ownership().run;
-    run.job = "fOTHER".into();
+    run.job = "fABD".into();
     let wrong = f.call(json!({"op":"collect_worker","owner":f.intent.owner,"correlation":f.intent.correlation,"facts":{"run":run,"stdout":stdout,"cleanup":null,"runtime_binding":null}}));
     assert_eq!(wrong.last().unwrap()["kind"], "error");
     let stderr = api::durable::blob(
