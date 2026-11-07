@@ -742,6 +742,109 @@ fn unresolvable_mounts_never_fall_back_to_file_names() {
 }
 
 #[test]
+fn file_based_alias_reasons_are_rejected_at_actual_mounts() {
+    let root = Path::new("/inventory-alias-fixture");
+    let sources = BTreeMap::from([
+        (
+            root.join("src/lib.rs"),
+            "mod ingest; mod ranks; mod reply_equivalence; mod dependencies;".into(),
+        ),
+        (
+            root.join("src/ingest.rs"),
+            "#[path = \"ingest_equivalence/mod.rs\"] mod reply_ingest_equivalence;".into(),
+        ),
+        (
+            root.join("src/ingest_equivalence/mod.rs"),
+            "fn option() {}".into(),
+        ),
+        (
+            root.join("src/ranks.rs"),
+            "#[path = \"teardown_equivalence/mod.rs\"] mod teardown_equivalence;".into(),
+        ),
+        (
+            root.join("src/teardown_equivalence/mod.rs"),
+            "fn outcome() {}".into(),
+        ),
+        (
+            root.join("src/reply_equivalence/mod.rs"),
+            "mod run_failed;".into(),
+        ),
+        (
+            root.join("src/reply_equivalence/run_failed.rs"),
+            "#[path = \"run_failed_reference.rs\"] mod reference;".into(),
+        ),
+        (
+            root.join("src/reply_equivalence/run_failed_reference.rs"),
+            "fn run_failed() {}".into(),
+        ),
+        (
+            root.join("src/dependencies.rs"),
+            "#[path = \"../verus/dependency_writes.rs\"] mod writes;".into(),
+        ),
+        (
+            root.join("verus/dependency_writes.rs"),
+            "fn write() {}".into(),
+        ),
+    ]);
+    let fs = collect(&sources, &root.join("src/lib.rs"));
+    let production = exemptions(super::VERUS_GROUPS);
+    let aliases = [
+        (
+            "kernel::ingest::reply_ingest_equivalence::option",
+            "kernel::ingest_equivalence::option",
+        ),
+        (
+            "kernel::ranks::teardown_equivalence::outcome",
+            "kernel::teardown_equivalence::outcome",
+        ),
+        (
+            "kernel::reply_equivalence::run_failed::reference::run_failed",
+            "kernel::reply_equivalence::run_failed_reference::run_failed",
+        ),
+        (
+            "kernel::dependencies::writes::write",
+            "kernel::dependency_writes::write",
+        ),
+    ];
+    let actual: BTreeMap<_, _> = aliases
+        .iter()
+        .map(|(name, _)| (String::from(*name), production[*name].clone()))
+        .collect();
+    assert!(check(&fs, &[], &actual).is_ok());
+    for (name, old) in aliases {
+        let mut stale = actual.clone();
+        let reason = stale.remove(name).unwrap();
+        stale.insert(old.into(), reason);
+        let failure = check(&fs, &[], &stale).unwrap_err();
+        assert!(failure.contains(&format!(
+            "{name}: ordinary Rust function needs an explicit unverified reason"
+        )));
+        assert!(failure.contains(&format!("stale unverified function: {old}")));
+    }
+}
+
+#[test]
+fn a_mount_missing_from_runtime_data_fails_loudly() {
+    let root = Path::new("/inventory-runtime-fixture");
+    let target = root.join("tests/mark_handled_equivalence/cases.rs");
+    let mut sources = BTreeMap::from([
+        (root.join("src/lib.rs"), "#[path = \"../tests/mark_handled_equivalence/cases.rs\"] mod mark_handled_equivalence;".into()),
+        (target.clone(), "fn compare() {}".into()),
+    ]);
+    assert_eq!(
+        collect(&sources, &root.join("src/lib.rs"))[0].path,
+        "kernel::mark_handled_equivalence::compare"
+    );
+    sources.remove(&target);
+    let failure = std::panic::catch_unwind(|| collect(&sources, &root.join("src/lib.rs")))
+        .expect_err("a mount omitted from runtime data must fail the inventory");
+    let message = failure.downcast_ref::<String>().unwrap();
+    assert!(
+        message.contains("unresolvable or ambiguous module mount kernel::mark_handled_equivalence")
+    );
+}
+
+#[test]
 fn unlisted_duplicate_stale_and_reasonless_entries_are_rejected() {
     let fs = functions(
         "kernel_fn! { fn first() {} fn extracted() {} }",
