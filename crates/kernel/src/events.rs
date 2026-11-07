@@ -14,7 +14,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
                 && settle_shape(old(w).nodes@[j]) && stopping_effect_fits(old(w).nodes@[j])
                 && (old(w).nodes@[j].phase is Closed ==> old(w).nodes@[j].effect.is_none())
                 && footprint::valid_footprint(*old(w), old(w).nodes@[j].footprint),
-    ensures report::agrees_except_fact_stops_and_ci_failed(event,
+    ensures report::agrees(event,
             phase_view(old(w).nodes@), phase_view(final(w).nodes@), report_input(*old(w), event),
             old(report).entries@, final(report).entries@,
             (phase_view(final(w).nodes@), final(report).entries@)),

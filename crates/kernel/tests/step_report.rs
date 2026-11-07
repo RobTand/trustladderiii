@@ -380,3 +380,75 @@ fn checked_step_returns_the_same_success_as_step() {
     assert_eq!(checked.outputs, direct.outputs);
     assert_eq!(checked.report, direct.report);
 }
+
+#[test]
+fn unknown_fact_targets_leave_reports_empty_for_every_fact_variant() {
+    let run = Run::new();
+    let facts = [
+        Fact::DependencyRemove {
+            kind: PrerequisiteKind::Issue,
+            number: 1,
+        },
+        Fact::Dependency {
+            target: DependencyTarget {
+                kind: PrerequisiteKind::Issue,
+                number: 1,
+                request: None,
+            },
+            status: DependencyStatus::Pending,
+        },
+        Fact::PrMerged {
+            head: HEAD,
+            checks_passed: true,
+        },
+        Fact::PrClosedByPerson,
+        Fact::PrDequeuedByPerson,
+        Fact::PushByOther { head: HEAD },
+        Fact::CiFailed { infra: false },
+        Fact::CiFailed { infra: true },
+        Fact::Conflict,
+        Fact::IncidentCleared { by_rob: true },
+        Fact::UpstreamStalled,
+        Fact::Priority(Priority::P0),
+    ];
+    for fact in facts {
+        let result = step(
+            run.world.clone(),
+            Event::Fact {
+                node: NodeId(u64::MAX),
+                fact,
+            },
+        );
+        assert!(result.world.valid(), "invalid world after {fact:?}");
+        assert_eq!(result.world, run.world, "unknown target changed {fact:?}");
+        assert!(
+            result.report.entries.is_empty(),
+            "spurious report for {fact:?}"
+        );
+    }
+}
+
+#[test]
+fn fact_reports_do_not_repeat_a_stop_during_or_after_teardown() {
+    let mut run = Run::new();
+    run.queued();
+    run.fact(Fact::PrClosedByPerson);
+    assert_eq!(
+        run.report.entries,
+        [ReportEntry::Stopped {
+            node: NodeId(0),
+            cause: StopCause::PrClosed,
+        }]
+    );
+    assert!(matches!(run.world.nodes[0].phase, Phase::Stopping(_)));
+    for fact in [Fact::PrClosedByPerson, Fact::CiFailed { infra: false }] {
+        run.fact(fact);
+        assert!(run.report.entries.is_empty());
+    }
+    run.confirm();
+    assert!(matches!(run.world.nodes[0].phase, Phase::Closed(_)));
+    for fact in [Fact::PrClosedByPerson, Fact::CiFailed { infra: false }] {
+        run.fact(fact);
+        assert!(run.report.entries.is_empty());
+    }
+}

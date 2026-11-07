@@ -3,6 +3,12 @@ load("@rules_python//python:defs.bzl", "py_binary")
 py_binary(
     name = "fixture-check",
     srcs = ["fixture-check.py"],
+    data = [
+        "measure-remote.py",
+        "production-selectors.fixture.json",
+        "six-helper-argv.fixture.json.gz",
+        "submit.py",
+    ],
     imports = [".."],
     visibility = ["//visibility:public"],
 )

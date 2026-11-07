@@ -342,3 +342,5 @@ fn audit_disagreement_runs_once_before_reset() {
     world.nodes.push(n);
     compare(world, 0, Reply::AuditDisagrees, Outbox::new());
 }
+
+mod run_failed;

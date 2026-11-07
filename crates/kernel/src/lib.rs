@@ -1644,7 +1644,7 @@ pub enum Broken {
 }
 
 // proof map start
-// proof gap: fact-path report proofs (facts stops + CiFailed), owner K3 #907
+// Fact stops and CiFailed reports: report::agrees, preserved by apply and step settlement.
 /// The proof-map entry that covers each event variant. The match is exhaustive, so
 /// a new variant without a proof doesn't compile, and a test checks that each
 /// named proof exists.
@@ -2010,14 +2010,19 @@ pub open spec fn phase_view(nodes: Seq<Node>) -> Seq<Phase> {
 pub closed spec fn world_phases(w: World) -> Seq<Phase> { phase_view(w.nodes@) }
 
 /// Project only the admission fields used by report agreement.
-pub closed spec fn report_input(w: World, event: Event) -> report::ReplyInput {
+pub closed spec fn report_input(w: World, event: Event) -> report::ReportInput {
     match event {
         Event::Reply { node, generation: _, reply } if node.0 < w.nodes@.len() => {
             let n = w.nodes@[node.0 as int];
-            report::ReplyInput { phase: n.phase, current: current_item(n),
+            report::ReportInput { phase: n.phase, current: current_item(n),
                 run: n.run, job: n.job, accepted: port_t860_contracts::admissible(w, n, reply) }
         }
-        _ => report::ReplyInput { phase: Phase::Unplanned, current: None,
+        Event::Fact { node, .. } if node.0 < w.nodes@.len() => {
+            let n = w.nodes@[node.0 as int];
+            report::ReportInput { phase: n.phase, current: current_item(n),
+                run: None, job: None, accepted: false }
+        }
+        _ => report::ReportInput { phase: Phase::Unplanned, current: None,
             run: None, job: None, accepted: false },
     }
 }
@@ -2027,10 +2032,15 @@ proof fn report_projection(w: World, event: Event)
         report_input(w, event) == match event {
             Event::Reply { node, reply, .. } if node.0 < w.nodes@.len() => {
                 let n = w.nodes@[node.0 as int];
-                report::ReplyInput { phase: n.phase, current: current_item(n),
+                report::ReportInput { phase: n.phase, current: current_item(n),
                     run: n.run, job: n.job, accepted: port_t860_contracts::admissible(w, n, reply) }
             }
-            _ => report::ReplyInput { phase: Phase::Unplanned, current: None,
+            Event::Fact { node, .. } if node.0 < w.nodes@.len() => {
+                let n = w.nodes@[node.0 as int];
+                report::ReportInput { phase: n.phase, current: current_item(n),
+                    run: None, job: None, accepted: false }
+            }
+            _ => report::ReportInput { phase: Phase::Unplanned, current: None,
                 run: None, job: None, accepted: false },
         },
 { reveal(world_phases); reveal(report_input); }
@@ -2322,6 +2332,10 @@ mod port_t860_link;
 
 #[cfg(all(test, not(verus_keep_ghost)))]
 mod reply_equivalence;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/node_writes.rs"]
+mod node_writes;
 
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/retries_facts.rs"]

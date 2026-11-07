@@ -1,6 +1,7 @@
 """Admitted-only producer fixtures. No Bazel, Verus or real scanner execution."""
 import base64
 import copy
+import gzip
 import io
 import json
 import os
@@ -17,7 +18,7 @@ import zipfile
 HERE = Path(__file__).resolve().parent
 S = runpy.run_path(str(HERE / 'submit.py'))
 D = S['D']
-HEAD = '6c6efd421c7026b9277c6af3ebb27c74030219fe'
+HEAD = subprocess.check_output(['git', '-C', str(HERE.parents[2]), 'rev-parse', 'HEAD'], text=True).strip()
 
 
 def configuration():
@@ -26,6 +27,24 @@ def configuration():
             'coordinator_minutes': 30, 'diagnostic_authorization': None, 'raw_queries': False,
             'selections': [{'target': '//crates/kernel:verus_dependencies',
                             'selector': 'kernel::dependencies#World::record_dependency', 'expected': 1}]}
+
+
+def fake_execution(row, mode='normal'):
+    tools = {key: {'path': path, 'sha256': 'a' * 64, 'bytes': 1} for key, path in
+             [('verifier', '/FAKE/verus'), ('rustc', '/FAKE/rust/bin/rustc'), ('z3', '/FAKE/z3'), ('rust_verify', '/FAKE/rust_verify')]}
+    tools['z3']['sha256'] = D['source_pins'](HERE.parents[2])['z3']
+    owner, _, function = row.selector.partition('#')
+    argv = ['/usr/bin/timeout', '--kill-after=5s', '120s' if mode == 'diagnostic' else '45s', '/FAKE/verus',
+            '--num-threads', '1', '--rlimit', '30', '--multiple-errors', '0', '-V', 'spinoff-all',
+            '--sysroot', '/FAKE/rust', 'crates/kernel/verus/progress.rs', '--edition', '2024', '--verify-only-module', owner,
+            '--time-expanded', '--output-json']
+    if function:
+        argv += ['--verify-function', function]
+    if mode == 'frontend-only':
+        argv += ['--no-verify']
+    return {'protocol': D['CAPABILITY'], 'mode': mode, 'argv': argv, 'tools': tools, 'pins': D['source_pins'](HERE.parents[2]), 'sysroot': '/FAKE/rust', 'status': 0,
+            'environment': {'PATH': '/FAKE/rust/bin:/usr/bin:/bin', 'LD_LIBRARY_PATH': '/FAKE/rust/lib',
+                'VERUS_USE_RUSTUP': '0', 'VERUS_Z3_PATH': '/FAKE/z3', 'OMP_NUM_THREADS': '1', 'RAYON_NUM_THREADS': '1'}}
 
 
 def fake_wrapper():
@@ -48,7 +67,7 @@ class Fixtures(unittest.TestCase):
         cls.evidence.mkdir(mode=0o700)
         subprocess.run(['git', 'init', '-q', str(cls.source)], check=True)
         subprocess.run(['git', '-C', str(cls.source), 'fetch', '-q', '--depth=1',
-                        'https://github.com/RobTand/trustladderiii.git', HEAD], check=True)
+                        str(HERE.parents[2]), HEAD], check=True)
         subprocess.run(['git', '-C', str(cls.source), 'checkout', '-q', '--detach', 'FETCH_HEAD'], check=True)
         assert D['git'](cls.source, 'rev-parse', '--is-shallow-repository').strip() == b'true'
         cls.original = (cls.source / D['RUNNER']).read_bytes()
@@ -57,19 +76,19 @@ class Fixtures(unittest.TestCase):
         return D['Config'].parse({**configuration(), **changes})
 
     def test_full_preparation_and_receipts(self):
-        for mode in ('normal', 'diagnostic'):
-            config = self.config(mode=mode, watchdog_seconds=45 if mode == 'normal' else 120,
-                                 diagnostic_authorization=None if mode == 'normal' else 'FAKE fixture authorization')
+        for mode in ('normal', 'diagnostic', 'frontend-only'):
+            config = self.config(mode=mode, watchdog_seconds=120 if mode == 'diagnostic' else 45,
+                                 diagnostic_authorization='FAKE fixture authorization' if mode == 'diagnostic' else None)
             receipt = self.evidence / f'{mode}-receipt.json'
             command = S['submission'](config, self.evidence / 'runner.log')
             result = S['full_dry_run'](self.source, config, self.evidence / mode, receipt, command)
             S['check_receipt'](self.source, config, receipt, command)
             self.assertEqual(result['full_preparation'], 'PASS')
             preview = (self.evidence / mode / 'runner-preview.rs').read_text()
-            self.assertIn(f'"{config.watchdog_seconds}s"', preview)
-            self.assertIn('let measured = true;', preview)
-            self.assertNotIn('--no-verify', preview)
-            self.assertNotIn('--log-all', preview)
+            self.assertEqual(preview.encode(), self.original)
+            self.assertEqual((self.evidence / mode / 'runner.patch').read_bytes(), b'')
+            self.assertIn('Toolchain::new', preview)
+            self.assertIn('--test_env=TL3_VERUS_RAW_QUERIES=0', config.command())
             self.assertEqual((self.source / D['RUNNER']).read_bytes(), self.original)
             with self.assertRaisesRegex(ValueError, 'exact_submission_argv'):
                 S['check_receipt'](self.source, config, receipt, command + ['stale'])
@@ -88,6 +107,137 @@ class Fixtures(unittest.TestCase):
             S['full_dry_run'](self.source, config, self.evidence / 'failed-count', receipt,
                               S['submission'](config, self.evidence / 'runner.log'))
         self.assertFalse(receipt.exists())
+
+    def test_production_checking_preparation_and_argv(self):
+        selection = {'target': '//crates/kernel:verus_checking',
+                     'selector': 'kernel::checking#*World::check', 'expected': 10}
+        for mode in ('frontend-only', 'normal'):
+            config = self.config(mode=mode, selections=[selection])
+            output = self.evidence / ('checking-' + mode)
+            command = S['submission'](config, self.evidence / ('checking-' + mode + '.log'))
+            receipt = self.evidence / ('checking-' + mode + '-receipt.json')
+            prepared = S['full_dry_run'](self.source, config, output, receipt, command)
+            self.assertEqual(prepared['full_preparation'], 'PASS')
+            S['check_receipt'](self.source, config, receipt, command)
+            self.assertEqual(config.command()[-1], selection['target'])
+            index = command.index('-c')
+            payload = S['unpack_transport'](command[index + 2], command[index + 3])
+            self.assertEqual(D['loads'](payload['config.json'])['selections'], [selection])
+            row = config.selections[0]
+            execution = fake_execution(row, mode)
+            D['validate_execution'](execution, row, mode)
+            self.assertEqual(execution['argv'][execution['argv'].index('--verify-function') + 1], '*World::check')
+        for selector in ('kernel::checking#**World::check', 'kernel::checking#World::*',
+                         'kernel::*#World::check', 'kernel::checking#*', 'kernel::checking#World::check;echo'):
+            with self.subTest(selector=selector), self.assertRaises(ValueError):
+                self.config(selections=[{**selection, 'selector': selector}])
+        for change in ({'selector': 'kernel::checking#*World::chek'}, {'expected': 11}):
+            config = self.config(selections=[{**selection, **change}])
+            with self.assertRaisesRegex(ValueError, 'selector/count differs from exact source'):
+                D['prepare'](self.source, config, D['owned_directory'](self.root / ('checking-invalid-' + str(len(change.get('selector', ''))))))
+
+    def test_all_342_production_selectors_parse(self):
+        inventory = D['loads']((HERE / 'production-selectors.fixture.json').read_bytes())
+        self.assertEqual(len(inventory['selections']), inventory['groups'])
+        self.assertEqual(inventory['groups'], 342)
+        self.assertEqual(sum(row['expected'] for row in inventory['selections']), inventory['obligations'])
+        rows = []
+        for selection in inventory['selections']:
+            try:
+                config = self.config(selections=[selection])
+                self.assertEqual(D['asdict'](config.selections[0]), selection)
+                rows.append({**selection, 'parse': 'PASS'})
+            except ValueError as error:
+                rows.append({**selection, 'parse': 'FAIL', 'reason': str(error)})
+        self.evidence.joinpath('production-selector-audit.json').write_bytes(D['encoded']({
+            **inventory, 'fixture_sha256': D['digest']((HERE / 'production-selectors.fixture.json').read_bytes()),
+            'rows': rows, 'parse_passes': sum(row['parse'] == 'PASS' for row in rows)}))
+        self.assertEqual([row for row in rows if row['parse'] != 'PASS'], [])
+        self.config(selections=inventory['selections'])  # Preserve whole-manifest uniqueness checks.
+
+    def production_selection_flags(self, selector):
+        # Bind the audit's case split to the exact production command builder.
+        source = self.original.decode()
+        start = source.index("        let (selected_module, function) = module")
+        end = source.index("        match mode {", start)
+        block = source[start:end]
+        expected = """        let (selected_module, function) = module
+            .split_once('#')
+            .map_or((module, None), |(owner, function)| (owner, Some(function)));
+        if selected_module == "root" {
+            process.arg("--verify-root");
+        } else if !selected_module.is_empty() {
+            process.args(["--verify-only-module", selected_module]);
+        }
+        if let Some(function) = function {
+            process.args(["--verify-function", function]);
+        }
+"""
+        self.assertEqual(block, expected, 'production selector flag convention changed; re-audit all kinds')
+        owner, _, function = selector.partition('#')
+        flags = ['--verify-root'] if owner == 'root' else ['--verify-only-module', owner]
+        return flags + (['--verify-function', function] if function else [])
+
+    def production_execution(self, row, mode):
+        execution = fake_execution(row, mode)
+        argv = execution['argv']
+        begin = argv.index('--verify-only-module')
+        del argv[begin:begin + 2]
+        if '--verify-function' in argv:
+            begin = argv.index('--verify-function')
+            del argv[begin:begin + 2]
+        argv += self.production_selection_flags(row.selector)
+        return execution
+
+    def test_production_root_preparation_and_execution(self):
+        selection = {'target': '//crates/kernel:verus_command_headroom', 'selector': 'root', 'expected': 1}
+        for mode in ('frontend-only', 'normal'):
+            config = self.config(mode=mode, selections=[selection])
+            output = self.evidence / ('root-' + mode)
+            command = S['submission'](config, self.evidence / ('root-' + mode + '.log'))
+            receipt = self.evidence / ('root-' + mode + '-receipt.json')
+            prepared = S['full_dry_run'](self.source, config, output, receipt, command)
+            self.assertEqual(prepared['full_preparation'], 'PASS')
+            S['check_receipt'](self.source, config, receipt, command)
+            self.assertEqual(config.command()[-1], selection['target'])
+            execution = self.production_execution(config.selections[0], mode)
+            self.assertIn('--verify-root', execution['argv'])
+            self.assertNotIn('--verify-only-module', execution['argv'])
+            D['validate_execution'](execution, config.selections[0], mode)
+            for flags in ([], ['--verify-only-module', 'root'], ['--verify-root', '--verify-only-module', 'root'], ['--verify-root', '--verify-root']):
+                bad = copy.deepcopy(execution)
+                bad['argv'].remove('--verify-root')
+                bad['argv'] += flags
+                with self.subTest(mode=mode, flags=flags), self.assertRaises(ValueError):
+                    D['validate_execution'](bad, config.selections[0], mode)
+        row = self.config().selections[0]
+        for flags in (['--verify-root'], ['--verify-root', '--verify-only-module', 'kernel::dependencies'], ['--verify-only-module', 'root']):
+            bad = self.production_execution(row, 'normal')
+            begin = bad['argv'].index('--verify-only-module')
+            del bad['argv'][begin:begin + 2]
+            bad['argv'] += flags
+            with self.subTest(flags=flags), self.assertRaises(ValueError):
+                D['validate_execution'](bad, row, 'normal')
+
+    def test_all_342_production_selection_flags(self):
+        inventory = D['loads']((HERE / 'production-selectors.fixture.json').read_bytes())
+        rows = []
+        for selection in inventory['selections']:
+            row = self.config(selections=[selection]).selections[0]
+            kind = 'root' if row.selector == 'root' else 'function' if '#' in row.selector else 'module'
+            try:
+                execution = self.production_execution(row, 'frontend-only')
+                D['validate_execution'](execution, row, 'frontend-only')
+                rows.append({**selection, 'kind': kind, 'flags': self.production_selection_flags(row.selector), 'validation': 'PASS'})
+            except ValueError as error:
+                rows.append({**selection, 'kind': kind, 'validation': 'FAIL', 'reason': str(error)})
+        self.evidence.joinpath('production-flags-audit.json').write_bytes(D['encoded']({
+            'source_head': inventory['source_head'], 'runner_sha256': D['digest'](self.original),
+            'production_builder_source_guard': True, 'executions': 'synthetic, not Verus runs',
+            'rows': rows, 'validation_passes': sum(row['validation'] == 'PASS' for row in rows)}))
+        self.assertEqual(len(rows), 342)
+        self.assertEqual({row['kind'] for row in rows}, {'root', 'module', 'function'})
+        self.assertEqual([row for row in rows if row['validation'] != 'PASS'], [])
 
     def test_config_and_inventory(self):
         for change in ({'watchdog_seconds': 120}, {'outer_seconds': 45}, {'raw_queries': 1},
@@ -114,24 +264,17 @@ class Fixtures(unittest.TestCase):
             extra.unlink()
 
     def test_anchors_and_restoration(self):
-        anchors = ['"--num-threads",', '"--rlimit",', '.env("OMP_NUM_THREADS", "1")',
-                   '.env("RAYON_NUM_THREADS", "1")', '.env("VERUS_Z3_PATH", &self.z3)',
-                   'process.args(["--time", "--output-json"]);',
-                   '.args(["--kill-after=5s", "45s"])',
-                   'verdict["success"].as_bool() != Some(true)',
-                   '    let result = toolchain.verify(source, module, measured)?;',
-                   '"{label}: group exceeds the hard 20s ceiling ({seconds:.3}s)"']
         text = self.original.decode()
-        for anchor in anchors:
-            with self.subTest(anchor=anchor), self.assertRaises(ValueError):
-                D['instrument'](text.replace(anchor, 'MISSING_ANCHOR'), self.config())
+        with self.assertRaisesRegex(ValueError, 'unsupported runner capability'):
+            D['instrument'](text.replace(D['CAPABILITY'], 'old-runner'), self.config())
         changed = D['instrument'](text, self.config()).encode()
+        self.assertEqual(changed, self.original)
         with self.assertRaisesRegex(RuntimeError, 'fixture exception'):
             with D['disposable_runner'](self.source, self.original, changed):
                 self.assertEqual((self.source / D['RUNNER']).read_bytes(), changed)
                 raise RuntimeError('fixture exception')
         self.assertEqual((self.source / D['RUNNER']).read_bytes(), self.original)
-        self.assertIn('--log-all', D['instrument'](text, self.config(raw_queries=True)))
+        self.assertEqual(D['instrument'](text, self.config(raw_queries=True)), text)
 
     def test_curated_readonly_and_metrics(self):
         source = self.root / 'read-only.json'
@@ -154,21 +297,101 @@ class Fixtures(unittest.TestCase):
         row = self.config().selections[0]
         stats = {'verification-results': {'verified': 1, 'errors': 0, 'encountered-error': False,
                  'encountered-vir-error': False, 'is-verifying-entire-crate': False},
-                 'times-ms': {'total': 0, 'num-threads': 1, 'smt': {'rlimit-run': 0, 'rlimit-init': 0}}}
+                 'times-ms': {'total': 0, 'num-threads': 1, 'smt': {'rlimit-run': 0, 'rlimit-init': 7, 'smt-run-module-times': [{'function-breakdown': [{'rlimit': 0, 'success': True}]}]}}}
         proof = {'proofs': {row.target: {'kind': 'verus', 'module': row.selector, 'verified': 1,
                   'expected_obligations': 1, 'threads': 1, 'seconds': 0}}}
         measurement = {'label': row.target, 'verified': 1, 'seconds': 0, 'rlimit_budget': 30,
-                       'rlimit_run': 0, 'rlimit_init': 0}
-        self.assertEqual(D['child_verdict'](stats, proof, measurement, row)['resources'], 'PASS')
+                       'rlimit_run': 0, 'rlimit_init': 7, 'function_rlimit_sum': 0, 'function_count': 1, 'max_function_rlimit': 0}
+        self.assertEqual(D['child_verdict'](stats, proof, measurement, row, execution=fake_execution(row))['resources'], 'PASS')
+        for key in ('rlimit_run', 'function_rlimit_sum', 'function_count', 'max_function_rlimit', 'seconds'):
+            bad = {**measurement, key: False if key != 'function_count' else True}
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                D['child_verdict'](stats, proof, bad, row, execution=fake_execution(row))
         del stats['times-ms']['total']
-        self.assertEqual(D['child_verdict'](stats, proof, measurement, row)['resources'], 'UNKNOWN')
+        self.assertEqual(D['child_verdict'](stats, proof, measurement, row, execution=fake_execution(row))['resources'], 'UNKNOWN')
         stats['verification-results']['success'] = False
         with self.assertRaises(ValueError):
-            D['child_verdict'](stats, proof, measurement, row)
+            D['child_verdict'](stats, proof, measurement, row, execution=fake_execution(row))
         stats['verification-results']['success'] = True
         stats['verification-results']['verified'] = True
         with self.assertRaises(ValueError):
-            D['child_verdict'](stats, proof, measurement, row)
+            D['child_verdict'](stats, proof, measurement, row, execution=fake_execution(row))
+
+    def test_frontend_boundaries_and_prerequisite(self):
+        row = self.config().selections[0]
+        stats = {'verification-results': {'verified': 0, 'errors': 0, 'encountered-error': False,
+                 'encountered-vir-error': False, 'is-verifying-entire-crate': False},
+                 'times-ms': {'total': 1, 'num-threads': 1, 'smt': {**{k: 0 for k in ('total', 'smt-init', 'smt-run', 'rlimit-init', 'rlimit-run')},
+                     'smt-init-module-times': [], 'smt-run-module-times': []}}}
+        proof = {'proofs': {'@@' + row.target: {'kind': 'FRONTEND_ONLY', 'module': row.selector, 'verified': 0,
+                 'expected_obligations': row.expected, 'threads': 1, 'seconds': 1}}}
+        metrics = {'label': '@@' + row.target, 'mode': 'FRONTEND_ONLY', 'no_smt': True,
+                   'proof': 'NOT_RUN', 'resource_acceptance': 'NOT_APPLICABLE'}
+        execution = fake_execution(row, 'frontend-only')
+        result = D['child_verdict'](stats, proof, metrics, row, 'frontend-only', execution)
+        self.assertEqual(result['proof'], 'NOT_RUN')
+        self.assertEqual(result['resources'], 'NOT_APPLICABLE')
+        for key in ('rlimit-run', 'rlimit-init', 'smt-run-module-times'):
+            bad = copy.deepcopy(stats)
+            del bad['times-ms']['smt'][key]
+            with self.assertRaises(ValueError):
+                D['child_verdict'](bad, proof, metrics, row, 'frontend-only', execution)
+        for key, value in [('verified', 1), ('verified', True), ('errors', 1), ('success', False), ('encountered-error', True)]:
+            bad = copy.deepcopy(stats)
+            bad['verification-results'][key] = value
+            with self.assertRaises(ValueError):
+                D['child_verdict'](bad, proof, metrics, row, 'frontend-only', execution)
+        for mutate in [lambda e: e.update(status=127), lambda e: e.update(mode='normal'),
+                       lambda e: e.update(sysroot='/FAKE/rust/bin/rustc'),
+                       lambda e: e['argv'].append('--build-sst'), lambda e: e['argv'].remove('--no-verify')]:
+            bad = copy.deepcopy(execution)
+            mutate(bad)
+            with self.assertRaises(ValueError):
+                D['child_verdict'](stats, proof, metrics, row, 'frontend-only', bad)
+        with self.assertRaisesRegex(ValueError, 'missing frontend prerequisite'):
+            S['check_frontend'](self.source, self.config(), None, self.evidence)
+        locator = self.evidence / 'fake-frontend-locator.json'
+        for prior in [{'overall': 'FAIL'}, {'overall': 'PASS', 'config': self.config().json()}]:
+            locator.write_bytes(D['encoded'](prior))
+            with self.assertRaisesRegex(ValueError, 'failed/stale'):
+                S['check_frontend'](self.source, self.config(), locator, self.evidence)
+
+    def test_bazel_main_repository_label_and_required_downloads(self):
+        row = self.config().selections[0]
+        for label in (row.target, '@@' + row.target):
+            self.assertEqual(D['inventory_label']({'proofs': {label: {}}}, row), label)
+        for label in ('@external' + row.target, '@' + row.target, '@@@' + row.target, '//wrong:target'):
+            with self.assertRaises(ValueError):
+                D['inventory_label']({'proofs': {label: {}}}, row)
+        regex = next(arg.split('=', 1)[1] for arg in self.config().command() if arg.startswith('--remote_download_regex='))
+        import re
+        for name in ('/testlogs/test.xml', '/testlogs/test.log', '/testlogs/test.outputs/outputs.zip'):
+            self.assertIsNotNone(re.fullmatch(regex, name))
+        self.assertIsNone(re.fullmatch(regex, '/execroot/unused_object.o'))
+
+    def test_frontend_ticket_and_stale_mode_source_argv(self):
+        config = self.config()
+        output = D['owned_directory'](self.root / 'ticket-preparation')
+        prepared, _, _ = D['prepare'](self.source, config, output)
+        ticket = {'schema': 'tl3.verus-measurement.frontend-prerequisite.v1',
+                  'parent_invocation_id': '12345678-1234-1234-1234-123456789abc', 'no_smt': True,
+                  **{key: prepared[key] for key in ('source_sha256', 'selection_sha256', 'runner_sha256', 'pins_sha256')},
+                  'driver_sha256': D['tooling_identity']()['driver_sha256'],
+                  'frontend_bazel_argv': self.config(mode='frontend-only').command(),
+                  'executions': [fake_execution(config.selections[0], 'frontend-only')]}
+        D['validate_frontend_ticket'](ticket, config, prepared)
+        for key, value in [('source_sha256', 'b' * 64), ('runner_sha256', 'b' * 64),
+                           ('driver_sha256', 'b' * 64), ('no_smt', False),
+                           ('frontend_bazel_argv', config.command()), ('executions', [])]:
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                D['validate_frontend_ticket']({**ticket, key: value}, config, prepared)
+        with self.assertRaises(ValueError):
+            D['validate_frontend_ticket'](None, config, prepared)
+        receipt = self.evidence / 'ticket-dry-receipt.json'
+        S['full_dry_run'](self.source, config, self.evidence / 'ticket-dry', receipt, S['submission'](config, self.evidence / 'runner.log'))
+        with self.assertRaisesRegex(ValueError, 'stale/mismatched'):
+            S['check_receipt'](self.source, self.config(mode='frontend-only'), receipt,
+                              S['submission'](self.config(mode='frontend-only'), self.evidence / 'runner.log'))
 
     def test_curated_archive_boundary(self):
         directory = self.root / 'archive-child'
@@ -228,6 +451,184 @@ class Fixtures(unittest.TestCase):
         self.evidence.joinpath('fake-wrapper-v1.json').write_text(json.dumps(wrapper, indent=2))
         self.evidence.joinpath('fixture-separation.txt').write_text('FAKE producer interface fixtures only. No scanner execution or retained RP qualification.\n')
 
+    def assert_unidentified_submission(self, tag, transcript, code, candidates):
+        output = D['owned_directory'](self.root / tag)
+        hold = self.root / ('absent-' + tag)
+        config = self.config()
+        reply = subprocess.CompletedProcess([], code, transcript)
+        with patch.dict(S['wait_own'].__globals__, {'HOLD': hold}), \
+                patch.object(subprocess, 'run', return_value=reply) as mocked:
+            with self.assertRaisesRegex(ValueError, 'submission lacks unique own invocation'):
+                S['wait_own'](['FAKE-no-execution'], output, config, {'fixture': True})
+        self.assertEqual(mocked.call_count, 1)  # No replay, wait or API inspection.
+        self.assertTrue((output / 'submission-client.txt').exists(), 'lost client response before own-ID guard')
+        self.assertEqual((output / 'submission-client.txt').read_bytes(), transcript.encode() if isinstance(transcript, str) else transcript)
+        self.assertEqual(D['loads']((output / 'submission-client-status.json').read_bytes()), {'client_exit': code})
+        result = D['loads']((output / 'terminal-attribution.json').read_bytes())
+        self.assertEqual(result['overall'], 'UNKNOWN')
+        self.assertEqual(result['parent'], 'UNKNOWN')
+        self.assertIsNone(result['parent_invocation_id'])
+        self.assertEqual(result['client_exit'], code)
+        self.assertEqual(result['invocation_candidates'], candidates)
+        self.assertEqual(result['config'], config.json())
+        self.assertEqual(result['preparation_identity'], {'fixture': True})
+
+    def test_submission_missing_id_retains_evidence(self):
+        self.assert_unidentified_submission('no-id', 'FAKE response without ID\n', 0, [])
+
+    def test_submission_ambiguous_ids_retains_evidence(self):
+        ids = ['12345678-1234-1234-1234-123456789abc', '22345678-1234-1234-1234-123456789abc']
+        text = ''.join('https://app.buildbuddy.io/invocation/' + id + '\n' for id in ids)
+        self.assert_unidentified_submission('ambiguous-ids', text, 0, ids)
+
+    def test_submission_nonzero_exit_retains_evidence(self):
+        self.assert_unidentified_submission('no-id-error', b'FAKE client refused before Run\r\n\xff', 2, [])
+
+    def test_minimum_ordered_batches(self):
+        # Greedy longest-prefix takes three batches; the optimum takes two.
+        allowed = {(0, 1), (0, 2), (1, 4), (2, 3), (3, 4)}
+        self.assertEqual(S['minimal_batches'](4, lambda i, j: (i, j) in allowed), [(0, 1), (1, 4)])
+        fit = lambda i, j: j - i <= 2
+        self.assertEqual(S['minimal_batches'](5, fit), [(0, 2), (2, 4), (4, 5)])
+        self.assertEqual(S['minimal_batches'](5, fit), S['minimal_batches'](5, fit))
+        with self.assertRaisesRegex(ValueError, 'no ordered batch partition'):
+            S['minimal_batches'](1, lambda i, j: False)
+
+    def pair_config(self, mode='normal'):
+        first = configuration()['selections'][0]
+        second = {'target': '//crates/kernel:verus_kernel_credit_balance', 'selector': 'kernel#Credit::balance', 'expected': 1}
+        return self.config(mode=mode, selections=[first, second])
+
+    def test_projected_frontend_ticket(self):
+        config = self.pair_config()
+        frontend = self.pair_config('frontend-only')
+        expected = {k: 'a' * 64 for k in ('source_sha256', 'selection_sha256', 'runner_sha256', 'pins_sha256')}
+        expected['driver_sha256'] = D['tooling_identity']()['driver_sha256']
+        prior = {'overall': 'PASS', 'parent_invocation_id': '12345678-1234-1234-1234-123456789abc',
+                 'config': frontend.json(), 'preparation_identity': expected,
+                 'driver': {'executions': [fake_execution(row, 'frontend-only') for row in frontend.selections]}}
+        current = S['subset'](config, 1, 2)
+        ticket = S['frontend_ticket'](prior, current)
+        prepared = {**expected, 'selection_sha256': D['digest'](D['encoded']([D['asdict'](current.selections[0])]))}
+        self.assertEqual(D['validate_frontend_ticket'](ticket, current, prepared), ticket)
+        self.assertEqual(ticket['parents'][0]['config'], frontend.json())
+        self.assertEqual(ticket['parents'][0]['indices'], [1])
+        for change in ('source', 'indices', 'mode', 'duplicate', 'execution'):
+            bad = copy.deepcopy(ticket)
+            if change == 'source': bad['source_sha256'] = 'b' * 64
+            if change == 'indices': bad['parents'][0]['indices'] = [0]
+            if change == 'mode': bad['parents'][0]['config']['mode'] = 'normal'
+            if change == 'duplicate': bad['parents'] *= 2
+            if change == 'execution': bad['executions'][0]['argv'] += ['--build-sst']
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                D['validate_frontend_ticket'](bad, current, prepared)
+
+    def test_batch_preparation_execution_and_ids(self):
+        config = self.pair_config('frontend-only')
+        def size(command):
+            index = command.index('-c')
+            decoded = S['unpack_transport'](command[index + 2], command[index + 3])
+            count = len(D['loads'](decoded['config.json'])['selections'])
+            return {'fits': count == 1, 'estimated_serialized_bytes': count * 10, 'limit_bytes': 10}
+        def completed(command, output, child_config, expected):
+            index = config.json()['selections'].index(child_config.json()['selections'][0])
+            parent = str(index + 1) + '2345678-1234-1234-1234-123456789abc'
+            observation = {'overall': 'PASS', 'parent': 'PASS', 'parent_invocation_id': parent,
+                           'config': child_config.json(), 'cas': [], 'preparation_identity': expected}
+            D['put'](output, 'terminal-attribution.json', D['encoded'](observation))
+            return 0
+        with patch.dict(S['batch_plan'].__globals__, {'stock_size': size}):
+            plan = S['batch_plan'](config, self.evidence / 'batch.log', None)
+            self.assertEqual([(i['start'], i['end']) for i in plan], [(0, 1), (1, 2)])
+            receipt = self.evidence / 'batch-root-receipt.json'
+            S['prepare_batches'](self.source, config, self.root / 'batch-preparation', receipt, plan)
+            output = self.root / 'batch-run'
+            with patch.dict(S['run_batches'].__globals__, {'wait_own': completed}):
+                self.assertEqual(S['run_batches'](self.source, config, output, receipt, plan, None), 0)
+            result = D['loads']((output / 'terminal-attribution.json').read_bytes())
+            self.assertEqual(result['overall'], 'PASS')
+            self.assertEqual(len(set(result['parent_invocation_ids'])), 2)
+            records = result['records']
+            bad = copy.deepcopy(records)
+            bad[1]['parent_invocation_id'] = bad[0]['parent_invocation_id']
+            with self.assertRaisesRegex(ValueError, 'duplicate batch own ID'):
+                S['merge_batches'](config, plan, bad)
+            bad = copy.deepcopy(records)
+            bad[1]['cas'] = [{'parent_invocation_id': bad[0]['parent_invocation_id']}]
+            with self.assertRaisesRegex(ValueError, 'batch CAS own ID mismatch'):
+                S['merge_batches'](config, plan, bad)
+            self.assertEqual(S['merge_batches'](config, plan, records[:1])['overall'], 'UNKNOWN')
+            with self.assertRaisesRegex(ValueError, 'batch config/coverage'):
+                S['merge_batches'](config, plan, records[::-1])
+            def incomplete(command, output, child_config, expected):
+                D['put'](output, 'terminal-attribution.json', D['encoded']({
+                    'overall': 'UNKNOWN', 'parent': 'UNKNOWN', 'parent_invocation_id': None,
+                    'config': child_config.json()}))
+                return 3
+            with patch.dict(S['run_batches'].__globals__, {'wait_own': incomplete}):
+                stopped = self.root / 'batch-stop'
+                self.assertEqual(S['run_batches'](self.source, config, stopped, receipt, plan, None), 3)
+            self.assertTrue((stopped / 'batch-0000').exists())
+            self.assertFalse((stopped / 'batch-0001').exists())
+            self.assertEqual(D['loads']((stopped / 'terminal-attribution.json').read_bytes())['overall'], 'UNKNOWN')
+            stale = copy.deepcopy(plan)
+            stale[0]['command'] += ['changed']
+            with self.assertRaisesRegex(ValueError, 'stale batch'):
+                S['run_batches'](self.source, config, self.root / 'batch-stale', receipt, stale, None)
+
+    def test_batched_frontend_audits_each_own_record(self):
+        config = self.pair_config()
+        frontend = self.pair_config('frontend-only')
+        records = [{'overall': 'PASS', 'parent_invocation_id': str(i + 1) + '2345678-1234-1234-1234-123456789abc',
+                    'config': S['subset'](frontend, i, i + 1).json()} for i in range(2)]
+        prior = {'schema': 'tl3.verus-measurement.batches.v1', 'overall': 'PASS',
+                 'config': frontend.json(), 'records': records}
+        path = self.evidence / 'batched-frontend-locator.json'
+        path.write_bytes(D['encoded'](prior))
+        calls = []
+        def audit(source, cfg, locator, output):
+            calls.append(D['loads'](locator.read_bytes()))
+            return {'driver': 'FAKE independently reaudited fields'}
+        with patch.dict(S['check_frontend'].__globals__, {'check_frontend_record': audit}):
+            result = S['check_frontend'](self.source, config, path, self.evidence)
+        self.assertEqual(result, prior)
+        self.assertEqual(calls, records)
+        for change in ('coverage', 'duplicate-id', 'failure'):
+            bad = copy.deepcopy(prior)
+            if change == 'coverage': bad['records'].reverse()
+            if change == 'duplicate-id': bad['records'][1]['parent_invocation_id'] = bad['records'][0]['parent_invocation_id']
+            if change == 'failure': bad['records'][0]['overall'] = 'FAIL'
+            path.write_bytes(D['encoded'](bad))
+            with patch.dict(S['check_frontend'].__globals__, {'check_frontend_record': audit}), self.assertRaises(ValueError):
+                S['check_frontend'](self.source, config, path, self.evidence)
+
+    def test_compact_saved_six_helper_transport(self):
+        saved = D['loads'](gzip.decompress((HERE / 'six-helper-argv.fixture.json.gz').read_bytes()))
+        stock = runpy.run_path(S['BB'][-1], run_name='fixture_stock_no_main')
+        old_body = stock['run_request'](stock['parse_args'](saved[3:]))
+        with self.assertRaises(stock['ActionTooLarge']):
+            stock['check_action_size'](json.dumps(old_body).encode())
+        config = D['Config'].parse(D['loads'](saved[saved.index('--config-json') + 1]))
+        ticket = D['loads'](saved[saved.index('--frontend-prerequisite-json') + 1])
+        command = S['submission'](config, self.evidence / 'six-helper.log', ticket)
+        new_body = stock['run_request'](stock['parse_args'](command[3:]))
+        stock['check_action_size'](json.dumps(new_body).encode())
+        self.evidence.joinpath('six-helper-size.json').write_bytes(D['encoded']({
+            'old': S['stock_size'](saved), 'compact': S['stock_size'](command)}))
+        payload, identity = S['transport_payload'](config, ticket)
+        self.assertEqual(S['transport_payload'](config, ticket), (payload, identity))
+        decoded = S['unpack_transport'](payload, identity)
+        self.assertEqual(decoded['measure-remote.py'], (HERE / 'measure-remote.py').read_bytes())
+        self.assertEqual(decoded['config.json'], D['encoded'](config.json()))
+        self.assertEqual(decoded['frontend.json'], D['encoded'](ticket))
+        with self.assertRaises(ValueError):
+            S['unpack_transport'](payload, '0' * 64)
+        records = D['loads'](gzip.decompress(base64.b64decode(payload)))
+        records['config.json']['bytes'] += 1
+        corrupt = gzip.compress(D['encoded'](records), mtime=0)
+        with self.assertRaisesRegex(ValueError, 'hash/length mismatch'):
+            S['unpack_transport'](base64.b64encode(corrupt).decode(), D['digest'](corrupt))
+
     def test_same_invocation_and_hold(self):
         parent = '12345678-1234-1234-1234-123456789abc'
         verdict = 'verdict: ' + json.dumps({'invocationId': parent, 'invocationStatus': 'COMPLETE_INVOCATION_STATUS', 'success': True})
@@ -252,6 +653,15 @@ class Fixtures(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'paused for BB hold'):
                 S['wait_own'](['fake-sentinel-no-Bazel'], output, self.config(), {})
             mocked.assert_not_called()
+
+    def test_pinned_wrapper_source_echo_is_not_an_emitted_result(self):
+        source = "            print('BBRUN_WRAPPER_RESULT_V1 ' + json.dumps(result(), sort_keys=True, separators=(',', ':')), flush=True)"
+        echo = source.replace("'", "'\"'\"'")
+        marker = S['MARKER'] + json.dumps(fake_wrapper())
+        self.assertEqual(S['wrapper_log_lines'](echo + '\n' + marker), ([marker], 1))
+        for text in [marker + '\n' + marker, 'embedded ' + marker, echo + '\n' + echo, echo + 'changed']:
+            with self.assertRaises(ValueError):
+                S['wrapper_log_lines'](text)
 
     def test_review_wrapper_reasons(self):
         parent = '12345678-1234-1234-1234-123456789abc'
@@ -391,18 +801,25 @@ class Fixtures(unittest.TestCase):
         summary['rows'][0]['rlimit_run'] = 999  # Untrusted summary must not supply metrics.
         summary['rlimit_run_sum'] = 999
         expected = D['loads']((self.evidence / 'normal-receipt.json').read_bytes())
+        ticket = {'schema': 'tl3.verus-measurement.frontend-prerequisite.v1',
+                  'parent_invocation_id': parent, 'no_smt': True,
+                  **{key: expected[key] for key in ('source_sha256', 'selection_sha256', 'runner_sha256', 'pins_sha256', 'driver_sha256')},
+                  'frontend_bazel_argv': self.config(mode='frontend-only').command(),
+                  'executions': [fake_execution(row, 'frontend-only')]}
+        expected['exact_submission_argv'] = S['submission'](config, self.evidence / 'fake.log', ticket)
         objects = {p.name: p.read_bytes() for p in (self.evidence / 'normal').iterdir()
                    if not p.name.endswith('pyc') and p.name != 'submission-argv.json'}
-        objects.update({'measurement-summary.json': D['encoded'](summary),
+        objects.update({'frontend-prerequisite.json': D['encoded'](ticket), 'measurement-summary.json': D['encoded'](summary),
             '0-test.log': b'FAKE selected child log\n',
             '0-test.xml': b'<testsuite tests="1" failures="0" errors="0"><testcase/></testsuite>',
             '0-inventory.json': D['encoded']({'proofs': {row.target: {'kind': 'verus', 'module': row.selector,
                 'verified': 1, 'expected_obligations': 1, 'threads': 1, 'seconds': 0}}}),
             '0-measurement.json': D['encoded']({'label': row.target, 'verified': 1, 'seconds': 0,
-                'rlimit_budget': 30, 'rlimit_run': 0, 'rlimit_init': 0}),
+                'rlimit_budget': 30, 'rlimit_run': 0, 'rlimit_init': 7, 'function_rlimit_sum': 0, 'function_count': 1, 'max_function_rlimit': 0}),
+            '0-execution.json': D['encoded'](fake_execution(row)),
             '0-verifier.json': D['encoded']({'verification-results': {'verified': 1, 'errors': 0,
                 'encountered-error': False, 'encountered-vir-error': False, 'is-verifying-entire-crate': False},
-                'times-ms': {'total': 0, 'num-threads': 1, 'smt': {'rlimit-run': 0, 'rlimit-init': 0}}})})
+                'times-ms': {'total': 0, 'num-threads': 1, 'smt': {'rlimit-run': 0, 'rlimit-init': 7, 'smt-run-module-times': [{'function-breakdown': [{'rlimit': 0, 'success': True}]}]}}})})
         manifest = [{'name': name, 'sha256': D['digest'](data), 'bytes': len(data)} for name, data in objects.items()]
         files = {'verus-measurement/' + name: data for name, data in objects.items()}
         files.update({'verus-measurement/artifact-manifest.json': D['encoded'](manifest),
