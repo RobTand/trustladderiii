@@ -45,7 +45,7 @@ class CleanupTests(unittest.TestCase):
             module = bbrun
             if baseline:
                 import importlib.util
-                source = subprocess.check_output(['git', 'show', '6c6efd421c7026b9277c6af3ebb27c74030219fe:tools/ci/bbrun.py'])
+                source = (Path(__file__).with_name('fixtures') / 'bbrun-baseline89.py.txt').read_bytes()
                 self.assertEqual(hashlib.sha256(source).hexdigest(), '89c8a850b9381cd2e4d52a2d94f45b5c2272c9fcb7a3708ef2a8c45552836763')
                 source_file = root / 'baseline89.py'
                 source_file.write_bytes(source)
