@@ -1002,6 +1002,7 @@ def verus_proofs():
             "reply_admission": ("kernel::reply_admission#accepts", 1),
             "reply_schema_accepted_payload": ("kernel::reply_schema#accepted_payload", 1),
             "reply_schema_audit_phase": ("kernel::reply_schema#audit_phase", 1),
+            "reply_schema_plan_check_phase": ("kernel::reply_schema#plan_check_phase", 1),
             "reply_schema_maker_phase": ("kernel::reply_schema#maker_phase", 1),
             "reply_schema_successful": ("kernel::reply_schema#successful", 1),
             "ingest_finish_ingest": ("kernel::ingest#finish_ingest", 1),

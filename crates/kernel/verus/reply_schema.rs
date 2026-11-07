@@ -51,6 +51,12 @@ pub(super) proof fn audit_phase(w: World, n: Node)
         == (n.phase == Phase::Auditing),
 { reveal(allows); }
 
+/// Planning review rows: code-owned plan-check replies cannot be schema-rejected.
+pub(super) proof fn plan_check_phase(w: World, n: Node, reply: Reply)
+    requires matches!(reply, Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit),
+    ensures allows(input(w, n, reply), reply) == (n.phase is Planning),
+{ reveal(allows); }
+
 /// Making row: only MakerDone in Making can reach the maker result consumer.
 pub(super) proof fn maker_phase(w: World, n: Node, head: HeadId)
     ensures allows(input(w, n, Reply::MakerDone { head }), Reply::MakerDone { head })

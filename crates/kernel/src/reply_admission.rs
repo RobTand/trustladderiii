@@ -508,6 +508,9 @@ pub(super) fn on_rejected_reply(w: &mut World, i: usize, _generation: u64, _repl
     kernel_snapshot! { before_outputs = *out }
     kernel_proof! {
         reply_schema::audit_phase(*w, w.nodes@[i as int]);
+        if matches!(_reply, Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit) {
+            reply_schema::plan_check_phase(*w, w.nodes@[i as int], _reply);
+        }
         if let Reply::MakerDone { head } = _reply {
             reply_schema::maker_phase(*w, w.nodes@[i as int], head);
         }
