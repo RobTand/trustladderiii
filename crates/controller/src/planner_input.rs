@@ -19,8 +19,15 @@ impl From<Event> for KernelInput {
     }
 }
 
+#[cfg(test)]
+std::thread_local! {
+    static REQUEST_ROW_LOADS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Pending deletion is authoritative, just like a pending replacement row.
 pub(crate) fn request_row(snapshot: &Snapshot, commit: &Commit, node: NodeId) -> Result<Value> {
+    #[cfg(test)]
+    REQUEST_ROW_LOADS.set(REQUEST_ROW_LOADS.get() + 1);
     let id = node.0.to_string();
     for change in commit.rows.iter().rev() {
         match change {
@@ -629,6 +636,60 @@ mod tests {
             journal.check().unwrap();
             assert_eq!(journal.after, expected);
             assert!(journal.after.nodes[0].run.is_none() && !journal.after.nodes[0].pool);
+        }
+    }
+
+    #[test]
+    fn planner_budget_unrelated_corruption_does_not_block_input() {
+        unrelated_rows(false);
+    }
+
+    #[test]
+    fn planner_budget_request_row_loads_do_not_scale_with_world() {
+        unrelated_rows(true);
+    }
+
+    fn unrelated_rows(count_only: bool) {
+        let mut database = support::Database::start();
+        for count in [2usize, 16] {
+            let settings = database.create(&format!("rp_bounded_{count}_{count_only}"));
+            let root = tempfile::tempdir().unwrap();
+            let mut c = Controller::open(Store::open(&settings).unwrap(),
+                adapters::simulation(root.path()).unwrap(), bootstrap(false)).unwrap();
+            let mut world = planning(false);
+            let n = world.nodes[0];
+            world.nodes.resize(count, n);
+            world.pool_capacity = count as u8;
+            world.gates[0].w = count as u8;
+            world.check().unwrap();
+            seed(&mut c, world, false);
+            let snapshot = c.store.load().unwrap();
+            let mut setup = Commit::new("unrelated-rows", json!({}), &snapshot);
+            let binding = request_row(&snapshot, &setup, NodeId(0)).unwrap();
+            for index in 1..count {
+                let mut row = binding.clone();
+                if !count_only && index == count - 1 {
+                    row["replan_budget"] = json!({"request":index,"used":"corrupt"});
+                }
+                setup.rows.push(put("requests", index.to_string(), row));
+            }
+            c.store.commit(&setup).unwrap();
+            let snapshot = c.store.load().unwrap();
+            let before = snapshot::decode(&snapshot).unwrap();
+            let mut commit = Commit::new("other-input", json!({}), &snapshot);
+            REQUEST_ROW_LOADS.set(0);
+            let result = c.apply(&snapshot, before, Event::Fact {
+                node: NodeId(0), fact: Fact::Priority(Priority::P0),
+            }, &mut commit);
+            let loads = REQUEST_ROW_LOADS.get();
+            result.expect("an unrelated request row must not block a kernel input");
+            if count_only {
+                assert_eq!(loads, 0, "non-planner input must not load unrelated request budgets");
+            }
+            assert!(!commit.rows.iter().any(|r| matches!(r, RowChange::Put { table, .. } if table == "requests")),
+                "unrelated legacy request rows must remain untouched");
+            c.store.commit(&commit).unwrap();
+            assert_eq!(snapshot::decode(&c.store.load().unwrap()).unwrap().nodes[0].priority, Priority::P0);
         }
     }
 

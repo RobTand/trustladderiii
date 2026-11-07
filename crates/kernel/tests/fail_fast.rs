@@ -51,6 +51,34 @@ fn planner_ordinary_reply_releases_stopping_run() {
     }
 }
 
+#[test]
+fn planner_empty_allowed_reply_releases_stopping_run() {
+    for fail_fast in [false, true] {
+        for used in [false, true] {
+            let mut run = Run::new(fail_fast);
+            run.start_planning();
+            let generation = run.node().run.expect("planner owns its run");
+            run.send(Event::Command {
+                node: NodeId(0),
+                id: run.node().last_cmd + 1,
+                command: Command::Stop,
+            });
+            let (expected, expected_out) = step(run.w.clone(), Event::Reply {
+                node: NodeId(0), generation, reply: Reply::PlanCheckRejected,
+            });
+            let budget = ReplanBudget::import(NodeId(0), used);
+            let (actual, after_budget, out) = step_planner(
+                run.w, budget, NodeId(0), generation, PlannerResult::EmptyAllowedReplan,
+            );
+            assert!(actual.nodes[0].run.is_none(), "empty-allowed stopping reply must release the run");
+            assert!(!actual.nodes[0].pool);
+            assert_eq!(actual, expected);
+            assert_eq!(out, expected_out);
+            assert_eq!(after_budget, budget);
+        }
+    }
+}
+
 /// Auditing / #832-A Q27: one repair then a free stop, under either flag.
 #[test]
 fn second_audit_disagreement_never_asks_or_spends() {
