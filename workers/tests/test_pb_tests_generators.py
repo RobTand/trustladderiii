@@ -24,8 +24,8 @@ def test_selected_flux_generator_holds_without_pb_tools_or_checkpoint_loss(gener
     tree.generator_state.write_text(json.dumps(original))
     with tree:
         result = generate()
-    assert result['status'] == 'not_available'
-    assert 'shared worker collector' in result['message']
+    assert result['status'] == 'failed'
+    assert 'another execution backend' in result['message']
     assert json.loads(tree.generator_state.read_text()) == original
 
 

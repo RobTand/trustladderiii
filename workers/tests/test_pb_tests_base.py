@@ -17,7 +17,9 @@ from worker_process import prepare_base_submission
 from worker_process import submission  # noqa: F401
 
 
-def test_pb_selection_holds_flux_checkpoint_without_consuming_it(submission):
+def test_pb_selection_holds_flux_checkpoint_without_consuming_it(submission, monkeypatch):
+    from tl3_workers import pb_tests
+    monkeypatch.setattr(pb_tests, 'bounded', lambda value, **kwargs: value)
     root, scripts = submission
     with Worktree(root) as tree:
         tree.pb_reattach = {False: {'backend': 'flux', 'key': 'worker:' + 'a' * 64}}

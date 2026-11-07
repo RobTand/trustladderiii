@@ -1,6 +1,5 @@
 //! Rust owns worker transport publication, reservations and canonical backend requests.
 use super::*;
-use backend::RunBackend;
 use schemars::JsonSchema;
 use std::{io::{Read, Write}, os::unix::fs::PermissionsExt};
 
@@ -136,6 +135,9 @@ fn execute(command: Command) -> Result<Value> {
             }
             let root = root(&profile, &call)?;
             if !root.is_dir() || root.is_symlink() { return Err(Error::Invalid("worker input was not allocated")); }
+            if durable::digest(&durable::read(&root.join("worker-input.json")).map_err(backend_error)?) != contract {
+                return Err(Error::Invalid("worker protocol input differs from its retained contract"));
+            }
             // PB intentionally leaves a dirty snapshot. Flux commits the transport independently.
             git(&root, &["add", "--force", "--all"])?;
             git(&root, &["commit", "--quiet", "--allow-empty", "-m", "Freeze worker transport input"])?;

@@ -1,4 +1,5 @@
 """Submit the configured generator and import only its verified output artifact."""
+from contextlib import nullcontext
 import base64
 import hashlib
 import json
@@ -15,6 +16,7 @@ from tl3_harness.scratch import environment as scratch_environment
 from tl3_harness.supervision import ExecutionFailure
 from tl3_workers.pb_tests import TestSettings, _failure_receipt, _git, _json_command, _stage
 from tl3_workers.session import save
+from tl3_workers import flux_execution
 
 
 def _elapsed(ending):
@@ -117,8 +119,6 @@ def make_generator_tool(worktree, *, restore_only=False):
         patterns = list(getattr(worktree, "generated_files", ()))
         if not isinstance(settings, TestSettings) or not command or not patterns:
             return {"status": "not_available", "message": "No admitted generator command/output contract was configured."}
-        if settings.backend == 'flux':
-            return {"status": "not_available", "message": "Flux generator execution is held pending the shared worker collector, output bounds and qualified runtime."}
         generator.configured_argv(command)
         selected = generator.budget(settings.cpus, settings.mem_gb,
                                     getattr(worktree, "generator_timeout_s", generator.TIMEOUT))
@@ -145,8 +145,8 @@ def make_generator_tool(worktree, *, restore_only=False):
         if restore_only and (state.get("contract") != identity or state.get("phase") != "applied"):
             return {"status": "not_available", "message": "No completed generation checkpoint matches this contract."}
         if state.get("contract") != identity:
-            if state.get("phase") == "importing":
-                raise ValueError("Generator contract changed during an interrupted import.")
+            if state.get("phase") in ("submitted", "importing"):
+                raise ValueError("Generator contract changed during retained execution or interrupted import.")
             state = {}
         if not restore_only:
             _recover_temporaries(worktree, state)
@@ -172,64 +172,86 @@ def make_generator_tool(worktree, *, restore_only=False):
         else:
             if state.get("phase") == "submitted" and current != state["before"]:
                 raise ValueError("Generator action input tree is stale; restore the submitted input before reattachment.")
-            if state.get("phase") != "submitted":
-                with tempfile.TemporaryDirectory(prefix="tl3-generator-input-") as temporary:
+            resumed = state.get('phase') == 'submitted'
+            if settings.backend == 'flux':
+                flux_execution.activation()
+            if not resumed:
+                call = None
+                if settings.backend == 'flux':
+                    call, retained_root = flux_execution.allocate(settings)
+                with (nullcontext(retained_root) if call is not None else
+                      tempfile.TemporaryDirectory(prefix="tl3-generator-input-")) as temporary:
                     root = Path(temporary)
                     tree = _stage(worktree, root, action="generator")
                     if generator.manifest(root / "checkout") != current:
                         raise ValueError("Generator input tree changed while freezing its snapshot.")
                     (root / "generator.json").write_text(json.dumps(contract, sort_keys=True))
                     _git(root, "add", "--force", "--all")
-                    args = [sys.executable, str(Path(settings.tools_path) / "pbrun.py"),
-                            "--cwd", str(root), "--anywhere", "--cpus", str(settings.cpus),
-                            "--demand", f"mem_gb={settings.mem_gb}", "--container-image", settings.image,
-                            "--timeout-s", str(selected["outer_timeout_s"]), "--progress-phase",
-                            f"tests={selected['outer_timeout_s']}",
-                            *[arg for name, value in scratch_environment().items() for arg in ("--env", f"{name}={value}")],
-                            *[arg for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS")
-                              for arg in ("--env", f"{name}={settings.cpus}")], "--detach", "--",
-                            "python3", "-I", "-B", "action.py", settings.image]
-                    code, submitted = _json_command(args)
-                    if code or submitted.get("schema") not in (
-                            "prismabuild.submission.v1", "prismaquant.prismabuild.pbrun_detach.v1"):
-                        raise ValueError("PrismaBuild refused generator submission.")
-                    key = submitted["action_key"]
-                    if not isinstance(key, str) or not re.fullmatch("[0-9a-f]{64}", key):
-                        raise ValueError("PrismaBuild returned an invalid generator action key.")
+                    if settings.backend == 'flux':
+                        plan = flux_execution.prepare(settings, call, root, tree, contract,
+                            generator=True, walltime=selected['outer_timeout_s'])
+                        key = plan['key']
+                    else:
+                        args = [sys.executable, str(Path(settings.tools_path) / "pbrun.py"),
+                                "--cwd", str(root), "--anywhere", "--cpus", str(settings.cpus),
+                                "--demand", f"mem_gb={settings.mem_gb}", "--container-image", settings.image,
+                                "--timeout-s", str(selected["outer_timeout_s"]), "--progress-phase",
+                                f"tests={selected['outer_timeout_s']}",
+                                *[arg for name, value in scratch_environment().items() for arg in ("--env", f"{name}={value}")],
+                                *[arg for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS")
+                                  for arg in ("--env", f"{name}={settings.cpus}")], "--detach", "--",
+                                "python3", "-I", "-B", "action.py", settings.image]
+                        code, submitted = _json_command(args)
+                        if code or submitted.get("schema") not in (
+                                "prismabuild.submission.v1", "prismaquant.prismabuild.pbrun_detach.v1"):
+                            raise ValueError("PrismaBuild refused generator submission.")
+                        key = submitted["action_key"]
+                        if not isinstance(key, str) or not re.fullmatch("[0-9a-f]{64}", key):
+                            raise ValueError("PrismaBuild returned an invalid generator action key.")
                     state = {"phase": "submitted", "contract": identity, "key": key, "backend": settings.backend,
                              "before": current, "input_tree": tree}
                     record()
             key = state["key"]
             diagnostics.update(action_key=key, budget=selected, phase="outer", identity={
                 "implementation": generator.IMPLEMENTATION, "image": settings.image, "budget": selected})
-            while True:
-                getattr(worktree, "progress_emit", lambda event: None)({
-                    "event": "progress", "unit": "external_wait",
-                    "wait": {"upstream": "prismabuild", "key": key}})
-                code, waited = _json_command([sys.executable, str(Path(settings.tools_path) / "pbwait.py"),
-                                              "--endings", "--until", "cleaned", key])
-                if (waited.get("schema") != "prismabuild.endings.v1" or
-                        type(waited.get("complete")) is not bool or len(waited["endings"]) != 1 or
-                        waited["endings"][0]["action_key"] != key):
-                    raise ValueError("PrismaBuild returned an invalid generator ending.")
-                if waited["complete"]:
-                    if code or not waited["endings"][0].get("succeeded"):
-                        receipt = _failure_receipt(waited["endings"][0], settings)
-                        result = {"status": "failed", "action_key": key, "receipts": [receipt],
-                                  "message": "Generator action failed: " + json.dumps(receipt, sort_keys=True),
-                                  "budget": selected, "phase": "outer", "identity": {
-                                      "implementation": generator.IMPLEMENTATION, "image": settings.image,
-                                      "budget": selected}, "outer": {**receipt, "elapsed_s": _elapsed(waited["endings"][0])},
-                                  "inner": {"status": "unavailable", "exit_code": None}}
-                        state.update(phase="failed", receipt=result)
-                        record()
-                        worktree.generation_receipt = result
-                        return result
-                    break
-                if waited["endings"][0]["status"] not in ("waiting", "executed", "cache_hit"):
-                    raise ValueError("PrismaBuild could not verify generator completion.")
-            diagnostics.update(outer=_failure_receipt(waited["endings"][0], settings), phase="artifact_validation")
-            artifact, receipt = _artifact(waited["endings"][0], key)
+            if settings.backend == 'flux':
+                if resumed:
+                    plan = flux_execution.resume(settings, key, state['input_tree'], contract)
+                payload = flux_execution.execute(plan, resumed=resumed,
+                    emit=getattr(worktree, 'progress_emit', lambda event: None))
+                if payload['kind'] != 'generator':
+                    raise ValueError('Flux returned a different generator protocol')
+                artifact, receipt = payload['artifact'], payload['receipt']
+                diagnostics.update(outer=receipt['outer'], phase='artifact_validation')
+            else:
+                while True:
+                    getattr(worktree, "progress_emit", lambda event: None)({
+                        "event": "progress", "unit": "external_wait",
+                        "wait": {"upstream": "prismabuild", "key": key}})
+                    code, waited = _json_command([sys.executable, str(Path(settings.tools_path) / "pbwait.py"),
+                                                  "--endings", "--until", "cleaned", key])
+                    if (waited.get("schema") != "prismabuild.endings.v1" or
+                            type(waited.get("complete")) is not bool or len(waited["endings"]) != 1 or
+                            waited["endings"][0]["action_key"] != key):
+                        raise ValueError("PrismaBuild returned an invalid generator ending.")
+                    if waited["complete"]:
+                        if code or not waited["endings"][0].get("succeeded"):
+                            receipt = _failure_receipt(waited["endings"][0], settings)
+                            result = {"status": "failed", "action_key": key, "receipts": [receipt],
+                                      "message": "Generator action failed: " + json.dumps(receipt, sort_keys=True),
+                                      "budget": selected, "phase": "outer", "identity": {
+                                          "implementation": generator.IMPLEMENTATION, "image": settings.image,
+                                          "budget": selected}, "outer": {**receipt, "elapsed_s": _elapsed(waited["endings"][0])},
+                                      "inner": {"status": "unavailable", "exit_code": None}}
+                            state.update(phase="failed", receipt=result)
+                            record()
+                            worktree.generation_receipt = result
+                            return result
+                        break
+                    if waited["endings"][0]["status"] not in ("waiting", "executed", "cache_hit"):
+                        raise ValueError("PrismaBuild could not verify generator completion.")
+                diagnostics.update(outer=_failure_receipt(waited["endings"][0], settings), phase="artifact_validation")
+                artifact, receipt = _artifact(waited["endings"][0], key)
             if (artifact.get("command") != command or artifact.get("identity") != {
                     "implementation": generator.IMPLEMENTATION, "image": settings.image, "budget": selected}
                     or artifact.get("budget") != selected):

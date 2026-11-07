@@ -39,7 +39,7 @@ def test_selected_flux_rehearsal_retains_backend_in_contract(rehearsal):
     assert restored.active['inflight']['backend'] == 'flux'
 
 
-def test_selected_flux_maker_reaches_explicit_hold_without_pb_transport(rehearsal, monkeypatch):
+def test_selected_flux_maker_reaches_activation_hold_without_pb_transport(rehearsal, monkeypatch):
     from tl3_workers import pb_tests
     ledger, _, _, calls = rehearsal
     ledger.worktree.test_settings = pb_tests.TestSettings(
@@ -48,9 +48,15 @@ def test_selected_flux_maker_reaches_explicit_hold_without_pb_transport(rehearsa
     def forbidden(_):
         pytest.fail('selected Flux invoked a PB transport')
     monkeypatch.setattr(pb_tests, '_json_command', forbidden)
+    from tl3_workers import flux_execution
+    from tl3_harness.supervision import ExecutionFailure, ExecutionOutcome
+    def held():
+        raise ExecutionFailure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'admission', 'runtime_activation_held')
+    monkeypatch.setattr(flux_execution, 'activation', held)
+    monkeypatch.setattr(pb_tests, 'bounded', lambda value, **kwargs: value)
     result = pb_tests.make_test_tool(ledger.worktree)([NODE])
     assert result['status'] == 'infrastructure_error'
-    assert 'shared worker collector' in result['message']
+    assert result['execution']['termination_reason'] == 'runtime_activation_held'
     assert not calls
 
 
