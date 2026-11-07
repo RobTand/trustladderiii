@@ -18,19 +18,35 @@ import remote_gate  # noqa: E402
 CASES = {
     'empty_allowed_second_replan': (
         'crates/kernel/src/empty_replan.rs',
-        'if !m.empty_allowed_replanned {',
+        'if !budget.used {',
         'if true {',
         '//crates/kernel:verus_empty_replan'),
     'empty_allowed_extra_spend': (
         'crates/kernel/src/empty_replan.rs',
-        '        m.empty_allowed_replanned = true;',
-        '        m.empty_allowed_replanned = true;\n        if m.credit.can_spend(1) { m.credit.spend(1); }',
+        '        budget.used = true;',
+        '        budget.used = true;\n        if m.credit.can_spend(1) { m.credit.spend(1); }',
         '//crates/kernel:verus_empty_replan'),
     'empty_allowed_asks': (
         'crates/kernel/src/empty_replan.rs',
         '        set_phase(m, phase);',
         '        ask_rob(w, i, QKind::CantMeet, Cont::Planning { must_split: false }, 0, _out);',
         '//crates/kernel:verus_empty_replan'),
+
+    'empty_allowed_not_consumed': (
+        'crates/kernel/src/empty_replan.rs',
+        '        budget.used = true;',
+        '        budget.used = false;',
+        '//crates/kernel:verus_empty_replan'),
+    'empty_allowed_stale_consumes': (
+        'crates/kernel/src/empty_replan.rs',
+        '    if !matches!(n.phase, Phase::Planning { .. }) || n.current() != Some(Item::Await)',
+        '    budget.used = true;\n    if !matches!(n.phase, Phase::Planning { .. }) || n.current() != Some(Item::Await)',
+        '//crates/kernel:verus_planner_entry'),
+    'empty_allowed_wrong_key': (
+        'crates/kernel/src/empty_replan.rs',
+        '    if budget.request != request {',
+        '    if false {',
+        '//crates/kernel:verus_planner_entry'),
 
     'audit_disagreement_asks': (
         'crates/kernel/src/ingest.rs',

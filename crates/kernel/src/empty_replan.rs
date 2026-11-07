@@ -72,6 +72,8 @@ pub enum PlannerResult {
 
 #[cfg(verus_keep_ghost)]
 verus! {
+pub closed spec fn planner_question_counter(w: World) -> u64 { w.next_question }
+
 /// This is the executable entry's pre-consumption admission, not caller policy.
 pub closed spec fn admitted(w: World, request: NodeId, generation: u64) -> bool {
     request.0 < w.nodes@.len() && {
@@ -122,9 +124,10 @@ pub fn step_planner(mut world: World, mut budget: ReplanBudget, request: NodeId,
             result.0 == world && result.2@.len() == 0,
         (budget.request_version() == request && admitted(world, request, generation)
             && planner_result is EmptyAllowedReplan) ==>
-                empty_replan_transition(world, result.0, request, budget.consumed()),
+                empty_replan_transition(world, result.0, request, budget.consumed())
+                    && planner_question_counter(result.0) == planner_question_counter(world),
 ] proof [reveal(ReplanBudget::request_version); reveal(ReplanBudget::consumed); reveal(empty_replan_transition);
-    reveal(admitted); reveal(world_headroom); world_checked_definition(world);] {
+    reveal(admitted); reveal(planner_question_counter); reveal(world_headroom); world_checked_definition(world);] {
     if budget.request != request {
         return (world, budget, Vec::new());
     }
