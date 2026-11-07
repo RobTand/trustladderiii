@@ -103,7 +103,7 @@ def test_flux_command_at_launcher_boundary(launcher):
         with Supervised(command, selection, ()) as process:
             list(process.records())
     arguments = json.loads(calls.read_text().splitlines()[0])
-    for flag in ('--cgroups=disabled', '--network=none', '--read-only', '--init', '--userns=keep-id',
+    for flag in ('--cgroups=disabled', '--network=none', '--read-only', '--init',
                  '--pull=never', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--ipc=private',
                  '--read-only-tmpfs=false', '--pid=private', '--http-proxy=false'):
         assert flag in arguments
@@ -113,6 +113,7 @@ def test_flux_command_at_launcher_boundary(launcher):
     assert f'type=bind,src={scratch},dst=/tmp' in mounts
     assert not any('flux-out' in mount or 'token' in mount for mount in mounts)
     assert '--cpuset-cpus' not in arguments
+    assert not any(arg.startswith(('--userns', '--user=', '--memory')) for arg in arguments)
     assert arguments[-2:] == ['/harness/runtime_evidence.py', '-']
 
 
