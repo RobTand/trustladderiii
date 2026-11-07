@@ -46,7 +46,7 @@ def main():
     head.mkdir()
     (head / 'test_probe.py').write_text('def test_probe():\n    assert False\n')
     check = model.Check('job probe', model.Kind.DEMONSTRATING, ('test_probe.py::test_probe',))
-    assert proof.assemble_proof(base, head, assembly / 'assembled', check, {})
+    assert proof.assemble_proof(base, head, assembly / 'assembled', check, {'test-files': ['test_*.py']})
 
     # Only replace the container/admission test seams. The staged runner, report,
     # refusal, supervision and outer action implementations execute unmodified.
