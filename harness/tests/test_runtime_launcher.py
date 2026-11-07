@@ -743,6 +743,54 @@ def test_cleanup_query_failure_still_stops_exact_retained_launcher(cleanup_fixtu
         child.wait(timeout=5)
 
 
+def test_cleanup_stops_launcher_before_any_podman_query(cleanup_fixture, monkeypatch):
+    import os
+    import subprocess
+    from tl3_harness import runtime
+
+    root, podman, systemctl, owned = cleanup_fixture
+    child = subprocess.Popen([sys.executable, '-I', '-c', 'import time;time.sleep(60)'], start_new_session=True)
+    observation = runtime._process_observation({'pid': child.pid, 'start_ticks': 0})
+    owned = {**owned, 'launcher': {'pid': child.pid, 'start_ticks': observation['observed_start_ticks']},
+             'process_group': child.pid}
+    handle = os.pidfd_open(child.pid)
+    original_run = subprocess.run
+
+    def observe(arguments, **options):
+        assert runtime.processes_stopped([handle], 0.01), 'launcher must stop before cleanup I/O'
+        child.wait(timeout=1)
+        return original_run(arguments, **options)
+
+    monkeypatch.setattr(subprocess, 'run', observe)
+    try:
+        facts = runtime.cleanup_observations(owned, podman=podman, systemctl=systemctl,
+                                             cgroup_root=root / 'cgroups', timeout=1)
+        assert facts['container']['remove_exit'] == 0
+        assert child.wait(timeout=5) < 0
+    finally:
+        os.close(handle)
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=5)
+
+
+def test_cleanup_slow_podman_shares_one_budget_and_retains_incomplete_evidence(cleanup_fixture):
+    import time
+    from tl3_harness import runtime
+
+    root, podman, systemctl, owned = cleanup_fixture
+    executable = Path(podman)
+    executable.write_text(executable.read_text().replace('import json\n', 'import json\nimport time\ntime.sleep(0.09)\n'))
+    started = time.monotonic()
+    facts = runtime.cleanup_observations(owned, podman=podman, systemctl=systemctl,
+                                         cgroup_root=root / 'cgroups', timeout=0.35)
+    assert time.monotonic() - started < 0.65, 'cleanup subprocesses must share the total budget'
+    assert facts['schema'] == 'tl3.cleanup_evidence.v1'
+    assert facts['launcher'] == {'kind': 'absent'}
+    assert facts['process_group_probe_errno'] == 3
+    assert facts['container'] is None, 'incomplete cleanup must not invent successful container evidence'
+
+
 def test_raw_prepared_inventory_includes_explicit_runtime_tools(tmp_path):
     from tl3_harness import runtime
 
