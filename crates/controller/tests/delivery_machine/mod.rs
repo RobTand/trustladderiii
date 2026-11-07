@@ -249,6 +249,10 @@ fn owned_controller_io_shell_remains_verbatim() {
         .unwrap()
         + start;
     let restored = source[start..end]
+        .replace(
+            "let tl3_kernel::StepResult {\n            mut world,\n            mut outputs,\n            ..\n        } = tl3_kernel::step(world, event);",
+            "let (mut world, mut outputs) = tl3_kernel::step(world, event);",
+        )
         .replace("Upstream::Delivery", "Upstream::Mergify")
         .replace(
             include_str!("current-plan.rs.txt"),

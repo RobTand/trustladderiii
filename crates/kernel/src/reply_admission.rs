@@ -56,13 +56,15 @@ kernel_fn! {
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
-    out: &mut Outbox) -> (result: ()) [
+    out: &mut Outbox, report: &mut Report) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
         footprint::valid_footprint(*old(w), old(w).nodes@[i as int].footprint),
         footprint::ordered_table(*old(w)),
-    ensures port_t860_contracts::reply_post(*old(w), *final(w), i as int, generation, reply, *old(out), *final(out)),
+    ensures report::forwards(old(report).entries@, final(report).entries@,
+            report::reply_entries(NodeId(i as u64), old(w).nodes@[i as int].phase, current_item(old(w).nodes@[i as int]), old(w).nodes@[i as int].run, old(w).nodes@[i as int].job, generation, reply, port_t860_contracts::admissible(*old(w), old(w).nodes@[i as int], reply))),
+        port_t860_contracts::reply_post(*old(w), *final(w), i as int, generation, reply, *old(out), *final(out)),
         progress_gate_contracts::maker_reply(*old(w), *final(w), i as int,
             generation, reply, *old(out), *final(out)),
         (node_checked(*old(w), old(w).nodes@[i as int])
@@ -118,15 +120,23 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
                     && *final(out) == *old(out)
             }),
 ] {
+    kernel_snapshot! { before_report = report.entries@ }
     kernel_snapshot! { before_reply = *w }
     kernel_snapshot! { before_outputs = *out }
     let n = &w.nodes[i];
     if n.phase.is_stopping() {
         on_stopping_reply(w, i, generation, reply, out);
+        kernel_proof! { report::lemmas::reply_result(before_report@, report.entries@, NodeId(i as u64),
+            before_reply@.nodes@[i as int].phase, current_item(before_reply@.nodes@[i as int]),
+            before_reply@.nodes@[i as int].run, before_reply@.nodes@[i as int].job,
+            generation, reply, port_t860_contracts::admissible(before_reply@, before_reply@.nodes@[i as int], reply)); }
         return;
     }
     if n.current() != Some(Item::Await) || (n.run != Some(generation) && n.job != Some(generation))
     {
+        report.record_stale(NodeId(i as u64), ReplyKind::of(reply));
+        kernel_proof! { report::lemmas::read_stale(before_report@, report.entries@,
+            NodeId(i as u64), report::reply_kind(reply)); }
         kernel_proof! { footprint::valid_under_table_growth(before_reply@, *w, w.nodes@[i as int].footprint); }
         kernel_proof! {
             progress_gate_contracts::table_order_frame(before_reply@, *w);
@@ -136,6 +146,10 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         kernel_proof! {
             port_t860_link::inactive(before_reply@, *w, i as int, generation, reply, before_outputs@, *out);
         }
+        kernel_proof! { report::lemmas::reply_result(before_report@, report.entries@, NodeId(i as u64),
+            before_reply@.nodes@[i as int].phase, current_item(before_reply@.nodes@[i as int]),
+            before_reply@.nodes@[i as int].run, before_reply@.nodes@[i as int].job,
+            generation, reply, port_t860_contracts::admissible(before_reply@, before_reply@.nodes@[i as int], reply)); }
         return; // stale
     }
     // A reply that breaks its schema or names the wrong commit counts as a failed run.
@@ -147,7 +161,13 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         }
     }
     if !accepts(w, n, &reply) {
-        on_rejected_reply(w, i, generation, reply, out);
+        on_rejected_reply(w, i, generation, reply, out, report);
+        kernel_proof! { report::lemmas::round_delta(before_report@, report.entries@,
+            NodeId(i as u64), Some(FailedRoundCause::RunFailed)); }
+        kernel_proof! { report::lemmas::reply_result(before_report@, report.entries@, NodeId(i as u64),
+            before_reply@.nodes@[i as int].phase, current_item(before_reply@.nodes@[i as int]),
+            before_reply@.nodes@[i as int].run, before_reply@.nodes@[i as int].job,
+            generation, reply, port_t860_contracts::admissible(before_reply@, before_reply@.nodes@[i as int], reply)); }
         return;
     }
     kernel_proof! {
@@ -155,7 +175,15 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
             assert(w.nodes@[i as int].phase == Phase::Auditing);
         }
     }
-    on_admitted_reply(w, i, generation, reply, out);
+    on_admitted_reply(w, i, generation, reply, out, report);
+    kernel_proof! {
+        report::lemmas::read_forwards(before_report@, report.entries@,
+            report::round_entries(NodeId(i as u64), report::work_failure(reply)));
+        report::lemmas::reply_result(before_report@, report.entries@, NodeId(i as u64),
+            before_reply@.nodes@[i as int].phase, current_item(before_reply@.nodes@[i as int]),
+            before_reply@.nodes@[i as int].run, before_reply@.nodes@[i as int].job,
+            generation, reply, port_t860_contracts::admissible(before_reply@, before_reply@.nodes@[i as int], reply)); }
+
 }
 }
 
@@ -164,7 +192,7 @@ kernel_fn! {
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn on_admitted_reply(w: &mut World, i: usize, _generation: u64, reply: Reply,
-    out: &mut Outbox) -> (result: ()) [
+    out: &mut Outbox, report: &mut Report) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
@@ -179,7 +207,9 @@ pub(super) fn on_admitted_reply(w: &mut World, i: usize, _generation: u64, reply
                 footprint::valid_footprint(*old(w), footprint),
             _ => true,
         }),
-    ensures port_t860_contracts::reply_post(*old(w), *final(w), i as int, _generation, reply, *old(out), *final(out)),
+    ensures report::forwards(old(report).entries@, final(report).entries@,
+            report::round_entries(NodeId(i as u64), report::work_failure(reply))),
+        port_t860_contracts::reply_post(*old(w), *final(w), i as int, _generation, reply, *old(out), *final(out)),
         progress_gate_contracts::maker_reply(*old(w), *final(w), i as int,
             _generation, reply, *old(out), *final(out)),
         (node_checked(*old(w), old(w).nodes@[i as int])
@@ -235,6 +265,8 @@ pub(super) fn on_admitted_reply(w: &mut World, i: usize, _generation: u64, reply
                     && *final(out) == *old(out)
             }),
 ] {
+    kernel_snapshot! { before_report = report.entries@ }
+    kernel_proof! { report::lemmas::work_kind(reply); }
     kernel_snapshot! { before_reply = *w }
     kernel_snapshot! { before_outputs = *out }
     kernel_snapshot! { before_operation = *w }
@@ -261,7 +293,9 @@ pub(super) fn on_admitted_reply(w: &mut World, i: usize, _generation: u64, reply
             }
         }
         _ => {
-            reply_transition(w, i, reply, out);
+            reply_transition(w, i, reply, out, report);
+            kernel_proof! { report::lemmas::round_delta(before_report@, report.entries@,
+                NodeId(i as u64), report::work_failure(reply)); }
             kernel_proof! {
                 assert(port_t860_contracts::reply_post(before_reply@, *w, i as int, _generation, reply, before_outputs@, *out)) by {
                     if reply == Reply::AuditDisagrees {
@@ -282,6 +316,9 @@ pub(super) fn on_admitted_reply(w: &mut World, i: usize, _generation: u64, reply
             }
         }
     }
+    kernel_proof! { report::lemmas::forward_round(before_report@, report.entries@,
+        NodeId(i as u64), report::work_failure(reply)); }
+
 }
 }
 
@@ -354,13 +391,15 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
 kernel_fn! {
 /// Reply rows / #771: partition the unchanged match for bounded solver queries.
 pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
-    out: &mut Outbox) -> (result: ()) [
+    out: &mut Outbox, report: &mut Report) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(reply is MakerNeedsFiles),
-    ensures port_t860_contracts::transition_post(*old(w), *final(w), i as int, reply, *old(out), *final(out)),
+    ensures report::forwards(old(report).entries@, final(report).entries@,
+            report::round_entries(NodeId(i as u64), report::work_failure(reply))),
+        port_t860_contracts::transition_post(*old(w), *final(w), i as int, reply, *old(out), *final(out)),
         progress_gate_contracts::maker_transition(*old(w), *final(w), i as int,
             reply, *old(out), *final(out)),
         (successful_reply_input(old(w).nodes@[i as int], reply)
@@ -390,13 +429,22 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
                     && *final(out) == *old(out)
             }),
 ] proof [reveal(port_t860_contracts::transition_post); reveal(progress_gate_contracts::maker_transition); reveal(distance);] {
+    kernel_snapshot! { before_report = report.entries@ }
+    kernel_proof! { report::lemmas::work_kind(reply); }
     match reply {
         Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees
             | Reply::AuditDisagrees | Reply::ProtectedPaths => reply_ingest(w, i, reply, out),
         Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet => reply_plan(w, i, reply, out),
         Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit => reply_plan_check(w, i, reply, out),
-        _ => reply_work(w, i, reply, out),
+        _ => {
+            reply_work(w, i, reply, out, report);
+            kernel_proof! { report::lemmas::round_delta(before_report@, report.entries@,
+                NodeId(i as u64), report::work_failure(reply)); }
+        },
     }
+    kernel_proof! { report::lemmas::forward_round(before_report@, report.entries@,
+        NodeId(i as u64), report::work_failure(reply)); }
+
 }
 }
 
@@ -405,7 +453,7 @@ kernel_fn! {
 #[cfg_attr(verus_keep_ghost, verifier::rlimit(90))]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn on_rejected_reply(w: &mut World, i: usize, _generation: u64, _reply: Reply,
-    out: &mut Outbox) -> (result: ()) [
+    out: &mut Outbox, report: &mut Report) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]), old(w).next_question < u64::MAX,
@@ -414,7 +462,9 @@ pub(super) fn on_rejected_reply(w: &mut World, i: usize, _generation: u64, _repl
         !(old(w).nodes@[i as int].phase is Stopping),
         port_t860_contracts::active(old(w).nodes@[i as int], _generation),
         !port_t860_contracts::admissible(*old(w), old(w).nodes@[i as int], _reply),
-    ensures port_t860_contracts::reply_post(*old(w), *final(w), i as int, _generation, _reply, *old(out), *final(out)),
+    ensures report::forwards(old(report).entries@, final(report).entries@,
+            report::round_entries(NodeId(i as u64), Some(FailedRoundCause::RunFailed))),
+        port_t860_contracts::reply_post(*old(w), *final(w), i as int, _generation, _reply, *old(out), *final(out)),
         progress_gate_contracts::maker_reply(*old(w), *final(w), i as int,
             _generation, _reply, *old(out), *final(out)),
         (node_checked(*old(w), old(w).nodes@[i as int])
@@ -470,6 +520,7 @@ pub(super) fn on_rejected_reply(w: &mut World, i: usize, _generation: u64, _repl
                     && *final(out) == *old(out)
             }),
 ] {
+    kernel_snapshot! { before_report = report.entries@ }
     kernel_snapshot! { before_reply = *w }
     kernel_snapshot! { before_outputs = *out }
     kernel_proof! { reveal(port_t860_contracts::admissible);
@@ -479,7 +530,11 @@ pub(super) fn on_rejected_reply(w: &mut World, i: usize, _generation: u64, _repl
             }
         }
     }
-        run_failed(w, i, out);
+        run_failed(w, i, out, report);
+        kernel_proof! {
+            report::lemmas::read_failed_round(before_report@, report.entries@, NodeId(i as u64), FailedRoundCause::RunFailed);
+            report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), Some(FailedRoundCause::RunFailed));
+        }
         kernel_proof! { footprint::valid_under_table_growth(before_reply@, *w, w.nodes@[i as int].footprint); }
         kernel_proof! {
             progress_gate_contracts::table_order_frame(before_reply@, *w);

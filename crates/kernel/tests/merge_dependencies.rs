@@ -1,7 +1,11 @@
 use tl3_kernel::*;
 
 fn send(world: &mut World, event: Event) -> Vec<Out> {
-    let (next, out) = step(world.clone(), event);
+    let tl3_kernel::StepResult {
+        world: next,
+        outputs: out,
+        ..
+    } = step(world.clone(), event);
     assert!(next.valid(), "invalid after {event:?}: {next:#?}");
     *world = next;
     out
