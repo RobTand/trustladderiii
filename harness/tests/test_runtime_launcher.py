@@ -344,6 +344,108 @@ def test_backend_cli_refuses_invalid_frames_without_pb_fallback(backend_cli, res
         runtime.launch_context()
 
 
+@pytest.fixture
+def cleanup_cli(backend_cli):
+    reply, calls = backend_cli
+    executable = reply.parent / 'backend-cli'
+    executable.write_text(f'''#!{sys.executable}
+import json, pathlib, sys, time
+command = json.load(sys.stdin)
+pathlib.Path({str(calls)!r}).write_text(json.dumps(command))
+def frame(sequence, kind, **body):
+    print(json.dumps(dict(schema='tl3.run_backend.frame.v1', sequence=sequence, kind=kind, **body)), flush=True)
+if command['op'] == 'cleanup_limits':
+    frame(0, 'result', result=dict(op='cleanup_limits', limits=dict(helper_budget_seconds=1,
+          native_timeout_seconds=2, idle_timeout_seconds=3, max_progress_frames=4,
+          max_frame_bytes=4096, max_response_bytes=16384)))
+elif command['op'] == 'launch_context':
+    frame(0, 'result', result=dict(op='launch_context', context=dict(owner='owner', correlation='correlation',
+          run=dict(backend='flux', uri='local:///native', instance='run/generation', job='fJob'), request_digest='a'*64)))
+else:
+    for delay, value in json.loads(pathlib.Path({str(reply)!r}).read_text()):
+        time.sleep(delay)
+        print(json.dumps(value), flush=True)
+''')
+    return reply
+
+
+def cleanup_frames(operation, *, delay=0):
+    progress = dict(owner=dict(owner='owner', correlation='correlation'),
+                    run=dict(backend='flux', uri='local:///native', instance='run/generation', job='fJob'),
+                    request_digest='a' * 64, execution='first', helper_budget_seconds=1, idle_timeout_seconds=3)
+    first = dict(schema='tl3.run_backend.frame.v1', sequence=0, kind='cleanup_progress', progress=progress)
+    second = {**first, 'sequence': 1, 'progress': {**progress, 'execution': 'second'}}
+    final = dict(schema='tl3.run_backend.frame.v1', sequence=2, kind='result', result=dict(op=operation, value='final'))
+    return [[0, first], [delay, second], [delay, final]]
+
+
+@pytest.mark.parametrize('operation', ['cleanup_runtime', 'cancel'])
+def test_cleanup_progress_renews_only_the_idle_deadline(cleanup_cli, operation):
+    from tl3_harness import runtime
+
+    cleanup_cli.write_text(json.dumps(cleanup_frames(operation, delay=2)))
+    result = runtime.backend_request(dict(op=operation, owner='owner', correlation='correlation'))
+    assert result == dict(op=operation, value='final')
+
+
+def test_cleanup_progress_silence_remains_bounded(cleanup_cli):
+    from tl3_harness import runtime
+
+    frames = cleanup_frames('cleanup_runtime')
+    frames[1][0] = 4
+    cleanup_cli.write_text(json.dumps(frames))
+    with pytest.raises(RuntimeError, match='timed out'):
+        runtime.backend_request(dict(op='cleanup_runtime', owner='owner', correlation='correlation'))
+
+
+@pytest.mark.parametrize('fault', ['owner', 'run', 'request_digest', 'helper_budget_seconds',
+                                'idle_timeout_seconds', 'sequence', 'duplicate_execution',
+                                'progress_after_result', 'duplicate_result', 'frame_bytes', 'count'])
+def test_cleanup_progress_refuses_wrong_binding_or_order(cleanup_cli, fault):
+    from tl3_harness import runtime
+
+    frames = cleanup_frames('cleanup_runtime')
+    if fault == 'owner':
+        frames[0][1]['progress']['owner']['owner'] = 'other'
+    elif fault == 'run':
+        frames[0][1]['progress']['run']['job'] = 'other'
+    elif fault in ('request_digest', 'helper_budget_seconds', 'idle_timeout_seconds'):
+        frames[0][1]['progress'][fault] = 'wrong'
+    elif fault == 'sequence':
+        frames[1][1]['sequence'] = 3
+    elif fault == 'duplicate_execution':
+        frames[1][1]['progress']['execution'] = 'first'
+    elif fault == 'progress_after_result':
+        frames = [frames[2], frames[0]]
+        for i, (_, frame) in enumerate(frames):
+            frame['sequence'] = i
+    elif fault == 'duplicate_result':
+        frames.append([0, {**frames[-1][1], 'sequence': 3}])
+    elif fault == 'frame_bytes':
+        frames[0][1]['progress']['execution'] = 'a' * 4096
+    else:
+        frames = [[0, {**frames[0][1], 'sequence': i,
+                       'progress': {**frames[0][1]['progress'], 'execution': str(i)}}] for i in range(5)]
+    cleanup_cli.write_text(json.dumps(frames))
+    with pytest.raises(RuntimeError):
+        runtime.backend_request(dict(op='cleanup_runtime', owner='owner', correlation='correlation'))
+
+
+def test_cleanup_main_consumes_rust_budget(monkeypatch, tmp_path, capsys):
+    import io
+    from tl3_harness import runtime
+
+    monkeypatch.setattr(runtime, 'check_rootless_directory', lambda _: None)
+    monkeypatch.setattr(sys, 'argv', ['cleanup', '--podman', '/explicit/podman', '--systemctl', '/explicit/systemctl'])
+    monkeypatch.setattr(sys, 'stdin', type('Input', (), {'buffer': io.BytesIO(json.dumps(dict(
+        schema='tl3.cleanup_input.v1', budget_seconds=7, ownership={'fixture': True}, launch=None)).encode())})())
+    observed = []
+    monkeypatch.setattr(runtime, 'cleanup_observations', lambda ownership, **options: observed.append(options) or {'fixture': True})
+    runtime.cleanup_main()
+    assert observed == [dict(launch=None, podman='/explicit/podman', systemctl='/explicit/systemctl', timeout=7)]
+    assert json.loads(capsys.readouterr().out) == {'fixture': True}
+
+
 def test_own_scope_command_keeps_mapped_grant_and_has_no_in_job_fallback(launcher):
     from tl3_harness.runtime import podman_command
 
