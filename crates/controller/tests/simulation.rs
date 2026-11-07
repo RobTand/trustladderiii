@@ -1019,7 +1019,6 @@ impl tl3_controller::executor::Executor for RetryWorker {
             return Ok(tl3_controller::executor::Completion {
                 diagnostic: None,
                 failure_class: None,
-                progress: None,
                 ack: tl3_kernel::Ack::Retryable,
                 observations: vec![],
             });
@@ -1564,8 +1563,7 @@ impl Executor for FaultyWorker {
                     return Ok(Reconciliation::Found(Box::new(Completion {
                         diagnostic: None,
                         failure_class: None,
-                        progress: None,
-                        ack,
+                                ack,
                         observations: vec![],
                     })));
                 }

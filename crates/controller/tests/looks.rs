@@ -453,7 +453,6 @@ fn permanent_incident_clear_at(settings: &tl3_config::Store, request_issue: bool
             Ok(Completion {
                 diagnostic: None,
                 failure_class: None,
-                progress: None,
                 ack: tl3_kernel::Ack::Permanent,
                 observations: vec![],
             })
