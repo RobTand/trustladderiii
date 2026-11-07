@@ -365,3 +365,15 @@ tl3_py_test(
     name = "test_bbrun_cancel",
     srcs = ["test_bbrun_cancel.py"],
 )
+
+py_binary(
+    name = "bbrun",
+    srcs = ["bbrun.py"],
+    visibility = ["//visibility:public"],
+)
+
+tl3_py_test(
+    name = "test_bbrun_cleanup",
+    srcs = ["test_bbrun_cleanup.py"],
+    deps = [":bbrun"],
+)

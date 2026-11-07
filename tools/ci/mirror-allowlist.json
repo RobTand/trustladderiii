@@ -961,6 +961,12 @@
     "sha256": "4ec4c5a7f3441636729e8f9aa286061ef21212c4195000b0787513baea7b6840"
   },
   {
+    "path": "tools/ci/fixtures/bbrun-baseline89.py.txt",
+    "detector": "frozen-copy",
+    "owner": "ops #878/ops-hermetic-baseline89; remove when the historical baseline-89 control is retired or replaced",
+    "sha256": "89c8a850b9381cd2e4d52a2d94f45b5c2272c9fcb7a3708ef2a8c45552836763"
+  },
+  {
     "path": "tools/ci/test_bazel_workspace.py",
     "detector": "source-include",
     "owner": "#878"
