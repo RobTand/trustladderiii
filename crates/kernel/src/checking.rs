@@ -29,7 +29,7 @@ impl World {
                 potential_member(w.nodes@, i as int, w.nodes@.len(), |n: Node| ticket_capacity(n));
             }
             kernel_snapshot! { before_probe = w }
-            if advance(&mut w, i, &mut out) { return false; }
+            if advance(&mut w, i, &mut out, &mut Report::new()) { return false; }
             kernel_proof! {
                 movable_frame(*self, before_probe@, i as int);
                 reveal(advance_post); reveal(settle_ready); reveal(scheduling_safe);

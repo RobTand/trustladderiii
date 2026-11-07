@@ -124,7 +124,11 @@ use scheduler::*;
 mod witness;
 use settling::settle;
 mod steps;
-pub use steps::{step, step_with_passes};
+pub use steps::{step, step_checked, step_with_passes};
+pub mod report;
+pub use report::{
+    FailedRoundCause, ReplyKind, Report, ReportEntry, StepRefusal, StepResult, StopCause,
+};
 #[cfg(verus_keep_ghost)]
 mod progress_pool;
 #[cfg(verus_keep_ghost)]
@@ -1640,6 +1644,7 @@ pub enum Broken {
 }
 
 // proof map start
+// proof gap: fact-path report proofs (facts stops + CiFailed), owner K3 #907
 /// The proof-map entry that covers each event variant. The match is exhaustive, so
 /// a new variant without a proof doesn't compile, and a test checks that each
 /// named proof exists.
@@ -1743,7 +1748,7 @@ pub fn proofs_of_phase(phase: Phase) -> &'static [&'static str] {
 /// Settle after the controller reconciles stored gate or agent capacity.
 pub fn settle_world(mut world: World) -> (World, Vec<Out>) {
     let mut out = Vec::new();
-    settle(&mut world, &mut out, None);
+    settle(&mut world, &mut out, None, &mut Report::new());
     (world, out)
 }
 
@@ -1752,11 +1757,11 @@ pub fn settle_world(mut world: World) -> (World, Vec<Out>) {
 pub fn step_traced(mut world: World, event: Event) -> (World, Vec<Out>, Vec<World>) {
     let mut outbox = Outbox::new();
     let mut trace = Vec::new();
-    apply(&mut world, event, &mut outbox);
+    apply(&mut world, event, &mut outbox, &mut Report::new());
     let mut out = Vec::new();
     outbox.drain_into(&mut out);
     trace.push(snapshot_world(&world));
-    settle(&mut world, &mut out, Some(&mut trace));
+    settle(&mut world, &mut out, Some(&mut trace), &mut Report::new());
     (world, out, trace)
 }
 
@@ -1997,6 +2002,39 @@ proof fn movable_frame(before: World, after: World, i: int)
 }
 
 /// #771: conserved allocations and frames across the real settle loop.
+pub open spec fn phase_view(nodes: Seq<Node>) -> Seq<Phase> {
+    Seq::new(nodes.len(), |i: int| nodes[i].phase)
+}
+
+/// Public projection of the phase field group, without exposing World storage.
+pub closed spec fn world_phases(w: World) -> Seq<Phase> { phase_view(w.nodes@) }
+
+/// Project only the admission fields used by report agreement.
+pub closed spec fn report_input(w: World, event: Event) -> report::ReplyInput {
+    match event {
+        Event::Reply { node, generation: _, reply } if node.0 < w.nodes@.len() => {
+            let n = w.nodes@[node.0 as int];
+            report::ReplyInput { phase: n.phase, current: current_item(n),
+                run: n.run, job: n.job, accepted: port_t860_contracts::admissible(w, n, reply) }
+        }
+        _ => report::ReplyInput { phase: Phase::Unplanned, current: None,
+            run: None, job: None, accepted: false },
+    }
+}
+
+proof fn report_projection(w: World, event: Event)
+    ensures world_phases(w) == phase_view(w.nodes@),
+        report_input(w, event) == match event {
+            Event::Reply { node, reply, .. } if node.0 < w.nodes@.len() => {
+                let n = w.nodes@[node.0 as int];
+                report::ReplyInput { phase: n.phase, current: current_item(n),
+                    run: n.run, job: n.job, accepted: port_t860_contracts::admissible(w, n, reply) }
+            }
+            _ => report::ReplyInput { phase: Phase::Unplanned, current: None,
+                run: None, job: None, accepted: false },
+        },
+{ reveal(world_phases); reveal(report_input); }
+
 spec fn settle_chain(before: World, after: World) -> bool {
     after.nodes@.len() == before.nodes@.len()
         && after.next_question == before.next_question && after.gates@ == before.gates@

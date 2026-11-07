@@ -231,7 +231,7 @@ pub(super) fn verify_abandoned(status: DependencyStatus) -> (result: (World, boo
         dependencies::delivered_definition(world.dependencies@, NodeId(0));
         footprint::inline_is_valid(world, 0);
     }
-    let admitted = advance(&mut world, 0, &mut out);
+    let admitted = advance(&mut world, 0, &mut out, &mut Report::new());
     assert(admitted == (status == DependencyStatus::Delivered));
     proof {
         reveal(advance_post); reveal(initial_node); reveal(retirement::node_rules);

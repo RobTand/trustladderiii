@@ -24,7 +24,7 @@ pub(super) fn verify_apply(mut w: World, generation: u64) -> (result: (World, Ou
     let mut out = Outbox::new();
     kernel_snapshot! { before_out = out }
     kernel_proof! { reveal(retirement::notices_only); }
-    apply(&mut w, Event::Reply { node: NodeId(0), generation, reply: Reply::AuditDisagrees }, &mut out);
+    apply(&mut w, Event::Reply { node: NodeId(0), generation, reply: Reply::AuditDisagrees }, &mut out, &mut Report::new());
     kernel_proof! {
         reveal(apply_post);
         port_t860_frames::world(before@, w, generation, before_out@, out);

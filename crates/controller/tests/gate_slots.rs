@@ -14,7 +14,7 @@ impl GateRun {
         Self(World::new(&[bootstrap.slots], bootstrap.pool))
     }
     fn send(&mut self, event: Event) {
-        self.0 = step(self.0.clone(), event).0;
+        self.0 = step(self.0.clone(), event).world;
         assert!(self.0.valid(), "{:?}", self.0.check());
         assert!(self.0.is_settled());
     }

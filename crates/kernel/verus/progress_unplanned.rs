@@ -59,7 +59,7 @@ pub(super) fn verify_outside(mut world: World) -> (result: (World, Event))
     let mut out = Outbox::new();
     proof { reveal(empty_outbox); }
     let selected = event.unwrap();
-    apply(&mut world, selected, &mut out);
+    apply(&mut world, selected, &mut out, &mut Report::new());
     (world, selected)
 }
 }

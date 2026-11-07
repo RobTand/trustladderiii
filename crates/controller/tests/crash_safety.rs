@@ -447,7 +447,11 @@ fn emission_coverage(
             continue;
         };
         let event: Event = serde_json::from_value(value.clone()).unwrap();
-        let (next, outputs) = tl3_kernel::step(world, event);
+        let tl3_kernel::StepResult {
+            world: next,
+            outputs,
+            ..
+        } = tl3_kernel::step(world, event);
         world = next;
         for (index, output) in outputs.into_iter().enumerate() {
             let (key, node, kind) = match output {

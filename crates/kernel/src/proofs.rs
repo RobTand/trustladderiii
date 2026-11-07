@@ -228,7 +228,7 @@ fn check_apply(event: Event) -> World {
     let before = any_settled_world(None);
     let mut after = before.clone();
     let mut out = Outbox::new();
-    apply(&mut after, event.clone(), &mut out);
+    apply(&mut after, event.clone(), &mut out, &mut Report::new());
     // Not vacuous: some world in the bounds is one this event changes.
     kani::cover!(after != before, "the event changes the world");
     if let Event::Reply {
@@ -511,9 +511,9 @@ fn check_fail_fast_diverts(phase: Phase, event: Event) {
     on.fail_fast = true;
     let b = off.nodes[0];
     let mut out_off = Outbox::new();
-    apply(&mut off, event, &mut out_off);
+    apply(&mut off, event, &mut out_off, &mut Report::new());
     let mut out_on = Outbox::new();
-    apply(&mut on, event, &mut out_on);
+    apply(&mut on, event, &mut out_on, &mut Report::new());
     on.fail_fast = false;
     let diverted = on != off;
     kani::cover!(diverted, "fail_fast stops a retry for TL3 review");
@@ -554,7 +554,7 @@ fn check_advance(phase: Phase, moves: bool) {
     let rank = before.nodes[0].settle_rank();
     let mut after = before.clone();
     let mut out = Outbox::new();
-    let changed = advance(&mut after, 0, &mut out);
+    let changed = advance(&mut after, 0, &mut out, &mut Report::new());
     // Not vacuous: settle takes a transition from this phase, or, for a phase
     // that only waits on outside events, a world in it exists. One cover per
     // harness, so every cover a proof contains is one it can reach.
@@ -621,9 +621,10 @@ fn check_dependency_delivery() {
             status: DependencyStatus::Delivered,
         }),
         &mut out,
+        &mut Report::new(),
     );
     assert!(world.measure() < before);
-    assert!(advance(&mut world, 0, &mut out));
+    assert!(advance(&mut world, 0, &mut out, &mut Report::new()));
     assert_eq!(world.nodes[0].phase, Phase::Planning { must_split: false });
     assert_eq!(world.nodes[0].credit.balance(), 4);
     require_consistent(&world);
@@ -633,7 +634,7 @@ fn check_dependency_delivery() {
 fn check_dependency_waiting() {
     let mut world = waiting_dependency_world();
     let mut out = Outbox::new();
-    let blocked = !advance(&mut world, 0, &mut out);
+    let blocked = !advance(&mut world, 0, &mut out, &mut Report::new());
     assert!(blocked);
     let node = &world.nodes[0];
     assert!(!node.holds && !node.pool && node.ticket.is_none() && node.run.is_none());
@@ -687,6 +688,7 @@ fn check_dependency_cycles() {
             },
         },
         &mut out,
+        &mut Report::new(),
     );
     assert!(world.dependency_graph_acyclic());
     kani::cover!(
@@ -716,6 +718,7 @@ fn check_dependency_registration() {
             status: kani::any(),
         }),
         &mut Outbox::new(),
+        &mut Report::new(),
     );
     if started || !matches!(phase, Phase::Ingesting | Phase::Auditing | Phase::Unplanned) {
         assert!(
@@ -759,6 +762,7 @@ fn check_dependency_remove() {
             number: target.number,
         }),
         &mut Outbox::new(),
+        &mut Report::new(),
     );
     assert_eq!(
         world.dependencies.len(),
@@ -1011,7 +1015,7 @@ proof!(apply_ack_body_policy_refused, {
     );
     let mut refused = before.clone();
     let mut refused_out = Outbox::new();
-    apply(&mut refused, event, &mut refused_out);
+    apply(&mut refused, event, &mut refused_out, &mut Report::new());
     if open_pr {
         assert!(
             refused_out.is_empty(),
@@ -1028,6 +1032,7 @@ proof!(apply_ack_body_policy_refused, {
                 ack: Ack::Permanent,
             },
             &mut permanent_out,
+            &mut Report::new(),
         );
         assert_eq!(refused, permanent);
         assert_eq!(refused_out, permanent_out);
@@ -1247,7 +1252,7 @@ fn check_gate_grant(width: u8) {
     let n = before.nodes[0];
     let mut after = before.clone();
     let mut out = Outbox::new();
-    let changed = advance(&mut after, 0, &mut out);
+    let changed = advance(&mut after, 0, &mut out, &mut Report::new());
     require_consistent(&after);
     let holders = before.nodes.iter().filter(|n| n.holds).count();
     kani::cover!(
@@ -1332,7 +1337,7 @@ fn check_gate_planning(width: u8) {
         .count();
     let mut after = before.clone();
     let mut out = Outbox::new();
-    let changed = advance(&mut after, 0, &mut out);
+    let changed = advance(&mut after, 0, &mut out, &mut Report::new());
     require_consistent(&after);
     assert_eq!(changed, waiting < usize::from(width));
     assert!(!after.nodes[0].holds && !after.nodes[0].pool);
@@ -1377,7 +1382,12 @@ fn publishing_ci_transition(infra: bool) -> (World, World) {
     kani::assume(!b.waiting_incident);
     let mut after = before.clone();
     let mut out = Outbox::new();
-    apply(&mut after, fact(Fact::CiFailed { infra }), &mut out);
+    apply(
+        &mut after,
+        fact(Fact::CiFailed { infra }),
+        &mut out,
+        &mut Report::new(),
+    );
     let n = &after.nodes[0];
     require_consistent(&after);
     check_nodes(&before, &after);
@@ -1406,6 +1416,7 @@ fn check_publishing_ci_tests() {
         &mut queued,
         fact(Fact::CiFailed { infra: false }),
         &mut Outbox::new(),
+        &mut Report::new(),
     );
     assert_eq!(n.credit, queued.nodes[0].credit);
     assert_eq!(n.round, queued.nodes[0].round);
@@ -1503,6 +1514,7 @@ fn check_publishing_ci_earlier_step() {
         &mut after,
         fact(Fact::CiFailed { infra: kani::any() }),
         &mut Outbox::new(),
+        &mut Report::new(),
     );
     assert_eq!(after, before);
     kani::cover!(before.nodes[0].pos == 0, "a failure before push is ignored");
@@ -1541,7 +1553,7 @@ fn check_gate_leaf_progress(width: u8) {
     let mut passed_chain = false;
     for i in 2..4 {
         let held = w.nodes[i].holds;
-        advance(&mut w, i, &mut Outbox::new());
+        advance(&mut w, i, &mut Outbox::new(), &mut Report::new());
         if !held && w.nodes[i].holds {
             passed = true;
             passed_chain |= i == 3 && chained_waiter;
@@ -1552,21 +1564,21 @@ fn check_gate_leaf_progress(width: u8) {
     // Successful teardown of the last conflicting holder, through real paths.
     on_command(&mut w, 1, 1, Command::Stop, &mut Outbox::new());
     for _ in 0..5 {
-        advance(&mut w, 1, &mut Outbox::new());
+        advance(&mut w, 1, &mut Outbox::new(), &mut Report::new());
         if let Some(effect) = w.nodes[1].effect {
             on_ack(&mut w, 1, effect.seq, Ack::Confirmed, &mut Outbox::new());
         }
     }
-    advance(&mut w, 1, &mut Outbox::new());
+    advance(&mut w, 1, &mut Outbox::new(), &mut Report::new());
     assert!(w.nodes[1].phase.is_closed());
     assert!(slot_free(&w, 0));
     // Visit younger leaves first: none can take the newly free slot or files.
     for i in 2..4 {
         let held = w.nodes[i].holds;
-        advance(&mut w, i, &mut Outbox::new());
+        advance(&mut w, i, &mut Outbox::new(), &mut Report::new());
         assert_eq!(w.nodes[i].holds, held);
     }
-    advance(&mut w, 0, &mut Outbox::new());
+    advance(&mut w, 0, &mut Outbox::new(), &mut Report::new());
     assert!(w.nodes[0].holds && w.nodes[0].ticket.is_none());
     require_consistent(&w);
     kani::cover!(
@@ -1622,7 +1634,7 @@ fn check_pool_grant_order() {
     kani::assume(n.ticket.is_some());
     let mut after = before.clone();
     let mut out = Outbox::new();
-    advance(&mut after, 0, &mut out);
+    advance(&mut after, 0, &mut out, &mut Report::new());
     require_consistent(&after);
     let mine = spec_key(n.priority, n.ticket.unwrap());
     let first = before.nodes[1..]

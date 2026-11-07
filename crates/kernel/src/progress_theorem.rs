@@ -66,7 +66,8 @@ fn kernel_progress(world: World) -> (result: (World, Vec<Out>))
     }
     let event = world.witness();
     proof { reveal(witness_selection); }
-    step(world, event.unwrap())
+    let result = step(world, event.unwrap());
+    (result.world, result.outputs)
 }
 
 }
