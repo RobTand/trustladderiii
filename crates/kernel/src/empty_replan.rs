@@ -53,6 +53,18 @@ pub closed spec fn admitted(w: World, request: NodeId, generation: u64) -> bool 
             && (n.run == Some(generation) || n.job == Some(generation))
     }
 }
+
+pub closed spec fn empty_replan_transition(world: World, next: World,
+    request: NodeId, consumed: bool) -> bool {
+    let before = world.nodes@[request.0 as int];
+    let after = next.nodes@[request.0 as int];
+    after.question.is_none() && after.credit == before.credit
+        && after.plan_retries == before.plan_retries && after.replanned == before.replanned
+        && (!consumed ==> after.phase == before.phase
+            && after.generation as int == before.generation as int + 1)
+        && (consumed ==> after.review_stop == Some(ReviewStop::PlanCantMeet)
+            && (after.phase is Stopping || after.phase is Closed))
+}
 }
 
 kernel_fn! {
@@ -70,17 +82,9 @@ pub fn step_planner(mut world: World, mut budget: ReplanBudget, request: NodeId,
             && !admitted(world, request, generation))) ==>
             result.0 == world && result.2@.len() == 0,
         (budget.request_version() == request && admitted(world, request, generation)
-            && planner_result is EmptyAllowedReplan) ==> {
-                let before = world.nodes@[request.0 as int];
-                let after = result.0.nodes@[request.0 as int];
-                after.question.is_none() && after.credit == before.credit
-                    && after.plan_retries == before.plan_retries && after.replanned == before.replanned
-                    && (!budget.consumed() ==> after.phase == before.phase
-                        && after.generation as int == before.generation as int + 1)
-                    && (budget.consumed() ==> after.review_stop == Some(ReviewStop::PlanCantMeet)
-                        && (after.phase is Stopping || after.phase is Closed))
-            },
-] proof [reveal(ReplanBudget::request_version); reveal(ReplanBudget::consumed);] {
+            && planner_result is EmptyAllowedReplan) ==>
+                empty_replan_transition(world, result.0, request, budget.consumed()),
+] proof [reveal(ReplanBudget::request_version); reveal(ReplanBudget::consumed); reveal(empty_replan_transition);] {
     if budget.request != request {
         return (world, budget, Vec::new());
     }
