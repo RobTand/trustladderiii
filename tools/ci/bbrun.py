@@ -208,55 +208,253 @@ def agent_command(command, repo, cloud=False, arch="amd64"):
 
 
 def run_and_record(command, mode, result_path):
-    """Runner-only: keep the Run API moving to its mandatory last step."""
+    """Runner-only command/handoff, or shared support when command is None.
+
+    Support lives here so inspect.getsource callers need only the existing
+    child_env/run_and_record/scan_artifacts extraction set, including Kani.
+    """
+    import json
+    import shutil
+    import stat
     import subprocess
     from pathlib import Path
-    import shutil
 
+    class Support:
+        receipt_name = 'bbrun-wrapper-result.v1.json'
+
+        def __init__(self):
+            self.state = Path(result_path + '.private')
+            self.cleanup_roots = {Path(result_path + '.artifacts')}
+
+        def directory(self, path, *, shared_parent=False):
+            # Open every component without following symlinks. No realpath or
+            # check-then-chmod path resolution crosses the ownership boundary.
+            path = Path(path)
+            if not path.is_absolute() or '..' in path.parts or path == Path('/'):
+                raise ValueError('unsafe_root')
+            fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                for name in path.parts[1:]:
+                    next_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                      dir_fd=fd)
+                    os.close(fd)
+                    fd = next_fd
+                info = os.fstat(fd)
+                if info.st_uid != os.getuid() and not (shared_parent and info.st_uid == 0 and info.st_mode & stat.S_ISVTX):
+                    raise ValueError('unowned_root')
+                return fd
+            except BaseException:
+                os.close(fd)
+                raise
+
+        def write(self, path, value):
+            # Wrapper state never lives inside the command-owned artifact tree.
+            fd = self.directory(self.state)
+            try:
+                name = Path(path).name
+                temporary = name + '.new'
+                out = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                              0o600, dir_fd=fd)
+                with os.fdopen(out, 'w') as stream:
+                    json.dump(value, stream, sort_keys=True, separators=(',', ':'))
+                os.replace(temporary, name, src_dir_fd=fd, dst_dir_fd=fd)
+            finally:
+                os.close(fd)
+
+        def read(self):
+            fd = self.directory(self.state)
+            try:
+                child = os.open('command.json', os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
+                with os.fdopen(child) as stream:
+                    value = json.load(stream)
+                code = value['exit_code']
+                if code is not None and (type(code) is not int or not -255 <= code <= 255):
+                    raise ValueError('invalid_command_state')
+                if value['handoff'] not in ('pass', 'fail', 'unknown'):
+                    raise ValueError('invalid_command_state')
+                cleanup = value['cleanup']
+                allowed = {'pass': (True, 'cleanup_complete'),
+                           'not_needed': (False, 'no_cleanup_targets')}
+                if cleanup['status'] in allowed:
+                    present, reason = allowed[cleanup['status']]
+                    if cleanup['targets_present'] is not present or cleanup['reason'] != reason:
+                        raise ValueError('invalid_cleanup_state')
+                elif cleanup['status'] not in ('fail', 'unknown') or cleanup['reason'] not in (
+                        'cleanup_permission_denied', 'cleanup_io_error', 'cleanup_not_observed'):
+                    raise ValueError('invalid_cleanup_state')
+                return value
+            finally:
+                os.close(fd)
+
+        def remove(self, path):
+            path = Path(path)
+            if path not in self.cleanup_roots:
+                raise ValueError('cleanup_outside_scratch')
+            anchor = self.directory(path.parent, shared_parent=True)
+            name = path.name
+            try:
+                info = os.stat(name, dir_fd=anchor, follow_symlinks=False)
+                if info.st_uid != os.getuid() or stat.S_ISLNK(info.st_mode):
+                    raise ValueError('unsafe_cleanup_root')
+                if not stat.S_ISDIR(info.st_mode) or not shutil.rmtree.avoids_symlink_attacks:
+                    raise ValueError('unsafe_cleanup_root')
+
+                retried = set()
+
+                def retry(function, failed, error):
+                    identity = (function, str(failed))
+                    if identity in retried:
+                        raise error
+                    retried.add(identity)
+                    if not isinstance(error, PermissionError):
+                        raise error
+                    relative = Path(failed)
+                    if relative.is_absolute() or '..' in relative.parts or relative.parts[0] != name:
+                        raise ValueError('cleanup_escape')
+                    # Only directory permissions affect POSIX unlink/rmdir.
+                    # Opened fds pin the owned inode; leaf symlinks are never chmodded.
+                    parent = os.dup(anchor)
+                    try:
+                        for component in relative.parts[:-1]:
+                            child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                            dir_fd=parent)
+                            os.close(parent)
+                            parent = child
+                        if os.fstat(parent).st_uid != os.getuid():
+                            raise ValueError('unowned_cleanup_parent')
+                        if function in (os.unlink, os.rmdir):
+                            os.fchmod(parent, stat.S_IMODE(os.fstat(parent).st_mode) | stat.S_IWUSR | stat.S_IXUSR)
+                            function(relative.name, dir_fd=parent)
+                        else:
+                            # A failed traversal is retried only for that subtree.
+                            child = os.open(relative.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                            dir_fd=parent)
+                            try:
+                                if os.fstat(child).st_uid != os.getuid():
+                                    raise ValueError('unowned_cleanup_directory')
+                                os.fchmod(child, stat.S_IMODE(os.fstat(child).st_mode) | stat.S_IRUSR | stat.S_IXUSR)
+                            finally:
+                                os.close(child)
+                            erase(str(relative))
+                    finally:
+                        os.close(parent)
+
+                def erase(relative):
+                    # Python 3.11 has onerror; 3.12+ has onexc. Both retain the
+                    # symlink-safe fd implementation and bounded retry callback.
+                    import inspect
+                    if 'onexc' in inspect.signature(shutil.rmtree).parameters:
+                        shutil.rmtree(relative, dir_fd=anchor, onexc=retry)
+                    else:
+                        shutil.rmtree(relative, dir_fd=anchor,
+                                      onerror=lambda fn, failed, exc: retry(fn, failed, exc[1]))
+
+                erase(name)
+                try:
+                    os.stat(name, dir_fd=anchor, follow_symlinks=False)
+                except FileNotFoundError:
+                    return
+                raise OSError('cleanup_incomplete')
+            finally:
+                os.close(anchor)
+
+        def quarantine(self, path):
+            # Detach before deletion: even an unrecoverable deletion failure must
+            # leave the runner's exact automatic upload directory empty.
+            path = Path(path)
+            parent = self.directory(path.parent, shared_parent=True)
+            try:
+                info = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+                if info.st_uid != os.getuid():
+                    raise ValueError('unowned_upload')
+                if not stat.S_ISLNK(info.st_mode):
+                    fd = self.directory(path)
+                    try:
+                        opened = os.fstat(fd)
+                        if (info.st_dev, info.st_ino) != (opened.st_dev, opened.st_ino):
+                            raise ValueError('upload_changed')
+                    finally:
+                        os.close(fd)
+                # A rejected symlink root is moved as a directory entry only;
+                # neither validation nor deletion follows its external target.
+                name = '.bbrun-rejected-' + os.urandom(16).hex()
+                os.mkdir(name, 0o700, dir_fd=parent)
+                destination = path.parent / name
+                self.cleanup_roots.add(destination)
+                os.rename(path.name, name + '/payload', src_dir_fd=parent, dst_dir_fd=parent)
+                os.mkdir(path.name, 0o700, dir_fd=parent)
+                return destination
+            finally:
+                os.close(parent)
+
+    support = Support()
+    if command is None:
+        return support
     environment = child_env(os.environ)
     environment['BBRUN_FINAL_SCAN'] = '1'
     if mode != 'step' and os.environ.get('BUILDBUDDY_API_KEY'):
         environment['BUILDBUDDY_API_KEY'] = os.environ['BUILDBUDDY_API_KEY']
     os.environ.clear()
     os.environ.update(environment)
+    code, handoff = None, 'unknown'
+    cleanup = {'status': 'not_needed', 'targets_present': False, 'reason': 'no_cleanup_targets'}
     try:
-        code = subprocess.call(command, env=environment)
-        if code < 0:
-            code = 128 - code
-    except BaseException:
-        print('runner command did not complete', file=sys.stderr)
-        code = 127
-    try:
-        # Run API uploads immediately after each step. Leave this step's exact
-        # upload directory empty until the final step can scan with credentials.
-        upload = Path(environment['BUILDBUDDY_ARTIFACTS_DIRECTORY'])
-        if upload.exists():
-            shutil.move(str(upload), result_path + '.artifacts')
-        upload.mkdir(parents=True, exist_ok=True)
-    except (OSError, KeyError):
-        code = 75
-        # A failed handoff must not leave unscanned files in an automatic upload.
-        if environment.get('BUILDBUDDY_ARTIFACTS_DIRECTORY'):
+        support.state.mkdir(mode=0o700)
+        try:
+            code = subprocess.call(command, env=environment)
+        except BaseException:
+            print('runner command did not complete', file=sys.stderr)
+        try:
             upload = Path(environment['BUILDBUDDY_ARTIFACTS_DIRECTORY'])
-            if upload.is_symlink():
-                upload.unlink()
-            elif upload.exists():
-                shutil.rmtree(upload)
-            upload.mkdir(parents=True, exist_ok=True)
-    Path(result_path).write_text(str(code))
+            fd = support.directory(upload)
+            os.close(fd)
+            if (upload / support.receipt_name).exists() or (upload / support.receipt_name).is_symlink():
+                raise ValueError('reserved_receipt_collision')
+            shutil.move(str(upload), result_path + '.artifacts')
+            upload.mkdir(mode=0o700)
+            handoff = 'pass'
+        except BaseException:
+            handoff = 'fail'
+            cleanup = {'status': 'unknown', 'targets_present': None, 'reason': 'cleanup_not_observed'}
+            try:
+                rejected = support.quarantine(Path(environment['BUILDBUDDY_ARTIFACTS_DIRECTORY']))
+                cleanup['targets_present'] = True
+                support.remove(rejected)
+                cleanup.update(status='pass', reason='cleanup_complete')
+            except PermissionError:
+                cleanup.update(status='fail', reason='cleanup_permission_denied')
+            except BaseException:
+                cleanup.update(status='fail', reason='cleanup_io_error')
+    except BaseException:
+        print('runner private state unavailable', file=sys.stderr, flush=True)
+    finally:
+        try:
+            support.write('command.json', {'exit_code': code, 'handoff': handoff, 'cleanup': cleanup})
+        except BaseException:
+            print('runner private command state not recorded', file=sys.stderr, flush=True)
+        # Keep each attempt independent so a private-state failure does not
+        # prevent the legacy status attempt or the mandatory final step.
+        try:
+            wrapped = (128 - code if code is not None and code < 0 else code)
+            Path(result_path).write_text(str(wrapped if handoff == 'pass' and wrapped is not None else 75))
+        except BaseException:
+            print('runner private status not recorded', file=sys.stderr, flush=True)
 
 
 def scan_artifacts(scanner_data, scanner_hash, result_path):
-    """Runner-only: scan in this process; never start a credential-bearing child."""
+    """Runner-only: preserve stage results and finalize even on cleanup failure."""
     import base64
     import contextlib
     import hashlib
     import io
+    import json
     from pathlib import Path
     import re
     import shutil
+    import tempfile
     from urllib.parse import quote, quote_plus
 
+    support = run_and_record(None, None, result_path)
     secrets = {name: os.environ[name] for name in
                ('BUILDBUDDY_API_KEY', 'MERGIFY_TOKEN', 'GITHUB_TOKEN') if os.environ.get(name)}
     environment = child_env(os.environ)
@@ -266,19 +464,93 @@ def scan_artifacts(scanner_data, scanner_hash, result_path):
     os.environ.update(secrets)
     upload_path = os.environ.get('BUILDBUDDY_ARTIFACTS_DIRECTORY')
     upload = Path(upload_path) if upload_path else None
-    code = 75
     staged = Path(result_path + '.artifacts')
+    code, first_code = None, None
+    command_code, handoff = None, 'unknown'
+    scanner_status, scanner_reason = 'unknown', 'scanner_not_run'
+    cleanup = {'status': 'unknown', 'targets_present': None, 'reason': 'cleanup_not_observed'}
+    original, final = None, 75
+    scan = None
+
+    def dispose():
+        nonlocal cleanup
+        targets = []
+        try:
+            # Establish absence positively; a missing/inaccessible root is not
+            # equivalent to an empty upload directory.
+            if staged.exists() or staged.is_symlink():
+                targets.append(staged)
+            if upload is None:
+                raise ValueError('missing_upload')
+            if upload.is_symlink():
+                present = True
+            else:
+                fd = support.directory(upload)
+                try:
+                    present = bool(os.listdir(fd))
+                finally:
+                    os.close(fd)
+            if present:
+                # Atomic detachment precedes chmod/rmtree and survives a
+                # permanent deletion failure without an automatic upload leak.
+                targets.append(support.quarantine(upload))
+            cleanup = {'status': 'pass' if targets else 'not_needed',
+                       'targets_present': bool(targets),
+                       'reason': 'cleanup_complete' if targets else 'no_cleanup_targets'}
+            for target in targets:
+                support.remove(target)
+        except PermissionError:
+            cleanup = {'status': 'fail', 'targets_present': True, 'reason': 'cleanup_permission_denied'}
+        except BaseException:
+            cleanup = {'status': 'fail', 'targets_present': True if targets else None,
+                       'reason': 'cleanup_io_error'}
+
+    def result():
+        return {'schema': 'tl3.bbrun.wrapper-result', 'version': 1,
+                'parent_invocation_id': None,
+                'command': {'status': 'unknown' if command_code is None else 'pass' if command_code == 0 else 'fail',
+                            'exit_code': command_code,
+                            'reason': 'command_not_observed' if command_code is None else 'command_succeeded' if command_code == 0 else 'command_failed'},
+                'artifact_handoff': {'status': handoff,
+                                     'reason': {'pass': 'handoff_succeeded', 'fail': 'handoff_failed', 'unknown': 'handoff_not_observed'}[handoff]},
+                'scanner': {'status': scanner_status, 'first_exit_code': first_code,
+                            'exit_code': code, 'reason': scanner_reason},
+                'cleanup': cleanup,
+                'wrapper': {'original_exit_code': original, 'exit_code': final}}
+
     try:
+        try:
+            state = support.read()
+            command_code, handoff, cleanup = state['exit_code'], state['handoff'], state['cleanup']
+        except BaseException:
+            pass
+        command_handoff = handoff
+        handoff = 'fail'
         if upload is None:
-            raise ValueError('upload directory unavailable')
-        upload.mkdir(parents=True, exist_ok=True)
-        if staged.exists():
+            raise ValueError('upload_unavailable')
+        fd = support.directory(upload)
+        os.close(fd)
+        if staged.exists() or staged.is_symlink():
+            fd = support.directory(staged)
+            os.close(fd)
             for path in staged.iterdir():
                 target = upload / path.name
                 if target.exists() or target.is_symlink():
-                    raise ValueError('upload path collision')
+                    raise ValueError('upload_collision')
                 shutil.move(str(path), str(target))
             staged.rmdir()
+            if cleanup['status'] in ('pass', 'not_needed'):
+                cleanup = {'status': 'pass', 'targets_present': True, 'reason': 'cleanup_complete'}
+        if (upload / support.receipt_name).exists() or (upload / support.receipt_name).is_symlink():
+            handoff = 'fail'
+            raise ValueError('reserved_receipt_collision')
+        # Do not let the scanner read a file symlink into original Bazel/CAS
+        # input. The cleanup implementation safely unlinks nested symlinks.
+        for directory, subdirectories, files in os.walk(upload, followlinks=False):
+            if any(Path(directory, name).is_symlink() for name in subdirectories + files):
+                handoff = 'fail'
+                raise ValueError('artifact_symlink')
+        handoff = command_handoff
         if not secrets.get('BUILDBUDDY_API_KEY'):
             raise ValueError('required scanner input unavailable')
         source = base64.b64decode(scanner_data, validate=True)
@@ -290,19 +562,27 @@ def scan_artifacts(scanner_data, scanner_hash, result_path):
             if name in secrets:
                 sys.argv.extend(['--env', name])
         sys.argv.append(upload_path)
-        def scan():
+        def scan(target=None):
             # Raw diagnostics stay private: paths may themselves contain secrets.
             # Execute the pinned scanner in-process without credential-bearing children.
+            sys.argv[-1] = str(target or upload)
+            nonlocal scanner_status, scanner_reason
             diagnostics = io.StringIO()
             status = 75
             with contextlib.redirect_stdout(diagnostics), contextlib.redirect_stderr(diagnostics):
                 try:
                     exec(compile(source, '<pinned-artifact-scanner>', 'exec'), {'__name__': '__main__'})
                 except SystemExit as outcome:
-                    status = outcome.code if isinstance(outcome.code, int) else 75
+                    status = outcome.code if type(outcome.code) is int else 75
+                except BaseException:
+                    scanner_status, scanner_reason = 'error', 'scanner_exception'
+                    raise
             return status, diagnostics.getvalue()
 
         code, diagnostics = scan()
+        first_code = code
+        scanner_status = 'pass' if code == 0 and not diagnostics else 'fail'
+        scanner_reason = 'scan_clean' if scanner_status == 'pass' else 'scan_rejected'
         if code in (0, 75) and diagnostics:
             # Match the pinned scanner's path redaction, including encoded keys.
             forms = set()
@@ -343,41 +623,82 @@ def scan_artifacts(scanner_data, scanner_hash, result_path):
                 path, reason = reports[report]
                 dropped.setdefault(path, set()).add(reason)
             for path, reasons in dropped.items():
-                size = path.stat().st_size
                 path.unlink()
-                relative = redact(str(path.relative_to(upload)))
-                message = (f'artifact scan: dropped {relative!r} ({size} bytes): '
-                           + '; '.join(sorted(reasons)))
-                print(redact(message), flush=True)
+                if cleanup['status'] in ('pass', 'not_needed'):
+                    cleanup = {'status': 'pass', 'targets_present': True, 'reason': 'cleanup_complete'}
+                print('artifact scan: dropped skipped file', flush=True)
             # Only a clean second scan can authorize the remaining upload.
             code, diagnostics = scan()
-            if code == 0 and diagnostics:
-                code = 75
+            scanner_status = 'pass' if code == 0 and not diagnostics else 'fail'
+            scanner_reason = 'scan_clean' if scanner_status == 'pass' else 'scan_incomplete'
     except BaseException:
-        code = 75
+        # Preserve the actual observed scanner codes, even if a drop/scan
+        # exception follows. No execution means both codes remain null.
+        if first_code is not None and scanner_status != 'error':
+            scanner_status, scanner_reason = 'fail', 'scan_reason_unknown'
+        else:
+            scanner_status = 'error'
+            scanner_reason = 'scanner_exception' if scan is not None else 'scanner_not_run'
     finally:
-        for name in secrets:
-            os.environ.pop(name, None)
-    if code:
-        if staged.exists():
-            shutil.rmtree(staged)
-        if upload is not None:
-            for path in upload.iterdir():
-                if path.is_symlink() or not path.is_dir():
-                    path.unlink()
+        try:
+            command_result = 128 - command_code if command_code is not None and command_code < 0 else command_code
+            original = (code or 75) if scanner_status != 'pass' else (command_result if handoff == 'pass' and command_result is not None else 75)
+            if scanner_status != 'pass' or handoff != 'pass':
+                prior_cleanup = cleanup
+                dispose()
+                if prior_cleanup['status'] in ('fail', 'unknown'):
+                    cleanup = prior_cleanup
+            elif cleanup['status'] == 'not_needed':
+                # No rejection means there are no deletion obligations. The
+                # empty staging root was positively removed above.
+                cleanup = {'status': 'not_needed', 'targets_present': False, 'reason': 'no_cleanup_targets'}
+            final = original if cleanup['status'] in ('pass', 'not_needed') else (original or 75)
+            if final is None:
+                final = 75
+            support.state.mkdir(mode=0o700, exist_ok=True)
+            support.write('wrapper.json', result())
+            # Only a successful artifact decision can publish a receipt. Scan
+            # its exact private bytes with the same pinned required-key core.
+            # A rejected upload is never rescanned empty to manufacture PASS.
+            if scanner_status == 'pass' and handoff == 'pass' and cleanup['status'] in ('pass', 'not_needed'):
+                receipt_path = support.state / 'wrapper.json'
+                receipt_code, receipt_diagnostics = scan(receipt_path)
+                if receipt_code == 0 and not receipt_diagnostics:
+                    destination = upload / support.receipt_name
+                    # Exclusive creation prevents command-name collisions.
+                    fd, temporary = tempfile.mkstemp(prefix='.bbrun-receipt-', dir=upload)
+                    try:
+                        with os.fdopen(fd, 'wb') as stream:
+                            stream.write(receipt_path.read_bytes())
+                        os.link(temporary, destination, follow_symlinks=False)
+                    finally:
+                        Path(temporary).unlink()
                 else:
-                    shutil.rmtree(path)
-        print('artifact scan: FAIL; artifacts deleted', flush=True)
-    else:
-        print('artifact scan: PASS (upload directory; required key available)', flush=True)
-    try:
-        previous = int(Path(result_path).read_text())
-        if not 0 <= previous <= 255:
-            previous = 75
-        Path(result_path).unlink()
-    except (OSError, ValueError):
-        previous = 75
-    raise SystemExit(code or previous)
+                    code = receipt_code
+                    scanner_status, scanner_reason = 'fail', 'receipt_scan_rejected'
+                    original = code or 75
+                    dispose()
+                    final = original
+        except BaseException:
+            # Publication failure cannot leave a partial or unscanned receipt.
+            if scanner_status != 'pass':
+                original = code or 75
+            dispose()
+            final = original or 75
+        finally:
+            try:
+                support.write('wrapper.json', result())
+                Path(result_path).write_text(str(final))
+            except BaseException:
+                # SIGKILL/unavailable storage cannot promise a durable receipt.
+                final = original or 75
+                dispose()
+            for name in secrets:
+                os.environ.pop(name, None)
+            print('artifact scan: PASS (upload directory; required key available)' if scanner_status == 'pass'
+                  else 'artifact scan: FAIL; cleanup ' + cleanup['status'], flush=True)
+            print('BBRUN_WRAPPER_RESULT_V1 ' + json.dumps(result(), sort_keys=True, separators=(',', ':')), flush=True)
+    raise SystemExit(final)
 
 
 def prepare_full_history(expected_commit):
@@ -466,24 +787,43 @@ def prepare_full_history(expected_commit):
 
 
 def run_with_full_history(command, mode, result_path, commit):
-    """Keep preparation in the command step and always leave the final scan runnable."""
+    """Keep preparation in the command step and finalize a failed preparation."""
     from pathlib import Path
-    import shutil
 
     if prepare_full_history(commit):
         run_and_record(command, mode, result_path)
         return
-    # Preparation publishes no artifacts. Remove any files in this step's
-    # automatic upload directory on failure; the mandatory scanner still runs.
-    upload_path = os.environ.get('BUILDBUDDY_ARTIFACTS_DIRECTORY')
-    if upload_path:
-        upload = Path(upload_path)
-        if upload.is_symlink():
-            upload.unlink()
-        elif upload.exists():
-            shutil.rmtree(upload)
-        upload.mkdir(parents=True, exist_ok=True)
-    Path(result_path).write_text('75')
+    support = run_and_record(None, None, result_path)
+    cleanup = {'status': 'unknown', 'targets_present': None, 'reason': 'cleanup_not_observed'}
+    try:
+        upload_path = os.environ.get('BUILDBUDDY_ARTIFACTS_DIRECTORY')
+        if upload_path:
+            upload = Path(upload_path)
+            fd = support.directory(upload)
+            try:
+                present = bool(os.listdir(fd))
+            finally:
+                os.close(fd)
+            if present:
+                target = support.quarantine(upload)
+                cleanup = {'status': 'fail', 'targets_present': True, 'reason': 'cleanup_io_error'}
+                support.remove(target)
+            cleanup = {'status': 'pass' if present else 'not_needed', 'targets_present': present,
+                       'reason': 'cleanup_complete' if present else 'no_cleanup_targets'}
+    except PermissionError:
+        cleanup.update(status='fail', reason='cleanup_permission_denied')
+    except BaseException:
+        cleanup.update(status='fail', reason='cleanup_io_error')
+    finally:
+        try:
+            support.state.mkdir(mode=0o700, exist_ok=True)
+            support.write('command.json', {'exit_code': None, 'handoff': 'fail', 'cleanup': cleanup})
+        except BaseException:
+            print('runner private command state not recorded', file=sys.stderr, flush=True)
+        try:
+            Path(result_path).write_text('75')
+        except BaseException:
+            print('runner private status not recorded', file=sys.stderr, flush=True)
 
 
 def secured_steps(command, mode, scanner, full_history_commit=None):
@@ -496,7 +836,7 @@ def secured_steps(command, mode, scanner, full_history_commit=None):
                  + inspect.getsource(run_and_record) + '\n'
                  + inspect.getsource(run_with_full_history) + '\n'
                  + f'run_with_full_history({command!r}, {mode!r}, {result_path!r}, {full_history_commit!r})\n')
-    final = (common + inspect.getsource(scan_artifacts) + '\n'
+    final = (common + inspect.getsource(run_and_record) + '\n' + inspect.getsource(scan_artifacts) + '\n'
              + f'scan_artifacts({base64.b64encode(scanner).decode()!r}, {SCANNER_SHA256!r}, {result_path!r})\n')
     return [{'run': shlex.join(['python3', '-I', '-S', '-c', source])}
             for source in (first, final)]
@@ -1119,9 +1459,8 @@ def security_selftest():
 assert os.environ['BUILDBUDDY_API_KEY'] == 'offline-final-scanner-sentinel'
 assert 'BBRUN_FINAL_SCAN' not in os.environ
 assert 'OTHER_API_KEY' not in os.environ
-assert sys.argv == ['check_no_secret_leak.py', '--env', 'BUILDBUDDY_API_KEY',
-                    '--require', 'BUILDBUDDY_API_KEY', '--env', 'MERGIFY_TOKEN', '--env', 'GITHUB_TOKEN',
-                    os.environ['BUILDBUDDY_ARTIFACTS_DIRECTORY']]
+assert sys.argv[:-1] == ['check_no_secret_leak.py', '--env', 'BUILDBUDDY_API_KEY',
+                    '--require', 'BUILDBUDDY_API_KEY', '--env', 'MERGIFY_TOKEN', '--env', 'GITHUB_TOKEN']
 raise SystemExit(0)
 '''
                 with patch(__name__ + '.checked_scanner', return_value=observer), patch(
@@ -1155,7 +1494,7 @@ raise SystemExit(0)
                 assert b'artifact scan: PASS' in final.stdout
                 if scenario == 'incomplete':
                     assert not (upload / 'partial.zst').exists()
-                    assert b"artifact scan: dropped 'partial.zst' (4 bytes):" in final.stdout
+                    assert b'artifact scan: dropped skipped file' in final.stdout
     with tempfile.TemporaryDirectory(prefix='bbrun-handoff-failure-') as directory:
         upload = Path(directory, 'upload')
         upload.mkdir()
@@ -1186,7 +1525,6 @@ def artifact_drop_selftest():
     from unittest.mock import patch
 
     fake_key = 'offline-drop-scanner-sentinel'
-    reason = 'zstd: not scanned (compression.zstd unavailable)'
     scenarios = [('secret', 1, 1), ('mixed-secret', 75, 1),
                  ('drop', 0, 2), ('drop-incomplete', 0, 2),
                  ('redacted-path', 0, 2), ('earlier-failure', 37, 2),
@@ -1205,9 +1543,16 @@ def artifact_drop_selftest():
             clean.write_text('harmless artifact')
             status = Path(directory, 'result.status')
             status.write_text('37' if scenario == 'earlier-failure' else '0')
+            support = run_and_record(None, None, str(status))
+            support.state.mkdir(mode=0o700)
+            support.write('command.json', {'exit_code': 37 if scenario == 'earlier-failure' else 0,
+                          'handoff': 'pass', 'cleanup': {'status': 'not_needed',
+                          'targets_present': False, 'reason': 'no_cleanup_targets'}})
             observer = (f'scenario = {scenario!r}\nrelative = {relative!r}\n' + r'''import os, sys
 from pathlib import Path
 upload = Path(sys.argv[-1])
+if upload.is_file():
+    raise SystemExit(0)
 counter = upload.parent / 'scan-calls'
 count = int(counter.read_text()) + 1 if counter.exists() else 1
 counter.write_text(str(count))
@@ -1248,9 +1593,7 @@ raise SystemExit(75 if scenario in ('mixed-secret', 'drop-incomplete') and skipp
             if expected in (0, 37):
                 assert not unscannable.exists(), scenario
                 assert clean.read_text() == 'harmless artifact', scenario
-                diagnostic = (f'artifact scan: dropped {relative.replace(fake_key, "")!r} '
-                              f'({len(b"opaque-file-bytes")} bytes): {reason}')
-                assert diagnostic.encode() in output, (scenario, output)
+                assert b'artifact scan: dropped skipped file' in output, scenario
                 assert b'artifact scan: PASS' in output, scenario
             else:
                 assert not list(upload.iterdir()), scenario
@@ -1417,8 +1760,8 @@ def full_history_selftest():
     command = ['bazel', 'test', '//tests:test_core', '--config=remote', '--jobs=16']
     with patch.object(uuid, 'uuid4', return_value=SimpleNamespace(hex='0' * 32)):
         default = run_request(parse_args(['test', *common, '--', *command]))
-        assert [hashlib.sha256(step['run'].encode()).hexdigest()
-                for step in default['steps']] == ['e9e25583cad20f621abbf19118a34636a19312631807e8ecd2a45e85d28860e3', 'c0adf5e78fdc617ff0461c75e085b24a699dd5e1fdf5d1aab00e74fc04832823'], 'default steps changed bytes'
+        step_hashes = [hashlib.sha256(step['run'].encode()).hexdigest() for step in default['steps']]
+        assert step_hashes == ['6c193c55e7b73671d094d57776ef186dcde129407d0eb0ac26c9699db14aeea9', '66d73354b94b87a71991313c08db89ef8c327fe0cb4f30774a116841e492a265'], step_hashes
         args = parse_args(['test', '--full-history', *common, '--', *command])
         assert args.full_history is True
         body = run_request(args)
@@ -1517,11 +1860,13 @@ def full_history_selftest():
                     patch.object(Path, 'unlink', new=unlink_marker), \
                     patch('subprocess.call', return_value=0) as execute, \
                     contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-                exec(compile(shlex.split(body['steps'][0]['run'])[4], '<full-history-step>', 'exec'), {})
+                source = shlex.split(body['steps'][0]['run'])[4].replace(
+                    '/tmp/bbrun-' + '1' * 32 + '.status', str(root / 'result.status'))
+                exec(compile(source, '<full-history-step>', 'exec'), {})
             text = output.getvalue() + errors.getvalue()
             assert fake_secret not in text and 'hidden.invalid' not in text
             assert 'full history:' in text
-            state = Path('/tmp/bbrun-' + '1' * 32 + '.status')
+            state = root / 'result.status'
             if scenario == 'marker-vanished' and not execute.called:
                 regressions.append('vanished promisor marker must be tolerated')
             if scenario in ('marker-vanished', 'marker-denied'):
