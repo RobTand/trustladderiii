@@ -5,6 +5,7 @@ py_binary(
     srcs = ["fixture-check.py"],
     data = [
         "measure-remote.py",
+        "production-selectors.fixture.json",
         "six-helper-argv.fixture.json.gz",
         "submit.py",
     ],

@@ -108,6 +108,53 @@ class Fixtures(unittest.TestCase):
                               S['submission'](config, self.evidence / 'runner.log'))
         self.assertFalse(receipt.exists())
 
+    def test_production_checking_preparation_and_argv(self):
+        selection = {'target': '//crates/kernel:verus_checking',
+                     'selector': 'kernel::checking#*World::check', 'expected': 10}
+        for mode in ('frontend-only', 'normal'):
+            config = self.config(mode=mode, selections=[selection])
+            output = self.evidence / ('checking-' + mode)
+            command = S['submission'](config, self.evidence / ('checking-' + mode + '.log'))
+            receipt = self.evidence / ('checking-' + mode + '-receipt.json')
+            prepared = S['full_dry_run'](self.source, config, output, receipt, command)
+            self.assertEqual(prepared['full_preparation'], 'PASS')
+            S['check_receipt'](self.source, config, receipt, command)
+            self.assertEqual(config.command()[-1], selection['target'])
+            index = command.index('-c')
+            payload = S['unpack_transport'](command[index + 2], command[index + 3])
+            self.assertEqual(D['loads'](payload['config.json'])['selections'], [selection])
+            row = config.selections[0]
+            execution = fake_execution(row, mode)
+            D['validate_execution'](execution, row, mode)
+            self.assertEqual(execution['argv'][execution['argv'].index('--verify-function') + 1], '*World::check')
+        for selector in ('kernel::checking#**World::check', 'kernel::checking#World::*',
+                         'kernel::*#World::check', 'kernel::checking#*', 'kernel::checking#World::check;echo'):
+            with self.subTest(selector=selector), self.assertRaises(ValueError):
+                self.config(selections=[{**selection, 'selector': selector}])
+        for change in ({'selector': 'kernel::checking#*World::chek'}, {'expected': 11}):
+            config = self.config(selections=[{**selection, **change}])
+            with self.assertRaisesRegex(ValueError, 'selector/count differs from exact source'):
+                D['prepare'](self.source, config, D['owned_directory'](self.root / ('checking-invalid-' + str(len(change.get('selector', ''))))))
+
+    def test_all_342_production_selectors_parse(self):
+        inventory = D['loads']((HERE / 'production-selectors.fixture.json').read_bytes())
+        self.assertEqual(len(inventory['selections']), inventory['groups'])
+        self.assertEqual(inventory['groups'], 342)
+        self.assertEqual(sum(row['expected'] for row in inventory['selections']), inventory['obligations'])
+        rows = []
+        for selection in inventory['selections']:
+            try:
+                config = self.config(selections=[selection])
+                self.assertEqual(D['asdict'](config.selections[0]), selection)
+                rows.append({**selection, 'parse': 'PASS'})
+            except ValueError as error:
+                rows.append({**selection, 'parse': 'FAIL', 'reason': str(error)})
+        self.evidence.joinpath('production-selector-audit.json').write_bytes(D['encoded']({
+            **inventory, 'fixture_sha256': D['digest']((HERE / 'production-selectors.fixture.json').read_bytes()),
+            'rows': rows, 'parse_passes': sum(row['parse'] == 'PASS' for row in rows)}))
+        self.assertEqual([row for row in rows if row['parse'] != 'PASS'], [])
+        self.config(selections=inventory['selections'])  # Preserve whole-manifest uniqueness checks.
+
     def test_config_and_inventory(self):
         for change in ({'watchdog_seconds': 120}, {'outer_seconds': 45}, {'raw_queries': 1},
                        {'head': 'main'}, {'mode': 'diagnostic', 'watchdog_seconds': 120},

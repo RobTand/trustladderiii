@@ -1,0 +1,1719 @@
+{
+  "source_head": "89dd47f13463d695e1813d6d180632b4deab3dd2",
+  "source_path": "tools/bazel/verus.bzl",
+  "source_sha256": "b2da00d9c605bc42d8767a059a61cc4426578e475e869d73afc722af6ac78d03",
+  "groups": 342,
+  "obligations": 539,
+  "selections": [
+    {
+      "target": "//crates/kernel:verus_kernel_clones",
+      "selector": "kernel#*::clone",
+      "expected": 33
+    },
+    {
+      "target": "//crates/kernel:verus_queries_wait_clone",
+      "selector": "kernel::queries#Wait::clone",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_credit_added_step_budget",
+      "selector": "kernel#CREDIT_ADDED_STEP_BUDGET",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_credit_earned_step_budget",
+      "selector": "kernel#CREDIT_EARNED_STEP_BUDGET",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_credit_spent_step_budget",
+      "selector": "kernel#CREDIT_SPENT_STEP_BUDGET",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_credit_start_step_budget",
+      "selector": "kernel#CREDIT_START_STEP_BUDGET",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_credit_balance",
+      "selector": "kernel#Credit::balance",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_credit_can_spend",
+      "selector": "kernel#Credit::can_spend",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_credit_fund_and_pay",
+      "selector": "kernel#Credit::fund_and_pay",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_credit_ledger_balance",
+      "selector": "kernel#Credit::ledger_balance",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_credit_pay",
+      "selector": "kernel#Credit::pay",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_credit_spend",
+      "selector": "kernel#Credit::spend",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_effect_step_budget",
+      "selector": "kernel#EFFECT_STEP_BUDGET",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_earlyend_outcome",
+      "selector": "kernel#EarlyEnd::outcome",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_effectkind_starts_operation",
+      "selector": "kernel#EffectKind::starts_operation",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_free_rechecks",
+      "selector": "kernel#FREE_RECHECKS",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_generation_step_budget",
+      "selector": "kernel#GENERATION_STEP_BUDGET",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_node_current",
+      "selector": "kernel#Node::current",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_node_new",
+      "selector": "kernel#Node::new",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_node_next_command_id",
+      "selector": "kernel#Node::next_command_id",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_node_pause_move_due",
+      "selector": "kernel#Node::pause_move_due",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_outbox",
+      "selector": "kernel#OUTBOX",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_outbox_drain_into",
+      "selector": "kernel#Outbox::drain_into",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_outbox_new",
+      "selector": "kernel#Outbox::new",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_outbox_push",
+      "selector": "kernel#Outbox::push",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_phase_holding",
+      "selector": "kernel#Phase::holding",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_phase_is_closed",
+      "selector": "kernel#Phase::is_closed",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_phase_is_stopping",
+      "selector": "kernel#Phase::is_stopping",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_phase_resume",
+      "selector": "kernel#Phase::resume",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_priority_rank",
+      "selector": "kernel#Priority::rank",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_question_step_budget",
+      "selector": "kernel#QUESTION_STEP_BUDGET",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_release_step",
+      "selector": "kernel#RELEASE_STEP",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_reserve",
+      "selector": "kernel#RESERVE",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_resume_phase",
+      "selector": "kernel#Resume::phase",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_world_counter_exhaustion",
+      "selector": "kernel#World::counter_exhaustion",
+      "expected": 3
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_world_headroom_ok",
+      "selector": "kernel#World::headroom_ok",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_world_index",
+      "selector": "kernel#World::index",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_world_ticket_step_budget",
+      "selector": "kernel#World::ticket_step_budget",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_agenda",
+      "selector": "kernel#agenda",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_checked_reserves",
+      "selector": "kernel#checked_reserves",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_cont_rank",
+      "selector": "kernel#cont_rank",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_movable_frame",
+      "selector": "kernel#movable_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_node_counter_exhaustion",
+      "selector": "kernel#node_counter_exhaustion",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_notice",
+      "selector": "kernel#notice",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_open_prefix",
+      "selector": "kernel#open_prefix",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_open_prefix_compare",
+      "selector": "kernel#open_prefix_compare",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_open_prefix_monotone",
+      "selector": "kernel#open_prefix_monotone",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_operation_start",
+      "selector": "kernel#operation_start",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_pause_node",
+      "selector": "kernel#pause_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_rank",
+      "selector": "kernel#rank",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_scan_step_budget",
+      "selector": "kernel#scan_step_budget",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_settle_step_budget",
+      "selector": "kernel#settle_step_budget",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_settled_world_definition",
+      "selector": "kernel#settled_world_definition",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_snapshot_world",
+      "selector": "kernel#snapshot_world",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_take_ticket_node",
+      "selector": "kernel#take_ticket_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_world_checked_definition",
+      "selector": "kernel#world_checked_definition",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_world_measure",
+      "selector": "kernel#World::measure",
+      "expected": 3
+    },
+    {
+      "target": "//crates/kernel:verus_events",
+      "selector": "kernel::events",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_reply_kind",
+      "selector": "kernel::report#ReplyKind::of",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_stop_kind",
+      "selector": "kernel::report#StopCause::from_phase",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_new",
+      "selector": "kernel::report#Report::new",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_failed_round",
+      "selector": "kernel::report#Report::record_failed_round",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_stop_cause",
+      "selector": "kernel::report#Report::record_stop",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_stale_refusal",
+      "selector": "kernel::report#Report::record_stale",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_clone_failed_round_cause",
+      "selector": "kernel::report#FailedRoundCause::clone",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_clone_stop_cause",
+      "selector": "kernel::report#StopCause::clone",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_clone_reply_kind",
+      "selector": "kernel::report#ReplyKind::clone",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_clone_entry",
+      "selector": "kernel::report#ReportEntry::clone",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_kind_value",
+      "selector": "kernel::report::lemmas#kind_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_read_stale",
+      "selector": "kernel::report::lemmas#read_stale",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_reply_result",
+      "selector": "kernel::report::lemmas#reply_result",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_stop_kind_value",
+      "selector": "kernel::report::lemmas#stop_kind_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_entries_for_event",
+      "selector": "kernel::report::lemmas#entries_for_event",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_projection",
+      "selector": "kernel#report_projection",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_observe",
+      "selector": "kernel::report::lemmas#observe",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_through_settle",
+      "selector": "kernel::report::lemmas#through_settle",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_quiet",
+      "selector": "kernel::report::lemmas#quiet",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_read_quiet",
+      "selector": "kernel::report::lemmas#read_quiet",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_phase_refl",
+      "selector": "kernel::report::lemmas#phase_refl",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_phase_trans",
+      "selector": "kernel::report::lemmas#phase_trans",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_settle_result",
+      "selector": "kernel::report::lemmas#settle_result",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_read_failed_round",
+      "selector": "kernel::report::lemmas#read_failed_round",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_read_forwards",
+      "selector": "kernel::report::lemmas#read_forwards",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_forward_entries",
+      "selector": "kernel::report::lemmas#forward_entries",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_round_shape",
+      "selector": "kernel::report::lemmas#round_shape",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_failure_kind",
+      "selector": "kernel::report::lemmas#failure_kind",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_work_kind",
+      "selector": "kernel::report::lemmas#work_kind",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_round_delta",
+      "selector": "kernel::report::lemmas#round_delta",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_forward_round",
+      "selector": "kernel::report::lemmas#forward_round",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_unchanged",
+      "selector": "kernel::report::lemmas#unchanged",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_refusal",
+      "selector": "kernel::report::lemmas#refusal",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_append_failed_round",
+      "selector": "kernel::report::lemmas#append_failed_round",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_append_stop",
+      "selector": "kernel::report::lemmas#append_stop",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_append_stale",
+      "selector": "kernel::report::lemmas#append_stale",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation",
+      "selector": "kernel::allocation#ask_rob",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_set_phase",
+      "selector": "kernel::allocation#set_phase",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_abandon_operation",
+      "selector": "kernel::allocation#abandon_operation",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_end_operation",
+      "selector": "kernel::allocation#end_operation",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_enter_stopping",
+      "selector": "kernel::allocation#enter_stopping",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_merge_credit",
+      "selector": "kernel::allocation#merge_credit",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_close_node",
+      "selector": "kernel::allocation#close_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_raise_incident",
+      "selector": "kernel::allocation#raise_incident",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_emit",
+      "selector": "kernel::allocation#emit",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_emit_node",
+      "selector": "kernel::allocation#emit_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_admission",
+      "selector": "kernel::reply_admission#accepts",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ingest_finish_ingest",
+      "selector": "kernel::ingest#finish_ingest",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ingest_finish_ingest_node",
+      "selector": "kernel::ingest#finish_ingest_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ingest_reply_ingest",
+      "selector": "kernel::ingest#reply_ingest",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ingest_reply_audit_agrees",
+      "selector": "kernel::ingest#reply_audit_agrees",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ingest_reply_audit_disagrees",
+      "selector": "kernel::ingest#reply_audit_disagrees",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ingest_audit_disagreement_node",
+      "selector": "kernel::ingest#audit_disagreement_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ingest_increment_audit",
+      "selector": "kernel::ingest#increment_audit",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ingest_facts_output_bound",
+      "selector": "kernel::ingest_facts#output_bound",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ingest_facts_audit_first",
+      "selector": "kernel::ingest_facts#audit_first",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ingest_facts_audit_spent",
+      "selector": "kernel::ingest_facts#audit_spent",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ingest_facts_audit_result",
+      "selector": "kernel::ingest_facts#audit_result",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_work_replies",
+      "selector": "kernel::work_replies#reply_work",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_work_replies_plan",
+      "selector": "kernel::work_replies#reply_plan",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_work_replies_rebase",
+      "selector": "kernel::work_replies#reply_rebase",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_work_replies_recheck_head",
+      "selector": "kernel::work_replies#update_recheck_head",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_retries",
+      "selector": "kernel::retries#run_failed",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_confirmed",
+      "selector": "kernel::acknowledgements#confirmed",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_confirmed_agenda",
+      "selector": "kernel::acknowledgements#confirmed_agenda",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_delivery_failed",
+      "selector": "kernel::acknowledgements#delivery_failed",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_effect_failed",
+      "selector": "kernel::acknowledgements#effect_failed",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_failed_delivery_node",
+      "selector": "kernel::acknowledgements#failed_delivery_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_on_ack",
+      "selector": "kernel::acknowledgements#on_ack",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts",
+      "selector": "kernel::facts#on_fact",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_transition",
+      "selector": "kernel::facts#fact_transition",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_incident_cleared",
+      "selector": "kernel::facts#incident_cleared",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_pr_dequeued",
+      "selector": "kernel::facts#pr_dequeued",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_failed_round_unreported",
+      "selector": "kernel::facts#failed_round_unreported",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_failed_round_value",
+      "selector": "kernel::report::lemmas#failed_round_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_ci_cause_value",
+      "selector": "kernel::report::lemmas#ci_cause_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_fact_record_result",
+      "selector": "kernel::report::lemmas#fact_record_result",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_bind_fact_cause",
+      "selector": "kernel::report::lemmas#bind_fact_cause",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_ci_failure_cause",
+      "selector": "kernel::report#ci_failure_cause",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_report_record_fact",
+      "selector": "kernel::report#record_fact",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_ci_failed",
+      "selector": "kernel::facts#ci_failed",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_infrastructure_retry",
+      "selector": "kernel::facts#infrastructure_retry",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_ci_infrastructure",
+      "selector": "kernel::facts#ci_infrastructure",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_merge",
+      "selector": "kernel::facts#pr_merged",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_merge_open",
+      "selector": "kernel::facts#merge_open",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_commands",
+      "selector": "kernel::commands",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answers",
+      "selector": "kernel::answers",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_command_helpers_allowed",
+      "selector": "kernel::command_helpers#allowed",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_command_helpers_mark_handled",
+      "selector": "kernel::command_helpers#mark_handled",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_continuations",
+      "selector": "kernel::continuations",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_checking",
+      "selector": "kernel::checking#*World::check",
+      "expected": 10
+    },
+    {
+      "target": "//crates/kernel:verus_checking_check_node",
+      "selector": "kernel::checking#World::check_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_checking_check_ready",
+      "selector": "kernel::checking#World::check_ready",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_checking_consistent",
+      "selector": "kernel::checking#World::consistent",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_checking_is_settled",
+      "selector": "kernel::checking#World::is_settled",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_check_dependencies",
+      "selector": "kernel::dependencies#World::check_dependencies",
+      "expected": 5
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_dependencies_delivered",
+      "selector": "kernel::dependencies#World::dependencies_delivered",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_dependency_fact",
+      "selector": "kernel::dependencies#World::dependency_fact",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_dependency_graph_acyclic",
+      "selector": "kernel::dependencies#World::dependency_graph_acyclic",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_graph_reflexive",
+      "selector": "kernel::dependencies::lemmas#reflexive",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_graph_extend",
+      "selector": "kernel::dependencies::lemmas#extend",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_graph_path_in_cut",
+      "selector": "kernel::dependencies::lemmas#path_in_cut",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_graph_cut_excludes",
+      "selector": "kernel::dependencies::lemmas#cut_excludes",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_graph_singleton_bit",
+      "selector": "kernel::dependencies::lemmas#singleton_bit",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_graph_union_bit",
+      "selector": "kernel::dependencies::lemmas#union_bit",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_dependency_path",
+      "selector": "kernel::dependencies#World::dependency_path",
+      "expected": 7
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_find_dependency",
+      "selector": "kernel::dependencies#World::find_dependency",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_first_undelivered",
+      "selector": "kernel::dependencies#World::first_undelivered",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_retirement_fact",
+      "selector": "kernel::dependency_retirement#verify_fact",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_retirement_preserves",
+      "selector": "kernel::dependency_retirement#preserves",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_retirement_abandoned",
+      "selector": "kernel::dependency_retirement#verify_abandoned",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_retirement_waiting_world",
+      "selector": "kernel::dependency_retirement#waiting_world",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_retirement_fact_witness",
+      "selector": "kernel::dependency_retirement#fact_witness",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_retirement_abandoned_witness",
+      "selector": "kernel::dependency_retirement#abandoned_witness",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_update_allowed",
+      "selector": "kernel::dependencies#update_allowed",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_prepare_dependency",
+      "selector": "kernel::dependencies#World::prepare_dependency",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies",
+      "selector": "kernel::dependencies#World::record_dependency",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_write_table",
+      "selector": "kernel::dependencies#write_dependency",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_write_pack",
+      "selector": "kernel::dependencies::writes#pack",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_write_length",
+      "selector": "kernel::dependencies::writes#length",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_write_index",
+      "selector": "kernel::dependencies::writes#index",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_write_frame",
+      "selector": "kernel::dependencies::writes#frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_write_finish",
+      "selector": "kernel::dependencies::writes#finish",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_remove_dependency",
+      "selector": "kernel::dependencies#World::remove_dependency",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_withhold_dependency_credit",
+      "selector": "kernel::dependencies#World::withhold_dependency_credit",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_clone",
+      "selector": "kernel::dependencies#Dependency::clone",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_indexability_frame",
+      "selector": "kernel::dependencies#indexability_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_indexable_definition",
+      "selector": "kernel::dependencies#indexable_definition",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_pending_blocks",
+      "selector": "kernel::dependencies#pending_blocks",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_pending_ready",
+      "selector": "kernel::dependencies#pending_ready",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_prerequisite_definition",
+      "selector": "kernel::dependencies#prerequisite_definition",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_unseen_prefix",
+      "selector": "kernel::dependencies#unseen_prefix",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_unseen_prefix_equal",
+      "selector": "kernel::dependencies#unseen_prefix_equal",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_visit_reduces_unseen",
+      "selector": "kernel::dependencies#visit_reduces_unseen",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_progress",
+      "selector": "kernel::progress",
+      "expected": 12
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_empty_delivered",
+      "selector": "kernel::dependencies#empty_delivered",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_delivered_definition",
+      "selector": "kernel::dependencies#delivered_definition",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_scheduler",
+      "selector": "kernel::scheduler",
+      "expected": 13
+    },
+    {
+      "target": "//crates/kernel:verus_step_with_passes",
+      "selector": "kernel::steps#step_with_passes",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_step_checked",
+      "selector": "kernel::steps#step_checked",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_steps",
+      "selector": "kernel::steps#step",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_settling",
+      "selector": "kernel::settling",
+      "expected": 3
+    },
+    {
+      "target": "//crates/kernel:verus_progress_theorem",
+      "selector": "kernel::progress_theorem",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_witness",
+      "selector": "kernel::witness",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_progress_pool",
+      "selector": "kernel::progress_pool",
+      "expected": 6
+    },
+    {
+      "target": "//crates/kernel:verus_progress_global",
+      "selector": "kernel::progress_global",
+      "expected": 7
+    },
+    {
+      "target": "//crates/kernel:verus_ranks",
+      "selector": "kernel::ranks#advance_release",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_admit",
+      "selector": "kernel::ranks#advance_admit",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_blocked",
+      "selector": "kernel::ranks#advance_blocked",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_checks",
+      "selector": "kernel::ranks#advance_checks",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_do",
+      "selector": "kernel::ranks#advance_do",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_finished",
+      "selector": "kernel::ranks#advance_finished",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_idle",
+      "selector": "kernel::ranks#advance_idle",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_node",
+      "selector": "kernel::ranks#advance_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_rebase",
+      "selector": "kernel::ranks#advance_rebase",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_slot",
+      "selector": "kernel::ranks#advance_slot",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_start",
+      "selector": "kernel::ranks#advance_start",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_sum_bounds",
+      "selector": "kernel::ranks#advance_sum_bounds",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_teardown",
+      "selector": "kernel::ranks#advance_teardown",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_teardown_missing",
+      "selector": "kernel::ranks#advance_teardown_missing",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_teardown_facts_absent",
+      "selector": "kernel::teardown_facts#absent",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_teardown_emitting",
+      "selector": "kernel::ranks#advance_teardown_emitting",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_distance",
+      "selector": "kernel::ranks#Node::distance",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_finite_minimum",
+      "selector": "kernel::ranks#finite_minimum",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_local_capacities",
+      "selector": "kernel::ranks#local_capacities",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_node_total",
+      "selector": "kernel::ranks#node_total",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_open_count_update",
+      "selector": "kernel::ranks#open_count_update",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_open_prefix_equal",
+      "selector": "kernel::ranks#open_prefix_equal",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_pending",
+      "selector": "kernel::ranks#Node::pending",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_phase_rank",
+      "selector": "kernel::ranks#phase_rank",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_potential_bound",
+      "selector": "kernel::ranks#potential_bound",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_potential_member",
+      "selector": "kernel::ranks#potential_member",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_potential_prefix",
+      "selector": "kernel::ranks#potential_prefix",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_potential_prefix_equal",
+      "selector": "kernel::ranks#potential_prefix_equal",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_potential_update",
+      "selector": "kernel::ranks#potential_update",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_settle_rank",
+      "selector": "kernel::ranks#Node::settle_rank",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_settle_reserve_totals",
+      "selector": "kernel::ranks#settle_reserve_totals",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_sum_update",
+      "selector": "kernel::ranks#sum_update",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint",
+      "selector": "kernel::footprint",
+      "expected": 23
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_node_distance_definition",
+      "selector": "kernel::ranks#node_distance_definition",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ids",
+      "selector": "kernel::ids",
+      "expected": 6
+    },
+    {
+      "target": "//crates/kernel:verus_controller_boundary",
+      "selector": "controller_boundary",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_command_headroom",
+      "selector": "root",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_retirement_fact_preserves_node",
+      "selector": "kernel::retirement#fact_preserves_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_retirement_fact_preserves_world",
+      "selector": "kernel::retirement#fact_preserves_world",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_retirement_infrastructure_frame",
+      "selector": "kernel::retirement#infrastructure_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_retirement_infrastructure_result",
+      "selector": "kernel::retirement#infrastructure_result",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_retirement_merge_input_distance",
+      "selector": "kernel::retirement#merge_input_distance",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_retirement_node_frame",
+      "selector": "kernel::retirement#node_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_retirement_verify_selected_apply",
+      "selector": "kernel::retirement#verify_selected_apply",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_retirement_witness",
+      "selector": "kernel::retirement_witness",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_retirement_merge_witness",
+      "selector": "kernel::retirement_merge_witness",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_retirement_merge_waiting_witness",
+      "selector": "kernel::retirement_merge_waiting_witness",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_retirement_terminal_fact_witness",
+      "selector": "kernel::retirement_terminal_fact_witness",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_progress_gate",
+      "selector": "kernel::progress_gate",
+      "expected": 3
+    },
+    {
+      "target": "//crates/kernel:verus_progress_gate_classification",
+      "selector": "kernel::progress_gate_classification",
+      "expected": 3
+    },
+    {
+      "target": "//crates/kernel:verus_progress_gate_waiting",
+      "selector": "kernel::progress_gate_waiting",
+      "expected": 3
+    },
+    {
+      "target": "//crates/kernel:verus_progress_gate_permutation",
+      "selector": "kernel::progress_gate_permutation",
+      "expected": 5
+    },
+    {
+      "target": "//crates/kernel:verus_progress_gate_maker",
+      "selector": "kernel::progress_gate_maker",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_progress_gate_fixture",
+      "selector": "kernel::progress_gate_fixture",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_progress_gate_covers",
+      "selector": "kernel::progress_gate_covers",
+      "expected": 3
+    },
+    {
+      "target": "//crates/kernel:verus_reply_admission_on_reply",
+      "selector": "kernel::reply_admission#on_reply",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_admission_files",
+      "selector": "kernel::reply_admission#reply_files",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_admission_transition",
+      "selector": "kernel::reply_admission#reply_transition",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_progress_gate_contracts",
+      "selector": "kernel::progress_gate_contracts",
+      "expected": 6
+    },
+    {
+      "target": "//crates/kernel:verus_progress_gate_apply_reserves",
+      "selector": "kernel::progress_gate_apply",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_progress_gate_apply_merge_safe",
+      "selector": "kernel::progress_gate_apply_merge_safe",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_progress_gate_apply_resume_safe",
+      "selector": "kernel::progress_gate_apply_resume_safe",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_progress_gate_apply_merge",
+      "selector": "kernel::progress_gate_apply_merge",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_progress_gate_apply_resume",
+      "selector": "kernel::progress_gate_apply_resume",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_progress_gate_apply_witness",
+      "selector": "kernel::progress_gate_apply_witness",
+      "expected": 3
+    },
+    {
+      "target": "//crates/kernel:verus_progress_gate_apply_resume_frame",
+      "selector": "kernel::progress_gate_apply_resume_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_progress_phase_measure",
+      "selector": "kernel::progress_phase_measure",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_progress_phase",
+      "selector": "kernel::progress_phase",
+      "expected": 5
+    },
+    {
+      "target": "//crates/kernel:verus_progress_phase_witness",
+      "selector": "kernel::progress_phase_witness",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_progress_phase_late_world",
+      "selector": "kernel::progress_phase_late_witness#world",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_progress_phase_late_cover",
+      "selector": "kernel::progress_phase_late_witness#cover",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_progress_unplanned",
+      "selector": "kernel::progress_unplanned",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_progress_unplanned_admission",
+      "selector": "kernel::progress_unplanned_admission",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_progress_unplanned_waiting",
+      "selector": "kernel::progress_unplanned_waiting",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_progress_unplanned_witness",
+      "selector": "kernel::progress_unplanned_witness",
+      "expected": 3
+    },
+    {
+      "target": "//crates/kernel:verus_dispatch_classifier",
+      "selector": "decision",
+      "expected": 17
+    },
+    {
+      "target": "//crates/kernel:verus_dispatch_model",
+      "selector": "model",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dispatch_liveness",
+      "selector": "kernel::controller_dispatch::dispatch_theorems",
+      "expected": 13
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_stopping_active_distance",
+      "selector": "kernel::allocation_stopping_lemmas#active_distance_lower",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_stopping_distance",
+      "selector": "kernel::allocation_stopping_lemmas#stopping_distance",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_stopping_progress",
+      "selector": "kernel::allocation_stopping_lemmas#stopping_progress",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_stopping_frame",
+      "selector": "kernel::allocation_stopping_lemmas#stopping_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_incident_frame",
+      "selector": "kernel::allocation_incident_lemmas#incident_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_transition_frame",
+      "selector": "kernel::facts_transition_lemmas#frame_consequences",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_incident_resumed_result",
+      "selector": "kernel::allocation_incident_lemmas#resumed_result",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_incident_waiting_result",
+      "selector": "kernel::allocation_incident_lemmas#waiting_result",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_ci_failed_retry_frame",
+      "selector": "kernel::facts_ci_failed_lemmas#retry_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_ci_failed_cancellation_input",
+      "selector": "kernel::facts_ci_failed_lemmas#cancellation_input",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_cont_rank_ready",
+      "selector": "kernel#cont_rank_ready",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_events_input",
+      "selector": "kernel::events_lemmas#selected_input",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_events_footprints",
+      "selector": "kernel::events_lemmas#footprints_after",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_cleanup_teardown_progress",
+      "selector": "kernel::cleanup_lemmas#teardown_progress",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_cleanup_resource_distance",
+      "selector": "kernel::cleanup_lemmas#resource_distance",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_timing3_ingest_deposit_bound",
+      "selector": "kernel::timing3_lemmas#ingest_deposit_bound",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_timing3_pause_resume",
+      "selector": "kernel::timing3_lemmas#pause_resume",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_merge_late_result",
+      "selector": "kernel::facts_merge_lemmas#late_result",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_merge_ignored_result",
+      "selector": "kernel::facts_merge_lemmas#ignored_result",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_merge_open_result",
+      "selector": "kernel::facts_merge_lemmas#open_result",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_plan_check",
+      "selector": "kernel::plan_check",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_plan_check_witness",
+      "selector": "kernel::plan_check_witness",
+      "expected": 5
+    },
+    {
+      "target": "//crates/kernel:verus_t860_retries_stop_for_review",
+      "selector": "kernel::retries#stop_for_review",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_t860_retries_failed_round",
+      "selector": "kernel::retries#failed_round",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_t860_retries_next_rung",
+      "selector": "kernel::retries#next_rung",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_t860_retries_out_of_room",
+      "selector": "kernel::retries#out_of_room",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_t860_retries_plan_retry",
+      "selector": "kernel::retries#plan_retry",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_t860_retries_recheck",
+      "selector": "kernel::retries#recheck",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_port_t860_scope",
+      "selector": "kernel::port_t860_scope#apply_scope",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_port_t860_headroom",
+      "selector": "kernel::port_t860_scope#checker_headroom",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_port_t860_admitted",
+      "selector": "kernel::port_t860_frames#admitted",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_port_t860_rejected_once",
+      "selector": "kernel::port_t860_frames#rejected_once",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_port_t860_rejected_incident",
+      "selector": "kernel::port_t860_frames#rejected_incident",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_port_t860_inactive",
+      "selector": "kernel::port_t860_frames#inactive",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_port_t860_actor",
+      "selector": "kernel::port_t860_frames#actor",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_port_t860_world",
+      "selector": "kernel::port_t860_frames#world",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_port_t860_apply",
+      "selector": "kernel::port_t860_apply#verify_apply",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_port_t860_witness_world",
+      "selector": "kernel::port_t860_witness#world",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_port_t860_witness_cover",
+      "selector": "kernel::port_t860_witness#cover",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_port_t860_release_run",
+      "selector": "kernel::reply_admission#release_run",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_port_t860_release_job",
+      "selector": "kernel::reply_admission#release_job",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_port_t860_on_stopping_reply",
+      "selector": "kernel::reply_admission#on_stopping_reply",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_port_t860_on_rejected_reply",
+      "selector": "kernel::reply_admission#on_rejected_reply",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_port_t860_on_admitted_reply",
+      "selector": "kernel::reply_admission#on_admitted_reply",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_port_t860_link_audit_finished",
+      "selector": "kernel::port_t860_link#audit_finished",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_port_t860_link_inactive",
+      "selector": "kernel::port_t860_link#inactive",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_port_t860_link_rejected",
+      "selector": "kernel::port_t860_link#rejected",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_port_t860_link_admitted",
+      "selector": "kernel::port_t860_link#admitted",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_port_t860_link_irrelevant",
+      "selector": "kernel::port_t860_link#irrelevant",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_command_helpers_mark_handled_resources",
+      "selector": "kernel::command_helpers#mark_handled_resources",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_retries_facts_restarted",
+      "selector": "kernel::retries_facts#restarted",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_retries_facts_incident",
+      "selector": "kernel::retries_facts#incident",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_retries_facts_failed_result",
+      "selector": "kernel::retries_facts#failed_result",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_node_writes_length",
+      "selector": "kernel::node_writes#write_length",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_node_writes_index",
+      "selector": "kernel::node_writes#write_index",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_node_writes_other",
+      "selector": "kernel::node_writes#write_other",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_node_writes_from_frame",
+      "selector": "kernel::node_writes#write_from_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_retries_facts_pack_incident_write",
+      "selector": "kernel::retries_facts#pack_incident_write",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_retries_facts_finish_failed_incident",
+      "selector": "kernel::retries_facts#finish_failed_incident",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_retries_raise_failed_run_incident",
+      "selector": "kernel::retries#raise_failed_run_incident",
+      "expected": 1
+    }
+  ]
+}

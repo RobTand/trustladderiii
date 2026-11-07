@@ -117,7 +117,7 @@ class Config:
         for row in value['selections']:
             exact_keys(row, Selection.__dataclass_fields__)
             require(type(row['target']) is str and re.fullmatch(r'//crates/kernel:verus_[a-z0-9_]+', row['target']), 'unsupported target')
-            require(type(row['selector']) is str and re.fullmatch(r'[A-Za-z0-9_:]+(?:#(?:\*::)?[A-Za-z0-9_:]+)?', row['selector']), 'invalid selector')
+            require(type(row['selector']) is str and re.fullmatch(r'[A-Za-z0-9_:]+(?:#\*?[A-Za-z0-9_:]+)?', row['selector']), 'invalid selector')
             require(type(row['expected']) is int and row['expected'] > 0, 'expected must be a positive integer')
             rows.append(Selection(**row))
         require(len({r.target for r in rows}) == len(rows) == len({r.selector for r in rows}), 'target/selector bijection violated')
