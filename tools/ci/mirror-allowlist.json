@@ -1002,6 +1002,11 @@
     "owner": "#884"
   },
   {
+    "path": "workers/tests/fixtures/stderr-redactor-before.txt",
+    "detector": "frozen-copy",
+    "owner": "#878/controller-core/reference-copy-cleanup"
+  },
+  {
     "path": "workers/tests/p5/main_reference.py",
     "detector": "frozen-copy",
     "owner": "#891"
