@@ -955,6 +955,12 @@
     "owner": "#915"
   },
   {
+    "path": "tools/ci/bbrun-wrapper-result.v1.schema.json",
+    "detector": "ungenerated-schema",
+    "owner": "ops #878/ops-wrapper-result-v1; remove when the wrapper protocol gains a Rust definition (e.g. bbrun ported to Rust), then generate.",
+    "sha256": "4ec4c5a7f3441636729e8f9aa286061ef21212c4195000b0787513baea7b6840"
+  },
+  {
     "path": "tools/ci/test_bazel_workspace.py",
     "detector": "source-include",
     "owner": "#878"

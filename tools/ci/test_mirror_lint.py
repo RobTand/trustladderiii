@@ -1,6 +1,7 @@
 """Mirror lint acceptance cases in isolated repository trees."""
 
 import contextlib
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -90,6 +91,45 @@ class MirrorLintTests(unittest.TestCase):
         self.assertEqual(mirror_lint.ratchet({offender}, [entry]), [])
         self.assertTrue(mirror_lint.ratchet({offender}, []))
         self.assertTrue(mirror_lint.ratchet(set(), [entry]))
+
+    def test_hash_pinned_schema_exception(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            schema = root / 'protocol.schema.json'
+            original = b'{"type": "object"}\n'
+            schema.write_bytes(original)
+            allow = root / mirror_lint.ALLOWLIST
+            allow.parent.mkdir(parents=True)
+            entry = {'path': schema.name, 'detector': 'ungenerated-schema',
+                     'owner': 'ops #878/ops-wrapper-result-v1',
+                     'sha256': hashlib.sha256(original).hexdigest()}
+            subprocess.run(['git', 'init', '-q', str(root)], check=True)
+            subprocess.run(['git', '-C', str(root), 'add', '.'], check=True)
+            for content, pin, expected, message in [
+                (original, entry['sha256'], 0, '0 errors'),
+                (original + b' ', entry['sha256'], 1, 'sha256 mismatch'),
+                (None, entry['sha256'], 1, 'pinned file unavailable'),
+                (original, 'invalid', 1, 'invalid sha256 pin'),
+            ]:
+                with self.subTest(content=content, pin=pin):
+                    if content is None:
+                        schema.unlink()
+                    else:
+                        schema.write_bytes(content)
+                    allow.write_text(json.dumps([{**entry, 'sha256': pin}]))
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output):
+                        status = mirror_lint.main(['--root', str(root)])
+                    self.assertEqual(status, expected, output.getvalue())
+                    self.assertIn(message, output.getvalue())
+            for unsafe in ['../protocol.schema.json', str(schema), '*.schema.json']:
+                with self.subTest(path=unsafe):
+                    allow.write_text(json.dumps([{**entry, 'path': unsafe}]))
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output):
+                        status = mirror_lint.main(['--root', str(root)])
+                    self.assertEqual(status, 1, output.getvalue())
+                    self.assertIn('unsafe pinned path', output.getvalue())
 
     def test_mutation_helpers_are_not_source_includes(self):
         for body in [
