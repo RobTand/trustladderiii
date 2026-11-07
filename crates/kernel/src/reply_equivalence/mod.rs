@@ -351,6 +351,7 @@ proptest! {
     fn failed_run_saturation_matches_original(n in node(), neighbor in node(),
         out in outbox(), ticket in any::<u64>(), question_id in any::<u64>(),
         fast in any::<bool>(), index in 0usize..3) {
+        let out = Outbox { len: out.len % OUTBOX, ..out };
         for failures in 0..=1 {
             for incidents in 0..=2 {
                 let mut selected = n;
