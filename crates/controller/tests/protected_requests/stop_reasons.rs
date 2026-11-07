@@ -233,6 +233,21 @@ fn accepted_early_end_projects_reason_but_stale_reply_does_not() {
                 reply: Reply::IngestEarlyEnd(end),
             },
         );
+        drain(&mut c);
+        assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Auditing);
+        assert!(reason(&mut c).is_none(), "early end still needs audit");
+        let generation = c.world().unwrap().nodes[0].generation;
+        send(
+            &mut c,
+            "audit-accepts-early-end",
+            Event::Reply {
+                node: NodeId(0),
+                generation,
+                reply: Reply::AuditAgrees,
+            },
+        );
+        let phase = c.world().unwrap().nodes[0].phase;
+        assert!(phase.is_stopping() || phase.is_closed(), "{phase:?}");
         assert_eq!(
             reason(&mut c).expect("accepted stop has a durable reason")["reason"],
             expected
