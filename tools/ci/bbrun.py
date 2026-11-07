@@ -373,6 +373,10 @@ def run_and_record(command, mode, result_path):
                         opened = os.fstat(fd)
                         if (info.st_dev, info.st_ino) != (opened.st_dev, opened.st_ino):
                             raise ValueError('upload_changed')
+                        # Cross-parent directory rename updates '..' and needs
+                        # owner write/search on the moved root, not only its
+                        # parent. Repair only this pinned, uid-checked inode.
+                        os.fchmod(fd, stat.S_IMODE(opened.st_mode) | stat.S_IWUSR | stat.S_IXUSR)
                     finally:
                         os.close(fd)
                 # A rejected symlink root is moved as a directory entry only;
@@ -407,7 +411,10 @@ def run_and_record(command, mode, result_path):
         try:
             upload = Path(environment['BUILDBUDDY_ARTIFACTS_DIRECTORY'])
             fd = support.directory(upload)
-            os.close(fd)
+            try:
+                os.fchmod(fd, stat.S_IMODE(os.fstat(fd).st_mode) | stat.S_IWUSR | stat.S_IXUSR)
+            finally:
+                os.close(fd)
             if (upload / support.receipt_name).exists() or (upload / support.receipt_name).is_symlink():
                 raise ValueError('reserved_receipt_collision')
             shutil.move(str(upload), result_path + '.artifacts')
@@ -551,6 +558,8 @@ def scan_artifacts(scanner_data, scanner_hash, result_path):
                 handoff = 'fail'
                 raise ValueError('artifact_symlink')
         handoff = command_handoff
+        if handoff != 'pass':
+            raise ValueError('command_handoff_incomplete')
         if not secrets.get('BUILDBUDDY_API_KEY'):
             raise ValueError('required scanner input unavailable')
         source = base64.b64decode(scanner_data, validate=True)
@@ -1761,7 +1770,7 @@ def full_history_selftest():
     with patch.object(uuid, 'uuid4', return_value=SimpleNamespace(hex='0' * 32)):
         default = run_request(parse_args(['test', *common, '--', *command]))
         step_hashes = [hashlib.sha256(step['run'].encode()).hexdigest() for step in default['steps']]
-        assert step_hashes == ['6c193c55e7b73671d094d57776ef186dcde129407d0eb0ac26c9699db14aeea9', '66d73354b94b87a71991313c08db89ef8c327fe0cb4f30774a116841e492a265'], step_hashes
+        assert step_hashes == ['02a646a66876faa70df38dd26ebc608563de1661ee9dab025bf5ec90ffc1800f', '2252dd09b6d7097a16434c463421af6b2eef8e1fdb6cb1f728b3fa1c06c93811'], step_hashes
         args = parse_args(['test', '--full-history', *common, '--', *command])
         assert args.full_history is True
         body = run_request(args)

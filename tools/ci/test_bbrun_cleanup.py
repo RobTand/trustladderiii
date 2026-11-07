@@ -97,7 +97,7 @@ class CleanupTests(unittest.TestCase):
 class ReceiptTests(unittest.TestCase):
     def fixture(self, *, command=0, content='harmless', scanner=None, injection='', state_change=None,
                 reserved=False, symlink=False, unavailable=False, extracted=False, missing_key=False, symlink_root=False,
-                no_staging=False, first_injection='', full_history=False):
+                no_staging=False, first_injection='', full_history=False, first_upload_mode=None):
         with tempfile.TemporaryDirectory(dir='/tmp') as directory:
             root = Path(directory)
             first_upload, upload = root / 'command', root / 'upload'
@@ -111,6 +111,9 @@ class ReceiptTests(unittest.TestCase):
             if symlink:
                 (first_upload / 'link').symlink_to(original, target_is_directory=True)
             (first_upload / (RECEIPT if reserved else 'proof')).write_bytes(content if isinstance(content, bytes) else content.encode())
+            if first_upload_mode is not None:
+                self.assertNotEqual(os.getuid(), 0, 'root invalidates permission reproduction')
+                first_upload.chmod(first_upload_mode)
             data = bbrun.checked_scanner() if scanner is None else scanner
             with patch.object(bbrun, 'SCANNER_SHA256', hashlib.sha256(data).hexdigest()):
                 program = f'import os; os.kill(os.getpid(), {-command})' if command < 0 else f'import sys; sys.exit({command})'
@@ -130,7 +133,10 @@ class ReceiptTests(unittest.TestCase):
                                               env={'PATH': os.defpath}, capture_output=True, timeout=30)
                     self.assertEqual(rendered.returncode, 0, 'Kani extraction rendering failed')
                     steps = json.loads(rendered.stdout)
-            result_path = str(root / 'result.status')
+            # The real upload and private status have different parents. A
+            # same-parent rename would hide the readonly-root permission gap.
+            (root / 'runner').mkdir()
+            result_path = str(root / 'runner' / 'result.status')
             argv = [shlex.split(step['run']) for step in steps]
             import re
             for arguments in argv:
@@ -335,7 +341,27 @@ os.link = unavailable
             self.assertEqual(receipt['artifact_handoff']['status'], 'fail')
             self.assertEqual(receipt['wrapper']['exit_code'], 75)
             self.assertEqual(receipt['command']['exit_code'], None if arguments.get('full_history') else 0)
+            self.assertEqual(receipt['scanner'], {'status': 'error', 'first_exit_code': None,
+                                                'exit_code': None, 'reason': 'scanner_not_run'})
             self.assertEqual(names, [])
+
+    def test_readonly_command_upload_root(self):
+        receipt, names, _ = self.fixture(content=KEY, first_upload_mode=0o500)
+        self.assertEqual(receipt['artifact_handoff']['status'], 'pass')
+        self.assertEqual(receipt['scanner']['status'], 'fail')
+        self.assertEqual(receipt['cleanup']['status'], 'pass')
+        self.assertNotEqual(receipt['wrapper']['exit_code'], 0)
+        self.assertEqual(names, [])
+
+    def test_readonly_rejected_upload_root(self):
+        self.assertNotEqual(os.getuid(), 0, 'root invalidates permission reproduction')
+        scanner = (b'import os,sys\nos.chmod(sys.argv[-1], 0o500)\nexec('
+                   + repr(bbrun.checked_scanner()).encode() + b')\n')
+        receipt, names, _ = self.fixture(content=KEY, scanner=scanner)
+        self.assertEqual(receipt['scanner']['status'], 'fail')
+        self.assertEqual(receipt['cleanup']['status'], 'pass')
+        self.assertNotEqual(receipt['wrapper']['exit_code'], 0)
+        self.assertEqual(names, [])
 
     def test_final_handoff_failure_preserves_command(self):
         receipt, names, _ = self.fixture(injection="import shutil\ndef denied(*args, **kwargs):\n    raise PermissionError('fixture-only-secret-+/cleanup')\nshutil.move = denied\n")

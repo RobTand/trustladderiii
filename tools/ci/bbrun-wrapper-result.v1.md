@@ -1,7 +1,7 @@
 # bbrun wrapper result v1
 
 Owner: TL3 ops. Consumer: fv-port reusable measurement driver.
-Status: ops interface agreement offered to fv-port before either builder starts.
+Status: read and accepted by fv-port before either builder started.
 Baseline shared client: SHA256 89c8a850b9381cd2e4d52a2d94f45b5c2272c9fcb7a3708ef2a8c45552836763.
 Found by: artifact cleanup, retained RP parent d765f39c-35dd-4dcd-b013-3005b046c59c.
 
@@ -54,6 +54,13 @@ Suggested codes include `command_succeeded`, `command_failed`,
 `cleanup_permission_denied` and `cleanup_io_error`. The implementation must
 document its exact emitted set. A historical unknown scanner cause stays unknown.
 
+The consumer pins reasons that can qualify a PASS: `command_succeeded`,
+`handoff_succeeded`, `scan_clean`, and `cleanup_complete`, with the explicit
+`no_cleanup_targets` case below. Schema-valid sanitized non-PASS reasons remain
+non-PASS evidence even when they extend the suggested list, for example
+`handoff_not_observed`, `cleanup_not_observed` or `receipt_scan_rejected`.
+They must not cause a failed receipt to disappear or turn into a success.
+
 `cleanup.not_needed` counts as successful ONLY with reason `no_cleanup_targets`
 and `targets_present=false`. It means the wrapper positively established that
 there was no target requiring deletion. It does not mean cleanup was skipped,
@@ -82,6 +89,16 @@ The collector may recover that line from its own terminal parent's retained,
 scrubbed runner log. This fallback does not authorize an unscanned upload or make
 a failed scan pass. If both forms exist their objects must agree; disagreement
 fails validation. If no durable form survives, the consumer records UNKNOWN.
+
+The wrapper emits the receipt as its final stdout line before exit. This is not
+a promise that it is the final nonempty line of the entire parent runner log:
+BuildBuddy subsequently appends command-exit, upload, cleanup and completion
+messages. A consumer demanding a literal final line of the complete parent log
+must refuse the fallback when that condition is absent. Use an independently
+established final wrapper-step output boundary if the transport provides one;
+do not search arbitrary earlier output for a convenient receipt. The artifact
+is preferred. Parent attribution/CAS binds transport, not cryptographic receipt
+authenticity, and never overrides terminal parent failure.
 
 The implementation must prove failure-safe publication as part of its scanner
 and read-only-tree fixtures. It must not report `artifacts deleted` if deletion
