@@ -21,6 +21,7 @@ py_library(
     srcs = [
         "__init__.py",
         "_redaction_policy.py",
+        "action_policy.py",
         "execution.py",
         "forcing_ownership.py",
         "generator.py",
@@ -52,13 +53,6 @@ py_library(
 py_binary(
     name = "generator",
     srcs = ["generator.py"],
-    imports = [".."],
-    visibility = ["//visibility:public"],
-)
-
-py_binary(
-    name = "proof_rules",
-    srcs = ["proof_rules.py"],
     imports = [".."],
     visibility = ["//visibility:public"],
 )

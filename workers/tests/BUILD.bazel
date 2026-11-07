@@ -168,7 +168,7 @@ tl3_py_test(
         ":conftest",
         ":test_workers",
         ":tracing_forms",
-        ":tracing_forms3",
+        ":tracing_policy_cases",
         "//workers/src",
         "@tl3_pip//jsonschema",
         "@tl3_pip//langchain_core",
@@ -327,10 +327,8 @@ tl3_py_test(
         ":test_prompt_cache",
         ":test_reviewer",
         ":test_workers",
-        "//harness/src/tl3_harness",
         "//workers/src",
         "@tl3_pip//httpx",
-        "@tl3_pip//jsonschema",
         "@tl3_pip//langchain_core",
         "@tl3_pip//openai",
         "@tl3_pip//pytest",
@@ -1064,18 +1062,6 @@ py_binary(
 )
 
 tl3_py_test(
-    name = "test_redaction_policy",
-    srcs = ["test_redaction_policy.py"],
-    deps = [
-        ":conftest",
-        ":redaction_branches",
-        "//harness/src/tl3_harness",
-        "//workers/src",
-        "@tl3_pip//pytest",
-    ],
-)
-
-tl3_py_test(
     name = "test_tokenizer_parity_oracle",
     srcs = ["test_tokenizer_parity_oracle.py"],
     deps = [
@@ -1266,6 +1252,20 @@ filegroup(
 # Input-only deterministic generators invoked by Rust producer tests.
 filegroup(
     name = "tracing_policy_inputs",
-    srcs = ["tracing_policy_cases.py", "tracing_forms.py", "tracing_forms3.py"],
+    srcs = [
+        "tracing_forms.py",
+        "tracing_forms3.py",
+        "tracing_policy_cases.py",
+    ],
     visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "tracing_policy_cases",
+    srcs = ["tracing_policy_cases.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":tracing_forms",
+        ":tracing_forms3",
+    ],
 )

@@ -243,8 +243,13 @@ fn trace_retention_and_allocation_are_action_owned() {
     );
 }
 
-fn schema_fact(keyword: &str, value: serde_json::Value, schema: serde_json::Value,
-               instance: serde_json::Value, path: serde_json::Value) -> serde_json::Value {
+fn schema_fact(
+    keyword: &str,
+    value: serde_json::Value,
+    schema: serde_json::Value,
+    instance: serde_json::Value,
+    path: serde_json::Value,
+) -> serde_json::Value {
     json!({"keyword":keyword,"validator_value":value,"schema":schema,"instance":instance,
         "path":path,"schema_path":[],"context":[]})
 }
@@ -253,22 +258,50 @@ fn schema_fact(keyword: &str, value: serde_json::Value, schema: serde_json::Valu
 fn declared_constraints_have_identical_direct_and_repair_permission_membership() {
     for (keyword, constraint, bad, accepted, rejected) in [
         ("const", json!(true), json!(false), json!(true), json!(1)),
-        ("enum", json!([1,"one"]), json!(null), json!(1), json!(true)),
-        ("pattern", json!("^fixed$"), json!("bad"), json!("fixed"), json!("unfixed")),
+        (
+            "enum",
+            json!([1, "one"]),
+            json!(null),
+            json!(1),
+            json!(true),
+        ),
+        (
+            "pattern",
+            json!("^fixed$"),
+            json!("bad"),
+            json!("fixed"),
+            json!("unfixed"),
+        ),
         ("type", json!("integer"), json!("1"), json!(1), json!(true)),
-        ("minLength", json!(3), json!("x"), json!("é中💡"), json!("é中")),
+        (
+            "minLength",
+            json!(3),
+            json!("x"),
+            json!("é中💡"),
+            json!("é中"),
+        ),
     ] {
         let source = json!({"type":"object","properties":{"value":{keyword:constraint}}});
         let rows = command(json!({"op":"schema_rows","errors":[schema_fact(keyword,
             constraint.clone(),source["properties"]["value"].clone(),bad.clone(),json!(["value"]))],
-            "root_schema":source,"role":"maker"}))["ok"]["result"]["value"].clone();
+            "root_schema":source,"role":"maker"}))["ok"]["result"]["value"]
+            .clone();
         assert_eq!(rows.as_array().unwrap().len(), 1);
-        for (candidate, expected) in [(accepted,true),(rejected,false)] {
-            let membership = command(json!({"op":"membership","allowed":rows[0]["allowed"],"value":candidate}));
-            assert_eq!(membership["ok"]["result"]["value"], expected, "{keyword}: {membership}");
-            let permission = command(json!({"op":"permits","rows":rows,"before":{"value":bad,"kept":7},
-                "after":{"value":candidate,"kept":7},"role":"maker"}));
-            assert_eq!(permission["ok"]["result"]["value"], expected, "{keyword}: {permission}");
+        for (candidate, expected) in [(accepted, true), (rejected, false)] {
+            let membership =
+                command(json!({"op":"membership","allowed":rows[0]["allowed"],"value":candidate}));
+            assert_eq!(
+                membership["ok"]["result"]["value"], expected,
+                "{keyword}: {membership}"
+            );
+            let permission = command(
+                json!({"op":"permits","rows":rows,"before":{"value":bad,"kept":7},
+                "after":{"value":candidate,"kept":7},"role":"maker"}),
+            );
+            assert_eq!(
+                permission["ok"]["result"]["value"], expected,
+                "{keyword}: {permission}"
+            );
         }
     }
 }
@@ -278,14 +311,21 @@ fn extra_field_repair_removes_only_unmatched_properties() {
     let source = json!({"type":"object","properties":{"kept":{"type":"integer"}},
         "patternProperties":{"^x-":{"type":"string"}},"additionalProperties":false});
     let before = json!({"kept":1,"x-valid":"text","a/b~c":false});
-    let result = command(json!({"op":"schema_rows","errors":[schema_fact("additionalProperties",
-        json!(false),source.clone(),before.clone(),json!([]))],"root_schema":source,"role":"maker"}));
+    let result = command(
+        json!({"op":"schema_rows","errors":[schema_fact("additionalProperties",
+        json!(false),source.clone(),before.clone(),json!([]))],"root_schema":source,"role":"maker"}),
+    );
     let rows = &result["ok"]["result"]["value"];
     assert_eq!(rows.as_array().unwrap().len(), 1);
     assert_eq!(rows[0]["repair"]["pointer"], "/a~1b~0c");
-    for (after, expected) in [(json!({"kept":1,"x-valid":"text"}),true),
-        (json!({"kept":2,"x-valid":"text"}),false),(json!({"kept":1}),false)] {
-        let result = command(json!({"op":"permits","rows":rows,"before":before,"after":after,"role":"maker"}));
+    for (after, expected) in [
+        (json!({"kept":1,"x-valid":"text"}), true),
+        (json!({"kept":2,"x-valid":"text"}), false),
+        (json!({"kept":1}), false),
+    ] {
+        let result = command(
+            json!({"op":"permits","rows":rows,"before":before,"after":after,"role":"maker"}),
+        );
         assert_eq!(result["ok"]["result"]["value"], expected);
     }
 }
@@ -295,20 +335,45 @@ fn composite_reference_repairs_keep_local_definitions_and_every_independent_row(
     let source = json!({"$defs":{"choice":{"type":"string","pattern":"^fixed$"}},
         "type":"object","properties":{"value":{"anyOf":[{"$ref":"#/$defs/choice"},{"type":"null"}]}}});
     let constraint = &source["properties"]["value"];
-    let result = command(json!({"op":"schema_rows","errors":[schema_fact("anyOf",constraint["anyOf"].clone(),
-        constraint.clone(),json!(17),json!(["value"]))],"root_schema":source,"role":"maker"}));
+    let result = command(
+        json!({"op":"schema_rows","errors":[schema_fact("anyOf",constraint["anyOf"].clone(),
+        constraint.clone(),json!(17),json!(["value"]))],"root_schema":source,"role":"maker"}),
+    );
     let rows = &result["ok"]["result"]["value"];
     assert_eq!(rows.as_array().unwrap().len(), 1);
-    for (after, expected) in [(json!("fixed"),true),(json!(null),true),(json!("bad"),false),(json!(true),false)] {
-        let result = command(json!({"op":"permits","rows":rows,"before":{"value":17},"after":{"value":after},"role":"maker"}));
+    for (after, expected) in [
+        (json!("fixed"), true),
+        (json!(null), true),
+        (json!("bad"), false),
+        (json!(true), false),
+    ] {
+        let result = command(
+            json!({"op":"permits","rows":rows,"before":{"value":17},"after":{"value":after},"role":"maker"}),
+        );
         assert_eq!(result["ok"]["result"]["value"], expected, "{result}");
     }
     let source = json!({"type":"object","properties":(0..30).map(|n|(format!("field-{n}"),json!({"const":"fixed"}))).collect::<serde_json::Map<_,_>>()});
-    let errors: Vec<_> = (0..30).map(|n|schema_fact("const",json!("fixed"),json!({"const":"fixed"}),json!("bad"),json!([format!("field-{n}")]))).collect();
-    let result = command(json!({"op":"schema_rows","errors":errors,"root_schema":source,"role":"maker"}));
+    let errors: Vec<_> = (0..30)
+        .map(|n| {
+            schema_fact(
+                "const",
+                json!("fixed"),
+                json!({"const":"fixed"}),
+                json!("bad"),
+                json!([format!("field-{n}")]),
+            )
+        })
+        .collect();
+    let result =
+        command(json!({"op":"schema_rows","errors":errors,"root_schema":source,"role":"maker"}));
     let rows = &result["ok"]["result"]["value"];
     assert_eq!(rows.as_array().unwrap().len(), 30);
     let result = command(json!({"op":"render","rows":rows,"role":"maker","context":"reply"}));
     let text = result["ok"]["result"]["value"].as_str().unwrap();
-    for n in 0..30 { assert!(text.contains(&format!("/field-{n}\"")), "missing complete repair {n}"); }
+    for n in 0..30 {
+        assert!(
+            text.contains(&format!("/field-{n}\"")),
+            "missing complete repair {n}"
+        );
+    }
 }

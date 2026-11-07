@@ -288,7 +288,7 @@ fn adversarial_producer_inputs_stay_bounded() {
     tl3_redaction::text("").unwrap();
     let data = data();
     let mut executed = 0;
-    for unit in data["adversarial"].as_array().unwrap() {
+    for (case, unit) in data["adversarial"].as_array().unwrap().iter().enumerate() {
         let unit = unit.as_str().unwrap();
         let source = unit.repeat(8192 / unit.len() + 1);
         let source: String = source.chars().take(8192).collect();
@@ -299,7 +299,7 @@ fn adversarial_producer_inputs_stay_bounded() {
         }
         assert!(
             start.elapsed() < std::time::Duration::from_millis(500),
-            "bounded matcher exceeded adversarial guard"
+            "bounded matcher exceeded adversarial guard for case {case}"
         );
     }
     println!("adversarial assertions={executed}");
