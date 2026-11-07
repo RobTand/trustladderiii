@@ -42,7 +42,7 @@ def podman_command(tree, image, scratch, threads, *, mode, cpus=None, memory=Non
         raise ValueError('explicit container mode required')
     return [
         *prefix, '--network=none', '--http-proxy=false', '--read-only', '--read-only-tmpfs=false',
-        '--userns=keep-id', '--interactive', '--rm', '--pull=never', '--cap-drop=ALL',
+        '--interactive', '--rm', '--pull=never', '--cap-drop=ALL',
         '--security-opt=no-new-privileges', '--pids-limit=128', '--ipc=private', '--pid=private', '--workdir=/checkout',
         '--mount', f'type=bind,src={tree},dst=/checkout,readonly',
         '--mount', f'type=bind,src={harness},dst=/harness,readonly',
