@@ -304,6 +304,17 @@ impl Daemon {
     fn restart(&mut self) {
         self.child.kill().unwrap();
         self.child.wait().unwrap();
+        let settings = self.store_settings();
+        let mut connection = postgres::Config::new()
+            .host(&settings.host)
+            .port(settings.port)
+            .user(&settings.user)
+            .dbname(&settings.database)
+            .password("tl3-disposable-test-password")
+            .connect(postgres::NoTls)
+            .unwrap();
+        support::controller_restart::wait_for_owner_release(&mut connection);
+        drop(connection);
         let mut child = Command::new(env!("CARGO_BIN_EXE_tl3d"))
             .arg("--config")
             .arg(self.root.path().join("config.toml"))
