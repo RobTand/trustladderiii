@@ -321,7 +321,7 @@ fn adversarial_producer_inputs_stay_bounded() {
 }
 
 #[test]
-fn public_certificate_is_retained_alongside_confidential_redaction() {
+fn readable_public_fixture_survives_alongside_confidential_redaction() {
     let case = data()["forms"]
         .as_array()
         .unwrap()
@@ -330,11 +330,11 @@ fn public_certificate_is_retained_alongside_confidential_redaction() {
         .unwrap();
     let input: Value = serde_json::from_str(case[1].as_str().unwrap()).unwrap();
     let safe: Value = serde_json::from_str(&payload(input.clone())).unwrap();
-    assert_eq!(safe["data"]["ca.crt"], input["data"]["ca.crt"]);
-    assert_ne!(safe["data"]["api-token"], input["data"]["api-token"]);
+    assert!(safe["data"]["ca.crt"] == input["data"]["ca.crt"], "readable ordinary fixture must survive");
+    assert!(safe["data"]["api-token"] != input["data"]["api-token"], "confidential sibling must be redacted");
     no_fragments(
         &safe.to_string(),
         case[2].as_array().unwrap(),
-        "public certificate carrier",
+        "readable public fixture carrier",
     );
 }

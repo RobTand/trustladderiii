@@ -35,6 +35,11 @@ def public_r(n, alpha=ALNUM):
     return ''.join(public_rng.choice(alpha) for _ in range(n))
 
 
+def public_content(n):
+    """Readable ordinary ALNUM data with a fixed public input, not a credential."""
+    return ('PUBLIC' * ((n + 5) // 6))[:n]
+
+
 def b64(s, urlsafe=False):
     f = base64.urlsafe_b64encode if urlsafe else base64.b64encode
     return f(s.encode() if isinstance(s, str) else s).decode()
@@ -95,12 +100,12 @@ F('k8s_secret_stringdata', 'cred', lambda S: (
     f"    db:\n      host: db\n      pass: {S(r(20, PWCH))}\n"))
 F('k8s_secret_tls', 'cred', lambda S: (
     "apiVersion: v1\nkind: Secret\ntype: kubernetes.io/tls\ndata:\n"
-    f"  tls.crt: {b64(public_r(300))}\n  tls.key: {S(b64('-----BEGIN PRIVATE KEY-----' + r(200, B64)))}\n"))
+    f"  tls.crt: {b64(public_content(300))}\n  tls.key: {S(b64('-----BEGIN PRIVATE KEY-----' + r(200, B64)))}\n"))
 F('k8s_secret_dockerconfigjson', 'cred', lambda S: (
     "kind: Secret\ntype: kubernetes.io/dockerconfigjson\ndata:\n  .dockerconfigjson: " +
     S(b64(json.dumps({"auths": {"registry.acme.io": {"username": "ci", "password": r(24), "auth": b64('ci:' + r(24))}}})))))
 F('kubectl_get_secret_json', 'cred', lambda S: json.dumps({"apiVersion": "v1", "data": {
-    "api-token": S(b64(r(36))), "ca.crt": b64(public_r(120))}, "kind": "Secret", "metadata": {"name": "t"}}, indent=2))
+    "api-token": S(b64(r(36))), "ca.crt": b64(public_content(120))}, "kind": "Secret", "metadata": {"name": "t"}}, indent=2))
 F('kubectl_get_secret_jsonpath_decoded', 'cred', lambda S: f"$ kubectl get secret orders-db -o jsonpath='{{.data.password}}' | base64 -d\n{S(r(24, PWCH))}")
 F('pgpass_wildcard', 'cred', lambda S: f"*:*:*:postgres:{S(r(20, PWCH))}")
 F('pgpass_host_db', 'cred', lambda S: f"db.internal.acme.io:5432:orders:orders_rw:{S(r(24, ALNUM))}")
