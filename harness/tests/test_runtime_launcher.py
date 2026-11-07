@@ -383,7 +383,8 @@ def test_host_collector_forwards_raw_stdout_to_exact_rust_operation(tmp_path, mo
     output = tmp_path / 'out'
     output.mkdir()
     run = {'backend': 'flux', 'uri': 'local:///native', 'instance': 'run/generation', 'job': 'fJob'}
-    context = {'output_dir': str(output), 'run': run, 'owner': 'owner', 'correlation': 'correlation'}
+    context = {'output_dir': str(output), 'run': run, 'owner': 'owner', 'correlation': 'correlation',
+               'output_bounds': {'stdout_bytes': 1024, 'stderr_bytes': 1024}}
     monkeypatch.setattr(runtime, 'launch_context', lambda: context)
     requests = []
 
@@ -399,17 +400,21 @@ def test_host_collector_forwards_raw_stdout_to_exact_rust_operation(tmp_path, mo
     assert code == 0 and result['report']['path'] == 'rust-owned-report'
     assert (output / 'host.stdout').read_bytes() == raw
     assert (output / 'host.stderr').read_text() == 'diagnostic'
-    assert requests == [{'op': 'collect_runner', 'owner': 'owner', 'correlation': 'correlation',
+    assert requests[0]['op'] == 'cleanup_runtime'
+    assert requests[1:] == [{'op': 'collect_runner', 'owner': 'owner', 'correlation': 'correlation',
                          'facts': {'run': run, 'stdout': {'path': str(output / 'host.stdout'),
                                    'sha256': hashlib.sha256(raw).hexdigest(), 'bytes': len(raw)},
-                                   'runtime_binding': None, 'cleanup': None}}]
+                                   'stderr': {'path': str(output / 'host.stderr'), 'bytes': 10,
+                                   'sha256': hashlib.sha256(b'diagnostic').hexdigest()},
+                                   'runtime_binding': None, 'runtime_bindings': [], 'cleanup': None}}]
 
 
 def test_host_collector_never_overwrites_prior_output(tmp_path, monkeypatch):
     from tl3_harness import runtime
 
     (tmp_path / 'host.stdout').write_text('retained')
-    monkeypatch.setattr(runtime, 'launch_context', lambda: {'output_dir': str(tmp_path)})
+    monkeypatch.setattr(runtime, 'launch_context', lambda: {'output_dir': str(tmp_path),
+                        'output_bounds': {'stdout_bytes': 1024, 'stderr_bytes': 1024}})
     with pytest.raises(FileExistsError):
         runtime.collect_host_payload([sys.executable, '-c', 'raise SystemExit(99)'], timeout=10)
     assert (tmp_path / 'host.stdout').read_text() == 'retained'
@@ -707,7 +712,7 @@ def test_pending_launch_recovers_exact_observed_identity_for_rust_reconciliation
     launcher = {**owned, 'container': None}
     launch = {'launcher': launcher, 'name': owned['container']['name'], 'mode': 'own_scope',
               'labels': owned['container']['labels']}
-    monkeypatch.setattr(runtime, 'scope_facts', lambda *args, **kwargs: (owned['container']['scope'], {}))
+    monkeypatch.setattr(runtime, 'scope_identity', lambda *args, **kwargs: owned['container']['scope'])
     result = runtime.cleanup_observations(launcher, launch=launch, podman=podman, systemctl=systemctl,
                                           cgroup_root=root / 'cgroups', timeout=2)
     assert result['ownership'] == owned

@@ -88,7 +88,7 @@ def prepare_runtime_profile(destination, *, host_interpreter, container_interpre
         'source_root': str(source_root), 'code_inventory': str(inventory.relative_to(source_root)),
         'collector': str(executable.relative_to(source_root)), 'cleanup': 'host-cleanup',
         'trusted_root': str(trusted.relative_to(source_root)), 'producer_commit': producer_commit,
-        'container_interpreter': container_interpreter,
+        'container_interpreter': container_interpreter, 'cleanup_arguments': [],
         'image_inventory': observations['map']['path'], 'image_inspect': str(inspection),
         'profile': profile, 'mode': mode, 'prerequisites': prerequisites,
     }}

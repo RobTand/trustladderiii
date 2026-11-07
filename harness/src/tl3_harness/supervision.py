@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import selectors
 import signal
+import sys
 import subprocess
 import time
 import uuid
@@ -130,12 +131,37 @@ class Supervised:
                 self.evidence = runtime.evidence_sink(self.container)
             except (OSError, RuntimeError, ValueError, StopIteration) as error:
                 raise self.failure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'runtime', 'host_evidence_unavailable') from error
+        durable = self.evidence is not None and self.evidence.context is not None
+        launch_command = ([sys.executable, '-I', '-B', str(Path(runtime.__file__).with_name('runtime_launcher.py'))]
+                          if durable else self.command)
         try:
-            self.child = subprocess.Popen(self.command, stdin=subprocess.PIPE if self.evidence else self.selection,
-                                          stdout=subprocess.PIPE,
-                                          stderr=subprocess.PIPE, start_new_session=True)
+            self.child = subprocess.Popen(launch_command, stdin=subprocess.PIPE if self.evidence else self.selection,
+                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
         except OSError as error:
             raise ExecutionFailure(ExecutionOutcome.SETUP_FAILURE, 'container_start', 'runtime_unavailable') from error
+        if durable:
+            try:
+                intent = runtime.begin_container_launch(self.child, self.evidence)
+                self.container = intent['name']
+                run_index = self.command.index('run')
+                name_index = self.command.index('--name')
+                self.command[name_index + 1] = self.container
+                self.command[run_index + 1:run_index + 1] = [
+                    arg for key, value in intent['labels'].items() for arg in ('--label', key + '=' + value)]
+                runtime.container_pending(self.container)
+                # Begin returned only after Rust fsynced the intent and debt. No retry on failure.
+                self.child.stdin.write(json.dumps(self.command).encode() + b'\n')
+                self.child.stdin.flush()
+            except BaseException:
+                # __exit__ is not called when __enter__ fails. Stop only this owned gated launcher.
+                try:
+                    self.child.kill()
+                    self.child.wait(timeout=self.cleanup_seconds)
+                finally:
+                    for pipe in (self.child.stdin, self.child.stdout, self.child.stderr):
+                        pipe.close()
+                raise
+
         return self
 
     def incomplete(self):
@@ -278,6 +304,25 @@ class Supervised:
             self.child.stdin.close()
         self.child.stdout.close()
         self.child.stderr.close()
+        if self.evidence is not None and self.evidence.context is not None:
+            context = self.evidence.context
+            try:
+                result = runtime.backend_request({'op': 'cleanup_runtime', 'owner': context['owner'],
+                                                  'correlation': context['correlation']})['cleanup']
+                self.evidence.record('cleanup_result', result)
+                self.cleanup_confirmed = result['stopped']
+            except (RuntimeError, OSError, ValueError, KeyError, subprocess.SubprocessError):
+                self.cleanup_confirmed = False
+            finally:
+                for handle in self.process_handles:
+                    os.close(handle)
+            if self.cleanup_confirmed:
+                runtime.container_stopped(self.container, self.command)
+                # The pre-begin execution token also held scratch pending lookup.
+                runtime._uncertain_containers.discard(self.evidence.container)
+            if not self.cleanup_confirmed:
+                raise self.failure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'cleanup', 'container_cleanup_unconfirmed')
+            return
         if self.container is not None:
             try:
                 subprocess.run([self.runtime, 'rm', '--force', self.container], stdin=subprocess.DEVNULL,
