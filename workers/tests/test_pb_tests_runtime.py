@@ -80,6 +80,7 @@ def test_selected_flux_maker_consumes_verified_payload_and_checkpoints_before_di
                 'symptom_runs': [], 'receipts': [{'backend': 'flux', 'receipt_sha256': 'd' * 64}]}
     monkeypatch.setattr(flux_execution, 'execute', execute)
     monkeypatch.setattr(pb_tests, '_json_command', lambda command: pytest.fail('Flux invoked PB'))
+    monkeypatch.setattr(pb_tests, 'bounded', lambda value, **kwargs: value)
     result = pb_tests.make_test_tool(worktree)([NODE], repeat=3, parallel=4)
     assert result['status'] == 'completed', result
     assert result['tree'] == 'b' * 40
