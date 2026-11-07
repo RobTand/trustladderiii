@@ -678,7 +678,11 @@ impl Supervisor {
                 inputs["tool_capabilities"].as_array_mut().unwrap().push(json!({
                     "tool": "run_generator", "executor": format!("{}_generator", self.tests.name()),
                     "runner_features": ["git_index", "scoped_outputs", "idempotent_import"],
-                    "artifacts": ["action_key", "cas_receipt", "input_tree", "output_tree", "artifact_sha256", "logs", "terminal_verdict"],
+                    "artifacts": if self.tests.name() == "flux" {
+                        vec!["run_binding", "receipt", "input_tree", "output_tree", "artifact_sha256", "logs", "terminal_verdict"]
+                    } else {
+                        vec!["action_key", "cas_receipt", "input_tree", "output_tree", "artifact_sha256", "logs", "terminal_verdict"]
+                    },
                     "methods": ["configured_generation"], "protected_files": [],
                 }));
             }
