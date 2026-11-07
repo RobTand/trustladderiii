@@ -17,6 +17,7 @@ tl3_crate(
         "//crates/kernel:tl3_kernel",
         "//crates/mergify:tl3_mergify",
         "//crates/prismabuild:tl3_prismabuild",
+        "//crates/redaction:tl3_redaction",
         "//crates/store:tl3_store",
         "//crates/worktrees:tl3_worktrees",
     ],

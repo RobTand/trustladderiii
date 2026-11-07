@@ -236,6 +236,55 @@ impl Redactor {
         self.note_calls(&value)?;
         self.shape_value(&value, limit.min(PAYLOAD_BYTES), 0)
     }
+    pub fn reshape(&mut self, value: &Shaped, limit: usize) -> Result<Shaped> {
+        value.validate(0)?;
+        self.reshape_value(value, limit.min(PAYLOAD_BYTES), 0)
+    }
+    fn reshape_value(&mut self, value: &Shaped, limit: usize, depth: usize) -> Result<Shaped> {
+        if depth > 20 || limit < 128 {
+            self.truncated = true;
+            return Ok(Shaped::Text(self.clip(BUDGET_NOTE, STRING_CHARS)?));
+        }
+        Ok(match value {
+            Shaped::Text(clip) => {
+                let total: usize = clip.parts.iter().map(|part| part.end - part.start).sum();
+                let cap = STRING_CHARS.min(limit.saturating_sub(64));
+                if total <= cap { return Ok(value.clone()); }
+                let first = &clip.parts[0];
+                let last = clip.parts.last().ok_or("absent shaped window")?;
+                let head_end = (first.start + cap / 4).min(first.end);
+                let tail_start = self.cut(&last.source, last.start, last.end, cap - cap / 4)?;
+                let parts = [(first, first.start, head_end), (last, tail_start, last.end)].into_iter().map(|(old, start, end)| {
+                    let low = start.saturating_sub(policy().context);
+                    let high = end.saturating_add(policy().context).min(old.source.chars().count());
+                    Window { source: substring(&old.source, low, high).to_owned(), start: start - low, end: end - low }
+                }).collect();
+                Shaped::Text(Clip { parts, lead: clip.lead, gap: clip.gap.saturating_add(total.saturating_sub(head_end - first.start + last.end - tail_start)) })
+            },
+            Shaped::Array(items) => {
+                let mut remaining = limit.saturating_sub(96); let mut result = vec![];
+                for (index, item) in items.iter().rev().enumerate() {
+                    if remaining < 160 { self.truncated = true; break; }
+                    let share = remaining.min(ITEM_BYTES.max(remaining / (items.len() - index)));
+                    let item = self.reshape_value(item, share, depth + 1)?;
+                    remaining = remaining.saturating_sub(item.size()?.saturating_add(2)); result.push(item);
+                }
+                result.reverse(); Shaped::Array(result)
+            },
+            Shaped::Object(fields) => {
+                let mut remaining = limit.saturating_sub(96); let mut result = vec![];
+                for (index, (key, item)) in fields.iter().rev().enumerate() {
+                    if remaining < 160 { self.truncated = true; break; }
+                    let share = remaining.saturating_sub(key.len() + 8).min(ITEM_BYTES.max(remaining / (fields.len() - index)));
+                    let item = self.reshape_value(item, share, depth + 1)?;
+                    remaining = remaining.saturating_sub(item.size()?.saturating_add(key.len() + 8)); result.push((key.clone(), item));
+                }
+                result.reverse(); Shaped::Object(result)
+            },
+            Shaped::Json { value, .. } => Shaped::Json { value: Box::new(self.reshape_value(value, limit / 2, depth + 1)?), raw: None },
+            other => other.clone(),
+        })
+    }
     fn shape_value(&mut self, value: &SummaryValue, limit: usize, depth: usize) -> Result<Shaped> {
         if limit < 128 || depth > 20 { self.truncated = true; return Ok(Shaped::Text(self.clip(BUDGET_NOTE, STRING_CHARS)?)); }
         Ok(match value {

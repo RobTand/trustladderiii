@@ -74,6 +74,14 @@ const COMMITTED: &[(&str, &str)] = &[
         "workers/src/tl3_workers/schemas/plan-check-provenance.json",
         include_str!("../../../workers/src/tl3_workers/schemas/plan-check-provenance.json"),
     ),
+    (
+        "crates/contracts/schema/violation.json",
+        include_str!("../schema/violation.json"),
+    ),
+    (
+        "workers/src/tl3_workers/schemas/action-request.json",
+        include_str!("../../../workers/src/tl3_workers/schemas/action-request.json"),
+    ),
 ];
 
 #[test]
@@ -171,7 +179,10 @@ fn refusal_row_schema_is_published_by_the_contract_owner() {
     assert!(encoded.contains("1024 UTF-8 bytes"));
     assert!(encoded.contains("4096 UTF-8 bytes"));
     for forbidden in ["Callback", "Registration", "Witness", "RuleFacts"] {
-        assert!(!encoded.contains(forbidden), "executable policy leaked: {forbidden}");
+        assert!(
+            !encoded.contains(forbidden),
+            "executable policy leaked: {forbidden}"
+        );
     }
 }
 

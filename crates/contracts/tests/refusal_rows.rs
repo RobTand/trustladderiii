@@ -1,19 +1,50 @@
 //! Public resolved-row cases extracted from dc59 C0; no evaluator or witness engine.
 use serde_json::{Value, json};
 use tl3_contracts::rules::*;
-fn terminal(value: &Value) -> bool { value.get("kind") == Some(&json!("cant_meet")) }
+fn terminal(value: &Value) -> bool {
+    value.get("kind") == Some(&json!("cant_meet"))
+}
 const TERMINALS: &[TerminalForm] = &[
-    TerminalForm { role: Role::Planner, predicate: terminal, phrase: "Return kind cant_meet." },
-    TerminalForm { role: Role::Maker, predicate: terminal, phrase: "Return kind cant_meet." },
+    TerminalForm {
+        role: Role::Planner,
+        predicate: terminal,
+        phrase: "Return kind cant_meet.",
+    },
+    TerminalForm {
+        role: Role::Maker,
+        predicate: terminal,
+        phrase: "Return kind cant_meet.",
+    },
 ];
-fn policy() -> Policy<'static> { Policy { terminals: TERMINALS, source_editors: &[Role::Maker], schema_membership: None } }
+fn policy() -> Policy<'static> {
+    Policy {
+        terminals: TERMINALS,
+        source_editors: &[Role::Maker],
+        schema_membership: None,
+    }
+}
 fn row() -> Violation {
-    let allowed = Allowed::Finite { values: vec![json!("fixed")] };
-    Violation { rule_id: "proof.subject".into(), role: Role::Maker,
-        names: vec![Name { kind: NameKind::Field, value: "/value".into() }],
-        bad_value: json!("bad"), allowed: allowed.clone(),
-        repair: Repair::Edit { pointer: "/value".to_owned().try_into().unwrap(), op: EditOp::Replace, allowed },
-        gating: false, evidence: vec![], evidence_truncated: 0 }
+    let allowed = Allowed::Finite {
+        values: vec![json!("fixed")],
+    };
+    Violation {
+        rule_id: "proof.subject".into(),
+        role: Role::Maker,
+        names: vec![Name {
+            kind: NameKind::Field,
+            value: "/value".into(),
+        }],
+        bad_value: json!("bad"),
+        allowed: allowed.clone(),
+        repair: Repair::Edit {
+            pointer: "/value".to_owned().try_into().unwrap(),
+            op: EditOp::Replace,
+            allowed,
+        },
+        gating: false,
+        evidence: vec![],
+        evidence_truncated: 0,
+    }
 }
 #[test]
 fn field_pointer_parsing_preserves_escaped_generated_segments() {
@@ -349,12 +380,28 @@ fn excerpt_exact_byte_boundary_and_straddling_character_are_pinned() {
 #[test]
 fn independent_repairs_and_evidence_never_get_clipped_to_fit() {
     let row = row();
-    let single = render_all(std::slice::from_ref(&row), Role::Maker, RenderContext::Reply, &policy()).unwrap();
+    let single = render_all(
+        std::slice::from_ref(&row),
+        Role::Maker,
+        RenderContext::Reply,
+        &policy(),
+    )
+    .unwrap();
     let mut exact = row.clone();
-    exact.repair = Repair::CantMeet { reason: "r".repeat(MESSAGE_BYTES) };
+    exact.repair = Repair::CantMeet {
+        reason: "r".repeat(MESSAGE_BYTES),
+    };
     assert!(render_all(&[exact], Role::Maker, RenderContext::Reply, &policy()).is_err());
     let count = MESSAGE_BYTES / (single.len() + 1) + 1;
-    assert!(render_all(&vec![row; count], Role::Maker, RenderContext::Reply, &policy()).is_err());
+    assert!(
+        render_all(
+            &vec![row; count],
+            Role::Maker,
+            RenderContext::Reply,
+            &policy()
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -362,10 +409,28 @@ fn every_role_is_checked_and_tool_context_cannot_edit_a_reply() {
     for role in Role::ALL {
         let mut row = row();
         row.role = role;
-        let reply = render_all(std::slice::from_ref(&row), role, RenderContext::Reply, &policy()).unwrap();
+        let reply = render_all(
+            std::slice::from_ref(&row),
+            role,
+            RenderContext::Reply,
+            &policy(),
+        )
+        .unwrap();
         assert!(reply.contains("replace reply field \"/value\""));
-        assert!(render_all(std::slice::from_ref(&row), role, RenderContext::Tool, &policy()).is_err());
-        let wrong_role = if role == Role::Maker { Role::Planner } else { Role::Maker };
+        assert!(
+            render_all(
+                std::slice::from_ref(&row),
+                role,
+                RenderContext::Tool,
+                &policy()
+            )
+            .is_err()
+        );
+        let wrong_role = if role == Role::Maker {
+            Role::Planner
+        } else {
+            Role::Maker
+        };
         assert!(render_all(&[row], wrong_role, RenderContext::Reply, &policy()).is_err());
     }
 }
@@ -374,10 +439,44 @@ fn every_role_is_checked_and_tool_context_cannot_edit_a_reply() {
 fn exact_field_permission_preserves_unmentioned_fields_and_propagates_schema_errors() {
     let mut row = row();
     let before = json!({"value":"bad", "kept":1});
-    assert!(permits(std::slice::from_ref(&row), &before, &json!({"value":"fixed", "kept":1}), Role::Maker, &policy()).unwrap());
-    assert!(!permits(std::slice::from_ref(&row), &before, &json!({"value":"fixed", "kept":2}), Role::Maker, &policy()).unwrap());
-    let allowed = Allowed::Schema { keyword: SchemaKeyword::Pattern, value: json!("fixed") };
+    assert!(
+        permits(
+            std::slice::from_ref(&row),
+            &before,
+            &json!({"value":"fixed", "kept":1}),
+            Role::Maker,
+            &policy()
+        )
+        .unwrap()
+    );
+    assert!(
+        !permits(
+            std::slice::from_ref(&row),
+            &before,
+            &json!({"value":"fixed", "kept":2}),
+            Role::Maker,
+            &policy()
+        )
+        .unwrap()
+    );
+    let allowed = Allowed::Schema {
+        keyword: SchemaKeyword::Pattern,
+        value: json!("fixed"),
+    };
     row.allowed = allowed.clone();
-    row.repair = Repair::Edit { pointer: "/value".to_owned().try_into().unwrap(), op: EditOp::Replace, allowed };
-    assert!(permits(&[row], &before, &json!({"value":"fixed", "kept":1}), Role::Maker, &policy()).is_err());
+    row.repair = Repair::Edit {
+        pointer: "/value".to_owned().try_into().unwrap(),
+        op: EditOp::Replace,
+        allowed,
+    };
+    assert!(
+        permits(
+            &[row],
+            &before,
+            &json!({"value":"fixed", "kept":1}),
+            Role::Maker,
+            &policy()
+        )
+        .is_err()
+    );
 }

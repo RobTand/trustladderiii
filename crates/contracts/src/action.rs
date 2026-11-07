@@ -1,14 +1,19 @@
 //! Requests for the single Rust action. Execution arrives in later action slices.
 //! The pytest edge is a subprocess; these contracts never embed an interpreter.
 
-use crate::{CheckRequest, DeclaredSymptom, Forcing, Generated};
 use crate::bounded::{CommitSha, Integer, List, Parallel, Text, UNBOUNDED, UnitPath};
 use crate::rules::Role;
+use crate::{CheckRequest, DeclaredSymptom, Forcing, Generated};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "action", content = "request", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(
+    tag = "action",
+    content = "request",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
 pub enum ActionRequest {
     Checks(CheckRequest),
     Tests(TestRequest),
@@ -47,6 +52,9 @@ pub fn generated() -> Vec<Generated> {
         .to_value();
     vec![Generated {
         path: format!("{}/action-request.json", crate::SCHEMA_DIRECTORY),
-        text: format!("{}\n", serde_json::to_string_pretty(&schema).expect("schema serializes")),
+        text: format!(
+            "{}\n",
+            serde_json::to_string_pretty(&schema).expect("schema serializes")
+        ),
     }]
 }

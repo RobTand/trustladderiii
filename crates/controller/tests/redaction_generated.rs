@@ -29,7 +29,8 @@ fn data() -> &'static Value {
 }
 
 fn classes() -> [String; 3] {
-    let policy: Value = serde_json::from_str(include_str!("../../redaction/src/policy.json")).unwrap();
+    let policy: Value =
+        serde_json::from_str(include_str!("../../redaction/src/policy.json")).unwrap();
     ["alnum", "decimal", "space"].map(|name| {
         let mut body = if name == "alnum" {
             "_".to_owned()

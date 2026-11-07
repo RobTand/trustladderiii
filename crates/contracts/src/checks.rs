@@ -12,7 +12,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _, se
 use std::borrow::Cow;
 
 /// Original zero-based index in request.inputs.ingest.goals, retained across splits.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(transparent)]
 pub struct GoalId(pub u64);
 

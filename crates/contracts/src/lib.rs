@@ -6,13 +6,13 @@
 //! the controller, so it can become its own crate unchanged.
 
 pub mod action;
-pub mod rules;
 pub mod bounded;
 pub mod checks;
 pub mod execution;
 pub mod footprint;
 pub mod prerequisites;
 pub mod report;
+pub mod rules;
 
 pub use checks::{Check, CheckKind, CheckRequest, DeclaredSymptom, Forcing, ProofDeclaration};
 pub use report::{CheckReport, CheckResult, MESSAGE_CHARS, ProofReceipt, TestResult};

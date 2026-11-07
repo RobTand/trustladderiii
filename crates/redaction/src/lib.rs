@@ -921,10 +921,7 @@ print(json.dumps(out))
 
     #[test]
     fn generated_policy_matches_the_authoritative_source() {
-        assert_eq!(
-            super::generated_policy(),
-            include_str!("policy.json")
-        );
+        assert_eq!(super::generated_policy(), include_str!("policy.json"));
         let worker = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../workers/src/tl3_workers/policy.json");
         assert_eq!(
