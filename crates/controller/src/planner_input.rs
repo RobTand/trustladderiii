@@ -33,22 +33,176 @@ pub(crate) fn request_row(snapshot: &Snapshot, commit: &Commit, node: NodeId) ->
 
 pub(crate) fn load_budget(snapshot: &Snapshot, commit: &Commit, node: NodeId) -> Result<ReplanBudget> {
     let row = request_row(snapshot, commit, node)?;
+    let legacy = snapshot.rows.iter().find(|row| row.table == "nodes" && row.id == node.0.to_string())
+        .and_then(|row| row.value.get("empty_allowed_replanned"));
+    let consumed = match legacy {
+        Some(Value::Bool(consumed)) => *consumed,
+        Some(_) => return Err(Error::Invalid("invalid legacy replan budget")),
+        None => false,
+    };
     let budget = match row.get("replan_budget") {
         Some(value) => decode_stored::<ReplanBudget>(value.clone())?,
         None => {
             // Inspect raw legacy storage before World decoding drops the old field.
-            let legacy = snapshot.rows.iter().find(|row| row.table == "nodes" && row.id == node.0.to_string())
-                .and_then(|row| row.value.get("empty_allowed_replanned"));
-            let consumed = match legacy {
-                Some(Value::Bool(consumed)) => *consumed,
-                Some(_) => return Err(Error::Invalid("invalid legacy replan budget")),
-                None => false,
-            };
             ReplanBudget::import(node, consumed)
         }
     };
     if !budget.bound_to(node) { return Err(Error::Invalid("replan budget binding mismatch")); }
-    Ok(budget)
+    Ok(if consumed { ReplanBudget::import(node, true) } else { budget })
+}
+
+#[cfg(test)]
+#[path = "../../store/tests/support/mod.rs"]
+mod support;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Bootstrap, Controller, LabelledIssue, Repository, adapters, snapshot};
+    use serde_json::json;
+    use tl3_kernel::*;
+    use tl3_store::Store;
+
+    fn bootstrap(fail_fast: bool) -> Bootstrap {
+        Bootstrap { operations: None, repos: vec![Repository { owner: "owner".into(), name: "repo".into(), installation: 1 }], rob: 1, slots: 1, pool: 1, fail_fast }
+    }
+
+    fn confirm(world: &mut World) {
+        for _ in 0..32 {
+            let Some(effect) = world.nodes[0].effect else { return };
+            *world = step(world.clone(), Event::Ack { node: NodeId(0), seq: effect.seq, ack: Ack::Confirmed }).0;
+        }
+        panic!("fixture did not settle effects");
+    }
+
+    fn planning(fail_fast: bool) -> World {
+        let mut w = step(World::new(&[1], 1), Event::NewRequest { repo: RepoId(0), priority: Priority::Unranked }).0;
+        w.fail_fast = fail_fast;
+        confirm(&mut w);
+        let generation = w.nodes[0].generation;
+        w = step(w, Event::Reply { node: NodeId(0), generation, reply: Reply::IngestDone { size: 2 } }).0;
+        confirm(&mut w);
+        let generation = w.nodes[0].generation;
+        w = step(w, Event::Reply { node: NodeId(0), generation, reply: Reply::AuditAgrees }).0;
+        confirm(&mut w);
+        assert!(matches!(w.nodes[0].phase, Phase::Planning { .. }));
+        w.check().unwrap();
+        assert!(w.is_settled());
+        w
+    }
+
+    fn seed(c: &mut Controller, world: World, legacy: bool) {
+        c.intake(LabelledIssue { delivery: "seed".into(), owner: "owner".into(), repo: "repo".into(), installation: 1, number: 930, title: "Budget".into(), actor: 1, label: "tl3".into(), labels: vec![] }).unwrap();
+        let snapshot = c.store.load().unwrap();
+        let mut commit = Commit::new("seed-planning", json!({}), &snapshot);
+        commit.rows.extend(snapshot::changes(&snapshot::encode(&snapshot::decode(&snapshot).unwrap()).unwrap(), snapshot::encode(&world).unwrap()));
+        let mut binding = request_row(&snapshot, &commit, NodeId(0)).unwrap();
+        binding.as_object_mut().unwrap().remove("replan_budget");
+        binding["extra_metadata"] = json!({"retain": [1, 2, 3]});
+        commit.rows.push(put("requests", "0".into(), binding));
+        if legacy {
+            let mut raw = serde_json::to_value(world.nodes[0]).unwrap();
+            raw["empty_allowed_replanned"] = json!(true);
+            commit.rows.push(put("nodes", "0".into(), raw));
+        }
+        c.store.commit(&commit).unwrap();
+    }
+
+    fn prepare(c: &mut Controller, snapshot: &Snapshot, key: &str, generation: u64, result: PlannerResult) -> Commit {
+        let mut commit = Commit::new(key, json!({"planner":key}), snapshot);
+        c.apply_input(snapshot, snapshot::decode(snapshot).unwrap(), KernelInput::Planner { node: NodeId(0), generation, result }, &mut commit).unwrap();
+        commit
+    }
+
+    #[test]
+    fn planner_budget_real_store_conflict_reopen_duplicate_and_new_version() {
+        let mut database = support::Database::start();
+        for fail_fast in [false, true] {
+            let settings = database.create(&format!("rp_budget_{fail_fast}"));
+            let root = tempfile::tempdir().unwrap();
+            let mut c = Controller::open(Store::open(&settings).unwrap(), adapters::simulation(root.path()).unwrap(), bootstrap(fail_fast)).unwrap();
+            seed(&mut c, planning(fail_fast), false);
+            let start = c.store.load().unwrap();
+            let before = snapshot::decode(&start).unwrap();
+            let generation = before.nodes[0].generation;
+            let first = prepare(&mut c, &start, "first", generation, PlannerResult::EmptyAllowedReplan);
+            let losing = prepare(&mut c, &start, "losing", generation, PlannerResult::EmptyAllowedReplan);
+            c.store.commit(&first).unwrap();
+            assert!(matches!(c.store.commit(&losing), Err(tl3_store::Error::Stale { .. })));
+            let persisted = c.store.load().unwrap();
+            let budget = load_budget(&persisted, &Commit::new("read", json!({}), &persisted), NodeId(0)).unwrap();
+            assert!(budget.used());
+            let request = persisted.rows.iter().find(|r| r.table == "requests" && r.id == "0").unwrap();
+            let node = persisted.rows.iter().find(|r| r.table == "nodes" && r.id == "0").unwrap();
+            assert_eq!(request.version, node.version);
+            assert_eq!(request.value["extra_metadata"], json!({"retain": [1, 2, 3]}));
+            let journal: crate::replay::PlannerStepRecord = serde_json::from_value(first.result["planner_replay"].clone()).unwrap();
+            journal.check().unwrap();
+            assert_eq!(journal.after_budget, budget);
+            let duplicate = prepare(&mut c, &persisted, "duplicate", generation, PlannerResult::EmptyAllowedReplan);
+            c.store.commit(&duplicate).unwrap();
+            assert_eq!(snapshot::decode(&c.store.load().unwrap()).unwrap(), journal.after);
+            drop(c);
+            let mut c = Controller::open(Store::open(&settings).unwrap(), adapters::simulation(root.path()).unwrap(), bootstrap(fail_fast)).unwrap();
+            let snapshot = c.store.load().unwrap();
+            let mut after = snapshot::decode(&snapshot).unwrap();
+            confirm(&mut after);
+            let mut ack = Commit::new("confirm-replan", json!({}), &snapshot);
+            ack.rows.extend(snapshot::changes(&snapshot::encode(&snapshot::decode(&snapshot).unwrap()).unwrap(), snapshot::encode(&after).unwrap()));
+            c.store.commit(&ack).unwrap();
+            let snapshot = c.store.load().unwrap();
+            let repeated = prepare(&mut c, &snapshot, "repeat", after.nodes[0].generation, PlannerResult::EmptyAllowedReplan);
+            c.store.commit(&repeated).unwrap();
+            let snapshot = c.store.load().unwrap();
+            let stopped = snapshot::decode(&snapshot).unwrap();
+            assert!(matches!(stopped.nodes[0].phase, Phase::Stopping(_) | Phase::Closed(_)));
+            assert_eq!(stopped.nodes[0].review_stop, Some(ReviewStop::PlanCantMeet));
+            assert_eq!(stopped.nodes[0].credit, before.nodes[0].credit);
+            assert!(stopped.nodes[0].question.is_none());
+            let mut version = Commit::new("new-version", json!({}), &snapshot);
+            let mut binding = request_row(&snapshot, &version, NodeId(0)).unwrap();
+            binding.as_object_mut().unwrap().remove("replan_budget");
+            version.rows.push(put("requests", "1".into(), binding));
+            c.apply(&snapshot, stopped, Event::NewRequest { repo: RepoId(0), priority: Priority::Unranked }, &mut version).unwrap();
+            c.store.commit(&version).unwrap();
+            let snapshot = c.store.load().unwrap();
+            let read = Commit::new("read", json!({}), &snapshot);
+            assert!(load_budget(&snapshot, &read, NodeId(0)).unwrap().used());
+            assert!(!load_budget(&snapshot, &read, NodeId(1)).unwrap().used());
+        }
+    }
+
+    #[test]
+    fn planner_budget_legacy_import_pending_writes_and_corrupt_bindings() {
+        let mut database = support::Database::start();
+        let settings = database.create("rp_budget_legacy");
+        let root = tempfile::tempdir().unwrap();
+        let mut c = Controller::open(Store::open(&settings).unwrap(), adapters::simulation(root.path()).unwrap(), bootstrap(false)).unwrap();
+        seed(&mut c, planning(false), true);
+        let snapshot = c.store.load().unwrap();
+        let mut commit = Commit::new("legacy-generic-rewrite", json!({}), &snapshot);
+        c.apply(&snapshot, snapshot::decode(&snapshot).unwrap(), Event::Fact { node: NodeId(0), fact: Fact::Priority(Priority::P0) }, &mut commit).unwrap();
+        c.store.commit(&commit).unwrap();
+        let snapshot = c.store.load().unwrap();
+        let mut pending = Commit::new("pending", json!({}), &snapshot);
+        assert!(load_budget(&snapshot, &pending, NodeId(0)).unwrap().used());
+        assert!(snapshot.rows.iter().find(|r| r.table == "nodes" && r.id == "0").unwrap().value.get("empty_allowed_replanned").is_none());
+        let mut binding = request_row(&snapshot, &pending, NodeId(0)).unwrap();
+        binding["replan_budget"] = json!(ReplanBudget::new(NodeId(1)));
+        pending.rows.push(put("requests", "0".into(), binding.clone()));
+        assert!(load_budget(&snapshot, &pending, NodeId(0)).is_err());
+        binding["replan_budget"] = json!({"request":0,"used":"corrupt"});
+        pending.rows.push(put("requests", "0".into(), binding));
+        assert!(load_budget(&snapshot, &pending, NodeId(0)).is_err());
+        pending.rows.push(RowChange::Delete { table: "requests".into(), id: "0".into() });
+        assert!(load_budget(&snapshot, &pending, NodeId(0)).is_err());
+        let mut binding = request_row(&snapshot, &Commit::new("read", json!({}), &snapshot), NodeId(0)).unwrap();
+        binding["extra_metadata"] = json!("pending wins");
+        pending.rows.push(put("requests", "0".into(), binding));
+        assert!(load_budget(&snapshot, &pending, NodeId(0)).unwrap().used());
+        save_budget(&snapshot, &mut pending, NodeId(0), ReplanBudget::import(NodeId(0), true)).unwrap();
+        assert_eq!(request_row(&snapshot, &pending, NodeId(0)).unwrap()["extra_metadata"], "pending wins");
+    }
 }
 
 pub(crate) fn save_budget(snapshot: &Snapshot, commit: &mut Commit, node: NodeId, budget: ReplanBudget) -> Result<()> {
