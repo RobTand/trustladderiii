@@ -556,8 +556,12 @@ impl Controller {
             &snapshot,
         );
         let Some(result) = self.checked_kernel_step(
-            &snapshot, &mut world, input_errors::settlement_event(), &mut commit,
-        )? else {
+            &snapshot,
+            &mut world,
+            input_errors::settlement_event(),
+            &mut commit,
+        )?
+        else {
             self.store.commit(&commit)?;
             return Ok(());
         };
@@ -2100,7 +2104,8 @@ impl Controller {
             mut world,
             mut outputs,
             ..
-        }) = self.checked_kernel_step(snapshot, &mut world, event, commit)? else {
+        }) = self.checked_kernel_step(snapshot, &mut world, event, commit)?
+        else {
             return Ok(());
         };
         outputs.splice(0..0, dependency_outputs);

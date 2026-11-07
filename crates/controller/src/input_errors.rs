@@ -619,7 +619,10 @@ impl Controller {
                     snapshot,
                     commit,
                     refusal.exhaustion.node,
-                    format!("kernel counter headroom exhausted: {}", refusal.exhaustion.counter),
+                    format!(
+                        "kernel counter headroom exhausted: {}",
+                        refusal.exhaustion.counter
+                    ),
                 )?;
                 Ok(None)
             }
@@ -635,7 +638,9 @@ impl Controller {
         commit: &mut Commit,
     ) -> Result<bool> {
         let mut world = crate::snapshot::decode(snapshot)?;
-        Ok(self.checked_kernel_step(snapshot, &mut world, settlement_event(), commit)?.is_some())
+        Ok(self
+            .checked_kernel_step(snapshot, &mut world, settlement_event(), commit)?
+            .is_some())
     }
 
     pub(crate) fn counter_exhausted(

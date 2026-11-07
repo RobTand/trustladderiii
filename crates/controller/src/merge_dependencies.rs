@@ -556,7 +556,8 @@ impl Controller {
             world: next,
             outputs: emitted,
             ..
-        }) = self.checked_kernel_step(snapshot, world, event, commit)? else {
+        }) = self.checked_kernel_step(snapshot, world, event, commit)?
+        else {
             return Ok(false);
         };
         *world = next;

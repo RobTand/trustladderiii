@@ -417,25 +417,44 @@ fn exhausted_kernel_headroom_prevents_the_step_and_reports_the_counter() {
     assert!(c.drive_once().unwrap());
     assert_eq!(c.world().unwrap(), before);
     let snapshot = c.snapshot().unwrap();
-    let incidents: Vec<_> = snapshot.rows.iter().filter(|row| {
-        row.table == "incidents"
-            && row.value["signature"]["class"] == "kernel_counter_headroom"
-    }).collect();
+    let incidents: Vec<_> = snapshot
+        .rows
+        .iter()
+        .filter(|row| {
+            row.table == "incidents" && row.value["signature"]["class"] == "kernel_counter_headroom"
+        })
+        .collect();
     assert_eq!(incidents.len(), 1);
-    assert_eq!(incidents[0].value["summary"], "kernel counter headroom exhausted: next_seq");
+    assert_eq!(
+        incidents[0].value["summary"],
+        "kernel counter headroom exhausted: next_seq"
+    );
     assert_eq!(incidents[0].value["open"], true);
-    assert!(snapshot.rows.iter().any(|row| row.table == "inbox" && row.id == "external:pause"));
-    assert!(!snapshot.rows.iter().any(|row| row.table == "queue_resumes" || row.table == "close_reasons"));
+    assert!(
+        snapshot
+            .rows
+            .iter()
+            .any(|row| row.table == "inbox" && row.id == "external:pause")
+    );
+    assert!(
+        !snapshot
+            .rows
+            .iter()
+            .any(|row| row.table == "queue_resumes" || row.table == "close_reasons")
+    );
     let incident = incidents[0].clone();
     let effects = snapshot.pending_effects;
     drain(&mut c);
     assert_eq!(c.world().unwrap(), before);
     let after = c.snapshot().unwrap();
     assert_eq!(after.pending_effects, effects);
-    let incidents: Vec<_> = after.rows.iter().filter(|row| {
-        row.table == "incidents"
-            && row.value["signature"]["class"] == "kernel_counter_headroom"
-    }).collect();
+    let incidents: Vec<_> = after
+        .rows
+        .iter()
+        .filter(|row| {
+            row.table == "incidents" && row.value["signature"]["class"] == "kernel_counter_headroom"
+        })
+        .collect();
     assert_eq!(incidents.len(), 1);
     assert_eq!(incidents[0].id, incident.id);
     assert_eq!(incidents[0].value["signature"], incident.value["signature"]);
