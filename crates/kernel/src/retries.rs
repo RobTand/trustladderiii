@@ -45,7 +45,8 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox, report: &mut
     if m.run_failures >= 2 {
         // Every second failure raises an incident. Only Rob can clear the second one.
         m.run_failures = 0;
-        m.run_incidents = (m.run_incidents + 1).min(2);
+        let incidents = m.run_incidents + 1;
+        m.run_incidents = if incidents < 2 { incidents } else { 2 };
         let needs_rob = m.run_incidents >= 2;
         kernel_proof! {
             assert(retirement::incident(*m, needs_rob) == retries_facts::failed_run(before_failed@)) by {
