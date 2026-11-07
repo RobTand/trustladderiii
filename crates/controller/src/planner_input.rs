@@ -258,6 +258,52 @@ mod tests {
     }
 
     #[test]
+    fn planner_budget_controller_later_failures_fit_leaf_stale_and_stopping() {
+        let mut database = support::Database::start();
+        for fail_fast in [false, true] {
+            let settings = database.create(&format!("rp_ordinary_{fail_fast}"));
+            let root = tempfile::tempdir().unwrap();
+            let mut c = Controller::open(Store::open(&settings).unwrap(), adapters::simulation(root.path()).unwrap(), bootstrap(fail_fast)).unwrap();
+            let mut world = planning(fail_fast);
+            let footprint = world.intern_footprint([FileId(0)]);
+            seed(&mut c, world.clone(), true);
+            let snapshot = c.store.load().unwrap();
+            let generation = world.nodes[0].generation;
+            for (reply, stops) in [
+                (Reply::PlanCantMeet, true), (Reply::PlanSplit, true),
+                (Reply::PlanLeaf { footprint, fits:false }, true),
+                (Reply::PlanLeaf { footprint:Footprint::default(), fits:true }, true),
+                (Reply::PlanLeaf { footprint, fits:true }, false),
+            ] {
+                let commit = prepare(&mut c, &snapshot, "ordinary", generation, PlannerResult::Ordinary(reply));
+                let journal: crate::replay::PlannerStepRecord = serde_json::from_value(commit.result["planner_replay"].clone()).unwrap();
+                journal.check().unwrap();
+                assert!(journal.after_budget.used());
+                if stops {
+                    assert_eq!(journal.after.nodes[0].review_stop, Some(ReviewStop::PlanCantMeet));
+                    assert_eq!(journal.after.nodes[0].credit, world.nodes[0].credit);
+                    assert!(journal.after.nodes[0].question.is_none());
+                } else {
+                    assert_eq!(journal.after, step(world.clone(), Event::Reply { node:NodeId(0), generation, reply }).0);
+                    assert!(journal.after.nodes[0].review_stop.is_none());
+                }
+            }
+            let stale = prepare(&mut c, &snapshot, "stale-ordinary", generation-1, PlannerResult::Ordinary(Reply::PlanCantMeet));
+            let stale: crate::replay::PlannerStepRecord = serde_json::from_value(stale.result["planner_replay"].clone()).unwrap();
+            assert_eq!(stale.after, step(world.clone(), Event::Reply { node:NodeId(0), generation:generation-1, reply:Reply::PlanCantMeet }).0);
+            let stopped = step(world, Event::Command { node:NodeId(0), id:1, command:Command::Stop }).0;
+            let expected = step(stopped.clone(), Event::Reply { node:NodeId(0), generation, reply:Reply::PlanCantMeet }).0;
+            let mut completion = Commit::new("stopping-ordinary", json!({}), &snapshot);
+            c.apply_input(&snapshot, stopped, KernelInput::Planner { node:NodeId(0), generation,
+                result:PlannerResult::Ordinary(Reply::PlanCantMeet) }, &mut completion).unwrap();
+            let journal: crate::replay::PlannerStepRecord = serde_json::from_value(completion.result["planner_replay"].clone()).unwrap();
+            journal.check().unwrap();
+            assert_eq!(journal.after, expected);
+            assert!(journal.after.nodes[0].run.is_none() && !journal.after.nodes[0].pool);
+        }
+    }
+
+    #[test]
     fn planner_budget_legacy_import_pending_writes_and_corrupt_bindings() {
         let mut database = support::Database::start();
         let settings = database.create("rp_budget_legacy");
