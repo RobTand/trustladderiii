@@ -1,0 +1,22 @@
+load("@rules_python//python:defs.bzl", "py_binary")
+
+py_binary(
+    name = "fixture-check",
+    srcs = ["fixture-check.py"],
+    imports = [".."],
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "measure-remote",
+    srcs = ["measure-remote.py"],
+    imports = [".."],
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "submit",
+    srcs = ["submit.py"],
+    imports = [".."],
+    visibility = ["//visibility:public"],
+)

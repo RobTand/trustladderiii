@@ -371,3 +371,9 @@ py_binary(
     srcs = ["bbrun.py"],
     visibility = ["//visibility:public"],
 )
+
+tl3_py_test(
+    name = "test_bbrun_cleanup",
+    srcs = ["test_bbrun_cleanup.py"],
+    deps = [":bbrun"],
+)
