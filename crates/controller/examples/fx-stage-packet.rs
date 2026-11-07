@@ -95,8 +95,10 @@ fn fixture(root: &Path) -> Result<Delivery> {
 }
 
 fn staging_destination(root: &Path) -> Result<PathBuf> {
+    let destination = root.to_str().ok_or("UTF-8 packet destination required")?;
+    // Packet labels can resemble secrets. Keep executable paths digest-addressed.
     Ok(Path::new("/mnt/shared/flux-out/fx2-inputs")
-        .join(root.file_name().ok_or("packet basename required")?))
+        .join(api::durable::digest(destination.as_bytes())))
 }
 
 fn prepare(
@@ -305,7 +307,10 @@ mod tests {
         );
         let staging = staging_destination(root).unwrap();
         assert_eq!(staging, staging_destination(root).unwrap());
-        assert_ne!(staging, staging_destination(&root.with_extension("next")).unwrap());
+        assert_ne!(
+            staging,
+            staging_destination(&root.with_extension("next")).unwrap()
+        );
         let action = staging.join(format!("{}-{}/tree/action.py", "a".repeat(64), "b".repeat(64)));
         let argument = action.to_str().unwrap();
         assert!(argument.len() < 16_384 && !argument.chars().any(char::is_control));
