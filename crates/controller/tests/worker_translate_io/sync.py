@@ -8,7 +8,7 @@ SOURCE = HERE.parent.parent / 'src'
 def main():
     source = (SOURCE / 'lib.rs').read_text()
     application = source.index('    fn apply(')
-    application_end = source.index('    fn record_kernel_result(', application)
+    application_end = source.index('    fn record_kernel_result(', application) - 1
     (HERE.parent / 'delivery_machine/planner-apply.rs.txt').write_text(source[application:application_end])
     start = source.index('            Observation::WorkerFailed {')
     end = source.index('            Observation::Plan {', start)

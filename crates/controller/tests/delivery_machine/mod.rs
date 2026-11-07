@@ -249,7 +249,7 @@ fn owned_controller_io_shell_remains_verbatim() {
         .unwrap()
         + start;
     let apply = source[start..end].find("    fn apply(").unwrap() + start;
-    assert_eq!(&source[apply..end], include_str!("planner-apply.rs.txt"));
+    assert_eq!(&source[apply..end - 1], include_str!("planner-apply.rs.txt"));
     let baseline = include_str!("base-integration-shell.rs.txt");
     let baseline_apply = baseline.find("    fn apply(").unwrap();
     // The planner boundary has its own current pin. Preserve the frozen
