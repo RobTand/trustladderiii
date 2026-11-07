@@ -456,7 +456,7 @@ def cleanup_fixture(tmp_path):
     properties.write_text('LoadState=loaded\nActiveState=active\nInvocationID=' + 'd' * 32 + '\nControlGroup=/user.slice/owned.scope\n')
     podman = root / 'podman'
     metadata = root / 'metadata'
-    metadata.write_text(json.dumps({'Id': container_id, 'Labels': labels}))
+    metadata.write_text(json.dumps({'Id': container_id, 'Name': 'tl3-owned', 'Labels': labels, 'Pid': 12345}))
     podman.write_text(f'''#!{sys.executable}
 import json
 from pathlib import Path
@@ -495,7 +495,7 @@ else:
     ownership = {'run': {'backend': 'flux', 'uri': 'local:///native', 'instance': 'run/generation', 'job': 'fJob'},
                  'owner': {'owner': 'owner', 'correlation': 'correlation'}, 'request_digest': 'a' * 64,
                  'host': 'dl380g10', 'rank': 0, 'launcher': {'pid': child.pid, 'start_ticks': 1},
-                 'process_group': child.pid, 'container': {'mode': 'own_scope', 'id': container_id, 'labels': labels,
+                 'process_group': child.pid, 'container': {'mode': 'own_scope', 'id': container_id, 'name': 'tl3-owned', 'labels': labels,
                      'scope': {'unit': 'owned.scope', 'invocation_id': 'd' * 32, 'cgroup': '/user.slice/owned.scope'}}}
     return root, str(podman), str(systemctl), ownership
 
@@ -685,3 +685,32 @@ def test_durable_launch_precedes_podman_and_binding_gates_payload(launcher, monk
             assert 'validate_runtime_binding' not in operations
     assert operations[0] == 'begin_container_launch'
     assert operations[-1] == 'cleanup_runtime'
+
+
+def test_pending_launch_without_observed_identity_never_certifies_cleanup(cleanup_fixture):
+    from tl3_harness import runtime
+
+    root, podman, systemctl, owned = cleanup_fixture
+    launcher = {**owned, 'container': None}
+    launch = {'launcher': launcher, 'name': 'tl3-pending', 'mode': 'own_scope', 'labels': owned['container']['labels']}
+    (root / 'absent').touch()
+    with pytest.raises(RuntimeError, match='unbound'):
+        runtime.cleanup_observations(launcher, launch=launch, podman=podman, systemctl=systemctl,
+                                     cgroup_root=root / 'cgroups', timeout=2)
+    assert not any(json.loads(line)[0] == 'rm' for line in (root / 'cleanup-calls').read_text().splitlines())
+
+
+def test_pending_launch_recovers_exact_observed_identity_for_rust_reconciliation(cleanup_fixture, monkeypatch):
+    from tl3_harness import runtime
+
+    root, podman, systemctl, owned = cleanup_fixture
+    launcher = {**owned, 'container': None}
+    launch = {'launcher': launcher, 'name': owned['container']['name'], 'mode': 'own_scope',
+              'labels': owned['container']['labels']}
+    monkeypatch.setattr(runtime, 'scope_facts', lambda *args, **kwargs: (owned['container']['scope'], {}))
+    result = runtime.cleanup_observations(launcher, launch=launch, podman=podman, systemctl=systemctl,
+                                          cgroup_root=root / 'cgroups', timeout=2)
+    assert result['ownership'] == owned
+    assert result['container']['name_exists_exit'] == 1
+    assert result['container']['sweep_exit'] == 0
+    assert result['container']['remaining_ids'] == []
