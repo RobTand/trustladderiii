@@ -1278,6 +1278,7 @@ tl3_py_test(
     deps = [
         ":conftest",
         ":redaction_branches",
+        ":redaction_original_inputs",
         ":tracing_forms3",
         "//harness/src/tl3_harness",
         "//workers/src",
@@ -1293,4 +1294,10 @@ tl3_py_test(
         "//harness/src/tl3_harness",
         "//workers/src",
     ],
+)
+
+py_library(
+    name = "redaction_original_inputs",
+    srcs = ["redaction_original_inputs.py"],
+    visibility = ["//visibility:public"],
 )
