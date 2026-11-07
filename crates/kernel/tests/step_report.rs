@@ -421,7 +421,10 @@ fn unknown_fact_targets_leave_reports_empty_for_every_fact_variant() {
         );
         assert!(result.world.valid(), "invalid world after {fact:?}");
         assert_eq!(result.world, run.world, "unknown target changed {fact:?}");
-        assert!(result.report.entries.is_empty(), "spurious report for {fact:?}");
+        assert!(
+            result.report.entries.is_empty(),
+            "spurious report for {fact:?}"
+        );
     }
 }
 

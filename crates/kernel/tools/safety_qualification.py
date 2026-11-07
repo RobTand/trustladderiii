@@ -16,6 +16,10 @@ import remote_gate  # noqa: E402
 
 
 CASES = {
+    'report_fact_order': ('crates/kernel/src/report.rs',
+        '    if matches!(fact, Fact::CiFailed { .. }) {\n        if let Some(cause) = ci {\n            report.record_failed_round(node, cause);\n            kernel_proof! { lemmas::failed_round_value(entries_before@, report.entries@, node, cause); }\n        }\n    }\n    kernel_snapshot! { entries_middle = report.entries@ }\n    let review = if matches!(fact, Fact::CiFailed { .. }) { Some(ReviewStop::CiFailed) } else { None };\n    let cause = StopCause::from_phase(after, review, matches!(fact, Fact::PrClosedByPerson), false);\n    report.record_stop(node, before, after, cause);\n',
+        '    let review = if matches!(fact, Fact::CiFailed { .. }) { Some(ReviewStop::CiFailed) } else { None };\n    let cause = StopCause::from_phase(after, review, matches!(fact, Fact::PrClosedByPerson), false);\n    report.record_stop(node, before, after, cause);\n    kernel_snapshot! { entries_middle = report.entries@ }\n    if matches!(fact, Fact::CiFailed { .. }) {\n        if let Some(cause) = ci {\n            report.record_failed_round(node, cause);\n            kernel_proof! { lemmas::failed_round_value(entries_before@, report.entries@, node, cause); }\n        }\n    }\n',
+        '//crates/kernel:verus_report_record_fact'),
     'report_fact_stop_proof': ('crates/kernel/src/report.rs',
         'report.record_stop(node, before, after, cause);',
         'let _ = (node, before, after, cause);',
