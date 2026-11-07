@@ -26,17 +26,29 @@ def test_flux_worker_settings_do_not_require_pb_tools_or_environment(monkeypatch
     assert settings.tools_path is None
 
 
-def test_selected_flux_rehearsal_retains_backend_in_contract(rehearsal):
-    from tl3_workers.forcing_rehearsal import ForcingRehearsals
+@pytest.mark.parametrize('backend', ['prismabuild', 'flux'])
+def test_selected_flux_rehearsal_retains_backend_in_contract(rehearsal, tmp_path, backend):
     ledger, root, inputs, _ = rehearsal
-    inputs['tests'] = {'image': 'sha256:' + '1' * 64,
-                      'execution': {'backend': 'flux', 'profile': '/fixture/attempt/execution.json'}}
-    restored = ForcingRehearsals(ledger.worktree, inputs, checkout=root)
-    assert restored.worktree.test_settings.backend == 'flux'
+    if backend == 'flux':
+        inputs['tests'] = {'image': 'sha256:' + '1' * 64,
+                          'execution': {'backend': 'flux', 'profile': '/fixture/attempt/execution.json'}}
+    checkpoint = tmp_path / 'rehearsal.json'
+    restored = ForcingRehearsals(ledger.worktree, inputs, checkout=root, checkpoint=checkpoint)
+    assert restored.worktree.test_settings.backend == backend
     restored.active = {}
     restored.worktree.pb_identity = 'identity'
-    restored.submitted('worker:' + 'a' * 64, True, 'tree')
-    assert restored.active['inflight']['backend'] == 'flux'
+    restored.submitted(('worker:' if backend == 'flux' else '') + 'a' * 64, True, 'tree')
+    assert json.loads(checkpoint.read_text())['active']['inflight']['backend'] == backend
+    resumed = ForcingRehearsals(ledger.worktree, inputs, checkout=root, checkpoint=checkpoint)
+    assert resumed.active['inflight']['backend'] == backend
+    changed = deepcopy(inputs)
+    changed['tests'] = ({'image': 'sha256:' + '1' * 64, 'tools_path': '/fixture/tools'}
+                        if backend == 'flux' else {'image': 'sha256:' + '1' * 64,
+                            'execution': {'backend': 'flux', 'profile': '/fixture/attempt/execution.json'}})
+    before = checkpoint.read_bytes()
+    with pytest.raises(ValueError, match='contract changed'):
+        ForcingRehearsals(ledger.worktree, changed, checkout=root, checkpoint=checkpoint)
+    assert checkpoint.read_bytes() == before
 
 
 @pytest.mark.parametrize('rehearsal_call', [False, True])

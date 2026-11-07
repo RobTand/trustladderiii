@@ -175,6 +175,7 @@ class Filesystem(IO):
 def loop(modules, schedule, crash):
     """Run the real maker.run closure and session.save, rather than simulating it."""
     from tl3_workers import runtime
+    from tl3_workers.pb_tests import TestSettings
     io = Filesystem(schedule, crash)
     module, edge, session = modules
     budget = edge.ExplorationBudget(tool_turns=8, finalization_turns=1, input_tokens=1_000_000,
@@ -189,7 +190,9 @@ def loop(modules, schedule, crash):
                                                             "tests": ["test.py"]}]}}}
     evidence = SimpleNamespace(state=lambda: {"sample": io.read("evidence")},
                                restore=lambda value: io.calls.append(["restore_evidence", value]))
-    worktree = SimpleNamespace(evidence=evidence, pb_identity={"fixture": True}, declared_files=frozenset({"f"}))
+    worktree = SimpleNamespace(evidence=evidence, pb_identity={"fixture": True},
+                               test_settings=TestSettings(**request["inputs"]["tests"]),
+                               declared_files=frozenset({"f"}))
     # #894 adds transport-only scope; the frozen reference and model both see the original inputs.
     if module is maker:
         request["inputs"]["footprint"] = ["f"]
@@ -332,7 +335,15 @@ def compare(old, schedules):
             expected = loop(reference, schedule, 0)
             actual = loop(current, schedule, 0)
             assert isinstance(expected[2], dict) and expected[2]["kind"] == "cant_meet", expected[2]
-            assert expected == actual, ("maker.run", schedule, 0)
+            # Retain the raw current writes. JSON emits each new metadata field in
+            # additional chunks, so stripping it would change this crash oracle's counts.
+            chunks = [call[2] for call in actual[0] if call[0] == "write_chunk"]
+            for index, chunk in enumerate(chunks):
+                if chunk == '\"backend\"':
+                    assert chunks[index + 1:index + 3] == [": ", '\"prismabuild\"']
+            counts = tuple(sum(call[0] == "write_chunk" for call in observed[0])
+                           for observed in (expected, actual))
+            assert expected == actual, ("maker.run", schedule, 0, "raw write_chunk counts", counts)
             assert {kind for kind, _ in expected[3]} == {"partial_write", "write", "flush", "fsync", "rename", "directory_fsync"}
             for crash in range(1, len(expected[3]) + 1):
                 expected_crash = loop(reference, schedule, crash)
