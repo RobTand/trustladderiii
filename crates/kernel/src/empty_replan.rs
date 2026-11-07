@@ -10,11 +10,19 @@ pub struct ReplanBudget {
     used: bool,
 }
 
+#[cfg(verus_keep_ghost)]
+verus! {
+impl ReplanBudget {
+    pub closed spec fn request_version(&self) -> NodeId { self.request }
+    pub closed spec fn consumed(&self) -> bool { self.used }
+}
+}
+
 kernel_fn! {
 impl ReplanBudget {
     pub fn new(request: NodeId) -> (result: ReplanBudget) [
-        ensures result.request == request, !result.used,
-    ] {
+        ensures result.request_version() == request, !result.consumed(),
+    ] proof [reveal(ReplanBudget::request_version); reveal(ReplanBudget::consumed);] {
         ReplanBudget { request, used: false }
     }
 }
@@ -22,7 +30,7 @@ impl ReplanBudget {
 
 kernel_fn! {
 impl ReplanBudget {
-    pub fn used(&self) -> (result: bool) [ensures result == self.used,] {
+    pub fn used(&self) -> (result: bool) [ensures result == self.consumed(),] proof [reveal(ReplanBudget::consumed);] {
         self.used
     }
 }
@@ -49,31 +57,58 @@ pub closed spec fn admitted(w: World, request: NodeId, generation: u64) -> bool 
 
 kernel_fn! {
 /// Draft public production entry. Its composition contracts are UNVERIFIED.
-/// Request binding and stale admission precede consumption and operation clearing.
-/// Ordinary replies share on_reply's schema check, end_operation and dispatch.
+/// Request binding precedes consumption. Only re-plans use special admission.
+/// Ordinary replies retain step's stopping, stale-reply and settling behavior.
 pub fn step_planner(mut world: World, mut budget: ReplanBudget, request: NodeId,
     generation: u64, planner_result: PlannerResult)
     -> (result: (World, ReplanBudget, Vec<Out>)) [
     requires world_checked(world), world_headroom(world), storage_ordered(world),
-    ensures result.1.request == budget.request,
-        result.1.used == (budget.used || (budget.request == request
+    ensures result.1.request_version() == budget.request_version(),
+        result.1.consumed() == (budget.consumed() || (budget.request_version() == request
             && admitted(world, request, generation) && planner_result is EmptyAllowedReplan)),
-        (budget.request != request || !admitted(world, request, generation)) ==>
+        (budget.request_version() != request || (planner_result is EmptyAllowedReplan
+            && !admitted(world, request, generation))) ==>
             result.0 == world && result.2@.len() == 0,
-        (budget.request == request && admitted(world, request, generation)
+        (budget.request_version() == request && admitted(world, request, generation)
             && planner_result is EmptyAllowedReplan) ==> {
                 let before = world.nodes@[request.0 as int];
                 let after = result.0.nodes@[request.0 as int];
                 after.question.is_none() && after.credit == before.credit
                     && after.plan_retries == before.plan_retries && after.replanned == before.replanned
-                    && (!budget.used ==> after.phase == before.phase
+                    && (!budget.consumed() ==> after.phase == before.phase
                         && after.generation as int == before.generation as int + 1)
-                    && (budget.used ==> after.review_stop == Some(ReviewStop::PlanCantMeet)
+                    && (budget.consumed() ==> after.review_stop == Some(ReviewStop::PlanCantMeet)
                         && (after.phase is Stopping || after.phase is Closed))
             },
-] {
+] proof [reveal(ReplanBudget::request_version); reveal(ReplanBudget::consumed);] {
     if budget.request != request {
         return (world, budget, Vec::new());
+    }
+    match planner_result {
+        PlannerResult::Ordinary(reply) => {
+            let mut mapped = reply;
+            if let Some(i) = request.index() {
+                if i < world.nodes.len() {
+                    let n = &world.nodes[i];
+                    if matches!(n.phase, Phase::Planning { .. }) && n.current() == Some(Item::Await)
+                        && (n.run == Some(generation) || n.job == Some(generation)) {
+                        let accepted = accepts(&world, n, &reply);
+                        let semantic_failure = match reply {
+                            Reply::PlanCantMeet | Reply::PlanSplit => true,
+                            Reply::PlanLeaf { footprint, fits } => !fits || footprint.is_empty()
+                                || matches!(n.phase, Phase::Planning { must_split: true }),
+                            _ => false,
+                        };
+                        if accepted && budget.used && semantic_failure {
+                            mapped = Reply::PlanCheckRejected;
+                        }
+                    }
+                }
+            }
+            let (world, out) = step(world, Event::Reply { node: request, generation, reply: mapped });
+            return (world, budget, out);
+        }
+        PlannerResult::EmptyAllowedReplan => {}
     }
     let i = match request.index() {
         Some(i) => i,
@@ -88,29 +123,8 @@ pub fn step_planner(mut world: World, mut budget: ReplanBudget, request: NodeId,
         return (world, budget, Vec::new());
     }
     let mut outbox = Outbox::new();
-    match planner_result {
-        PlannerResult::EmptyAllowedReplan => {
-            end_operation(&mut world.nodes[i]);
-            reply_empty_replan(&mut world, i, &mut budget, &mut outbox);
-        }
-        PlannerResult::Ordinary(reply) => {
-            // Check schema before mapping a consumed semantic failure to review.
-            // Invalid footprint replies retain the existing failed-run handling.
-            let accepted = accepts(&world, &world.nodes[i], &reply);
-            let semantic_failure = match reply {
-                Reply::PlanCantMeet | Reply::PlanSplit => true,
-                Reply::PlanLeaf { footprint, fits } => !fits || footprint.is_empty()
-                    || matches!(world.nodes[i].phase, Phase::Planning { must_split: true }),
-                _ => false,
-            };
-            let reply = if accepted && budget.used && semantic_failure {
-                Reply::PlanCheckRejected
-            } else {
-                reply
-            };
-            on_reply(&mut world, i, generation, reply, &mut outbox);
-        }
-    }
+    end_operation(&mut world.nodes[i]);
+    reply_empty_replan(&mut world, i, &mut budget, &mut outbox);
     let mut out = Vec::new();
     outbox.drain_into(&mut out);
     settle(&mut world, &mut out, None);
@@ -128,17 +142,17 @@ pub(super) fn reply_empty_replan(w: &mut World, i: usize, budget: &mut ReplanBud
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         old(w).nodes@[i as int].phase is Planning,
-        old(budget).request.0 == i as int,
+        old(budget).request_version().0 == i as int,
     ensures reply_bounds(*old(w), *final(w), i as int, old(_out).len, final(_out).len),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-        final(budget).request == old(budget).request, final(budget).used,
-        (!old(budget).used ==>
+        final(budget).request_version() == old(budget).request_version(), final(budget).consumed(),
+        (!old(budget).consumed() ==>
             final(w).nodes@[i as int] == retirement::phased(
                 Node { question: None, ..old(w).nodes@[i as int] },
                 old(w).nodes@[i as int].phase)),
-        (old(budget).used ==>
+        (old(budget).consumed() ==>
             final(w).nodes@[i as int].phase == Phase::Stopping(Outcome::Stopped)
                 && final(w).nodes@[i as int].review_stop == Some(ReviewStop::PlanCantMeet)),
         final(w).nodes@[i as int].credit == old(w).nodes@[i as int].credit,
@@ -147,7 +161,7 @@ pub(super) fn reply_empty_replan(w: &mut World, i: usize, budget: &mut ReplanBud
         final(w).nodes@[i as int].replanned == old(w).nodes@[i as int].replanned,
         final(w).next_question == old(w).next_question,
         *final(_out) == *old(_out),
-] proof [reveal(reply_bounds); reveal(retirement::phased); reveal(retirement::stopped);] {
+] proof [reveal(ReplanBudget::request_version); reveal(ReplanBudget::consumed); reveal(reply_bounds); reveal(retirement::phased); reveal(retirement::stopped);] {
     let m = &mut w.nodes[i];
     m.question = None;
     if !budget.used {
