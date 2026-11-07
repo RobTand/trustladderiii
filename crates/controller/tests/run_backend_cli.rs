@@ -1566,6 +1566,93 @@ fn own_scope_runtime_mapping_compares_golden_dl380_sets_and_effective_cap() {
 
 #[test]
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn in_job_sdexec_requires_exact_native_job_unit_and_host_coordinates() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::InJob, true);
+    f.request.reservation.cpus = 1.try_into().unwrap();
+    f.request.reservation.parallelism = 1.try_into().unwrap();
+    f.intent.request_digest = digest(&serde_json::to_vec(&f.request).unwrap());
+    fs::write(f.root.path().join("submit-id"), "fAxT19DuQT\n").unwrap();
+    f.submit();
+    let mut owned = f.ownership();
+    owned.run.job = "fAxT19DuQT".into();
+    let frames = f.call(json!({"op":"begin_container_launch","owner":f.intent.owner,"correlation":f.intent.correlation,"launcher":owned}));
+    let launch: ContainerLaunchIntent =
+        serde_json::from_value(frames.last().unwrap()["result"]["launch"].clone()).unwrap();
+    owned.container = Some(ContainerOwnership {
+        mode: ContainerMode::InJob,
+        id: "d".repeat(64),
+        name: launch.name,
+        labels: launch.labels,
+        scope: None,
+    });
+    let frames = f.call(json!({"op":"retain_runtime","owner":f.intent.owner,"correlation":f.intent.correlation,"ownership":owned}));
+    assert_eq!(frames.last().unwrap()["kind"], "result", "{frames:?}");
+    let native = serde_json::to_vec(&json!({"version":1,"execution":{"R_lite":[{"rank":"0","children":{"core":"0"}}],"nodelist":["dl380g10"]}})).unwrap();
+    let allocation = api::durable::blob(&f.intent.output_dir.join("R.json"), &native).unwrap();
+    let topology = api::durable::blob(
+        &f.intent.output_dir.join("topology.json"),
+        &serde_json::to_vec(&TopologyMapping {
+            run: owned.run.clone(),
+            request_digest: f.intent.request_digest.clone(),
+            ranks: vec![RankMapping {
+                rank: 0,
+                host: "dl380g10".into(),
+                cores: vec![CoreMapping {
+                    flux_core: 0,
+                    os_pus: "0,40".into(),
+                }],
+            }],
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    let exact = "/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/shell-fAxT19DuQT:sys.service";
+    let sibling = exact.replace("fAxT19DuQT", "fABC");
+    let foreign = exact.replace("flux-jobs.slice", "foreign.slice");
+    let suffix_collision = format!("{exact}-foreign");
+    for (name, host, container, expected) in [
+        ("retained-private-namespace-root", exact, "/", false),
+        ("host-coordinates", exact, exact, true),
+        ("contained", exact, &format!("{exact}/payload"), true),
+        ("sibling-container", exact, sibling.as_str(), false),
+        (
+            "sibling-host-and-container",
+            sibling.as_str(),
+            sibling.as_str(),
+            false,
+        ),
+        ("foreign-slice", foreign.as_str(), foreign.as_str(), false),
+        (
+            "slice-root",
+            "/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice",
+            "/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice",
+            false,
+        ),
+        ("namespace-root", "/", "/", false),
+        (
+            "unit-prefix-collision",
+            exact,
+            suffix_collision.as_str(),
+            false,
+        ),
+    ] {
+        let process = |path: &str| json!({"rank":0,"host":"dl380g10","allowed_cpus":"0,40","cgroup":format!("0::{path}\n")});
+        let facts = json!({"run":owned.run,"execution":owned.execution,
+            "request_digest":f.intent.request_digest,"container_id":owned.container.as_ref().unwrap().id,
+            "allocation":allocation,"topology":topology,"host":process(host),
+            "container":process(container),"container_scope":null});
+        let frames = f.call(json!({"op":"validate_runtime_binding","owner":f.intent.owner,"correlation":f.intent.correlation,"facts":facts}));
+        assert_eq!(
+            frames.last().unwrap()["result"]["qualification"]["qualified"],
+            expected,
+            "{name}: {frames:?}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn cancellation_uses_independent_cleanup_without_runner_report_after_wrapper_loss() {
     let mut f = Fixture::new();
     f.podman(ContainerMode::OwnScope, true);

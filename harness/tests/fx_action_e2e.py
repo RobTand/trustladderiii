@@ -60,7 +60,8 @@ def main():
 
         runtime.command = command
         snapshot = runtime.Evidence.host_snapshot
-        runtime.Evidence.host_snapshot = staticmethod(lambda: {**snapshot(), 'hostname': 'dl380g10'})
+        runtime.Evidence.host_snapshot = staticmethod(lambda: {**snapshot(), 'hostname': 'dl380g10',
+            'cgroup': '0::/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/shell-fABC:sys.service\n'})
         runpy.run_path(str(root / 'staged/action.py'), run_name='__main__')
         runtime.command = original
         return
@@ -170,7 +171,8 @@ if args[0] == 'run':
     (root / (name + '.container.json')).write_text(json.dumps(metadata))
     status = pathlib.Path('/proc/self/status').read_text()
     allowed = next(line.split(':',1)[1].strip() for line in status.splitlines() if line.startswith('Cpus_allowed_list:'))
-    facts = {{'Cpus_allowed_list':allowed, 'cgroup':pathlib.Path('/proc/self/cgroup').read_text()}}
+    cgroup = '0::/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/shell-fABC:sys.service\\n' if '--cgroupns=host' in args else '0::/\\n'
+    facts = {{'Cpus_allowed_list':allowed, 'cgroup':cgroup}}
     if {mode!r} == 'binding-mismatch':
         facts['Cpus_allowed_list'] = '65535'
     print('TL3_RUNTIME_EVIDENCE ' + json.dumps(facts), file=sys.stderr, flush=True)

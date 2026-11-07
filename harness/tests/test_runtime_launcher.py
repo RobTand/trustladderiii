@@ -106,7 +106,7 @@ def test_flux_command_at_launcher_boundary(launcher):
         with Supervised(command, selection, ()) as process:
             list(process.records())
     arguments = json.loads(calls.read_text().splitlines()[0])
-    for flag in ('--cgroups=disabled', '--network=none', '--read-only', '--init',
+    for flag in ('--cgroups=disabled', '--cgroupns=host', '--network=none', '--read-only', '--init',
                  '--pull=never', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--ipc=private',
                  '--read-only-tmpfs=false', '--pid=private', '--http-proxy=false'):
         assert flag in arguments

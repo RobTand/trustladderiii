@@ -168,6 +168,17 @@ pub(super) fn runtime_binding(
             let child = cgroup_path(&container.cgroup)?;
             match mode {
                 ContainerMode::InJob => {
+                    // Standing sdexec names the unit from the native f58 ID.
+                    // Both observations must use host cgroup coordinates.
+                    let expected = format!(
+                        "/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/shell-{}:sys.service",
+                        binding.id.job
+                    );
+                    if cgroup != expected {
+                        return Err(BackendError::invalid(
+                            "in_job host cgroup differs from native sdexec job unit",
+                        ));
+                    }
                     if child != cgroup
                         && !child
                             .strip_prefix(&cgroup)

@@ -30,7 +30,7 @@ def podman_command(tree, image, scratch, threads, *, mode, cpus=None, memory=Non
     if mode == 'in_job':
         if cpus is not None or memory is not None:
             raise ValueError('in_job cannot set independent CPU or memory limits')
-        prefix = [str(executable), 'run', '--cgroups=disabled', '--init']
+        prefix = [str(executable), 'run', '--cgroups=disabled', '--cgroupns=host', '--init']
         if oci_runtime is not None:
             prefix.append(f'--runtime={oci_runtime}')
         if init_path is not None:
