@@ -247,7 +247,10 @@ fn accepted_early_end_projects_reason_but_stale_reply_does_not() {
             },
         );
         let phase = c.world().unwrap().nodes[0].phase;
-        assert!(phase.is_stopping() || phase.is_closed(), "{phase:?}");
+        assert!(
+            matches!(phase, Phase::Stopping(_) | Phase::Closed(_)),
+            "{phase:?}"
+        );
         assert_eq!(
             reason(&mut c).expect("accepted stop has a durable reason")["reason"],
             expected
