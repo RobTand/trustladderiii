@@ -284,34 +284,3 @@ def violation_data(violation, role):
     """Resolve callback facts into the one canonical Rust-owned row wire."""
     row, facts = violation
     return resolved_row(row, facts, role)
-
-
-def export_rows():
-    """Planner preflight templates, generated from the executable Python rows."""
-    result = []
-    for id, row in sorted(ROWS.items()):
-        if id.startswith(('proof.loader.', 'proof.support.')):
-            facts = example(row)
-            data = violation_data(evaluate((row,), facts, role='planner')[0], 'planner')
-            if id == 'proof.loader.stdlib_shadow':
-                data['repair']['reason'] = data['repair']['reason'].replace('pathlib.py', '{path}').replace('`pathlib`', '`{stdlib}`')
-            placeholders = {'field': '{declaration_field}', 'path': '{module}', 'symbol': '{module}::{definition}'}
-            data['names'] = [{'kind': name['kind'], 'value': '{path}' if name['kind'] == 'path' and name['value'] == facts['path']
-                             else placeholders[name['kind']]} for name in data['names']]
-            result.append(data)
-    return result
-
-
-def main():
-    """python -m tl3_harness.proof_rules --output harness/proof-rules.json"""
-    import argparse
-    import json
-    from pathlib import Path
-    parser = argparse.ArgumentParser(description='Regenerate the proof preflight row templates.')
-    parser.add_argument('--output', type=Path, default=Path('harness/proof-rules.json'))
-    args = parser.parse_args()
-    args.output.write_text(json.dumps(export_rows(), indent=2, sort_keys=True) + '\n')
-
-
-if __name__ == '__main__':
-    main()

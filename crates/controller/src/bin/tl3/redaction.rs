@@ -19,8 +19,6 @@ pub fn run(command: &str, args: &[String]) -> Result<(), Box<dyn std::error::Err
             if [
                 "--check",
                 "--output",
-                "--identity-check",
-                "--identity-output",
                 "--harness-check",
                 "--harness-output",
             ]
@@ -28,8 +26,6 @@ pub fn run(command: &str, args: &[String]) -> Result<(), Box<dyn std::error::Err
         {
             let expected = if flag.starts_with("--harness-") {
                 tl3_controller::redaction::generated_harness_policy()
-            } else if flag.starts_with("--identity-") {
-                tl3_controller::redaction::generated_policy_identity()
             } else {
                 tl3_controller::redaction::generated_policy()
             };
@@ -43,7 +39,7 @@ pub fn run(command: &str, args: &[String]) -> Result<(), Box<dyn std::error::Err
         }
         _ => {
             return Err(
-                "usage: tl3 redact | redaction-policy [--check FILE | --output FILE | --identity-check FILE | --identity-output FILE | --harness-check FILE | --harness-output FILE]".into(),
+                "usage: tl3 redact | redaction-policy [--check FILE | --output FILE | --harness-check FILE | --harness-output FILE]".into(),
             );
         }
     }

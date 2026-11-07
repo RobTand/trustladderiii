@@ -40,35 +40,26 @@ pub fn maker(inputs: &Value) -> crate::Result<Vec<String>> {
         .find_map(|path| declared_file(path).err())
     {
         Some(message)
-    } else if inputs.plan.checks.iter().any(|check| {
-        check.goal_ids.iter().any(|id| {
-            usize::try_from(id.0)
-                .ok()
-                .is_none_or(|index| index >= inputs.goals.len())
-        })
-    }) || inputs
-        .feedback
-        .iter()
-        .any(|item| item.goal_ids.iter().any(|id| !goals.contains(id.as_str())))
-    {
-        Some("unknown goal id")
+    } else if inputs.feedback.iter().any(|item| item.goal_ids.iter().any(|id| !goals.contains(id.as_str()))) {
+        Some("unknown feedback goal id")
     } else {
-        let covered: BTreeSet<_> = inputs
-            .plan
-            .checks
-            .iter()
-            .flat_map(|check| check.goal_ids.iter().map(|id| id.0))
-            .collect();
-        inputs
-            .goals
-            .iter()
-            .enumerate()
-            .any(|(index, goal)| {
-                goal.stage.as_deref() != Some("publishing") && !covered.contains(&(index as u64))
-            })
-            .then_some("checks must cover every maker and checking goal")
+        None
     };
-    Ok(violation.into_iter().map(str::to_owned).collect())
+    if let Some(violation) = violation { return Ok(vec![violation.into()]); }
+    let required: Vec<_> = inputs.goals.iter().enumerate()
+        .filter(|(_, goal)| goal.stage.as_deref() != Some("publishing"))
+        .map(|(index, _)| tl3_contracts::GoalId(index as u64)).collect();
+    if let Err(error) = tl3_contracts::checks::admit_plan(&inputs.plan.checks, inputs.goals.len(), &required) {
+        return Ok(vec![error]);
+    }
+    for check in &inputs.plan.checks {
+        for test in &check.tests {
+            if tl3_harness_core::node_id::NodeId::parse(test, tl3_harness_core::node_id::Mode::Exact).is_err() {
+                return Ok(vec!["checks need exact pytest selectors".into()]);
+            }
+        }
+    }
+    Ok(vec![])
 }
 
 fn declared_file(path: &str) -> Result<(), &'static str> {
@@ -141,51 +132,28 @@ mod tests {
     }
 
     #[test]
-    fn maker_matches_python_reference() {
-        let script = r#"
-import json, sys
-from pathlib import Path
-sys.path.insert(0, str(Path(sys.argv[1]) / 'workers/tests/p5'))
-from maker_reference import _check_inputs
-rows = []
-base = {'goals': [{'id': 'a'}, {'id': 'b', 'stage': 'checking'}, {'id': 'c', 'stage': 'publishing'}],
-        'plan': {'files': ['src/a.rs'], 'checks': [{'goal_ids': ['a', 'b']}]}}
-from copy import deepcopy
-for kind in ['valid', 'duplicate', 'unknown', 'feedback', 'uncovered', 'dot', 'parent', 'git', 'absolute', 'long', 'unicode']:
-    value = deepcopy(base)
-    if kind == 'duplicate': value['goals'].append(value['goals'][0])
-    if kind == 'unknown': value['plan']['checks'][0]['goal_ids'] = ['unknown']
-    if kind == 'feedback': value['feedback'] = [{'goal_ids': ['unknown']}]
-    if kind == 'uncovered': value['plan']['checks'][0]['goal_ids'] = ['a']
-    paths = {'dot': '.', 'parent': 'x/../y', 'git': 'x/.git/HEAD', 'absolute': '/x', 'long': 'x'*256, 'unicode': 'é'*128}
-    if kind in paths: value['plan']['files'] = [paths[kind]]
-    try:
-        _check_inputs(value)
-        expected = []
-    except ValueError as error: expected = [str(error)]
-    rows.append({'inputs': value, 'expected': expected})
-print(json.dumps(rows))
-"#;
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let output = std::process::Command::new(root.join("workers/.venv/bin/python"))
-            .args(["-c", script])
-            .arg(&root)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let rows: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
-        assert!(rows.len() >= 10);
-        for row in rows {
-            assert_eq!(
-                json!(maker(&row["inputs"]).unwrap()),
-                row["expected"],
-                "{row}"
-            );
+    fn maker_preserves_numeric_original_indices_and_distinct_feedback_ids() {
+        let base = json!({"goals":[{"id":"a"},{"id":"b","stage":"checking"},{"id":"c","stage":"publishing"}],
+            "plan":{"files":["src/a.rs"],"checks":[{"name":"behavior","kind":"demonstrating",
+                "tests":["tests/test_a.py::test_a"],"goal_ids":[0,1]}]}, "feedback":[{"goal_ids":["b"]}]});
+        assert!(maker(&base).unwrap().is_empty());
+        for (path, replacement) in [
+            ("/goals/1/id",json!("a")), ("/feedback/0/goal_ids",json!(["unknown"])),
+            ("/plan/checks/0/goal_ids",json!([0])), ("/plan/checks/0/goal_ids",json!([0,3])),
+            ("/plan/checks/0/goal_ids",json!([])), ("/plan/checks/0/name",json!(" ")),
+            ("/plan/checks/0/tests",json!(["tests/test_a.py"])),
+        ] {
+            let mut candidate=base.clone(); *candidate.pointer_mut(path).unwrap()=replacement;
+            assert!(!maker(&candidate).unwrap().is_empty(), "{candidate}");
         }
+        for path in [".","x/../y","x/.git/HEAD","/x",&"x".repeat(256),&"é".repeat(128)] {
+            let mut candidate=base.clone(); candidate["plan"]["files"]=json!([path]);
+            assert!(!maker(&candidate).unwrap().is_empty());
+        }
+        let mut omitted=base.clone(); omitted["plan"]["checks"][0].as_object_mut().unwrap().remove("goal_ids");
+        assert!(maker(&omitted).is_err());
+        let mut strings=base.clone(); strings["plan"]["checks"][0]["goal_ids"]=json!(["a","b"]);
+        assert!(maker(&strings).is_err());
     }
 
     #[test]

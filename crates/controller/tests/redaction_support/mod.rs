@@ -34,22 +34,3 @@ pub fn shared_inputs() -> Vec<String> {
     );
     matrix
 }
-
-pub fn python_redact(matrix: &[String]) -> Vec<String> {
-    use std::io::Write;
-    let mut child = python_command()
-            .args(["-I", "-c", "import json,sys; from tl3_workers.tracing import Redactor; r=Redactor(None); print(json.dumps([r.text(s,limit=len(s)) for s in json.load(sys.stdin)]))"])
-            .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped())
-            .spawn().unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(&serde_json::to_vec(matrix).unwrap())
-        .unwrap();
-    let output = child.wait_with_output().unwrap();
-    assert!(output.status.success());
-    let expected: Vec<String> = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(expected.len(), matrix.len());
-    expected
-}

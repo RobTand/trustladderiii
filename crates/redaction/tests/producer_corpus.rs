@@ -280,7 +280,7 @@ fn adversarial_producer_inputs_stay_bounded() {
             executed += 1;
         }
         assert!(
-            start.elapsed() < std::time::Duration::from_secs(2),
+            start.elapsed() < std::time::Duration::from_millis(500),
             "bounded matcher exceeded adversarial guard"
         );
     }

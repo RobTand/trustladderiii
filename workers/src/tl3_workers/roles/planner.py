@@ -958,10 +958,6 @@ def check_reply(inputs, reply, *, rehearsals=None, plan_errors=None):
             base_nodes.add(node)
         return definition
     if reply["kind"] == "leaf":
-        from tl3_harness.action_policy import admit_plan
-        admit_plan(reply['checks'], len(inputs['ingest']['goals']),
-                   [index for index, goal in enumerate(inputs['ingest']['goals'])
-                    if goal.get('stage', 'maker') != 'publishing'])
         if inputs["must_split"]:
             violations.append(named('leaf.must_split', "Must split after running out of room.", dict(must_split=inputs["must_split"])))
         if not reply["files"]:
@@ -1195,6 +1191,11 @@ def check_reply(inputs, reply, *, rehearsals=None, plan_errors=None):
             raise repair_error
         if plan_errors is not None:
             plan_errors.append(repair_error)
+    if reply['kind'] == 'leaf' and not violations:
+        from tl3_harness.action_policy import admit_plan
+        admit_plan(reply['checks'], len(inputs['ingest']['goals']),
+                   [index for index, goal in enumerate(inputs['ingest']['goals'])
+                    if goal.get('stage', 'maker') != 'publishing'])
     return None
 
 

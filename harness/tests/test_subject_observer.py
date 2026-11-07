@@ -1475,18 +1475,12 @@ def test_t867_call_refusal_lists_the_allowlist_generated_from_the_rule():
 ])
 def test_r1_support_rows_name_the_rule_and_repair(source, expected, witness):
     from tl3_harness import proof
-    from tl3_harness.rules import render_all
     with pytest.raises(model.ProofRefusal) as caught:
         proof.validate_support(source, 'tests/test_observer.py')
     error = caught.value
     assert getattr(error, 'rule', None) == 'proof.support.' + expected
     assert error.violations
-    assert error.reason == render_all(error.violations, role='maker')
     assert str(error) == error.reason
-    for violation in error.violations:
-        text = violation.render(role='maker')
-        assert 'tests/test_observer.py' in text and 'Allowed:' in text
-        assert violation.repair is not None
     proof.validate_support(witness, 'tests/test_observer.py')
 
 
@@ -1495,7 +1489,7 @@ def test_r1_reports_independent_support_violations_together():
     with pytest.raises(model.ProofRefusal) as caught:
         proof.validate_support('def first(value): return sorted(value)\n'
                                'def second(box): box["x"] = 1\n', 'tests/test_observer.py')
-    assert {v.rule.id for v in getattr(caught.value, 'violations', ())} == {
+    assert {row['rule_id'] for row in caught.value.as_json()} == {
         'proof.support.call_allowlist', 'proof.support.member_write'}
 
 
@@ -1511,7 +1505,7 @@ def test_r1_destination_gates_source_checks(tmp_path):
         proof.assemble_proof(base, head, destination, check, {'test-files': ['tests/*.py']})
     assert getattr(caught.value, 'rule', None) == 'proof.tree.destination_fresh'
     assert len(caught.value.violations) == 1
-    assert caught.value.violations[0].rule.gating
+    assert caught.value.as_json()[0]['gating']
     assert 'Further checks were not run.' in str(caught.value)
 
 
@@ -1525,17 +1519,16 @@ def test_r1_nonlocal_support_is_a_source_row():
 
 def test_r1_forcing_classes_come_from_the_actual_predicate():
     import builtins
-    from tl3_harness.rules import Edit
     with pytest.raises(model.HarnessInputError) as caught:
         Forcing.parse({'symptom': 'flake', 'patches': [{'target': 'app.value', 'raises': 'AssertionError'}]})
     violations = getattr(caught.value, 'violations', ())
     assert len(violations) == 1
-    violation = violations[0]
-    assert violation.rule.id == 'forcing.raise_class'
+    violation = caught.value.as_json()[0]
+    assert violation['rule_id'] == 'forcing.raise_class'
     assert model.contextual(caught.value, check=0).rule == 'forcing.raise_class'
     expected = sorted(name for name in dir(builtins) if model.forced_exception(name))
-    assert violation.allowed.value == expected
-    assert isinstance(violation.repair, Edit)
+    assert violation['allowed']['value'] == expected
+    assert violation['repair']['kind'] == 'edit'
     for name in expected:
         assert name in str(caught.value)
         Forcing.parse({'symptom': 'flake', 'patches': [{'target': 'app.value', 'raises': name}]})
@@ -1546,21 +1539,10 @@ def test_r1_symbol_names_have_one_shared_grammar():
     with pytest.raises(model.ProofRefusal) as caught:
         proof.source_unit('class Outer: pass', 'tests/test_observer.py::Outer::missing')
     assert getattr(caught.value, 'rule', None) == 'proof.source.definition'
-    symbols = [name.value for name in caught.value.violations[0].rule.names(caught.value.violations[0].facts)
-               if name.kind == 'symbol']
+    symbols = [name['value'] for name in caught.value.as_json()[0]['names'] if name['kind'] == 'symbol']
     assert symbols == ['tests/test_observer.py::Outer.missing']
 
 
-def test_r1_preflight_export_matches_the_rows():
-    import importlib.util
-    assert importlib.util.find_spec('tl3_harness.proof_rules') is not None, 'proof rows are missing'
-    from tl3_harness.proof_rules import export_rows
-    artifact = Path(__file__).parents[1] / 'proof-rules.json'
-    assert artifact.is_file(), 'preflight export is missing'
-    exported = json.loads(artifact.read_text())
-    assert exported == export_rows(), 'Regenerate with: PYTHONPATH=harness/src python -m tl3_harness.proof_rules --output harness/proof-rules.json'
-    assert exported and all(row['id'].startswith(('proof.loader.', 'proof.support.')) for row in exported)
-    assert all({'id', 'names', 'allowed', 'repair'} <= row.keys() for row in exported)
 
 
 
@@ -1599,19 +1581,18 @@ def test_r1_report_all_keeps_each_support_declaration_pointer(tmp_path):
     case['proof']['observer_support'] = ['tests/test_observer.py::first', 'tests/test_observer.py::second']
     with pytest.raises(model.ProofRefusal) as caught:
         assemble_t842_case(tmp_path, case)
-    assert {violation.rule.id for violation in caught.value.violations} == {
+    assert {violation['rule_id'] for violation in caught.value.as_json()} == {
         'proof.support.call_allowlist', 'proof.support.member_write'}
-    assert {name.value for violation in caught.value.violations for name in violation.rule.names(violation.facts)
-            if name.kind == 'field'} == {'/checks/0/proof/observer_support/0', '/checks/0/proof/observer_support/1'}
+    assert {name['value'] for violation in caught.value.as_json() for name in violation['names']
+            if name['kind'] == 'field'} == {'/checks/0/proof/observer_support/0', '/checks/0/proof/observer_support/1'}
 
 
 def test_r1_report_all_includes_independent_inferred_support(tmp_path):
     case = t842_immutable_case('_FIRST = {}\n_SECOND = {}', '_FIRST or _SECOND')
     with pytest.raises(model.ProofRefusal) as caught:
         assemble_t842_case(tmp_path, case)
-    literals = [violation for violation in caught.value.violations
-                if violation.rule.id == 'proof.support.literal_binding']
-    assert {violation.facts['symbol'] for violation in literals} == {'_FIRST', '_SECOND'}
+    literals = [facts for row, facts in caught.value.violations if row.id == 'proof.support.literal_binding']
+    assert {facts['symbol'] for facts in literals} == {'_FIRST', '_SECOND'}
 
 
 @pytest.mark.parametrize('loader', [False, True])

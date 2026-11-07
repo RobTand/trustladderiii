@@ -29,7 +29,6 @@ filegroup(
     srcs = glob([
         "tl3_workers/prompts/*.md",
         "tl3_workers/evaluation/*.json",
-        "tl3_workers/policy.json",
         "tl3_workers/plan_rules.json",
     ]) + [":schemas"],
     visibility = ["//visibility:public"],
@@ -81,7 +80,6 @@ py_library(
     srcs = [
         "tl3_workers/__init__.py",
         "tl3_workers/__main__.py",
-        "tl3_workers/_policy_identity.py",
         "tl3_workers/budget_check.py",
         "tl3_workers/classifier_eval.py",
         "tl3_workers/contracts.py",
@@ -146,14 +144,6 @@ py_library(
     ],
 )
 
-filegroup(
-    name = "redaction_contract",
-    srcs = [
-        "tl3_workers/_policy_identity.py",
-        "tl3_workers/policy.json",
-    ],
-    visibility = ["//visibility:public"],
-)
 
 # The tokenizer parity generator extracts this loader with ast.
 filegroup(

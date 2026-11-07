@@ -89,7 +89,6 @@ _CONTROLLER_TEST_DATA = [
     "//crates/store:sources",
 ]
 _CONTROLLER_TEST_COMPILE_DATA = {
-    "crates/action": ["//workers:schemas"],
     "tests/writer_blocker.rs": ["//workers/tests:fixtures"],
 }
 # Only these scenarios execute tl3_workers. Its imports include tl3_harness.
@@ -127,7 +126,6 @@ _CONTROLLER_RUNTIME = {
     "test_test_harness_summary": ["//workers/tests:fixtures", "//workers/tests:harness_io_schedule"],
     "test_test_worker_budget_orchestration": ["//workers/tests:budget_orchestration"],
     "test_test_worker_checker": ["//workers/tests:checker_recordings", ":example_checker-vectors"],
-    "test_test_redaction_policy": ["//workers/src:redaction_contract"],
     "test_test_redaction_adapter": ["//workers/tests:redaction_branches", "//crates/redaction:sources"],
     "test_test_redaction_generated": ["//workers/tests:redaction_generated", "//crates/redaction:sources"],
     "test_test_redaction_parity": ["//workers/tests:redaction_branches"],
