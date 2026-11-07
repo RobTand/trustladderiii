@@ -326,6 +326,14 @@ impl Flux {
     }
 
     pub(super) fn run_cleanup(&self, owner: &Owner) -> Result<CleanupResult> {
+        self.cleanup_runtime_with_progress(owner, &mut |_| Ok(()))
+    }
+
+    pub fn cleanup_runtime_with_progress(
+        &self,
+        owner: &Owner,
+        emit: &mut dyn FnMut(&CleanupProgress) -> Result<()>,
+    ) -> Result<CleanupResult> {
         let record = self.journal.load(owner)?;
         if all_stopped(&record) {
             return Ok(result(
@@ -349,21 +357,30 @@ impl Flux {
             ));
         }
         for ownership in &executions(&record) {
-            if record
+            let current = self.journal.load(owner)?;
+            if current.terminal.is_some() { break; }
+            if current
                 .cleanup_evidence
                 .get(&ownership.execution)
                 .is_some_and(|reference| {
-                    stopped(&record, &ownership.run, reference).unwrap_or(false)
+                    stopped(&current, &ownership.run, reference).unwrap_or(false)
                 })
             {
                 continue;
             }
+            let input = serde_json::to_vec(&CleanupInput {
+                schema: "tl3.cleanup_input.v1".into(),
+                budget_seconds: CLEANUP_HELPER_BUDGET_SECONDS,
+                ownership: ownership.clone(),
+                launch: record.container_launches.get(&ownership.execution).cloned(),
+            })?;
+            emit(&CleanupProgress {
+                owner: owner.clone(), run: ownership.run.clone(),
+                request_digest: ownership.request_digest.clone(), execution: ownership.execution.clone(),
+                helper_budget_seconds: CLEANUP_HELPER_BUDGET_SECONDS,
+                idle_timeout_seconds: CLEANUP_IDLE_TIMEOUT_SECONDS,
+            })?;
             let cleaned = (|| -> Result<()> {
-                let input = serde_json::to_vec(&CleanupInput {
-                    schema: "tl3.cleanup_input.v1".into(),
-                    ownership: ownership.clone(),
-                    launch: record.container_launches.get(&ownership.execution).cloned(),
-                })?;
                 // Deliberately uses retained labels/generation after broker or launcher loss.
                 let mut command = std::process::Command::new(&program.executable);
                 command

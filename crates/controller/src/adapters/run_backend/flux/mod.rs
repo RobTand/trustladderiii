@@ -45,6 +45,45 @@ impl Flux {
         Ok(intent)
     }
 
+    pub fn cancel_with_cleanup_progress(
+        &self, owner: &Owner, emit: &mut dyn FnMut(&CleanupProgress) -> Result<()>,
+    ) -> Result<CancelAck> {
+        let record = self.journal.transaction(owner, |dir, current| {
+            let mut current =
+                current.ok_or_else(|| BackendError::invalid("submission intent not found"))?;
+            self.instance(&current)?;
+            current.cancel_requested = true;
+            save(dir, &current)?;
+            Ok(current)
+        })?;
+        if let Some(terminal) = record.terminal {
+            return Ok(CancelAck {
+                binding: record.binding,
+                acknowledged: true,
+                terminal: Some(terminal),
+            });
+        }
+        self.mark_cleanup_debt(&record)?;
+        let binding = self.recover(owner).ok().flatten().or(record.binding);
+        let acknowledged = if let Some(binding) = &binding {
+            self.capture(&["cancel", &binding.id.job])
+                .is_ok_and(|reply| reply.success)
+        } else {
+            false
+        };
+        let mut transport_error = None;
+        let _ = self.cleanup_runtime_with_progress(owner, &mut |progress| {
+            emit(progress).inspect_err(|error| transport_error = Some(error.clone()))
+        });
+        if let Some(error) = transport_error { return Err(error); }
+        Ok(CancelAck {
+            binding,
+            acknowledged,
+            terminal: None,
+        })
+    }
+
+
     fn instance(&self, record: &Record) -> Result<()> {
         if record.intent.instance != self.options.instance_generation
             || record.intent.uri != self.options.uri
@@ -426,35 +465,7 @@ impl RunBackend for Flux {
     }
 
     fn cancel(&self, owner: &Owner) -> Result<CancelAck> {
-        let record = self.journal.transaction(owner, |dir, current| {
-            let mut current =
-                current.ok_or_else(|| BackendError::invalid("submission intent not found"))?;
-            self.instance(&current)?;
-            current.cancel_requested = true;
-            save(dir, &current)?;
-            Ok(current)
-        })?;
-        if let Some(terminal) = record.terminal {
-            return Ok(CancelAck {
-                binding: record.binding,
-                acknowledged: true,
-                terminal: Some(terminal),
-            });
-        }
-        self.mark_cleanup_debt(&record)?;
-        let binding = self.recover(owner).ok().flatten().or(record.binding);
-        let acknowledged = if let Some(binding) = &binding {
-            self.capture(&["cancel", &binding.id.job])
-                .is_ok_and(|reply| reply.success)
-        } else {
-            false
-        };
-        let _ = self.run_cleanup(owner);
-        Ok(CancelAck {
-            binding,
-            acknowledged,
-            terminal: None,
-        })
+        self.cancel_with_cleanup_progress(owner, &mut |_| Ok(()))
     }
 
     fn liveness(&self, owner: &Owner) -> Result<Liveness> {

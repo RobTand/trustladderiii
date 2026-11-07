@@ -877,11 +877,52 @@ pub struct ScopeIdentity {
     pub cgroup: String,
 }
 
+/// One authority for native subprocess capture and cleanup transport allowances.
+pub const NATIVE_COMMAND_TIMEOUT_SECONDS: u64 = 30;
+pub const CLEANUP_HELPER_BUDGET_SECONDS: u64 = NATIVE_COMMAND_TIMEOUT_SECONDS - 10;
+pub const CLEANUP_IDLE_TIMEOUT_SECONDS: u64 = NATIVE_COMMAND_TIMEOUT_SECONDS + 5;
+
+/// Query once before cleanup/cancel to set the initial idle deadline without guessing.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CleanupLimits {
+    pub helper_budget_seconds: u64,
+    pub native_timeout_seconds: u64,
+    pub idle_timeout_seconds: u64,
+    pub max_progress_frames: usize,
+    pub max_frame_bytes: usize,
+    pub max_response_bytes: usize,
+}
+
+pub fn cleanup_limits() -> CleanupLimits {
+    CleanupLimits {
+        helper_budget_seconds: CLEANUP_HELPER_BUDGET_SECONDS,
+        native_timeout_seconds: NATIVE_COMMAND_TIMEOUT_SECONDS,
+        idle_timeout_seconds: CLEANUP_IDLE_TIMEOUT_SECONDS,
+        max_progress_frames: 1024,
+        max_frame_bytes: 16 * 1024,
+        max_response_bytes: 1024 * 16 * 1024 + durable::MAX_BYTES,
+    }
+}
+
+/// Transport allowance only. Never a stopped result or native liveness observation.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CleanupProgress {
+    pub owner: Owner,
+    pub run: BackendId,
+    pub request_digest: String,
+    pub execution: String,
+    pub helper_budget_seconds: u64,
+    pub idle_timeout_seconds: u64,
+}
+
 /// One bounded JSON stdin request to the trusted independent runtime cleanup entry.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CleanupInput {
     pub schema: String,
+    pub budget_seconds: u64,
     pub ownership: RuntimeOwnership,
     pub launch: Option<ContainerLaunchIntent>,
 }
