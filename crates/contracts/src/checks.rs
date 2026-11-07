@@ -11,6 +11,20 @@ use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _, ser::SerializeMap};
 use std::borrow::Cow;
 
+/// Original zero-based index in request.inputs.ingest.goals, retained across splits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[serde(transparent)]
+pub struct GoalId(pub u64);
+
+fn check_goals<'de, D: Deserializer<'de>>(input: D) -> Result<Vec<GoalId>, D::Error> {
+    let goals = Vec::<GoalId>::deserialize(input)?;
+    let mut unique = std::collections::BTreeSet::new();
+    if goals.iter().any(|goal| !unique.insert(*goal)) {
+        return Err(D::Error::custom("check goal_ids must be unique"));
+    }
+    Ok(goals)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum CheckKind {
@@ -26,6 +40,11 @@ pub enum CheckKind {
 #[serde(deny_unknown_fields)]
 pub struct Check {
     pub name: String,
+    /// Original ingest.goals indices. Required, unique, never renumbered across splits.
+    /// The planner gate checks nonempty/range/coverage; controller controls explicitly use [].
+    #[serde(deserialize_with = "check_goals")]
+    #[schemars(with = "List<GoalId, 0, UNBOUNDED, true>")]
+    pub goal_ids: Vec<GoalId>,
     pub kind: CheckKind,
     pub tests: Vec<String>,
     // A demonstrating check's forced reproduction (#393).
@@ -167,6 +186,8 @@ impl JsonSchema for Patch {
 pub struct ProofDeclaration {
     pub subjects: List<UnitPath, 0, 16, true>,
     pub observer_support: List<UnitPath, 0, 16, true>,
+    /// Planner-declared EXPECTED assertion message, never captured run evidence.
+    /// Rust checks actual-run RED messages independently before accepting the proof.
     pub red_message: Text<1, 160>,
 }
 

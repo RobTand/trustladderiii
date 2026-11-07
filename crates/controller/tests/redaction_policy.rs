@@ -4,7 +4,7 @@ use tl3_controller::redaction;
 #[test]
 fn generated_policy_matches_committed_file() {
     let committed: Value =
-        serde_json::from_str(include_str!("../src/redaction/policy.json")).unwrap();
+        serde_json::from_str(include_str!("../../redaction/src/policy.json")).unwrap();
     let generated: Value = serde_json::from_str(&redaction::generated_policy()).unwrap();
     assert!(generated == committed, "generated policy drift");
 }
@@ -12,7 +12,7 @@ fn generated_policy_matches_committed_file() {
 #[test]
 fn generated_policy_retains_every_corpus_rule() {
     let committed: Value =
-        serde_json::from_str(include_str!("../src/redaction/policy.json")).unwrap();
+        serde_json::from_str(include_str!("../../redaction/src/policy.json")).unwrap();
     let generated: Value = serde_json::from_str(&redaction::generated_policy()).unwrap();
     for key in ["patterns", "checked", "regex", "words", "characters"] {
         assert_eq!(

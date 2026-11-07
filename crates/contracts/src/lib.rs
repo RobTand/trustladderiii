@@ -5,6 +5,8 @@
 //! This module depends only on std, serde, serde_json and schemars, never on the rest of
 //! the controller, so it can become its own crate unchanged.
 
+pub mod action;
+pub mod rules;
 pub mod bounded;
 pub mod checks;
 pub mod execution;
@@ -80,6 +82,8 @@ pub fn generated() -> Vec<Generated> {
                 .to_value(),
         ),
     });
+    files.extend(rules::generated());
+    files.extend(action::generated());
     files
 }
 

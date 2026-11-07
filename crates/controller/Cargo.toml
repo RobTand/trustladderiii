@@ -21,6 +21,7 @@ tl3-prismabuild = { path = "../prismabuild" }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "net", "process", "sync", "macros"] }
 tl3-kernel = { path = "../kernel", features = ["serde"] }
 tl3-harness-core = { path = "../harness-core" }
+tl3-redaction = { path = "../redaction" }
 tl3-store = { path = "../store" }
 tl3-config = { path = "../config" }
 tl3-contracts = { path = "../contracts" }

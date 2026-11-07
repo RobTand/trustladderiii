@@ -1,5 +1,5 @@
 //! #753 re-review: parsed-class membership and corpus-derived production-redactor conformance.
-#[path = "../src/redaction/compatibility.rs"]
+#[path = "../../redaction/src/compatibility.rs"]
 mod compatibility;
 mod redaction_support;
 
@@ -14,7 +14,7 @@ fn data() -> &'static Value {
         let output = python_command()
             .args(["-I", "-c", "import sys; sys.path.insert(0,sys.argv.pop(1)); import redaction_generated; redaction_generated.main()"])
             .arg(root.join("../../workers/tests"))
-            .arg(root.join("src/redaction/policy.json"))
+            .arg(root.join("../redaction/src/policy.json"))
             .arg(root.join("src/redaction/matrix.json"))
             .arg(root.join("src/redaction/corpus.json"))
             .output().unwrap();
@@ -29,7 +29,7 @@ fn data() -> &'static Value {
 }
 
 fn classes() -> [String; 3] {
-    let policy: Value = serde_json::from_str(include_str!("../src/redaction/policy.json")).unwrap();
+    let policy: Value = serde_json::from_str(include_str!("../../redaction/src/policy.json")).unwrap();
     ["alnum", "decimal", "space"].map(|name| {
         let mut body = if name == "alnum" {
             "_".to_owned()

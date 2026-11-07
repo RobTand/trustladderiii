@@ -1,0 +1,15 @@
+[package]
+name = "tl3-action"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+schemars = "1"
+tl3-contracts = { path = "../contracts" }
+tl3-harness-core = { path = "../harness-core" }
+tl3-redaction = { path = "../redaction" }
+
+[lints.rust]
+unsafe_code = "forbid"

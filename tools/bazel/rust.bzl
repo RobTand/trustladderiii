@@ -26,7 +26,7 @@ _POSTGRES = ["crates/controller", "crates/store"]
 # Files that include_str! and build.rs read from outside the crate.
 _COMPILE_DATA = {
     "crates/contracts": ["//workers:schemas", "//workers/tests:footprint_paths"],
-    "crates/controller": ["//workers:schemas"],
+    "crates/controller": ["//workers:schemas", "//crates/redaction:sources"],
     "crates/config": ["//deploy/dl380g10:models.toml"],
     "crates/github": ["//crates/mergify:sources"],
     "crates/mergify": ["//crates/github:sources"],
@@ -125,8 +125,8 @@ _CONTROLLER_RUNTIME = {
     "test_test_worker_budget_orchestration": ["//workers/tests:budget_orchestration"],
     "test_test_worker_checker": ["//workers/tests:checker_recordings", ":example_checker-vectors"],
     "test_test_redaction_policy": ["//workers/src:redaction_contract"],
-    "test_test_redaction_adapter": ["//workers/tests:redaction_branches"],
-    "test_test_redaction_generated": ["//workers/tests:redaction_generated"],
+    "test_test_redaction_adapter": ["//workers/tests:redaction_branches", "//crates/redaction:sources"],
+    "test_test_redaction_generated": ["//workers/tests:redaction_generated", "//crates/redaction:sources"],
     "test_test_redaction_parity": ["//workers/tests:redaction_branches"],
     "lib_test_tl3_controller": [
         "//workers/tests:p5_references",
