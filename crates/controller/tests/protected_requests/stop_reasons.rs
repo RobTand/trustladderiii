@@ -63,7 +63,11 @@ fn drain(c: &mut Controller) {
 }
 
 fn send(c: &mut Controller, key: &str, event: Event) {
-    c.observe(key, Observation::Kernel(event)).unwrap();
+    let observation = match event {
+        Event::Command { node, command, .. } => Observation::Steering { node, command },
+        _ => Observation::Kernel(event),
+    };
+    c.observe(key, observation).unwrap();
     assert!(c.drive_once().unwrap());
 }
 
@@ -124,10 +128,11 @@ fn stale_pr_close_and_out_of_order_stop_do_not_author_reasons() {
     assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Ingesting);
     send(&mut c, "pr-never-opened", Event::Fact { node: NodeId(0), fact: Fact::PrClosedByPerson });
     send(&mut c, "new-command", Event::Command { node: NodeId(0), id: 3, command: Command::Resume });
-    send(&mut c, "old-stop", stop(2));
+    c.observe("old-stop", Observation::Kernel(stop(2))).unwrap();
+    assert!(c.drive_once().unwrap());
     assert!(reason(&mut c).is_none());
     assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Ingesting);
-    assert!(!c.snapshot().unwrap().rows.iter().any(|r| r.table == "incidents"));
+    assert!(c.snapshot().unwrap().rows.iter().any(|r| r.table == "incidents"));
     db.stop();
 }
 
