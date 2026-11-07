@@ -102,7 +102,11 @@ pub struct PublicationBranch {
 /// Serialize through `serde_json::to_value` to retain the producer's sorted keys.
 /// Direct struct serialization follows declaration order and differs from those bytes.
 pub struct IngestInput {
-    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[schemars(with = "TestsRef")]
     pub tests: Option<crate::roles::maker_input::Tests>,
     #[schemars(with = "IssueRef")]

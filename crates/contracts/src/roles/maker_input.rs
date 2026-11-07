@@ -280,10 +280,18 @@ pub type Feedbackitem = Validated<FeedbackitemFields, FeedbackIdentity>;
 ])))]
 pub struct TestsFields {
     pub image: ImageDigest,
-    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[schemars(with = "AbsolutePath", extend("minLength" = 1))]
     pub tools_path: Option<AbsolutePath>,
-    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[schemars(with = "WorkerExecution")]
     pub execution: Option<WorkerExecution>,
     #[serde(
@@ -715,11 +723,24 @@ impl SchemaOrder for Tests {
         TypeOrder::of::<Self>(&[
             (
                 "",
-                &["type", "properties", "required", "additionalProperties", "oneOf"],
+                &[
+                    "type",
+                    "properties",
+                    "required",
+                    "additionalProperties",
+                    "oneOf",
+                ],
             ),
             (
                 "/properties",
-                &["image", "tools_path", "execution", "cpus", "mem_gb", "quiet_seconds"],
+                &[
+                    "image",
+                    "tools_path",
+                    "execution",
+                    "cpus",
+                    "mem_gb",
+                    "quiet_seconds",
+                ],
             ),
             ("/properties/image", &["type", "pattern"]),
             ("/properties/tools_path", &["type", "pattern", "minLength"]),
@@ -728,10 +749,22 @@ impl SchemaOrder for Tests {
             ("/oneOf/1", &["required", "not"]),
             ("/oneOf/1/not", &["required"]),
             ("/properties/execution", &["oneOf"]),
-            ("/properties/execution/oneOf/0", &["type", "properties", "required", "additionalProperties"]),
-            ("/properties/execution/oneOf/0/properties", &["backend", "profile"]),
-            ("/properties/execution/oneOf/0/properties/backend", &["type", "const"]),
-            ("/properties/execution/oneOf/0/properties/profile", &["type", "pattern"]),
+            (
+                "/properties/execution/oneOf/0",
+                &["type", "properties", "required", "additionalProperties"],
+            ),
+            (
+                "/properties/execution/oneOf/0/properties",
+                &["backend", "profile"],
+            ),
+            (
+                "/properties/execution/oneOf/0/properties/backend",
+                &["type", "const"],
+            ),
+            (
+                "/properties/execution/oneOf/0/properties/profile",
+                &["type", "pattern"],
+            ),
         ])
     }
 }

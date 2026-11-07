@@ -1,10 +1,10 @@
+#[path = "production/backend_watch.rs"]
+mod backend_watch;
+#[path = "production/flux_options.rs"]
+mod flux_options;
 mod prismabuild_fixture;
 #[path = "production/startup.rs"]
 mod startup;
-#[path = "production/flux_options.rs"]
-mod flux_options;
-#[path = "production/backend_watch.rs"]
-mod backend_watch;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
 
@@ -76,14 +76,28 @@ fn flux_selection_holds_legacy_pb_bindings_without_reinterpreting_them() {
                 executable: "/opt/flux/bin/flux".into(),
                 backend_cli: "/opt/tl3/bin/tl3-run-backend".into(),
                 container_mode: tl3_config::ContainerMode::OwnScope,
-                runtime_bundles: vec![format!("/mnt/shared/flux-out/tl3/.runtime/{}/manifest.json", "0".repeat(64)).into()],
+                runtime_bundles: vec![
+                    format!(
+                        "/mnt/shared/flux-out/tl3/.runtime/{}/manifest.json",
+                        "0".repeat(64)
+                    )
+                    .into(),
+                ],
                 uri: "local:///run/flux/local-0".into(),
-                environment: BTreeMap::from([("PATH".into(), "/usr/bin:/bin".into()), ("HOME".into(), "/home/rob".into()), ("XDG_RUNTIME_DIR".into(), "/run/user/1000".into())]),
+                environment: BTreeMap::from([
+                    ("PATH".into(), "/usr/bin:/bin".into()),
+                    ("HOME".into(), "/home/rob".into()),
+                    ("XDG_RUNTIME_DIR".into(), "/run/user/1000".into()),
+                ]),
                 staging_root: "/mnt/shared/tl3-inputs".into(),
                 output_root: "/mnt/shared/flux-out/tl3".into(),
                 container_image: config.prismabuild.container_image.clone(),
             });
-            let directory = config.workers.runs.join(".controller/prismabuild").join(node);
+            let directory = config
+                .workers
+                .runs
+                .join(".controller/prismabuild")
+                .join(node);
             fs::create_dir_all(&directory).unwrap();
             let binding = directory.join(format!("legacy.{suffix}"));
             fs::write(&binding, "legacy PB evidence, deliberately not a Flux ID").unwrap();
@@ -91,8 +105,14 @@ fn flux_selection_holds_legacy_pb_bindings_without_reinterpreting_them() {
                 Ok(_) => panic!("Flux silently adopted legacy PB evidence"),
                 Err(error) => error,
             };
-            assert!(error.to_string().contains("drain or explicitly hold"), "{error}");
-            assert_eq!(fs::read_to_string(binding).unwrap(), "legacy PB evidence, deliberately not a Flux ID");
+            assert!(
+                error.to_string().contains("drain or explicitly hold"),
+                "{error}"
+            );
+            assert_eq!(
+                fs::read_to_string(binding).unwrap(),
+                "legacy PB evidence, deliberately not a Flux ID"
+            );
         }
     }
 }
@@ -128,7 +148,10 @@ fn production_registers_every_real_adapter_and_source() {
     ]);
     assert_eq!(registered.adapters.registered_types(), expected);
     assert!(std::any::type_name_of_val(&registered.workers).ends_with("WorkerOutputSource"));
-    assert!(matches!(registered.bell, production::CheckSource::PrismaBuild(_)));
+    assert!(matches!(
+        registered.bell,
+        production::CheckSource::PrismaBuild(_)
+    ));
     assert!(
         std::any::type_name_of_val(&registered.mergify).ends_with("delivery_events::Translator")
     );
@@ -282,7 +305,10 @@ fn selected_flux_refuses_unprovisioned_runtime_without_pb_fallback() {
         Ok(_) => panic!("unprovisioned Flux selection entered a backend"),
         Err(error) => error,
     };
-    assert!(error.to_string().contains("Flux runtime preparation"), "{error}");
+    assert!(
+        error.to_string().contains("Flux runtime preparation"),
+        "{error}"
+    );
 }
 
 /// FX: actual production composition selects Flux without dereferencing absent PB settings.
@@ -296,12 +322,21 @@ fn selected_flux_constructs_real_adapter_and_source_without_pb_or_native_launch(
     config.prismabuild.container_image.clear();
     let mut database = support::Database::start();
     let settings = database.create("flux_construction");
-    let mut ownership = tl3_controller::Ownership::claim(tl3_store::Store::open(&settings).unwrap()).unwrap();
+    let mut ownership =
+        tl3_controller::Ownership::claim(tl3_store::Store::open(&settings).unwrap()).unwrap();
     let mut registry = tl3_controller::executor::Registry::default();
-    let source = production::register_execution(&config, &root.path().join("records"), &mut registry, &mut ownership)
-        .unwrap_or_else(|error| panic!("selected Flux production composition failed: {error}"));
+    let source = production::register_execution(
+        &config,
+        &root.path().join("records"),
+        &mut registry,
+        &mut ownership,
+    )
+    .unwrap_or_else(|error| panic!("selected Flux production composition failed: {error}"));
     assert!(matches!(source, production::CheckSource::Flux { .. }));
-    assert_eq!(registry.registered_types().get(&Upstream::PrismaBuild), Some(&"tl3_controller::adapters::flux_checks::Adapter"));
+    assert_eq!(
+        registry.registered_types().get(&Upstream::PrismaBuild),
+        Some(&"tl3_controller::adapters::flux_checks::Adapter")
+    );
     assert!(!root.path().join("records/prismabuild").exists());
     drop((source, registry, ownership));
     database.stop();

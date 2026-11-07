@@ -661,7 +661,10 @@ fn external_wait(value: &Value) -> Option<tl3_store::ExternalWait> {
         && key_valid
         && match wait.upstream.as_str() {
             "prismabuild" => wait.key.parse::<tl3_prismabuild::ActionKey>().is_ok(),
-            "flux" => wait.key.strip_prefix("worker:").is_some_and(|key| crate::run_backend::hex(key, 64)),
+            "flux" => wait
+                .key
+                .strip_prefix("worker:")
+                .is_some_and(|key| crate::run_backend::hex(key, 64)),
             _ => false,
         })
     .then_some(wait)

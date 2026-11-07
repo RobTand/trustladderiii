@@ -297,10 +297,14 @@ fn real_builders(flux: bool) {
         config.execution_backend = tl3_config::ExecutionBackend::Flux;
         config.flux = Some(tl3_config::Flux {
             instance_generation: "fixture/00000000000000000000000000000000".into(),
-            executable: "/fixture/flux".into(), backend_cli: "/fixture/tl3-run-backend".into(),
+            executable: "/fixture/flux".into(),
+            backend_cli: "/fixture/tl3-run-backend".into(),
             container_mode: tl3_config::ContainerMode::OwnScope,
-            runtime_bundles: vec![], uri: "local:///fixture/flux".into(), environment: BTreeMap::new(),
-            staging_root: f.root.path().join("staging"), output_root: f.root.path().join("outputs"),
+            runtime_bundles: vec![],
+            uri: "local:///fixture/flux".into(),
+            environment: BTreeMap::new(),
+            staging_root: f.root.path().join("staging"),
+            output_root: f.root.path().join("outputs"),
             container_image: config.prismabuild.container_image.clone(),
         });
         config.prismabuild.tools_dir = PathBuf::new();
@@ -455,7 +459,10 @@ fn real_builders(flux: bool) {
                         assert_eq!(request["inputs"]["tests"]["execution"]["backend"], "flux");
                     }
                     if flux && role == "planner" {
-                        assert_eq!(request["inputs"]["tool_capabilities"][0]["executor"], "flux_pytest");
+                        assert_eq!(
+                            request["inputs"]["tool_capabilities"][0]["executor"],
+                            "flux_pytest"
+                        );
                     }
                     assert!(
                         crate::input_check::request(&request).unwrap().is_empty(),

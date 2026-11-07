@@ -6,7 +6,10 @@ use tl3_prismabuild::{Demand, Options, PrismaBuild, Tool};
 /// Preserve the controller routing tag while selecting its observation source.
 pub enum CheckSource {
     PrismaBuild(adapters::prismabuild::Source),
-    Flux { daytime: adapters::backend_watch::Source, workers: adapters::backend_watch::Source },
+    Flux {
+        daytime: adapters::backend_watch::Source,
+        workers: adapters::backend_watch::Source,
+    },
 }
 impl CheckSource {
     pub fn register(self, sources: &mut crate::ingress::Sources) {
@@ -33,13 +36,29 @@ pub fn register_execution(
         require_drained_pb(&records.join("prismabuild"))?;
         let preparation = adapters::flux_checks::staging::Stager::new(config)?;
         let options = provision_flux_options(flux, ownership)?;
-        let backend = std::sync::Arc::new(adapters::run_backend::flux::Flux::new(options.clone())
-            .map_err(|error| Error::Adapter(Box::new(error)))?);
-        let (waits, workers) = adapters::workers::execution::Waits::new(backend.clone(), options.clone(), &records.join("worker-waits"))?;
-        let mut adapter = adapters::flux_checks::Adapter::new(backend, options, &records.join("flux-checks"), preparation, ownership)?.with_worker_waits(waits);
+        let backend = std::sync::Arc::new(
+            adapters::run_backend::flux::Flux::new(options.clone())
+                .map_err(|error| Error::Adapter(Box::new(error)))?,
+        );
+        let (waits, workers) = adapters::workers::execution::Waits::new(
+            backend.clone(),
+            options.clone(),
+            &records.join("worker-waits"),
+        )?;
+        let mut adapter = adapters::flux_checks::Adapter::new(
+            backend,
+            options,
+            &records.join("flux-checks"),
+            preparation,
+            ownership,
+        )?
+        .with_worker_waits(waits);
         let source = adapter.source()?;
         registry.register(crate::executor::Upstream::PrismaBuild, adapter);
-        return Ok(CheckSource::Flux { daytime: source, workers });
+        return Ok(CheckSource::Flux {
+            daytime: source,
+            workers,
+        });
     }
     let tools = &config.prismabuild.tools_dir;
     let tool = Tool {

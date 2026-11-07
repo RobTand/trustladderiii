@@ -471,8 +471,14 @@ impl Supervisor {
             inputs["plan"]["files"] = json!(delivery.paths);
             inputs["footprint"] = json!(delivery.paths);
             inputs["context_size"] = json!(self.limits.context_tokens);
-            inputs["tests"] = self.tests.inputs(self.images.for_repository(&delivery.repository, self.tests.image()),
-                self.images.test_demand(&delivery.repository).unwrap_or_default(), &self.root(&delivery.key).join("execution.json"));
+            inputs["tests"] = self.tests.inputs(
+                self.images
+                    .for_repository(&delivery.repository, self.tests.image()),
+                self.images
+                    .test_demand(&delivery.repository)
+                    .unwrap_or_default(),
+                &self.root(&delivery.key).join("execution.json"),
+            );
             let demand = self
                 .images
                 .test_demand(&delivery.repository)
@@ -537,8 +543,12 @@ impl Supervisor {
                 .images
                 .test_demand(&delivery.repository)
                 .unwrap_or_default();
-            inputs["tests"] = self.tests.inputs(self.images.for_repository(&delivery.repository, self.tests.image()),
-                demand, &self.root(&delivery.key).join("execution.json"));
+            inputs["tests"] = self.tests.inputs(
+                self.images
+                    .for_repository(&delivery.repository, self.tests.image()),
+                demand,
+                &self.root(&delivery.key).join("execution.json"),
+            );
         } else if role == "audit" {
             inputs["ingest"] = store
                 .worker_document(&node, "briefs")?
@@ -568,8 +578,14 @@ impl Supervisor {
             inputs["forecast"] = forecast;
         }
         if matches!(role, "ingest" | "audit") && generator_available {
-            inputs["tests"] = self.tests.inputs(self.images.for_repository(&delivery.repository, self.tests.image()),
-                self.images.test_demand(&delivery.repository).unwrap_or_default(), &self.root(&delivery.key).join("execution.json"));
+            inputs["tests"] = self.tests.inputs(
+                self.images
+                    .for_repository(&delivery.repository, self.tests.image()),
+                self.images
+                    .test_demand(&delivery.repository)
+                    .unwrap_or_default(),
+                &self.root(&delivery.key).join("execution.json"),
+            );
         }
         if matches!(role, "ingest" | "audit" | "planner" | "maker") {
             inputs["decision_context"] =
@@ -648,7 +664,13 @@ impl Supervisor {
                 for capability in inputs["tool_capabilities"].as_array_mut().unwrap() {
                     if capability["executor"] == "prismabuild_pytest" {
                         capability["executor"] = json!("flux_pytest");
-                        capability["artifacts"] = json!(["run_binding", "receipt", "input_tree", "logs", "terminal_verdict"]);
+                        capability["artifacts"] = json!([
+                            "run_binding",
+                            "receipt",
+                            "input_tree",
+                            "logs",
+                            "terminal_verdict"
+                        ]);
                     }
                 }
             }
