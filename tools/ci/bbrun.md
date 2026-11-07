@@ -86,3 +86,39 @@ Run `test_bbrun_cancel.py` and `bbrun.py --selftest` through PrismaBuild or
 approved free remote compute. The cancel tests drive the real CLI, request
 serialization, HTTP routes and response parsing against fake HTTP responses.
 They never use real credentials or send requests to BuildBuddy.
+
+Scanner rejections retain safe diagnostics in runner stdout as
+`BBRUN_SCAN_DIAGNOSTICS_V1` JSON lines, before the final wrapper-result line.
+The same records are written to private runner state as
+`scan-diagnostics.v1.json`. The rejected upload stays empty; the private file is
+not an automatic upload artifact. The runner log is the durable evidence when
+artifact bytes are discarded. Wrapper-result v1 fields and scanner exits are
+unchanged.
+
+Each diagnostic has schema `tl3.bbrun.scan-diagnostics`, version `1`, a phase
+(`initial`, `remaining`, `receipt`, or `unobserved`), `scanner_exit_code`,
+`diagnostics_status`, `detections`, and `incomplete_report_count`. Each detection
+has a safe upload-relative `path`, `rule_id` from the scanner's environment
+labels, and `match_count: 1`. This counts a reported rule detection per file per
+scan, including compressed members. Repeated raw or encoded occurrences within
+a file still count once. Counts from different scan phases must not be summed
+as unique files or byte occurrences. `incomplete_report_count` counts recognized
+incomplete-file reports, not matches.
+
+Only exact scanner reports corresponding to the current file inventory are
+recognized. Unknown, empty, duplicate, ambiguous, or unparseable reports make
+`diagnostics_status` partial. Scanner exceptions produce partial evidence and
+missing scans produce unavailable evidence. These statuses describe diagnostic
+coverage; they never authorize upload or replace the scanner verdict. A complete
+diagnostic record can accompany an incomplete scanner verdict such as exit 75.
+
+Credential forms are removed from paths using the pinned scanner's redaction
+forms. Paths with colons, non-ASCII/control characters, or more than 512
+characters are withheld as JSON null, as are private receipt paths. Filenames
+with line separators make the entire scan's interpretation partial with no
+attributed detections, because they can forge line framing. Redaction collisions
+also prevent attribution. At most 32 detections are retained per scan, with
+partial coverage if more were reported. Paths are never truncated. A final
+credential-form check can withhold a record. Raw scanner output, exception text,
+matched bytes, and surrounding content are never emitted. No scanner source or
+rule changes are involved.

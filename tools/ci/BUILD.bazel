@@ -377,3 +377,9 @@ tl3_py_test(
     srcs = ["test_bbrun_cleanup.py"],
     deps = [":bbrun"],
 )
+
+tl3_py_test(
+    name = "test_bbrun_scan_diagnostics",
+    srcs = ["test_bbrun_scan_diagnostics.py"],
+    deps = [":bbrun"],
+)

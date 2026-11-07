@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 umask 077
+for key in ${!GIT_@}; do unset "$key"; done
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0
 cd "$(dirname "$0")/../.."
 output=${1:?usage: build-release.sh ABSOLUTE_NEW_ARTIFACT_DIRECTORY EXACT_SOURCE_SHA}
 selected_head=${2:?exact selected source SHA is required}
 [[ $output = /* && ! -e $output ]]
 [[ $selected_head =~ ^[0-9a-f]{40}$ ]]
-[[ $(git rev-parse 'HEAD^{tree}') = "$(git rev-parse "$selected_head^{tree}")" ]]
-[[ -z $(git status --porcelain) ]]
+[[ $(timeout --kill-after=5s 30s git rev-parse HEAD) = "$selected_head" ]]
+[[ $(timeout --kill-after=5s 30s git rev-parse 'HEAD^{tree}') = "$(timeout --kill-after=5s 30s git rev-parse "$selected_head^{tree}")" ]]
+source_status=$(timeout --kill-after=5s 30s git status --porcelain)
+[[ -z $source_status ]]
 export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-2}
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 cargo build --release --locked -p tl3-controller --bins --example tl3-deploy
@@ -27,7 +31,7 @@ import sys
 
 output = Path(sys.argv[1])
 head = sys.argv[2]
-if subprocess.check_output(["git", "status", "--porcelain"]).strip():
+if subprocess.check_output(["git", "status", "--porcelain"], timeout=30).strip():
     raise SystemExit("release provenance requires a clean source checkout")
 names = ("tl3", "tl3d", "tl3-deploy", "tl3-worker-supervisor")
 (output / "SOURCE.json").write_text(json.dumps({"head": head, "binaries": {
