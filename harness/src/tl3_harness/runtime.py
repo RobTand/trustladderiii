@@ -110,17 +110,57 @@ def backend_request(command, *, bounds=None):
     import subprocess
     import time
 
-    bound = bounds['cli_result_bytes'] if bounds is not None else 4 * 1024 * 1024
+    cleanup = command['op'] in ('cleanup_runtime', 'cancel')
+    limits = backend_request({'op': 'cleanup_limits'})['limits'] if cleanup else None
+    binding = launch_context() if cleanup else None
+    if cleanup:
+        if (not isinstance(limits, dict) or any(type(value) is not int or value <= 0 for value in limits.values())
+                or not limits['helper_budget_seconds'] < limits['native_timeout_seconds'] < limits['idle_timeout_seconds']
+                or binding is None or binding['owner'] != command['owner']
+                or binding['correlation'] != command['correlation']):
+            raise RuntimeError('invalid Rust cleanup transport limits or binding')
+    bound = limits['max_response_bytes'] if cleanup else (
+        bounds['cli_result_bytes'] if bounds is not None else 4 * 1024 * 1024)
     request = json.dumps(command).encode() + b'\n'
     if len(request) > bound:
         raise RuntimeError('backend command exceeds transport bound')
     process = subprocess.Popen(
-        [os.environ['TL3_RUN_BACKEND_CLI'], *([] if command['op'] == 'output_bounds' else
+        [os.environ['TL3_RUN_BACKEND_CLI'], *([] if command['op'] in ('output_bounds', 'cleanup_limits') else
          ['--config', os.environ['TL3_RUN_BACKEND_CONFIG']])],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
     output = bytearray()
     pending = memoryview(request)
-    deadline = time.monotonic() + 30
+    idle = limits['idle_timeout_seconds'] if cleanup else 30
+    deadline = time.monotonic() + idle
+    sequence, received, executions = 0, 0, set()
+    terminal = None
+
+    def accept(raw):
+        nonlocal sequence, deadline, terminal
+        frame = json.loads(raw)
+        if (frame['schema'] != 'tl3.run_backend.frame.v1' or type(frame['sequence']) is not int
+                or frame['sequence'] != sequence or terminal is not None):
+            raise RuntimeError('backend CLI returned an invalid frame sequence')
+        sequence += 1
+        if frame['kind'] == 'cleanup_progress':
+            if not cleanup or len(raw) > limits['max_frame_bytes'] or len(executions) >= limits['max_progress_frames']:
+                raise RuntimeError('backend CLI returned unexpected or excessive cleanup progress')
+            progress = frame['progress']
+            execution = progress['execution']
+            if (progress['owner'] != {'owner': command['owner'], 'correlation': command['correlation']}
+                    or progress['run'] != binding['run'] or progress['request_digest'] != binding['request_digest']
+                    or not isinstance(execution, str) or not execution or execution in executions
+                    or progress['helper_budget_seconds'] != limits['helper_budget_seconds']
+                    or progress['idle_timeout_seconds'] != idle):
+                raise RuntimeError('backend CLI cleanup progress differs from retained binding')
+            executions.add(execution)
+            deadline = time.monotonic() + idle
+        elif frame['kind'] in ('result', 'error'):
+            if frame['kind'] == 'result' and frame['result']['op'] != command['op']:
+                raise RuntimeError('backend CLI returned the wrong result operation')
+            terminal = frame
+        else:
+            raise RuntimeError('backend CLI returned an unexpected frame')
     try:
         with selectors.DefaultSelector() as ready:
             os.set_blocking(process.stdin.fileno(), False)
@@ -141,17 +181,17 @@ def backend_request(command, *, bounds=None):
                         if not chunk:
                             ready.unregister(key.fileobj)
                         output.extend(chunk)
-                        if len(output) > bound:
+                        received += len(chunk)
+                        if received > bound:
                             raise RuntimeError('backend CLI response exceeds transport bound')
+                        while b'\n' in output:
+                            raw, _, remainder = output.partition(b'\n')
+                            output[:] = remainder
+                            accept(raw)
             code = process.wait(timeout=max(0.001, deadline - time.monotonic()))
-        frames = output.splitlines()
-        if code != 0 or len(frames) != 1:
+        if code != 0 or output or terminal is None or terminal['kind'] != 'result':
             raise RuntimeError('backend CLI did not return one successful result')
-        frame = json.loads(frames[0])
-        if (frame['schema'] != 'tl3.run_backend.frame.v1' or frame['sequence'] != 0
-                or frame['kind'] != 'result' or frame['result']['op'] != command['op']):
-            raise RuntimeError('backend CLI returned an invalid result frame')
-        return frame['result']
+        return terminal['result']
     except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError) as error:
         raise RuntimeError('backend CLI transport failed') from error
     finally:
@@ -651,7 +691,7 @@ def _scope_observation(identity, *, systemctl, cgroup_root, timeout):
             'cgroup_procs': procs, 'active_state': active}
 
 
-def cleanup_observations(ownership, *, launch=None, podman, systemctl, cgroup_root='/sys/fs/cgroup', timeout=10):
+def cleanup_observations(ownership, *, launch=None, podman, systemctl, cgroup_root='/sys/fs/cgroup', timeout):
     """Collect exact CleanupEvidence; Rust alone reconciles ownership and clears debt."""
     import signal
     import subprocess
@@ -661,8 +701,8 @@ def cleanup_observations(ownership, *, launch=None, podman, systemctl, cgroup_ro
     if group <= 1 or group == os.getpgrp() or ownership['launcher']['pid'] <= 1:
         raise RuntimeError('cleanup cannot target the helper group or an unsafe identity')
 
-    if not 0 < timeout <= 20:
-        raise ValueError('cleanup total budget must be positive and at most 20 seconds')
+    if not 0 < timeout < float('inf'):
+        raise ValueError('cleanup total budget must be positive and finite')
     deadline = time.monotonic() + timeout
 
     def remaining():
@@ -788,17 +828,17 @@ def cleanup_main():
     parser = argparse.ArgumentParser(description='Independent exact-ownership runtime cleanup observations')
     parser.add_argument('--podman', required=True)
     parser.add_argument('--systemctl', required=True)
-    parser.add_argument('--timeout', type=float, default=10)
     args = parser.parse_args()
     check_rootless_directory(os.environ)
-    if not 0 < args.timeout <= 60:
-        raise ValueError('cleanup timeout must be positive and at most 60 seconds')
     raw = sys.stdin.buffer.read(1024 * 1024 + 1)
     if len(raw) > 1024 * 1024:
         raise ValueError('cleanup input exceeds byte bound')
     request = json.loads(raw)
     if request['schema'] != 'tl3.cleanup_input.v1':
         raise ValueError('unsupported Rust cleanup input')
+    budget = request['budget_seconds']
+    if type(budget) is not int or budget <= 0:
+        raise ValueError('positive Rust cleanup budget required')
     evidence = cleanup_observations(request['ownership'], launch=request['launch'], podman=args.podman, systemctl=args.systemctl,
-                                    timeout=args.timeout)
+                                    timeout=budget)
     print(json.dumps(evidence, sort_keys=True))
