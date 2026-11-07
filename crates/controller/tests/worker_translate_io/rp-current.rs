@@ -3,12 +3,12 @@ struct Shell<'a>(&'a mut Controller);
 impl std::ops::Deref for Shell<'_> { type Target=Controller; fn deref(&self)->&Controller { self.0 } }
 impl std::ops::DerefMut for Shell<'_> { fn deref_mut(&mut self)->&mut Controller { self.0 } }
 impl Shell<'_> {
-    fn translate(&mut self, snapshot: &Snapshot, world: &mut World, observation: Observation, commit: &mut Commit) -> Result<(Option<Event>, bool)> {
+    fn translate(&mut self, snapshot: &Snapshot, world: &mut World, observation: Observation, commit: &mut Commit) -> Result<(Option<KernelInput>, bool)> {
         let mut detailed_review = false;
         let event = self.arm(snapshot, world, observation, commit, &mut detailed_review)?;
         Ok((event, detailed_review))
     }
-    fn arm(&mut self, snapshot: &Snapshot, world: &mut World, observation: Observation, commit: &mut Commit, detail: &mut bool) -> Result<Option<Event>> {
+    fn arm(&mut self, snapshot: &Snapshot, world: &mut World, observation: Observation, commit: &mut Commit, detail: &mut bool) -> Result<Option<KernelInput>> {
         let mut detailed_review = false;
         let event = match observation {
             Observation::WorkerFailed {
@@ -54,7 +54,7 @@ impl Shell<'_> {
                     .get(node.0 as usize)
                     .copied()
                     .ok_or(Error::Invalid("worker node missing"))?;
-                if worker::worker_failed(n.run, n.generation, generation) == worker::Failure::Ignore
+                if role != "planner" && worker::worker_failed(n.run, n.generation, generation) == worker::Failure::Ignore
                 {
                     return Ok(None);
                 }
@@ -77,7 +77,7 @@ impl Shell<'_> {
                     "postmortem" => worker::Role::Postmortem,
                     _ => worker::Role::Unknown,
                 };
-                let valid_role = worker::valid_role(phase, worker_role);
+                let valid_role = role == "planner" || worker::valid_role(phase, worker_role);
                 let mut mapped = match adapters::workers::protocol::map_reply_with_plan_check(
                     &role,
                     &reply,
@@ -85,13 +85,21 @@ impl Shell<'_> {
                 ) {
                     Ok(reply) if valid_role => reply,
                     _ => {
-                        return Ok(Some(Event::Reply {
+                        return Ok(Some(KernelInput::Event(Event::Reply {
                             node,
                             generation,
                             reply: Reply::RunFailed,
-                        }));
+                        })));
                     }
                 };
+                if role == "planner" && (!matches!(n.phase, tl3_kernel::Phase::Planning { .. })
+                    || (n.run != Some(generation) && n.job != Some(generation))) {
+                    let result = match mapped {
+                        adapters::workers::protocol::MappedReply::Planner(result) => result,
+                        _ => unreachable!("planner mapper"),
+                    };
+                    return Ok(Some(KernelInput::Planner { node, generation, result }));
+                }
                 // Legacy quota rows have no ordering identity. Preserve their
                 // once-only reply consumption until fresh quota facts replace them.
                 if let Some(row) = snapshot.rows.iter().find(|row| {
@@ -162,11 +170,11 @@ impl Shell<'_> {
                         match adapters::workers::review::validate_reply(&reply, &criteria) {
                             Ok(blockers) => blockers,
                             Err(_) => {
-                                return Ok(Some(Event::Reply {
+                                return Ok(Some(KernelInput::Event(Event::Reply {
                                     node,
                                     generation,
                                     reply: Reply::RunFailed,
-                                }));
+                                })));
                             }
                         };
                     commit.rows.push(put(
@@ -293,39 +301,19 @@ impl Shell<'_> {
                     commit
                         .rows
                         .push(put("findings", node.0.to_string(), findings));
-                    if let adapters::workers::protocol::MappedReply::Kernel(Reply::PlanLeaf {
+                    if let adapters::workers::protocol::MappedReply::Planner(tl3_kernel::PlannerResult::Ordinary(Reply::PlanLeaf {
                         fits,
                         ..
-                    }) = mapped
+                    })) = mapped
                     {
                         let paths = adapters::workers::protocol::reply_field::<Vec<String>>(
                             &reply, "files",
                         )?;
                         mapped =
-                            adapters::workers::protocol::MappedReply::Kernel(Reply::PlanLeaf {
+                            adapters::workers::protocol::MappedReply::Planner(tl3_kernel::PlannerResult::Ordinary(Reply::PlanLeaf {
                                 footprint: self.footprint(snapshot, world, node, &paths)?,
                                 fits,
-                            });
-                    }
-                }
-                // Q27: a later semantic planner failure consumes no second
-                // re-plan and asks no question. Q50/owner/resource paths stay
-                // outside this semantic mapping, as does Q54's maker ladder.
-                if role == "planner"
-                    && n.empty_allowed_replanned
-                    && let adapters::workers::protocol::MappedReply::Kernel(ending) = &mut mapped
-                {
-                    *ending = adapters::workers::protocol::after_empty_allowed_replan(
-                        *ending,
-                        n.empty_allowed_replanned,
-                    );
-                    if matches!(
-                        ending,
-                        Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit
-                    ) {
-                        reply["empty_allowed_replan_stop"] = json!(
-                            "Planning failed after the one empty-allowed re-plan for this request version; stop for TL3 review."
-                        );
+                            }));
                     }
                 }
                 let checkpoint = commit.rows.len();
@@ -351,11 +339,11 @@ impl Shell<'_> {
                         // Discard partial declarations from this reply, atomically with its rejection.
                         commit.rows.truncate(checkpoint);
                         input_resources::record(commit, node, generation, failure);
-                        return Ok(Some(Event::Reply {
+                        return Ok(Some(KernelInput::Event(Event::Reply {
                             node,
                             generation,
                             reply: Reply::RunFailed,
-                        }));
+                        })));
                     }
                     return Err(error);
                 }
@@ -378,6 +366,13 @@ impl Shell<'_> {
                     ));
                 }
                 let mapped = match mapped {
+                    adapters::workers::protocol::MappedReply::Planner(result) => {
+                        return Ok(Some(KernelInput::Planner { node, generation, result }));
+                    }
+                    adapters::workers::protocol::MappedReply::Kernel(reply) if role == "planner" => {
+                        return Ok(Some(KernelInput::Planner { node, generation,
+                            result: tl3_kernel::PlannerResult::Ordinary(reply) }));
+                    }
                     adapters::workers::protocol::MappedReply::Kernel(reply) => reply,
                     adapters::workers::protocol::MappedReply::Made(sha) => {
                         let inputs = self
@@ -509,10 +504,10 @@ impl Shell<'_> {
             }
         };
         *detail = detailed_review;
-        Ok(Some(event))
+        Ok(Some(KernelInput::Event(event)))
     }
 }
-pub(super) fn translate(c: &mut Controller, s: &Snapshot, w: &mut World, o: Observation, commit: &mut Commit) -> Result<(Option<Event>, bool)> { Shell(c).translate(s,w,o,commit) }
+pub(super) fn translate(c: &mut Controller, s: &Snapshot, w: &mut World, o: Observation, commit: &mut Commit) -> Result<(Option<KernelInput>, bool)> { Shell(c).translate(s,w,o,commit) }
 // The current arm resolves `adapters::workers::reproducing` to the current
 // production body (#824 moved node-id parsing to tl3-harness-core). The
 // reference arm keeps the frozen pre-#824 copy in reproducing.rs, so no shared

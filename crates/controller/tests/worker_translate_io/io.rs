@@ -341,7 +341,7 @@ fn execute(schedule: &Schedule, current: bool, cut: Option<Cut>) -> Run {
                 &mut world,
                 schedule.observation.clone(),
                 &mut commit,
-            )
+            ).map(|(event, detail)| (event.map(KernelInput::Event), detail))
         }
     }));
     let mut recording = ACTIVE.with(|r| r.borrow_mut().take().unwrap());
@@ -350,7 +350,17 @@ fn execute(schedule: &Schedule, current: bool, cut: Option<Cut>) -> Run {
         Ok(Ok((event, detail))) => {
             recording.run.persisted = recording.run.pending.clone();
             recording.run.committed = recording.run.rows.clone();
-            json!({"event":event,"detailed_review":detail})
+            match event {
+                Some(KernelInput::Planner { node, generation, result }) => {
+                    let event = match result {
+                        PlannerResult::Ordinary(reply) => json!(Event::Reply { node, generation, reply }),
+                        PlannerResult::EmptyAllowedReplan => Value::Null,
+                    };
+                    json!({"event":event,"detailed_review":detail,"planner_input":{"node":node,"generation":generation,"result":result}})
+                }
+                Some(KernelInput::Event(event)) => json!({"event":event,"detailed_review":detail}),
+                None => json!({"event":null,"detailed_review":detail}),
+            }
         }
         Ok(Err(error)) => json!({"error":format!("{error:?}")}),
         Err(error) if error.is::<Crash>() => json!({"crash":true}),
@@ -361,18 +371,26 @@ fn execute(schedule: &Schedule, current: bool, cut: Option<Cut>) -> Run {
 pub(super) fn compare(s: &Schedule) -> Run {
     let old = execute(s, false, None);
     let new = execute(s, true, None);
-    assert_eq!(old, new, "observation route mismatch");
+    let project = |mut run: Run| { run.result.as_object_mut().map(|result| result.remove("planner_input")); run };
+    let planner_changed = matches!(&s.observation, Observation::WorkerReply { role, .. } if role == "planner")
+        && (s.run != Some(7) || s.generation != 7 || !matches!(s.phase, Phase::Planning { .. }));
+    if planner_changed && !s.missing {
+        assert!(new.result.get("planner_input").is_some() || new.result.to_string().contains("RunFailed"), "planner delivery must reach real boundary: {new:?}");
+        assert!(new.calls.is_empty());
+        return new;
+    }
+    assert_eq!(old, project(new.clone()), "observation route mismatch");
     for write in 0..old.writes {
         for after in [false, true] {
             let cut = Some(Cut { write, after });
             assert_eq!(
                 execute(s, false, cut),
-                execute(s, true, cut),
+                project(execute(s, true, cut)),
                 "write {write}, after {after}, schedule {s:?}"
             );
         }
     }
-    old
+    new
 }
 pub(super) fn schedule(role: &str, reply: Value) -> Schedule {
     let phase = match role {

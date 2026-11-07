@@ -173,7 +173,7 @@ pub fn step_planner(mut world: World, mut budget: ReplanBudget, request: NodeId,
     reply_empty_replan(&mut world, i, &mut budget, &mut outbox);
     kernel_proof! {
         reveal(reply_bounds); reveal(storage_ordered);
-        reveal(footprint::ordered_table); reveal(footprint::valid_footprint);
+        reveal(footprint::ordered_table);
         assert forall|j: int| 0 <= j < world.nodes@.len() implies
             settle_shape(world.nodes@[j])
                 && world.nodes@[j].generation as int + generation_capacity(world.nodes@[j]) <= u64::MAX as int
@@ -181,6 +181,7 @@ pub fn step_planner(mut world: World, mut budget: ReplanBudget, request: NodeId,
                 && world.nodes@[j].credit.earned as int + merge_capacity(world.nodes@[j]) <= u64::MAX as int
         by {
             assert(node_checked(before_replan@, before_replan@.nodes@[j]));
+            footprint::valid_under_table_growth(before_replan@, world, world.nodes@[j].footprint);
             local_capacities(world.nodes@[j]);
             if j != i { assert(world.nodes@[j] == before_replan@.nodes@[j]); }
         }

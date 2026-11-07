@@ -1,7 +1,7 @@
 use super::super::super::*;
 use std::sync::OnceLock;
 use tl3_kernel::EarlyEnd;
-pub(crate) enum MappedReply { Kernel(Reply), Made(String), NeedsFiles {paths:Vec<String>, fits:bool} }
+pub(crate) enum MappedReply { Kernel(Reply), Planner(PlannerResult), Made(String), NeedsFiles {paths:Vec<String>, fits:bool} }
 include!(concat!(env!("OUT_DIR"), "/worker_schemas.rs"));
 pub(crate) fn map_reply(role: &str, reply: &Value) -> Result<MappedReply> {
     map_reply_with_plan_check(role, reply, None)
@@ -30,9 +30,10 @@ pub(crate) fn map_reply_with_plan_check(
             return Err(Error::Invalid("invalid plan-check provenance"));
         }
         forecast(reply)?;
-        return Ok(MappedReply::Kernel(if provenance.empty_allowed_replan() {
-            Reply::PlanCheckReplan
-        } else if provenance
+        if provenance.empty_allowed_replan() {
+            return Ok(MappedReply::Planner(PlannerResult::EmptyAllowedReplan));
+        }
+        return Ok(MappedReply::Planner(PlannerResult::Ordinary(if provenance
             .objections
             .iter()
             .any(|objection| objection.class != ObjectionClass::SizeExecutionFit)
@@ -40,7 +41,7 @@ pub(crate) fn map_reply_with_plan_check(
             Reply::PlanCheckRejected
         } else {
             Reply::PlanCheckNeedsSplit
-        }));
+        })));
     }
     if role == "maker" {
         return Ok(match reply["kind"].as_str().unwrap() {
@@ -83,6 +84,9 @@ pub(crate) fn map_reply_with_plan_check(
             _ => unreachable!(),
         });
     }
+    if role == "planner" {
+        return Ok(MappedReply::Planner(PlannerResult::Ordinary(ordinary_planner_reply(reply)?)));
+    }
     Ok(MappedReply::Kernel(match role {
         "ingest" if reply["kind"] == "brief" => {
             let forecast = forecast(reply)?;
@@ -107,7 +111,6 @@ pub(crate) fn map_reply_with_plan_check(
         },
         "reviewer" if reply["verdict"] == "out_of_room" => Reply::ReviewerOutOfRoom,
         "reviewer" => Reply::ChangesRequested,
-        "planner" => ordinary_planner_reply(reply)?,
         _ => return Err(Error::Invalid("unsupported worker role")),
     }))
 }
@@ -256,20 +259,3 @@ pub(crate) fn reply_field<T: serde::de::DeserializeOwned>(reply: &Value, field: 
     serde_json::from_value(value.clone()).map_err(|_| Error::Invalid("invalid worker reply field"))
 }
 
-/// Q27: only a consumed empty-allowed re-plan changes legacy planner endings.
-/// Transport, infrastructure, owner, credit and quota handling never enters here.
-pub(crate) fn after_empty_allowed_replan(ending: Reply, consumed: bool) -> Reply {
-    if consumed
-        && matches!(
-            ending,
-            Reply::PlanCantMeet
-                | Reply::PlanSplit
-                | Reply::PlanLeaf { fits: false, .. }
-                | Reply::PlanCheckReplan
-        )
-    {
-        Reply::PlanCheckRejected
-    } else {
-        ending
-    }
-}

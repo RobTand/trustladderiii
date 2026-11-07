@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use tl3_controller::{Error, Repository, Result};
-use tl3_kernel::{Event, HeadId, NodeId, Reply};
+use tl3_kernel::{Event, HeadId, NodeId, PlannerResult, Reply};
+#[derive(Clone, Copy, Debug)]
+enum KernelInput { Event(Event), Planner { node: NodeId, generation: u64, result: PlannerResult } }
 use tl3_store::Snapshot;
 #[derive(Serialize)]
 enum RowChange {

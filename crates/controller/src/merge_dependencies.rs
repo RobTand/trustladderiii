@@ -1300,7 +1300,7 @@ mod tests {
             .translate(&snapshot, &mut world, observation, &mut commit)
             .unwrap()
         {
-            c.apply(&snapshot, world, event, &mut commit).unwrap();
+            c.apply_input(&snapshot, world, event, &mut commit).unwrap();
         }
         c.store.commit(&commit).unwrap();
     }

@@ -90,8 +90,8 @@ fn production_and_reference_sources_are_pinned() {
                     mapping(&production),
                     "current mapping drift"
                 );
-                let helper = |source: &str| source[source.find("pub(crate) fn after_empty_allowed_replan(").unwrap()..].split("#[cfg(test)]").next().unwrap().trim().to_owned();
-                assert_eq!(helper(&copy), helper(&production));
+                assert!(!production.contains("fn after_empty_allowed_replan("));
+                assert!(!copy.contains("fn after_empty_allowed_replan("));
                 for part in pin["parts"].as_array().unwrap().iter().skip(1) {
                     let part = part.as_str().unwrap();
                     assert!(production.contains(part), "production leaf drift: {name}");
@@ -169,7 +169,10 @@ fn mandatory_roles_and_staleness() {
             };
             let r = compare(&s);
             assert!(r.calls.is_empty());
-            assert_eq!(r.result["event"], Value::Null);
+            if role == "planner" {
+                assert!(r.result.get("planner_input").is_some());
+                assert!(r.result["planner_input"]["result"].get("Ordinary").is_some());
+            } else { assert_eq!(r.result["event"], Value::Null); }
         }
     }
     for role in ["writer", "classifier", "postmortem", "unknown"] {
@@ -183,7 +186,9 @@ fn mandatory_role_validation_and_error_classes() {
     for role in ["ingest", "audit", "planner", "maker", "reviewer"] {
         let mut s = schedule(role, reply(role));
         s.phase = tl3_kernel::Phase::Queued;
-        assert!(routed(&s).result.to_string().contains("RunFailed"));
+        let routed = routed(&s);
+        if role == "planner" { assert!(routed.result.get("planner_input").is_some()); }
+        else { assert!(routed.result.to_string().contains("RunFailed")); }
         assert!(
             routed(&schedule(role, json!({})))
                 .result

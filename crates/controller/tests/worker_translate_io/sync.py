@@ -18,10 +18,10 @@ def main():
     assert arm.count(quota_comment) == 1
     # Keep #828's separately pinned historical clear in this extraction comparison.
     arm = arm.replace(quota_comment, (HERE / 'legacy-quota-clear.rs.txt').read_text())
-    current = (HERE / 'current.rs').read_text()
+    current = (HERE / 'rp-current.rs').read_text()
     first = current.index('            Observation::WorkerFailed {')
     last = current.index('        };\n        *detail', first)
-    (HERE / 'current.rs').write_text(current[:first] + arm + current[last:])
+    (HERE / 'rp-current.rs').write_text(current[:first] + arm + current[last:])
 
     production = (SOURCE / 'adapters/workers/protocol.rs').read_text()
     frozen = (HERE / 'protocol.rs').read_text()
@@ -29,7 +29,7 @@ def main():
     last = frozen.index('pub(crate) fn relative_file(', first)
     start = production.index('pub(crate) fn map_reply(')
     end = production.index('pub(crate) fn relative_file(', start)
-    (HERE / 'protocol-current.rs').write_text(frozen[:first] + production[start:end] + frozen[last:])
+    (HERE / 'protocol-rp.rs').write_text(frozen[:first].replace('Kernel(Reply), Made(String)', 'Kernel(Reply), Planner(PlannerResult), Made(String)') + production[start:end] + frozen[last:])
 
 
 if __name__ == '__main__':
