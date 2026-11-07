@@ -2645,7 +2645,15 @@ fn pending_injob_launch_requires_exact_stopped_launcher_and_empty_name_and_label
         "process_group_probe_errno":3,"container":null,
         "pending_launch":{"intent":launch,"name_exists_exit":1,"sweep_exit":0,"remaining_ids":[]}});
     for defect in [
-        "name", "sweep", "remaining", "launcher", "group", "intent", "mode", "missing", "valid",
+        "name",
+        "sweep",
+        "remaining",
+        "launcher",
+        "group",
+        "intent",
+        "mode",
+        "missing",
+        "valid",
     ] {
         let mut evidence = facts.clone();
         match defect {
@@ -2743,7 +2751,7 @@ fn injob_no_launch_needs_native_clean_and_does_not_leave_unregistered_debt() {
         let terminal = f.attach();
         assert_eq!(
             terminal.last().unwrap()["result"]["observation"]["terminal"]["ending"],
-            if cancelled { "cancelled" } else { "infra_lost" },
+            if cancelled { "cancelled" } else { "infra-lost" },
             "{terminal:?}"
         );
         let debt = f
