@@ -232,6 +232,8 @@ impl Flux {
             format!("--cwd={}", request.tree.root.display()),
             "-n".into(),
             "1".into(),
+            "-N".into(),
+            "1".into(),
             "-c".into(),
             request.reservation.cpus.to_string(),
             "-t".into(),
@@ -298,6 +300,46 @@ pub(super) struct Job {
 #[derive(Deserialize, Serialize, PartialEq, Eq)]
 #[serde(transparent)]
 pub(super) struct Jobspec(serde_json::Value);
+
+impl Jobspec {
+    /// Fluxion's standing graph accounts in GiB leaves under a single node's slot.
+    /// This requests admission; sdexec's fixed caps do not follow this count.
+    pub(super) fn with_memory(mut self, reservation: &Reservation) -> Result<Self> {
+        let invalid = || {
+            BackendError::invalid(
+                "native jobspec must have one node and one task slot with the requested cores",
+            )
+        };
+        let resources = self
+            .0
+            .get_mut("resources")
+            .and_then(serde_json::Value::as_array_mut)
+            .ok_or_else(invalid)?;
+        if resources.len() != 1 || resources[0]["type"] != "node" || resources[0]["count"] != 1 {
+            return Err(invalid());
+        }
+        let slots = resources[0]
+            .get_mut("with")
+            .and_then(serde_json::Value::as_array_mut)
+            .ok_or_else(invalid)?;
+        if slots.len() != 1 || slots[0]["type"] != "slot" || slots[0]["count"] != 1 {
+            return Err(invalid());
+        }
+        let leaves = slots[0]
+            .get_mut("with")
+            .and_then(serde_json::Value::as_array_mut)
+            .ok_or_else(invalid)?;
+        if leaves.len() != 1
+            || leaves[0]["type"] != "core"
+            || leaves[0]["count"] != reservation.cpus.get()
+            || reservation.gpus != 0
+        {
+            return Err(invalid());
+        }
+        leaves.push(serde_json::json!({"type": "memory", "count": reservation.memory_bytes.get().div_ceil(1_u64 << 30)}));
+        Ok(self)
+    }
+}
 
 #[derive(Deserialize)]
 struct NativeEvent {

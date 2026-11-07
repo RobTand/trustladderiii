@@ -362,7 +362,8 @@ impl RunBackend for Flux {
         if !prepared.success {
             return Ok(Submission::Unknown { reason: "native immutable jobspec preparation failed; nothing submitted; intent retained".into() });
         }
-        let spec: process::Jobspec = serde_json::from_slice(&prepared.stdout)?;
+        let spec = serde_json::from_slice::<process::Jobspec>(&prepared.stdout)?
+            .with_memory(&record.request.reservation)?;
         let spec = blob(
             &record.intent.output_dir.join("original-jobspec.json"),
             &serde_json::to_vec(&spec)?,

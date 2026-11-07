@@ -251,7 +251,7 @@ resource)
     case "$3" in --states=all) cat "$fixture/all.json";; --states=free) cat "$fixture/free.json";; *) exit 9;; esac;;
 job)
     case "$2" in
-    submit) if [ "$mode" = unknown ]; then exit 1; fi; printf 'fABC\n';;
+    submit) cp "$3" "$fixture/jobspec.json"; if [ "$mode" = unknown ]; then exit 1; fi; printf 'fABC\n';;
     info)
         if [ "$mode" = quiet-info ]; then touch "$fixture/watching"; exec /bin/sleep 300; fi
         if [ "$3" = --original ]; then cat "$fixture/jobspec.json"; else cat "$fixture/all.json"; fi;;
@@ -269,7 +269,7 @@ def option(prefix): return next(item[len(prefix):] for item in args if item.star
 environment=dict(item[6:].split('=',1) for item in args if item.startswith('--env=') and '=' in item[6:])
 user=dict(item[15:].split('=',1) for item in args if item.startswith('--setattr=user.'))
 runner=next(i for i,item in enumerate(args) if not item.startswith('-') and item.startswith('/mnt/shared/'))
-spec={'tasks':[{'command':args[runner:]}], 'resources':[{'type':'core','count':int(args[args.index('-c')+1])}], 'attributes':{'user':user,'system':{'duration':option('-t') if any(item.startswith('-t=') for item in args) else args[args.index('-t')+1], 'constraints':option('--requires='), 'cwd':option('--cwd='),'environment':environment,'job':{'name':option('--job-name=')}, 'shell':{'options':{'output':{'stdout':{'path':option('--output=')},'stderr':{'path':option('--error=')}}}}}}}
+spec={'tasks':[{'command':args[runner:]}], 'resources':[{'type':'node','count':1,'with':[{'type':'slot','count':1,'label':'task','with':[{'type':'core','count':int(args[args.index('-c')+1])}]}]}], 'attributes':{'user':user,'system':{'duration':option('-t') if any(item.startswith('-t=') for item in args) else args[args.index('-t')+1], 'constraints':option('--requires='), 'cwd':option('--cwd='),'environment':environment,'job':{'name':option('--job-name=')}, 'shell':{'options':{'output':{'stdout':{'path':option('--output=')},'stderr':{'path':option('--error=')}}}}}}}
 text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
 "#).unwrap();
         fs::set_permissions(&native, fs::Permissions::from_mode(0o555)).unwrap();
@@ -467,6 +467,104 @@ fn completed(status: u32) -> Vec<Value> {
 
 #[test]
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn jobspec_admits_declared_memory_as_rounded_gib_leaves_and_preserves_original() {
+    for (bytes, leaves) in [(1_u64, 1_u64), (1 << 30, 1), ((1 << 30) + 1, 2)] {
+        let mut f = Fixture::new();
+        f.request.reservation.memory_bytes = bytes.try_into().unwrap();
+        f.intent.request_digest = digest(&serde_json::to_vec(&f.request).unwrap());
+        assert_eq!(f.submit()["kind"], "accepted");
+        let spec: Value = serde_json::from_slice(
+            &fs::read(f.intent.output_dir.join("original-jobspec.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(spec["resources"][0]["type"], "node");
+        assert_eq!(
+            spec["resources"][0]["with"][0]["with"],
+            json!([
+                {"type":"core","count":2}, {"type":"memory","count":leaves}
+            ])
+        );
+        assert_eq!(
+            spec["attributes"]["user"]["memory_bytes"],
+            bytes.to_string()
+        );
+        assert_eq!(
+            spec["attributes"]["system"]["environment"]["OMP_NUM_THREADS"],
+            "1"
+        );
+        assert_eq!(
+            spec["tasks"][0]["command"][0],
+            f.request.runner.executable.to_str().unwrap()
+        );
+        // Native original contains memory too, so recovery compares the whole admitted shape.
+        fs::write(f.root.path().join("events"), "").unwrap();
+        let frames = f.attach();
+        assert_ne!(frames.last().unwrap()["kind"], "error", "{frames:?}");
+        let mut altered = spec;
+        altered["resources"][0]["with"][0]["with"][1]["count"] = json!(leaves + 1);
+        fs::write(f.root.path().join("jobspec.json"), altered.to_string()).unwrap();
+        assert_eq!(
+            f.attach().last().unwrap()["result"]["observation"]["kind"],
+            "unknown"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn malformed_memory_jobspec_shape_never_dispatches() {
+    for replacement in [
+        "spec['resources'][0]['count']=2",
+        "spec['resources'][0]['with'][0]['count']=2",
+        "spec['resources'][0]['with'][0]['with'].append({'type':'memory','count':1})",
+        "spec['resources'][0]['with'][0]['with'][0]['count']=3",
+    ] {
+        let f = Fixture::new();
+        let path = f.root.path().join("jobspec.py");
+        let source = fs::read_to_string(&path).unwrap().replace(
+            "text=json.dumps(spec);",
+            &format!("{replacement}\ntext=json.dumps(spec);"),
+        );
+        fs::write(path, source).unwrap();
+        let frames = f.call(json!({"op":"submit","request":f.request,"intent":f.intent}));
+        assert_eq!(frames.last().unwrap()["kind"], "error", "{frames:?}");
+        assert!(!f.calls().contains("job submit "));
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn resource_kill_without_oom_stderr_is_infrastructure_only_after_cleanup() {
+    for status in [137 * 256, 143 * 256, 9, 15] {
+        let f = Fixture::new();
+        assert_eq!(f.submit()["kind"], "accepted");
+        f.report(ReportOutcome::TestsFailed, false);
+        f.events(&completed(status));
+        assert_eq!(
+            f.attach().last().unwrap()["result"]["observation"]["kind"],
+            "unknown"
+        );
+        f.report(ReportOutcome::TestsFailed, true);
+        let frames = f.attach();
+        let terminal = &frames.last().unwrap()["result"]["observation"]["terminal"];
+        assert_eq!(terminal["ending"], "infra-lost", "{frames:?}");
+        assert!(
+            terminal["reason"]
+                .as_str()
+                .unwrap()
+                .contains("infrastructure/resource")
+        );
+        assert!(
+            terminal["reason"]
+                .as_str()
+                .unwrap()
+                .contains("not inferred")
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn acceptance_unknown_never_resubmits_and_original_jobspec_recovers_one_match() {
     let f = Fixture::new();
     fs::write(f.root.path().join("mode"), "unknown").unwrap();
@@ -645,8 +743,8 @@ fn posix_and_five_endings_require_semantic_and_cleanup_evidence() {
     f.report(ReportOutcome::TestsFailed, true);
     f.events(&completed(15));
     assert_eq!(
-        f.attach().last().unwrap()["result"]["observation"]["kind"],
-        "unknown"
+        f.attach().last().unwrap()["result"]["observation"]["terminal"]["ending"],
+        "infra-lost"
     );
     let mut f = Fixture::new();
     f.request.reservation.memory_guarantee = MemoryGuarantee::RequireAdmission;

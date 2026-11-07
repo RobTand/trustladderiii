@@ -24,18 +24,19 @@ def main():
     parser.add_argument("binary_sha256")
     parser.add_argument("destination", type=Path)
     parser.add_argument("manifest", type=Path)
-    parser.add_argument("old_context", type=Path)
+    parser.add_argument("context", type=Path)
+    parser.add_argument("expected_generation")
     args = parser.parse_args()
     if identity(args.binary)["sha256"] != args.binary_sha256:
         raise RuntimeError("BuildBuddy binary digest mismatch")
     source = Path(__file__).resolve().parent.parent
     subprocess.run([str(args.binary), str(args.destination), str(args.manifest),
-                    str(args.old_context), str(source)], check=True, timeout=180)
+                    str(args.context), str(source), args.expected_generation], check=True, timeout=180)
     packet_path = args.destination / "packet.json"
     packet = json.loads(packet_path.read_bytes())
     assert packet["status"] == "HELD_NOT_RELEASED_NOT_EXECUTED"
     assert packet["runtime_qualified"] is False
-    assert packet["generation"] == "fv1-model/61f47a7f95af46d794ca89c3a71f0654"
+    assert packet["generation"] == args.expected_generation
     # Independent reader checks every staged identity recorded by the Rust entrypoint.
     checked = []
     def verify(value):

@@ -843,6 +843,20 @@ fn classify(
             "cancel intent, native cancel exception, clean and trusted stopped-scope evidence",
         ));
     }
+    if finish.is_some_and(|(_, status)| {
+        matches!(
+            status,
+            WaitStatus::Exited {
+                code: 137 | 143,
+                ..
+            } | WaitStatus::Signalled { signal: 9 | 15, .. }
+        )
+    }) {
+        return Some((
+            Ending::InfraLost,
+            "infrastructure/resource termination; preserve raw status and partial output; OOM cause is not inferred",
+        ));
+    }
     if report.is_none()
         && record.runtime_ownerships.is_empty()
         && matches!(
