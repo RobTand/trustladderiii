@@ -468,16 +468,35 @@ def same_tools(frontend, actual):
 
 
 def validate_frontend_ticket(ticket, config, prepared):
-    require(type(ticket) is dict and ticket.get('schema') == 'tl3.verus-measurement.frontend-prerequisite.v1' and
-            ticket.get('no_smt') is True, 'missing frontend prerequisite; no measured execution allowed')
+    require(type(ticket) is dict and ticket.get('schema') in (
+        'tl3.verus-measurement.frontend-prerequisite.v1', 'tl3.verus-measurement.frontend-prerequisite.v2') and
+        ticket.get('no_smt') is True, 'missing frontend prerequisite; no measured execution allowed')
     for key in ('source_sha256', 'selection_sha256', 'runner_sha256', 'pins_sha256'):
         require(ticket.get(key) == prepared[key], 'frontend prerequisite source/runner/selection/pins mismatch')
     require(ticket.get('driver_sha256') == tooling_identity()['driver_sha256'], 'frontend prerequisite driver mismatch')
     frontend = Config.parse({**config.json(), 'mode': 'frontend-only', 'watchdog_seconds': 45,
                              'diagnostic_authorization': None, 'raw_queries': False})
-    require(ticket.get('frontend_bazel_argv') == frontend.command() and
-            type(ticket.get('parent_invocation_id')) is str and
-            re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', ticket['parent_invocation_id']), 'frontend prerequisite argv/parent mismatch')
+    valid_id = lambda id: type(id) is str and re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', id)
+    if ticket['schema'].endswith('.v1'):
+        require(ticket.get('frontend_bazel_argv') == frontend.command() and valid_id(ticket.get('parent_invocation_id')), 'frontend prerequisite argv/parent mismatch')
+    else:
+        parents = ticket.get('parents')
+        require(type(parents) is list and parents, 'missing frontend projection parents')
+        ids, selections, executions = [], [], []
+        for parent in parents:
+            exact_keys(parent, ('parent_invocation_id', 'config', 'indices', 'executions'))
+            id = parent['parent_invocation_id']
+            require(valid_id(id) and id not in ids, 'invalid/duplicate frontend projection parent')
+            ids.append(id)
+            original = Config.parse(parent['config'])
+            expected = {**frontend.json(), 'selections': original.json()['selections']}
+            require(original.json() == expected, 'projected frontend mode/source config mismatch')
+            indices = parent['indices']
+            require(type(indices) is list and indices and all(type(i) is int and 0 <= i < len(original.selections) for i in indices) and indices == sorted(set(indices)), 'invalid frontend projection indices')
+            require(type(parent['executions']) is list and len(parent['executions']) == len(indices), 'missing projected frontend execution')
+            selections += [asdict(original.selections[i]) for i in indices]
+            executions += parent['executions']
+        require(selections == [asdict(row) for row in config.selections] and executions == ticket.get('executions'), 'frontend projection selection/execution mismatch')
     require(type(ticket.get('executions')) is list and len(ticket['executions']) == len(config.selections), 'missing frontend execution identities')
     for row, execution in zip(config.selections, ticket['executions']):
         validate_execution(execution, row, 'frontend-only')

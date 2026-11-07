@@ -1,6 +1,7 @@
 """Admitted-only producer fixtures. No Bazel, Verus or real scanner execution."""
 import base64
 import copy
+import gzip
 import io
 import json
 import os
@@ -318,6 +319,184 @@ class Fixtures(unittest.TestCase):
                 S['wrapper_evidence'](**{**args, **extra})
         self.evidence.joinpath('fake-wrapper-v1.json').write_text(json.dumps(wrapper, indent=2))
         self.evidence.joinpath('fixture-separation.txt').write_text('FAKE producer interface fixtures only. No scanner execution or retained RP qualification.\n')
+
+    def assert_unidentified_submission(self, tag, transcript, code, candidates):
+        output = D['owned_directory'](self.root / tag)
+        hold = self.root / ('absent-' + tag)
+        config = self.config()
+        reply = subprocess.CompletedProcess([], code, transcript)
+        with patch.dict(S['wait_own'].__globals__, {'HOLD': hold}), \
+                patch.object(subprocess, 'run', return_value=reply) as mocked:
+            with self.assertRaisesRegex(ValueError, 'submission lacks unique own invocation'):
+                S['wait_own'](['FAKE-no-execution'], output, config, {'fixture': True})
+        self.assertEqual(mocked.call_count, 1)  # No replay, wait or API inspection.
+        self.assertTrue((output / 'submission-client.txt').exists(), 'lost client response before own-ID guard')
+        self.assertEqual((output / 'submission-client.txt').read_bytes(), transcript.encode() if isinstance(transcript, str) else transcript)
+        self.assertEqual(D['loads']((output / 'submission-client-status.json').read_bytes()), {'client_exit': code})
+        result = D['loads']((output / 'terminal-attribution.json').read_bytes())
+        self.assertEqual(result['overall'], 'UNKNOWN')
+        self.assertEqual(result['parent'], 'UNKNOWN')
+        self.assertIsNone(result['parent_invocation_id'])
+        self.assertEqual(result['client_exit'], code)
+        self.assertEqual(result['invocation_candidates'], candidates)
+        self.assertEqual(result['config'], config.json())
+        self.assertEqual(result['preparation_identity'], {'fixture': True})
+
+    def test_submission_missing_id_retains_evidence(self):
+        self.assert_unidentified_submission('no-id', 'FAKE response without ID\n', 0, [])
+
+    def test_submission_ambiguous_ids_retains_evidence(self):
+        ids = ['12345678-1234-1234-1234-123456789abc', '22345678-1234-1234-1234-123456789abc']
+        text = ''.join('https://app.buildbuddy.io/invocation/' + id + '\n' for id in ids)
+        self.assert_unidentified_submission('ambiguous-ids', text, 0, ids)
+
+    def test_submission_nonzero_exit_retains_evidence(self):
+        self.assert_unidentified_submission('no-id-error', b'FAKE client refused before Run\r\n\xff', 2, [])
+
+    def test_minimum_ordered_batches(self):
+        # Greedy longest-prefix takes three batches; the optimum takes two.
+        allowed = {(0, 1), (0, 2), (1, 4), (2, 3), (3, 4)}
+        self.assertEqual(S['minimal_batches'](4, lambda i, j: (i, j) in allowed), [(0, 1), (1, 4)])
+        fit = lambda i, j: j - i <= 2
+        self.assertEqual(S['minimal_batches'](5, fit), [(0, 2), (2, 4), (4, 5)])
+        self.assertEqual(S['minimal_batches'](5, fit), S['minimal_batches'](5, fit))
+        with self.assertRaisesRegex(ValueError, 'no ordered batch partition'):
+            S['minimal_batches'](1, lambda i, j: False)
+
+    def pair_config(self, mode='normal'):
+        first = configuration()['selections'][0]
+        second = {'target': '//crates/kernel:verus_kernel_credit_balance', 'selector': 'kernel#Credit::balance', 'expected': 1}
+        return self.config(mode=mode, selections=[first, second])
+
+    def test_projected_frontend_ticket(self):
+        config = self.pair_config()
+        frontend = self.pair_config('frontend-only')
+        expected = {k: 'a' * 64 for k in ('source_sha256', 'selection_sha256', 'runner_sha256', 'pins_sha256')}
+        expected['driver_sha256'] = D['tooling_identity']()['driver_sha256']
+        prior = {'overall': 'PASS', 'parent_invocation_id': '12345678-1234-1234-1234-123456789abc',
+                 'config': frontend.json(), 'preparation_identity': expected,
+                 'driver': {'executions': [fake_execution(row, 'frontend-only') for row in frontend.selections]}}
+        current = S['subset'](config, 1, 2)
+        ticket = S['frontend_ticket'](prior, current)
+        prepared = {**expected, 'selection_sha256': D['digest'](D['encoded']([D['asdict'](current.selections[0])]))}
+        self.assertEqual(D['validate_frontend_ticket'](ticket, current, prepared), ticket)
+        self.assertEqual(ticket['parents'][0]['config'], frontend.json())
+        self.assertEqual(ticket['parents'][0]['indices'], [1])
+        for change in ('source', 'indices', 'mode', 'duplicate', 'execution'):
+            bad = copy.deepcopy(ticket)
+            if change == 'source': bad['source_sha256'] = 'b' * 64
+            if change == 'indices': bad['parents'][0]['indices'] = [0]
+            if change == 'mode': bad['parents'][0]['config']['mode'] = 'normal'
+            if change == 'duplicate': bad['parents'] *= 2
+            if change == 'execution': bad['executions'][0]['argv'] += ['--build-sst']
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                D['validate_frontend_ticket'](bad, current, prepared)
+
+    def test_batch_preparation_execution_and_ids(self):
+        config = self.pair_config('frontend-only')
+        def size(command):
+            index = command.index('-c')
+            decoded = S['unpack_transport'](command[index + 2], command[index + 3])
+            count = len(D['loads'](decoded['config.json'])['selections'])
+            return {'fits': count == 1, 'estimated_serialized_bytes': count * 10, 'limit_bytes': 10}
+        def completed(command, output, child_config, expected):
+            index = config.json()['selections'].index(child_config.json()['selections'][0])
+            parent = str(index + 1) + '2345678-1234-1234-1234-123456789abc'
+            observation = {'overall': 'PASS', 'parent': 'PASS', 'parent_invocation_id': parent,
+                           'config': child_config.json(), 'cas': [], 'preparation_identity': expected}
+            D['put'](output, 'terminal-attribution.json', D['encoded'](observation))
+            return 0
+        with patch.dict(S['batch_plan'].__globals__, {'stock_size': size}):
+            plan = S['batch_plan'](config, self.evidence / 'batch.log', None)
+            self.assertEqual([(i['start'], i['end']) for i in plan], [(0, 1), (1, 2)])
+            receipt = self.evidence / 'batch-root-receipt.json'
+            S['prepare_batches'](self.source, config, self.root / 'batch-preparation', receipt, plan)
+            output = self.root / 'batch-run'
+            with patch.dict(S['run_batches'].__globals__, {'wait_own': completed}):
+                self.assertEqual(S['run_batches'](self.source, config, output, receipt, plan, None), 0)
+            result = D['loads']((output / 'terminal-attribution.json').read_bytes())
+            self.assertEqual(result['overall'], 'PASS')
+            self.assertEqual(len(set(result['parent_invocation_ids'])), 2)
+            records = result['records']
+            bad = copy.deepcopy(records)
+            bad[1]['parent_invocation_id'] = bad[0]['parent_invocation_id']
+            with self.assertRaisesRegex(ValueError, 'duplicate batch own ID'):
+                S['merge_batches'](config, plan, bad)
+            bad = copy.deepcopy(records)
+            bad[1]['cas'] = [{'parent_invocation_id': bad[0]['parent_invocation_id']}]
+            with self.assertRaisesRegex(ValueError, 'batch CAS own ID mismatch'):
+                S['merge_batches'](config, plan, bad)
+            self.assertEqual(S['merge_batches'](config, plan, records[:1])['overall'], 'UNKNOWN')
+            with self.assertRaisesRegex(ValueError, 'batch config/coverage'):
+                S['merge_batches'](config, plan, records[::-1])
+            def incomplete(command, output, child_config, expected):
+                D['put'](output, 'terminal-attribution.json', D['encoded']({
+                    'overall': 'UNKNOWN', 'parent': 'UNKNOWN', 'parent_invocation_id': None,
+                    'config': child_config.json()}))
+                return 3
+            with patch.dict(S['run_batches'].__globals__, {'wait_own': incomplete}):
+                stopped = self.root / 'batch-stop'
+                self.assertEqual(S['run_batches'](self.source, config, stopped, receipt, plan, None), 3)
+            self.assertTrue((stopped / 'batch-0000').exists())
+            self.assertFalse((stopped / 'batch-0001').exists())
+            self.assertEqual(D['loads']((stopped / 'terminal-attribution.json').read_bytes())['overall'], 'UNKNOWN')
+            stale = copy.deepcopy(plan)
+            stale[0]['command'] += ['changed']
+            with self.assertRaisesRegex(ValueError, 'stale batch'):
+                S['run_batches'](self.source, config, self.root / 'batch-stale', receipt, stale, None)
+
+    def test_batched_frontend_audits_each_own_record(self):
+        config = self.pair_config()
+        frontend = self.pair_config('frontend-only')
+        records = [{'overall': 'PASS', 'parent_invocation_id': str(i + 1) + '2345678-1234-1234-1234-123456789abc',
+                    'config': S['subset'](frontend, i, i + 1).json()} for i in range(2)]
+        prior = {'schema': 'tl3.verus-measurement.batches.v1', 'overall': 'PASS',
+                 'config': frontend.json(), 'records': records}
+        path = self.evidence / 'batched-frontend-locator.json'
+        path.write_bytes(D['encoded'](prior))
+        calls = []
+        def audit(source, cfg, locator, output):
+            calls.append(D['loads'](locator.read_bytes()))
+            return {'driver': 'FAKE independently reaudited fields'}
+        with patch.dict(S['check_frontend'].__globals__, {'check_frontend_record': audit}):
+            result = S['check_frontend'](self.source, config, path, self.evidence)
+        self.assertEqual(result, prior)
+        self.assertEqual(calls, records)
+        for change in ('coverage', 'duplicate-id', 'failure'):
+            bad = copy.deepcopy(prior)
+            if change == 'coverage': bad['records'].reverse()
+            if change == 'duplicate-id': bad['records'][1]['parent_invocation_id'] = bad['records'][0]['parent_invocation_id']
+            if change == 'failure': bad['records'][0]['overall'] = 'FAIL'
+            path.write_bytes(D['encoded'](bad))
+            with patch.dict(S['check_frontend'].__globals__, {'check_frontend_record': audit}), self.assertRaises(ValueError):
+                S['check_frontend'](self.source, config, path, self.evidence)
+
+    def test_compact_saved_six_helper_transport(self):
+        saved = D['loads'](gzip.decompress((HERE / 'six-helper-argv.fixture.json.gz').read_bytes()))
+        stock = runpy.run_path(S['BB'][-1], run_name='fixture_stock_no_main')
+        old_body = stock['run_request'](stock['parse_args'](saved[3:]))
+        with self.assertRaises(stock['ActionTooLarge']):
+            stock['check_action_size'](json.dumps(old_body).encode())
+        config = D['Config'].parse(D['loads'](saved[saved.index('--config-json') + 1]))
+        ticket = D['loads'](saved[saved.index('--frontend-prerequisite-json') + 1])
+        command = S['submission'](config, self.evidence / 'six-helper.log', ticket)
+        new_body = stock['run_request'](stock['parse_args'](command[3:]))
+        stock['check_action_size'](json.dumps(new_body).encode())
+        self.evidence.joinpath('six-helper-size.json').write_bytes(D['encoded']({
+            'old': S['stock_size'](saved), 'compact': S['stock_size'](command)}))
+        payload, identity = S['transport_payload'](config, ticket)
+        self.assertEqual(S['transport_payload'](config, ticket), (payload, identity))
+        decoded = S['unpack_transport'](payload, identity)
+        self.assertEqual(decoded['measure-remote.py'], (HERE / 'measure-remote.py').read_bytes())
+        self.assertEqual(decoded['config.json'], D['encoded'](config.json()))
+        self.assertEqual(decoded['frontend.json'], D['encoded'](ticket))
+        with self.assertRaises(ValueError):
+            S['unpack_transport'](payload, '0' * 64)
+        records = D['loads'](gzip.decompress(base64.b64decode(payload)))
+        records['config.json']['bytes'] += 1
+        corrupt = gzip.compress(D['encoded'](records), mtime=0)
+        with self.assertRaisesRegex(ValueError, 'hash/length mismatch'):
+            S['unpack_transport'](base64.b64encode(corrupt).decode(), D['digest'](corrupt))
 
     def test_same_invocation_and_hold(self):
         parent = '12345678-1234-1234-1234-123456789abc'

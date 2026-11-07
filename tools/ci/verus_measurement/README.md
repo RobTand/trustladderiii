@@ -1,6 +1,6 @@
 # Verus measurement driver
 
-`submit.py` prepares and submits one exact-source measurement. Its full dry-run
+`submit.py` prepares exact-source measurements and submits one run or an ordered batch plan. Its full dry-run
 is the preparation gate. `fixture-check.py` checks that gate without running
 Bazel, Verus, or the real scanner. Development checks run through PrismaBuild
 or supported free remote compute.
@@ -95,6 +95,45 @@ Legacy ordinary targets and `--measure` retain their previous behavior unless
 The exact BB command uses the approved `python3 -I .../bbrun.py` client. Terminal
 inspection uses `python3 -I .../bb_logs.py`. Named CAS downloads use the approved
 bbrun artifact operation and verify the URI's SHA256 and byte length.
+
+## Compact transport and ordered batches
+
+The submission packs the exact remote driver, canonical config and frontend ticket
+into one deterministic gzip+base64 payload. The remote bootstrap verifies the
+packed SHA256, exact file set, and every decoded file's SHA256 and byte length
+before executing the driver. It writes private temporary files and checks their
+bytes again. Neither the proof source nor the production runner is patched.
+
+Before preparation and submission, the driver constructs the request with the
+installed stock bbrun serializer and invokes its unchanged size guard. The
+preparation identity records the request size, serialized estimate, limit, and
+client/scanner hashes. If the full manifest does not fit, dynamic programming
+chooses the fewest contiguous ordered batches that fit. Equal-count plans choose
+the longest first batch, then apply the same rule to the remaining selections.
+Gzip sizes need not be monotonic. An impossible partition refuses before Run.
+The stock client repeats its size guard at actual submission.
+
+Each batch has its own config, exact command, preparation receipt, output
+directory, runner log and invocation ID. The root preparation receipt binds the
+complete ordered plan and all child receipts. Submission rechecks each identity
+and stops after the first failure or UNKNOWN. The root
+`terminal-attribution.json` retains the ordered child records and exact own IDs.
+It cannot pass with missing, duplicate or conflicting IDs, mismatched CAS
+attribution, or incomplete selection coverage. It does not combine raw group
+metrics into a new measurement.
+
+Normal batches use only rows from independently reaudited frontend parents.
+Projected tickets retain each original frontend config, own parent ID, selected
+indices and actual execution identities. Frontend and normal batch boundaries
+may differ. Every original frontend parent, wrapper and CAS receipt is rechecked;
+local batch summaries remain locators. Source, runner, tooling, pins, ordered
+selection and tool identity checks apply to each projection remotely and during
+collection. A new tooling/source revision requires fresh frontend evidence.
+
+The submitter saves `submission-client.txt` and
+`submission-client-status.json` before checking the unique own invocation ID.
+Missing or ambiguous IDs also produce an UNKNOWN attribution with the observed
+candidates. The submission is rejected and never replayed automatically.
 
 ## Evidence and verdicts
 
