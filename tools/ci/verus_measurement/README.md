@@ -175,3 +175,9 @@ preparation in the admitted fixture. Python 3.10 or later is required. Output
 inside the clean source checkout is refused before directory creation. Focused runner compilation, fixtures and any authorized frontend smoke are
 reported in the producer handoff. Actual normal verifier/scanner qualification
 remains UNKNOWN until an independently authorized landed-head run.
+
+The pinned wrapper's exact shell-quoted print-statement echo contains marker
+text but no JSON verdict. Collection records this single source echo separately.
+Changed/repeated source echoes and embedded/repeated emitted JSON results fail.
+This distinction provides no fallback authority; own scanned receipt validation
+and emitted result agreement remain mandatory.

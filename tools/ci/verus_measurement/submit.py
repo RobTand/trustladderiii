@@ -226,6 +226,26 @@ def cas_artifact(parent, metadata, output, local_name):
                   'sha256': match[1], 'bytes': len(data)}
 
 
+def wrapper_log_lines(log):
+    # The pinned wrapper's shell trace contains its print statement verbatim.
+    # This exact quoted source literal contains no JSON verdict. It is recorded
+    # as source text, never a result or fallback authority. Every other embedded
+    # marker, and every duplicate/conflicting emitted result, still fails.
+    source = "            print('BBRUN_WRAPPER_RESULT_V1 ' + json.dumps(result(), sort_keys=True, separators=(',', ':')), flush=True)"
+    echoed_source = source.replace("'", "'\"'\"'")
+    lines, source_echoes = [], 0
+    for line in log.splitlines():
+        if MARKER not in line:
+            continue
+        if line == echoed_source:
+            source_echoes += 1
+        else:
+            lines.append(line)
+    require(source_echoes <= 1 and len(lines) <= 1 and all(line.startswith(MARKER) for line in lines),
+            'forged/repeated/ambiguous wrapper markers')
+    return lines, source_echoes
+
+
 def collect_terminal(parent, terminal, output, runner_log, config, expected, *, wrapper_step_stdout=None):
     require(terminal in ('PASS', 'FAIL'), 'own parent must be independently terminal')
     listed = subprocess.run([*BB, 'artifacts', parent], stdout=subprocess.PIPE,
@@ -309,8 +329,7 @@ def collect_terminal(parent, terminal, output, runner_log, config, expected, *, 
     if wrapper_meta is not None:
         wrapper_bytes, audit = cas_artifact(parent, wrapper_meta, output, RESERVED)
         audits.append(audit)
-    lines = [line for line in runner_log.splitlines() if MARKER in line]
-    require(len(lines) <= 1 and all(line.startswith(MARKER) for line in lines), 'forged/repeated/ambiguous wrapper markers')
+    lines, source_echoes = wrapper_log_lines(runner_log)
     # The full parent log includes BuildBuddy footers and command stdout. It is
     # not a proven wrapper-step body and cannot independently authorize fallback.
     trusted_line = None
@@ -326,7 +345,8 @@ def collect_terminal(parent, terminal, output, runner_log, config, expected, *, 
         require(validate_wrapper(loads(lines[0][len(MARKER):]), parent) == wrapper,
                 'wrapper artifact/body and parent-log line disagree')
     return {'parent': terminal, 'wrapper': wrapper if wrapper is not None else 'UNKNOWN',
-            'driver': summary, 'overall': qualify(summary, wrapper, terminal), 'cas': audits}
+            'driver': summary, 'overall': qualify(summary, wrapper, terminal), 'cas': audits,
+            'wrapper_source_echoes': source_echoes}
 
 
 def wait_own(command, output, config, expected):

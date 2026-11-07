@@ -327,6 +327,15 @@ class Fixtures(unittest.TestCase):
                 S['wait_own'](['fake-sentinel-no-Bazel'], output, self.config(), {})
             mocked.assert_not_called()
 
+    def test_pinned_wrapper_source_echo_is_not_an_emitted_result(self):
+        source = "            print('BBRUN_WRAPPER_RESULT_V1 ' + json.dumps(result(), sort_keys=True, separators=(',', ':')), flush=True)"
+        echo = source.replace("'", "'\"'\"'")
+        marker = S['MARKER'] + json.dumps(fake_wrapper())
+        self.assertEqual(S['wrapper_log_lines'](echo + '\n' + marker), ([marker], 1))
+        for text in [marker + '\n' + marker, 'embedded ' + marker, echo + '\n' + echo, echo + 'changed']:
+            with self.assertRaises(ValueError):
+                S['wrapper_log_lines'](text)
+
     def test_review_wrapper_reasons(self):
         parent = '12345678-1234-1234-1234-123456789abc'
         for stage, values in (

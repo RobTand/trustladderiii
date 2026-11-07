@@ -41,3 +41,10 @@ checks raw source/pin/runner identities and actual tools again. Legacy diagnosti
 configuration remains available on capable sources with its existing explicit
 authorization, timeout and optional query logs. Unsupported older diagnostic
 sources require an explicit update; disposable patch fallback is removed.
+
+Own remote runner-test logs exposed an existing collector ambiguity before the
+live smoke: BuildBuddy's shell trace includes the pinned wrapper's literal
+print statement as quoted Python source. The collector records that exact
+non-JSON source line separately. It rejects changed/repeated source echoes and
+all embedded, duplicate or conflicting emitted JSON markers. Source text grants
+no wrapper verdict or fallback authority. The wrapper and scanner are unchanged.
