@@ -473,12 +473,6 @@ def test_proxy_chunk_usage_is_visible_without_changing_accounting(request_doc, t
 from tracing_forms import PLANTED, PLANTED_LINES  # noqa: E402
 
 
-@pytest.mark.parametrize('planted,secret', PLANTED)
-def test_redacts_review_credential_forms(planted, secret):
-    from tl3_workers.tracing import Redactor
-    result = Redactor(None).payload({'content': 'visible-before ' + planted + ' visible-after'})
-    assert secret not in json.dumps(result)
-    assert 'visible-after' in json.dumps(result)
 
 
 # Forms a second probe found after the review round. Header values run to the end
@@ -486,36 +480,10 @@ def test_redacts_review_credential_forms(planted, secret):
 
 
 
-@pytest.mark.parametrize('planted,secret', PLANTED_LINES)
-def test_redacts_further_credential_forms(planted, secret):
-    from tl3_workers.tracing import Redactor
-    result = json.dumps(Redactor(None).payload({'content': 'visible-before\n' + planted + '\nvisible-after'}))
-    assert secret not in result
-    assert 'visible-before' in result and 'visible-after' in result
 
 
-@pytest.mark.parametrize('document', [
-    json.dumps({'k': json.dumps({'password': 'ab"cd-nested-296'}), 'note': 'kept'}),
-    json.dumps({'token': ['list-secret-296', 'other'], 'note': 'kept'}),
-    json.dumps(json.dumps({'headers': {'private_key': 12345296}, 'note': 'kept'})),
-])
-def test_json_text_is_judged_by_field_names_however_deeply_quoted(document):
-    # A string that is wholly JSON is parsed, so quoting depth and value shape
-    # cannot hide a sensitive field. Text that merely contains JSON relies on
-    # the patterns above.
-    from tl3_workers.tracing import Redactor
-    result = Redactor(None).payload({'content': document})['content']
-    for secret in ('cd-nested-296', 'list-secret-296', '12345296'):
-        assert secret not in result
-    assert 'kept' in result
 
 
-@pytest.mark.parametrize('key', ['OPENAI_API_KEY', 'x-api-key', 'github_token', 'webhook_secret',
-                                 'secret', 'token', 'passwd_hash', 'private_key_id', 'credential_id',
-                                 'Cookie', 'Set-Cookie', 'AUTHORIZATION'])
-def test_redacts_sensitive_key_substrings(key):
-    from tl3_workers.tracing import Redactor
-    assert Redactor(None).payload({key: 'opaque-sensitive-value-296'})[key] == '[REDACTED]'
 
 
 @pytest.mark.parametrize('surface', ['tool_result', 'model_input', 'usage_chunks'])
@@ -571,40 +539,8 @@ def test_every_exported_field_is_free_of_planted_secrets(request_doc, exporters,
     assert marker[4:].encode() not in packets[-1][2]
 
 
-def test_payload_preserves_recent_messages_and_argument_tails():
-    from tl3_workers.tracing import Redactor
-    redactor = Redactor(None)
-    messages = [{'role': 'system', 'content': ('old-system-line\n' * 20000)}]
-    messages += [{'role': 'user', 'content': f'turn-{i}\n' + 'old\n' * 10000 + f'newest-{i}'}
-                 for i in range(8)]
-    result = redactor.payload({'messages': messages})
-    assert isinstance(result.get('messages'), list), 'keep message structure'
-    assert 'newest-7' in json.dumps(result), 'keep the latest turn'
-    assert 'truncated' in json.dumps(result).lower()
-    args = redactor.payload({'path': 'file.txt', 'argument': 'old\n' * 50000 + 'argument-tail',
-                             'result': 'old\n' * 50000 + 'result-tail'})
-    assert args['path'] == 'file.txt'
-    assert 'argument-tail' in json.dumps(args['argument'])
-    assert 'result-tail' in json.dumps(args['result'])
-    assert len(json.dumps(args, ensure_ascii=False).encode()) <= 65536
 
 
-def test_oversized_strings_bound_redaction_work_without_cut_secret_leaks(monkeypatch):
-    from tl3_workers.tracing import Redactor
-    redactor = Redactor(None)
-    original = redactor.text
-    seen = []
-    def text(value):
-        seen.append(len(value))
-        return original(value)
-    monkeypatch.setattr(redactor, 'text', text)
-    secret = 'sk-' + 'A' * 100000
-    result = redactor.payload({'content': 'old\n' * 3000000 + secret + '\nlatest-visible-line'})
-    assert max(seen) <= 65536, 'regex must never process the full oversized string'
-    assert 'latest-visible-line' in json.dumps(result)
-    assert 'A' * 32 not in json.dumps(result), 'no partial credential at the cut'
-    private = '-----BEGIN PRIVATE KEY-----\n' + 'A\n' * 100000 + '-----END PRIVATE KEY-----\nvisible-tail'
-    assert 'A\\n' not in json.dumps(redactor.payload(private))
 
 
 def test_trace_has_total_budget_and_keeps_root(request_doc, exporters, receiver):
@@ -651,37 +587,12 @@ def test_experiment_tag_failure_does_not_discard_trace(request_doc, monkeypatch,
     assert packets[-1][0] == '/v1/traces'
 
 
-def test_json_model_reply_keeps_readable_tail_without_escaped_secrets():
-    from tl3_workers.tracing import Redactor
-    reply = json.dumps({'kind': 'brief', 'brief': 'earlier paragraph\n' * 20000 + 'latest-reply-paragraph',
-                        'webhook_secret': 'opaque-json-reply-secret-296'})
-    result = Redactor(None).payload({'content': reply})
-    assert 'latest-reply-paragraph' in result['content']
-    assert 'opaque-json-reply-secret-296' not in json.dumps(result)
-    assert isinstance(json.loads(result['content']), dict), 'keep the structured model reply readable'
-    assert len(json.dumps(result).encode()) <= 65536
 
 
 # Third review round. The reviewer's 245 planted forms each pass through every
 # way a string reaches a span. Only the limits that workers/README.md lists may leak.
 from tracing_forms import FORMS, B64, r  # noqa: E402
 
-DOCUMENTED_LIMITS = {'DOC_unquoted_spaces', 'url_no_scheme', 'generic_webhook_path', 'cli_gh_with_token'}
-CARRIERS = {
-    'text': lambda R, F: R.text(F),
-    'payload': lambda R, F: R.payload(F),
-    'line': lambda R, F: R.payload('lead line\n' + F + '\ntrailer line that follows'),
-    'inline': lambda R, F: R.payload('I looked at ' + F + ' and then moved on.'),
-    'dict_value': lambda R, F: R.payload({'note': F}),
-    'json': lambda R, F: R.payload(json.dumps({'text': F})),
-    'json_twice': lambda R, F: R.payload(json.dumps(json.dumps({'text': F}))),
-    'json_thrice': lambda R, F: R.payload(json.dumps(json.dumps(json.dumps({'text': F})))),
-    'tool_args': lambda R, F: R.payload({'tool_calls': [{'name': 'bash', 'args': {'command': F}}],
-                                         'messages': [{'role': 'user', 'content': F}]}),
-    'tool_result_json': lambda R, F: R.payload([{'role': 'tool', 'content': json.dumps({'stdout': F})}]),
-    'function_arguments': lambda R, F: R.payload({'tool_calls': [{'function': {
-        'name': 'bash', 'arguments': json.dumps({'command': F})}}]}),
-}
 
 
 def leaked(output, secrets, width=8):
@@ -690,14 +601,6 @@ def leaked(output, secrets, width=8):
             if any(secret[i:i + width] in flat for i in range(max(1, len(secret) - width + 1)))]
 
 
-@pytest.mark.parametrize('name,text,secrets', [(name, text, secrets) for name, text, secrets, _ in FORMS
-                                               if name not in DOCUMENTED_LIMITS],
-                         ids=[name for name, *_ in FORMS if name not in DOCUMENTED_LIMITS])
-def test_planted_form_never_leaks_through_any_carrier(name, text, secrets):
-    from tl3_workers.tracing import Redactor
-    redactor = Redactor('/nonexistent/key-file-path')
-    leaks = {carrier: leaked(build(redactor, text), secrets) for carrier, build in CARRIERS.items()}
-    assert not any(leaks.values()), leaks
 
 
 def test_planted_forms_never_reach_the_packet(request_doc, exporters, receiver):
@@ -723,123 +626,18 @@ def test_planted_forms_never_reach_the_packet(request_doc, exporters, receiver):
         assert marker in data
 
 
-ORDINARY = [
-    'def test_password_reset_sends_email(client):',
-    'The password must be at least 12 characters and contain a digit.',
-    'Users reset their password by clicking the link in the email.',
-    'for token in tokens:\n    count += 1',
-    'self.token_count += len(tokens)',
-    'max_tokens=4096',
-    'sorted(items, key=lambda kv: kv[1])',
-    'max(words, key=len)',
-    'if token == expected:',
-    'def verify(token: str, key: bytes) -> bool:',
-    '# TODO: rotate the API key every 90 days',
-    'class TokenBucket:\n    def __init__(self, capacity, rate):',
-    "tokenizer = AutoTokenizer.from_pretrained('gpt2')",
-    "assert 'password' in error_message",
-    "git commit -m 'Fix password hashing'",
-    "key = d.get('name')",
-    'input_tokens: 123, output_tokens: 456',
-    'The cache key is derived from the file path.',
-    'export PATH=/usr/bin:$PATH',
-    'HTTP 401: invalid token',
-    'ssh -p 2222 host',
-    'pytest -p no:cacheprovider -q workers/tests',
-    "python -m pytest -k 'test_token or test_key' -q",
-    'primary_key=True, sort_keys=True',
-    'https://github.com/RobTand/trustladderiii/pull/302',
-    'git@github.com:RobTand/trustladderiii.git',
-    'ssh://git@github.com/o/r.git',
-    'http://localhost:8080/path@2x.png',
-    'email bob@example.com: thanks',
-    'let token = self.next_token()?;',
-    'for (key, value) in map.iter() {',
-    'fn parse_token(s: &str) -> Option<Token> {',
-    'The authorization header is required for this endpoint.',
-    'Missing password for user bob; ask the requester.',
-    '- [ ] rotate secrets quarterly',
-    'secret handshake protocol (SHP) v2 is documented in docs/shp.md',
-    'a passkey is not a password',
-    'use `--token-budget 4000` to cap spend',
-    'Cookie banner copy lives in web/consent.html',
-    'commit 29280f4b147fd889f848c51300ba3352b9e26d9d and 3f14146feb2902d35819403c0a83bb2a0ead9a36',
-    'sha256:81a462f2634e11c5372eb8822209d17cf6ca5ad653cda0315171c3a26b396cfe',
-    'uuid 6f59aec1-88d6-170c-0ce7-0fdb4eebbb70',
-    'Bearer tokens are described in RFC 6750.',
-    'Basic usage: run `tl3 start`.',
-    'basic authentication is disabled',
-    'a key-value store',
-    'keyboard shortcuts: ctrl+s to save',
-    'monkey patch the key function',
-    'tokens per second: 41.7',
-    'trace tr-6f59aec188d6170c0ce70ecdb4fde685, request cdc57fa99768407bb915874b3d9fde54',
-    'integrity sha512-Q2xvdWRmbGFyZS1zZWN1cml0eS10ZXN0LXZhbHVlLWZvci1pbnRlZ3JpdHk=',
-]
 
 
-@pytest.mark.parametrize('text', ORDINARY)
-def test_ordinary_text_survives_redaction(text):
-    from tl3_workers.tracing import Redactor
-    redactor = Redactor('/nonexistent/key-file-path')
-    assert redactor.text(text) == text
-    assert redactor.payload(text) == text
 
 
-def test_usage_counts_and_harmless_token_fields_survive():
-    from tl3_workers.tracing import Redactor
-    usage = {'input_tokens': 5, 'output_tokens': 6, 'total_tokens': 11, 'cache_read_input_tokens': 3,
-             'cache_creation_input_tokens': 2, 'max_tokens': 4096, 'budget_tokens': 32000,
-             'token_count': 12, 'tokenizer': 'gpt2', 'key': 'name', 'primary_key': 'id',
-             'input_token_details': {'cache_read': 8, 'cache_creation': 2},
-             'usage_metadata': {'input_tokens': 9, 'output_token_details': {'reasoning': 4}}}
-    assert Redactor(None).payload(usage) == usage
 
 
-@pytest.mark.parametrize('document,secret', [
-    ({'env': [{'name': 'DB_PASSWORD', 'value': 'k8s-json-env-296'}]}, 'k8s-json-env-296'),
-    ({'secret': 123456789012}, '123456789012'),
-    ({'auth': 'Ym9iOmh1bnRlcjI5Ng=='}, 'Ym9iOmh1bnRlcjI5Ng=='),
-])
-def test_structured_secrets_are_redacted_by_field(document, secret):
-    from tl3_workers.tracing import Redactor
-    assert secret not in json.dumps(Redactor(None).payload(document))
 
 
-def test_high_entropy_tokens_are_redacted_but_digests_survive():
-    from tl3_workers.tracing import Redactor
-    redactor = Redactor(None)
-    for secret in [r(40, B64), r(24), r(32, '0123456789abcdef'), r(56, B64)]:
-        assert leaked(redactor.text(f'the value {secret} was set'), [secret]) == []
-        assert 'the value' in redactor.text(f'the value {secret} was set')
 
 
-SENSITIVE_PATHS = ['.env', 'config/.env.local', 'deploy/server.pem', 'tls/site.key', '/home/u/.ssh/id_ed25519',
-                   '.netrc', 'web/.npmrc', '.pypirc', 'aws/credentials', 'k8s/db-secret.yaml',
-                   '/home/u/.docker/config.json', 'keys/putty.ppk', 'certs/client.p12', '/home/u/.kube/config',
-                   # Third re-check: match path components, not just base names.
-                   'config/prod.env', 'deploy/app.env', 'deploy/new.env', 'env.production', 'env', 'id_rsa.bak',
-                   'id_rsa.old', 'id_ed25519.orig', 'keystore.jks', 'app.keystore', 'signing.p8', 'key.pk8',
-                   'secrets/prod.yml', 'ops/credentials/db.txt', '.dockercfg', 'terraform.tfvars',
-                   'prod.auto.tfvars', 'terraform.tfstate', 'terraform.tfstate.backup', '.htpasswd', '.my.cnf',
-                   'service-account.json', 'service-account-prod.json', ' .env']
 
 
-@pytest.mark.parametrize('path', SENSITIVE_PATHS)
-def test_content_from_sensitive_files_is_replaced_by_a_marker(path):
-    from tl3_workers.tracing import Redactor
-    redactor = Redactor(None)
-    grep = redactor.payload({'matches': [{'path': path, 'line': 1, 'text': 'visible-sensitive-line'},
-                                         {'path': 'src/app.py', 'line': 2, 'text': 'ordinary-line'}]})
-    assert 'visible-sensitive-line' not in json.dumps(grep)
-    assert path in json.dumps(grep) and 'ordinary-line' in json.dumps(grep)
-    messages = redactor.payload({'messages': [
-        {'type': 'ai', 'content': '', 'tool_calls': [{'name': 'read', 'args': {'path': path}, 'id': 'call-s'},
-                                                    {'name': 'read', 'args': {'path': 'README.md'}, 'id': 'call-o'}]},
-        {'type': 'tool', 'tool_call_id': 'call-s', 'content': 'visible-sensitive-line'},
-        {'type': 'tool', 'tool_call_id': 'call-o', 'content': 'ordinary-line'}]})
-    assert 'visible-sensitive-line' not in json.dumps(messages)
-    assert 'ordinary-line' in json.dumps(messages)
 
 
 def test_sensitive_file_tool_result_names_the_path(request_doc, exporters, receiver):
@@ -862,79 +660,16 @@ def test_sensitive_file_tool_result_names_the_path(request_doc, exporters, recei
     assert tools[1].outputs == 'ordinary-source-line'
 
 
-def _filler(count, width=70):
-    return '\n'.join(f'filler {i} ' + 'f' * width for i in range(count))
 
 
-@pytest.mark.parametrize('begin,end', [
-    ('-----BEGIN RSA PRIVATE KEY-----', '-----END RSA PRIVATE KEY-----'),
-    ('-----BEGIN OPENSSH PRIVATE KEY-----', '-----END OPENSSH PRIVATE KEY-----'),
-    ('-----BEGIN PGP PRIVATE KEY BLOCK-----\nVersion: x\n', '-----END PGP PRIVATE KEY BLOCK-----'),
-    ('-----BEGIN ENCRYPTED PRIVATE KEY-----', '-----END ENCRYPTED PRIVATE KEY-----'),
-    ('api_key: |', 'next: 1'),
-])
-def test_multiline_secret_straddling_a_cut_never_leaks(begin, end):
-    from tl3_workers.tracing import Redactor
-    redactor = Redactor(None)
-    indent = '  ' if begin.startswith('api_key') else ''
-    body = [r(64, B64) for _ in range(40)]
-    key = begin + '\n' + '\n'.join(indent + line for line in body) + '\n' + end
-    bad = [fill for fill in range(60, 135)
-           if leaked(redactor.text(_filler(150) + '\n' + key + '\n' + _filler(fill, 60)), body)
-           or leaked(redactor.payload(_filler(150) + '\n' + key + '\n' + _filler(fill, 60)), body)]
-    assert bad == []
 
 
-def test_single_line_secrets_straddling_any_cut_never_leak():
-    from tl3_workers.tracing import Redactor
-    redactor = Redactor(None)
-    model_key = 'zz' + r(40) + '-mk'
-    redactor.secrets.add(model_key)
-    password = 'Qx' + r(22)
-    for fill in range(60, 135):
-        text = _filler(150) + f'\npassword={password}\nx {model_key} y\n' + _filler(fill, 60)
-        assert leaked(redactor.text(text), [password, model_key]) == []
-    # One oversized line is cut twice, keeping its head and its tail. Sweep the
-    # secret across the whole line so it straddles both cuts wherever they fall.
-    for offset in range(0, 9000, 5):
-        line = 'A' * offset + f' password={password} x {model_key} y ' + 'B' * (9000 - offset)
-        assert leaked(redactor.text(line), [password, model_key]) == [], offset
 
 
-def test_oversized_single_line_keeps_its_head_and_tail():
-    from tl3_workers.tracing import Redactor
-    redactor = Redactor(None)
-    result = redactor.payload('HEAD_MARK ' + 'z' * 20000 + ' FINAL_ONE_LINE_MARK')
-    assert result.startswith('HEAD_MARK') and result.endswith('FINAL_ONE_LINE_MARK')
-    assert 'truncated' in result
-    args = redactor.payload({'command': 'START_ARG ' + 'a' * 30000 + ' ENDARG'})
-    assert args['command'].startswith('START_ARG') and args['command'].endswith('ENDARG')
-    reply = redactor.payload({'text': 'REPLY_HEAD ' + 'o' * 3000}, 2048)
-    assert 'REPLY_HEAD' in json.dumps(reply)
 
 
-ADVERSARIAL = ['key', 'token', 'token=', 'secret_', 'password', 'credential', 'signature', 'a.', 'a-', 'a:',
-               'a://', 'sk-', 'Bearer ', 'authorization:', 'Authorization: Basic ', 'cookie=', '"password": ',
-               '\\"', '\\\\\\"', "'", '--password ', '-u a:', '-u ', 'https://u:', 'eyJ.', 'ghp_', 'AKIA',
-               '-----BEGIN PRIVATE KEY-----\n', '-----BEGIN A A A ', ' ', '\t', '\\n', 'token\\n', 'key=\\n ',
-               '= ', 'x_token_', 'secret secret ', 'key=key=', 'password:  ', 'password="', '| ', '[a]\n',
-               'name: a\n', 'x: |\n', 'mysql ', 'Private-Lines: 1\n', 'aB3', '//', ':@',
-               # Third re-check: a run of backslashes was quadratic.
-               '\\', '\\\\', '\\\\\\', 'password is ', 'token ', 'IDENTIFIED BY ', '<password>',
-               'a,password,', '"name": "DB_PASSWORD", ', '\tTRUE\t', 'net use ', '-db-password ']
 
 
-@pytest.mark.parametrize('unit', ADVERSARIAL)
-def test_redaction_is_linear_on_adversarial_text(unit):
-    import time
-    from tl3_workers.tracing import Redactor
-    redactor = Redactor(None)
-    text = (unit * (8192 // len(unit) + 1))[:8192]
-    started = time.process_time()
-    redactor.text(text)
-    redactor.text('x\n' + text)
-    # The quadratic label pattern this replaces took 2 s per call on dl380g10.
-    assert time.process_time() - started < 0.5
 
 
 def _maker_trace(mlflow):
@@ -1004,74 +739,16 @@ def test_very_long_trace_keeps_its_first_and_last_spans(request_doc, exporters, 
 
 # Fourth round: the third re-check's forms and variants. They keep their own
 # seed, so they import after the second round's forms.
-import tracing_forms3  # noqa: E402
-
-V3_DOCUMENTED = {
-    'kubectl_get_secret_jsonpath_decoded',  # a bare value on the line after a command
-    'env_uncommon_hex64', 'env_hmac_seed_hex64', 'env_openssl_rand_hex_output', 'hex_in_json_secret_bytes',  # 64-hex
-    'unicode_escaped_json',  # a label spelled with JSON escapes inside other text
-}
-V3_FORMS = [(name, text, secrets) for name, text, secrets, _ in tracing_forms3.FORMS if name not in V3_DOCUMENTED]
+from tracing_policy_cases import DOCUMENTED_LIMITS, V3_FORMS, VARIANTS  # noqa: E402
 
 
-@pytest.mark.parametrize('name,text,secrets', V3_FORMS, ids=[name for name, *_ in V3_FORMS])
-def test_third_recheck_form_never_leaks_through_any_carrier(name, text, secrets):
-    from tl3_workers.tracing import Redactor
-    redactor = Redactor('/nonexistent/key-file-path')
-    leaks = {carrier: leaked(build(redactor, text), secrets) for carrier, build in CARRIERS.items()}
-    assert not any(leaks.values()), leaks
 
 
-def _variants():
-    r, pw = tracing_forms3.r, lambda: tracing_forms3.r(20, tracing_forms3.PWCH)
-    alnum, hex_ = tracing_forms3.ALNUM, tracing_forms3.HEX
-    found = []
-
-    def v(name, template, secret):
-        found.append((name, template % secret, secret))
-    v('kubectl_pod_json_env_pretty', '$ kubectl get pod web -o json\n{\n  "spec": {"containers": [{"env": [\n    {\n'
-      '      "name": "DB_PASSWORD",\n      "value": "%s"\n    }\n  ]}]}\n}', pw())
-    v('json_key_value_inline', 'vars: {"key":"DB_PASSWORD","value":"%s"} end', pw())
-    v('json_key_value_escaped', 'out: {\\"name\\": \\"API_TOKEN\\", \\"value\\": \\"%s\\"}', pw())
-    v('form_body_pct_leading', 'username=bob&password=%s&client=cli', '%21' + r(16, alnum))
-    v('sql_with_password', "CREATE USER orders_svc WITH PASSWORD '%s';", pw())
-    v('sql_alter_user', "ALTER USER app WITH PASSWORD '%s';", pw())
-    v('sql_create_role_login', "CREATE ROLE svc LOGIN PASSWORD '%s' NOSUPERUSER;", pw())
-    v('sql_mysql_set_password', "SET PASSWORD FOR 'app'@'%%' = PASSWORD('%s');", pw())
-    v('sql_identified_by', "CREATE USER 'app'@'%%' IDENTIFIED BY '%s';", pw())
-    v('xml_element', '<server><id>nexus</id><username>deploy</username><password>%s</password></server>', pw())
-    v('xml_maven_settings', '<settings><servers><server>\n  <id>central</id>\n  <username>deploy</username>\n'
-      '  <password>%s</password>\n</server></servers></settings>', pw())
-    v('xml_hibernate_property', '<property name="hibernate.connection.password">%s</property>', pw())
-    v('csv_password_column', 'username,password,role\nbob,%s,admin', pw())
-    v('csv_row_with_header_password', 'id,email,password_hash,password\n1,a@b.io,x,%s', pw())
-    v('prose_password_is', 'The password for the staging database is %s - please rotate it.', pw())
-    v('prose_pw_is', 'the db pw is %s', pw())
-    v('prose_use_password', 'You can log in with user admin and password %s.', pw())
-    v('prose_password_used', 'FATAL: password authentication failed for user "app" (password used: %s)', pw())
-    v('prose_login_pair', 'Login: admin / %s', pw())
-    v('redis_requirepass', 'requirepass %s', pw())
-    v('redis_auth_command', 'AUTH %s', pw())
-    v('go_flag_password', 'myapp -db-password %s -port 8080', pw())
-    v('single_dash_flag', 'tool -pass %s', pw())
-    v('powershell_flag', 'Connect-Server -Password "%s"', pw())
-    v('powershell_securestring', "$p = ConvertTo-SecureString '%s' -AsPlainText -Force", pw())
-    v('net_use', 'net use \\\\srv\\share /user:CORP\\bob %s', pw())
-    v('htpasswd_apr1', 'deploy:$apr1$h7Gk2dQ1$%s', r(22, alnum))
-    v('netscape_cookie_jar', '.acme.io\tTRUE\t/\tTRUE\t1893456000\tsession_id\t%s', r(40, hex_))
-    v('airtable_pat', 'token %s', 'pat' + r(14) + '.' + r(64, hex_))
-    return found
 
 
-VARIANTS = _variants()
 
 
-@pytest.mark.parametrize('name,text,secret', VARIANTS, ids=[name for name, *_ in VARIANTS])
-def test_third_recheck_variant_is_redacted(name, text, secret):
-    from tl3_workers.tracing import Redactor
-    redactor = Redactor(None)
-    for carrier in (text, 'lead\n' + text + '\ntrail', [{'role': 'tool', 'content': text}]):
-        assert leaked(redactor.payload(carrier), [secret]) == [], carrier
+
 
 
 def test_third_recheck_forms_never_reach_the_packet(request_doc, exporters, receiver):
@@ -1093,53 +770,12 @@ def test_third_recheck_forms_never_reach_the_packet(request_doc, exporters, rece
     assert 'MARKER_TOOL_OUT' in data
 
 
-@pytest.mark.parametrize('path', ['docs/secret-scanning.md', 'tests/test_secret_redaction.py', 'src/credentials.rs',
-                                  'keys/id_rsa.pub', 'src/id_map.py', 'README.md', 'config/settings.toml'])
-def test_ordinary_files_keep_their_content(path):
-    from tl3_workers.tracing import Redactor
-    grep = Redactor(None).payload({'matches': [{'path': path, 'line': 1, 'text': 'ordinary-line'}]})
-    assert 'ordinary-line' in json.dumps(grep)
 
 
-def test_backslash_payloads_stay_linear():
-    import time
-    from tl3_workers.tracing import Redactor
-    redactor = Redactor(None)
-    started = time.process_time()
-    redactor.payload({f'field{i}': '\\' * 65536 for i in range(8)})
-    # Before the fix, one 8 KiB window of backslashes took 0.57 s on dl380g10.
-    assert time.process_time() - started < 1.0
 
 
-ORDINARY_V3 = [
-    "reply={'ok': True, 'scope_id': unit, 'token': 'b'*64,",
-    'token = "w" * 32',
-    'env_path.write_text("GF_SECURITY_ADMIN_PASSWORD=" + password + "\\nGF_USERS_DEFAULT_THEME=dark")',
-    'ssh-keygen -q -t ed25519 -N "" -C "pb-smoke3-$stamp" -f "$ctx/id_smoke" || exit 2',
-    '"Authorization": self.authorization, "Content-Type": "application/json"})',
-    'scope `prismabuild-jobd3c6002f82352acc91a2998304cbe0e2.slice` on Sparklina.',
-    "'uuid': 'GPU-b1eceeea-fec7-371e-2cf3-cd10f2e7b705',",
-    'receipt      8ff38b7dc24d51c63e4147dbe1587cf1...   cas_receipt.v3',
-    '"10.batch|00:00:00|00:00:00|20164608|5600628|33215|1|"',
-    'if not password:\n    continue',
-    'Called after release with the same attempt token: reports',
-    '"unit": "pb-test-inventory-9cb03d044a0faeabe29b.service",',
-    'Rotate the token every 90 days from the admin console.',
-    'password = getpass("Password: ")',
-    'The token expires after 3600 seconds unless refreshed.',
-    'Secret rotation runs nightly at 02:00 UTC for every service.',
-    'Store the password in the vault, not in the repository.',
-    'let token = tokens.next().ok_or(Error::MissingToken)?;',
-    'username,password_hash,role',
-]
 
 
-@pytest.mark.parametrize('text', ORDINARY_V3)
-def test_ordinary_text_from_the_recheck_corpus_survives(text):
-    from tl3_workers.tracing import Redactor
-    redactor = Redactor('/nonexistent/key-file-path')
-    assert redactor.text(text) == text
-    assert redactor.payload(text) == text
 
 
 def test_trace_tags_recalled_cited_and_flagged_memories(request_doc, monkeypatch, exporters, receiver):
