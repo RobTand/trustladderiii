@@ -595,7 +595,8 @@ pub(super) open spec fn advance_pre(n: Node, ticket: u64, out_len: usize) -> boo
 #[verifier::opaque]
 pub(super) open spec fn advance_post(before: Node, after: Node,
     ticket_before: u64, ticket_after: u64, changed: bool) -> bool {
-    (changed ==> internal_height(after) < internal_height(before))
+    empty_replan::settle_frame(before, after)
+    && (changed ==> internal_height(after) < internal_height(before))
     && (changed && before.phase == Phase::Unplanned
         && !before.waiting_incident && before.effect.is_none() ==> after == (Node {
         credit: Credit { withheld: false, ..before.credit }, planning_started: true,

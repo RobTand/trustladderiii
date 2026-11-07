@@ -92,6 +92,18 @@ pub closed spec fn empty_replan_transition(world: World, next: World,
         && (consumed ==> after.review_stop == Some(ReviewStop::PlanCantMeet)
             && (after.phase is Stopping || after.phase is Closed))
 }
+
+/// Settling advances agendas without changing the planner's retry decision.
+pub(super) open spec fn settle_frame(before: Node, after: Node) -> bool {
+    after.plan_retries == before.plan_retries && after.replanned == before.replanned
+        && after.review_stop == before.review_stop
+        && (before.question.is_none() ==> after.question.is_none())
+        && (before.phase is Planning ==> after.phase == before.phase
+            && after.generation == before.generation && after.credit == before.credit)
+        && (before.phase == Phase::Stopping(Outcome::Stopped) ==>
+            (after.phase == before.phase || after.phase == Phase::Closed(Outcome::Stopped))
+                && after.credit == before.credit)
+}
 }
 
 kernel_fn! {
@@ -154,13 +166,38 @@ pub fn step_planner(mut world: World, mut budget: ReplanBudget, request: NodeId,
         || (n.run != Some(generation) && n.job != Some(generation)) {
         return (world, budget, Vec::new());
     }
+    kernel_snapshot! { before_replan = world }
     let mut outbox = Outbox::new();
     kernel_proof! { reveal(empty_outbox); assert(node_checked(world, world.nodes@[i as int])); }
     end_operation(&mut world.nodes[i]);
     reply_empty_replan(&mut world, i, &mut budget, &mut outbox);
+    kernel_proof! {
+        reveal(reply_bounds); reveal(storage_ordered);
+        reveal(footprint::ordered_table); reveal(footprint::valid_footprint);
+        assert forall|j: int| 0 <= j < world.nodes@.len() implies
+            settle_shape(world.nodes@[j])
+                && world.nodes@[j].generation as int + generation_capacity(world.nodes@[j]) <= u64::MAX as int
+                && world.nodes@[j].next_seq as int + effect_capacity(world.nodes@[j]) <= u64::MAX as int
+                && world.nodes@[j].credit.earned as int + merge_capacity(world.nodes@[j]) <= u64::MAX as int
+        by {
+            assert(node_checked(before_replan@, before_replan@.nodes@[j]));
+            local_capacities(world.nodes@[j]);
+            if j != i { assert(world.nodes@[j] == before_replan@.nodes@[j]); }
+        }
+        open_prefix_compare(before_replan@.nodes@, world.nodes@, before_replan@.nodes@.len());
+        settle_reserve_totals(world.nodes@);
+        open_prefix_monotone(world.nodes@, 0, world.nodes@.len());
+        reveal(open_prefix);
+        assert(settle_ready(world));
+    }
     let mut out = Vec::new();
     outbox.drain_into(&mut out);
+    kernel_snapshot! { after_replan = world }
     settle(&mut world, &mut out, None);
+    kernel_proof! {
+        reveal(settle_chain);
+        assert(settle_frame(after_replan@.nodes@[i as int], world.nodes@[i as int]));
+    }
     (world, budget, out)
 }
 }

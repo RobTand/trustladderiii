@@ -60,6 +60,7 @@ pub(super) fn settle(w: &mut World, out: &mut Vec<Out>, mut trace: Option<&mut V
                         <= baseline@.nodes@[j].credit.earned as int + merge_capacity(baseline@.nodes@[j])
                     && w.nodes@[j].last_cmd == baseline@.nodes@[j].last_cmd
                     && w.nodes@[j].credit.start == baseline@.nodes@[j].credit.start
+                    && empty_replan::settle_frame(baseline@.nodes@[j], w.nodes@[j])
                     && w.nodes@[j].credit.added == baseline@.nodes@[j].credit.added
                     && w.nodes@[j].credit.spent == baseline@.nodes@[j].credit.spent by {
                     if j != i { assert(w.nodes@[j] == before_node@.nodes@[j]); }

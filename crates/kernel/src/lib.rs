@@ -2011,6 +2011,7 @@ spec fn settle_chain(before: World, after: World) -> bool {
         && after.next_ticket as int + potential_prefix(after.nodes@, after.nodes@.len(), |n: Node| ticket_capacity(n))
             <= before.next_ticket as int + potential_prefix(before.nodes@, before.nodes@.len(), |n: Node| ticket_capacity(n))
         && forall|j: int| 0 <= j < before.nodes@.len() ==>
+            empty_replan::settle_frame(before.nodes@[j], after.nodes@[j]) &&
             (before.nodes@[j].phase is Closed ==> after.nodes@[j].phase is Closed) &&
             after.nodes@[j].generation as int + generation_capacity(after.nodes@[j])
                 <= before.nodes@[j].generation as int + generation_capacity(before.nodes@[j])
