@@ -2994,14 +2994,15 @@ impl Controller {
                 mut outcome,
                 receipt,
             } => {
-                if receipt.as_ref().is_some_and(|id| {
+                let recorded = receipt.as_ref().is_some_and(|id| {
                     snapshot.rows.iter().any(|row| {
                         row.table == "delivery_outcomes"
                             && row.id == *id
                     })
-                }) {
+                });
+                let Some(_receipt) = tl3_controller_core::translate::begin(recorded) else {
                     return Ok(None);
-                }
+                };
                 use outcome::Outcome;
                 let current = world
                     .nodes
@@ -3014,19 +3015,24 @@ impl Controller {
                 {
                     return Ok(None);
                 }
-                // Direct head checks retain the pre-S2 queued/enqueuing admission rule.
+                // Head CI applies while waiting or during a live handoff.
                 if receipt.is_some()
                     && matches!(outcome, Outcome::CiFailed { .. })
                     && !(current.phase == tl3_kernel::Phase::AwaitingDelivery
                         || current.phase == tl3_kernel::Phase::Publishing
                             && current.effect.is_some_and(|effect| {
-                                effect.kind == tl3_kernel::EffectKind::Enqueue && !effect.cancelling
+                                tl3_controller_core::translate::enqueue_pending(
+                                    effect.kind == tl3_kernel::EffectKind::Enqueue,
+                                    effect.cancelling,
+                                )
                             }))
                 {
                     return Ok(None);
                 }
                 if let Outcome::CiFailed { head, evidence, .. } = &mut outcome
-                    && Some(self.head(node, head)?) != current.head
+                    && !tl3_controller_core::translate::head_current(
+                        self.head(node, head)?.0, current.head.map(|head| head.0),
+                    )
                 {
                     // Base records stale head evidence without attributing it or applying a fact.
                     evidence.cause = None;

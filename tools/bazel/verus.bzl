@@ -83,231 +83,6 @@ def verus_proofs():
                 exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
             )
 
-    if native.package_name() == "crates/mergify":
-        verus_test(
-            name = "verus_queue_entry",
-            src = "proofs/queue_entry.rs",
-            srcs = ["src/decide/queue_entry.rs"],
-            expected_obligations = 4,
-            tags = ["rust", "verus"],
-            size = "small",
-            timeout = "short",
-            target_compatible_with = ["@platforms//cpu:x86_64"],
-            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
-            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
-        )
-
-        # Group B1: production recovery residue and full-domain witnesses.
-        for name, count in [("budget", 10), ("eligibility", 10), ("schedule", 8), ("command", 6)]:
-            verus_test(
-                name = "verus_recovery_" + name,
-                src = "proofs/recovery.rs",
-                srcs = ["src/decide/recovery.rs"],
-                expected_obligations = count,
-                module = "recovery::" + name,
-                tags = ["rust", "verus"],
-                size = "small",
-                timeout = "short",
-                target_compatible_with = ["@platforms//cpu:x86_64"],
-                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
-                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
-            )
-        # ctrl-core A1: shell residue, with no contract changes to enqueue::decide.
-        verus_test(
-            name = "verus_completion",
-            src = "proofs/completion.rs",
-            srcs = ["src/decide/completion.rs"],
-            specs = ["proofs/completion_spec.rs"],
-            expected_obligations = 44,
-            tags = ["rust", "verus"],
-            size = "small",
-            timeout = "short",
-            target_compatible_with = ["@platforms//cpu:x86_64"],
-            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
-            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
-        )
-        # #743 M1a: real observe/check/facts decisions and original-domain witnesses.
-        for name, module, count in [
-            ("observe", "observe", 11),
-            ("check_facts", "facts", 26),
-            ("observe_witness", "observe_witness", 8),
-            ("observe_properties", "observe_properties", 2),
-        ]:
-            verus_test(
-                name = "verus_" + name,
-                src = "proofs/observe.rs",
-                srcs = [
-                    "//crates/github:src/checks/check.rs",
-                    "src/decide/observe.rs",
-                    "//crates/github:src/checks/verification.rs",
-                    "src/decide/facts.rs",
-                ],
-                specs = ["src/decide/observe_witness.rs", "proofs/observe_properties.rs"],
-                module = module,
-                expected_obligations = count,
-                tags = ["rust", "verus"],
-                size = "small",
-                timeout = "short",
-                target_compatible_with = ["@platforms//cpu:x86_64"],
-                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
-                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
-            )
-
-        # ctrl-core B2: selectors are inventoried by the required mergify proof_map test.
-        # Each decide contract has one owner; shared bodies and generated Clone
-        # obligations have one owner across all roots. New families append entries.
-        enqueue_groups = {
-            "refused_sticky": ("refused_sticky", "enqueue#decide", 1),
-            "refused_sticky_witness": ("refused_sticky", "witness", 1),
-            # Write-ahead partitions exhaust Write: Label, Command and Rerun.
-            "write_ahead_label": ("write_ahead_label", "enqueue#decide", 1),
-            "write_ahead_label_witness": ("write_ahead_label", "witness", 2),
-            "write_ahead_command": ("write_ahead_command", "enqueue#decide", 1),
-            "write_ahead_command_witness": ("write_ahead_command", "witness", 1),
-            "write_ahead_rerun": ("write_ahead_rerun", "enqueue#decide", 1),
-            "write_ahead_rerun_witness": ("write_ahead_rerun", "witness", 1),
-            "recovery_grace": ("recovery_grace", "enqueue#decide", 1),
-            "recovery_grace_witness": ("recovery_grace", "witness", 2),
-            "command_completion": ("refused_sticky", "enqueue#command_completion", 1),
-            "reconcile_issue": ("refused_sticky", "enqueue#reconcile_issue", 1),
-            "grace_ms": ("recovery_grace", "enqueue#GRACE_MS", 1),
-            "clone_requeue": ("refused_sticky", "enqueue#Requeue::clone", 1),
-            "clone_command": ("refused_sticky", "enqueue#Command::clone", 1),
-            "clone_recovery": ("refused_sticky", "enqueue#Recovery::clone", 1),
-            "clone_intent": ("refused_sticky", "enqueue#Intent::clone", 1),
-            "clone_rerun": ("refused_sticky", "enqueue#Rerun::clone", 1),
-            "clone_enqueue_state": ("refused_sticky", "enqueue#EnqueueState::clone", 1),
-            "clone_issue_read": ("refused_sticky", "enqueue#IssueRead::clone", 1),
-            "clone_queue_read": ("refused_sticky", "enqueue#QueueRead::clone", 1),
-            "clone_need": ("refused_sticky", "enqueue#Need::clone", 1),
-            "clone_failure": ("refused_sticky", "enqueue#Failure::clone", 1),
-            "clone_complete": ("refused_sticky", "enqueue#Complete::clone", 1),
-            "clone_write": ("refused_sticky", "enqueue#Write::clone", 1),
-            "clone_command_result": ("refused_sticky", "enqueue#CommandResult::clone", 1),
-            "clone_rerun_result": ("refused_sticky", "enqueue#RerunResult::clone", 1),
-            "clone_command_read": ("refused_sticky", "enqueue#CommandRead::clone", 1),
-            "clone_queue_event": ("refused_sticky", "enqueue#QueueEvent::clone", 1),
-            "clone_effect": ("refused_sticky", "enqueue#Effect::clone", 1),
-            # ctrl-core A4: independent ack, stale-head and dequeue contract families.
-            "ack_sound": ("ack_sound", "enqueue#decide", 1, {"extra_specs": ["proofs/enqueue_ack_sound_helpers.rs"]}),
-            "ack_sound_issue": ("ack_sound", "enqueue#reconcile_issue", 1, {"extra_specs": ["proofs/enqueue_ack_sound_helpers.rs"]}),
-            "ack_sound_completion": ("ack_sound", "enqueue#command_completion", 1, {"extra_specs": ["proofs/enqueue_ack_sound_helpers.rs"]}),
-            "ack_sound_witness": ("ack_sound", "witness", 4, {"extra_specs": ["proofs/enqueue_ack_sound_helpers.rs"]}),
-            "stale_head": ("stale_head", "enqueue#decide", 1),
-            "stale_head_witness": ("stale_head", "witness", 2),
-            "dequeue_fresh": ("dequeue_fresh", "enqueue#dequeue_pending", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
-            "dequeue_fresh_label_event": ("dequeue_fresh", "enqueue#LabelEvent::clone", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
-            "dequeue_fresh_witness": ("dequeue_fresh", "witness", 4, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
-            # ctrl-core C2: required-check port and rerun-budget selectors.
-            "required_check": ("required_check", "enqueue#required_check", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
-            "required_check_types": ("required_check", "enqueue#RequiredState::clone", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
-            "required_check_witness": ("required_check", "witness#covers", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
-            "required_check_oracle_witness": ("required_check", "witness#oracle", 1, {"extra_specs": ["proofs/enqueue_refused_sticky_spec.rs"]}),
-            "rerun_budget": ("rerun_budget", "enqueue#decide", 1),
-            "rerun_budget_consumed_receipt_witness": ("rerun_budget", "witness#consumed_receipt", 1),
-            "rerun_budget_retained_budget_witness": ("rerun_budget", "witness#retained_budget", 1),
-            "rerun_budget_dispatch_once_witness": ("rerun_budget", "witness#dispatch_once", 1),
-            "rerun_budget_result_budget_witness": ("rerun_budget", "witness#result_budget", 1),
-            "rerun_budget_read_gates_witness": ("rerun_budget", "witness#read_gates", 1),
-            "rerun_budget_read_receipts_witness": ("rerun_budget", "witness#read_receipts", 1),
-            "rerun_budget_absent_results_witness": ("rerun_budget", "witness#absent_results", 1),
-            "rerun_budget_terminal_results_witness": ("rerun_budget", "witness#terminal_results", 1),
-            "rerun_budget_resumable_results_witness": ("rerun_budget", "witness#resumable_results", 1),
-            "rerun_budget_pending_covers_witness": ("rerun_budget", "witness#pending_covers", 1),
-        }
-        for name, entry in enqueue_groups.items():
-            root, module, count = entry[:3]
-            extra_specs = entry[3].get("extra_specs", []) if len(entry) == 4 else []
-            verus_test(
-                name = "verus_enqueue_" + name,
-                src = "proofs/enqueue_" + root + ".rs",
-                srcs = [
-                    "src/decide/enqueue.rs",
-                    "//crates/github:src/checks/check.rs",
-                    "src/decide/observe.rs",
-                    "//crates/github:src/checks/verification.rs",
-                ],
-                specs = [
-                    "proofs/enqueue_helpers.rs",
-                    "proofs/enqueue_" + root + "_spec.rs",
-                    "proofs/enqueue_" + root + "_witness.rs",
-                ] + extra_specs,
-                module = module,
-                expected_obligations = count,
-                tags = ["rust", "verus"],
-                size = "small",
-                timeout = "short",
-                target_compatible_with = ["@platforms//cpu:x86_64"],
-                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
-                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
-            )
-
-        # ctrl-core A2: executable execute plans and body-heal decisions.
-        verus_test(
-            name = "verus_plan",
-            src = "proofs/plan.rs",
-            srcs = ["src/decide/plan.rs"],
-            specs = ["proofs/plan_spec.rs"],
-            expected_obligations = 22,
-            tags = ["rust", "verus"],
-            size = "small",
-            timeout = "short",
-            target_compatible_with = ["@platforms//cpu:x86_64"],
-            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
-            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
-        )
-
-        verus_test(
-            name = "verus_heal",
-            src = "proofs/heal.rs",
-            srcs = ["src/decide/heal.rs"],
-            specs = ["proofs/heal_spec.rs"],
-            expected_obligations = 23,
-            tags = ["rust", "verus"],
-            size = "small",
-            timeout = "short",
-            target_compatible_with = ["@platforms//cpu:x86_64"],
-            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
-            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
-        )
-        # #743 M1b: real translation, fact decisions, and all original covers.
-        for name, module, count in [
-            ("translate", "translate", 11),
-            ("decide_properties", "decide_properties", 9),
-            ("decide_witness", "decide_witness", 8),
-        ]:
-            verus_test(
-                name = "verus_" + name,
-                src = "proofs/decide.rs",
-                srcs = ["//crates/github:src/checks/check.rs", "src/decide/observe.rs", "src/decide/facts.rs", "src/decide/translate.rs", "//crates/github:src/checks/verification.rs"],
-                specs = ["src/decide/decide_witness.rs", "proofs/decide_properties.rs"],
-                module = module,
-                expected_obligations = count,
-                tags = ["rust", "verus"],
-                size = "small",
-                timeout = "short",
-                target_compatible_with = ["@platforms//cpu:x86_64"],
-                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
-                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
-            )
-
-        # ctrl-core A3: separate routing families over the real production module.
-        for name, count in [("queue", 10), ("webhook", 16), ("projection", 12), ("failure", 5)]:
-            verus_test(
-                name = "verus_route_" + name,
-                src = "proofs/route.rs",
-                srcs = ["src/decide/route.rs"],
-                expected_obligations = count,
-                module = "route::" + name,
-                tags = ["rust", "verus"],
-                size = "small",
-                timeout = "short",
-                target_compatible_with = ["@platforms//cpu:x86_64"],
-                exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
-                exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
-            )
-
-    # CC-E: dependency-free delivery steps and the faithful dispatch composition.
     if native.package_name() == "crates/delivery":
         for name, count in {"dispatch": 42, "core": 44, "once": 61, "converges": 65, "dedup": 64, "approval": 68, "fence": 39}.items():
             verus_test(
@@ -361,18 +136,6 @@ def verus_proofs():
             srcs = ["proofs/direct_merge_resources.py"],
             main = "proofs/direct_merge_resources.py",
             visibility = ["//visibility:public"],
-        )
-        verus_test(
-            name = "verus_queue_cause",
-            src = "proofs/queue_cause.rs",
-            srcs = ["src/queue_cause_decide.rs"],
-            expected_obligations = 11,
-            tags = ["rust", "verus"],
-            size = "small",
-            timeout = "short",
-            target_compatible_with = ["@platforms//cpu:x86_64"],
-            exec_compatible_with = ["@platforms//os:linux", "@platforms//cpu:x86_64"],
-            exec_properties = {"EstimatedCPU": "1", "EstimatedComputeUnits": "1", "EstimatedMemory": "1GB"},
         )
         verus_test(
             name = "verus_direct_merge",
@@ -529,16 +292,13 @@ def verus_proofs():
             )
 
     if native.package_name() == "crates/controller-core":
-        # Group G1: production Queue residue, with separate unbounded scans.
+        # Production pushed-head translation and retained plan witnesses.
         translate_groups = {
-            "repeated": ("translate#repeated", 2),
-            "dispatch": ("translate#dispatch", 1),
-            "clear": ("translate#clear_reported", 2),
             "previous": ("translate#previous_commit", 2),
             "carry": ("translate#carry_plan", 1),
             "head_current": ("translate#head_current", 1),
             "enqueue": ("translate#enqueue_pending", 1),
-            "witnesses": ("translate_witnesses", 6),
+            "witnesses": ("translate_witnesses", 2),
         }
         for name, (module, count) in translate_groups.items():
             verus_test(

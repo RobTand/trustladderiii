@@ -1,5 +1,4 @@
-//! Queue-arm residue. Mergify owns admission, CI classification and routing.
-//! The shell keeps JSON parsing, reads, commit interning and row writes.
+//! Delivery outcome receipt admission and pushed-head plan preservation.
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
@@ -14,106 +13,14 @@ macro_rules! scan {
     };
 }
 
-/// Equality results at the stored JSON boundary. Repository equality here is
-/// exact JSON equality, unlike Repository's case-insensitive domain equality.
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
-#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PriorFailure {
-    pub same_repository: bool,
-    pub same_number: bool,
-    pub same_head: bool,
-    pub infra: bool,
-    pub overlapping_test: bool,
-}
-
-/// Q58; docs/state-machine.md:789-807 and docs/state-table.md:574-575 on cdacce8f.
-/// A prior infrastructure failure repeats exactly on this repo, PR and head
-/// with an overlapping failed test. The scan is unbounded; the invariant is
-/// the small reference model, and the I/O differential checks its JSON parse.
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures
-    result == (exists|i: int| 0 <= i < rows.len() &&
-        rows[i].same_repository && rows[i].same_number && rows[i].same_head &&
-        rows[i].infra && rows[i].overlapping_test),
-))]
-pub fn repeated(rows: &[PriorFailure]) -> bool {
-    let mut index = 0;
-    scan! { (index < rows.len()) [
-        invariant index <= rows.len(),
-            forall|i: int| 0 <= i < index ==> !(rows[i].same_repository &&
-                rows[i].same_number && rows[i].same_head && rows[i].infra && rows[i].overlapping_test),
-        decreases rows.len() - index,
-    ] {
-        let row = &rows[index];
-        if row.same_repository && row.same_number && row.same_head && row.infra && row.overlapping_test {
-            return true;
-        }
-        index += 1;
-    } }
-    false
-}
-
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
-#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum KernelKind {
-    PrMerged { checks_passed: bool },
-    CiFailed { infra: bool },
-    Conflict,
-    PrDequeuedByPerson,
-    PrClosedByPerson,
-    PushByOther,
-}
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
-#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Route {
-    Record,
-    Skip,
-    Kernel(KernelKind),
-    Incident,
-}
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
-#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EvidenceKind {
-    Setup,
-    Missing,
-    Blocked,
-    Reported,
-    Merged,
-    PushByOther,
-    Other,
-}
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
-#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum IncidentAction {
-    Setup,
-    Missing,
-    Blocked,
-    Clear,
-}
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
-#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Decision {
-    Record,
-    Skip,
-    Incident(IncidentAction),
-    Kernel(KernelKind),
-    InvalidIncident,
-    InvalidKernel,
-}
-
-/// Queue translation admitted by the recorded-receipt guard. Dispatch consumes
+/// Delivery outcome admitted by its recorded-receipt guard. The shell consumes
 /// this value; callers construct it only through `begin` at the receipt read.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub struct Translation {
     receipt: (),
 }
 
-/// S-once: preserve the recorded-receipt early return from the Queue arm on
+/// S-once: preserve the recorded-receipt early return on
 /// f5b0ba2f, lib.rs:2846-2850. #751/#760 require its original sampling position.
 /// This is preserved existing dedup behavior, not a new state-table rule.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures
@@ -125,96 +32,6 @@ pub fn begin(recorded: bool) -> Option<Translation> {
     } else {
         Some(Translation { receipt: () })
     }
-}
-
-/// Q52 / #447; docs/state-table.md:542-545,555-557,578 on cdacce8f.
-/// Setup evidence never returns a kernel fact, even with an invalid route pairing.
-/// Frozen Mergify routing never constructs those pairings; valid mappings stay intact.
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures
-    result == match route {
-        Route::Record => Decision::Record,
-        Route::Skip => Decision::Skip,
-        Route::Incident => match evidence {
-            EvidenceKind::Setup => Decision::Incident(IncidentAction::Setup),
-            EvidenceKind::Missing => Decision::Incident(IncidentAction::Missing),
-            EvidenceKind::Blocked => Decision::Incident(IncidentAction::Blocked),
-            EvidenceKind::Reported => Decision::Incident(IncidentAction::Clear),
-            _ => Decision::InvalidIncident,
-        },
-        Route::Kernel(kernel) => if matches!(evidence, EvidenceKind::Setup | EvidenceKind::Missing | EvidenceKind::Blocked | EvidenceKind::Reported) {
-            Decision::InvalidKernel
-        } else { match kernel {
-            KernelKind::PrMerged { .. } => if evidence == EvidenceKind::Merged { Decision::Kernel(kernel) } else { Decision::InvalidKernel },
-            KernelKind::PushByOther => if evidence == EvidenceKind::PushByOther { Decision::Kernel(kernel) } else { Decision::InvalidKernel },
-            _ => Decision::Kernel(kernel),
-        } },
-    },
-    route == Route::Incident ==> !(result is Kernel),
-    matches!(evidence, EvidenceKind::Setup | EvidenceKind::Missing | EvidenceKind::Blocked | EvidenceKind::Reported) ==> !(result is Kernel),
-))]
-pub fn dispatch(translation: Translation, route: Route, evidence: EvidenceKind) -> Decision {
-    let Translation { receipt: () } = translation;
-    match route {
-        Route::Record => Decision::Record,
-        Route::Skip => Decision::Skip,
-        Route::Incident => match evidence {
-            EvidenceKind::Setup => Decision::Incident(IncidentAction::Setup),
-            EvidenceKind::Missing => Decision::Incident(IncidentAction::Missing),
-            EvidenceKind::Blocked => Decision::Incident(IncidentAction::Blocked),
-            EvidenceKind::Reported => Decision::Incident(IncidentAction::Clear),
-            _ => Decision::InvalidIncident,
-        },
-        Route::Kernel(kernel) => match kernel {
-            _ if matches!(
-                evidence,
-                EvidenceKind::Setup
-                    | EvidenceKind::Missing
-                    | EvidenceKind::Blocked
-                    | EvidenceKind::Reported
-            ) =>
-            {
-                Decision::InvalidKernel
-            }
-            KernelKind::PrMerged { .. } if evidence != EvidenceKind::Merged => {
-                Decision::InvalidKernel
-            }
-            KernelKind::PushByOther if evidence != EvidenceKind::PushByOther => {
-                Decision::InvalidKernel
-            }
-            _ => Decision::Kernel(kernel),
-        },
-    }
-}
-
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
-#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct IncidentRow {
-    pub own_incident: bool,
-    pub open: bool,
-}
-
-/// Q52; docs/state-table.md:543,556 on cdacce8f.
-/// CheckReported clears the first open row with its own incident ID only.
-/// The shell computes the ID from node, head, required context and app.
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures
-    match result {
-        Some(index) => index < rows.len() && rows[index as int].own_incident && rows[index as int].open &&
-            forall|i: int| 0 <= i < index ==> !(rows[i].own_incident && rows[i].open),
-        None => forall|i: int| 0 <= i < rows.len() ==> !(rows[i].own_incident && rows[i].open),
-    },
-))]
-pub fn clear_reported(rows: &[IncidentRow]) -> Option<usize> {
-    let mut index = 0;
-    scan! { (index < rows.len()) [
-        invariant index <= rows.len(),
-            forall|i: int| 0 <= i < index ==> !(rows[i].own_incident && rows[i].open),
-        decreases rows.len() - index,
-    ] {
-        if rows[index].own_incident && rows[index].open { return Some(index); }
-        index += 1;
-    } }
-    None
 }
 
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
@@ -282,7 +99,7 @@ pub fn carry_plan<H, P>(node: u64, head: H, plan: Option<P>) -> Option<CarriedPl
     }
 }
 
-/// Queue attempt head; docs/state-table.md:540,574-576 on cdacce8f.
+/// Delivery evidence applies only to the currently interned head.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures
     result == (current == Some(interned)),
 ))]
