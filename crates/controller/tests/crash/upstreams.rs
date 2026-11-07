@@ -159,7 +159,6 @@ impl Executor for Fake {
             Completion {
                 diagnostic: None,
                 failure_class: None,
-                progress: None,
                 ack: if self.scenario == "retry" {
                     Ack::Retryable
                 } else {

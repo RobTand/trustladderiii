@@ -1,7 +1,7 @@
 impl Controller {
     fn retire_effect(&mut self, snapshot: &Snapshot, row: &tl3_store::WorldRow) -> Result<()> {
         let delivery: Delivery = decode_stored(row.value.clone())?;
-        if executor::upstream(delivery.output) == executor::Upstream::Mergify
+        if executor::upstream(delivery.output) == executor::Upstream::Delivery
             || approval_delivery::is_approval(&delivery)
         {
             self.adapters
@@ -180,7 +180,7 @@ impl Controller {
         if let Some(class) = completion.failure_class.as_deref() {
             self.failure_allowance(snapshot, key, class, &mut commit)?;
         }
-        if effect.state == EffectState::Uncertain && completion.ack != Ack::Confirmed {
+        if effect.state == EffectState::Uncertain && !matches!(completion.ack, Ack::Confirmed | Ack::DeliveryAccepted) {
             // A terminal failed attempt was found. Return to the sending state
             // through the effect machine before recording its failure.
             commit.transitions.push(EffectTransition {
@@ -194,7 +194,7 @@ impl Controller {
                 to: EffectState::Sent,
             });
         }
-        let from = if effect.state == EffectState::Uncertain && completion.ack != Ack::Confirmed {
+        let from = if effect.state == EffectState::Uncertain && !matches!(completion.ack, Ack::Confirmed | Ack::DeliveryAccepted) {
             EffectState::Sent
         } else {
             effect.state
@@ -203,7 +203,7 @@ impl Controller {
             EffectState::Confirmed
         } else {
             match completion.ack {
-                Ack::Confirmed => EffectState::Confirmed,
+                Ack::Confirmed | Ack::DeliveryAccepted => EffectState::Confirmed,
                 Ack::Retryable => EffectState::Intended,
                 Ack::Permanent | Ack::BodyPolicyRefused => EffectState::Failed,
             }

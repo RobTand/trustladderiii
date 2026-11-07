@@ -18,7 +18,7 @@ fn schedule(kind: u8) -> Schedule {
     let event = if kind == 5 {
         Event::Fact {
             node: NodeId(0),
-            fact: Fact::PrDequeuedByPerson,
+            fact: Fact::PrClosedByPerson,
         }
     } else if kind == 3 {
         Event::Fact {

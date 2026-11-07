@@ -312,11 +312,17 @@ fn delivery_wait_conflict_enters_ready_rebasing_without_a_stop_report() {
     let mut run = Run::new();
     run.queued();
     let before = run.world.nodes[0];
+    let event = Event::Fact { node: NodeId(0), fact: Fact::Conflict };
+    let (_, _, trace) = step_traced(run.world.clone(), event);
+    let admitted = trace.first().expect("the actual apply boundary is traced");
+    admitted.check().unwrap();
+    assert_eq!(admitted.nodes[0].phase, Phase::Ready(Resume::Rebasing));
+    assert_eq!(admitted.nodes[0].generation, before.generation + 1);
+    assert_eq!(admitted.nodes[0].credit, before.credit);
+    assert!(!admitted.nodes[0].holds);
     run.fact(Fact::Conflict);
-    assert_eq!(run.world.nodes[0].phase, Phase::Ready(Resume::Rebasing));
-    assert_eq!(run.world.nodes[0].generation, before.generation + 1);
-    assert_eq!(run.world.nodes[0].credit, before.credit);
-    assert!(!run.world.nodes[0].holds);
+    assert_eq!(run.world.nodes[0].phase, Phase::Rebasing);
+    assert!(run.world.nodes[0].holds, "settlement reacquires the free slot");
     assert!(run.report.entries.is_empty());
 }
 

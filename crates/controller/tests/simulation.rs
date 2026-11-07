@@ -538,7 +538,7 @@ fn labelled_issue_closes(settings: &tl3_config::Store) {
         "Checking",
         "Reviewing",
         "Publishing",
-        "Queued",
+        "AwaitingDelivery",
         "Stopping",
         "Closed",
     ] {
@@ -2922,7 +2922,7 @@ fn postmortem_records(settings: &tl3_config::Store) {
         expected.insert(name, json!(total));
     }
     assert_eq!(phases, &serde_json::Value::Object(expected));
-    for phase in ["Making", "Checking", "Reviewing", "Publishing", "Queued"] {
+    for phase in ["Making", "Checking", "Reviewing", "Publishing", "AwaitingDelivery"] {
         assert!(phases.get(phase).is_some(), "{phase}: {phases}");
     }
     assert!(
