@@ -413,6 +413,7 @@ impl JsonSchema for OutsidePathSchema {
 pub fn generated() -> Result<crate::Generated, render::RenderError> {
     Ok(crate::Generated {
         path: format!("{}/maker-input.json", crate::SCHEMA_DIRECTORY),
-        text: serde_json::to_string_pretty(&schema()).expect("maker input schema serializes") + "\n",
+        text: serde_json::to_string_pretty(&schema()).expect("maker input schema serializes")
+            + "\n",
     })
 }

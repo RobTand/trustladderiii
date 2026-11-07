@@ -16,6 +16,100 @@
     "result"
   ],
   "$defs": {
+    "Allowed": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "finite"
+            },
+            "values": {
+              "type": "array",
+              "items": true
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "values"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "keyword": {
+              "$ref": "#/$defs/SchemaKeyword"
+            },
+            "kind": {
+              "type": "string",
+              "const": "schema"
+            },
+            "value": true
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "keyword",
+            "value"
+          ]
+        }
+      ]
+    },
+    "AttributionMethod": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "failing_targets": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 64
+            },
+            "failing_targets_truncated": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "outside_selection"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "failing_targets"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "failed_prefix_head": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            },
+            "kind": {
+              "type": "string",
+              "const": "prefix_bisection"
+            },
+            "passed_prefix_head": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "passed_prefix_head",
+            "failed_prefix_head"
+          ]
+        }
+      ]
+    },
     "Clip": {
       "type": "object",
       "properties": {
@@ -39,6 +133,112 @@
         "parts",
         "lead",
         "gap"
+      ]
+    },
+    "EditOp": {
+      "type": "string",
+      "enum": [
+        "add",
+        "replace",
+        "remove"
+      ]
+    },
+    "Evidence": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "excerpt": {
+              "description": "At most 4096 UTF-8 bytes after Violation normalization, including newline+[truncated]. JSON Schema maxLength counts characters; Violation serialization/deserialization and rendering enforce the UTF-8 byte cap.",
+              "type": "string",
+              "maxLength": 4096
+            },
+            "kind": {
+              "type": "string",
+              "const": "test_failure"
+            },
+            "log_ref": {
+              "type": "string"
+            },
+            "receipt": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            },
+            "test": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "target",
+            "test",
+            "excerpt",
+            "log_ref",
+            "receipt"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "batch_head": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            },
+            "kind": {
+              "type": "string",
+              "const": "attribution"
+            },
+            "member": {
+              "type": "string"
+            },
+            "member_head": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            },
+            "method": {
+              "$ref": "#/$defs/AttributionMethod"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "batch_head",
+            "member",
+            "member_head",
+            "method"
+          ]
+        }
+      ]
+    },
+    "FieldPointer": {
+      "type": "string",
+      "pattern": "^(?:/(?:[^~]|~[01])*)?$"
+    },
+    "Name": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/NameKind"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "value"
+      ]
+    },
+    "NameKind": {
+      "type": "string",
+      "enum": [
+        "field",
+        "path",
+        "symbol"
       ]
     },
     "PolicyResult": {
@@ -155,6 +355,25 @@
           "required": [
             "kind"
           ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "rows"
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Violation"
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
         }
       ]
     },
@@ -183,6 +402,107 @@
         "secrets",
         "calls",
         "truncated"
+      ]
+    },
+    "Repair": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "allowed": {
+              "$ref": "#/$defs/Allowed"
+            },
+            "kind": {
+              "type": "string",
+              "const": "edit"
+            },
+            "op": {
+              "$ref": "#/$defs/EditOp"
+            },
+            "pointer": {
+              "$ref": "#/$defs/FieldPointer"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "pointer",
+            "op",
+            "allowed"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "cant_meet"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "instruction": {
+              "description": "Nonblank instruction of at most 1024 UTF-8 bytes. JSON Schema maxLength counts characters; Rust deserialization and validation enforce the byte cap.",
+              "type": "string",
+              "maxLength": 1024,
+              "minLength": 1
+            },
+            "kind": {
+              "type": "string",
+              "const": "source_edit"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "path",
+            "instruction"
+          ]
+        }
+      ]
+    },
+    "Role": {
+      "type": "string",
+      "enum": [
+        "ingest",
+        "audit",
+        "planner",
+        "maker",
+        "reviewer",
+        "classifier",
+        "writer",
+        "postmortem"
+      ]
+    },
+    "SchemaKeyword": {
+      "type": "string",
+      "enum": [
+        "schema",
+        "const",
+        "enum",
+        "type",
+        "pattern",
+        "minimum",
+        "maximum",
+        "minLength",
+        "maxLength",
+        "minItems",
+        "maxItems",
+        "required",
+        "additionalProperties"
       ]
     },
     "Shaped": {
@@ -325,6 +645,55 @@
             "value"
           ]
         }
+      ]
+    },
+    "Violation": {
+      "type": "object",
+      "properties": {
+        "allowed": {
+          "$ref": "#/$defs/Allowed"
+        },
+        "bad_value": true,
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "maxItems": 16
+        },
+        "evidence_truncated": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "gating": {
+          "type": "boolean"
+        },
+        "names": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Name"
+          }
+        },
+        "repair": {
+          "$ref": "#/$defs/Repair"
+        },
+        "role": {
+          "$ref": "#/$defs/Role"
+        },
+        "rule_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "rule_id",
+        "role",
+        "names",
+        "bad_value",
+        "allowed",
+        "repair",
+        "gating"
       ]
     },
     "Window": {

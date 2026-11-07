@@ -3787,7 +3787,10 @@ impl Controller {
                         .as_array()
                         .ok_or(Error::Invalid("planner checks must be an array"))?
                         .iter()
-                        .map(|check| serde_json::from_value::<adapters::prismabuild::Check>(check.clone()).map_err(Error::from))
+                        .map(|check| {
+                            serde_json::from_value::<adapters::prismabuild::Check>(check.clone())
+                                .map_err(Error::from)
+                        })
                         .collect::<Result<Vec<_>>>()?;
                     if let Err(error) = adapters::prismabuild::validate_plan_size(&checks) {
                         match error {

@@ -328,12 +328,20 @@ pub(crate) fn maker_inputs(
         return Err(Error::Invalid("making requires an accepted leaf plan"));
     }
     let goals = crate::goals::identified(&brief["goals"])?;
-    let checks = plan["checks"].as_array().ok_or(Error::Invalid("accepted plan needs checks"))?
-        .iter().map(|value| serde_json::from_value::<tl3_contracts::Check>(value.clone()).map_err(Error::from))
+    let checks = plan["checks"]
+        .as_array()
+        .ok_or(Error::Invalid("accepted plan needs checks"))?
+        .iter()
+        .map(|value| {
+            serde_json::from_value::<tl3_contracts::Check>(value.clone()).map_err(Error::from)
+        })
         .collect::<Result<Vec<_>>>()?;
-    let required: Vec<_> = goals.iter().enumerate()
+    let required: Vec<_> = goals
+        .iter()
+        .enumerate()
         .filter(|(_, goal)| goal["stage"] != "publishing")
-        .map(|(index, _)| tl3_contracts::GoalId(index as u64)).collect();
+        .map(|(index, _)| tl3_contracts::GoalId(index as u64))
+        .collect();
     tl3_contracts::checks::admit_plan(&checks, goals.len(), &required)
         .map_err(|_| Error::Invalid("accepted plan violates check goal admission"))?;
     for check in &checks {

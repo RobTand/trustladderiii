@@ -76,3 +76,76 @@ fn expected_red_declaration_is_not_observed_match_evidence() {
     assert!(serde_json::from_value::<tl3_contracts::ProofDeclaration>(declaration).is_ok());
     assert!(serde_json::from_value::<tl3_contracts::ProofDeclaration>(observed).is_err());
 }
+
+fn command(operation: serde_json::Value) -> serde_json::Value {
+    use std::io::Write;
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_tl3-action"))
+        .env_clear().arg("policy").stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped()).spawn().unwrap();
+    let request = json!({"state":{"secrets":[],"calls":{},"truncated":false},"operation":operation});
+    writeln!(child.stdin.take().unwrap(), "{request}").unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+#[test]
+fn schema_repairs_through_the_action_preserve_escaped_subjects_and_permission_union() {
+    let failure = |keyword: &str, schema: serde_json::Value, instance: serde_json::Value, path: serde_json::Value, validator_value: serde_json::Value| json!({
+        "keyword":keyword,"validator_value":validator_value,"schema":schema,"instance":instance,
+        "path":path,"schema_path":[],"context":[]});
+    let source = json!({"type":"object","properties":{"nested":{"type":"object","properties":{
+        "a/b~c":{"enum":["fixed"]},"count":{"type":"integer","minimum":1}},"required":["a/b~c","count"]}}});
+    let result = command(json!({"op":"schema_rows","errors":[
+        failure("required",source["properties"]["nested"].clone(),json!({}),json!(["nested"]),json!(["a/b~c","count"]))
+    ],"root_schema":source,"role":"maker"}));
+    let rows = result["ok"]["result"]["value"].clone();
+    assert_eq!(rows.as_array().unwrap().len(),2);
+    let text = command(json!({"op":"render","rows":rows,"role":"maker","context":"reply"}));
+    let text = text["ok"]["result"]["value"].as_str().unwrap();
+    assert!(text.contains("/nested/a~1b~0c"));
+    assert!(text.contains("/nested/count"));
+    assert!(text.contains("add"));
+    let before = json!({"nested":{},"untouched":true});
+    for (after, expected) in [
+        (json!({"nested":{"a/b~c":"fixed","count":1},"untouched":true}),true),
+        (json!({"nested":{"a/b~c":"fixed","count":0},"untouched":true}),false),
+        (json!({"nested":{"a/b~c":"fixed","count":1},"untouched":1}),false),
+        (json!({"nested":{"a/b~c":"fixed","count":1},"untouched":false}),false),
+    ] {
+        let result = command(json!({"op":"permits","rows":rows,"before":before,"after":after,"role":"maker"}));
+        assert_eq!(result["ok"]["result"]["value"],json!(expected));
+    }
+}
+
+#[test]
+fn nested_unsupported_schema_semantics_and_unresolved_references_are_explicit_errors() {
+    for constraint in [
+        json!({"properties":{"ordinary":{"items":{"x-ordered":{}}}}}),
+        json!({"$defs":{"unused":{"x-memory-flags":{}}}}),
+        json!({"anyOf":[{"$ref":"missing-ref.json"},{"type":"null"}]}),
+        json!({"$ref":"#/$defs/missing"}),
+    ] {
+        let result = command(json!({"op":"membership","allowed":{"kind":"schema","keyword":"schema","value":constraint},"value":null}));
+        assert!(result.get("error").is_some(), "{result}");
+        assert!(result.get("ok").is_none());
+    }
+    for constraint in [
+        json!({"properties":{"x-ordered":{"const":{"x-memory-flags":7}}}}),
+        json!({"const":{"x-ordered":{}}}),
+        json!({"enum":[{"x-memory-flags":{}}]}),
+    ] {
+        let result = command(json!({"op":"membership","allowed":{"kind":"schema","keyword":"schema","value":constraint},"value":null}));
+        assert!(result.get("ok").is_some(), "instance keys were treated as schema keywords: {result}");
+    }
+}
+
+#[test]
+fn complete_repair_prompts_are_redacted_and_never_clip_the_repair_tail() {
+    let result = command(json!({"op":"repair_prompt","message":"password=producer-secret-Q7r9T3x6\nComplete repair at /checks/0/tests."}));
+    let text = result["ok"]["result"]["value"].as_str().unwrap();
+    assert!(!text.contains("producer-secret-Q7r9T3x6"));
+    assert!(text.contains("Complete repair at /checks/0/tests."));
+    assert!(text.ends_with("nothing else."));
+    assert!(command(json!({"op":"repair_prompt","message":"é".repeat(rules::MESSAGE_BYTES)})).get("error").is_some());
+}

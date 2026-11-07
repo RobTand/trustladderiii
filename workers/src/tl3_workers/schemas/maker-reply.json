@@ -1082,7 +1082,7 @@
               }
             },
             "proof": {
-              "$ref": "planner-reply.json#/$defs/proof"
+              "$ref": "planner-reply.json#/$defs/ProofDeclaration"
             }
           },
           "required": [

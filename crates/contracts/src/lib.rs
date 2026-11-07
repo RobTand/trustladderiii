@@ -14,7 +14,9 @@ pub mod prerequisites;
 pub mod report;
 pub mod rules;
 
-pub use checks::{Check, CheckKind, CheckRequest, DeclaredSymptom, Forcing, GoalId, ProofDeclaration};
+pub use checks::{
+    Check, CheckKind, CheckRequest, DeclaredSymptom, Forcing, GoalId, ProofDeclaration,
+};
 pub use report::{CheckReport, CheckResult, MESSAGE_CHARS, ProofReceipt, TestResult};
 
 use schemars::generate::SchemaSettings;

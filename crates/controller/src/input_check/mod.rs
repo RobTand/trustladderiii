@@ -40,12 +40,16 @@ pub fn maker(inputs: &Value) -> crate::Result<Vec<String>> {
         .find_map(|path| declared_file(path).err())
     {
         Some(message)
-    } else if inputs
-        .plan
-        .checks
+    } else if inputs.plan.checks.iter().any(|check| {
+        check.goal_ids.iter().any(|id| {
+            usize::try_from(id.0)
+                .ok()
+                .is_none_or(|index| index >= inputs.goals.len())
+        })
+    }) || inputs
+        .feedback
         .iter()
-        .any(|check| check.goal_ids.iter().any(|id| usize::try_from(id.0).ok().is_none_or(|index| index >= inputs.goals.len())))
-        || inputs.feedback.iter().any(|item| item.goal_ids.iter().any(|id| !goals.contains(id.as_str())))
+        .any(|item| item.goal_ids.iter().any(|id| !goals.contains(id.as_str())))
     {
         Some("unknown goal id")
     } else {
@@ -59,7 +63,9 @@ pub fn maker(inputs: &Value) -> crate::Result<Vec<String>> {
             .goals
             .iter()
             .enumerate()
-            .any(|(index, goal)| goal.stage.as_deref() != Some("publishing") && !covered.contains(&(index as u64)))
+            .any(|(index, goal)| {
+                goal.stage.as_deref() != Some("publishing") && !covered.contains(&(index as u64))
+            })
             .then_some("checks must cover every maker and checking goal")
     };
     Ok(violation.into_iter().map(str::to_owned).collect())

@@ -76,7 +76,11 @@ pub struct Check {
 /// Planner boundary: one canonical Check, validated against the original ingest goal
 /// index space. Required goals exclude publishing goals; references may include them.
 /// Controller-added controls do not enter this model-plan admission function.
-pub fn admit_plan(checks: &[Check], goal_count: usize, required_goals: &[GoalId]) -> Result<(), String> {
+pub fn admit_plan(
+    checks: &[Check],
+    goal_count: usize,
+    required_goals: &[GoalId],
+) -> Result<(), String> {
     let mut names = std::collections::BTreeSet::new();
     let mut covered = std::collections::BTreeSet::new();
     for check in checks {
@@ -89,7 +93,13 @@ pub fn admit_plan(checks: &[Check], goal_count: usize, required_goals: &[GoalId]
         if check.tests.is_empty() || check.tests.iter().any(|test| test.trim().is_empty()) {
             return Err("each planner check needs exact test selectors".into());
         }
-        if check.goal_ids.is_empty() || check.goal_ids.iter().any(|id| usize::try_from(id.0).ok().is_none_or(|index| index >= goal_count)) {
+        if check.goal_ids.is_empty()
+            || check.goal_ids.iter().any(|id| {
+                usize::try_from(id.0)
+                    .ok()
+                    .is_none_or(|index| index >= goal_count)
+            })
+        {
             return Err("each planner check needs valid original ingest goal indices".into());
         }
         let distinct: std::collections::BTreeSet<_> = check.goal_ids.iter().collect();
@@ -98,7 +108,12 @@ pub fn admit_plan(checks: &[Check], goal_count: usize, required_goals: &[GoalId]
         }
         covered.extend(check.goal_ids.iter().copied());
     }
-    if required_goals.iter().any(|goal| usize::try_from(goal.0).ok().is_none_or(|index| index >= goal_count) || !covered.contains(goal)) {
+    if required_goals.iter().any(|goal| {
+        usize::try_from(goal.0)
+            .ok()
+            .is_none_or(|index| index >= goal_count)
+            || !covered.contains(goal)
+    }) {
         return Err("planner checks must cover every required non-publishing goal".into());
     }
     Ok(())
