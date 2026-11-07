@@ -62,6 +62,25 @@ fn shown(clip: &Clip) -> String {
     text
 }
 impl Shaped {
+    pub fn validate(&self, depth: usize) -> Result<()> {
+        if depth > 24 { return Err("shaped redaction depth exceeds bound".into()); }
+        match self {
+            Self::Text(clip) => {
+                if clip.parts.is_empty() || clip.parts.len() > 2 { return Err("invalid shaped windows".into()); }
+                for part in &clip.parts {
+                    if part.start > part.end || part.end > part.source.chars().count() || part.source.len() > super::LIMIT {
+                        return Err("invalid shaped window boundary".into());
+                    }
+                }
+            },
+            Self::Array(items) => for item in items { item.validate(depth + 1)?; },
+            Self::Object(fields) => for (_, item) in fields { item.validate(depth + 1)?; },
+            Self::Json { value, .. } => value.validate(depth + 1)?,
+            Self::Number(value) => { parse(value)?; },
+            _ => (),
+        }
+        Ok(())
+    }
     fn displayed(&self) -> Result<SummaryValue> {
         Ok(match self {
             Self::Null => SummaryValue::Null,
@@ -73,7 +92,7 @@ impl Shaped {
             Self::Json { value, .. } => value.displayed()?,
         })
     }
-    pub fn size(&self) -> Result<usize> { measured(&self.displayed()?) }
+    pub fn size(&self) -> Result<usize> { self.validate(0)?; measured(&self.displayed()?) }
 }
 
 pub fn sensitive_file(path: &str) -> Result<bool> {
@@ -306,6 +325,7 @@ impl Redactor {
         })
     }
     pub fn clean(&mut self, value: &Shaped, limit: usize) -> Result<String> {
+        value.validate(0)?;
         let value = self.clean_value(value, limit.min(PAYLOAD_BYTES), 0)?;
         let bytes = PythonEnvelope.serialize(&value).map_err(|error| format!("{error:?}"))?;
         if bytes.len() > limit.min(PAYLOAD_BYTES) { return Err("redacted payload exceeds publication byte budget".into()); }
@@ -318,3 +338,4 @@ impl Redactor {
 }
 
 pub fn sensitive_path_json(text: &str) -> Result<Option<String>> { sensitive_path(&parse(text)?) }
+pub fn measure_json(text: &str) -> Result<usize> { measured(&parse(text)?) }

@@ -20,7 +20,9 @@ pub enum PolicyOperation {
     Clean { shaped: Shaped, limit: usize },
     Payload { input_json: String, limit: usize },
     Size { shaped: Shaped },
+    MeasureJson { input_json: String },
     SensitivePath { input_json: String },
+    FileMarker { path: String },
     Render { rows: Vec<Violation>, role: Role, context: RenderContext },
     Validate { rows: Vec<Violation>, role: Role },
     Permits { rows: Vec<Violation>, before: serde_json::Value, after: serde_json::Value, role: Role },
@@ -58,7 +60,9 @@ pub fn policy(request: PolicyRequest) -> Result<PolicyResponse, String> {
         PolicyOperation::Clean { shaped, limit } => PolicyResult::Json(state.clean(&shaped, limit)?),
         PolicyOperation::Payload { input_json, limit } => PolicyResult::Json(state.payload(&input_json, limit)?),
         PolicyOperation::Size { shaped } => PolicyResult::Size(shaped.size()?),
+        PolicyOperation::MeasureJson { input_json } => PolicyResult::Size(tl3_redaction::structured::measure_json(&input_json)?),
         PolicyOperation::SensitivePath { input_json } => PolicyResult::Path(tl3_redaction::structured::sensitive_path_json(&input_json)?),
+        PolicyOperation::FileMarker { path } => PolicyResult::Text(tl3_redaction::structured::file_marker(&path)),
         PolicyOperation::Render { rows, role, context } => {
             let rendered = rules::render_all(&rows, role, context, &row_policy())?;
             let safe = state.window(&rendered, 0, rendered.chars().count())?;
