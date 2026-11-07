@@ -382,8 +382,7 @@ def span_entry(span, redactor, role, model):
         result.attributes.add(key='tl3.proxy.usage_chunks_truncated').value.bool_value = True
     if kind in {'LLM', 'CHAT_MODEL'} and (raw := span.attributes.get('mlflow.chat.tokenUsage')):
         usage = json.loads(raw)
-        usage = {key: value for key in TOKEN_FIELDS
-                 if type(value := usage.get(key)) is int and value >= 0}
+        usage = trace_policy({'op': 'usage', 'value': usage})['value']
         attr = result.attributes.add(key='mlflow.chat.tokenUsage')
         for key, value in usage.items():
             attr.value.kvlist_value.values.add(key=key).value.int_value = value

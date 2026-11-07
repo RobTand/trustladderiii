@@ -19,6 +19,7 @@ pub struct Entry {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
+    Usage { value: serde_json::Value },
     Label {
         kind: LabelKind,
         value: String,
@@ -66,6 +67,7 @@ pub struct PacketEntry {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum Decision {
+    Usage { value: serde_json::Value },
     Label {
         text: String,
     },
@@ -100,6 +102,7 @@ fn exhausted() -> serde_json::Value {
 }
 pub fn decide(request: Request, redactor: &mut Redactor) -> Result<Decision, String> {
     Ok(match request {
+        Request::Usage { value } => Decision::Usage { value: tl3_redaction::structured::usage_counts(&value) },
         Request::Label { kind, value } => {
             let limit = match kind {
                 LabelKind::Span | LabelKind::Attribute => 256,

@@ -540,7 +540,7 @@ def test_resume_keeps_compaction_and_cache_pricing(maker_request, tmp_path, monk
 
 @pytest.mark.durability
 def test_resume_keeps_an_exhausted_budget(maker_request, tmp_path, monkeypatch):
-        from tl3_workers.exploration import ExplorationBudget
+    from tl3_workers.exploration import ExplorationBudget
     from tl3_workers.roles import maker
 
     visit = maker_visit(maker_request, tmp_path)

@@ -419,3 +419,12 @@ fn trace_labels_are_redacted_and_bounded_before_api_publication() {
         assert!(!text.contains("producer-secret"));
     }
 }
+
+#[test]
+fn trace_usage_keeps_only_nonnegative_integer_observations() {
+    let result = command(json!({"op":"trace","request":{"op":"usage","value":{
+        "input_tokens":3,"output_tokens":false,"total_tokens":-1,
+        "cache_read_input_tokens":2.5,"cache_creation_input_tokens":4,
+        "password":"confidential observation","unknown":5}}}));
+    assert_eq!(result["ok"]["result"]["value"]["value"], json!({"input_tokens":3,"cache_creation_input_tokens":4}));
+}

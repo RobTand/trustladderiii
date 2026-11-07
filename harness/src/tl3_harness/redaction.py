@@ -3,7 +3,6 @@
 Only its span/window dependency closure remains until Flux executor verified.
 Every other caller uses the Rust action policy.
 """
-import json
 import re
 
 from ._redaction_policy import POLICY

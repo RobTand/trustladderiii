@@ -591,7 +591,7 @@ def test_experiment_tag_failure_does_not_discard_trace(request_doc, monkeypatch,
 
 # Third review round. The reviewer's 245 planted forms each pass through every
 # way a string reaches a span. Only the limits that workers/README.md lists may leak.
-from tracing_forms import FORMS, B64, r  # noqa: E402
+from tracing_forms import FORMS  # noqa: E402
 
 
 
