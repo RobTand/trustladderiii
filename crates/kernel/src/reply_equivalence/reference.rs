@@ -89,3 +89,38 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply, o
         }
     }
 }
+
+
+// Exact pre-K2-rest failed-run body, including proof macros erased in tests.
+pub(super) fn run_failed_original(w: &mut World, i: usize, out: &mut Outbox, report: &mut Report) {
+    report.record_failed_round(NodeId(i as u64), FailedRoundCause::RunFailed);
+    kernel_snapshot! { before_failed = w.nodes@[i as int] }
+    kernel_snapshot! { before_failed_out = *out }
+    let m = &mut w.nodes[i];
+    abandon_operation(m);
+    m.pos = operation_start(m.phase);
+    m.generation += 1;
+    m.run_failures += 1;
+    if m.run_failures >= 2 {
+        // Every second failure raises an incident. Only Rob can clear the second one.
+        m.run_failures = 0;
+        m.run_incidents = (m.run_incidents + 1).min(2);
+        let needs_rob = m.run_incidents >= 2;
+        kernel_proof! {
+            assert(retirement::incident(*m, needs_rob) == retries_facts::failed_run(before_failed@)) by {
+                retries_facts::incident(before_failed@, *m, needs_rob);
+            }
+        }
+        raise_incident(w, i, needs_rob, out);
+    }
+    kernel_proof! {
+        if before_failed@.run_failures == 0 {
+            assert(w.nodes@[i as int] == retries_facts::failed_run(before_failed@)) by {
+                retries_facts::restarted(before_failed@, w.nodes@[i as int]);
+            }
+        }
+        assert(port_t860_contracts::failed_post(before_failed@, w.nodes@[i as int], before_failed_out@, *out)) by {
+            retries_facts::failed_result(before_failed@, w.nodes@[i as int], before_failed_out@, *out);
+        }
+    }
+}
