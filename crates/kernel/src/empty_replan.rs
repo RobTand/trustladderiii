@@ -268,7 +268,8 @@ fn planner_entry_fixture(fail_fast: bool) -> (w: World) [
         empty_replan::admitted(w, NodeId(0), 3), empty_replan::admitted(w, NodeId(1), 3),
         w.nodes@.len() == 2, w.next_question == 7, w.fail_fast == fail_fast,
         forall|j: int| 0 <= j < 2 ==> w.nodes@[j].generation == 3
-            && w.nodes@[j].phase == (Phase::Planning { must_split: false }),
+            && w.nodes@[j].phase == (Phase::Planning { must_split: false })
+            && w.nodes@[j].run == Some(3) && w.nodes@[j].job.is_none(),
 ] proof [reveal(initial_node); reveal(world_checked); reveal(node_checked);
     reveal(world_headroom); reveal(storage_ordered); reveal(footprint::ordered_table);
     reveal(empty_replan::admitted); reveal(open_prefix);] {
@@ -287,7 +288,16 @@ fn planner_entry_fixture(fail_fast: bool) -> (w: World) [
     gates.push(Gate { w: 1 });
     let w = World { nodes, gates, pool_capacity: 2, next_ticket: 0, next_question: 7,
         file_sets: Vec::new(), dependencies: Vec::new(), fail_fast };
-    kernel_proof! { footprint::inline_is_valid(w, 0); }
+    kernel_proof! {
+        footprint::inline_is_valid(w, 0);
+        dependencies::indexable_definition(w);
+        assert(dependencies::dependencies_checked(w));
+        assert(node_checked(w, w.nodes@[0]));
+        assert(node_checked(w, w.nodes@[1]));
+        assert forall|j: int| 0 <= j < w.nodes@.len() implies node_checked(w, w.nodes@[j]) by {
+            assert(j == 0 || j == 1);
+        }
+    }
     w
 }
 }
