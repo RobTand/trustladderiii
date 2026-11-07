@@ -3021,6 +3021,7 @@ dependencies = [
 name = "tl3-controller"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "fancy-regex 0.18.0",
  "hex",
