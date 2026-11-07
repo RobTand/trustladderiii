@@ -545,7 +545,10 @@ fn mode_log(
     receipt: &serde_json::Value,
 ) -> String {
     let modern = format!("VERUS_MODE {} {metrics}", mode.name());
-    if matches!(mode, ExecutionMode::NormalStats | ExecutionMode::DiagnosticStats) {
+    if matches!(
+        mode,
+        ExecutionMode::NormalStats | ExecutionMode::DiagnosticStats
+    ) {
         format!("{modern}\nVERUS_RAW_MEASUREMENT {raw}\nVERUS_PROOF {receipt}")
     } else {
         modern
@@ -1016,22 +1019,33 @@ mod receipt_tests {
             "verus": {"version": "0.2026.11.02.8bf68ee"}
         });
         let raw = serde_json::json!({"label": label, "seconds": 1.0, "stats": stats});
-        let receipt = serde_json::json!({"proofs": {label: {"verified": 1, "expected_obligations": 1}}});
+        let receipt =
+            serde_json::json!({"proofs": {label: {"verified": 1, "expected_obligations": 1}}});
         let metrics = serde_json::json!({"rlimit_run": 1234});
         for mode in [ExecutionMode::NormalStats, ExecutionMode::DiagnosticStats] {
             let output = mode_log(mode, &metrics, &raw, &receipt);
             if mode == ExecutionMode::NormalStats {
                 println!("MARKER_FIXTURE_START\n{output}\nMARKER_FIXTURE_END");
             }
-            for (prefix, expected) in [
-                ("VERUS_RAW_MEASUREMENT ", &raw),
-                ("VERUS_PROOF ", &receipt),
-            ] {
-                let lines: Vec<_> = output.lines().filter_map(|s| s.strip_prefix(prefix)).collect();
+            for (prefix, expected) in [("VERUS_RAW_MEASUREMENT ", &raw), ("VERUS_PROOF ", &receipt)]
+            {
+                let lines: Vec<_> = output
+                    .lines()
+                    .filter_map(|s| s.strip_prefix(prefix))
+                    .collect();
                 assert_eq!(lines.len(), 1, "missing or duplicate {prefix}");
-                assert_eq!(&serde_json::from_str::<serde_json::Value>(lines[0]).unwrap(), expected);
+                assert_eq!(
+                    &serde_json::from_str::<serde_json::Value>(lines[0]).unwrap(),
+                    expected
+                );
             }
-            assert_eq!(output.lines().filter(|s| s.starts_with("VERUS_MODE ")).count(), 1);
+            assert_eq!(
+                output
+                    .lines()
+                    .filter(|s| s.starts_with("VERUS_MODE "))
+                    .count(),
+                1
+            );
         }
         let frontend = mode_log(ExecutionMode::FrontendOnly, &metrics, &raw, &receipt);
         assert!(!frontend.contains("VERUS_RAW_MEASUREMENT"));
