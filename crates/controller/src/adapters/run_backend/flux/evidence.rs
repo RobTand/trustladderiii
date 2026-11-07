@@ -545,6 +545,11 @@ impl Flux {
         };
         let record = self.journal.load(owner)?;
         let cleanup_complete = super::cleanup::all_stopped(&record);
+        if cleanup_complete && record.runtime_ownerships.is_empty() && record.container_launches.is_empty() {
+            // A queued cancel or wrapper failure may have retained unregistered
+            // debt before native clean arrived. Retire only that exact intent.
+            self.run_cleanup(owner)?;
+        }
         let Some((ending, reason)) = classify(&record, report.as_ref(), cleanup_complete) else {
             self.mark_cleanup_debt(&record)?;
             return Ok(Observation::Unknown {

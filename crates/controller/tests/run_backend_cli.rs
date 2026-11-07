@@ -2630,7 +2630,7 @@ fn pending_injob_launch_requires_exact_stopped_launcher_and_empty_name_and_label
     let facts = json!({"schema":"tl3.cleanup_evidence.v1","ownership":launcher,"launcher":{"kind":"absent"},
         "process_group_probe_errno":3,"container":null,
         "pending_launch":{"intent":launch,"name_exists_exit":1,"sweep_exit":0,"remaining_ids":[]}});
-    for defect in ["name", "sweep", "remaining", "launcher", "group", "intent", "missing", "valid"] {
+    for defect in ["name", "sweep", "remaining", "launcher", "group", "intent", "mode", "missing", "valid"] {
         let mut evidence = facts.clone();
         match defect {
             "name" => evidence["pending_launch"]["name_exists_exit"] = json!(125),
@@ -2639,6 +2639,7 @@ fn pending_injob_launch_requires_exact_stopped_launcher_and_empty_name_and_label
             "launcher" => evidence["launcher"] = json!({"kind":"unknown"}),
             "group" => evidence["process_group_probe_errno"] = Value::Null,
             "intent" => evidence["pending_launch"]["intent"]["name"] = json!("another-name"),
+            "mode" => evidence["pending_launch"]["intent"]["mode"] = json!("own_scope"),
             "missing" => { evidence.as_object_mut().unwrap().remove("pending_launch"); },
             _ => {},
         }
@@ -2652,6 +2653,12 @@ fn pending_injob_launch_requires_exact_stopped_launcher_and_empty_name_and_label
     }
     let debt = f.options.journal_root.join("cleanup-debt").join(&f.request.runtime.manifest_digest);
     assert!(fs::read_dir(debt).unwrap().next().is_none());
+    let mut late = launcher.clone();
+    late.container = Some(ContainerOwnership { name: launch["name"].as_str().unwrap().into(),
+        id: "c".repeat(64), mode: ContainerMode::InJob,
+        labels: serde_json::from_value(launch["labels"].clone()).unwrap(), scope: None });
+    let frames = f.call(json!({"op":"bind_container_launch","owner":f.intent.owner,"correlation":f.intent.correlation,"observed":late}));
+    assert_eq!(frames.last().unwrap()["kind"], "error", "stopped pending intent must not acquire a late binding");
     f.call(json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}));
     f.events(&[json!({"name":"exception","context":{"type":"cancel","severity":0}}),json!({"name":"clean"})]);
     let terminal = f.attach();
