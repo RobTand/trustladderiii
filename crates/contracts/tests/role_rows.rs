@@ -649,7 +649,7 @@ fn unicode_source_identifiers_reject_backend_ids_and_invalid_starts() {
 }
 
 #[test]
-fn mixed_source_and_reply_repairs_require_null_witness_and_recheck_reply_only() {
+fn root_null_edit_and_source_repair_recheck_reply_only() {
     fn mixed() -> Rule<Value> {
         Rule {
             id: "mixed.repair",
