@@ -559,6 +559,7 @@ impl World {
                         && reachable(*self, from, pending@[i]),
                 decreases self.dependencies.len() - edge,
             ] {
+                kernel_snapshot! { frontier_scan = pending@ }
                 let dependency = self.dependencies[edge];
                 if dependency.node == node
                     && !dependency.rejected
@@ -571,6 +572,15 @@ impl World {
                             lemmas::extend(*self, from, node, target);
                         }
                         pending.push(target);
+                    }
+                }
+                kernel_proof! {
+                    assert forall|n: NodeId| frontier_scan@.contains(n)
+                        implies pending@.contains(n) by {
+                        let j = choose|j: int| 0 <= j < frontier_scan@.len()
+                            && frontier_scan@[j] == n;
+                        assert(j < pending@.len());
+                        assert(pending@[j] == n);
                     }
                 }
                 edge += 1;
