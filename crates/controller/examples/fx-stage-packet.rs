@@ -120,10 +120,11 @@ fn prepare(root: &Path, bundle: &Path, context: &Path, source: &Path) -> Result<
         reviewed: run.reviewed_sha.as_ref().map(|sha| sha.as_str().into()), plan_digest: api::durable::digest(&serde_json::to_vec(&run.plan)?) };
     if request.suite != expected_suite { return Err("staged served suite changed".into()); }
     let staged: tl3_contracts::checks::CheckRequest = serde_json::from_slice(&fs::read(request.tree.root.join("request.json"))?)?;
-    if staged.head != *head || staged.base != run.base_sha.as_str() { return Err("served request tuple changed".into()); }
+    if staged.head.as_str() != head.as_str() || staged.base.as_str() != run.base_sha.as_str() { return Err("served request tuple changed".into()); }
     git(&request.tree.root, &["bundle", "verify", "served.bundle"])?;
     let manifest: api::InputManifest = serde_json::from_slice(&fs::read(&request.tree.manifest)?)?;
     if manifest.head != request.tree.head || manifest.tree != request.tree.tree { return Err("transport manifest identity changed".into()); }
+    if identity(&request.tree.manifest)?["sha256"] != request.tree.input_digest { return Err("independent input manifest digest mismatch".into()); }
     let mut staged_files = Vec::new();
     for entry in &manifest.files {
         let observed = identity(&request.tree.root.join(&entry.path))?;
