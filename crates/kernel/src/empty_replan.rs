@@ -292,6 +292,11 @@ fn planner_entry_fixture(fail_fast: bool) -> (w: World) [
         footprint::inline_is_valid(w, 0);
         dependencies::indexable_definition(w);
         assert(dependencies::dependencies_checked(w));
+        open_prefix_monotone(w.nodes@, 0, w.nodes@.len());
+        assert(node_headroom(n));
+        assert forall|j: int| 0 <= j < w.nodes@.len() implies node_headroom(w.nodes@[j]) by {
+            assert(w.nodes@[j] == n);
+        }
         assert(node_checked(w, w.nodes@[0]));
         assert(node_checked(w, w.nodes@[1]));
         assert forall|j: int| 0 <= j < w.nodes@.len() implies node_checked(w, w.nodes@[j]) by {
