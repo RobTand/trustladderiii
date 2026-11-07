@@ -1534,7 +1534,7 @@ fn rp_2648_reopen_keeps_one_use_feedback_and_terminal_reason() {
             drain(&mut c);
             let after = c.world().unwrap();
             assert!(matches!(after.nodes[0].phase, Phase::Planning { .. }));
-            assert!(after.nodes[0].empty_allowed_replanned);
+            assert!(request_budget(&c.snapshot().unwrap(), 0).used());
             assert_eq!(after.nodes[0].credit, before.nodes[0].credit);
             assert_eq!(plans.lock().unwrap().len(), 2);
             let findings = Store::open(&settings)
@@ -1561,7 +1561,7 @@ fn rp_2648_reopen_keeps_one_use_feedback_and_terminal_reason() {
             )
             .unwrap();
             let recovered = reopened.world().unwrap();
-            assert!(recovered.nodes[0].empty_allowed_replanned);
+            assert!(request_budget(&reopened.snapshot().unwrap(), 0).used());
             assert_eq!(recovered.nodes[0].generation, after.nodes[0].generation);
             reopened
                 .observe(
@@ -1580,7 +1580,7 @@ fn rp_2648_reopen_keeps_one_use_feedback_and_terminal_reason() {
             let stopped = reopened.world().unwrap();
             assert_eq!(stopped.nodes[0].phase, Phase::Closed(Outcome::Stopped));
             assert_eq!(stopped.nodes[0].review_stop, Some(ReviewStop::PlanCantMeet));
-            assert!(stopped.nodes[0].empty_allowed_replanned);
+            assert!(request_budget(&reopened.snapshot().unwrap(), 0).used());
             assert_eq!(stopped.nodes[0].credit, before.nodes[0].credit);
             assert_eq!(
                 plans.lock().unwrap().len(),
@@ -1641,4 +1641,11 @@ impl Executor for RpHeldPlans {
         }
         self.fake.reconcile(delivery)
     }
+}
+
+fn request_budget(snapshot: &tl3_store::Snapshot, node: u64) -> tl3_kernel::ReplanBudget {
+    let row = snapshot.rows.iter().find(|r| r.table == "requests" && r.id == node.to_string()).unwrap();
+    let budget: tl3_kernel::ReplanBudget = serde_json::from_value(row.value["replan_budget"].clone()).unwrap();
+    assert!(budget.bound_to(tl3_kernel::NodeId(node)));
+    budget
 }

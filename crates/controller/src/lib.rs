@@ -2136,6 +2136,16 @@ impl Controller {
             Some((node, generation, result, budget, ref before)) => {
                 let (next, after_budget, outputs) = tl3_kernel::step_planner(world, budget, node, generation, result);
                 planner_input::save_budget(snapshot, commit, node, after_budget)?;
+                if after_budget.used() && next.nodes.get(node.0 as usize).is_some_and(|n|
+                    n.review_stop == Some(tl3_kernel::ReviewStop::PlanCantMeet)) {
+                    let plan = commit.rows.iter_mut().rev().find_map(|row| match row {
+                        RowChange::Put { table, id, value } if table == "plans" && *id == node.0.to_string() => Some(value),
+                        _ => None,
+                    });
+                    if let Some(plan) = plan {
+                        plan["empty_allowed_replan_stop"] = json!("Planning failed after the one empty-allowed re-plan for this request version; stop for TL3 review.");
+                    }
+                }
                 if !commit.result.is_object() { commit.result = json!({}); }
                 commit.result["planner_replay"] = json!(replay::PlannerStepRecord {
                     input: before.clone(), node, generation, result, budget, after_budget, after: next.clone(),

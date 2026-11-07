@@ -5,6 +5,7 @@ use super::*;
 /// Only creation of a new request version may call `new`; generations reuse it.
 #[cfg_attr(all(feature = "serde", not(kani)), derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub struct ReplanBudget {
     request: NodeId,
@@ -14,20 +15,30 @@ pub struct ReplanBudget {
 #[cfg(verus_keep_ghost)]
 verus! {
 impl ReplanBudget {
+    pub closed spec fn request_version(&self) -> NodeId { self.request }
+    pub closed spec fn consumed(&self) -> bool { self.used }
+}
+}
+
+kernel_fn! {
+impl ReplanBudget {
     pub fn import(request: NodeId, consumed: bool) -> (result: ReplanBudget) [
         ensures result.request_version() == request, result.consumed() == consumed,
     ] proof [reveal(ReplanBudget::request_version); reveal(ReplanBudget::consumed);] {
         ReplanBudget { request, used: consumed }
     }
 
+}
+}
+
+kernel_fn! {
+impl ReplanBudget {
     pub fn bound_to(&self, request: NodeId) -> (result: bool) [
         ensures result == (self.request_version() == request),
     ] proof [reveal(ReplanBudget::request_version);] {
         self.request == request
     }
 
-    pub closed spec fn request_version(&self) -> NodeId { self.request }
-    pub closed spec fn consumed(&self) -> bool { self.used }
 }
 }
 
@@ -52,6 +63,7 @@ impl ReplanBudget {
 /// Separate from Reply and Event, so dependency-reachable types carry no budget.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(all(feature = "serde", not(kani)), derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 pub enum PlannerResult {
     Ordinary(Reply),

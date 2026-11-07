@@ -1,3 +1,4 @@
+use tl3_kernel::PlannerResult;
 use super::*;
 use serde_json::json;
 
@@ -94,7 +95,7 @@ fn assert_plan_check_stops(class: crate::contracts::plan_check::ObjectionClass) 
             ] {
                 let mut provenance = plan_check_provenance(class);
                 provenance.repair = repair;
-                let MappedReply::Kernel(reply) =
+                let MappedReply::Planner(PlannerResult::Ordinary(reply)) =
                     map_reply_with_plan_check("planner", &checked_plan_reply(), Some(&provenance))
                         .unwrap()
                 else {
@@ -150,7 +151,7 @@ fn plan_check_needs_split_never_asks_or_retries() {
 fn plan_check_without_provenance_preserves_the_legacy_fallback() {
     assert!(matches!(
         map_reply("planner", &checked_plan_reply()).unwrap(),
-        MappedReply::Kernel(Reply::PlanCantMeet)
+        MappedReply::Planner(PlannerResult::Ordinary(Reply::PlanCantMeet))
     ));
     let mut forged = checked_plan_reply();
     forged["plan_check"] = serde_json::to_value(plan_check_provenance(
@@ -221,7 +222,7 @@ fn plan_check_event_metadata_survives_without_changing_the_model_reply() {
         assert!(checked.get("plan_check").is_none());
         assert!(matches!(
             map_reply_with_plan_check("planner", &checked, plan_check.as_ref()).unwrap(),
-            MappedReply::Kernel(Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit)
+            MappedReply::Planner(PlannerResult::Ordinary(Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit))
         ));
     }
 }
@@ -235,7 +236,7 @@ fn plan_check_mixed_objections_stop_and_empty_provenance_is_invalid() {
         .extend(plan_check_provenance(ObjectionClass::Other).objections);
     assert!(matches!(
         map_reply_with_plan_check("planner", &checked_plan_reply(), Some(&provenance)).unwrap(),
-        MappedReply::Kernel(Reply::PlanCheckRejected)
+        MappedReply::Planner(PlannerResult::Ordinary(Reply::PlanCheckRejected))
     ));
     provenance.objections.clear();
     assert!(
@@ -333,7 +334,7 @@ fn split_forecast_keys_are_the_union_of_piece_files() {
     reply["forecast"]["file_tokens"]["new.py"] = json!(0);
     assert!(matches!(
         map_reply("planner", &reply).unwrap(),
-        MappedReply::Kernel(Reply::PlanSplit)
+        MappedReply::Planner(PlannerResult::Ordinary(Reply::PlanSplit))
     ));
     reply["forecast"]["file_tokens"]["extra.py"] = json!(0);
     assert!(map_reply("planner", &reply).is_err());
@@ -349,12 +350,12 @@ fn leaf_with_declared_test_edits_maps_by_its_violations() {
     "forecast": ingest(1)["forecast"], "violations": []});
     assert!(matches!(
         map_reply("planner", &reply).unwrap(),
-        MappedReply::Kernel(Reply::PlanLeaf { fits: true, .. })
+        MappedReply::Planner(PlannerResult::Ordinary(Reply::PlanLeaf { fits: true, .. }))
     ));
     reply["violations"] = json!(["A test the change edits can't be frozen."]);
     assert!(matches!(
         map_reply("planner", &reply).unwrap(),
-        MappedReply::Kernel(Reply::PlanCantMeet)
+        MappedReply::Planner(PlannerResult::Ordinary(Reply::PlanCantMeet))
     ));
     let mut cant_meet = json!({"kind": "cant_meet", "report": "Blocked.", "files": ["greeting.py"],
         "edits_tests": [test], "forecast": ingest(1)["forecast"], "violations": []});
@@ -362,7 +363,7 @@ fn leaf_with_declared_test_edits_maps_by_its_violations() {
     cant_meet.as_object_mut().unwrap().remove("edits_tests");
     assert!(matches!(
         map_reply("planner", &cant_meet).unwrap(),
-        MappedReply::Kernel(Reply::PlanCantMeet)
+        MappedReply::Planner(PlannerResult::Ordinary(Reply::PlanCantMeet))
     ));
 }
 
@@ -448,7 +449,7 @@ fn configured_evidence_preflight_does_not_accept_a_downgraded_leaf() {
         );
         assert!(matches!(
             map_reply("planner", &reply).unwrap(),
-            MappedReply::Kernel(Reply::PlanCantMeet)
+            MappedReply::Planner(PlannerResult::Ordinary(Reply::PlanCantMeet))
         ));
     }
 }
@@ -594,21 +595,15 @@ fn pq_2648_empty_allowed_replans_once_under_both_flags() {
                 }],
                 repair: PlanRepair::Attempted,
             };
-            let MappedReply::Kernel(reply) =
+            let MappedReply::Planner(reply) =
                 map_reply_with_plan_check("planner", &case["reply"], Some(&provenance)).unwrap()
             else {
                 panic!("kernel reply")
             };
             let before = planning_world(fail_fast, 0);
             let generation = before.nodes[0].generation;
-            let (after, out) = step(
-                before.clone(),
-                Event::Reply {
-                    node: NodeId(0),
-                    generation,
-                    reply,
-                },
-            );
+            let (after, budget, out) = step_planner(before.clone(), ReplanBudget::new(NodeId(0)), NodeId(0), generation, reply);
+            assert!(budget.used());
             if !matches!(after.nodes[0].phase, Phase::Planning { .. }) {
                 failures.push(format!(
                     "{} fail_fast={fail_fast}: {:?}",
@@ -652,12 +647,12 @@ fn empty_allowed_replan_excludes_nonempty_unattempted_owner_infrastructure_credi
             ObjectionClass::Other | ObjectionClass::SizeExecutionFit
         );
         assert_eq!(provenance.empty_allowed_replan(), allowed);
-        let MappedReply::Kernel(ending) =
+        let MappedReply::Planner(ending) =
             map_reply_with_plan_check("planner", &checked_plan_reply(), Some(&provenance)).unwrap()
         else {
             panic!("kernel reply")
         };
-        assert_eq!(ending == tl3_kernel::Reply::PlanCheckReplan, allowed);
+        assert_eq!(ending == PlannerResult::EmptyAllowedReplan, allowed);
         provenance.objections[0].rule = "path.protected".into();
         assert!(!provenance.empty_allowed_replan());
     }
@@ -695,57 +690,26 @@ fn empty_allowed_replan_excludes_nonempty_unattempted_owner_infrastructure_credi
 #[test]
 fn empty_allowed_replan_terminal_mapping_preserves_pre_replan_legacy_endings() {
     use tl3_kernel::*;
-    for ending in [
-        Reply::PlanCantMeet,
-        Reply::PlanSplit,
-        Reply::PlanLeaf {
-            footprint: World::new(&[1], 1).intern_footprint([FileId(0)]),
-            fits: false,
-        },
-    ] {
-        assert_eq!(after_empty_allowed_replan(ending, false), ending);
-        assert_eq!(
-            after_empty_allowed_replan(ending, true),
-            Reply::PlanCheckRejected
-        );
-        for fail_fast in [false, true] {
-            let mut before = planning_world(fail_fast, 0);
-            before.nodes[0].empty_allowed_replanned = true;
+    for fail_fast in [false, true] {
+        for ending in [Reply::PlanCantMeet, Reply::PlanSplit, Reply::PlanLeaf {
+            footprint: World::new(&[1], 1).intern_footprint([FileId(0)]), fits: false,
+        }] {
+            let before = planning_world(fail_fast, 0);
             let generation = before.nodes[0].generation;
+            let (legacy, legacy_out) = step(before.clone(), Event::Reply { node: NodeId(0), generation, reply: ending });
+            let (actual, budget, out) = step_planner(before.clone(), ReplanBudget::new(NodeId(0)), NodeId(0), generation, PlannerResult::Ordinary(ending));
+            assert_eq!(actual, legacy);
+            assert_eq!(out, legacy_out);
+            assert!(!budget.used());
             let credit = before.nodes[0].credit;
-            let (after, out) = step(
-                before,
-                Event::Reply {
-                    node: NodeId(0),
-                    generation,
-                    reply: after_empty_allowed_replan(ending, true),
-                },
-            );
-            assert!(matches!(
-                after.nodes[0].phase,
-                Phase::Stopping(_) | Phase::Closed(_)
-            ));
+            let (after, budget, out) = step_planner(before, ReplanBudget::import(NodeId(0), true), NodeId(0), generation, PlannerResult::Ordinary(ending));
+            assert!(budget.used());
+            assert!(matches!(after.nodes[0].phase, Phase::Stopping(_) | Phase::Closed(_)));
             assert_eq!(after.nodes[0].review_stop, Some(ReviewStop::PlanCantMeet));
             assert_eq!(after.nodes[0].credit, credit);
             assert!(after.nodes[0].question.is_none());
-            assert!(!out.iter().any(|o| matches!(
-                o,
-                Out::Notice {
-                    notice: Notice::Ask { .. },
-                    ..
-                }
-            )));
+            assert!(!out.iter().any(|o| matches!(o, Out::Notice { notice: Notice::Ask { .. }, .. })));
         }
-    }
-    for ending in [
-        Reply::ProtectedPaths,
-        Reply::RunFailed,
-        Reply::PlanLeaf {
-            footprint: World::new(&[1], 1).intern_footprint([FileId(0)]),
-            fits: true,
-        },
-    ] {
-        assert_eq!(after_empty_allowed_replan(ending, true), ending);
     }
 }
 
@@ -756,68 +720,26 @@ fn empty_allowed_replan_is_durable_one_use_and_resets_only_for_a_new_request_ver
         let before = planning_world(fail_fast, 0);
         let generation = before.nodes[0].generation;
         let credit = before.nodes[0].credit;
-        let (after, out) = step(
-            before,
-            Event::Reply {
-                node: NodeId(0),
-                generation,
-                reply: Reply::PlanCheckReplan,
-            },
-        );
-        assert!(after.nodes[0].empty_allowed_replanned);
+        let (after, budget, out) = step_planner(before, ReplanBudget::new(NodeId(0)), NodeId(0), generation, PlannerResult::EmptyAllowedReplan);
+        assert!(budget.used());
         assert!(!after.nodes[0].replanned, "Q54 maker flag stays untouched");
         assert_eq!(after.nodes[0].credit, credit);
-        assert!(out.iter().any(|o| matches!(
-            o,
-            Out::Effect {
-                kind: EffectKind::StartRun(Role::Plan),
-                ..
-            }
-        )));
-        let mut restarted: World =
-            serde_json::from_slice(&serde_json::to_vec(&after).unwrap()).unwrap();
-        assert!(restarted.nodes[0].empty_allowed_replanned);
+        assert!(out.iter().any(|o| matches!(o, Out::Effect { kind: EffectKind::StartRun(Role::Plan), .. })));
+        let mut restarted: World = serde_json::from_slice(&serde_json::to_vec(&after).unwrap()).unwrap();
+        let budget: ReplanBudget = serde_json::from_slice(&serde_json::to_vec(&budget).unwrap()).unwrap();
+        assert!(budget.used());
         let effect = restarted.nodes[0].effect.unwrap();
-        restarted = step(
-            restarted,
-            Event::Ack {
-                node: NodeId(0),
-                seq: effect.seq,
-                ack: Ack::Confirmed,
-            },
-        )
-        .0;
+        restarted = step(restarted, Event::Ack { node: NodeId(0), seq: effect.seq, ack: Ack::Confirmed }).0;
         let generation = restarted.nodes[0].generation;
-        let (stopped, out) = step(
-            restarted,
-            Event::Reply {
-                node: NodeId(0),
-                generation,
-                reply: Reply::PlanCheckReplan,
-            },
-        );
-        assert!(matches!(
-            stopped.nodes[0].phase,
-            Phase::Stopping(_) | Phase::Closed(_)
-        ));
-        assert!(stopped.nodes[0].empty_allowed_replanned);
+        let (stopped, budget, out) = step_planner(restarted, budget, NodeId(0), generation, PlannerResult::EmptyAllowedReplan);
+        assert!(matches!(stopped.nodes[0].phase, Phase::Stopping(_) | Phase::Closed(_)));
+        assert!(budget.used());
         assert_eq!(stopped.nodes[0].credit, credit);
         assert!(stopped.nodes[0].question.is_none());
-        assert!(!out.iter().any(|o| matches!(
-            o,
-            Out::Effect {
-                kind: EffectKind::StartRun(Role::Plan),
-                ..
-            }
-        )));
-        let (new_version, _) = step(
-            stopped,
-            Event::NewRequest {
-                repo: RepoId(0),
-                priority: Priority::Unranked,
-            },
-        );
-        assert!(new_version.nodes[0].empty_allowed_replanned);
-        assert!(!new_version.nodes[1].empty_allowed_replanned);
+        assert!(!out.iter().any(|o| matches!(o, Out::Effect { kind: EffectKind::StartRun(Role::Plan), .. })));
+        let (new_version, _) = step(stopped, Event::NewRequest { repo: RepoId(0), priority: Priority::Unranked });
+        assert_eq!(new_version.nodes.len(), 2);
+        assert!(budget.bound_to(NodeId(0)) && budget.used());
+        assert!(!ReplanBudget::new(NodeId(1)).used());
     }
 }
