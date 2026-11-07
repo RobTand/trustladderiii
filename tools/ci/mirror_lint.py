@@ -15,7 +15,6 @@ import tokenize
 ROOT = Path(__file__).resolve().parents[2]
 ALLOWLIST = Path('tools/ci/mirror-allowlist.json')
 MANIFEST = Path('crates/contracts/generated/manifest.json')
-DRIFT_TEST = Path('crates/contracts/tests/schema_drift.rs')
 TEST_DIRS = {'test', 'tests', 'fixture', 'fixtures', 'testdata', '__tests__'}
 DECLARATION = re.compile(
     r'\b(?:mirror\s+of\b|(?<!git )mirrors\s+(?!(?:and|or|are|the|a|an|in|for|to|from)\b)'
@@ -235,10 +234,8 @@ def generated_paths(root):
                 raise ValueError(f'{MANIFEST}: invalid output path')
             paths.add(Path(path))
         return paths
-    drift = root / DRIFT_TEST
-    if not drift.exists():
-        return set()
     return {(drift.parent / value).resolve().relative_to(root)
+            for drift in root.glob('crates/*/tests/schema_drift.rs')
             for _, value in rust_includes(rust_tokens(drift.read_text()))}
 
 
