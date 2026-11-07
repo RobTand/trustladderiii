@@ -452,7 +452,6 @@ def collect(root, config, output, batch_exit):
         elif unavailable:
             row.update(collection='UNKNOWN', reason='child_evidence_unavailable')
         rows.append(row)
-    run_values = [r['rlimit_run'] for r in rows]
     child = 'FAIL' if batch_exit != 0 or any(r['proof'] == 'FAIL' for r in rows) else (
         'PASS' if all(r.get('frontend' if config.mode == 'frontend-only' else 'proof') == 'PASS' for r in rows) else 'UNKNOWN')
     collection = 'FAIL' if any(r['collection'] == 'FAIL' for r in rows) else (
