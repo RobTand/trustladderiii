@@ -175,8 +175,9 @@ def _retain_backend_diagnostic(diagnostic):
         name = f'backend-cli-{uuid.uuid4().hex}.json'
         temporary = '.' + name
         handle = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=descriptor)
-        with os.fdopen(handle, 'w') as target:
-            json.dump(diagnostic, target, ensure_ascii=False, sort_keys=True)
+        with os.fdopen(handle, 'w', encoding='utf-8') as target:
+            # JSON escapes also retain undecodable path bytes represented by surrogates.
+            json.dump(diagnostic, target, ensure_ascii=True, sort_keys=True)
             target.write('\n')
             target.flush()
             os.fsync(target.fileno())
@@ -271,8 +272,6 @@ def backend_request(command, *, bounds=None):
                         stream = stdout_evidence if key.fileobj is process.stdout else stderr_evidence
                         stream.add(chunk)
                         if key.fileobj is process.stderr:
-                            if stream.received > 4 * 1024 * 1024:
-                                raise _BackendTransportError('stderr_oversize', 'backend CLI stderr exceeds transport bound')
                             continue
                         received += len(chunk)
                         if received > bound:
@@ -318,7 +317,7 @@ def backend_request(command, *, bounds=None):
                       'stdout': stdout_evidence.sanitized(), 'stderr': stderr_evidence.sanitized()}
         try:
             _retain_backend_diagnostic(diagnostic)
-        except (OSError, RuntimeError) as retention:
+        except (OSError, RuntimeError, ValueError) as retention:
             diagnostic['retention_error'] = Redactor(None).text(str(retention), limit=1024)
         raise BackendCliError(diagnostic) from None
     finally:

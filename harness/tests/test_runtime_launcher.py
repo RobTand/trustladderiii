@@ -1100,6 +1100,63 @@ def test_backend_cli_diagnostic_budget_does_not_clip_legal_results_or_stderr(bac
     assert runtime.backend_request(dict(op='launch_context'), bounds={'cli_result_bytes': 300000}) == payload
 
 
+def test_backend_cli_success_drains_stderr_beyond_diagnostic_capture(backend_cli):
+    from tl3_harness import runtime
+
+    reply, _ = backend_cli
+    payload = dict(op='launch_context', context='complete')
+    reply.write_text(json.dumps(dict(schema='tl3.run_backend.frame.v1', sequence=0, kind='result', result=payload)) + '\n')
+    executable = reply.parent / 'backend-cli'
+    executable.write_text(executable.read_text() + "\nsys.stderr.write('diagnostic line\\n' * 300000)\n")
+    assert runtime.backend_request(dict(op='launch_context')) == payload
+
+
+def test_backend_cli_diagnostic_retains_unicode_and_surrogate_in_ascii_locale(backend_cli, tmp_path, monkeypatch):
+    import os
+    import subprocess
+
+    reply, _ = backend_cli
+    output = tmp_path / 'correlation'
+    output.mkdir()
+    monkeypatch.setenv('TL3_RUN_DIAGNOSTIC_DIR', str(output))
+    monkeypatch.setenv('OUT', str(output))
+    reply.write_text(json.dumps(dict(schema='tl3.run_backend.frame.v1', sequence=0, kind='error',
+                                    code='invalid_request', message='cause \u754c\udcff')) + '\n')
+    script = '''import json, sys
+from pathlib import Path
+from tl3_harness import runtime
+runtime.BACKEND_OUTPUT_ROOT = Path(sys.argv[1])
+try:
+    runtime.launch_context()
+except runtime.BackendCliError as error:
+    print(json.dumps(error.diagnostic))
+else:
+    raise AssertionError('backend failure required')
+'''
+    result = subprocess.run([sys.executable, '-c', script, str(tmp_path)], capture_output=True,
+                            env={**os.environ, 'LC_ALL': 'C', 'PYTHONUTF8': '0', 'PYTHONCOERCECLOCALE': '0'})
+    assert result.returncode == 0, result.stderr
+    diagnostic = json.loads(result.stdout)
+    assert 'retention_error' not in diagnostic
+    assert diagnostic['cause']['message'] == 'cause \u754c\udcff'
+    assert json.loads(next(output.glob('backend-cli-*.json')).read_bytes()) == diagnostic
+
+
+def test_backend_cli_retention_value_error_keeps_typed_failure(backend_cli, monkeypatch):
+    from tl3_harness import runtime
+
+    reply, _ = backend_cli
+    reply.write_text('invalid frame\n')
+
+    def unavailable(_diagnostic):
+        raise ValueError('diagnostic encoding unavailable')
+
+    monkeypatch.setattr(runtime, '_retain_backend_diagnostic', unavailable)
+    with pytest.raises(runtime.BackendCliError) as caught:
+        runtime.launch_context()
+    assert caught.value.diagnostic['retention_error'] == 'diagnostic encoding unavailable'
+
+
 @pytest.mark.parametrize('fault', ['caller_path', 'symlink'])
 def test_backend_cli_diagnostic_refuses_unapproved_output(backend_cli, tmp_path, monkeypatch, fault):
     from tl3_harness import runtime

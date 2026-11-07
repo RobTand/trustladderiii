@@ -493,6 +493,11 @@ fn jobspec_admits_declared_memory_as_rounded_gib_leaves_and_preserves_original()
             spec["attributes"]["system"]["environment"]["OMP_NUM_THREADS"],
             "1"
         );
+        let environment = &spec["attributes"]["system"]["environment"];
+        for key in ["OUT", "TL3_RUN_DIAGNOSTIC_DIR"] {
+            assert_eq!(environment[key], f.intent.output_dir.to_str().unwrap());
+        }
+        assert_eq!(environment["TL3_RUN_CORRELATION"], f.intent.correlation);
         assert_eq!(
             spec["tasks"][0]["command"][0],
             f.request.runner.executable.to_str().unwrap()
