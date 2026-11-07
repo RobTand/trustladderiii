@@ -101,7 +101,7 @@ def test_t613_ac4_helper_capability_does_not_establish_target_suitability(tmp_pa
     reply = {'kind': 'leaf', 'estimated_exploration_turns': 0,
              'files': ['tests/test_evidence.py'], 'edits_tests': [],
              'no_design_questions': True, 'lands_on_its_own': True,
-             'checks': [{'kind': 'demonstrating', 'node_ids': ['tests/test_evidence.py::test_observer'],
+             'checks': [{'name': 'source-evidence-observer', 'kind': 'demonstrating', 'tests': ['tests/test_evidence.py::test_observer'],
                          'goal_ids': [0], 'proof': {'subjects': ['tests/test_evidence.py::_eio'],
                                                           'observer_support': [], 'red_message': 'wrong evidence'}}]}
     planner.check_reply(inputs, reply)
@@ -152,7 +152,7 @@ def test_planner_prompt_states_the_obligation_to_check_mapping():
         "Never cite it on a regression or behavior-preserving check. A forcing is allowed.",
         "gives proof.red_message and covers every obligation subject in proof.subjects",
         "A subject is covered by itself or by its enclosing module or definition.",
-        "every node_id of that check is a new test that the maker adds",
+        "every test selector of that check is a new test that the maker adds",
         "An existing test cannot prove it, also when the plan edits it.",
         'For observer "new", never cite the goal in rehearse_forcing goal_ids.',
         'For observer "any", an existing test can be the observer.',
@@ -177,26 +177,26 @@ def _obligation_goal(observer):
 
 # (prompt rule, observer, check, campaign, accepted). A campaign is a rehearse_forcing call.
 RULES = [
-    ("demonstrating", "new", {"kind": "demonstrating", "node_ids": [NEW], "proof": PROOF}, False, True),
-    ("not regression", "any", {"kind": "regression", "node_ids": [OLD]}, False, False),
-    ("not behavior-preserving", "any", {"kind": "behavior-preserving", "node_ids": [OLD]}, False, False),
-    ("forcing allowed", "any", {"kind": "demonstrating", "node_ids": [OLD], "proof": PROOF,
+    ("demonstrating", "new", {'name': 'new-assertion-observer', "kind": "demonstrating", 'tests': [NEW], "proof": PROOF}, False, True),
+    ("not regression", "any", {'name': 'existing-regression', "kind": "regression", 'tests': [OLD]}, False, False),
+    ("not behavior-preserving", "any", {'name': 'existing-behavior', "kind": "behavior-preserving", 'tests': [OLD]}, False, False),
+    ("forcing allowed", "any", {'name': 'forced-existing-observer', "kind": "demonstrating", 'tests': [OLD], "proof": PROOF,
                                 "forcing": FORCING}, False, True),
-    ("not declared_symptom", "any", {"kind": "demonstrating", "node_ids": [OLD], "proof": PROOF,
+    ("not declared_symptom", "any", {'name': 'symptom-observer', "kind": "demonstrating", 'tests': [OLD], "proof": PROOF,
                                      "declared_symptom": SYMPTOM}, False, False),
-    ("red_message", "new", {"kind": "demonstrating", "node_ids": [NEW],
+    ("red_message", "new", {'name': 'missing-expected-assertion', "kind": "demonstrating", 'tests': [NEW],
                             "proof": {**PROOF, "red_message": ""}}, False, False),
-    ("every subject", "new", {"kind": "demonstrating", "node_ids": [NEW],
+    ("every subject", "new", {'name': 'different-subject-observer', "kind": "demonstrating", 'tests': [NEW],
                               "proof": {**PROOF, "subjects": ["tools/dispatch.py::Gateway::wait"]}}, False, False),
-    ("enclosing module", "new", {"kind": "demonstrating", "node_ids": [NEW],
+    ("enclosing module", "new", {'name': 'module-subject-observer', "kind": "demonstrating", 'tests': [NEW],
                                  "proof": {**PROOF, "subjects": ["tools/dispatch.py"]}}, False, True),
-    ("enclosing definition", "new", {"kind": "demonstrating", "node_ids": [NEW],
+    ("enclosing definition", "new", {'name': 'definition-subject-observer', "kind": "demonstrating", 'tests': [NEW],
                                      "proof": {**PROOF, "subjects": ["tools/dispatch.py::Gateway"]}}, False, True),
-    ("new: no existing test", "new", {"kind": "demonstrating", "node_ids": [OLD], "proof": PROOF}, False, False),
-    ("any: existing test", "any", {"kind": "demonstrating", "node_ids": [OLD], "proof": PROOF}, False, True),
-    ("new: no rehearsal", "new", {"kind": "demonstrating", "node_ids": [OLD]}, True, False),
-    ("any: assertion rehearsal", "any", {"kind": "demonstrating", "node_ids": [OLD]}, True, True),
-    ("any: no symptom rehearsal", "any", {"kind": "demonstrating", "node_ids": [OLD],
+    ("new: no existing test", "new", {'name': 'new-required-existing-observer', "kind": "demonstrating", 'tests': [OLD], "proof": PROOF}, False, False),
+    ("any: existing test", "any", {'name': 'existing-assertion-observer', "kind": "demonstrating", 'tests': [OLD], "proof": PROOF}, False, True),
+    ("new: no rehearsal", "new", {'name': 'new-required-rehearsal', "kind": "demonstrating", 'tests': [OLD]}, True, False),
+    ("any: assertion rehearsal", "any", {'name': 'existing-assertion-rehearsal', "kind": "demonstrating", 'tests': [OLD]}, True, True),
+    ("any: no symptom rehearsal", "any", {'name': 'symptom-rehearsal', "kind": "demonstrating", 'tests': [OLD],
                                           "declared_symptom": SYMPTOM}, True, False),
 ]
 
@@ -217,11 +217,11 @@ def _pq3299_shaped_plan(cite_obligations_everywhere, campaign):
     obligation = [1] if cite_obligations_everywhere else []
     if campaign:
         # The rehearse_forcing call that PQ #3299's planner made for edited existing tests.
-        return goals, [{"kind": "demonstrating", "node_ids": [OLD], "goal_ids": [0, *obligation]}]
+        return goals, [{'name': 'rehearsed-existing-observer', "kind": "demonstrating", 'tests': [OLD], "goal_ids": [0, *obligation]}]
     checks = [
-        {"kind": "demonstrating", "node_ids": [NEW], "goal_ids": [0, 1], "proof": PROOF},
-        {"kind": "demonstrating", "node_ids": [OLD], "goal_ids": [2, *obligation], "proof": PROOF},
-        {"kind": "regression", "node_ids": ["tests/test_old.py::test_unchanged_verdict"],
+        {'name': 'new-adapter-observer', "kind": "demonstrating", 'tests': [NEW], "goal_ids": [0, 1], "proof": PROOF},
+        {'name': 'edited-existing-observer', "kind": "demonstrating", 'tests': [OLD], "goal_ids": [2, *obligation], "proof": PROOF},
+        {'name': 'unchanged-existing-verdict', "kind": "regression", 'tests': ["tests/test_old.py::test_unchanged_verdict"],
          "goal_ids": [2, *obligation]},
     ]
     return goals, checks
