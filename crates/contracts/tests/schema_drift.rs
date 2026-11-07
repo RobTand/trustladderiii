@@ -240,7 +240,10 @@ fn canonical_check_requires_original_goal_indices_and_keeps_expected_proof() {
     alias.as_object_mut().unwrap().remove("tests");
     alias["node_ids"] = json!(["tests/test_a.py::test_a"]);
     assert!(serde_json::from_value::<Check>(alias).is_err());
-    assert!(contracts::checks::admit_plan(std::slice::from_ref(&check), 3, &[GoalId(0), GoalId(2)]).is_ok());
+    assert!(
+        contracts::checks::admit_plan(std::slice::from_ref(&check), 3, &[GoalId(0), GoalId(2)])
+            .is_ok()
+    );
     assert!(contracts::checks::admit_plan(std::slice::from_ref(&check), 3, &[GoalId(1)]).is_err());
     assert!(contracts::checks::admit_plan(&[check.clone(), check.clone()], 3, &[]).is_err());
     assert!(contracts::checks::admit_plan(std::slice::from_ref(&check), 2, &[]).is_err());

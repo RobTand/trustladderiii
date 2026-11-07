@@ -53,11 +53,11 @@ fn no_fragments(output: &str, secrets: &[Value], label: &str) {
         let secret = secret.as_str().unwrap();
         let chars: Vec<_> = secret.chars().collect();
         let width = chars.len().min(8);
-        for fragment in chars.windows(width) {
+        for (offset, fragment) in chars.windows(width).enumerate() {
             let fragment: String = fragment.iter().collect();
             assert!(
                 !output.contains(&fragment),
-                "producer secret fragment leaked in {label}"
+                "producer secret fragment leaked in {label} at fragment offset {offset}"
             );
         }
     }
