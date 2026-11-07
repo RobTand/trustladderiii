@@ -3,7 +3,7 @@ use super::{Kind, Result, full_rule, has, label_kind, plausible, policy, rule, s
 use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
 use std::collections::{BTreeMap, BTreeSet};
-use tl3_harness_core::summary::{PythonEnvelope, PythonText, Serializer, SummaryValue};
+use tl3_harness_core::summary::{PythonEnvelope, PythonText, SummarySerializer, SummaryValue};
 
 pub const PAYLOAD_BYTES: usize = 65_536;
 pub const STRING_CHARS: usize = 8192;
