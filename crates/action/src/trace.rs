@@ -1,7 +1,7 @@
 //! Trace retention and allocation from primitive MLflow/protobuf observations.
+use crate::structured::{PAYLOAD_BYTES, Redactor, Shaped};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use crate::structured::{PAYLOAD_BYTES, Redactor, Shaped};
 const TRACE_BYTES: usize = 1024 * 1024;
 const FLOOR_BYTES: usize = 4096;
 const FIRST_SPANS: usize = 1024;

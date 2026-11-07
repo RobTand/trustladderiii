@@ -1,5 +1,8 @@
 //! Structured redaction and bounded windows. Unredacted windows remain private until clean.
-use tl3_redaction::{FieldRole, FieldValue, context_chars, field_is_secret, field_matches, redacted_marker, sensitive_file};
+use tl3_redaction::{
+    FieldRole, FieldValue, context_chars, field_is_secret, field_matches, redacted_marker,
+    sensitive_file,
+};
 type Result<T> = std::result::Result<T, String>;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -188,10 +191,19 @@ pub struct Redactor {
 }
 impl Redactor {
     pub fn window(&self, source: &str, start: usize, end: usize) -> Result<String> {
-        tl3_redaction::window(source, start..end, &self.secrets.iter().map(String::as_str).collect::<Vec<_>>())
+        tl3_redaction::window(
+            source,
+            start..end,
+            &self.secrets.iter().map(String::as_str).collect::<Vec<_>>(),
+        )
     }
     fn settle(&self, source: &str, cut: usize, end: usize) -> Result<usize> {
-        tl3_redaction::settled_cut(source, cut, end, &self.secrets.iter().map(String::as_str).collect::<Vec<_>>())
+        tl3_redaction::settled_cut(
+            source,
+            cut,
+            end,
+            &self.secrets.iter().map(String::as_str).collect::<Vec<_>>(),
+        )
     }
     fn cut(&self, source: &str, start: usize, end: usize, limit: usize) -> Result<usize> {
         self.settle(source, end.saturating_sub(limit).max(start), end)
@@ -467,7 +479,9 @@ impl Redactor {
                         SummaryValue::Null => FieldValue::Null,
                         SummaryValue::Bool(_) => FieldValue::Bool,
                         SummaryValue::Number(_) => FieldValue::Number,
-                        SummaryValue::String(_) => FieldValue::Text(scalar_text.as_deref().ok_or("invalid field scalar")?),
+                        SummaryValue::String(_) => {
+                            FieldValue::Text(scalar_text.as_deref().ok_or("invalid field scalar")?)
+                        }
                         _ => FieldValue::Container,
                     };
                     let substitute = if let Some(path) = &path
@@ -476,7 +490,9 @@ impl Redactor {
                         Some(file_marker(path))
                     } else if field_is_secret(&key, field_value, &named)? {
                         Some(redacted_marker().into())
-                    } else { None };
+                    } else {
+                        None
+                    };
                     let key: String = key.chars().take(128).collect();
                     let share = remaining
                         .saturating_sub(key.len() + 8)
@@ -498,16 +514,25 @@ impl Redactor {
     fn clean_value(&mut self, value: &Shaped, limit: usize, depth: usize) -> Result<SummaryValue> {
         // Source rule: Redactor.walk cleans an already fitting container whole,
         // then checks its actual redacted bytes before using truncation reserves.
-        if depth <= 20 && limit >= 128
+        if depth <= 20
+            && limit >= 128
             && matches!(value, Shaped::Array(_) | Shaped::Object(_))
             && value.size()? <= limit.saturating_sub(32)
         {
             let result = self.clean_value_inner(value, limit, depth, true)?;
-            if measured(&result)? <= limit { return Ok(result); }
+            if measured(&result)? <= limit {
+                return Ok(result);
+            }
         }
         self.clean_value_inner(value, limit, depth, false)
     }
-    fn clean_value_inner(&mut self, value: &Shaped, limit: usize, depth: usize, roomy: bool) -> Result<SummaryValue> {
+    fn clean_value_inner(
+        &mut self,
+        value: &Shaped,
+        limit: usize,
+        depth: usize,
+        roomy: bool,
+    ) -> Result<SummaryValue> {
         if depth > 20 || limit < 128 {
             self.truncated = true;
             return Ok(SummaryValue::String(PythonText::from(BUDGET_NOTE)));
@@ -543,7 +568,11 @@ impl Redactor {
                         )));
                         break;
                     }
-                    let share = if roomy { item.size()?.saturating_add(512) } else { remaining.min(ITEM_BYTES.max(remaining / (items.len() - index))) };
+                    let share = if roomy {
+                        item.size()?.saturating_add(512)
+                    } else {
+                        remaining.min(ITEM_BYTES.max(remaining / (items.len() - index)))
+                    };
                     let item = self.clean_value(item, share, depth + 1)?;
                     remaining = remaining.saturating_sub(measured(&item)?.saturating_add(2));
                     result.push(item);
@@ -564,9 +593,13 @@ impl Redactor {
                         break;
                     }
                     let key = self.text(key, 128)?;
-                    let share = if roomy { value.size()?.saturating_add(512) } else { remaining
-                        .saturating_sub(key.len() + 8)
-                        .min(ITEM_BYTES.max(remaining / (fields.len() - index))) };
+                    let share = if roomy {
+                        value.size()?.saturating_add(512)
+                    } else {
+                        remaining
+                            .saturating_sub(key.len() + 8)
+                            .min(ITEM_BYTES.max(remaining / (fields.len() - index)))
+                    };
                     let item = self.clean_value(value, share, depth + 1)?;
                     remaining = remaining.saturating_sub(
                         key.len().saturating_add(measured(&item)?).saturating_add(8),

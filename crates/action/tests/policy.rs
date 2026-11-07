@@ -1,7 +1,7 @@
 use serde_json::json;
+use tl3_action::structured::Redactor;
 use tl3_action::{PolicyOperation, PolicyRequest, PolicyResult, policy};
 use tl3_contracts::rules::{self, *};
-use tl3_action::structured::Redactor;
 fn row() -> Violation {
     Violation {
         rule_id: "proof.subject".into(),
@@ -450,8 +450,10 @@ fn small_trace_content_keeps_its_fields_within_the_allocated_budget() {
     assert_eq!(cleaned["ok"]["result"]["value"]["values"], json!([value]));
     let exhausted = command(json!({"op":"trace","request":{"op":"clean",
         "contents":[shaped],"limits":[0]}}));
-    assert_eq!(exhausted["ok"]["result"]["value"]["values"],
-        json!([{"truncated":true,"note":"trace content budget exhausted"}]));
+    assert_eq!(
+        exhausted["ok"]["result"]["value"]["values"],
+        json!([{"truncated":true,"note":"trace content budget exhausted"}])
+    );
 }
 
 #[test]
@@ -462,15 +464,27 @@ fn azure_sas_context_redacts_exact_signature_spans_without_granting_generic_sig_
         .replace('/', "%2F")
         .replace('=', "%3D");
     for (query, raw_signature) in [
-        (format!("sv=2022-11-02&se=2026-12-01&sr=b&sig={signature}"), signature.as_str()),
-        (format!("sig={encoded}&ss=b&se=2026-12-01&sv=2022-11-02"), encoded.as_str()),
-        (format!("%73v=2022-11-02&%73e=2026-12-01&%73r=b&%73ig={encoded}"), encoded.as_str()),
+        (
+            format!("sv=2022-11-02&se=2026-12-01&sr=b&sig={signature}"),
+            signature.as_str(),
+        ),
+        (
+            format!("sig={encoded}&ss=b&se=2026-12-01&sv=2022-11-02"),
+            encoded.as_str(),
+        ),
+        (
+            format!("%73v=2022-11-02&%73e=2026-12-01&%73r=b&%73ig={encoded}"),
+            encoded.as_str(),
+        ),
     ] {
         let source = format!("https://st42.blob.core.windows.net/c/b?{query}&after=ordinary");
         let result = command(json!({"op":"text","value":source}));
         let text = result["ok"]["result"]["value"].as_str().unwrap();
         assert!(!text.contains("TL3FAKE"));
-        assert!(text == source.replace(raw_signature, "[REDACTED]"), "SAS public context changed");
+        assert!(
+            text == source.replace(raw_signature, "[REDACTED]"),
+            "SAS public context changed"
+        );
         let start = source.find("TL3FAKE").unwrap() + 3;
         let result = command(json!({"op":"window","value":source,"start":start,"end":start+16}));
         assert_eq!(result["ok"]["result"]["value"], "[REDACTED]");

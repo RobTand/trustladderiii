@@ -64,7 +64,7 @@
       "tools/BUILD.bazel"
     ],
     "checks": [
-      {"name": "843-2825-check-1", 
+      {"name": "nonfinite-finish-fallback", 
         "kind": "demonstrating",
         "tests": [
           "tests/test_pbstatus_reader_failures.py::test_a_non_finite_finish_time_falls_back_to_mtime"
@@ -86,7 +86,7 @@
           "red_message": "an unusable finish time entered the ending order"
         }
       },
-      {"name": "843-2825-check-2", 
+      {"name": "oversized-finish-fallback", 
         "kind": "demonstrating",
         "tests": [
           "tests/test_pbstatus_reader_failures.py::test_an_oversized_finish_time_falls_back_to_mtime"
@@ -114,7 +114,7 @@
           "parallel": 0
         }
       },
-      {"name": "843-2825-check-3", 
+      {"name": "ending-transport-and-resource-regressions", 
         "kind": "regression",
         "tests": [
           "tests/test_pbstatus.py::test_a_record_that_cannot_be_parsed_is_a_row_not_a_silence",
@@ -130,7 +130,7 @@
           3
         ]
       },
-      {"name": "843-2825-check-4", 
+      {"name": "duplication-baselines-only-shrink", 
         "kind": "regression",
         "tests": [
           "tests/test_duplication_baseline.py::test_near_duplicate_pairs_only_shrink",

@@ -1,12 +1,12 @@
 //! The action's implemented policy operations. Execution remains in later slices.
 pub mod plugin;
-pub mod structured;
 mod schema;
+pub mod structured;
 mod trace;
+use crate::structured::{Redactor, Shaped};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tl3_contracts::rules::{self, Policy, RenderContext, Role, TerminalForm, Violation};
-use crate::structured::{Redactor, Shaped};
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -185,10 +185,9 @@ pub fn policy(request: PolicyRequest) -> Result<PolicyResponse, String> {
             }
             PolicyResult::Valid
         }
-        PolicyOperation::Text { value, limit } => PolicyResult::Text(state.text(
-            &value,
-            limit.unwrap_or(crate::structured::STRING_CHARS),
-        )?),
+        PolicyOperation::Text { value, limit } => PolicyResult::Text(
+            state.text(&value, limit.unwrap_or(crate::structured::STRING_CHARS))?,
+        ),
         PolicyOperation::Window { value, start, end } => {
             PolicyResult::Text(state.window(&value, start, end)?)
         }
@@ -199,10 +198,9 @@ pub fn policy(request: PolicyRequest) -> Result<PolicyResponse, String> {
         PolicyOperation::Reshape { shaped, limit } => {
             PolicyResult::Shaped(state.reshape(&shaped, limit)?)
         }
-        PolicyOperation::Clean { shaped, limit } => PolicyResult::Json(state.clean(
-            &shaped,
-            limit.unwrap_or(crate::structured::PAYLOAD_BYTES),
-        )?),
+        PolicyOperation::Clean { shaped, limit } => PolicyResult::Json(
+            state.clean(&shaped, limit.unwrap_or(crate::structured::PAYLOAD_BYTES))?,
+        ),
         PolicyOperation::Payload { input_json, limit } => PolicyResult::Json(state.payload(
             &input_json,
             limit.unwrap_or(crate::structured::PAYLOAD_BYTES),

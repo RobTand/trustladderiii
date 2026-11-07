@@ -58,7 +58,7 @@
       "tests/test_cached_unit_reader_gamut.py"
     ],
     "checks": [
-      {"name": "843-1455-check-1", 
+      {"name": "accepted-wire-container-parser-once", 
         "kind": "demonstrating",
         "tests": [
           "tests/test_cached_producer.py::test_accepted_wire_reaches_the_container_parser_once"
@@ -74,7 +74,7 @@
           "red_message": "accepted-wire decode is missing"
         }
       },
-      {"name": "843-1455-check-2", 
+      {"name": "accepted-wire-decode-matches-reader", 
         "kind": "demonstrating",
         "tests": [
           "tests/test_cached_producer.py::test_accepted_wire_decode_matches_the_bytes_reader"
@@ -90,7 +90,7 @@
           "red_message": "accepted-wire decode is missing"
         }
       },
-      {"name": "843-1455-check-3", 
+      {"name": "accepted-wire-rejects-invalid-input", 
         "kind": "demonstrating",
         "tests": [
           "tests/test_cached_unit_reader_gamut.py::test_accepted_wire_decode_refuses_what_the_readers_refuse",
@@ -107,7 +107,7 @@
           "red_message": "accepted-wire decode is missing"
         }
       },
-      {"name": "843-1455-check-4", 
+      {"name": "cached-wire-identity-and-verification", 
         "kind": "regression",
         "tests": [
           "tests/test_cached_producer.py::test_sealed_historical_identity_accepts_original_without_relabelling",
@@ -130,7 +130,7 @@
           5
         ]
       },
-      {"name": "843-1455-check-5", 
+      {"name": "digest-loader-and-document-regressions", 
         "kind": "regression",
         "tests": [
           "tests/test_parse_digest_once.py::test_a_complete_artifact_hashes_its_region_once",

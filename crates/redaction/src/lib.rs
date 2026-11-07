@@ -1,129 +1,131 @@
 //! Text matching against the authoritative Rust redaction policy.
 use fancy_regex::{Captures, Regex};
 mod azure_sas {
-//! Confidential Azure SAS syntax, independent of signature entropy or authenticity.
-use std::collections::BTreeMap;
+    //! Confidential Azure SAS syntax, independent of signature entropy or authenticity.
+    use std::collections::BTreeMap;
 
-const FIELD_BYTES: usize = 4096;
+    const FIELD_BYTES: usize = 4096;
 
-fn valid_percent_encoding(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' {
-            if index + 2 >= bytes.len()
-                || !bytes[index + 1..index + 3]
-                    .iter()
-                    .all(u8::is_ascii_hexdigit)
-            {
-                return false;
-            }
-            index += 3;
-        } else {
-            index += 1;
-        }
-    }
-    true
-}
-
-pub(super) fn spans(text: &str) -> Vec<(usize, usize)> {
-    let mut result = Vec::new();
-    // The caller's one-MiB source bound also bounds candidate scanning and parsing.
-    let mut scanned_until = 0;
-    for (colon, _) in text.match_indices("://") {
-        if colon < scanned_until {
-            continue;
-        }
-        let start = ["https", "http"].into_iter().find_map(|scheme| {
-            let start = colon.checked_sub(scheme.len())?;
-            text.get(start..colon)?
-                .eq_ignore_ascii_case(scheme)
-                .then_some(start)
-        });
-        let Some(start) = start else {
-            continue;
-        };
-        if text[..start]
-            .chars()
-            .next_back()
-            .is_some_and(|c| c.is_alphanumeric() || c == '_')
-        {
-            continue;
-        }
-        let end = text[start..]
-            .find(|c: char| {
-                c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | '\\' | ')' | ']' | '}')
-            })
-            .map_or(text.len(), |offset| start + offset);
-        scanned_until = end;
-        let raw = &text[start..end];
-        let Ok(parsed) = url::Url::parse(raw) else {
-            continue;
-        };
-        if !parsed.username().is_empty() || parsed.password().is_some() {
-            continue;
-        }
-        let Some(account) = parsed
-            .host_str()
-            .and_then(|host| host.strip_suffix(".blob.core.windows.net"))
-        else {
-            continue;
-        };
-        if account.is_empty()
-            || account.len() > 63
-            || !account
-                .bytes()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
-        {
-            continue;
-        }
-        // Use the original query's byte coordinates. URL parsing only establishes authority.
-        let query_end = raw.find('#').unwrap_or(raw.len());
-        let Some(query_start) = raw[..query_end].find('?').map(|index| index + 1) else {
-            continue;
-        };
-        let mut fields = BTreeMap::new();
-        let mut offset = query_start;
-        let mut valid = true;
-        for pair in raw[query_start..query_end].split('&') {
-            if let Some((key, value)) = pair.split_once('=') {
-                if key.len() > FIELD_BYTES
-                    || value.len() > FIELD_BYTES
-                    || !valid_percent_encoding(pair)
+    fn valid_percent_encoding(value: &str) -> bool {
+        let bytes = value.as_bytes();
+        let mut index = 0;
+        while index < bytes.len() {
+            if bytes[index] == b'%' {
+                if index + 2 >= bytes.len()
+                    || !bytes[index + 1..index + 3]
+                        .iter()
+                        .all(u8::is_ascii_hexdigit)
                 {
-                    valid = false;
-                    break;
+                    return false;
                 }
-                let mut decoded = url::form_urlencoded::parse(pair.as_bytes());
-                let Some((key, value)) = decoded.next() else {
-                    valid = false;
-                    break;
-                };
-                if matches!(key.as_ref(), "sv" | "se" | "ss" | "sr" | "sig") {
-                    let span = (
-                        start + offset + pair.find('=').unwrap() + 1,
-                        start + offset + pair.len(),
-                    );
-                    if value.trim().is_empty() || fields.insert(key.into_owned(), span).is_some() {
+                index += 3;
+            } else {
+                index += 1;
+            }
+        }
+        true
+    }
+
+    pub(super) fn spans(text: &str) -> Vec<(usize, usize)> {
+        let mut result = Vec::new();
+        // The caller's one-MiB source bound also bounds candidate scanning and parsing.
+        let mut scanned_until = 0;
+        for (colon, _) in text.match_indices("://") {
+            if colon < scanned_until {
+                continue;
+            }
+            let start = ["https", "http"].into_iter().find_map(|scheme| {
+                let start = colon.checked_sub(scheme.len())?;
+                text.get(start..colon)?
+                    .eq_ignore_ascii_case(scheme)
+                    .then_some(start)
+            });
+            let Some(start) = start else {
+                continue;
+            };
+            if text[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_')
+            {
+                continue;
+            }
+            let end = text[start..]
+                .find(|c: char| {
+                    c.is_whitespace()
+                        || matches!(c, '"' | '\'' | '<' | '>' | '\\' | ')' | ']' | '}')
+                })
+                .map_or(text.len(), |offset| start + offset);
+            scanned_until = end;
+            let raw = &text[start..end];
+            let Ok(parsed) = url::Url::parse(raw) else {
+                continue;
+            };
+            if !parsed.username().is_empty() || parsed.password().is_some() {
+                continue;
+            }
+            let Some(account) = parsed
+                .host_str()
+                .and_then(|host| host.strip_suffix(".blob.core.windows.net"))
+            else {
+                continue;
+            };
+            if account.is_empty()
+                || account.len() > 63
+                || !account
+                    .bytes()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+            {
+                continue;
+            }
+            // Use the original query's byte coordinates. URL parsing only establishes authority.
+            let query_end = raw.find('#').unwrap_or(raw.len());
+            let Some(query_start) = raw[..query_end].find('?').map(|index| index + 1) else {
+                continue;
+            };
+            let mut fields = BTreeMap::new();
+            let mut offset = query_start;
+            let mut valid = true;
+            for pair in raw[query_start..query_end].split('&') {
+                if let Some((key, value)) = pair.split_once('=') {
+                    if key.len() > FIELD_BYTES
+                        || value.len() > FIELD_BYTES
+                        || !valid_percent_encoding(pair)
+                    {
                         valid = false;
                         break;
                     }
+                    let mut decoded = url::form_urlencoded::parse(pair.as_bytes());
+                    let Some((key, value)) = decoded.next() else {
+                        valid = false;
+                        break;
+                    };
+                    if matches!(key.as_ref(), "sv" | "se" | "ss" | "sr" | "sig") {
+                        let span = (
+                            start + offset + pair.find('=').unwrap() + 1,
+                            start + offset + pair.len(),
+                        );
+                        if value.trim().is_empty()
+                            || fields.insert(key.into_owned(), span).is_some()
+                        {
+                            valid = false;
+                            break;
+                        }
+                    }
                 }
+                offset += pair.len() + 1;
             }
-            offset += pair.len() + 1;
+            if valid
+                && fields.contains_key("sv")
+                && fields.contains_key("se")
+                && (fields.contains_key("ss") || fields.contains_key("sr"))
+                && let Some(span) = fields.get("sig")
+            {
+                result.push(*span);
+            }
         }
-        if valid
-            && fields.contains_key("sv")
-            && fields.contains_key("se")
-            && (fields.contains_key("ss") || fields.contains_key("sr"))
-            && let Some(span) = fields.get("sig")
-        {
-            result.push(*span);
-        }
+        result
     }
-    result
-}
-
 }
 mod compatibility;
 mod source;
@@ -1024,33 +1026,63 @@ print(json.dumps(out))
     }
 }
 
-
 /// Maximum matcher input or extracted context window bytes, not raw-source length.
 pub const INPUT_BYTE_LIMIT: usize = LIMIT;
 /// Immutable context retained on each side of a character-index window.
-pub fn context_chars() -> usize { policy().context }
-pub fn redacted_marker() -> &'static str { policy().redacted }
-#[derive(Clone, Copy)]
-pub enum FieldRole { Path, Content, Skipped, TokenCount }
-pub fn field_matches(role: FieldRole, key: &str) -> Result<bool> {
-    has(match role {
-        FieldRole::Path => "PATH_KEYS",
-        FieldRole::Content => "CONTENT_KEYS",
-        FieldRole::Skipped => "SKIPPED_KEYS",
-        FieldRole::TokenCount => "TOKEN_FIELDS",
-    }, key)
+pub fn context_chars() -> usize {
+    policy().context
+}
+pub fn redacted_marker() -> &'static str {
+    policy().redacted
 }
 #[derive(Clone, Copy)]
-pub enum FieldValue<'a> { Null, Bool, Number, Text(&'a str), Container }
+pub enum FieldRole {
+    Path,
+    Content,
+    Skipped,
+    TokenCount,
+}
+pub fn field_matches(role: FieldRole, key: &str) -> Result<bool> {
+    has(
+        match role {
+            FieldRole::Path => "PATH_KEYS",
+            FieldRole::Content => "CONTENT_KEYS",
+            FieldRole::Skipped => "SKIPPED_KEYS",
+            FieldRole::TokenCount => "TOKEN_FIELDS",
+        },
+        key,
+    )
+}
+#[derive(Clone, Copy)]
+pub enum FieldValue<'a> {
+    Null,
+    Bool,
+    Number,
+    Text(&'a str),
+    Container,
+}
 pub fn field_is_secret(key: &str, value: FieldValue<'_>, named: &str) -> Result<bool> {
-    let kind = if key.chars().count() > 128 { Some(Kind::Strong) } else { label_kind(key)? };
+    let kind = if key.chars().count() > 128 {
+        Some(Kind::Strong)
+    } else {
+        label_kind(key)?
+    };
     let weak_secret = if kind == Some(Kind::Weak) {
-        if let FieldValue::Text(text) = value { plausible(Some(Kind::Weak), key, text, "", "", false)? } else { false }
-    } else { false };
-    Ok(matches!(kind, Some(Kind::Strong)) && !matches!(value, FieldValue::Null | FieldValue::Bool)
-        || weak_secret
-        || matches!(key, "value" | "Value") && label_kind(named)? == Some(Kind::Strong)
-            && matches!(value, FieldValue::Text(_) | FieldValue::Number))
+        if let FieldValue::Text(text) = value {
+            plausible(Some(Kind::Weak), key, text, "", "", false)?
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+    Ok(
+        matches!(kind, Some(Kind::Strong)) && !matches!(value, FieldValue::Null | FieldValue::Bool)
+            || weak_secret
+            || matches!(key, "value" | "Value")
+                && label_kind(named)? == Some(Kind::Strong)
+                && matches!(value, FieldValue::Text(_) | FieldValue::Number),
+    )
 }
 
 pub fn sensitive_file(path: &str) -> Result<bool> {
@@ -1078,115 +1110,125 @@ pub fn sensitive_file(path: &str) -> Result<bool> {
 }
 
 /// Redact a character-index range with bounded surrounding source context.
-pub fn window(source: &str, range: std::ops::Range<usize>, known_secrets: &[&str]) -> Result<String> {
-        let (start, end) = (range.start, range.end);
-        let length = source.chars().count();
-        if start > end || end > length {
-            return Err("invalid redaction window".into());
-        }
-        let low = start.saturating_sub(policy().context);
-        let high = end.saturating_add(policy().context).min(length);
-        let text = substring(source, low, high);
-        if text.len() > LIMIT {
-            return Err("redaction window exceeds one MiB".into());
-        }
-        let first = byte_at(text, start - low);
-        let stop = byte_at(text, end - low);
-        let mut found = spans(text)?;
-        for secret in known_secrets {
-            if !secret.is_empty() {
-                found.extend(
-                    text.match_indices(*secret)
-                        .map(|(index, _)| (index, index + secret.len())),
-                );
-            }
-        }
-        found.sort_unstable();
-        let mut cursor = first;
-        let mut out = String::new();
-        for (start, end) in found {
-            if end <= cursor || start >= stop {
-                continue;
-            }
-            if start > cursor {
-                out.push_str(&text[cursor..start]);
-            }
-            out.push_str(policy().redacted);
-            cursor = cursor.max(end);
-        }
-        if cursor < stop {
-            out.push_str(&text[cursor..stop]);
-        }
-        Ok(out)
+pub fn window(
+    source: &str,
+    range: std::ops::Range<usize>,
+    known_secrets: &[&str],
+) -> Result<String> {
+    let (start, end) = (range.start, range.end);
+    let length = source.chars().count();
+    if start > end || end > length {
+        return Err("invalid redaction window".into());
     }
+    let low = start.saturating_sub(policy().context);
+    let high = end.saturating_add(policy().context).min(length);
+    let text = substring(source, low, high);
+    if text.len() > LIMIT {
+        return Err("redaction window exceeds one MiB".into());
+    }
+    let first = byte_at(text, start - low);
+    let stop = byte_at(text, end - low);
+    let mut found = spans(text)?;
+    for secret in known_secrets {
+        if !secret.is_empty() {
+            found.extend(
+                text.match_indices(*secret)
+                    .map(|(index, _)| (index, index + secret.len())),
+            );
+        }
+    }
+    found.sort_unstable();
+    let mut cursor = first;
+    let mut out = String::new();
+    for (start, end) in found {
+        if end <= cursor || start >= stop {
+            continue;
+        }
+        if start > cursor {
+            out.push_str(&text[cursor..start]);
+        }
+        out.push_str(policy().redacted);
+        cursor = cursor.max(end);
+    }
+    if cursor < stop {
+        out.push_str(&text[cursor..stop]);
+    }
+    Ok(out)
+}
 
 /// Return a safe character-index cut; reject cut > end or an end beyond the source.
-    // Source rule: the removed Python settle/tail_window safety boundary. Use the
-    // authoritative TOKEN_CHAR/NOT_TOKEN/PRIVATE_HEADER grammar, never rescan a huge
-    // omitted prefix through every secret matcher just to choose a window.
+// Source rule: the removed Python settle/tail_window safety boundary. Use the
+// authoritative TOKEN_CHAR/NOT_TOKEN/PRIVATE_HEADER grammar, never rescan a huge
+// omitted prefix through every secret matcher just to choose a window.
 pub fn settled_cut(source: &str, cut: usize, end: usize, known_secrets: &[&str]) -> Result<usize> {
-        if cut > end || end > source.chars().count() {
-            return Err("invalid redaction cut".into());
-        }
-        let stop = byte_at(source, end);
-        let mut position = byte_at(source, cut);
-        if let Some(begin) = source[..position].rfind("-----BEGIN ") {
-            let header = rule("PRIVATE_HEADER")?
-                .find(&source[begin..stop])
-                .map_err(|error| error.to_string())?;
-            if header.is_some_and(|matched| matched.start() == 0)
-                && !source[begin..position].contains("-----END ")
-            {
-                position = source[position..stop]
-                    .find("-----END ")
-                    .and_then(|close| {
-                        let close = position + close + 9;
-                        source[close..stop]
-                            .find("-----")
-                            .map(|tail| close + tail + 5)
-                    })
-                    .unwrap_or(stop);
-            }
-        }
-        for secret in known_secrets {
-            if secret.is_empty() {
-                continue;
-            }
-            let mut low = position.saturating_sub(secret.len());
-            while !source.is_char_boundary(low) {
-                low += 1;
-            }
-            let mut high = position.saturating_add(secret.len()).min(stop);
-            while !source.is_char_boundary(high) {
-                high -= 1;
-            }
-            for (first, _) in source[low..high].match_indices(*secret) {
-                let first = low + first;
-                if first < position && first + secret.len() > position {
-                    position = first + secret.len();
-                }
-            }
-        }
-        if position > 0 && position < stop {
-            let before = source[..position]
-                .chars()
-                .next_back()
-                .ok_or("missing cut context")?;
-            let after = source[position..stop]
-                .chars()
-                .next()
-                .ok_or("missing cut context")?;
-            if full_rule("TOKEN_CHAR", &before.to_string())?
-                && full_rule("TOKEN_CHAR", &after.to_string())?
-            {
-                position = rule("NOT_TOKEN")?
-                    .find(&source[position..stop])
-                    .map_err(|error| error.to_string())?
-                    .map_or(stop, |matched| position + matched.start());
-            }
-        }
-        Ok(source[..position].chars().count())
+    if cut > end || end > source.chars().count() {
+        return Err("invalid redaction cut".into());
     }
+    let stop = byte_at(source, end);
+    let mut position = byte_at(source, cut);
+    if let Some(begin) = source[..position].rfind("-----BEGIN ") {
+        let header = rule("PRIVATE_HEADER")?
+            .find(&source[begin..stop])
+            .map_err(|error| error.to_string())?;
+        if header.is_some_and(|matched| matched.start() == 0)
+            && !source[begin..position].contains("-----END ")
+        {
+            position = source[position..stop]
+                .find("-----END ")
+                .and_then(|close| {
+                    let close = position + close + 9;
+                    source[close..stop]
+                        .find("-----")
+                        .map(|tail| close + tail + 5)
+                })
+                .unwrap_or(stop);
+        }
+    }
+    for secret in known_secrets {
+        if secret.is_empty() {
+            continue;
+        }
+        let mut low = position.saturating_sub(secret.len());
+        while !source.is_char_boundary(low) {
+            low += 1;
+        }
+        let mut high = position.saturating_add(secret.len()).min(stop);
+        while !source.is_char_boundary(high) {
+            high -= 1;
+        }
+        for (first, _) in source[low..high].match_indices(*secret) {
+            let first = low + first;
+            if first < position && first + secret.len() > position {
+                position = first + secret.len();
+            }
+        }
+    }
+    if position > 0 && position < stop {
+        let before = source[..position]
+            .chars()
+            .next_back()
+            .ok_or("missing cut context")?;
+        let after = source[position..stop]
+            .chars()
+            .next()
+            .ok_or("missing cut context")?;
+        if full_rule("TOKEN_CHAR", &before.to_string())?
+            && full_rule("TOKEN_CHAR", &after.to_string())?
+        {
+            position = rule("NOT_TOKEN")?
+                .find(&source[position..stop])
+                .map_err(|error| error.to_string())?
+                .map_or(stop, |matched| position + matched.start());
+        }
+    }
+    Ok(source[..position].chars().count())
+}
 
-fn byte_at(text: &str, index: usize) -> usize { text.char_indices().nth(index).map_or(text.len(), |(index, _)| index) }
-fn substring(text: &str, start: usize, end: usize) -> &str { &text[byte_at(text, start)..byte_at(text, end)] }
+fn byte_at(text: &str, index: usize) -> usize {
+    text.char_indices()
+        .nth(index)
+        .map_or(text.len(), |(index, _)| index)
+}
+fn substring(text: &str, start: usize, end: usize) -> &str {
+    &text[byte_at(text, start)..byte_at(text, end)]
+}
