@@ -140,4 +140,7 @@ impl Shell<'_> {
 
 // #838 changed the findings helper. Only the current tail uses this copy;
 // the reference tail keeps the frozen findings.rs and its original pin.
-pub(super) mod findings { include!("findings-current.rs"); }
+pub(super) mod findings {
+    use tl3_controller::findings::CauseEvidence;
+    include!("findings-current.rs");
+}

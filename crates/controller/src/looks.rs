@@ -863,7 +863,7 @@ impl Controller {
         }
         match result {
             Ok(Look::Found(completion)) => {
-                let mut completion = *completion;
+                let completion = *completion;
                 let effect = self
                     .store
                     .effect(&state.delivery.key)?
@@ -2281,9 +2281,6 @@ mod git_failure_tests {
 #[cfg(test)]
 mod incident_tests {
     use super::*;
-
-    #[test]
-
 
     #[test]
     fn git_remote_failures_in_worktrees_are_upstream() {

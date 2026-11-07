@@ -65,9 +65,6 @@ impl Respond for DirectApi {
     }
 }
 struct DirectFixture { api: Server, root: tempfile::TempDir, direct: Arc<Mutex<DirectState>>, wakes: direct_merge::Wakes, clock: Clock }
-fn direct_repo() -> tl3_config::Repository {
-    serde_json::from_value(json!({"owner":"owner", "name":"sandbox", "installation_id":3, "delivery":"direct"})).unwrap()
-}
 impl DirectFixture {
     fn new() -> Self {
         let api = Server::new();
@@ -834,7 +831,7 @@ fn annotation_crash_preserves_consumed_merge_attempts() {
         assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
         drop(controller);
         let path = direct_intent_path(&fixture);
-        let mut intent: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let intent: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(intent["action"], "Merge");
         std::fs::write(&path, serde_json::to_vec(&intent).unwrap()).unwrap();
         {

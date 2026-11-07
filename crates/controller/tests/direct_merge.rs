@@ -6,7 +6,6 @@ use std::{
     collections::BTreeMap,
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
-    path::Path,
     sync::{Arc, Mutex, mpsc},
     thread,
     time::Duration,
@@ -15,10 +14,10 @@ use support::scenario::progress as scenario_progress;
 use tl3_controller::{
     Bootstrap, Boundary, Controller, LabelledIssue, Repository, adapters,
     executor::{Delivery, Executor, Output as Out, Reconciliation, Upstream},
-    ingress::{self, CatchUp, Source, Webhooks},
+    ingress::{self, Source, Webhooks},
 };
 use tl3_github::{AppConfig, ClientOptions, GitHub};
-use tl3_kernel::{Ack, EffectKind, NodeId, Outcome, Phase};
+use tl3_kernel::{EffectKind, NodeId, Outcome, Phase};
 use tl3_store::Store;
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
@@ -240,11 +239,4 @@ fn deliver(settings: &tl3_config::Store, _api: &Server, event: &str, body: &Valu
     handle.join().unwrap().unwrap();
     drop(receiver);
 }
-fn pull_event(api: &Server, action: &str) -> Value {
-    let mut body = webhook_fixture();
-    body["action"] = json!(action);
-    body["pull_request"] = api.state.lock().unwrap().pull.clone();
-    body
-}
-
 include!("direct_merge/scenarios.rs");
