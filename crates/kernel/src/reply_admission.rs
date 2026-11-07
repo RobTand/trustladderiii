@@ -5,7 +5,7 @@ kernel_fn! {
 /// Reply rows / #771: phase, schema and commit identity use the executable checks.
 pub(super) fn accepts(w: &World, n: &Node, reply: &Reply) -> (result: bool) [
     ensures result == reply_schema::allows(reply_schema::input(*w, *n, *reply), *reply),
-] proof [reveal(reply_schema::allows);] {
+] proof [reveal(reply_schema::input); reveal(reply_schema::allows);] {
     match (n.phase, reply) {
         (Phase::Ingesting | Phase::Auditing | Phase::Planning { .. }, Reply::ProtectedPaths) => {
             true

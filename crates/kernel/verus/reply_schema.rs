@@ -5,6 +5,7 @@ verus! {
 pub(super) type Input = (Phase, Option<HeadId>, Option<HeadId>, bool);
 
 /// Reply rows: only footprint-bearing payloads consult the real storage table.
+#[verifier::opaque]
 pub(super) open spec fn input(w: World, n: Node, reply: Reply) -> Input {
     (n.phase, n.head, n.checked, match reply {
         Reply::PlanLeaf { footprint, .. } | Reply::MakerNeedsFiles { files: footprint, .. } =>
@@ -43,25 +44,25 @@ pub(super) proof fn accepted_payload(w: World, n: Node, reply: Reply)
             footprint::valid_footprint(w, footprint),
         _ => true,
     },
-{ reveal(allows); }
+{ reveal(input); reveal(allows); }
 
 /// Auditing row: a wrong-phase disagreement is a rejected operation reply.
 pub(super) proof fn audit_phase(w: World, n: Node)
     ensures allows(input(w, n, Reply::AuditDisagrees), Reply::AuditDisagrees)
         == (n.phase == Phase::Auditing),
-{ reveal(allows); }
+{ reveal(input); reveal(allows); }
 
 /// Planning review rows: code-owned plan-check replies cannot be schema-rejected.
 pub(super) proof fn plan_check_phase(w: World, n: Node, reply: Reply)
     requires matches!(reply, Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit),
     ensures allows(input(w, n, reply), reply) == (n.phase is Planning),
-{ reveal(allows); }
+{ reveal(input); reveal(allows); }
 
 /// Making row: only MakerDone in Making can reach the maker result consumer.
 pub(super) proof fn maker_phase(w: World, n: Node, head: HeadId)
     ensures allows(input(w, n, Reply::MakerDone { head }), Reply::MakerDone { head })
         == (n.phase == Phase::Making),
-{ reveal(allows); }
+{ reveal(input); reveal(allows); }
 
 /// Successful reply rows: consistency supplies Approved's actual head identity.
 pub(super) proof fn successful(w: World, n: Node, reply: Reply)
@@ -69,5 +70,5 @@ pub(super) proof fn successful(w: World, n: Node, reply: Reply)
         (reply is PlanLeaf && footprint::footprint_empty(n.footprint)
             ==> footprint::valid_footprint(w, footprint::inline_footprint(1))),
     ensures allows(input(w, n, reply), reply),
-{ reveal(allows); }
+{ reveal(input); reveal(allows); }
 }
