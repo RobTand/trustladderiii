@@ -58,12 +58,11 @@ pub(crate) fn load_budget(snapshot: &Snapshot, commit: &Commit, node: NodeId) ->
         }
     };
     if !budget.bound_to(node) { return Err(Error::Invalid("replan budget binding mismatch")); }
-    if let Some(old) = snapshot.rows.iter().find(|row| row.table == "requests" && row.id == node.0.to_string()) {
-        if let Some(value) = old.value.get("replan_budget") {
-            let persisted = decode_stored::<ReplanBudget>(value.clone())?;
-            if !persisted.bound_to(node) || (persisted.used() && !budget.used() && !consumed) {
-                return Err(Error::Invalid("replan budget reset"));
-            }
+    if let Some(old) = snapshot.rows.iter().find(|row| row.table == "requests" && row.id == node.0.to_string())
+        && let Some(value) = old.value.get("replan_budget") {
+        let persisted = decode_stored::<ReplanBudget>(value.clone())?;
+        if !persisted.bound_to(node) || (persisted.used() && !budget.used() && !consumed) {
+            return Err(Error::Invalid("replan budget reset"));
         }
     }
     Ok(if consumed { ReplanBudget::import(node, true) } else { budget })
@@ -71,12 +70,11 @@ pub(crate) fn load_budget(snapshot: &Snapshot, commit: &Commit, node: NodeId) ->
 
 pub(crate) fn save_budget(snapshot: &Snapshot, commit: &mut Commit, node: NodeId, budget: ReplanBudget) -> Result<()> {
     if !budget.bound_to(node) { return Err(Error::Invalid("replan budget binding mismatch")); }
-    if let Some(old) = snapshot.rows.iter().find(|row| row.table == "requests" && row.id == node.0.to_string()) {
-        if let Some(value) = old.value.get("replan_budget") {
-            let persisted = decode_stored::<ReplanBudget>(value.clone())?;
-            if !persisted.bound_to(node) || (persisted.used() && !budget.used()) {
-                return Err(Error::Invalid("replan budget reset"));
-            }
+    if let Some(old) = snapshot.rows.iter().find(|row| row.table == "requests" && row.id == node.0.to_string())
+        && let Some(value) = old.value.get("replan_budget") {
+        let persisted = decode_stored::<ReplanBudget>(value.clone())?;
+        if !persisted.bound_to(node) || (persisted.used() && !budget.used()) {
+            return Err(Error::Invalid("replan budget reset"));
         }
     }
     let mut row = request_row(snapshot, commit, node)?;

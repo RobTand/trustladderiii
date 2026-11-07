@@ -110,10 +110,9 @@ pub fn check_record(
         if let Some(world) = previous {
             check_prepared(world, &planner.input).map_err(|reason| fail(&reason))?;
         }
-        if let Some(metadata) = result.get("kernel_planner_input") {
-            if *metadata != serde_json::json!({"node":planner.node,"generation":planner.generation,"result":planner.result}) {
-                return Err(fail("planner input metadata diverged"));
-            }
+        if let Some(metadata) = result.get("kernel_planner_input")
+            && *metadata != serde_json::json!({"node":planner.node,"generation":planner.generation,"result":planner.result}) {
+            return Err(fail("planner input metadata diverged"));
         }
         return Ok(Some(planner.after));
     }
