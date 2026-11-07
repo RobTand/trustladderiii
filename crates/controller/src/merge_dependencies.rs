@@ -549,17 +549,17 @@ impl Controller {
         outputs: &mut Vec<Out>,
         commit: &mut Commit,
     ) -> Result<bool> {
-        if !self.kernel_headroom(snapshot, world, commit)? {
-            return Ok(false);
-        }
         if !self.input_checkpoint(snapshot, commit)? {
             return Ok(false);
         }
-        let tl3_kernel::StepResult {
+        let Some(tl3_kernel::StepResult {
             world: next,
             outputs: emitted,
             ..
-        } = tl3_kernel::step(world.clone(), event);
+        }) = self.checked_kernel_step(snapshot, world, event, commit)?
+        else {
+            return Ok(false);
+        };
         *world = next;
         outputs.extend(emitted);
         if !commit.result.is_object() {

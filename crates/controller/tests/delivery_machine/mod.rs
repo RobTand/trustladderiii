@@ -259,6 +259,11 @@ fn owned_controller_io_shell_remains_verbatim() {
     let base = include_str!("base-integration-shell.rs.txt");
     let end = base.find("    fn apply(").unwrap();
     assert_eq!(restored, &base[..end]);
+}
+
+/// Approval I/O stays at its original source positions around pure decisions.
+#[test]
+fn approval_delivery_io_shell_remains_verbatim() {
     let restored = include_str!("../../src/approval_delivery.rs")
         .replace(
             include_str!("new-authorization.rs.txt"),

@@ -1999,3 +1999,146 @@ fn deadlock_retains_input_and_replays_without_incident() {
             .any(|r| r.table == "incidents")
     );
 }
+
+#[test]
+fn startup_counter_halt_preserves_recovery_input_and_effects() {
+    let mut db = Database::start();
+    let (repo, mut c, repository, _) = fixture_with_settings(&mut db, "startup_counter_refusal");
+    let waiter = intake(&mut c, &repository, 42);
+    ingest(&mut c, waiter, &[2761, 2772]);
+    external(&mut c, &repository, 2761, DependencyStatus::Abandoned);
+    let mut world = c.world().unwrap();
+    assert_eq!(world.dependencies()[0].status, DependencyStatus::Delivered);
+    assert!(!world.nodes[waiter.0 as usize].planning_started);
+    world.nodes[waiter.0 as usize].next_seq = u64::MAX;
+    persist_world(&mut c, &world, "startup-exhausted-counter");
+    let before = c.snapshot().unwrap();
+    // Transfer the claimed session so opening the successor has no unlock race.
+    let Controller {
+        store, bootstrap, ..
+    } = c;
+    let mut c = Controller::open(
+        store,
+        crate::adapters::simulation(&repo.root.path().join("fakes")).unwrap(),
+        bootstrap,
+    )
+    .unwrap();
+    assert_eq!(c.world().unwrap(), world);
+    let after = c.snapshot().unwrap();
+    let business = |snapshot: &Snapshot| {
+        snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table != "incidents" && row.table != crate::dispatch_liveness::PARKED)
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let parked: Vec<_> = after
+        .rows
+        .iter()
+        .filter(|row| row.table == crate::dispatch_liveness::PARKED)
+        .collect();
+    assert_eq!(parked.len(), 1);
+    assert_eq!(parked[0].id, "headroom");
+    assert_eq!(parked[0].value, json!(true));
+    assert_eq!(business(&after), business(&before));
+    assert_eq!(after.pending_effects, before.pending_effects);
+    let incidents: Vec<_> = after
+        .rows
+        .iter()
+        .filter(|row| {
+            row.table == "incidents" && row.value["signature"]["class"] == "kernel_counter_headroom"
+        })
+        .collect();
+    assert_eq!(incidents.len(), 1);
+    assert_eq!(
+        incidents[0].value["summary"],
+        "kernel counter headroom exhausted: next_seq"
+    );
+    assert_eq!(incidents[0].value["open"], true);
+}
+
+#[test]
+fn startup_capacity_change_refusal_preserves_world_repositories_and_effects() {
+    let mut db = Database::start();
+    let (repo, mut c, repository, _) = fixture_with_settings(&mut db, "startup_capacity_refusal");
+    let node = intake(&mut c, &repository, 42);
+    let mut world = c.world().unwrap();
+    world.nodes[node.0 as usize].next_seq = u64::MAX;
+    persist_world(&mut c, &world, "startup-capacity-exhausted");
+    let before = c.snapshot().unwrap();
+    assert!(!before.rows.iter().any(|row| row.table == "incidents"
+        && row.value["signature"]["class"] == "kernel_counter_headroom"));
+    let Controller {
+        store,
+        mut bootstrap,
+        ..
+    } = c;
+    bootstrap.pool += 1;
+    bootstrap.slots += 1;
+    let mut addition = repository.clone();
+    addition.name.push_str("-new");
+    bootstrap.repos.push(addition);
+    let mut c = Controller::open(
+        store,
+        crate::adapters::simulation(&repo.root.path().join("fakes")).unwrap(),
+        bootstrap,
+    )
+    .unwrap();
+    assert_eq!(
+        c.world().unwrap(),
+        world,
+        "capacity reconciliation must refuse before persisting changed gates or pool"
+    );
+    let after = c.snapshot().unwrap();
+    let business = |snapshot: &Snapshot| {
+        snapshot
+            .rows
+            .iter()
+            .filter(|row| {
+                row.table != "incidents"
+                    && row.table != crate::dispatch_liveness::PARKED
+                    && row.table != crate::dispatch_liveness::QUEUED
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    // Reopening parks an acknowledged worker behind the counter halt.
+    assert!(
+        !before
+            .rows
+            .iter()
+            .any(|row| row.table == crate::dispatch_liveness::QUEUED)
+    );
+    let queued: Vec<_> = after
+        .rows
+        .iter()
+        .filter(|row| row.table == crate::dispatch_liveness::QUEUED)
+        .collect();
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].id, node.0.to_string());
+    assert_eq!(queued[0].value, json!(true));
+    assert_eq!(
+        business(&after),
+        business(&before),
+        "repository and gate rows must not be written on refusal"
+    );
+    assert_eq!(
+        after.interned, before.interned,
+        "new repositories must not be interned on refusal"
+    );
+    assert_eq!(after.pending_effects, before.pending_effects);
+    let incidents: Vec<_> = after
+        .rows
+        .iter()
+        .filter(|row| {
+            row.table == "incidents" && row.value["signature"]["class"] == "kernel_counter_headroom"
+        })
+        .collect();
+    assert_eq!(incidents.len(), 1);
+    assert_eq!(
+        incidents[0].value["summary"],
+        "kernel counter headroom exhausted: next_seq"
+    );
+    assert_eq!(incidents[0].value["open"], true);
+}

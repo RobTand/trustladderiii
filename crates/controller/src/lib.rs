@@ -556,10 +556,16 @@ impl Controller {
                 "fail_fast": fail_fast_change, "repositories": additions}),
             &snapshot,
         );
-        if !self.kernel_headroom(&snapshot, &world, &mut commit)? {
+        let Some(result) = self.checked_kernel_step(
+            &snapshot,
+            &mut world,
+            input_errors::settlement_event(),
+            &mut commit,
+        )?
+        else {
             self.store.commit(&commit)?;
             return Ok(());
-        }
+        };
         for (index, repository) in additions {
             self.store
                 .intern_repo(&repository.owner, &repository.name)?;
@@ -569,8 +575,7 @@ impl Controller {
                 serde_json::to_value(repository)?,
             ));
         }
-        let (world, outputs) = tl3_kernel::settle_world(world);
-        self.record_kernel_result(&snapshot, world, outputs, &mut commit)?;
+        self.record_kernel_result(&snapshot, result.world, result.outputs, &mut commit)?;
         self.store.commit(&commit)?;
         Ok(())
     }
@@ -682,13 +687,14 @@ impl Controller {
         let snapshot = self.store.load()?;
         // A retained intake has no request row yet. Only the path without a
         // backlog or halt may discard an edit to an issue TL3 does not track.
+        // Untracked edits never enter the kernel; its next input or dispatch
+        // scan raises any counter halt.
         if !input_errors::kernel_backlog(&snapshot)
             && !snapshot.rows.iter().any(|r| {
                 r.table == "incidents"
                     && r.value["open"] == true
                     && r.value["signature"]["class"] == input_errors::COUNTER_HEADROOM
             })
-            && snapshot::decode(&snapshot)?.headroom_ok()
             && !stored_repositories(&snapshot)?.iter().any(|repo| {
                 repo.owner.eq_ignore_ascii_case(&change.owner)
                     && repo.name.eq_ignore_ascii_case(&change.repo)
@@ -714,9 +720,6 @@ impl Controller {
         commit: &mut Commit,
     ) -> Result<()> {
         let world = snapshot::decode(snapshot)?;
-        if !self.kernel_headroom(snapshot, &world, commit)? {
-            return Ok(());
-        }
         let Some(repo) = stored_repositories(snapshot)?.into_iter().find(|r| {
             r.owner.eq_ignore_ascii_case(&change.owner)
                 && r.name.eq_ignore_ascii_case(&change.repo)
@@ -2048,9 +2051,6 @@ impl Controller {
         commit: &mut Commit,
     ) -> Result<()> {
         let close_details = close_reasons::take_details(commit);
-        if !self.kernel_headroom(snapshot, &world, commit)? {
-            return Ok(());
-        }
         // A dequeue receipt can precede queue admission, where the kernel
         // intentionally ignores it. Only an accepted Resume releases that hold.
         if let Event::Command {
@@ -2076,18 +2076,21 @@ impl Controller {
             &mut dependency_outputs,
             commit,
         )?;
-        if !self.kernel_headroom(snapshot, &world, commit)? {
+        if input_errors::deferred(commit) {
             return Ok(());
         }
         let dependency_roots = merge_dependencies::changed_roots(&world, event);
         if !self.input_checkpoint(snapshot, commit)? {
             return Ok(());
         }
-        let tl3_kernel::StepResult {
+        let Some(tl3_kernel::StepResult {
             mut world,
             mut outputs,
             report,
-        } = tl3_kernel::step(world, event);
+        }) = self.checked_kernel_step(snapshot, &mut world, event, commit)?
+        else {
+            return Ok(());
+        };
         outputs.splice(0..0, dependency_outputs);
         self.announce_dependency_endings(
             snapshot,
