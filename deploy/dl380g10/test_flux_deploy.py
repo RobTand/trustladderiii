@@ -1,14 +1,18 @@
 """Hermetic fake-native controls. These tests never invoke a real Flux client."""
+import ast
 import copy
 import fcntl
 import hashlib
 import importlib.util
+import json
 import os
-from pathlib import Path
+import re
+import stat
 import subprocess
 import tempfile
-from types import SimpleNamespace
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('flux_deployment', Path(__file__).with_name('flux-deploy.py'))
@@ -23,12 +27,16 @@ class FluxAdmissionTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix='tl3-flux-fixture-')
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
+        lock_temporary = tempfile.TemporaryDirectory(prefix='tl3-owner-lock-fixture-')
+        self.addCleanup(lock_temporary.cleanup)
+        self.lock_root = Path(lock_temporary.name) / 'deploy'
+        self.addCleanup(patch.stopall)
+        patch.object(fx, 'LOCK_ROOT', self.lock_root, create=True).start()
         self.out = self.root / 'dispatch' / 'build'
         self.out.parent.mkdir()
         self.source = self.root / 'source'
         self.source.mkdir()
         self.secret = 'DISPOSABLE_MARKER_7b4299c0'
-        self.addCleanup(patch.stopall)
         patch.object(fx, 'SOURCE', self.source).start()
         patch.object(fx, 'SCRATCH', self.root / 'scratch').start()
         fx.SCRATCH.mkdir()
@@ -64,6 +72,8 @@ class FluxAdmissionTests(unittest.TestCase):
             self.assertEqual(args[2], '--env=-*')
             self.assertIn('-n1', args)
             self.assertNotIn('-N1', args)
+            self.assertIn('-t5400s', args)
+            self.assertIn('--requires=host:dl380g10', args)
             env = dict(item[len('--env='):].split('=', 1) for item in args[3:] if item.startswith('--env='))
             self.assertEqual(env, self.intent['environment'])
             self.assertNotIn('TL3_PLANTED_MARKER', env)
@@ -71,7 +81,8 @@ class FluxAdmissionTests(unittest.TestCase):
             return 0, fx.encoded({'version': 1, 'resources': [{'type': 'slot', 'count': 1, 'label': 'task',
                     'with': [{'type': 'core', 'count': self.intent['cpus']}]}],
                     'tasks': [{'command': command, 'slot': 'task', 'count': {'per_slot': 1}}],
-                    'attributes': {'system': {'environment': env, 'cwd': str(self.source), 'duration': 7200}}}), b''
+                    'attributes': {'system': {'environment': env, 'cwd': str(self.source), 'duration': 5400,
+                    'constraints': {'hostlist': ['dl380g10']}}}}), b''
         if args[:2] == ('job', 'submit'):
             self.spec = fx.load(Path(args[2]))
             expected = fx.digest(fx.encoded(self.intent))
@@ -119,6 +130,351 @@ class FluxAdmissionTests(unittest.TestCase):
     def submissions(self):
         return sum(call[:2] == ('job', 'submit') for call in self.calls)
 
+    def test_owner_preflight_rejects_old_6900_second_allowance(self):
+        module_spec = importlib.util.spec_from_file_location('budget_deployment', Path(__file__).with_name('deploy.py'))
+        deploy = importlib.util.module_from_spec(module_spec)
+        module_spec.loader.exec_module(deploy)
+        # 5000s backup estimate alone leaves less than the required explicit
+        # deployment margin and 90s stability inside a 5400s job.
+        total = (5000 - 1800) * 20 * 1024 * 1024 // 8
+        item = SimpleNamespace(lstat=lambda total=total: SimpleNamespace(st_mode=stat.S_IFREG, st_size=total))
+        source = SimpleNamespace(rglob=lambda pattern, item=item: [item])
+        with patch.object(deploy, 'validate_backup_destination'), \
+             self.assertRaises(RuntimeError):
+            deploy.preflight_backup({'data': source}, self.root / 'backup')
+
+    def test_oversize_preflight_refuses_before_any_new_submission(self):
+        module_spec = importlib.util.spec_from_file_location('budget_deployment', Path(__file__).with_name('deploy.py'))
+        deploy = importlib.util.module_from_spec(module_spec)
+        module_spec.loader.exec_module(deploy)
+        total = (5000 - 1800) * 20 * 1024 * 1024 // 8
+        item = SimpleNamespace(lstat=lambda total=total: SimpleNamespace(st_mode=stat.S_IFREG, st_size=total))
+        source = SimpleNamespace(rglob=lambda pattern, item=item: [item])
+        def checked(command, **kwargs):
+            if 'preflight-fresh-budget' in command:
+                deploy.preflight_backup({'data': source}, self.root / 'backup')
+            return b''
+        with patch.object(deploy, 'validate_backup_destination'), \
+             patch.object(fx, 'STORE', self.root / 'evidence'), \
+             patch.object(fx, 'source_identity', return_value='b' * 40), \
+             patch.object(fx, 'checked', side_effect=checked), \
+             patch.object(fx, 'admit_stages', return_value={}) as admitted, \
+             patch.object(fx.sys, 'argv', ['flux-deploy.py', 'admit', 'a' * 40, 'dev',
+                                         '/fixture/manifest', '/fixture/backup']):
+            with self.assertRaises(RuntimeError):
+                fx.main()
+            admitted.assert_not_called()
+        self.assertEqual(self.submissions(), 0)
+
+    def test_job_shell_python_invocations_are_isolated(self):
+        script = Path(__file__).with_name('build-release.sh').read_text()
+        invocations = re.findall(r'(?m)^.*?\b(?:/usr/bin/)?python3\s+([^\n]+)', script)
+        self.assertTrue(invocations)
+        for arguments in invocations:
+            self.assertRegex(arguments, r'^(?:-I|-s)(?:\s|$)')
+
+    def test_backup_budget_boundary_keeps_stability_and_margin_inside_job(self):
+        module_spec = importlib.util.spec_from_file_location('budget_deployment', Path(__file__).with_name('deploy.py'))
+        deploy = importlib.util.module_from_spec(module_spec)
+        module_spec.loader.exec_module(deploy)
+        self.assertEqual(deploy.FRESH_BACKUP_BUDGET_S, 4800)
+        self.assertEqual(deploy.FRESH_STABILITY_S, 90)
+        self.assertEqual(deploy.FRESH_MARGIN_S, 510)
+        self.assertEqual(deploy.FRESH_BACKUP_BUDGET_S + deploy.FRESH_STABILITY_S + deploy.FRESH_MARGIN_S, 5400)
+        boundary = (4800 - 1800) * 20 * 1024 * 1024 // 8
+        for total, refused in ((0, False), (boundary, False), (boundary + 1, True)):
+            item = SimpleNamespace(lstat=lambda total=total: SimpleNamespace(st_mode=stat.S_IFREG, st_size=total))
+            source = SimpleNamespace(rglob=lambda pattern, item=item: [item])
+            with self.subTest(total=total), patch.object(deploy, 'validate_backup_destination'):
+                if refused:
+                    with self.assertRaises(RuntimeError):
+                        deploy.preflight_backup({'data': source}, self.root / 'backup')
+                else:
+                    deploy.preflight_backup({'data': source}, self.root / 'backup')
+
+    def test_pre_submit_inventory_is_metadata_only_and_counts_entire_runs_root(self):
+        module_spec = importlib.util.spec_from_file_location('budget_deployment', Path(__file__).with_name('deploy.py'))
+        deploy = importlib.util.module_from_spec(module_spec)
+        module_spec.loader.exec_module(deploy)
+        data, config, runs, tablespace = [self.root / name for name in ('data', 'config', 'runs', 'tablespace')]
+        for directory in (data, config, runs, tablespace):
+            directory.mkdir()
+        config_file = config / 'tl3.toml'
+        config_file.write_text('[workers]\nruns = "' + str(runs) + '"\n')
+        manifest = self.root / 'manifest'
+        manifest.write_bytes(fx.encoded({'schema': 'tl3.fresh-init.v1', 'head': 'a' * 40,
+            'config_sha256': hashlib.sha256(config_file.read_bytes()).hexdigest(),
+            'archive': {}, 'tablespaces': {'1234': str(tablespace)}}))
+        args = SimpleNamespace(home=self.root, head='a' * 40, state_manifest=manifest, backup=self.root / 'backup')
+        real_preflight = deploy.preflight_backup
+        captured = []
+        def preflight(sources, backup, **kwargs):
+            captured.append((sources, kwargs))
+            return real_preflight(sources, backup, **kwargs)
+        # paths() expects root/postgres/data. Use a synthetic TL3 root.
+        (self.root / 'postgres').mkdir()
+        data.rename(self.root / 'postgres/data')
+        with patch.object(deploy, 'paths', return_value=(self.root, config, self.root / 'pg-bin')), \
+             patch.object(deploy, 'preflight_backup', side_effect=preflight), \
+             patch.object(deploy, 'tree_manifest') as content_hash:
+            deploy.preflight_fresh_budget(args)
+            content_hash.assert_not_called()
+        self.assertEqual(captured[0][0]['runs'], runs)
+        self.assertEqual(captured[0][0]['tablespace-1234'], tablespace)
+        self.assertEqual(captured[0][1], {'metadata_only': True})
+        self.assertFalse(args.backup.exists())
+
+    def test_python_command_lists_in_job_call_chain_are_isolated(self):
+        for name in ('flux-deploy.py', 'deploy.py'):
+            tree = ast.parse(Path(__file__).with_name(name).read_text())
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.List) or not node.elts:
+                    continue
+                first = node.elts[0]
+                python = (isinstance(first, ast.Constant) and isinstance(first.value, str)
+                          and Path(first.value).name in ('python', 'python3'))
+                python = python or (isinstance(first, ast.Attribute) and isinstance(first.value, ast.Name)
+                                    and first.value.id == 'sys' and first.attr == 'executable')
+                if python:
+                    with self.subTest(file=name, line=node.lineno):
+                        self.assertGreater(len(node.elts), 1)
+                        self.assertIsInstance(node.elts[1], ast.Constant)
+                        self.assertIn(node.elts[1].value, ('-I', '-s'))
+
+    def test_reattach_submitted_fresh_job_skips_new_backup_preflight(self):
+        fresh = self.out.parent / 'fresh-init'
+        fresh.mkdir()
+        fx.save(fresh / 'dispatched.json', {})
+        calls = []
+        def checked(command, **kwargs):
+            calls.append(command)
+            if 'preflight-fresh-budget' in command:
+                raise RuntimeError('a submitted job may already have created its backup')
+            return b''
+        with patch.object(fx, 'STORE', self.root), \
+             patch.object(fx, 'source_identity', return_value='b' * 40), \
+             patch.object(fx, 'checked', side_effect=checked), \
+             patch.object(fx, 'admit_stages', return_value={}) as admitted, \
+             patch.object(fx.sys, 'argv', ['flux-deploy.py', 'admit', 'a' * 40, 'dev',
+                                         '/fixture/manifest', '/fixture/backup', '--reattach', str(self.out.parent)]):
+            fx.main()
+            admitted.assert_called_once()
+        self.assertEqual(len(calls), 1)
+        self.assertIn('qualify-fresh', calls[0])
+        self.assertEqual(self.submissions(), 0)
+
+    def test_source_path_does_not_select_lock_or_evidence_root(self):
+        self.assertEqual(fx.STORE, Path('/home/rob/.local/share/tl3/deploy-admission'))
+        with patch.object(fx, 'SOURCE', self.root / 'another-source'):
+            self.assertEqual(fx.STORE, Path('/home/rob/.local/share/tl3/deploy-admission'))
+            self.assertEqual(fx.LOCK_ROOT, self.lock_root)
+
+    def test_owner_walltime_is_5400_seconds(self):
+        self.assertEqual(self.intent['walltime_s'], 5400)
+
+    def test_owner_0755_lock_root_contains_only_lock(self):
+        shared = self.root / 'owner-lock'
+        shared.mkdir(mode=0o755)
+        shared.chmod(0o755)
+        evidence = self.root / 'private-evidence'
+        with patch.object(fx, 'LOCK_ROOT', shared, create=True), \
+             patch.object(fx, 'admit_stages', return_value={}):
+            self.coordinator(evidence)
+        self.assertEqual(sorted(p.name for p in shared.iterdir()), ['deploy.lock'])
+        self.assertEqual(shared.stat().st_mode & 0o777, 0o755)
+        self.assertEqual(evidence.stat().st_mode & 0o777, 0o700)
+        self.assertFalse((evidence / 'deploy.lock').exists())
+
+    def test_owner_limit_verifier_checks_actual_jobspec_and_saved_intent(self):
+        good = fx.jobspec(self.intent, fx.digest(fx.encoded(self.intent)))
+        for field, maximum, leaf in (('cpus', 8, 0), ('memory_gib', 32, 1),
+                                     ('walltime_s', 5400, None)):
+            for value in (None, True, 0, -1, '8', float('nan'), float('inf'), maximum + 1):
+                with self.subTest(field=field, value=value):
+                    intent = copy.deepcopy(self.intent)
+                    spec = copy.deepcopy(good)
+                    intent[field] = value
+                    if leaf is None:
+                        spec['attributes']['system']['duration'] = value
+                    else:
+                        spec['resources'][0]['with'][leaf]['count'] = value
+                    with self.assertRaises((RuntimeError, KeyError, TypeError, ValueError)):
+                        fx.validate_spec(intent, fx.digest(fx.encoded(intent)), spec)
+        for field, maximum, leaf in (('cpus', 8, 0), ('memory_gib', 32, 1),
+                                     ('walltime_s', 5400, None)):
+            intent = copy.deepcopy(self.intent)
+            spec = copy.deepcopy(good)
+            intent[field] = maximum
+            if leaf is None:
+                spec['attributes']['system']['duration'] = maximum
+            else:
+                spec['resources'][0]['with'][leaf]['count'] = maximum
+            request = fx.digest(fx.encoded(intent))
+            spec['tasks'][0]['command'][-1] = request
+            spec['attributes']['user']['tl3_deploy_intent'] = request
+            fx.validate_spec(intent, request, spec)
+        self.assertEqual(self.submissions(), 0)
+
+    def test_invalid_persisted_shapes_refuse_before_submit(self):
+        good = fx.jobspec(self.intent, fx.digest(fx.encoded(self.intent)))
+        mutations = [
+            lambda s: s['attributes']['system'].pop('constraints'),
+            lambda s: s['attributes']['system'].update(constraints={}),
+            lambda s: s['attributes']['system'].update(constraints=None),
+            lambda s: s['attributes']['system'].update(constraints={'hostlist': 'dl380g10'}),
+            lambda s: s['attributes']['system'].update(constraints={'hostlist': ['sparky']}),
+            lambda s: s['attributes']['system'].update(constraints={'hostlist': ['dl380g10', 'sparky']}),
+            lambda s: s['attributes']['system'].update(constraints={'or': [{'hostlist': ['dl380g10']}, {}]}),
+            lambda s: s['attributes']['system'].update(constraints={'hostlist': ['dl380g10'], 'properties': []}),
+            lambda s: s['attributes']['system'].pop('duration'),
+            lambda s: s['resources'][0].update(exclusive=True),
+            lambda s: s['attributes']['system'].update(exclusive=True),
+            lambda s: s['resources'][0].update(label=[]),
+            lambda s: s['resources'][0].update(type='node'),
+            lambda s: s['resources'][0].update(count=2),
+            lambda s: s['resources'][0]['with'].pop(),
+            lambda s: s['resources'][0]['with'][0].pop('count'),
+            lambda s: s['resources'][0]['with'][0].update(count=9),
+            lambda s: s['resources'][0]['with'][1].update(count=33),
+            lambda s: s['attributes']['system'].update(duration=5401),
+        ]
+        self.out.mkdir()
+        for change in mutations:
+            spec = copy.deepcopy(good)
+            change(spec)
+            fx.save(self.out / 'jobspec.json', spec)
+            with self.subTest(change=change), self.assertRaises((RuntimeError, KeyError, TypeError)):
+                fx.stage(self.intent)
+            self.assertFalse((self.out / 'dispatched.json').exists())
+        self.assertEqual(self.submissions(), 0)
+
+    def test_invalid_dry_run_host_or_shape_refuses_before_submit(self):
+        original = self.native
+        for field, value in (('constraints', {}), ('constraints', {'hostlist': ['sparky']}),
+                             ('duration', 7200)):
+            def altered(*args, field=field, value=value, **kwargs):
+                rc, raw, error = original(*args, **kwargs)
+                if args[:2] == ('submit', '--dry-run'):
+                    spec = json.loads(raw)
+                    spec['attributes']['system'][field] = value
+                    raw = fx.encoded(spec)
+                return rc, raw, error
+            with patch.object(fx, 'native', side_effect=altered), \
+                 self.subTest(field=field, value=value), self.assertRaises(RuntimeError):
+                fx.stage(self.intent)
+            self.assertFalse((self.out / 'dispatched.json').exists())
+        self.assertEqual(self.submissions(), 0)
+
+    def test_lock_layout_refuses_invalid_mode_symlink_owner_and_foreign_entry(self):
+        self.lock_root.mkdir()
+        for mode in (0o700, 0o775, 0o777):
+            self.lock_root.chmod(mode)
+            with self.subTest(mode=mode), self.assertRaises(RuntimeError):
+                self.coordinator(self.root / 'evidence')
+            self.assertEqual(self.lock_root.stat().st_mode & 0o777, mode)
+        self.lock_root.chmod(0o755)
+        foreign = self.lock_root / 'old-uuid'
+        foreign.mkdir()
+        with self.assertRaises(RuntimeError):
+            self.coordinator(self.root / 'evidence')
+        foreign.rmdir()
+        target = self.root / 'target'
+        target.mkdir()
+        self.lock_root.rmdir()
+        self.lock_root.symlink_to(target)
+        with self.assertRaises(RuntimeError):
+            self.coordinator(self.root / 'evidence')
+        self.lock_root.unlink()
+        self.lock_root.mkdir(mode=0o755)
+        self.lock_root.chmod(0o755)
+        real_lstat = Path.lstat
+        def wrong_owner(path, *args, **kwargs):
+            info = real_lstat(path, *args, **kwargs)
+            if path == self.lock_root:
+                return SimpleNamespace(st_mode=info.st_mode, st_uid=info.st_uid + 1)
+            return info
+        with patch.object(Path, 'lstat', wrong_owner), self.assertRaises(RuntimeError):
+            self.coordinator(self.root / 'evidence')
+        self.assertEqual(self.submissions(), 0)
+
+    def test_lock_file_symlink_unowned_nonregular_and_hardlink_refuse(self):
+        self.lock_root.mkdir(mode=0o755)
+        self.lock_root.chmod(0o755)
+        lock = self.lock_root / 'deploy.lock'
+        target = self.root / 'target'
+        target.write_text('do not overwrite')
+        lock.symlink_to(target)
+        with self.assertRaises((OSError, RuntimeError)):
+            self.coordinator(self.root / 'evidence')
+        lock.unlink()
+        lock.mkdir()
+        with self.assertRaises((OSError, RuntimeError)):
+            self.coordinator(self.root / 'evidence')
+        lock.rmdir()
+        os.link(target, lock)
+        with self.assertRaises(RuntimeError):
+            self.coordinator(self.root / 'evidence')
+        self.assertEqual(target.read_text(), 'do not overwrite')
+        lock.unlink()
+        lock.write_text('unchanged')
+        real_lstat = Path.lstat
+        def wrong_owner(path, *args, **kwargs):
+            info = real_lstat(path, *args, **kwargs)
+            if path == lock:
+                return SimpleNamespace(st_mode=info.st_mode, st_uid=info.st_uid + 1)
+            return info
+        with patch.object(Path, 'lstat', wrong_owner), self.assertRaises(RuntimeError):
+            self.coordinator(self.root / 'evidence')
+        self.assertEqual(lock.read_text(), 'unchanged')
+        self.assertEqual(self.submissions(), 0)
+
+    def test_evidence_store_invalid_mode_symlink_and_ancestry_refuse(self):
+        store = self.root / 'evidence'
+        store.mkdir()
+        store.chmod(0o755)
+        with self.assertRaises(RuntimeError):
+            self.coordinator(store)
+        self.assertEqual(store.stat().st_mode & 0o777, 0o755)
+        store.rmdir()
+        store.symlink_to(self.out.parent)
+        with self.assertRaises(RuntimeError):
+            self.coordinator(store)
+        store.unlink()
+        ancestor = self.root / 'alias'
+        ancestor.symlink_to(self.out.parent)
+        with self.assertRaises(RuntimeError):
+            self.coordinator(ancestor / 'must-not-create')
+        self.assertFalse((self.out.parent / 'must-not-create').exists())
+        with patch.object(fx, 'LOCK_ROOT', ancestor / 'lock'), self.assertRaises(RuntimeError):
+            self.coordinator(store)
+        self.assertFalse((self.out.parent / 'lock').exists())
+        self.assertEqual(self.submissions(), 0)
+
+    def test_global_lock_remains_held_through_accepted_write(self):
+        real_save = fx.save
+        observed = []
+        def save(path, value):
+            if path.name == 'accepted.json':
+                with (self.lock_root / 'deploy.lock').open('a') as contender, \
+                     self.assertRaises(BlockingIOError):
+                    fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                observed.append(path)
+            return real_save(path, value)
+        with patch.object(fx, 'save', side_effect=save), \
+             patch.object(fx, 'admit_stages', return_value={}):
+            self.coordinator(self.root / 'evidence')
+        self.assertEqual(len(observed), 1)
+
+    def test_different_evidence_stores_share_same_physical_global_lock(self):
+        store = self.root / 'first-evidence'
+        store.mkdir()
+        with patch.object(fx, 'STORE', store), fx.serialized_admission(None), \
+             patch.object(fx, 'admit_stages', return_value={}) as admitted:
+            with self.assertRaises(BlockingIOError):
+                self.coordinator(self.root / 'other-evidence')
+            admitted.assert_not_called()
+        self.assertEqual(list(self.lock_root.iterdir()), [self.lock_root / 'deploy.lock'])
+
     def assert_private_clean_evidence(self):
         for path in self.out.rglob('*'):
             if path.is_file():
@@ -137,7 +493,7 @@ class FluxAdmissionTests(unittest.TestCase):
         self.assertEqual(slot['with'], [{'type': 'core', 'count': 8}, {'type': 'memory', 'count': 8}])
         self.assertEqual(self.spec['attributes']['system']['environment']['CARGO_BUILD_JOBS'], '2')
         self.assertEqual(self.spec['attributes']['user']['source_head'], 'a' * 40)
-        self.assertEqual(self.spec['attributes']['system']['duration'], 7200)
+        self.assertEqual(self.spec['attributes']['system']['duration'], 5400)
         self.assertIn('--requires=host:dl380g10', self.calls[3])
         self.assert_private_clean_evidence()
         for name, reference in receipt['files'].items():
@@ -325,7 +681,9 @@ class FluxAdmissionTests(unittest.TestCase):
     def test_store_lock_excludes_a_second_coordinator(self):
         store = self.root / 'store'
         store.mkdir()
-        with (store / 'deploy.lock').open('a') as lock, \
+        self.lock_root.mkdir(mode=0o755)
+        self.lock_root.chmod(0o755)
+        with (self.lock_root / 'deploy.lock').open('a') as lock, \
              patch.object(fx, 'admit_stages', return_value={}) as admitted:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             with self.assertRaises(BlockingIOError):
@@ -354,13 +712,13 @@ class FluxAdmissionTests(unittest.TestCase):
     def test_store_lock_spans_both_stages_and_is_released_afterward(self):
         store = self.root / 'store'
         def admitted(*args):
-            with (store / 'deploy.lock').open('a') as contender:
+            with (self.lock_root / 'deploy.lock').open('a') as contender:
                 with self.assertRaises(BlockingIOError):
                     fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
             return {}
         with patch.object(fx, 'admit_stages', side_effect=admitted):
             self.coordinator(store)
-        with (store / 'deploy.lock').open('a') as contender:
+        with (self.lock_root / 'deploy.lock').open('a') as contender:
             fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
         self.assertEqual(self.submissions(), 0)
 

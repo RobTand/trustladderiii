@@ -22,7 +22,7 @@ chmod 0700 "$staging"
 target=${CARGO_TARGET_DIR:-$PWD/target}
 install -m 0700 "$target/release/tl3" "$target/release/tl3d" "$target/release/tl3-worker-supervisor" "$target/release/examples/tl3-deploy" "$staging/"
 (cd "$staging" && sha256sum tl3 tl3d tl3-deploy tl3-worker-supervisor > SHA256SUMS)
-python3 - "$staging" "$selected_head" <<'PY'
+python3 -I - "$staging" "$selected_head" <<'PY'
 import hashlib
 import json
 from pathlib import Path
