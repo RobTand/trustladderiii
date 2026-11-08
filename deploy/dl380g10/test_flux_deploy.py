@@ -24,10 +24,10 @@ class FluxAdmissionTests(unittest.TestCase):
     def setUp(self):
         previous = os.umask(0o077)
         self.addCleanup(os.umask, previous)
-        temporary = tempfile.TemporaryDirectory(prefix='tl3-flux-fixture-')
+        temporary = tempfile.TemporaryDirectory(prefix='tl3-flux-fixture-', dir='/tmp')
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        lock_temporary = tempfile.TemporaryDirectory(prefix='tl3-owner-lock-fixture-')
+        lock_temporary = tempfile.TemporaryDirectory(prefix='tl3-owner-lock-fixture-', dir='/tmp')
         self.addCleanup(lock_temporary.cleanup)
         self.lock_root = Path(lock_temporary.name) / 'deploy'
         self.addCleanup(patch.stopall)
