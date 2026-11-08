@@ -829,6 +829,40 @@ def test_r1_allowed_rendering_is_bounded_without_changing_membership():
     assert allowed.accepts(99) and not allowed.accepts(100)
 
 
+@pytest.mark.parametrize('character', ['x', 'é'])
+@pytest.mark.parametrize('message_bytes', [2049, 4096, 4097])
+def test_planner_consistency_complete_message_byte_boundary(character, message_bytes):
+    from tl3_harness.model import named
+    from tl3_workers.roles.planner import PlanConsistencyError
+    from tl3_workers.rules import render_all
+    from tl3_workers.turns import REPAIR_MESSAGE_BYTES, repair_message
+
+    facts, _ = _row_case('leaf.design_open')
+    facts['inputs']['repair_plan_consistency'] = True
+
+    def error_for(field):
+        return PlanConsistencyError(facts['draft'], facts['draft'],
+                                    [named('leaf.design_open', '', {'field': field})], facts['inputs'])
+
+    # The real registered row renders this long subject once, without copying
+    # the diagnostic container. Keep that complete row at the byte boundary.
+    initial = character * 1000
+    overhead = len(error_for(initial).repair_text.encode()) - len(initial.encode())
+    repetitions, remainder = divmod(message_bytes - overhead, len(character.encode()))
+    field = character * repetitions + 'x' * remainder
+    error = error_for(field)
+    assert REPAIR_MESSAGE_BYTES == 2048
+    assert len(error.repair_text.encode()) == message_bytes
+    if character == 'é':
+        assert len(error.repair_text) < 4096
+    assert field in error.repair_text
+    assert repair_message(error) == error.repair_text == render_all(error.rule_violations, role='planner')
+    assert error.unavailable_reason == ('message_limit' if message_bytes > 4096 else None)
+    assert not error.check({**CANT_MEET, 'files': ['pkg.py']})
+    rejected = error.check({**CANT_MEET, 'files': ['pkg.py', 'unrelated.py']})
+    assert rejected and rejected[0].rule == 'guard.fields_changed'
+
+
 def test_r1_pb2710_large_message_keeps_message_limit_provenance():
     from tl3_harness.model import named
     from tl3_workers.roles.planner import PlanConsistencyError, terminal
