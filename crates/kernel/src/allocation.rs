@@ -155,6 +155,9 @@ fn enter_stopping_active(m: &mut Node, outcome: Outcome) -> (result: ()) [
     ensures *final(m) == (Node {
         question: None, waiting_incident: false, incident_needs_rob: false,
         phase: Phase::Stopping(outcome), pos: 0, ticket: None,
+        effect: match old(m).effect {
+            Some(e) => Some(InFlight { cancelling: true, ..e }), None => None,
+        },
         generation: (old(m).generation + 1) as u64, ..*old(m)
     }),
 ] {

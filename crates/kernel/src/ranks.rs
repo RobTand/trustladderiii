@@ -322,7 +322,7 @@ pub(super) proof fn finite_minimum(nodes: Seq<Node>, end: nat, eligible: spec_fn
     assert(0 <= member < end && accepts(member));
     finite_minimum_index(end, accepts, priority);
     let best = choose|i: int| 0 <= i < end && accepts(i)
-        && forall|j: int| 0 <= j < end && accepts(j) ==> priority(i) <= priority(j);
+        && forall|j: int| 0 <= j < end && #[trigger] accepts(j) ==> priority(i) <= priority(j);
     assert forall|j: int| 0 <= j < end && eligible(nodes[j])
         implies key(nodes[best]) <= key(nodes[j]) by {
         assert(accepts(j));
@@ -336,39 +336,39 @@ pub(super) proof fn finite_minimum(nodes: Seq<Node>, end: nat, eligible: spec_fn
 #[verifier::spinoff_prover]
 pub(super) proof fn finite_minimum_index(end: nat, eligible: spec_fn(int) -> bool,
     key: spec_fn(int) -> nat)
-    requires exists|i: int| 0 <= i < end && eligible(i),
-    ensures exists|i: int| 0 <= i < end && eligible(i)
-        && forall|j: int| 0 <= j < end && eligible(j) ==> key(i) <= key(j),
+    requires exists|i: int| 0 <= i < end && #[trigger] eligible(i),
+    ensures exists|i: int| 0 <= i < end && #[trigger] eligible(i)
+        && forall|j: int| 0 <= j < end && #[trigger] eligible(j) ==> key(i) <= key(j),
     decreases end,
 {
-    if exists|i: int| 0 <= i < end - 1 && eligible(i) {
+    if exists|i: int| 0 <= i < end - 1 && #[trigger] eligible(i) {
         finite_minimum_index((end - 1) as nat, eligible, key);
-        let best = choose|i: int| 0 <= i < (end - 1) && eligible(i)
-            && forall|j: int| 0 <= j < (end - 1) && eligible(j)
+        let best = choose|i: int| 0 <= i < (end - 1) && #[trigger] eligible(i)
+            && forall|j: int| 0 <= j < (end - 1) && #[trigger] eligible(j)
                 ==> key(i) <= key(j);
         let last = end - 1;
         if eligible(last) && key(last) < key(best) {
-            assert forall|j: int| 0 <= j < end && eligible(j)
+            assert forall|j: int| 0 <= j < end && #[trigger] eligible(j)
                 implies key(last) <= key(j) by {
                 if j < last { assert(key(best) <= key(j)); }
             }
             assert(0 <= last < end && eligible(last)
-                && forall|j: int| 0 <= j < end && eligible(j) ==> key(last) <= key(j));
+                && forall|j: int| 0 <= j < end && #[trigger] eligible(j) ==> key(last) <= key(j));
         } else {
-            assert forall|j: int| 0 <= j < end && eligible(j)
+            assert forall|j: int| 0 <= j < end && #[trigger] eligible(j)
                 implies key(best) <= key(j) by {
                 if j < last { assert(key(best) <= key(j)); }
             }
             assert(0 <= best < end && eligible(best)
-                && forall|j: int| 0 <= j < end && eligible(j) ==> key(best) <= key(j));
+                && forall|j: int| 0 <= j < end && #[trigger] eligible(j) ==> key(best) <= key(j));
         }
     } else {
         let last = end - 1;
         assert(eligible(last));
-        assert forall|j: int| 0 <= j < end && eligible(j)
+        assert forall|j: int| 0 <= j < end && #[trigger] eligible(j)
             implies key(last) <= key(j) by { assert(j == last); }
         assert(0 <= last < end && eligible(last)
-            && forall|j: int| 0 <= j < end && eligible(j) ==> key(last) <= key(j));
+            && forall|j: int| 0 <= j < end && #[trigger] eligible(j) ==> key(last) <= key(j));
     }
 }
 
