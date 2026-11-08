@@ -135,25 +135,6 @@ pub(super) fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
         final(m).last_cmd == old(m).last_cmd,
 ] {
     kernel_snapshot! { before_confirmed = *m }
-    confirmed_resources(m, kind);
-    kernel_proof! { cleanup_lemmas::resource_distance(before_confirmed@, *m); }
-    confirmed_agenda(m, kind);
-}
-}
-
-kernel_fn! {
-/// The existing resource cleanup is framed separately from agenda advancement.
-fn confirmed_resources(m: &mut Node, kind: EffectKind) -> (result: ()) [
-    ensures *final(m) == (Node {
-            fx_failures: 0, fx_incidents: 0,
-            run: if kind == EffectKind::StopRun { None } else { old(m).run },
-            pool: if kind == EffectKind::StopRun { false } else { old(m).pool },
-            job: if kind == EffectKind::WithdrawJob { None } else { old(m).job },
-            pr_open: if kind == EffectKind::ClosePr { false } else { old(m).pr_open },
-            worktree: if kind == EffectKind::RemoveWorktree { false } else { old(m).worktree },
-            ..*old(m)
-        }),
-] {
     m.fx_failures = 0;
     m.fx_incidents = 0;
     match kind {
@@ -166,6 +147,8 @@ fn confirmed_resources(m: &mut Node, kind: EffectKind) -> (result: ()) [
         EffectKind::RemoveWorktree => m.worktree = false,
         _ => {}
     }
+    kernel_proof! { cleanup_lemmas::resource_distance(before_confirmed@, *m); }
+    confirmed_agenda(m, kind);
 }
 }
 

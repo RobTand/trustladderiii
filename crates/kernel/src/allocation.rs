@@ -124,7 +124,7 @@ pub(super) fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
         !(old(m).phase is Closed || old(m).phase is Stopping) ==>
             final(m).pos == 0 && final(m).ticket.is_none() && final(m).question.is_none()
                 && !final(m).waiting_incident && !final(m).incident_needs_rob,
-] {
+] proof [reveal(retirement::stopped);] {
     kernel_snapshot! { before = *m }
     match m.phase {
         Phase::Closed(_) => {}
@@ -134,37 +134,16 @@ pub(super) fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
             }
         }
         _ => {
-            enter_stopping_active(m, outcome);
+            m.question = None;
+            m.waiting_incident = false;
+            m.incident_needs_rob = false;
+            set_phase(m, Phase::Stopping(outcome));
         }
     }
     kernel_proof! {
-        assert(*m == retirement::stopped(before@, outcome)) by {
-            reveal(retirement::stopped);
-        }
         allocation_stopping_lemmas::stopping_frame(before@, *m, outcome);
         allocation_stopping_lemmas::stopping_progress(before@, *m, outcome);
     }
-}
-}
-
-kernel_fn! {
-/// The active stopping mutation retains an exact whole-node frame.
-fn enter_stopping_active(m: &mut Node, outcome: Outcome) -> (result: ()) [
-    requires !(old(m).phase is Closed || old(m).phase is Stopping),
-        old(m).generation < u64::MAX,
-    ensures *final(m) == (Node {
-        question: None, waiting_incident: false, incident_needs_rob: false,
-        phase: Phase::Stopping(outcome), pos: 0, ticket: None,
-        effect: match old(m).effect {
-            Some(e) => Some(InFlight { cancelling: true, ..e }), None => None,
-        },
-        generation: (old(m).generation + 1) as u64, ..*old(m)
-    }),
-] {
-    m.question = None;
-    m.waiting_incident = false;
-    m.incident_needs_rob = false;
-    set_phase(m, Phase::Stopping(outcome));
 }
 }
 
