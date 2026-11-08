@@ -131,18 +131,17 @@ pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) -> Result
         && reply["checks"]
             .as_array()
             .is_some_and(|checks| checks.iter().any(|check| check.get("proof").is_some()))
-    {
-        if let Some(requirement) = method_requirement(
+        && let Some(requirement) = method_requirement(
             capabilities,
             "Run the head observer against the base subject and the head subject.",
             "subject_observer",
             &["base_head"],
             &["receipt", "terminal_verdict"],
             &mut selection_errors,
-        ) && !contract.contains(&requirement)
-        {
-            contract.push(requirement);
-        }
+        )
+        && !contract.contains(&requirement)
+    {
+        contract.push(requirement);
     }
     let mut errors = branch_errors;
     errors.append(&mut selection_errors);
