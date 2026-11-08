@@ -1,5 +1,5 @@
 load("@rules_python//python:defs.bzl", "py_binary")
-load("//tools/bazel:python.bzl", "tl3_py_test")
+load("//tools/bazel:python.bzl", "py_library", "tl3_py_test")
 
 py_binary(
     name = "queue_pr",
@@ -29,4 +29,17 @@ py_binary(
     name = "fx2_stage_packet",
     srcs = ["fx2_stage_packet.py"],
     visibility = ["//visibility:public"],
+)
+
+py_library(
+    name = "fx-scratch-requirements",
+    srcs = ["fx-scratch-requirements.py"],
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "verify_fx_fixtures",
+    srcs = ["verify_fx_fixtures.py"],
+    visibility = ["//visibility:public"],
+    deps = ["//harness/src/tl3_harness"],
 )
