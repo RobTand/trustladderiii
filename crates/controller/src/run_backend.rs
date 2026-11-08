@@ -8,6 +8,10 @@ use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 pub use tl3_config::ContainerMode;
+pub use tl3_contracts::run_binding::{
+    BackendId, BackendTag, Ending, RunBinding, SubmissionIntent, absolute, canonical_job_id, f58,
+    generation, hex, token,
+};
 
 pub mod durable;
 
@@ -46,6 +50,12 @@ impl BackendError {
     }
 }
 
+impl From<tl3_contracts::run_binding::BindingError> for BackendError {
+    fn from(error: tl3_contracts::run_binding::BindingError) -> Self {
+        Self::invalid(error.message())
+    }
+}
+
 impl From<std::io::Error> for BackendError {
     fn from(_: std::io::Error) -> Self {
         Self {
@@ -61,133 +71,6 @@ impl From<serde_json::Error> for BackendError {
             message: "invalid or incompatible structured evidence".into(),
         }
     }
-}
-
-pub fn token(value: &str) -> bool {
-    !value.is_empty()
-        && !matches!(value, "." | "..")
-        && value.len() <= 128
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
-}
-pub fn hex(value: &str, length: usize) -> bool {
-    value.len() == length
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-}
-pub fn generation(value: &str) -> bool {
-    token(value)
-        || value
-            .split_once('/')
-            .is_some_and(|(run, invocation)| token(run) && hex(invocation, 32))
-}
-const JOB_ALPHABET: &[u8; 58] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-
-/// Flux job IDs are u64 identities. Locale-dependent prefixes never cross our boundary.
-pub fn canonical_job_id(value: &str) -> Result<String> {
-    let invalid = || BackendError::invalid("invalid or overflowing Flux job ID");
-    let mut number = 0_u64;
-    if let Some(digits) = value.strip_prefix('f').or_else(|| value.strip_prefix('ƒ')) {
-        if digits.is_empty() || digits.len() > 11 {
-            return Err(invalid());
-        }
-        for digit in digits.bytes() {
-            let digit = JOB_ALPHABET
-                .iter()
-                .position(|b| *b == digit)
-                .ok_or_else(invalid)?;
-            number = number
-                .checked_mul(58)
-                .and_then(|n| n.checked_add(digit as u64))
-                .ok_or_else(invalid)?;
-        }
-    } else {
-        if value.is_empty() || value.len() > 20 || !value.bytes().all(|b| b.is_ascii_digit()) {
-            return Err(invalid());
-        }
-        number = value.parse().map_err(|_| invalid())?;
-    }
-    let mut digits = Vec::new();
-    loop {
-        digits.push(JOB_ALPHABET[(number % 58) as usize]);
-        number /= 58;
-        if number == 0 {
-            break;
-        }
-    }
-    digits.reverse();
-    Ok(format!(
-        "f{}",
-        String::from_utf8(digits).expect("ASCII alphabet")
-    ))
-}
-
-pub fn f58(value: &str) -> bool {
-    (value.starts_with('f') || value.starts_with('ƒ')) && canonical_job_id(value).is_ok()
-}
-
-fn deserialize_job_id<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> std::result::Result<String, D::Error> {
-    canonical_job_id(&String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-}
-
-fn serialize_job_id<S: serde::Serializer>(
-    value: &str,
-    serializer: S,
-) -> std::result::Result<S::Ok, S::Error> {
-    canonical_job_id(value)
-        .map_err(serde::ser::Error::custom)?
-        .serialize(serializer)
-}
-pub fn absolute(path: &std::path::Path) -> bool {
-    path.is_absolute()
-        && path
-            .to_str()
-            .is_some_and(|s| s.len() <= 4096 && !s.chars().any(char::is_control))
-        && path.components().all(|c| {
-            matches!(
-                c,
-                std::path::Component::RootDir | std::path::Component::Normal(_)
-            )
-        })
-}
-
-impl BackendId {
-    pub fn validate(&self) -> Result<()> {
-        if !generation(&self.instance)
-            || !self.uri.starts_with("local:///")
-            || self.uri.len() > 4096
-            || self.uri.chars().any(char::is_control)
-            || canonical_job_id(&self.job).is_err()
-        {
-            return Err(BackendError::invalid(
-                "expected Flux instance generation and f58 job ID; PB keys are unsupported",
-            ));
-        }
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct BackendId {
-    pub backend: BackendTag,
-    pub instance: String,
-    pub uri: String,
-    #[serde(
-        deserialize_with = "deserialize_job_id",
-        serialize_with = "serialize_job_id"
-    )]
-    pub job: String,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum BackendTag {
-    Flux,
 }
 
 /// Host-runner plumbing, not scheduler attestation or own-cgroup qualification.
@@ -410,38 +293,9 @@ pub struct Request {
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct SubmissionIntent {
-    pub backend: BackendTag,
-    pub instance: String,
-    pub uri: String,
-    pub owner: String,
-    pub correlation: String,
-    pub request_digest: String,
-    pub output_dir: PathBuf,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct RunBinding {
-    pub id: BackendId,
-    pub intent: SubmissionIntent,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
 pub struct Owner {
     pub owner: String,
     pub correlation: String,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-pub enum Ending {
-    Passed,
-    Failed,
-    Refused,
-    InfraLost,
-    Cancelled,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]

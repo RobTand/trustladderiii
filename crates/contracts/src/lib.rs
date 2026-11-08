@@ -12,6 +12,7 @@ pub mod execution;
 pub mod footprint;
 pub mod prerequisites;
 pub mod report;
+pub mod run_binding;
 pub mod rules;
 
 pub use checks::{

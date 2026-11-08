@@ -1,9 +1,50 @@
 use crate::bounded::{Text as BoundedText, *};
 use crate::render::{Layout, TypeOrder, TypeUse};
+use crate::run_binding::{self, BackendTag, Ending, RunBinding};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub use super::writer_reply::{TEXT_ORDER, Text};
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct WorkerWaitReference(String);
+impl WorkerWaitReference {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+impl<'de> Deserialize<'de> for WorkerWaitReference {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        if value.strip_prefix("worker:").is_some_and(|key| run_binding::hex(key, 64)) {
+            Ok(Self(value))
+        } else {
+            Err(serde::de::Error::custom("expected worker:<lowercase SHA-256>"))
+        }
+    }
+}
+impl JsonSchema for WorkerWaitReference {
+    fn inline_schema() -> bool {
+        true
+    }
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "WorkerWaitReference".into()
+    }
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({"type":"string", "pattern":"^worker:[0-9a-f]{64}$"})
+    }
+}
+
+fn validate_worker_receipt(reference: &WorkerWaitReference, binding: &RunBinding) -> Result<(), String> {
+    binding.validate().map_err(|error| error.to_string())?;
+    if binding.intent.owner != "worker-tools"
+        || binding.intent.correlation != reference.as_str().replace("worker:", "worker-")
+    {
+        return Err("native receipt does not match its worker reference".into());
+    }
+    Ok(())
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
@@ -391,30 +432,13 @@ pub struct GenerationReceiptInner {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[schemars(inline)]
-#[schemars(transform = reply_enum_schema)]
-pub enum GenerationReceiptOuterStatus {
-    #[serde(rename = "executed")]
-    Executed,
-    #[serde(rename = "cache_hit")]
-    CacheHit,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-#[schemars(inline)]
-pub struct GenerationReceiptOuter {
-    pub status: GenerationReceiptOuterStatus,
-    pub exit_code: ReplyZero,
-    #[serde(deserialize_with = "serde::Deserialize::deserialize")]
-    pub elapsed_s: ReplyNullable<ReplyNumber<0, 0, true, false, false>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "generation_receipt")]
-pub struct GenerationReceipt {
-    pub action_key: ReplyText<5, 0, UNBOUNDED>,
+pub struct GenerationReceiptFields {
+    pub backend: BackendTag,
+    pub wait_reference: WorkerWaitReference,
+    pub run_binding: RunBinding,
+    pub ending: Ending,
     pub artifact_sha256: ReplyText<5, 0, UNBOUNDED>,
     pub receipt_sha256: ReplyText<5, 0, UNBOUNDED>,
     pub output_manifest: ReplyText<5, 0, UNBOUNDED>,
@@ -430,8 +454,16 @@ pub struct GenerationReceipt {
     pub timings: GenerationReceiptTimings,
     pub phase: GenerationReceiptPhase,
     pub inner: GenerationReceiptInner,
-    pub outer: GenerationReceiptOuter,
 }
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct GenerationReceiptRule;
+impl Rule<GenerationReceiptFields> for GenerationReceiptRule {
+    fn validate(value: &GenerationReceiptFields) -> Result<(), String> {
+        validate_worker_receipt(&value.wait_reference, &value.run_binding)
+    }
+}
+pub type GenerationReceipt = Validated<GenerationReceiptFields, GenerationReceiptRule>;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
@@ -461,39 +493,23 @@ pub enum TestRunStatus {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[schemars(inline)]
-#[schemars(transform = reply_enum_schema)]
-pub enum TestRunReceiptsItemStatus {
-    #[serde(rename = "executed")]
-    Executed,
-    #[serde(rename = "cache_hit")]
-    CacheHit,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(inline)]
-pub struct TestRunReceiptsItem {
-    pub action_key: ReplyText<5, 0, UNBOUNDED>,
-    pub status: TestRunReceiptsItemStatus,
-    pub exit_code: ReplyNumber<0, 0, false, false, true>,
+pub struct TestRunReceiptsFields {
+    pub backend: BackendTag,
+    pub wait_reference: WorkerWaitReference,
+    pub run_binding: RunBinding,
     pub receipt_sha256: ReplyText<5, 0, UNBOUNDED>,
-    pub log_sha256: ReplyText<5, 0, UNBOUNDED>,
-    #[serde(
-        default,
-        deserialize_with = "present",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[schemars(with = "ReplyNumber<1, 0, true, false, true>", default)]
-    pub attempt: Option<ReplyNumber<1, 0, true, false, true>>,
-    #[serde(
-        default,
-        deserialize_with = "present",
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[schemars(with = "ReplyText<5, 0, UNBOUNDED>", default)]
-    pub generation: Option<ReplyText<5, 0, UNBOUNDED>>,
+    pub ending: Ending,
 }
+#[derive(Clone, Debug, PartialEq)]
+pub struct TestRunReceiptRule;
+impl Rule<TestRunReceiptsFields> for TestRunReceiptRule {
+    fn validate(value: &TestRunReceiptsFields) -> Result<(), String> {
+        validate_worker_receipt(&value.wait_reference, &value.run_binding)
+    }
+}
+pub type TestRunReceiptsItem = Validated<TestRunReceiptsFields, TestRunReceiptRule>;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
@@ -583,7 +599,7 @@ pub struct TestRunRunsItem {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "test_run")]
-#[schemars(description = "A completed run_tests call with its PrismaBuild receipts (#408).")]
+#[schemars(description = "A completed run_tests call with its native Flux receipt.")]
 pub struct TestRun {
     pub tests: List<BoundedText<0, 2048>, 0, 256, false>,
     pub base: bool,
@@ -592,8 +608,6 @@ pub struct TestRun {
     pub status: TestRunStatus,
     #[schemars(description = "The git tree of the checkout this run tested.")]
     pub tree: ReplyText<6, 0, UNBOUNDED>,
-    #[schemars(description = "False when PrismaBuild replayed a stored result.")]
-    pub fresh: bool,
     pub totals: Totals,
     pub receipts: List<TestRunReceiptsItem, 1, 1, false>,
     #[serde(
@@ -907,7 +921,7 @@ pub enum MakerReplyBlockedEvidenceValue1Class {
 #[serde(deny_unknown_fields)]
 #[schemars(inline)]
 pub struct MakerReplyBlockedEvidenceValue1 {
-    pub action_key: ReplyText<5, 0, UNBOUNDED>,
+    pub wait_reference: WorkerWaitReference,
     #[schemars(description = "Added by worker code. The model must omit this field.")]
     pub class: MakerReplyBlockedEvidenceValue1Class,
 }
@@ -981,7 +995,7 @@ pub struct MakerReplyBlockedEvidenceValue2 {
 #[serde(untagged)]
 #[schemars(inline)]
 #[schemars(
-    description = "An action_key whose run_tests summary had status infrastructure_error, or a tool_error id, recorded in this run."
+    description = "A wait_reference whose run_tests summary had status infrastructure_error, or a tool_error id, recorded in this run."
 )]
 #[schemars(transform = reply_one_of)]
 pub enum MakerReplyBlockedEvidence {
@@ -995,7 +1009,7 @@ pub enum MakerReplyBlockedEvidence {
 pub struct MakerReplyBlocked {
     pub kind: MakerReplyBlockedKind,
     #[schemars(
-        description = "An action_key whose run_tests summary had status infrastructure_error, or a tool_error id, recorded in this run."
+        description = "A wait_reference whose run_tests summary had status infrastructure_error, or a tool_error id, recorded in this run."
     )]
     pub evidence: MakerReplyBlockedEvidence,
     pub report: Text,
@@ -1302,10 +1316,10 @@ pub const ROOT_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     ),
     (
         "/oneOf/3/properties/evidence/oneOf/0/properties",
-        &["action_key", "class"],
+        &["wait_reference", "class"],
     ),
     (
-        "/oneOf/3/properties/evidence/oneOf/0/properties/action_key",
+        "/oneOf/3/properties/evidence/oneOf/0/properties/wait_reference",
         &["type", "pattern"],
     ),
     (
@@ -1508,7 +1522,10 @@ pub const GENERATION_RECEIPT_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     (
         "/properties",
         &[
-            "action_key",
+            "backend",
+            "wait_reference",
+            "run_binding",
+            "ending",
             "artifact_sha256",
             "receipt_sha256",
             "output_manifest",
@@ -1524,10 +1541,12 @@ pub const GENERATION_RECEIPT_ORDER: &[crate::render::ObjectOrder<'static>] = &[
             "timings",
             "phase",
             "inner",
-            "outer",
         ],
     ),
-    ("/properties/action_key", &["type", "pattern"]),
+    ("/properties/backend", &["type", "enum"]),
+    ("/properties/wait_reference", &["type", "pattern"]),
+    ("/properties/run_binding", &["$ref"]),
+    ("/properties/ending", &["type", "enum"]),
     ("/properties/artifact_sha256", &["type", "pattern"]),
     ("/properties/receipt_sha256", &["type", "pattern"]),
     ("/properties/output_manifest", &["type", "pattern"]),
@@ -1703,20 +1722,7 @@ pub const GENERATION_RECEIPT_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     ("/properties/inner/properties", &["status", "exit_code"]),
     ("/properties/inner/properties/status", &["const"]),
     ("/properties/inner/properties/exit_code", &["const"]),
-    (
-        "/properties/outer",
-        &["type", "properties", "required", "additionalProperties"],
-    ),
-    (
-        "/properties/outer/properties",
-        &["status", "exit_code", "elapsed_s"],
-    ),
-    ("/properties/outer/properties/status", &["enum"]),
-    ("/properties/outer/properties/exit_code", &["const"]),
-    (
-        "/properties/outer/properties/elapsed_s",
-        &["type", "minimum"],
-    ),
+
 ];
 pub const SELECTOR_IDENTITY_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     (
@@ -1758,7 +1764,6 @@ pub const TEST_RUN_ORDER: &[crate::render::ObjectOrder<'static>] = &[
             "proof",
             "execution",
             "tree",
-            "fresh",
             "repeat",
             "parallel",
             "status",
@@ -1800,7 +1805,6 @@ pub const TEST_RUN_ORDER: &[crate::render::ObjectOrder<'static>] = &[
         &["type", "maxLength"],
     ),
     ("/properties/tree", &["type", "pattern", "description"]),
-    ("/properties/fresh", &["type", "description"]),
     ("/properties/repeat", &["type", "minimum", "maximum"]),
     ("/properties/parallel", &["enum"]),
     ("/properties/status", &["const"]),
@@ -1815,38 +1819,13 @@ pub const TEST_RUN_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     ),
     (
         "/properties/receipts/items/properties",
-        &[
-            "action_key",
-            "status",
-            "exit_code",
-            "attempt",
-            "generation",
-            "receipt_sha256",
-            "log_sha256",
-        ],
+        &["backend", "wait_reference", "run_binding", "receipt_sha256", "ending"],
     ),
-    (
-        "/properties/receipts/items/properties/action_key",
-        &["type", "pattern"],
-    ),
-    ("/properties/receipts/items/properties/status", &["enum"]),
-    ("/properties/receipts/items/properties/exit_code", &["type"]),
-    (
-        "/properties/receipts/items/properties/attempt",
-        &["type", "minimum"],
-    ),
-    (
-        "/properties/receipts/items/properties/generation",
-        &["type", "pattern"],
-    ),
-    (
-        "/properties/receipts/items/properties/receipt_sha256",
-        &["type", "pattern"],
-    ),
-    (
-        "/properties/receipts/items/properties/log_sha256",
-        &["type", "pattern"],
-    ),
+    ("/properties/receipts/items/properties/backend", &["type", "enum"]),
+    ("/properties/receipts/items/properties/wait_reference", &["type", "pattern"]),
+    ("/properties/receipts/items/properties/run_binding", &["$ref"]),
+    ("/properties/receipts/items/properties/receipt_sha256", &["type", "pattern"]),
+    ("/properties/receipts/items/properties/ending", &["type", "enum"]),
     ("/properties/runs", &["type", "maxItems", "items"]),
     (
         "/properties/runs/items",
@@ -1896,3 +1875,76 @@ pub const REPRODUCTION_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     ("/oneOf/1/properties/finding_id", &["$ref"]),
     ("/oneOf/1/properties/reason", &["$ref"]),
 ];
+
+#[cfg(test)]
+mod native_receipt_tests {
+    use super::*;
+    use serde_json::{Value, json};
+
+    fn receipt() -> Value {
+        json!({
+            "backend": "flux",
+            "wait_reference": format!("worker:{}", "a".repeat(64)),
+            "run_binding": {
+                "id": {"backend": "flux", "instance": "worker-run",
+                    "uri": "local:///fixture", "job": "f2"},
+                "intent": {"backend": "flux", "instance": "worker-run",
+                    "uri": "local:///fixture", "owner": "worker-tools",
+                    "correlation": format!("worker-{}", "a".repeat(64)),
+                    "request_digest": "b".repeat(64), "output_dir": "/fixture/output"}
+            },
+            "receipt_sha256": "c".repeat(64),
+            "ending": "passed"
+        })
+    }
+
+    #[test]
+    fn native_receipt_requires_exact_fields_and_binding_closure() {
+        let valid = receipt();
+        let admitted: TestRunReceiptsItem = serde_json::from_value(valid.clone()).unwrap();
+        assert_eq!(serde_json::to_value(admitted).unwrap(), valid);
+        for key in ["backend", "wait_reference", "run_binding", "receipt_sha256", "ending"] {
+            let mut missing = valid.clone();
+            missing.as_object_mut().unwrap().remove(key);
+            assert!(serde_json::from_value::<TestRunReceiptsItem>(missing).is_err(), "{key}");
+        }
+        for key in ["action_key", "status", "exit_code", "log_sha256", "attempt", "generation"] {
+            let mut obsolete = valid.clone();
+            obsolete[key] = json!(0);
+            assert!(serde_json::from_value::<TestRunReceiptsItem>(obsolete).is_err(), "{key}");
+        }
+        for (pointer, invalid) in [
+            ("/backend", json!("prismabuild")),
+            ("/wait_reference", json!("a".repeat(64))),
+            ("/wait_reference", json!(format!("worker:{}", "A".repeat(64)))),
+            ("/receipt_sha256", json!("C".repeat(64))),
+            ("/ending", json!("executed")),
+            ("/run_binding/id/backend", json!("prismabuild")),
+            ("/run_binding/id/instance", json!("other")),
+            ("/run_binding/id/uri", json!("local:///other")),
+            ("/run_binding/id/job", json!("18446744073709551616")),
+            ("/run_binding/intent/owner", json!("other")),
+            ("/run_binding/intent/correlation", json!("other")),
+            ("/run_binding/intent/request_digest", json!("short")),
+            ("/run_binding/intent/output_dir", json!("relative/output")),
+        ] {
+            let mut malformed = valid.clone();
+            *malformed.pointer_mut(pointer).unwrap() = invalid;
+            assert!(serde_json::from_value::<TestRunReceiptsItem>(malformed).is_err(), "{pointer}");
+        }
+    }
+
+    #[test]
+    fn blocked_native_reference_rejects_old_keys_and_malformed_references() {
+        let valid = json!({"wait_reference": format!("worker:{}", "a".repeat(64)),
+            "class": "test_infrastructure"});
+        assert!(serde_json::from_value::<MakerReplyBlockedEvidenceValue1>(valid.clone()).is_ok());
+        for reference in ["a".repeat(64), format!("worker:{}", "A".repeat(64)), "worker:short".into()] {
+            let mut invalid = valid.clone();
+            invalid["wait_reference"] = json!(reference);
+            assert!(serde_json::from_value::<MakerReplyBlockedEvidenceValue1>(invalid).is_err());
+        }
+        let obsolete = json!({"action_key": "a".repeat(64), "class": "test_infrastructure"});
+        assert!(serde_json::from_value::<MakerReplyBlockedEvidenceValue1>(obsolete).is_err());
+    }
+}
