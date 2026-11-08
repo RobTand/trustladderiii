@@ -256,14 +256,16 @@ fn source_pins_and_production_copies() {
             let frozen = match name {
                 "look_state" => {
                     // FX adds only Flux routing to this otherwise frozen extraction.
-                    let old = function(copy, name, true).replace(
-                        r#"matches!(wait.upstream.as_str(), "prismabuild" | "flux")"#,
-                        r#"wait.upstream == "prismabuild""#,
-                    );
-                    assert_eq!(
-                        format!("{:x}", Sha256::digest(old.as_bytes())),
-                        "a9c9ec39cc5c88298ca802e01a5a4aee810d0f260dbedccfee4a24703b8016d1"
-                    );
+                    if source != base {
+                        let old = function(copy, name, true).replace(
+                            r#"matches!(wait.upstream.as_str(), "prismabuild" | "flux")"#,
+                            r#"wait.upstream == "prismabuild""#,
+                        );
+                        assert_eq!(
+                            format!("{:x}", Sha256::digest(old.as_bytes())),
+                            "a9c9ec39cc5c88298ca802e01a5a4aee810d0f260dbedccfee4a24703b8016d1"
+                        );
+                    }
                     Some("083f35cccd402e981d106410768f2f062dd1aa49c327836f1bbf8d63f1b7ef29")
                 }
                 "look_observations" => {

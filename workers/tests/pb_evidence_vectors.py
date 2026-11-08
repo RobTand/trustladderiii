@@ -634,7 +634,7 @@ def observe(kind, data):
 
 
 # Scope is the evidence decisions, not generator process lifecycle or staging.
-COVERED = (pb_tests._summary, pb_tests.TestSettings.__post_init__, pb_tests._selectors, pb_tests._priority,
+COVERED = (pb_tests._summary, pb_tests._verified_test_summary, pb_tests.TestSettings.__post_init__, pb_tests._selectors, pb_tests._priority,
            pb_tests._json_command, pb_tests._stdout_json_command, pb_generators._artifact,
            generator.validate_artifact, generator.text, generator.changed, generator.path_parts,
            generator._check_interpreter, generator.budget, tools._selectors, Evidence.restore,
@@ -871,13 +871,13 @@ BOUND_CASES = {'generator.budget: 1 <= cpus <= 16': ['generator-artifact/budget-
                                                      'ending-summary/log-bytes-at',
                                                      'ending-summary/log-bytes-above',
                                                      'ending-summary/log-size-negative'],
- 'pb_tests._summary: bounded(result, limit=SUMMARY_BYTES - 2048)': ['ending-summary/action-summary-bytes-below',
+ 'pb_tests._verified_test_summary: bounded(result, limit=SUMMARY_BYTES - 2048)': ['ending-summary/action-summary-bytes-below',
                                                                     'ending-summary/action-summary-bytes-at',
                                                                     'ending-summary/action-summary-bytes-above'],
  'pb_tests._summary: bounded(model_result(result), limit=SUMMARY_BYTES - 512)': ['ending-summary/summary-bytes-below',
                                                                    'ending-summary/summary-bytes-at',
                                                                    'ending-summary/summary-bytes-above'],
- 'pb_tests._summary: count < 0': ['ending-summary/executed',
+ 'pb_tests._verified_test_summary: count < 0': ['ending-summary/executed',
                                   'ending-summary/totals-negative',
                                   'ending-summary/totals-bool'],
  "pb_tests._summary: ending['attempt'] > 0": ['ending-summary/executed', 'ending-summary/attempt-bool-ignored'],
