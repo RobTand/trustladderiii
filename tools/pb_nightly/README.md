@@ -12,7 +12,7 @@ The original Sonnet HIGH REQUEST_CHANGES remains historical; parent fixes and
 captain disposition resolve its findings without claiming reviewer approval.
 REVIEW-DISPOSITION.md preserves the source-specific explanation.
 
-`//tools/ci/pb_nightly:fixture-check` is a manual PB qualification executable,
+`//tools/pb_nightly:fixture-check` is a manual PB qualification executable,
 not a sandbox test. Its 44 fixtures need complete Git history, shared PB CAS,
 and sealed safe-reader bytes. Run `fixture-check.py SAFE_READER_SOURCE` through
 pbrun and deploy/dl380g10/exact-source.py at the committed tooling head. The
