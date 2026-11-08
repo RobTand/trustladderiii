@@ -56,6 +56,23 @@ pub(super) proof fn continue_step(b: Node, n: Node)
     reveal(command_step);
 }
 
+/// A command or answer that changes nothing keeps every row.
+pub(super) proof fn same_step(b: Node)
+    ensures command_step(b, b),
+{
+    reveal(command_step);
+}
+
+/// The three check_nodes identity rows of command_step, for callers that
+/// state them directly.
+pub(super) proof fn step_identity(b: Node, n: Node)
+    requires command_step(b, n),
+    ensures n.proposed == b.proposed, n.adopted == b.adopted,
+        b.phase is Closed ==> n.phase == b.phase,
+{
+    reveal(command_step);
+}
+
 /// on_command records the command id before dispatching; the rows ignore it.
 pub(super) proof fn last_cmd_step(b: Node, m: Node, n: Node)
     requires m == (Node { last_cmd: m.last_cmd, ..b }), command_step(m, n),

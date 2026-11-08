@@ -44,9 +44,14 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         final(w).nodes@[i as int].proposed == old(w).nodes@[i as int].proposed,
         final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
         (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase),
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(retirement::stopped);] {
+        handler_safety::command_step(old(w).nodes@[i as int], final(w).nodes@[i as int]),
+] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);] {
     if id <= w.nodes[i].last_cmd {
         kernel_proof! { reveal(progress_gate_apply::resume_post); reveal(progress_gate_apply::resumed); }
+        kernel_proof! {
+            handler_safety::same_step(w.nodes@[i as int]);
+            handler_safety::step_identity(w.nodes@[i as int], w.nodes@[i as int]);
+        }
         return; // a repeated command
     }
     kernel_snapshot! { before_command_node = w.nodes@[i as int] }
@@ -56,6 +61,7 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
             && node_checked(*w, w.nodes@[i as int]) { resume_decreases(*w, w.nodes@[i as int]); }
     }
     w.nodes[i].last_cmd = id;
+    kernel_snapshot! { after_id = w.nodes@[i as int] }
     match command {
         Command::Stop => enter_stopping(&mut w.nodes[i], Outcome::Stopped),
         Command::ChangeRequest => enter_stopping(&mut w.nodes[i], Outcome::Replaced),
@@ -84,6 +90,16 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
             }
             on_answer(w, i, question, answer, out);
         },
+    }
+    kernel_proof! {
+        match command {
+            Command::Stop => handler_safety::stop_step(after_id@, Outcome::Stopped),
+            Command::ChangeRequest => handler_safety::stop_step(after_id@, Outcome::Replaced),
+            Command::Answer { .. } => {},
+            _ => handler_safety::field_step(after_id@, w.nodes@[i as int]),
+        }
+        handler_safety::last_cmd_step(before_command_node@, after_id@, w.nodes@[i as int]);
+        handler_safety::step_identity(before_command_node@, w.nodes@[i as int]);
     }
     kernel_proof! {
         if command != Command::Resume { reveal(progress_gate_apply::resume_post); }
