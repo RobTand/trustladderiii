@@ -40,14 +40,7 @@ fn fresh_start_rejects_closed_history_and_old_rob_approval() {
         name: "project".into(),
         installation: 1,
     });
-    initialize_intake(
-        &mut store,
-        &bootstrap,
-        &[],
-        instant,
-        |_, _| unreachable!(),
-    )
-    .unwrap();
+    initialize_intake(&mut store, &bootstrap, &[], instant, |_, _| unreachable!()).unwrap();
     assert_eq!(
         store.ingress_cursor("github-catch-up").unwrap(),
         Some(json!(instant()))
