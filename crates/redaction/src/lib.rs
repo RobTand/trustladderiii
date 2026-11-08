@@ -928,10 +928,9 @@ pub fn generated_harness_policy() -> String {
 fn python_command() -> std::process::Command {
     let directory = std::env::var_os("TEST_TMPDIR")
         .expect("TEST_TMPDIR must name the explicit test-fact directory");
-    let interpreter = std::fs::read_to_string(
-        std::path::PathBuf::from(directory).join("tl3-test-python"),
-    )
-    .expect("tl3-test-python must contain the pinned test interpreter path");
+    let interpreter =
+        std::fs::read_to_string(std::path::PathBuf::from(directory).join("tl3-test-python"))
+            .expect("tl3-test-python must contain the pinned test interpreter path");
     assert!(
         std::path::Path::new(&interpreter).is_absolute(),
         "tl3-test-python must contain an absolute interpreter path"
