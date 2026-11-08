@@ -138,10 +138,10 @@ class Fixtures(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'selector/count differs from exact source'):
                 D['prepare'](self.source, config, D['owned_directory'](self.root / ('checking-invalid-' + str(len(change.get('selector', ''))))))
 
-    def test_all_342_production_selectors_parse(self):
+    def test_all_348_production_selectors_parse(self):
         inventory = D['loads']((HERE / 'production-selectors.fixture.json').read_bytes())
         self.assertEqual(len(inventory['selections']), inventory['groups'])
-        self.assertEqual(inventory['groups'], 342)
+        self.assertEqual(inventory['groups'], 348)
         self.assertEqual(sum(row['expected'] for row in inventory['selections']), inventory['obligations'])
         rows = []
         for selection in inventory['selections']:
@@ -221,7 +221,7 @@ class Fixtures(unittest.TestCase):
             with self.subTest(flags=flags), self.assertRaises(ValueError):
                 D['validate_execution'](bad, row, 'normal')
 
-    def test_all_342_production_selection_flags(self):
+    def test_all_348_production_selection_flags(self):
         inventory = D['loads']((HERE / 'production-selectors.fixture.json').read_bytes())
         rows = []
         for selection in inventory['selections']:
@@ -237,7 +237,7 @@ class Fixtures(unittest.TestCase):
             'source_head': inventory['source_head'], 'runner_sha256': D['digest'](self.original),
             'production_builder_source_guard': True, 'executions': 'synthetic, not Verus runs',
             'rows': rows, 'validation_passes': sum(row['validation'] == 'PASS' for row in rows)}))
-        self.assertEqual(len(rows), 342)
+        self.assertEqual(len(rows), 348)
         self.assertEqual({row['kind'] for row in rows}, {'root', 'module', 'function'})
         self.assertEqual([row for row in rows if row['validation'] != 'PASS'], [])
 

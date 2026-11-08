@@ -1,9 +1,9 @@
 {
-  "source_head": "89dd47f13463d695e1813d6d180632b4deab3dd2",
+  "source_head": "62031fa8ed2d0e22088a3489c49ae10f5cbd6a94",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "b2da00d9c605bc42d8767a059a61cc4426578e475e869d73afc722af6ac78d03",
-  "groups": 342,
-  "obligations": 539,
+  "source_sha256": "27811a204c96f320e32a5ec7d683ad0a51d63d1e1b2be838be4ff3380888c2eb",
+  "groups": 348,
+  "obligations": 545,
   "selections": [
     {
       "target": "//crates/kernel:verus_kernel_clones",
@@ -501,6 +501,16 @@
       "expected": 1
     },
     {
+      "target": "//crates/kernel:verus_allocation_stopping_entry",
+      "selector": "kernel::allocation#stopping_entry",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_stopping_active",
+      "selector": "kernel::allocation#stopping_active",
+      "expected": 1
+    },
+    {
       "target": "//crates/kernel:verus_allocation_merge_credit",
       "selector": "kernel::allocation#merge_credit",
       "expected": 1
@@ -611,8 +621,23 @@
       "expected": 1
     },
     {
+      "target": "//crates/kernel:verus_acknowledgements_delivery_accepted",
+      "selector": "kernel::acknowledgements#delivery_accepted",
+      "expected": 1
+    },
+    {
       "target": "//crates/kernel:verus_acknowledgements_confirmed",
       "selector": "kernel::acknowledgements#confirmed",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_confirmed_resources",
+      "selector": "kernel::acknowledgements#confirmed_resources",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_release_confirmed",
+      "selector": "kernel::acknowledgements#release_confirmed",
       "expected": 1
     },
     {
@@ -653,11 +678,6 @@
     {
       "target": "//crates/kernel:verus_facts_incident_cleared",
       "selector": "kernel::facts#incident_cleared",
-      "expected": 1
-    },
-    {
-      "target": "//crates/kernel:verus_facts_pr_dequeued",
-      "selector": "kernel::facts#pr_dequeued",
       "expected": 1
     },
     {
@@ -1116,6 +1136,11 @@
       "expected": 1
     },
     {
+      "target": "//crates/kernel:verus_ranks_minimum_index",
+      "selector": "kernel::ranks#minimum_index",
+      "expected": 1
+    },
+    {
       "target": "//crates/kernel:verus_ranks_local_capacities",
       "selector": "kernel::ranks#local_capacities",
       "expected": 1
@@ -1433,6 +1458,11 @@
     {
       "target": "//crates/kernel:verus_allocation_stopping_frame",
       "selector": "kernel::allocation_stopping_lemmas#stopping_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_stopping_cases",
+      "selector": "kernel::allocation_stopping_lemmas#stopped_cases",
       "expected": 1
     },
     {
