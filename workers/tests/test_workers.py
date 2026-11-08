@@ -1348,3 +1348,89 @@ def test_ep2_reporting_clause_does_not_hide_unknown_field_duty(dimension, value)
     preflight({'tool_capabilities': [capability]}, reply)
     assert reply['evidence_contract'] == [entry]
     assert any(dimension + '=' + value in error for error in reply['evidence_errors'])
+
+
+FLUX_EVIDENCE_REPLAY = json.loads(
+    (Path(__file__).parent / 'fixtures' / 'planner-flux-evidence-1574-1455.json').read_text())
+OBSERVER_DUTY = 'Run the head observer against the base subject and the head subject.'
+SYMPTOM_DUTY = 'Observe the declared exception at the original node and phase in a fixed campaign.'
+PROOF_CHECK = {'name': 'proof', 'kind': 'demonstrating', 'tests': ['tests/test_new.py::test_observer'],
+               'proof': {'subjects': ['src/pkg/mod.py::subject'], 'observer_support': [],
+                         'red_message': 'expected assertion'}}
+SYMPTOM_CHECK = {'name': 'symptom', 'kind': 'demonstrating', 'tests': ['tests/test_new.py::test_observer'],
+                 'declared_symptom': {'node': 'tests/test_new.py::test_observer',
+                                      'exception': 'builtins.TimeoutError', 'phase': 'call',
+                                      'repeat': 2, 'parallel': 0}}
+
+
+def _flux_planning(case, capabilities, checks):
+    from tl3_workers.evidence import preflight
+
+    inputs = {'tool_capabilities': capabilities,
+              'ingest': {'goals': [], 'evidence_contract': copy.deepcopy(case['ingest_evidence_contract'])},
+              'audit_evidence_contract': copy.deepcopy(case['audit_evidence_contract'])}
+    reply = {'kind': 'leaf', 'evidence_contract': [], 'checks': copy.deepcopy(checks)}
+    objections = []
+    preflight(inputs, reply, planning=True, objections=objections)
+    return reply, objections
+
+
+@pytest.mark.parametrize('case', FLUX_EVIDENCE_REPLAY['cases'], ids=lambda case: case['request'])
+def test_flux_planning_replay_injects_observer_duty_on_admitted_capability(case):
+    # #1574/#1455 at 1077: preflight injected prismabuild_pytest + cas_receipt, so the
+    # admitted Flux capability refused it and repair ended in cant_meet.
+    capability = FLUX_EVIDENCE_REPLAY['admitted_capability']
+    reply, objections = _flux_planning(case, [copy.deepcopy(capability)], [PROOF_CHECK])
+    assert all(OBSERVER_DUTY in diagnostic for diagnostic in case['live_evidence_objections'][:1])
+    assert objections == [], objections
+    assert reply['evidence_errors'] == []
+    observer = [entry for entry in reply['evidence_contract'] if entry['requirement'] == OBSERVER_DUTY]
+    assert observer == [{'requirement': OBSERVER_DUTY, 'provenance': {'kind': 'method'}, 'tool': 'run_tests',
+                         'executor': capability['executor'], 'runner_features': ['base_head'],
+                         'artifacts': capability['artifacts'], 'methods': ['subject_observer'],
+                         'protected_files': []}]
+    # Every source obligation survives unchanged.
+    for entry in case['ingest_evidence_contract'] + case['audit_evidence_contract']:
+        assert entry in reply['evidence_contract']
+
+
+def test_flux_planning_method_duty_without_support_fails_closed():
+    case = FLUX_EVIDENCE_REPLAY['cases'][1]
+    capability = copy.deepcopy(FLUX_EVIDENCE_REPLAY['admitted_capability'])
+    capability['artifacts'].remove('terminal_verdict')
+    reply, objections = _flux_planning(case, [capability], [PROOF_CHECK])
+    assert all(entry['requirement'] != OBSERVER_DUTY for entry in reply['evidence_contract'])
+    assert any(OBSERVER_DUTY in error and 'artifacts=terminal_verdict' in error
+               for error in reply['evidence_errors'])
+    assert objections
+    # declared_symptom keeps its sha need: the 1077 admitted list has no sha.
+    reply, _ = _flux_planning(case, [copy.deepcopy(FLUX_EVIDENCE_REPLAY['admitted_capability'])],
+                              [SYMPTOM_CHECK])
+    assert any(SYMPTOM_DUTY in error and 'artifacts=sha' in error for error in reply['evidence_errors'])
+
+
+def test_flux_planning_method_duty_with_ambiguous_capabilities_fails_closed():
+    case = FLUX_EVIDENCE_REPLAY['cases'][1]
+    first = copy.deepcopy(FLUX_EVIDENCE_REPLAY['admitted_capability'])
+    second = dict(copy.deepcopy(first), executor='other_pytest')
+    reply, objections = _flux_planning(case, [first, second], [PROOF_CHECK])
+    assert all(entry['requirement'] != OBSERVER_DUTY for entry in reply['evidence_contract'])
+    assert any(OBSERVER_DUTY in error and 'ambiguous admitted run_tests capabilities: flux_pytest, other_pytest'
+               in error for error in reply['evidence_errors'])
+    assert objections
+
+
+def test_flux_declared_symptom_duty_takes_the_admitted_artifact_list():
+    from tl3_workers.evidence import preflight
+
+    capability = {'tool': 'run_tests', 'executor': 'flux_pytest',
+                  'runner_features': ['base_head', 'repeat', 'parallel', 'native_threads_1'],
+                  'artifacts': ['run_binding', 'receipt', 'input_tree', 'sha', 'logs', 'terminal_verdict'],
+                  'methods': ['declared_symptom'], 'protected_files': []}
+    reply = {'kind': 'leaf', 'evidence_contract': [], 'checks': [copy.deepcopy(SYMPTOM_CHECK)]}
+    preflight({'tool_capabilities': [capability]}, reply, planning=True, objections=[])
+    assert reply['evidence_errors'] == []
+    assert reply['evidence_contract'] == [{
+        'requirement': SYMPTOM_DUTY, 'provenance': {'kind': 'method'}, 'tool': 'run_tests',
+        'executor': 'flux_pytest', 'runner_features': ['base_head', 'repeat', 'parallel'],
+        'artifacts': capability['artifacts'], 'methods': ['declared_symptom'], 'protected_files': []}]

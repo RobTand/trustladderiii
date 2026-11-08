@@ -668,4 +668,125 @@ mod ingest_tests {
             }
         }
     }
+
+    /// #1574/#1455 at 1077: the injected observer duty named prismabuild_pytest and
+    /// cas_receipt, so the admitted Flux capability refused it and planning ended in
+    /// cant_meet. The capability is what 1077 admitted for tessera (2 test CPUs).
+    fn flux_1077_capability() -> Value {
+        json!({"tool":"run_tests", "executor":"flux_pytest",
+            "runner_features":["base_head","repeat","parallel","always_tests","native_threads_2"],
+            "artifacts":["run_binding","receipt","input_tree","logs","terminal_verdict"],
+            "methods":["red_green","declared_symptom","head","base_head","subject_observer",
+                "forced_reproduction.environment","forced_reproduction.patches"],
+            "protected_files":[]})
+    }
+
+    fn flux_planning(capabilities: Value, check: Value) -> Value {
+        // tessera#1574 retained source obligation (briefs.evidence_contract[0]).
+        let source = json!({"tool":"run_tests", "executor":"flux_pytest", "runner_features":["base_head"],
+            "artifacts":[], "methods":["red_green","subject_observer"], "protected_files":[],
+            "provenance":{"kind":"source", "source":"issue comment",
+                "quote":"The new negative test also needs proof that it can fail."},
+            "requirement":"The new negative regression must fail with an ordinary assertion against the old code."});
+        let inputs = json!({"tool_capabilities":capabilities, "ingest":{"evidence_contract":[source.clone()]},
+            "audit_evidence_contract":[source]});
+        let mut reply = json!({"kind":"leaf", "evidence_contract":[], "checks":[check]});
+        preflight("planner", &inputs, &mut reply).unwrap();
+        reply
+    }
+
+    const OBSERVER: &str = "Run the head observer against the base subject and the head subject.";
+
+    #[test]
+    fn flux_1574_observer_duty_uses_the_admitted_capability() {
+        let capability = flux_1077_capability();
+        let reply = flux_planning(
+            json!([capability]),
+            json!({"proof":{"subjects":["src/pkg.py::f"]}}),
+        );
+        assert_eq!(reply["kind"], "leaf", "{reply}");
+        assert_eq!(reply["evidence_errors"], json!([]));
+        let observer: Vec<&Value> = reply["evidence_contract"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|entry| entry["requirement"] == OBSERVER)
+            .collect();
+        assert_eq!(
+            observer,
+            [
+                &json!({"requirement":OBSERVER, "provenance":{"kind":"method"},
+            "tool":"run_tests", "executor":"flux_pytest", "runner_features":["base_head"],
+            "artifacts":capability["artifacts"], "methods":["subject_observer"], "protected_files":[]})
+            ]
+        );
+    }
+
+    #[test]
+    fn flux_method_duty_without_support_or_with_ambiguity_fails_closed() {
+        let mut lacking = flux_1077_capability();
+        lacking["methods"] = json!(["red_green", "subject_observer"]);
+        lacking["artifacts"] = json!(["run_binding", "receipt", "logs"]);
+        let reply = flux_planning(
+            json!([lacking]),
+            json!({"proof":{"subjects":["src/pkg.py::f"]}}),
+        );
+        assert_eq!(reply["kind"], "cant_meet", "{reply}");
+        assert!(
+            reply["evidence_contract"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|e| e["requirement"] != OBSERVER)
+        );
+        assert!(
+            reply["evidence_errors"]
+                .to_string()
+                .contains("artifacts=terminal_verdict"),
+            "{reply}"
+        );
+
+        let mut other = flux_1077_capability();
+        other["executor"] = json!("other_pytest");
+        let reply = flux_planning(
+            json!([flux_1077_capability(), other]),
+            json!({"proof":{"subjects":["src/pkg.py::f"]}}),
+        );
+        assert_eq!(reply["kind"], "cant_meet", "{reply}");
+        assert!(
+            reply["evidence_contract"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|e| e["requirement"] != OBSERVER)
+        );
+        assert!(
+            reply["evidence_errors"]
+                .to_string()
+                .contains("ambiguous admitted run_tests capabilities: flux_pytest, other_pytest"),
+            "{reply}"
+        );
+
+        // declared_symptom keeps its sha need; the 1077 list lacks sha, the Flux default has it.
+        let symptom = json!({"declared_symptom":{"node":"tests/t.py::t", "exception":"builtins.TimeoutError",
+            "phase":"call", "repeat":2, "parallel":0}});
+        let reply = flux_planning(json!([flux_1077_capability()]), symptom.clone());
+        assert!(
+            reply["evidence_errors"]
+                .to_string()
+                .contains("artifacts=sha"),
+            "{reply}"
+        );
+        let mut flux = flux_1077_capability();
+        flux["artifacts"] = json!([
+            "run_binding",
+            "receipt",
+            "input_tree",
+            "sha",
+            "logs",
+            "terminal_verdict"
+        ]);
+        let reply = flux_planning(json!([flux]), symptom);
+        assert_eq!(reply["evidence_errors"], json!([]), "{reply}");
+    }
 }

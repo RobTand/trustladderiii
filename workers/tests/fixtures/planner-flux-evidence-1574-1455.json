@@ -1,0 +1,398 @@
+{
+ "source": {
+  "record": "20261108T183300Z-1077eac532135570ce3610960982786e8c48bfb8/window-console-input-corrected-20261108T201242Z/STOP-WORLD-1794169979325572074.private.json",
+  "record_sha256": "59231813df4dabc2ae9a1405991f6c3162fdece31524dd6143dbcbb75c45d5b1",
+  "acceptance_stop": "20261108T183300Z-1077eac532135570ce3610960982786e8c48bfb8/window-console-input-corrected-20261108T201242Z/LIVE-ACCEPTANCE-STOP.json",
+  "acceptance_stop_sha256": "7c6e2f87d70d69c21e9cdf5ad0740ac2ef9a89593d7c51f725f6d004756566d8",
+  "tl3_head": "1077eac532135570ce3610960982786e8c48bfb8",
+  "tessera_base_sha": "2fd3b61cc21c61d65462e0937930e56327f9b9bb",
+  "tables": [
+   "requests",
+   "briefs.evidence_contract",
+   "audits.evidence_contract"
+  ],
+  "note": "Sanitized projection of the first Flux planning window at tl3 1077eac5. The planner drafts were not retained; the live objection proves a proof check with subjects reached preflight. admitted_capability is what 1077 admitted: crates/config/src/lib.rs evidence_tools() with effective_tool_capabilities(2) (tessera test cpus 2, matching the native_threads_2 source rows), then the crates/controller/src/adapters/workers.rs:640-653 Flux rewrite. The recorded missing list [executor=prismabuild_pytest, artifacts=cas_receipt] confirms it."
+ },
+ "admitted_capability": {
+  "tool": "run_tests",
+  "executor": "flux_pytest",
+  "runner_features": [
+   "base_head",
+   "repeat",
+   "parallel",
+   "always_tests",
+   "native_threads_2"
+  ],
+  "artifacts": [
+   "run_binding",
+   "receipt",
+   "input_tree",
+   "logs",
+   "terminal_verdict"
+  ],
+  "methods": [
+   "red_green",
+   "declared_symptom",
+   "head",
+   "base_head",
+   "subject_observer",
+   "forced_reproduction.environment",
+   "forced_reproduction.patches"
+  ],
+  "protected_files": []
+ },
+ "cases": [
+  {
+   "request": "RobTand/tessera#1455",
+   "world_node": "0",
+   "ingest_evidence_contract": [
+    {
+     "tool": "run_tests",
+     "methods": [
+      "head"
+     ],
+     "executor": "flux_pytest",
+     "artifacts": [
+      "receipt",
+      "logs",
+      "terminal_verdict"
+     ],
+     "provenance": {
+      "kind": "source",
+      "quote": "The new and changed tests will run through the build tool with two native threads. They cover the two main test files. Four existing tests will run as read-only controls. The record will list the exit status, logs, final verdict, stored receipts, skipped tests and missing tools.",
+      "source": "issue comment tl3-robtand[bot], effect 89326:0"
+     },
+     "requirement": "Run the new and changed tests in tests/test_cached_producer.py and tests/test_cached_unit_reader_gamut.py. Establish the one-parse result, reader parity and required refusals with self-contained CPU fixtures. Use the configured two-native-thread bound. Retain exit status, logs, terminal verdict and stored receipts. Report skips and missing tools from the available records.",
+     "protected_files": [],
+     "runner_features": [
+      "native_threads_2"
+     ]
+    },
+    {
+     "tool": "run_tests",
+     "methods": [
+      "head"
+     ],
+     "executor": "flux_pytest",
+     "artifacts": [
+      "run_binding",
+      "receipt",
+      "logs",
+      "terminal_verdict"
+     ],
+     "provenance": {
+      "kind": "source",
+      "quote": "Independent check:\n- The targeted tests run again on the final version through the build tool, with the two-thread native runner setting.\n- The run covers the two edited test files. It also covers four read-only control tests: parse digest, compact loader, issue references and impacted tests.\n- The report will give the action key, exit status, logs, final verdict, storage receipts, skips and missing tools. It will also confirm that the new parse-count and refusal tests pass without a GPU, checkpoint or download.\n- The receipt may not show the priority of -10, the CPU and memory admitted, or the number of workers that ran. The report will state these as gaps. It will not state them as seen facts.",
+      "source": "issue comment tl3-robtand[bot], effect 108810:0"
+     },
+     "requirement": "Independently rerun the final head. Cover tests/test_cached_producer.py, tests/test_cached_unit_reader_gamut.py, tests/test_parse_digest_once.py, tests/test_compact_loader.py, tests/test_issue_refs.py and tests/test_impacted_tests.py. Confirm the new parse-count and refusal results without a GPU, checkpoint or download. Retain the action key, exit status, logs, terminal verdict and stored receipts. Report skips, missing tools and evidence gaps. The supplied capabilities do not establish the executed command, priority -10, admitted CPU and memory, worker count or measured thread settings.",
+     "protected_files": [],
+     "runner_features": [
+      "native_threads_2"
+     ]
+    },
+    {
+     "tool": "run_tests",
+     "methods": [
+      "red_green",
+      "subject_observer"
+     ],
+     "executor": "flux_pytest",
+     "artifacts": [
+      "run_binding",
+      "receipt",
+      "logs",
+      "terminal_verdict"
+     ],
+     "provenance": {
+      "kind": "source",
+      "quote": "The parse-count check does not satisfy the declared RED proof. The base run fails before it reaches a parser-count assertion. Supply a proof that meets the subject/observer rule.",
+      "source": "issue comment tl3-robtand[bot], effect 109938:0"
+     },
+     "requirement": "Supply assertion RED for the new parse-count observer against base Python subjects. Run the same observer against head subjects for GREEN. Declare the exact RED assertion message before execution. A base import error does not establish the required assertion failure.",
+     "protected_files": [],
+     "runner_features": [
+      "base_head",
+      "native_threads_2"
+     ]
+    }
+   ],
+   "audit_evidence_contract": [
+    {
+     "tool": "run_tests",
+     "methods": [
+      "head"
+     ],
+     "executor": "flux_pytest",
+     "artifacts": [
+      "receipt",
+      "logs",
+      "terminal_verdict"
+     ],
+     "provenance": {
+      "kind": "source",
+      "quote": "The new and changed tests will run through the build tool with two native threads. They cover the two main test files. Four existing tests will run as read-only controls. The record will list the exit status, logs, final verdict, stored receipts, skipped tests and missing tools.",
+      "source": "issue comment tl3-robtand[bot], effect 89326:0"
+     },
+     "requirement": "Run the new and changed tests in tests/test_cached_producer.py and tests/test_cached_unit_reader_gamut.py. Establish the one-parse result, reader parity and required refusals with self-contained CPU fixtures. Use the configured two-native-thread bound. Retain exit status, logs, terminal verdict and stored receipts. Report skips and missing tools from the available records.",
+     "protected_files": [],
+     "runner_features": [
+      "native_threads_2"
+     ]
+    },
+    {
+     "tool": "run_tests",
+     "methods": [
+      "head"
+     ],
+     "executor": "flux_pytest",
+     "artifacts": [
+      "run_binding",
+      "receipt",
+      "logs",
+      "terminal_verdict"
+     ],
+     "provenance": {
+      "kind": "source",
+      "quote": "Independent check:\n- The targeted tests run again on the final version through the build tool, with the two-thread native runner setting.\n- The run covers the two edited test files. It also covers four read-only control tests: parse digest, compact loader, issue references and impacted tests.\n- The report will give the action key, exit status, logs, final verdict, storage receipts, skips and missing tools. It will also confirm that the new parse-count and refusal tests pass without a GPU, checkpoint or download.\n- The receipt may not show the priority of -10, the CPU and memory admitted, or the number of workers that ran. The report will state these as gaps. It will not state them as seen facts.",
+      "source": "issue comment tl3-robtand[bot], effect 108810:0"
+     },
+     "requirement": "Independently rerun the final head. Cover tests/test_cached_producer.py, tests/test_cached_unit_reader_gamut.py, tests/test_parse_digest_once.py, tests/test_compact_loader.py, tests/test_issue_refs.py and tests/test_impacted_tests.py. Confirm the new parse-count and refusal results without a GPU, checkpoint or download. Retain the action key, exit status, logs, terminal verdict and stored receipts. Report skips, missing tools and evidence gaps. The supplied capabilities do not establish the executed command, priority -10, admitted CPU and memory, worker count or measured thread settings.",
+     "protected_files": [],
+     "runner_features": [
+      "native_threads_2"
+     ]
+    },
+    {
+     "tool": "run_tests",
+     "methods": [
+      "red_green",
+      "subject_observer"
+     ],
+     "executor": "flux_pytest",
+     "artifacts": [
+      "run_binding",
+      "receipt",
+      "logs",
+      "terminal_verdict"
+     ],
+     "provenance": {
+      "kind": "source",
+      "quote": "The parse-count check does not satisfy the declared RED proof. The base run fails before it reaches a parser-count assertion. Supply a proof that meets the subject/observer rule.",
+      "source": "issue comment tl3-robtand[bot], effect 109938:0"
+     },
+     "requirement": "Supply assertion RED for the new parse-count observer against base Python subjects. Run the same observer against head subjects for GREEN. Declare the exact RED assertion message before execution. A base import error does not establish the required assertion failure.",
+     "protected_files": [],
+     "runner_features": [
+      "base_head",
+      "native_threads_2"
+     ]
+    },
+    {
+     "tool": "run_tests",
+     "methods": [
+      "head"
+     ],
+     "executor": "flux_pytest",
+     "artifacts": [
+      "receipt",
+      "logs",
+      "terminal_verdict"
+     ],
+     "provenance": {
+      "kind": "source",
+      "quote": "The new and changed tests will run through the build tool with two native threads. They cover the two main test files. Four existing tests will run as read-only controls. The record will list the exit status, logs, final verdict, stored receipts, skipped tests and missing tools.",
+      "source": "issue comment tl3-robtand[bot], effect 89326:0"
+     },
+     "requirement": "Current test results remain unknown. The maker must run the new and changed tests in tests/test_cached_producer.py and tests/test_cached_unit_reader_gamut.py. The tests must establish one parse, equal reader results and the required refusals. The new fixtures must need no GPU, checkpoint or model download. Use the configured native-thread bound. Retain the exit status, logs, final verdict and stored receipts. Report skips and missing tools. Report execution details that the records do not establish as gaps.",
+     "protected_files": [],
+     "runner_features": [
+      "native_threads_2"
+     ]
+    },
+    {
+     "tool": "run_tests",
+     "methods": [
+      "head"
+     ],
+     "executor": "flux_pytest",
+     "artifacts": [
+      "run_binding",
+      "receipt",
+      "logs",
+      "terminal_verdict"
+     ],
+     "provenance": {
+      "kind": "source",
+      "quote": "Independent check:\n- The targeted tests run again on the final version through the build tool, with the two-thread native runner setting.\n- The run covers the two edited test files. It also covers four read-only control tests: parse digest, compact loader, issue references and impacted tests.\n- The report will give the action key, exit status, logs, final verdict, storage receipts, skips and missing tools. It will also confirm that the new parse-count and refusal tests pass without a GPU, checkpoint or download.\n- The receipt may not show the priority of -10, the CPU and memory admitted, or the number of workers that ran. The report will state these as gaps. It will not state them as seen facts.",
+      "source": "issue comment tl3-robtand[bot], effect 108810:0"
+     },
+     "requirement": "Independent checking remains unfinished. Run the final head again. Cover tests/test_cached_producer.py, tests/test_cached_unit_reader_gamut.py, tests/test_parse_digest_once.py, tests/test_compact_loader.py, tests/test_issue_refs.py and tests/test_impacted_tests.py. Confirm that the new parse-count and refusal tests pass without a GPU, checkpoint or download. Retain the action key, exit status, logs, final verdict and stored receipts. Report skips and missing tools. State gaps for execution details that the records do not establish. Do not treat device-dependent skips as proof of the new cases.",
+     "protected_files": [],
+     "runner_features": [
+      "native_threads_2"
+     ]
+    },
+    {
+     "tool": "run_tests",
+     "methods": [
+      "red_green",
+      "subject_observer"
+     ],
+     "executor": "flux_pytest",
+     "artifacts": [
+      "run_binding",
+      "receipt",
+      "logs",
+      "terminal_verdict"
+     ],
+     "provenance": {
+      "kind": "source",
+      "quote": "The parse-count check does not satisfy the declared RED proof. The base run fails before it reaches a parser-count assertion. Supply a proof that meets the subject/observer rule.",
+      "source": "issue comment tl3-robtand[bot], effect 109938:0"
+     },
+     "requirement": "The required RED and GREEN results remain unknown. Independent checking must establish assertion RED for the new parse-count observer against base subjects. It must establish GREEN with the same observer against head subjects. Declare the exact RED assertion message before execution. An import error or setup error does not prove the required failure.",
+     "protected_files": [],
+     "runner_features": [
+      "base_head",
+      "native_threads_2"
+     ]
+    }
+   ],
+   "live_plan_kind": "cant_meet",
+   "live_evidence_objections": [
+    "Unsupported evidence requirement: Run the head observer against the base subject and the head subject. (executor=prismabuild_pytest, artifacts=cas_receipt).",
+    "Return evidence_contract with source requirements and separately marked method choices."
+   ],
+   "live_other_objections": [
+    {
+     "rule": "check.base_missing",
+     "diagnostic": "Existing check must name a test defined at the base: tests/test_impacted_tests.py::test_reads_every_doc. A new assertion observer needs a demonstrating check; adding it only at head cannot repair an original-base regression."
+    },
+    {
+     "rule": "check.base_missing",
+     "diagnostic": "Existing check must name a test defined at the base: tests/test_impacted_tests.py::test_which_helper_pytest_executed. A new assertion observer needs a demonstrating check; adding it only at head cannot repair an original-base regression."
+    }
+   ]
+  },
+  {
+   "request": "RobTand/tessera#1574",
+   "world_node": "1",
+   "ingest_evidence_contract": [
+    {
+     "tool": "run_tests",
+     "methods": [
+      "red_green",
+      "subject_observer"
+     ],
+     "executor": "flux_pytest",
+     "artifacts": [],
+     "provenance": {
+      "kind": "source",
+      "quote": "The new negative test also needs proof that it can fail. The same test will run against the old code and the new code. The old code must fail with an ordinary assertion failure. The exact failure message will be written down before the run. The new code must pass.",
+      "source": "issue comment tl3:effect:6e6f746963653a3131343032313a30"
+     },
+     "requirement": "The new negative regression must fail with an ordinary assertion against the old code. The same test must pass against the changed code. Record the exact expected failure message before execution.",
+     "protected_files": [],
+     "runner_features": [
+      "base_head"
+     ]
+    },
+    {
+     "tool": "run_tests",
+     "methods": [
+      "head"
+     ],
+     "executor": "flux_pytest",
+     "artifacts": [],
+     "provenance": {
+      "kind": "source",
+      "quote": "All existing tests must still pass, including the exporter layout test and the fail-fast export tests.",
+      "source": "issue comment tl3:effect:6e6f746963653a3130373835313a30"
+     },
+     "requirement": "The existing tests must still pass. Targeted validation must include the installed-layout test and the export fail-fast tests. Keep the full-suite run outside the maker step.",
+     "protected_files": [],
+     "runner_features": []
+    }
+   ],
+   "audit_evidence_contract": [
+    {
+     "tool": "run_tests",
+     "methods": [
+      "red_green",
+      "subject_observer"
+     ],
+     "executor": "flux_pytest",
+     "artifacts": [],
+     "provenance": {
+      "kind": "source",
+      "quote": "The new negative test also needs proof that it can fail. The same test will run against the old code and the new code. The old code must fail with an ordinary assertion failure. The exact failure message will be written down before the run. The new code must pass.",
+      "source": "issue comment tl3:effect:6e6f746963653a3131343032313a30"
+     },
+     "requirement": "The new negative regression must fail with an ordinary assertion against the old code. The same test must pass against the changed code. Record the exact expected failure message before execution.",
+     "protected_files": [],
+     "runner_features": [
+      "base_head"
+     ]
+    },
+    {
+     "tool": "run_tests",
+     "methods": [
+      "head"
+     ],
+     "executor": "flux_pytest",
+     "artifacts": [],
+     "provenance": {
+      "kind": "source",
+      "quote": "All existing tests must still pass, including the exporter layout test and the fail-fast export tests.",
+      "source": "issue comment tl3:effect:6e6f746963653a3130373835313a30"
+     },
+     "requirement": "The existing tests must still pass. Targeted validation must include the installed-layout test and the export fail-fast tests. Keep the full-suite run outside the maker step.",
+     "protected_files": [],
+     "runner_features": []
+    },
+    {
+     "tool": "run_tests",
+     "methods": [
+      "red_green",
+      "subject_observer"
+     ],
+     "executor": "flux_pytest",
+     "artifacts": [],
+     "provenance": {
+      "kind": "source",
+      "quote": "The new negative test also needs proof that it can fail. The same test will run against the old code and the new code. The old code must fail with an ordinary assertion failure. The exact failure message will be written down before the run. The new code must pass.",
+      "source": "issue comment tl3:effect:6e6f746963653a3131343032313a30"
+     },
+     "requirement": "Record the exact expected assertion failure message before execution. Run the same negative test against the old subject and the changed subject. Require an ordinary assertion failure against the old subject. Require a pass against the changed subject. This audit did not execute these checks.",
+     "protected_files": [],
+     "runner_features": [
+      "base_head"
+     ]
+    },
+    {
+     "tool": "run_tests",
+     "methods": [
+      "head"
+     ],
+     "executor": "flux_pytest",
+     "artifacts": [],
+     "provenance": {
+      "kind": "source",
+      "quote": "All existing tests must still pass, including the exporter layout test and the fail-fast export tests.",
+      "source": "issue comment tl3:effect:6e6f746963653a3130373835313a30"
+     },
+     "requirement": "Require all existing tests to pass. Include the installed-layout test and the export fail-fast tests in targeted validation. Keep the full-suite run outside the maker step. This audit read the relevant source and tests. It did not verify test results. The cited external action and prior queue results remain unverified.",
+     "protected_files": [],
+     "runner_features": []
+    }
+   ],
+   "live_plan_kind": "cant_meet",
+   "live_evidence_objections": [
+    "Unsupported evidence requirement: Run the head observer against the base subject and the head subject. (executor=prismabuild_pytest, artifacts=cas_receipt).",
+    "Return evidence_contract with source requirements and separately marked method choices."
+   ],
+   "live_other_objections": []
+  }
+ ]
+}
