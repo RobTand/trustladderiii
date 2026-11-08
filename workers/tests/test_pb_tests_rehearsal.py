@@ -189,9 +189,9 @@ def test_every_named_old_path_must_hit_the_delayed_target(rehearsal):
 
 @pytest.mark.parametrize('changed', ['forcing', 'selectors'])
 def test_pb_verified_log_for_another_forcing_or_selection_is_not_evidence(rehearsal, monkeypatch, changed):
-    from tl3_workers import pb_tests
+    from tl3_workers import tests_tool
     ledger, _, _, _ = rehearsal
-    original = pb_tests._summary
+    original = tests_tool._summary
 
     def stale(ending, key):
         result = original(ending, key)
@@ -199,7 +199,7 @@ def test_pb_verified_log_for_another_forcing_or_selection_is_not_evidence(rehear
             result[changed] = {} if changed == 'forcing' else ['tests/test_other.py::test_other']
         return result
 
-    monkeypatch.setattr(pb_tests, '_summary', stale)
+    monkeypatch.setattr(tests_tool, '_summary', stale)
     result = ledger.run([NODE], reachable())
     assert result['status'] == 'infrastructure_error'
     assert result['forced']['status'] == 'infrastructure_error'

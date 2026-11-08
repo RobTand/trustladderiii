@@ -3,7 +3,8 @@
 from pathlib import Path
 import pytest
 from pb_fixtures import supported_fake_runtime as supported_fake_runtime
-from tl3_workers.pb_tests import TestSettings, make_test_tool
+from pb_fixtures import flux_settings
+from tl3_workers.tests_tool import make_test_tool
 from tl3_workers.tools import Worktree
 
 from worker_process import IMAGE
@@ -23,7 +24,7 @@ def test_request_158_plain_base_is_advisory_and_checking_owns_overlay(
     import sys
     from tl3_harness import execution
     from tl3_harness.model import Check, Kind, Outcome, Proof
-    from tl3_workers.pb_tests import _git
+    from tl3_workers.tests_tool import _git
 
     root, scripts = submission
     (root / "pyproject.toml").write_text(
@@ -52,7 +53,7 @@ def test_request_158_plain_base_is_advisory_and_checking_owns_overlay(
     (root / "test_code.py").write_text(source)
     with Worktree(root) as tree:
         tree.test_checkout, tree.check_base_sha = root, base
-        tool = make_test_tool(tree, TestSettings(IMAGE, scripts))
+        tool = make_test_tool(tree, flux_settings())
         baseline = tool([test], base=True)
         if case == "edited":
             (root / "example_module.py").write_text("value = 'head'\n")

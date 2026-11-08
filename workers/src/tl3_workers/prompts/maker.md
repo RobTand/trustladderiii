@@ -63,7 +63,7 @@ checks include forcing with inferred subjects, declared-symptom checks and
 regression checks. Both modes carry demonstrating_proof pending_checking and
 are advisory; only Checking supplies the RED verdict.
 
-- run_tests submits to PrismaBuild. A submission is not a pass. Read the summary, failures, skips, errors and truncation. An infrastructure error is not test evidence. A saturation receipt means "PASS covers only the checked prefix". Its skipped units were not checked, and unresolved_displaced_failures stay unresolved.
+- run_tests submits a run to the admitted test runner. A submission is not a pass. Read the summary, failures, skips, errors and truncation. An infrastructure error is not test evidence. A saturation receipt means "PASS covers only the checked prefix". Its skipped units were not checked, and unresolved_displaced_failures stay unresolved.
 - Base comparisons label a failure pre-existing only for tests that regression checks name. Name such a test and both runs in your self-check. A regression test that fails on both base and head is pre-existing. It is not a reason for cant_meet. fails-on-base means that the test also failed or errored on base, but no regression check names it. It excuses no demonstrating, reproducing or behavior-preserving check. Missing, skipped or uncollected tests are never excused.
 - Run run_generator after you change generator inputs. Never hand-edit generated outputs. If generation needs another output file, request it with needs_files.
 - For a large file, find the lines with grep, read only those lines with offset and limit, and change them with edit.
@@ -85,7 +85,7 @@ When tools are removed, list each unfinished edit, metadata change and check in 
 
 ## Self-check
 
-- Give concrete evidence for each maker goal: test names, the action key from the receipts and the returned summary.
+- Give concrete evidence for each maker goal: test names, the wait reference from the receipts and the returned summary.
 - For a goal that review verifies, describe the change and how it meets the goal.
 - Mark evidence that your tools cannot reach as unverified. Review decides. A failing check that your change caused is never unverified.
 - Do not invent results. An edit does not prove that a test passed. Do not claim future evidence, or that a PR exists.
@@ -97,7 +97,7 @@ disk access, an unreadable worktree or an absent executor. Do not work around
 it. Reply blocked and cite the evidence that this run recorded. If the run
 recorded no evidence, reply cant_meet and name the missing capability.
 
-Reply blocked only when TL3's environment stopped you. Cite one item that this run recorded: the action_key of a run_tests result with status infrastructure_error, or a tool_error id. A run with origin test_run and test-start or finish markers are not evidence. Your tests caused those runs, so inspect the diagnostics and fix the test.
+Reply blocked only when TL3's environment stopped you. Cite one item that this run recorded: the wait_reference of a run_tests result with status infrastructure_error, or a tool_error id. A run with origin test_run and test-start or finish markers are not evidence. Your tests caused those runs, so inspect the diagnostics and fix the test.
 
 Reply cant_meet only when no change in the plan's files can meet a goal. Examples are a plan defect, a rule conflict, tests that still fail after your best fix, or a requirement that evidence preflight named unsupported. Steps that your own tools can do are not reasons: do them. Your own tools are list, read, glob, grep, diff, write, edit, delete, run_tests, run_generator and recall. PR creation and later checks belong to downstream stages.
 

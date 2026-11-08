@@ -8,7 +8,7 @@ import pytest
 
 from tl3_harness.supervision import ExecutionFailure, ExecutionOutcome
 from tl3_harness.test_tool import Summary
-from tl3_workers import facts, pb_tests, tracing
+from tl3_workers import facts, tests_tool, tracing
 import pb_fixtures as shared
 from pb_fixtures import IMAGE, KEY, call, configured_generator
 
@@ -120,9 +120,9 @@ def consumer(request, private_backend, generator_repo, tmp_path):
         (root / 'publisher.py').write_text('def adopt(): return True\n')
         (root / 'tests/test_adoption.py').write_text(
             'from publisher import adopt\ndef test_adopt(): assert adopt()\n')
-        pb_tests._git(root, 'add', '.')
-        pb_tests._git(root, 'commit', '-qm', 'Rehearsal base')
-        base = pb_tests._git(root, 'rev-parse', 'HEAD').strip()
+        tests_tool._git(root, 'add', '.')
+        tests_tool._git(root, 'commit', '-qm', 'Rehearsal base')
+        base = tests_tool._git(root, 'rev-parse', 'HEAD').strip()
         script = scripts / 'pbrun.py'
         source = script.read_text().replace(
             'assert (root / "checkout/uncommitted.py").read_bytes() == b"current dirty bytes\\x00\\xff"', '')
@@ -178,8 +178,8 @@ print(json.dumps({"schema":''')
 
     def generate():
         with configured_generator(generator_repo, tmp_path)[0] as tree:
-            from tl3_workers.pb_generators import make_generator_tool
-            tree.test_settings = pb_tests.TestSettings(IMAGE, scripts)
+            from tl3_workers.generators import make_generator_tool
+            tree.test_settings = tests_tool.TestSettings(IMAGE, scripts)
             return make_generator_tool(tree)()
     return generate, scripts
 
@@ -296,7 +296,7 @@ def test_capability_is_cached_per_runtime_path(private_backend, supported):
         # Invalid action args are intentional; the capability probe still has to
         # happen once, before any attempted submission.
         try:
-            pb_tests._json_command(command)
+            tests_tool._json_command(command)
         except (ExecutionFailure, ValueError):
             pass
     assert (scripts / 'pbrun-probes').exists(), 'the runtime capability was never queried'
@@ -311,7 +311,7 @@ def test_receipt_fake_cli_capability_branch(submission, script):
     assert result.returncode == 0, result.stderr
     assert result.stdout == (
         '{"schema":"prismabuild.machine_record_capability.v1","machine_record_fd":1}\n')
-    assert pb_tests._machine_record_supported(str((scripts / script).resolve()))
+    assert tests_tool._machine_record_supported(str((scripts / script).resolve()))
     capability = json.loads(result.stdout)
     assert capability == {
         'schema': 'prismabuild.machine_record_capability.v1', 'machine_record_fd': 1}
@@ -325,5 +325,5 @@ def test_reader_raises_typed_channel_error(private_backend):
     (scripts / 'pbrun.py').write_text(CHANNEL + 'print(json.dumps({"schema": "prismabuild.submission.v1"}))\n')
     configure(scripts, 'pbrun', channel='malformed')
     with pytest.raises(ExecutionFailure) as caught:
-        pb_tests._json_command([sys.executable, str(scripts / 'pbrun.py'), '--detach', '--cwd', str(root)])
+        tests_tool._json_command([sys.executable, str(scripts / 'pbrun.py'), '--detach', '--cwd', str(root)])
     assert caught.value.outcome == ExecutionOutcome.TRANSPORT_FAILURE

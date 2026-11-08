@@ -17,9 +17,9 @@ from tl3_harness.trees import generated_header
 from langchain_core.tools import StructuredTool, ToolException, create_schema_from_function
 
 from tl3_workers.diff import MissingExecutable, make_diff_tool
-from tl3_workers.pb_tests import make_test_tool, selector_identity
+from tl3_workers.tests_tool import make_test_tool, selector_identity
 from tl3_workers.forcing_rehearsal import make_rehearsal_tool
-from tl3_workers.pb_generators import make_generator_tool
+from tl3_workers.generators import make_generator_tool
 from tl3_workers.recall import make_recall_tool
 from tl3_workers.memory import current
 from tl3_harness.rules import Allowed, CantMeet, Name, Rule, evaluate, register, render_all
@@ -324,10 +324,9 @@ class Evidence:
             return
         if result.get("status") == "completed" and result.get("receipts") and isinstance(result.get("tree"), str):
             # The maker's done reply carries these, so the reviewer sees what ran (#408), on
-            # which tree: the staged snapshot's, never model text (#432). A cache hit replayed a run.
+            # which tree: the staged snapshot's, never model text (#432).
             entry = {"tests": list(selectors[1]), "base": selectors[0], **(options or {"repeat": 1, "parallel": 0}),
                      "status": "completed", "tree": result["tree"],
-                     "fresh": all(receipt["status"] == "executed" for receipt in result["receipts"]),
                      "totals": result["totals"], "receipts": result["receipts"]}
             if "execution" in result:
                 entry["execution"] = result["execution"]
@@ -359,8 +358,8 @@ class Evidence:
             return
         if result.get("status") != "infrastructure_error" or result.get("origin") == "test_run":
             return
-        key = result.get("action_key")
-        if isinstance(key, str) and re.fullmatch("[0-9a-f]{64}", key):
+        key = result.get("wait_reference")
+        if isinstance(key, str) and re.fullmatch("worker:[0-9a-f]{64}", key):
             with self._lock:
                 self.infrastructure_keys[key] = selectors
         else:
@@ -399,7 +398,7 @@ class Evidence:
     def detail(self, evidence):
         """The worker-recorded facts behind cited evidence, or None if this run has none."""
         with self._lock:
-            if evidence.get("action_key") in self.infrastructure_keys:
+            if evidence.get("wait_reference") in self.infrastructure_keys:
                 return {"class": "test_infrastructure"}
             error = self.tool_errors.get(evidence.get("tool_error"))
             if error is None or error.get("retired"):
@@ -410,7 +409,7 @@ class Evidence:
         return self.detail(evidence) is not None
 
     def test_evidence(self):
-        """This run's completed run_tests calls with their PrismaBuild receipts, newest last."""
+        """This run's completed run_tests calls with their run receipts, newest last."""
         with self._lock:
             return list(self.test_runs)
 

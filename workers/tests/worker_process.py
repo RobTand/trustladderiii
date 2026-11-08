@@ -2,7 +2,6 @@
 
 from copy import deepcopy
 from dataclasses import dataclass
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -13,7 +12,6 @@ import httpx
 import pytest
 
 from tl3_workers.forcing_rehearsal import ForcingRehearsals
-from tl3_workers.pb_tests import TestSettings
 from tl3_workers.roles import planner
 from tl3_workers.tools import Worktree, build_tools
 import pb_fixtures as shared
@@ -244,34 +242,35 @@ def prepare_base_submission(submission, base_value="base", head_value="head"):
     head = git("rev-parse", "HEAD")
     (root / "example_module.py").write_text(f"value = {head_value!r}\n")
     before = git("status", "--porcelain")
-    script = scripts / "pbrun.py"
-    script.write_text(script.read_text().replace(
-        'assert (root / "checkout/uncommitted.py").read_bytes() == b"current dirty bytes\\x00\\xff"\n', "",
-    ).replace(
-        'print(json.dumps({"schema":',
-        '''import subprocess
-sys.path.insert(0, str(root / "trusted"))
-from tl3_harness.test_tool import Summary
-selected = args[args.index("--") + 6]
-run = subprocess.run([sys.executable, str(root / "trusted/tl3_harness/runner.py"),
-                      selected, str(root / "checkout"), "--summary"], capture_output=True, text=True)
-assert run.returncode in (0, 1, 4, 5), run.stdout + run.stderr
-summary = Summary()
-for line in run.stdout.splitlines():
-    record = json.loads(line)
-    if record["event"] == "result":
-        summary.add(record["test"], record["outcome"], record["message"])
-if (root / 'proof.json').is_file():
-    summary.result['proof'] = json.loads((root / 'proof.json').read_text())
-(here / "response.json").write_text(json.dumps(summary.result))
-record = here / "submissions.json"
-submissions = json.loads(record.read_text()) if record.exists() else []
-submissions.append(json.loads(selected))
-record.write_text(json.dumps(submissions))
-print(json.dumps({"schema":''',
-    ).replace('"action_key": "a" * 64', '"action_key": ("a" if len(submissions) == 1 else "c") * 64'))
-    waiter = scripts / "pbwait.py"
-    waiter.write_text(waiter.read_text().replace('"action_key": "a" * 64', '"action_key": sys.argv[-1]'))
+    fake = shared.FAKES[str(scripts)]
+
+    def run(staged, document):
+        # The real staged runner runs the selected tests on the staged checkout.
+        staged = Path(staged)
+        selected = document["arguments"][0]
+        run = subprocess.run([sys.executable, str(staged / "trusted/tl3_harness/runner.py"),
+                              selected, str(staged / "checkout"), "--summary"], capture_output=True, text=True)
+        assert run.returncode in (0, 1, 4, 5), run.stdout + run.stderr
+        sys.path.insert(0, str(staged / "trusted"))
+        try:
+            from tl3_harness.test_tool import Summary
+        finally:
+            sys.path.remove(str(staged / "trusted"))
+        summary = Summary()
+        for line in run.stdout.splitlines():
+            record = json.loads(line)
+            if record["event"] == "result":
+                summary.add(record["test"], record["outcome"], record["message"])
+        if (staged / "proof.json").is_file():
+            summary.result["proof"] = json.loads((staged / "proof.json").read_text())
+        (scripts / "response.json").write_text(json.dumps(summary.result))
+        record = scripts / "submissions.json"
+        submissions = json.loads(record.read_text()) if record.exists() else []
+        submissions.append(json.loads(selected))
+        record.write_text(json.dumps(submissions))
+        (scripts / "submitted.json").write_text(json.dumps(document))
+        return "tests", summary.result, []
+    fake.job = run
     return base, head, before, git
 
 
@@ -279,8 +278,8 @@ def invoke(submission, response, arguments):
     root, scripts = submission
     (scripts / "response.json").write_text(json.dumps(response))
     with Worktree(root) as tree:
-        tree.test_settings = TestSettings(IMAGE, scripts, cpus=1, mem_gb=2)
-        tool = build_tools(tree, {"run_tests": "Run worktree tests through PrismaBuild."})[0]
+        tree.test_settings = shared.flux_settings(cpus=1, mem_gb=2)
+        tool = build_tools(tree, {"run_tests": "Run worktree tests on the admitted test runner."})[0]
         return tool.invoke(arguments), tree
 
 
@@ -293,32 +292,13 @@ def generator_backend(tmp_path, monkeypatch):
     # Exercise real git-index generation and artifact validation. Only the fleet
     # transport and Docker launch are replaced; these tests themselves run remotely.
     from tl3_harness import generator
-    from tl3_workers import pb_generators
     monkeypatch.setattr(generator, "require_admission", lambda: None)
     monkeypatch.setattr(generator, "container_command", lambda tree, container, argv, cidfile: argv)
-    calls = []
-    artifacts = {}
-
-    def command(args):
-        if args[1].endswith("pbrun.py"):
-            root = Path(args[args.index("--cwd") + 1])
-            contract = json.loads((root / "generator.json").read_text())
-            result = generator.run(root / "checkout", generator.Container(IMAGE), **contract)
-            raw = (generator.PREFIX + json.dumps(result) + "\n").encode()
-            log = tmp_path / f"generator-{len(calls)}.log"
-            log.write_bytes(raw)
-            artifacts[KEY] = {"action_key": KEY, "status": "executed", "exit_code": 0,
-                              "diagnostics": {"elapsed_s": 123.5},
-                              "succeeded": True, "result": {"verified": True,
-                              "receipt_sha256": "b" * 64, "stdout": {
-                                  "path": str(log), "bytes": len(raw),
-                                  "sha256": hashlib.sha256(raw).hexdigest()}}}
-            calls.append(args)
-            return 0, {"schema": "prismabuild.submission.v1", "action_key": KEY}
-        return 0, {"schema": "prismabuild.endings.v1", "complete": True,
-                   "endings": [artifacts[KEY]]}
-
-    monkeypatch.setattr(pb_generators, "_json_command", command)
+    # The central Flux fake replaces only the Flux wire; its payload, receipt and
+    # import checks run. calls lists each new submission; artifacts its payloads.
+    fake = shared.FAKES[str(tmp_path / "tools")]
+    fake.job = shared.generator_job
+    calls, artifacts = fake.prepared, fake.payloads
     return calls, artifacts
 
 
@@ -408,21 +388,19 @@ def rehearsal(tmp_path, monkeypatch):
     git(root, 'add', '.')
     git(root, 'commit', '-qm', 'base')
     base = git(root, 'rev-parse', 'HEAD')
-    inputs = {'base_sha': base, 'tests': {'image': IMAGE, 'tools_path': str(tmp_path)},
+    inputs = {'base_sha': base, 'tests': {'image': IMAGE, 'execution': dict(shared.FLUX_EXECUTION)},
               'must_split': False, 'findings': [], 'protected_paths': [],
               'ingest': {'brief': 'Preserve adoption, no copying and no publication wait.',
                          'goals': [{'description': 'Make the adoption test deterministic.', 'verification': 'test'}]},
               'forecast': {'fit_tokens': 100000, 'context_tokens': 150000, 'overhead_tokens': {'tools': 1}}}
     calls = []
-    from tl3_workers import pb_tests
+    fake = shared.FAKES[str(tmp_path / 'tools')]
 
-    def submit(command):
-        if 'pbrun.py' in command[1]:
-            calls.append(command)
-            staged = Path(command[command.index('--cwd') + 1])
-            # A fake PB transport drives the real staged harness and runner on free remote compute.
-            # Admission/container and display seams are fixtures; served code still runs.
-            script = '''
+    def submit(staged, document):
+        calls.append(document)
+        # The Flux fake drives the real staged harness and runner on free remote compute.
+        # Admission/container and display seams are fixtures; served code still runs.
+        script = '''
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path('trusted').resolve()))
@@ -438,22 +416,11 @@ test_tool.container_command = lambda tree, container, tests: [sys.executable, '-
 sys.argv = ['action.py', *json.loads(sys.argv[1])]
 test_tool.main()
 '''
-            script = script.replace('RUNNER', repr(REHEARSAL_RUNNER))
-            args = command[command.index('action.py') + 1:]
-            child = subprocess.run([sys.executable, '-c', script, json.dumps(args)], cwd=staged,
-                                   capture_output=True, text=True, check=True)
-            log = tmp_path / 'action.log'
-            log.write_text(child.stdout)
-            return 0, {'schema': 'prismabuild.submission.v1', 'action_key': 'a' * 64}
-        import hashlib
-        log = tmp_path / 'action.log'
-        raw = log.read_bytes()
-        return 0, {'schema': 'prismabuild.endings.v1', 'complete': True, 'endings': [
-            {'action_key': 'a' * 64, 'status': 'executed', 'exit_code': 0, 'succeeded': True,
-             'result': {'verified': True, 'receipt_sha256': 'b' * 64,
-                        'stdout': {'path': str(log), 'bytes': len(raw),
-                                   'sha256': hashlib.sha256(raw).hexdigest()}}}]}
-    monkeypatch.setattr(pb_tests, '_json_command', submit)
+        script = script.replace('RUNNER', repr(REHEARSAL_RUNNER))
+        child = subprocess.run([sys.executable, '-c', script, json.dumps([IMAGE, *document['arguments']])],
+                               cwd=staged, capture_output=True, text=True, check=True)
+        return shared.action_payload(child.stdout)
+    fake.job = submit
     monkeypatch.setattr(planner.Forecaster, 'measure', lambda *a: {'fits': True})
     monkeypatch.chdir(root)
     with Worktree(root) as tree:

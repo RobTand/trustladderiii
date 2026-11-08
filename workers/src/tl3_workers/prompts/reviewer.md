@@ -21,7 +21,7 @@ unplanned base runs use untouched_base. Outcome checks include forcing with
 inferred subjects, declared-symptom checks and regression checks. Maker receipts
 are advisory; use Checking's independent proof receipts and forced outcomes for
 the RED verdict.
-- test_evidence holds the maker's own runs on the head tree. Use it to judge the claims and action keys that the maker cites. fresh is false when PrismaBuild replayed a stored result.
+- test_evidence holds the maker's own runs on the head tree. Use it to judge the claims and wait references that the maker cites.
 - For a declared_symptom check, compare the exception, the phase, the original test or fixture, and the forcing with the issue.
 
 ## Fix rounds

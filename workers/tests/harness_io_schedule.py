@@ -17,7 +17,7 @@ import pytest
 from tl3_harness import execution, selector_identity as identity, test_tool
 from tl3_harness.selector_identity import selector_identity
 from tl3_harness.supervision import ExecutionFailure, ExecutionOutcome
-from tl3_workers import pb_tests
+from tl3_workers import tests_tool
 
 
 # Frozen reference dependency, copied verbatim from 2e8cbefd9fe914d33308d8872838b34bbdb80219
@@ -564,7 +564,7 @@ def verify_crash_cut(schedule):
     """#823 review-r2: capture unflushed bytes before context-manager cleanup."""
     example = {**schedule, 'reads':[0], 'selector_reads':[True, True],
                'selectors':['t.py'], 'mode':'run_current', 'crash':-1, 'base':False, 'reattach':False}
-    for function, module, write in [(action, test_tool, 'write'), (lifecycle, pb_tests, 'stage-write')]:
+    for function, module, write in [(action, test_tool, 'write'), (lifecycle, tests_tool, 'stage-write')]:
         with tempfile.TemporaryDirectory(prefix='harness-cut-') as name:
             complete = function(module, Path(name), example)
         if function is action:
@@ -596,7 +596,7 @@ def decide(schedule):
         vector = json.loads((REFERENCE / 'repeated-run.json').read_text())
         assert old[1] == ('result', vector['action'])
         before = worker(legacy_worker, schedule, facts=old[1][1])
-        after = worker(pb_tests, schedule, facts=new[1][1])
+        after = worker(tests_tool, schedule, facts=new[1][1])
         assert before == after
         assert after[1] == vector['worker'], ('complete worker parity vector changed', after)
     boundaries = 0
@@ -610,16 +610,16 @@ def decide(schedule):
         coverage.update(call[0] for call in observed[0])
     for base in (False, True):
         for reattach in (False, True):
-            observed = compare_crashes(lifecycle, legacy_worker, pb_tests, {**schedule, 'base':base, 'reattach':reattach})
+            observed = compare_crashes(lifecycle, legacy_worker, tests_tool, {**schedule, 'base':base, 'reattach':reattach})
             boundaries += observed[3]
             coverage.update(call[0] for call in observed[0])
     before = worker(legacy_worker, schedule)
-    after = worker(pb_tests, schedule)
+    after = worker(tests_tool, schedule)
     assert before == after, ('worker log schedule changed', schedule, before, after)
     for size in ([] if REFUSALS_CHECKED else [14_000, 14_500, 20_000, 750_000, 800_000, 1_050_000]):
         enlarged = {**schedule, 'proof_bytes':size}
         old_trace, old_result, old_state = worker(legacy_worker, enlarged)
-        new_trace, new_result, new_state = worker(pb_tests, enlarged)
+        new_trace, new_result, new_state = worker(tests_tool, enlarged)
         for result in [old_result, new_result]:
             for receipt in result.get('receipts', []): receipt.pop('log_sha256')
         assert (old_trace, old_result, old_state) == (new_trace, new_result, new_state), (size, old_result, new_result)
