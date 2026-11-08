@@ -222,6 +222,17 @@ class FluxAdmissionTests(unittest.TestCase):
             fx.stage(self.intent)
         self.assertEqual(self.submissions(), 1)
 
+    def test_missing_required_cleanup_identity_refuses_even_after_scope_removal(self):
+        fx.stage(self.intent)
+        result = fx.load(self.out / 'result.json')
+        for field in ('cgroup_inode', 'intent', 'source_tree', 'scratch_removed'):
+            altered = dict(result)
+            altered.pop(field)
+            fx.save(self.out / 'result.json', altered)
+            with self.subTest(field=field), self.assertRaises(RuntimeError):
+                fx.stage(self.intent)
+        self.assertEqual(self.submissions(), 1)
+
     def test_missing_cleanup_receipt_cannot_pass_on_clean(self):
         fx.stage(self.intent)
         (self.out / 'result.json').unlink()

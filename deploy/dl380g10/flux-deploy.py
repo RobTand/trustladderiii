@@ -277,13 +277,14 @@ def collect(intent, request_digest, spec, identifier):
             or parsed.get('exception_occurred') is not False
             or type(parsed.get('waitstatus')) is not int or parsed['waitstatus'] != 0
             or type(parsed.get('result')) is not int or parsed['result'] != 1
-            or finishes != [0] or 'exception' in names
+            or finishes != [0] or type(finishes[0]) is not int or 'exception' in names
             or names.index('start') > names.index('finish') or names.index('finish') > names.index('clean')):
         raise RuntimeError('native terminal failure/unknown; evidence retained')
     result = load(out / 'result.json')
     if (result.get('schema') != 'tl3.deploy.payload.v1' or result.get('intent') != request_digest
             or result.get('job_id') != identifier or type(result.get('returncode')) is not int
-            or result['returncode'] != 0
+            or result['returncode'] != 0 or type(result.get('cgroup_inode')) is not int
+            or result['cgroup_inode'] <= 0
             or result.get('source_tree') != intent['tree'] or result.get('scratch_removed') is not True):
         raise RuntimeError('payload receipt failure/mismatch')
     # Native clean is insufficient. Read only this payload's recorded cgroup.
