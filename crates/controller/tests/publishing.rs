@@ -729,6 +729,9 @@ fn webhook(c: &mut Controller, server: &Server, action: &str) {
     let mut store=Store::open(&settings).unwrap();
     store.receive_ingress("github-webhook",&format!("publishing-{action}-{sequence}"),"pull_request",&serde_json::to_vec(&body).unwrap()).unwrap();
     tl3_controller::ingress::drain(c).unwrap();
+    eprintln!("Direct wake {action}: {:?}", c.snapshot().unwrap().rows.iter()
+        .filter(|r| matches!(r.table.as_str(), "nodes" | "watches" | "allowances" | "incidents" | "inbox"))
+        .collect::<Vec<_>>());
 
 }
 fn patch_lines(diff: &Value) -> Vec<&str> {
