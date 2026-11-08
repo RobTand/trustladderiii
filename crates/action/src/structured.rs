@@ -82,13 +82,25 @@ fn utf8_json(value: &SummaryValue) -> Result<String> {
         }
         SummaryValue::Array(values) => format!(
             "[{}]",
-            values.iter().map(utf8_json).collect::<Result<Vec<_>>>()?.join(", ")
+            values
+                .iter()
+                .map(utf8_json)
+                .collect::<Result<Vec<_>>>()?
+                .join(", ")
         ),
         SummaryValue::Object(fields) => format!(
             "{{{}}}",
-            fields.iter().map(|(key, value)| {
-                Ok(format!("{}: {}", utf8_json(&SummaryValue::String(key.clone()))?, utf8_json(value)?))
-            }).collect::<Result<Vec<_>>>()?.join(", ")
+            fields
+                .iter()
+                .map(|(key, value)| {
+                    Ok(format!(
+                        "{}: {}",
+                        utf8_json(&SummaryValue::String(key.clone()))?,
+                        utf8_json(value)?
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?
+                .join(", ")
         ),
     })
 }
@@ -326,7 +338,8 @@ impl Redactor {
             oldest.end = first.end.min(first.start + head);
             let mut newest = last.clone();
             newest.start = tail(last, limit - head)?.0;
-            result.gap = result.gap
+            result.gap = result
+                .gap
                 .checked_add(first.end - oldest.end + newest.start - last.start)
                 .ok_or("shaped redaction gap overflow")?;
             result.parts = vec![oldest, newest];
@@ -453,12 +466,11 @@ impl Redactor {
                         self.truncated = true;
                         break;
                     }
-                    let share = remaining
-                        .saturating_sub(key.len() + 8)
-                        .min(ITEM_BYTES.max(remaining / (fields.len() - index)));
+                    let key_bytes = measured(&SummaryValue::String(PythonText::from(key.as_str())))?;
+                    let available = remaining.saturating_sub(key_bytes + 8);
+                    let share = available.min(ITEM_BYTES.max(available / (fields.len() - index)));
                     let item = self.reshape_value(item, share, depth + 1)?;
-                    remaining =
-                        remaining.saturating_sub(item.size()?.saturating_add(key.len() + 8));
+                    remaining = remaining.saturating_sub(item.size()?.saturating_add(key_bytes + 6));
                     result.push((key.clone(), item));
                 }
                 result.reverse();
@@ -575,16 +587,15 @@ impl Redactor {
                         None
                     };
                     let key: String = key.chars().take(128).collect();
-                    let share = remaining
-                        .saturating_sub(key.len() + 8)
-                        .min(ITEM_BYTES.max(remaining / (fields.len() - index)));
+                    let key_bytes = measured(&SummaryValue::String(PythonText::from(key.as_str())))?;
+                    let available = remaining.saturating_sub(key_bytes + 8);
+                    let share = available.min(ITEM_BYTES.max(available / (fields.len() - index)));
                     let item = if let Some(text) = substitute {
                         Shaped::Text(self.clip(&text, STRING_CHARS)?)
                     } else {
                         self.shape_value(value, share, depth + 1)?
                     };
-                    remaining = remaining
-                        .saturating_sub(key.len().saturating_add(item.size()?).saturating_add(8));
+                    remaining = remaining.saturating_sub(key_bytes.saturating_add(item.size()?).saturating_add(6));
                     result.push((key, item));
                 }
                 result.reverse();
@@ -619,9 +630,9 @@ impl Redactor {
             return Ok(SummaryValue::String(PythonText::from(BUDGET_NOTE)));
         }
         Ok(match value {
-            Shaped::Text(value) => {
-                SummaryValue::String(PythonText::from(self.clean_leaf_clip(value, limit)?.as_str()))
-            }
+            Shaped::Text(value) => SummaryValue::String(PythonText::from(
+                self.clean_leaf_clip(value, limit)?.as_str(),
+            )),
             Shaped::Json { value, raw } => {
                 let cleaned = self.clean_value(value, limit / 2, depth + 1)?;
                 let encoded = if let Some(raw) = raw
@@ -671,16 +682,16 @@ impl Redactor {
                         break;
                     }
                     let key = self.text(key, 128)?;
+                    let key_bytes = measured(&SummaryValue::String(PythonText::from(key.as_str())))?;
+                    let available = remaining.saturating_sub(key_bytes + 8);
                     let share = if roomy {
                         value.size()?.saturating_add(512)
                     } else {
-                        remaining
-                            .saturating_sub(key.len() + 8)
-                            .min(ITEM_BYTES.max(remaining / (fields.len() - index)))
+                        available.min(ITEM_BYTES.max(available / (fields.len() - index)))
                     };
                     let item = self.clean_value(value, share, depth + 1)?;
                     remaining = remaining.saturating_sub(
-                        key.len().saturating_add(measured(&item)?).saturating_add(8),
+                        key_bytes.saturating_add(measured(&item)?).saturating_add(6),
                     );
                     result.push((PythonText::from(key.as_str()), item));
                 }
