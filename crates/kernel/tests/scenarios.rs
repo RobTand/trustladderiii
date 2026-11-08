@@ -622,6 +622,70 @@ fn approval_is_one_exact_wide_head() {
 }
 
 #[test]
+fn unapproved_delivery_merges_report_incidents_and_finish_truthful_teardown() {
+    for wrong_head in [false, true] {
+        let mut run = Run::new();
+        run.start_making();
+        let mut approved = HeadId(1 << 40);
+        run.pass(&mut approved);
+        let observed = if wrong_head {
+            HeadId(u64::MAX)
+        } else {
+            approved
+        };
+        let checks_passed = wrong_head;
+        let credit = run.node().credit;
+        let footprint = run.node().footprint;
+        assert!(run.node().worktree && run.node().pr_open);
+        assert_eq!(run.w.check(), Ok(()));
+        run.notices.clear();
+
+        run.send(Event::Fact {
+            node: NodeId(0),
+            fact: Fact::PrMerged {
+                head: observed,
+                checks_passed,
+            },
+        });
+        assert_eq!(run.phase(), Phase::Stopping(Outcome::Merged));
+        assert_eq!(run.node().merged, Some(observed));
+        assert_eq!(run.node().approved, Some(approved));
+        assert!(!run.node().pr_open);
+        assert!(
+            run.node().worktree,
+            "teardown must await its actual acknowledgement"
+        );
+        assert_eq!(run.node().effect.unwrap().kind, EffectKind::RemoveWorktree);
+        assert!(run.notices.contains(&Notice::Note(NoteKind::UnapprovedMerge)));
+        assert!(run.notices.contains(&Notice::Incident { needs_rob: false }));
+        assert_eq!(run.w.check(), Ok(()));
+
+        run.confirm();
+        let closed = run.node();
+        assert_eq!(closed.phase, Phase::Closed(Outcome::Merged));
+        assert_eq!(closed.merged, Some(observed));
+        assert_eq!(closed.footprint, footprint);
+        assert!(!closed.holds && !closed.pool && !closed.worktree && !closed.pr_open);
+        assert!(closed.run.is_none() && closed.job.is_none() && closed.ticket.is_none());
+        assert!(closed.effect.is_none() && closed.question.is_none());
+        assert_eq!(closed.credit.spent, credit.spent);
+        assert_eq!(closed.credit.earned, credit.earned + 1);
+        assert_eq!(run.w.check(), Ok(()));
+
+        run.fact(Fact::PrMerged {
+            head: observed,
+            checks_passed,
+        });
+        assert_eq!(
+            run.node(),
+            closed,
+            "a duplicate merge cannot change truth or earn twice"
+        );
+        assert_eq!(run.w.check(), Ok(()));
+    }
+}
+
+#[test]
 fn repo_and_node_ids_do_not_truncate() {
     let mut w = World::new(&vec![1; 300], 1);
     w = step(
