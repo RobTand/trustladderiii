@@ -44,7 +44,7 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         final(w).nodes@[i as int].proposed == old(w).nodes@[i as int].proposed,
         final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
         (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase),
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(retirement::stopped);] {
+] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);] {
     if id <= w.nodes[i].last_cmd {
         kernel_proof! { reveal(progress_gate_apply::resume_post); reveal(progress_gate_apply::resumed); }
         return; // a repeated command
@@ -57,8 +57,22 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
     }
     w.nodes[i].last_cmd = id;
     match command {
-        Command::Stop => enter_stopping(&mut w.nodes[i], Outcome::Stopped),
-        Command::ChangeRequest => enter_stopping(&mut w.nodes[i], Outcome::Replaced),
+        Command::Stop => {
+            kernel_snapshot! { before_stop = w.nodes@[i as int] }
+            enter_stopping(&mut w.nodes[i], Outcome::Stopped);
+            kernel_proof! {
+                assert(w.nodes@[i as int].proposed == before_stop@.proposed && w.nodes@[i as int].adopted == before_stop@.adopted)
+                    by { reveal(retirement::stopped); }
+            }
+        }
+        Command::ChangeRequest => {
+            kernel_snapshot! { before_replace = w.nodes@[i as int] }
+            enter_stopping(&mut w.nodes[i], Outcome::Replaced);
+            kernel_proof! {
+                assert(w.nodes@[i as int].proposed == before_replace@.proposed && w.nodes@[i as int].adopted == before_replace@.adopted)
+                    by { reveal(retirement::stopped); }
+            }
+        }
         Command::Pause => {
             let m = &mut w.nodes[i];
             if !m.phase.is_stopping() && !m.phase.is_closed() {

@@ -42,7 +42,7 @@ pub(super) fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
-] proof [reveal(distance); reveal(retirement::stopped);] {
+] proof [reveal(distance);] {
     let m = &mut w.nodes[i];
     m.credit.fund_and_pay(deposit, q.cost);
     m.question = None;
@@ -58,8 +58,22 @@ pub(super) fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
             }
         }
         Cont::Ready(r) => set_phase(m, Phase::Ready(r)),
-        Cont::Stop(o) => enter_stopping(m, o),
-        Cont::Nowhere => enter_stopping(m, Outcome::Stopped),
+        Cont::Stop(o) => {
+            kernel_snapshot! { before_stop = *m }
+            enter_stopping(m, o);
+            kernel_proof! {
+                assert((*m).proposed == before_stop@.proposed && (*m).adopted == before_stop@.adopted)
+                    by { reveal(retirement::stopped); }
+            }
+        }
+        Cont::Nowhere => {
+            kernel_snapshot! { before_nowhere = *m }
+            enter_stopping(m, Outcome::Stopped);
+            kernel_proof! {
+                assert((*m).proposed == before_nowhere@.proposed && (*m).adopted == before_nowhere@.adopted)
+                    by { reveal(retirement::stopped); }
+            }
+        }
     }
 }
 }
