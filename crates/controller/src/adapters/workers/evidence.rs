@@ -2,6 +2,74 @@
 use crate::{Error, Result};
 use serde_json::{Value, json};
 
+/// Select the one admitted run_tests capability that meets a code-owned method duty.
+///
+/// `method`, `runner_features` and `artifacts` are the proof's minimum needs. The selected
+/// capability supplies the executor and its whole advertised artifact list, which
+/// contains every needed artifact. No support or several supporting capabilities add
+/// an explicit refusal and select nothing.
+fn method_requirement(
+    capabilities: &[Value],
+    requirement: &str,
+    method: &str,
+    runner_features: &[&str],
+    artifacts: &[&str],
+    errors: &mut Vec<String>,
+) -> Option<Value> {
+    let needs = [
+        ("methods", &[method][..]),
+        ("runner_features", runner_features),
+        ("artifacts", artifacts),
+    ];
+    let mut gaps: Vec<Vec<String>> = Vec::new();
+    let mut supporting: Vec<&Value> = Vec::new();
+    for capability in capabilities
+        .iter()
+        .filter(|capability| capability["tool"] == "run_tests")
+    {
+        let missing: Vec<String> = needs
+            .iter()
+            .flat_map(|(key, values)| values.iter().map(move |value| (*key, *value)))
+            .filter(|(key, value)| {
+                !capability[*key]
+                    .as_array()
+                    .is_some_and(|values| values.iter().any(|v| v == value))
+            })
+            .map(|(key, value)| format!("{key}={value}"))
+            .collect();
+        if missing.is_empty() && !supporting.contains(&capability) {
+            supporting.push(capability);
+        }
+        gaps.push(missing);
+    }
+    if let [capability] = supporting.as_slice() {
+        return Some(json!({
+            "requirement": requirement, "provenance": {"kind": "method"}, "tool": "run_tests",
+            "executor": capability["executor"], "runner_features": runner_features,
+            "artifacts": capability["artifacts"], "methods": [method], "protected_files": []}));
+    }
+    let missing = if supporting.is_empty() {
+        gaps.into_iter()
+            .min_by_key(Vec::len)
+            .unwrap_or_else(|| vec!["tool=run_tests".into()])
+    } else {
+        let mut executors: Vec<&str> = supporting
+            .iter()
+            .filter_map(|capability| capability["executor"].as_str())
+            .collect();
+        executors.sort_unstable();
+        vec![format!(
+            "ambiguous admitted run_tests capabilities: {}",
+            executors.join(", ")
+        )]
+    };
+    errors.push(format!(
+        "Unsupported evidence requirement: {requirement} ({}).",
+        missing.join(", ")
+    ));
+    None
+}
+
 pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) -> Result<()> {
     let goals = if role == "audit" {
         &inputs["ingest"]["goals"]
@@ -28,16 +96,20 @@ pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) -> Result
         return Ok(());
     }
     let mut contract = Vec::new();
+    let mut selection_errors = Vec::new();
     if role == "planner"
         && reply["checks"]
             .as_array()
             .is_some_and(|checks| checks.iter().any(|c| c.get("declared_symptom").is_some()))
     {
-        contract.push(json!({
-            "requirement":"Observe the declared exception at the original node and phase in a fixed campaign.",
-            "provenance":{"kind":"method"},
-            "tool":"run_tests", "executor":"prismabuild_pytest", "runner_features":["base_head", "repeat", "parallel"],
-            "artifacts":["cas_receipt", "logs", "sha", "terminal_verdict"], "methods":["declared_symptom"], "protected_files":[]}));
+        contract.extend(method_requirement(
+            capabilities,
+            "Observe the declared exception at the original node and phase in a fixed campaign.",
+            "declared_symptom",
+            &["base_head", "repeat", "parallel"],
+            &["receipt", "logs", "sha", "terminal_verdict"],
+            &mut selection_errors,
+        ));
     }
     // Source obligations persist; each role replaces the previous method choices.
     // Unmarked legacy contracts remain mandatory.
@@ -60,16 +132,20 @@ pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) -> Result
             .as_array()
             .is_some_and(|checks| checks.iter().any(|check| check.get("proof").is_some()))
     {
-        let requirement = json!({
-            "requirement":"Run the head observer against the base subject and the head subject.",
-            "provenance":{"kind":"method"}, "tool":"run_tests", "executor":"prismabuild_pytest",
-            "runner_features":["base_head"], "artifacts":["cas_receipt", "terminal_verdict"],
-            "methods":["subject_observer"], "protected_files":[]});
-        if !contract.contains(&requirement) {
+        if let Some(requirement) = method_requirement(
+            capabilities,
+            "Run the head observer against the base subject and the head subject.",
+            "subject_observer",
+            &["base_head"],
+            &["receipt", "terminal_verdict"],
+            &mut selection_errors,
+        ) && !contract.contains(&requirement)
+        {
             contract.push(requirement);
         }
     }
     let mut errors = branch_errors;
+    errors.append(&mut selection_errors);
     if role != "planner" && reply.get("evidence_contract").is_none() {
         return Err(Error::Invalid("worker evidence contract is missing"));
     }
@@ -250,9 +326,9 @@ mod proof_obligation_tests {
     #[test]
     fn declared_symptom_choice_is_replaceable_and_source_proof_persists() {
         for required_method in ["red_green", "declared_symptom"] {
-            let capability = json!({"tool":"run_tests", "executor":"prismabuild_pytest",
+            let capability = json!({"tool":"run_tests", "executor":"flux_pytest",
                 "runner_features":["base_head","repeat","parallel"],
-                "artifacts":["cas_receipt","logs","sha","terminal_verdict"],
+                "artifacts":["receipt","logs","sha","terminal_verdict"],
                 "methods":["red_green","declared_symptom"], "protected_files":[]});
             let mut source = capability.clone();
             source["requirement"] = json!("Prove the timeout.");
@@ -287,8 +363,8 @@ mod proof_obligation_tests {
 
     #[test]
     fn t613_replaces_method_choices_without_erasing_source_proof() {
-        let capability = json!({"tool":"run_tests", "executor":"prismabuild_pytest",
-            "runner_features":["base_head"], "artifacts":["cas_receipt","terminal_verdict"],
+        let capability = json!({"tool":"run_tests", "executor":"flux_pytest",
+            "runner_features":["base_head"], "artifacts":["receipt","terminal_verdict"],
             "methods":["red_green"], "protected_files":[]});
         let mut source = capability.clone();
         source["requirement"] = json!("Show assertion RED and GREEN.");

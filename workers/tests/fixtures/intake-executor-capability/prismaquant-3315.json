@@ -10,13 +10,13 @@
   "tool_capabilities": [
     {
       "artifacts": [
-        "action_key",
-        "cas_receipt",
+        "run_binding",
+        "receipt",
         "sha",
         "logs",
         "terminal_verdict"
       ],
-      "executor": "prismabuild_pytest",
+      "executor": "flux_pytest",
       "methods": [
         "red_green",
         "declared_symptom",
@@ -38,8 +38,8 @@
     },
     {
       "artifacts": [
-        "action_key",
-        "cas_receipt",
+        "run_binding",
+        "receipt",
         "input_tree",
         "output_tree",
         "artifact_sha256",
@@ -64,13 +64,13 @@
     "evidence_contract": [
       {
         "tool": "run_tests",
-        "executor": "prismabuild_pytest",
+        "executor": "flux_pytest",
         "runner_features": [
           "base_head"
         ],
         "artifacts": [
-          "action_key",
-          "cas_receipt",
+          "run_binding",
+          "receipt",
           "sha",
           "logs",
           "terminal_verdict"
@@ -89,13 +89,13 @@
       },
       {
         "tool": "run_tests",
-        "executor": "prismabuild_pytest",
+        "executor": "flux_pytest",
         "runner_features": [
           "base_head"
         ],
         "artifacts": [
-          "action_key",
-          "cas_receipt",
+          "run_binding",
+          "receipt",
           "sha",
           "logs",
           "terminal_verdict"
@@ -154,8 +154,8 @@
           "idempotent_import"
         ],
         "artifacts": [
-          "action_key",
-          "cas_receipt",
+          "run_binding",
+          "receipt",
           "input_tree",
           "output_tree",
           "artifact_sha256",
@@ -183,13 +183,13 @@
     "evidence_contract": [
       {
         "artifacts": [
-          "action_key",
-          "cas_receipt",
+          "run_binding",
+          "receipt",
           "sha",
           "logs",
           "terminal_verdict"
         ],
-        "executor": "prismabuild_pytest",
+        "executor": "flux_pytest",
         "methods": [
           "red_green",
           "subject_observer"
@@ -208,13 +208,13 @@
       },
       {
         "artifacts": [
-          "action_key",
-          "cas_receipt",
+          "run_binding",
+          "receipt",
           "sha",
           "logs",
           "terminal_verdict"
         ],
-        "executor": "prismabuild_pytest",
+        "executor": "flux_pytest",
         "methods": [
           "base_head"
         ],
@@ -266,13 +266,13 @@
       },
       {
         "tool": "run_tests",
-        "executor": "prismabuild_pytest",
+        "executor": "flux_pytest",
         "runner_features": [
           "base_head"
         ],
         "artifacts": [
-          "action_key",
-          "cas_receipt",
+          "run_binding",
+          "receipt",
           "sha",
           "logs",
           "terminal_verdict"
@@ -291,13 +291,13 @@
       },
       {
         "tool": "run_tests",
-        "executor": "prismabuild_pytest",
+        "executor": "flux_pytest",
         "runner_features": [
           "base_head"
         ],
         "artifacts": [
-          "action_key",
-          "cas_receipt",
+          "run_binding",
+          "receipt",
           "sha",
           "logs",
           "terminal_verdict"
@@ -356,8 +356,8 @@
           "idempotent_import"
         ],
         "artifacts": [
-          "action_key",
-          "cas_receipt",
+          "run_binding",
+          "receipt",
           "input_tree",
           "output_tree",
           "artifact_sha256",
@@ -386,13 +386,13 @@
     "evidence_contract": [
       {
         "artifacts": [
-          "action_key",
-          "cas_receipt",
+          "run_binding",
+          "receipt",
           "sha",
           "logs",
           "terminal_verdict"
         ],
-        "executor": "prismabuild_pytest",
+        "executor": "flux_pytest",
         "methods": [
           "red_green",
           "subject_observer"
@@ -411,13 +411,13 @@
       },
       {
         "artifacts": [
-          "action_key",
-          "cas_receipt",
+          "run_binding",
+          "receipt",
           "sha",
           "logs",
           "terminal_verdict"
         ],
-        "executor": "prismabuild_pytest",
+        "executor": "flux_pytest",
         "methods": [
           "base_head"
         ],
@@ -469,13 +469,13 @@
       },
       {
         "artifacts": [
-          "action_key",
-          "cas_receipt",
+          "run_binding",
+          "receipt",
           "sha",
           "logs",
           "terminal_verdict"
         ],
-        "executor": "prismabuild_pytest",
+        "executor": "flux_pytest",
         "methods": [
           "red_green",
           "subject_observer"
@@ -494,13 +494,13 @@
       },
       {
         "artifacts": [
-          "action_key",
-          "cas_receipt",
+          "run_binding",
+          "receipt",
           "sha",
           "logs",
           "terminal_verdict"
         ],
-        "executor": "prismabuild_pytest",
+        "executor": "flux_pytest",
         "methods": [
           "base_head"
         ],
@@ -553,14 +553,14 @@
       {
         "requirement": "Retain assertion RED on base and GREEN on final head for the new routing observer. Run the observer against base parse_declaration with all other existing definitions on base. Declare the exact call-assertion message before execution. Require the recorded-owner-calls assertion to fail. Use a recording wrapper that calls the real digest owner. Read the logs and terminal verdicts. Retain both results for Independent Checking.",
         "tool": "run_tests",
-        "executor": "prismabuild_pytest",
+        "executor": "flux_pytest",
         "runner_features": [
           "base_head",
           "native_threads_2"
         ],
         "artifacts": [
-          "action_key",
-          "cas_receipt",
+          "run_binding",
+          "receipt",
           "sha",
           "logs",
           "terminal_verdict"
@@ -579,14 +579,14 @@
       {
         "requirement": "Run the fixed compatibility controls on base with test-only changes. Run the same controls on final head. Use the remote pytest executor. Read the logs and terminal verdicts. Retain both results.",
         "tool": "run_tests",
-        "executor": "prismabuild_pytest",
+        "executor": "flux_pytest",
         "runner_features": [
           "base_head",
           "native_threads_2"
         ],
         "artifacts": [
-          "action_key",
-          "cas_receipt",
+          "run_binding",
+          "receipt",
           "sha",
           "logs",
           "terminal_verdict"
@@ -645,8 +645,8 @@
           "idempotent_import"
         ],
         "artifacts": [
-          "action_key",
-          "cas_receipt",
+          "run_binding",
+          "receipt",
           "input_tree",
           "output_tree",
           "artifact_sha256",

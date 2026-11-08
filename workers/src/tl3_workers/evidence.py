@@ -86,7 +86,7 @@ _ROUTE_CLAUSES = {
             r"(?:(?:, | or )(?:exit status|skips|missing tools|separate terminal records))* as artifact capabilities",
         ),
         'artifacts': (r"(?:exit[ _]status|terminal[ _]records|skips|missing[ _]tools)",),
-        'context_artifacts': (r"(?:logs|terminal_verdict|cas_receipt|sha|action_key)",),
+        'context_artifacts': (r"(?:logs|terminal_verdict|receipt|sha|run_binding|input_tree)",),
     },
 }
 
@@ -142,7 +142,7 @@ def _route_only(text, entry=None, inputs=None):
         if entry.get('methods') or entry.get('protected_files'):
             return False
         capabilities = (inputs or {}).get('tool_capabilities', [])
-        executors = {'prismabuild_pytest'} | {item['executor'] for item in capabilities}
+        executors = {item['executor'] for item in capabilities}
         if entry.get('tool') != 'run_tests' or entry.get('executor') not in executors:
             return False
         if any(not _route_dimension(dimension, value, context=True)
@@ -233,7 +233,7 @@ def forcing_capabilities(cpus=1):
         "reserved_prefixes": list(RESERVED_PREFIXES),
         "runner_environment": {name: str(cpus) for name in NATIVE_THREAD_ENVIRONMENT},
         "runner_feature": f"native_threads_{cpus}",
-        "executor": "prismabuild_pytest",
+        "executor": "flux_pytest",
         "path_depth": {"supported": False, "reason":
                        "No bounded sandbox-local temporary-root/path-depth forcing is installed. "
                        "TMPDIR/TEMP/TMP and PYTEST* remain reserved."},
@@ -250,7 +250,7 @@ def forcing_guidance(cpus=1):
             + ", ".join(f"{name}={value}" for name, value in contract["runner_environment"].items())
             + ". Keep these names out of forcing.environment, including when the requested value matches. "
             f"Represent the configured bound with runner_features=[{contract['runner_feature']}] on "
-            "prismabuild_pytest and retain its required run artifacts. Check tool_capabilities for support. "
+            "flux_pytest and retain its required run artifacts. Check tool_capabilities for support. "
             "forced_reproduction.environment describes only symptom mutations. "
             f"Delay is bounded to {contract['delay']['per_call_seconds']} seconds per call and "
             f"{contract['delay']['per_test_seconds']} seconds per pytest test, shared across targets and forks; "
@@ -263,6 +263,37 @@ def forcing_guidance(cpus=1):
 
 
 DIMENSIONS = ('runner_features', 'artifacts', 'methods', 'protected_files')
+
+
+def _method_requirement(inputs, requirement, method, runner_features, artifacts, errors):
+    """Select the one admitted run_tests capability that meets a code-owned method duty.
+
+    method, runner_features and artifacts are the proof's minimum needs. The selected
+    capability supplies the executor and its whole advertised artifact list, which
+    contains every needed artifact. No support or several supporting capabilities add
+    an explicit evidence.unsupported refusal and select nothing."""
+    needs = {'methods': [method], 'runner_features': list(runner_features), 'artifacts': list(artifacts)}
+    gaps, supporting = [], []
+    for capability in inputs.get('tool_capabilities', []):
+        if capability['tool'] != 'run_tests':
+            continue
+        missing = [f'{key}={value}' for key, values in needs.items() for value in values
+                   if value not in capability[key]]
+        gaps.append(missing)
+        if not missing and capability not in supporting:
+            supporting.append(capability)
+    if len(supporting) == 1:
+        return {'requirement': requirement, 'provenance': {'kind': 'method'}, 'tool': 'run_tests',
+                'executor': supporting[0]['executor'], **needs,
+                'artifacts': list(supporting[0]['artifacts']), 'protected_files': []}
+    missing = (['ambiguous admitted run_tests capabilities: '
+                + ', '.join(sorted(capability['executor'] for capability in supporting))] if supporting
+               else min(gaps, key=len) if gaps else ['tool=run_tests'])
+    duty = {'requirement': requirement, 'provenance': {'kind': 'method'}, 'tool': 'run_tests',
+            **needs, 'protected_files': []}
+    errors.append(named('evidence.unsupported', f'Unsupported evidence requirement: {requirement} '
+                        f'({", ".join(missing)}).', dict(requirement=duty, missing=missing)))
+    return None
 
 
 def subject_covers(chosen, subject):
@@ -382,21 +413,18 @@ def preflight(inputs, reply, *, planning=False, objections=None):
         reply['evidence_contract'] = []
     source_subjects = (reply.get('kind') == 'leaf' and any(
         goal.get('proof_obligation', {}).get('subjects') for goal in inputs.get('ingest', {}).get('goals', [])))
+    selection_errors = []
     if planning and (source_subjects or any(check.get('proof', {}).get('subjects') for check in reply.get('checks', []))):
-        reply['evidence_contract'].append({
-            'requirement': 'Run the head observer against the base subject and the head subject.',
-            'provenance': {'kind': 'method'},
-            'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head'],
-            'artifacts': ['cas_receipt', 'terminal_verdict'], 'methods': ['subject_observer'],
-            'protected_files': []})
+        if selected := _method_requirement(
+                inputs, 'Run the head observer against the base subject and the head subject.',
+                'subject_observer', ['base_head'], ['receipt', 'terminal_verdict'], selection_errors):
+            reply['evidence_contract'].append(selected)
     if planning and any('declared_symptom' in check for check in reply.get('checks', [])):
-        reply['evidence_contract'].append({
-            'requirement': 'Observe the declared exception at the original node and phase in a fixed campaign.',
-            'provenance': {'kind': 'method'},
-            'tool': 'run_tests', 'executor': 'prismabuild_pytest',
-            'runner_features': ['base_head', 'repeat', 'parallel'],
-            'artifacts': ['cas_receipt', 'logs', 'sha', 'terminal_verdict'],
-            'methods': ['declared_symptom'], 'protected_files': []})
+        if selected := _method_requirement(
+                inputs, 'Observe the declared exception at the original node and phase in a fixed campaign.',
+                'declared_symptom', ['base_head', 'repeat', 'parallel'], ['receipt', 'logs', 'sha', 'terminal_verdict'],
+                selection_errors):
+            reply['evidence_contract'].append(selected)
     contract = []
     # Only source obligations survive stage changes. Unmarked legacy entries remain
     # mandatory because their origin cannot be recovered safely from a method name.
@@ -409,7 +437,7 @@ def preflight(inputs, reply, *, planning=False, objections=None):
                 continue
             if requirement not in contract:
                 contract.append(requirement)
-    errors = list(branch_errors)
+    errors = [*branch_errors, *selection_errors]
     for requirement in contract:
         for method in requirement['methods']:
             if method in ('helper_target_observer', 'helper_target_observer.setup_function'):

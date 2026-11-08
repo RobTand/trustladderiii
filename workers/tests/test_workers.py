@@ -529,8 +529,8 @@ def test_request_evidence_contract_survives_intake_and_audit(tmp_path, request_d
     request_doc['role'] = request_doc['operation']['kind'] = role
     request_doc['inputs']['issue']['body'] = requirement['requirement'] + ' Supply invocation URLs, SHAs, logs and terminal verdicts.'
     request_doc['inputs']['tool_capabilities'] = [{
-        'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head', 'repeat', 'parallel'],
-        'artifacts': ['sha', 'logs', 'terminal_verdict', 'cas_receipt'], 'methods': ['red_green'], 'protected_files': [],
+        'tool': 'run_tests', 'executor': 'flux_pytest', 'runner_features': ['base_head', 'repeat', 'parallel'],
+        'artifacts': ['sha', 'logs', 'terminal_verdict', 'receipt'], 'methods': ['red_green'], 'protected_files': [],
     }]
     if role == 'audit':
         request_doc['inputs']['ingest'] = dict(copy.deepcopy(BRIEF), evidence_contract=[])
@@ -773,7 +773,7 @@ def test_audit_objects_to_inherited_source_obligations(audit_evidence_case, lega
     if legacy:
         requirement.pop("provenance")
     if missing == "runner_feature":
-        requirement.update(tool="run_tests", executor="prismabuild_pytest",
+        requirement.update(tool="run_tests", executor="flux_pytest",
                            runner_features=["bazel_source_closure"], methods=[])
     elif missing == "all_tools":
         inputs["tool_capabilities"] = []
@@ -851,8 +851,8 @@ EXEC_PROSE = json.loads((Path(__file__).parent / 'fixtures' / 'exec-prose.json')
 
 
 def route_requirement(text, *, verification=False):
-    return {'requirement': text, 'tool': 'run_tests', 'executor': 'prismabuild_pytest',
-            'runner_features': [], 'artifacts': ['cas_receipt', 'terminal_verdict'],
+    return {'requirement': text, 'tool': 'run_tests', 'executor': 'flux_pytest',
+            'runner_features': [], 'artifacts': ['receipt', 'terminal_verdict'],
             'methods': ['red_green'] if verification else [], 'protected_files': []}
 
 
@@ -1093,7 +1093,7 @@ def test_ep2_composed_verification_stays_mandatory(policy, guard):
                          ids=lambda case: case['id'])
 @pytest.mark.parametrize('dimension,value', [
     ('runner_features', ['priority', 'resource_admission', 'worker_bound', 'native_threads_2']),
-    ('artifacts', ['exit_status', 'logs', 'terminal_records', 'cas_receipt', 'skips', 'missing_tools']),
+    ('artifacts', ['exit_status', 'logs', 'terminal_records', 'receipt', 'skips', 'missing_tools']),
 ])
 def test_ep2_classifies_before_unsupported_projection(case, dimension, value):
     from tl3_workers.rules import apply_edit, permits
@@ -1193,9 +1193,9 @@ def test_ep2_exact_retained_audit_preflight(presented):
     audit = EP2_RETAINED['final_audit']
     entries = (EP2_RETAINED['evidence_contract_presented_to_final_audit'] if presented
                else audit['evidence_contract'])
-    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+    capability = {'tool': 'run_tests', 'executor': 'flux_pytest',
                   'runner_features': ['native_threads_2', 'base_head'],
-                  'artifacts': ['logs', 'terminal_verdict', 'cas_receipt', 'action_key'],
+                  'artifacts': ['logs', 'terminal_verdict', 'receipt', 'run_binding'],
                   'methods': ['red_green', 'subject_observer', 'head'], 'protected_files': []}
     inputs = {'tool_capabilities': [capability], 'ingest': dict(copy.deepcopy(BRIEF),
               goals=copy.deepcopy(EP2_RETAINED['goals_presented_to_final_audit']),
@@ -1234,14 +1234,14 @@ def test_ep2_exact_audit_mixed_goals_and_wrappers_stay_intact():
     assert not contract_violations({'tool_capabilities': []}, reply)
 
 
-@pytest.mark.parametrize('dimension,value', [('artifacts', 'cas_receipt'), ('runner_features', 'base_head'),
+@pytest.mark.parametrize('dimension,value', [('artifacts', 'receipt'), ('runner_features', 'base_head'),
                                            ('methods', 'red_green'), ('protected_files', 'reader.py')])
 def test_ep2_mixed_projection_keeps_real_capability_gaps(dimension, value):
     from tl3_workers.evidence import preflight
 
     entry = route_requirement('Record missing tools. The parser count must be one.')
     entry[dimension] = [value]
-    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+    capability = {'tool': 'run_tests', 'executor': 'flux_pytest',
                   'runner_features': [], 'artifacts': [], 'methods': [], 'protected_files': []}
     reply = dict(copy.deepcopy(BRIEF), evidence_contract=[entry])
     preflight({'tool_capabilities': [capability]}, reply)
@@ -1285,8 +1285,8 @@ def test_ep2_unknown_substantive_dimension_is_not_reporting(dimension, value):
 
     entry = route_requirement('The verifier must emit and validate the ' + value + ' field.')
     entry[dimension] = [value]
-    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
-                  'runner_features': [], 'artifacts': ['cas_receipt', 'terminal_verdict'],
+    capability = {'tool': 'run_tests', 'executor': 'flux_pytest',
+                  'runner_features': [], 'artifacts': ['receipt', 'terminal_verdict'],
                   'methods': [], 'protected_files': []}
     reply = dict(copy.deepcopy(BRIEF), evidence_contract=[entry])
     preflight({'tool_capabilities': [capability]}, reply)
@@ -1308,9 +1308,9 @@ def test_ep2_reporting_clause_does_not_hide_verification_dimension(guard, dimens
 
     entry = route_requirement(guard + ' Record exit status, skips and missing tools.')
     entry[dimension] = [value]
-    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+    capability = {'tool': 'run_tests', 'executor': 'flux_pytest',
                   'runner_features': ['base_head'],
-                  'artifacts': ['cas_receipt', 'terminal_verdict', 'skips', 'missing_tools', 'numerical_measurement'],
+                  'artifacts': ['receipt', 'terminal_verdict', 'skips', 'missing_tools', 'numerical_measurement'],
                   'methods': [], 'protected_files': []}
     capability[dimension].remove(value)
     if role == 'audit':
@@ -1341,8 +1341,8 @@ def test_ep2_reporting_clause_does_not_hide_unknown_field_duty(dimension, value)
                    'Reserve CPU and RAM before dispatch. Limit worker count and native thread count.')
     entry = route_requirement(requirement)
     entry[dimension] = [value]
-    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
-                  'runner_features': [], 'artifacts': ['cas_receipt', 'terminal_verdict'],
+    capability = {'tool': 'run_tests', 'executor': 'flux_pytest',
+                  'runner_features': [], 'artifacts': ['receipt', 'terminal_verdict'],
                   'methods': [], 'protected_files': []}
     reply = dict(copy.deepcopy(BRIEF), evidence_contract=[entry])
     preflight({'tool_capabilities': [capability]}, reply)

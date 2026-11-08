@@ -126,7 +126,7 @@ impl Planning {
     pub fn effective_tool_capabilities(&self, cpus: u32) -> Vec<ToolCapability> {
         let mut tools = self.tool_capabilities.clone();
         for tool in &mut tools {
-            if tool.tool == "run_tests" && tool.executor == "prismabuild_pytest" {
+            if tool.tool == "run_tests" && tool.executor == "flux_pytest" {
                 for feature in &mut tool.runner_features {
                     if feature.starts_with("native_threads_") {
                         *feature = format!("native_threads_{cpus}");
@@ -163,7 +163,7 @@ pub struct ToolCapability {
 fn evidence_tools() -> Vec<ToolCapability> {
     vec![ToolCapability {
         tool: "run_tests".into(),
-        executor: "prismabuild_pytest".into(),
+        executor: "flux_pytest".into(),
         runner_features: [
             "base_head",
             "repeat",
@@ -173,9 +173,12 @@ fn evidence_tools() -> Vec<ToolCapability> {
         ]
         .map(String::from)
         .to_vec(),
+        // Flux run facts: Receipt.binding, the tl3.run_receipt.v1 blob, Receipt.tree
+        // (input digest and head sha), runner stdout/stderr and Terminal.ending.
         artifacts: [
-            "action_key",
-            "cas_receipt",
+            "run_binding",
+            "receipt",
+            "input_tree",
             "sha",
             "logs",
             "terminal_verdict",

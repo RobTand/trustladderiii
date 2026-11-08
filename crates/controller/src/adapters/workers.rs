@@ -637,29 +637,11 @@ impl Supervisor {
         if matches!(role, "ingest" | "audit" | "planner") {
             inputs["tool_capabilities"] =
                 json!(self.planning.effective_tool_capabilities(test_cpus));
-            if self.tests.name() == "flux" {
-                for capability in inputs["tool_capabilities"].as_array_mut().unwrap() {
-                    if capability["executor"] == "prismabuild_pytest" {
-                        capability["executor"] = json!("flux_pytest");
-                        capability["artifacts"] = json!([
-                            "run_binding",
-                            "receipt",
-                            "input_tree",
-                            "logs",
-                            "terminal_verdict"
-                        ]);
-                    }
-                }
-            }
             if generator_available {
                 inputs["tool_capabilities"].as_array_mut().unwrap().push(json!({
                     "tool": "run_generator", "executor": format!("{}_generator", self.tests.name()),
                     "runner_features": ["git_index", "scoped_outputs", "idempotent_import"],
-                    "artifacts": if self.tests.name() == "flux" {
-                        vec!["run_binding", "receipt", "input_tree", "output_tree", "artifact_sha256", "logs", "terminal_verdict"]
-                    } else {
-                        vec!["action_key", "cas_receipt", "input_tree", "output_tree", "artifact_sha256", "logs", "terminal_verdict"]
-                    },
+                    "artifacts": ["run_binding", "receipt", "input_tree", "output_tree", "artifact_sha256", "logs", "terminal_verdict"],
                     "methods": ["configured_generation"], "protected_files": [],
                 }));
             }
