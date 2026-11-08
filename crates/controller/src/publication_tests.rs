@@ -185,6 +185,19 @@ fn td_completion_checks_typed_receipts_and_retains_only_live_hydrated_watches() 
         controller.complete(&key, accepted).unwrap();
         let after = controller.world().unwrap();
         after.check().unwrap();
+        if cancel {
+            // The receipt cannot rearm a watch. Existing watches retire through
+            // the real dispatch loop after cancellation has settled.
+            for _ in 0..300 {
+                let current = controller.snapshot().unwrap();
+                if !current.rows.iter().any(|row| row.table == "watches" && row.id == key) {
+                    break;
+                }
+                assert_ne!(controller.world().unwrap().nodes[0].phase, tl3_kernel::Phase::AwaitingDelivery);
+                assert!(controller.drive_once().unwrap());
+            }
+            controller.world().unwrap().check().unwrap();
+        }
         let retained = controller.snapshot().unwrap();
         if cancel {
             assert_ne!(after.nodes[0].phase, tl3_kernel::Phase::AwaitingDelivery);
