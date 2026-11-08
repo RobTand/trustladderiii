@@ -227,6 +227,13 @@ impl Controller {
             from,
             to: state,
         });
+        // Acceptance retains the dispatch-hydrated PR binding for future wakes.
+        // A cancelling receipt never confirms, so it cannot recreate a watch.
+        if completion.ack == Ack::DeliveryAccepted && state == EffectState::Confirmed
+            && snapshot.rows.iter().any(|row| row.table == "watches" && row.id == key)
+        {
+            commit.rows.push(put("watches", key.into(), json!(hydrate(effect, snapshot)?)));
+        }
         // Preserve teardown evidence in the same transaction that can emit the summary.
         for observation in &completion.observations {
             match observation {

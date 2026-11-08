@@ -1807,6 +1807,13 @@ impl Controller {
             from,
             to: state,
         });
+        // Acceptance retains the dispatch-hydrated PR binding for future wakes.
+        // A cancelling receipt never confirms, so it cannot recreate a watch.
+        if completion.ack == Ack::DeliveryAccepted && state == EffectState::Confirmed
+            && snapshot.rows.iter().any(|row| row.table == "watches" && row.id == key)
+        {
+            commit.rows.push(put("watches", key.into(), json!(hydrate(effect, snapshot)?)));
+        }
         // Preserve teardown evidence in the same transaction that can emit the summary.
         for observation in &completion.observations {
             match observation {
@@ -2131,23 +2138,11 @@ impl Controller {
                 Some(value) => decode_stored(value)?,
                 None => request(snapshot, node)?,
             };
-            // PR observation can emit the handoff in this same transaction.
-            // Persist its binding in the watch before dispatch hydrates the effect.
-            let staged_pull_request = commit.rows.iter().rev().find_map(|row| match row {
-                RowChange::Put { table, id, value }
-                    if table == "pull_requests" && id == &node.0.to_string() =>
-                {
-                    Some(value["number"].as_u64())
-                }
-                RowChange::Delete { table, id }
-                    if table == "pull_requests" && id == &node.0.to_string() => Some(None),
-                _ => None,
-            });
-            let pull_request = staged_pull_request.unwrap_or_else(|| snapshot
+            let pull_request = snapshot
                 .rows
                 .iter()
                 .find(|r| r.table == "pull_requests" && r.id == node.0.to_string())
-                .and_then(|r| r.value["number"].as_u64()));
+                .and_then(|r| r.value["number"].as_u64());
             let paths = world
                 .files(n.footprint)
                 .ok_or(Error::Invalid("unknown footprint"))?

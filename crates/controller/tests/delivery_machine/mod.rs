@@ -127,6 +127,14 @@ fn target_shell(historical: &str) -> String {
             return Err(Error::Invalid("live handoff requires typed delivery acceptance"));
         }
 "#, "        if completion.ack == Ack::Permanent\n            && publication_failure::handles(&delivery)"))
+        .replace("        // Preserve teardown evidence in the same transaction that can emit the summary.", concat!(r#"        // Acceptance retains the dispatch-hydrated PR binding for future wakes.
+        // A cancelling receipt never confirms, so it cannot recreate a watch.
+        if completion.ack == Ack::DeliveryAccepted && state == EffectState::Confirmed
+            && snapshot.rows.iter().any(|row| row.table == "watches" && row.id == key)
+        {
+            commit.rows.push(put("watches", key.into(), json!(hydrate(effect, snapshot)?)));
+        }
+"#, "        // Preserve teardown evidence in the same transaction that can emit the summary.\n"))
         .replace("            self.failure_allowance(snapshot, key, class, &mut commit)?;\n        }\n", "            self.failure_allowance(snapshot, key, class, &mut commit)?;\n        }\n        self.accepted_delivery_refusal(snapshot, &delivery, &completion, &mut commit)?;\n")
 }
 
