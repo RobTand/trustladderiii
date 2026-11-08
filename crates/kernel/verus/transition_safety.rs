@@ -441,7 +441,7 @@ pub(super) proof fn settle_effects(before: World, after: World, out: Seq<Option<
 
 /// K4b: check_nodes composes, because merge credit is earned once and kept.
 pub(super) proof fn node_step_trans(a: Node, b: Node, c: Node)
-    requires node_step(a, b), node_step(b, c),
+    requires node_step(a, b),
     ensures node_step(a, c),
 {
 }
