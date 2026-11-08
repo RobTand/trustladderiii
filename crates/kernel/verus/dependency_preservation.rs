@@ -29,6 +29,8 @@ pub(super) proof fn concat(w: World, a: NodeId, b: NodeId, c: NodeId)
     reveal(reachable);
     let route = choose|route: Seq<NodeId>| path(w, route)
         && route[0] == b && route[route.len() - 1] == c;
+    reveal(path);
+    assert(route.len() > 0);
     concat_prefix(w, a, route, route.len() - 1);
 }
 
@@ -84,6 +86,8 @@ pub(super) proof fn acyclic_after(before: World, after: World, i: NodeId, t: Nod
             reveal(reachable);
             let route = choose|route: Seq<NodeId>| path(after, route)
                 && route[0] == b && route[route.len() - 1] == a;
+            reveal(path);
+            assert(route.len() > 0);
             reach_split(before, after, i, t, added, route, route.len() - 1);
             if active_edge(before, a, b) {
                 if !reachable(before, b, a) {
