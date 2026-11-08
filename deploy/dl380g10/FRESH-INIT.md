@@ -114,6 +114,46 @@ The helper performs this sequence:
    start MLflow, status and console. Require active units and 90 seconds of stable
    readiness of all four client units with zero restarts.
 
+The pinned Zonky 17.4.0 package contains exactly `initdb`, `pg_ctl`, and `postgres`
+in `bin`. `deploy.py` declares this set as `PG_EXECUTABLES` and checks every member
+before publishing an extracted installation and when reusing an installation.
+The deployment never requires another PostgreSQL utility.
+
+The hash-verified selected `tl3-deploy cold-cluster-identity DATA` reads the new
+cold copy's `PG_VERSION` and `global/pg_control` before publishing reset context.
+It accepts only PG17's little-endian Linux amd64 layout and complete 8192-byte
+files with valid CRC-32C. The system identifier remains a decimal string.
+Authorization rechecks the cold identifier against the context before consuming
+the capability. The SQL boundary still compares the running cluster's identifier
+before any database reset.
+
+`tl3-deploy database-ready CONFIG` opens an authenticated connection to database
+`postgres` as `tl3` over the configured Unix socket on port 5543. It issues no SQL.
+The orchestrator allows three attempts, each in a process bounded at four seconds,
+with half-second retry delays. A failed or stalled connection refuses before SQL
+authorization. Credentials remain inside the helper.
+
+An attempt after a partial file reset still requires a new backup destination.
+Its new copy includes the current empty adapter directories and cold cluster.
+Existing backups are never inputs to this retry and are never searched or changed.
+
+The parser follows PostgreSQL `REL_17_4`'s
+[`ControlFileData`](https://github.com/postgres/postgres/blob/REL_17_4/src/include/catalog/pg_control.h)
+and [`get_controlfile_by_exact_path`](https://github.com/postgres/postgres/blob/REL_17_4/src/common/controldata_utils.c).
+On this ABI, `sizeof(CheckPoint)` is 88, `sizeof(ControlFileData)` is 296,
+and `offsetof(ControlFileData, crc)` is 288. CRC-32C covers bytes 0 through 287,
+including struct padding, and excludes the stored CRC and trailing file padding.
+[`pg_crc32c.h`](https://github.com/postgres/postgres/blob/REL_17_4/src/include/port/pg_crc32c.h)
+defines the Castagnoli checksum convention.
+
+The admitted fixture scripts in `fixtures/pgutil-*.fixture` retain the immutable
+baseline reproduction, upstream C layout probe, and synthetic retry qualification.
+They use `/mnt/shared/agent-artifacts/fresh-init-pgutil` for their own artifacts.
+The Rust parser tests embed bytes from that pinned package's actual `initdb` file,
+whose full SHA-256 is
+`219d725db03ff4d5b63dc88d2e3064331cc2489d145ca299bb6749ff4d507c48`.
+These fixtures exercise synthetic boundaries and do not qualify a live deployment.
+
 The native Flux actions have a 7200-second walltime, with the payload child
 bounded at 7150 seconds. Preflight estimates inventory transfer cost conservatively
 at 20 MiB/s with eight I/O passes plus 1800 seconds overhead; it refuses a predicted

@@ -1,4 +1,4 @@
-//! Deployment-only REST operations. Credentials never leave this process.
+//! Deployment operations. Credentials never leave this process.
 use reqwest::{Client, Method};
 use serde_json::{Value, json};
 use std::{fs, io::Write, path::Path, time::Duration};
@@ -20,6 +20,13 @@ fn run() -> Result<()> {
     let [command, path, rest @ ..] = args.as_slice() else {
         return Err("usage: tl3-deploy COMMAND CONFIG [HOSTNAME]".into());
     };
+    if command == "cold-cluster-identity" {
+        if !rest.is_empty() {
+            return Err("cold cluster identity requires one data directory".into());
+        }
+        println!("{}", cold_cluster_identity(Path::new(path))?);
+        return Ok(());
+    }
     let text = fs::read_to_string(path).map_err(|_| "cannot read config")?;
     let config = tl3_config::Config::parse(&text)?;
     match command.as_str() {
@@ -53,6 +60,7 @@ fn run() -> Result<()> {
         "database" => {
             database(&tl3_config::Config::load_status(path)?)?;
         }
+        "database-ready" => database_ready(&tl3_config::Config::load_status(path)?)?,
         "fresh-database" => {
             let [context] = rest else {
                 return Err("fresh database requires the verified cold-backup context".into());
@@ -114,6 +122,162 @@ fn run() -> Result<()> {
         _ => return Err("unknown deploy command".into()),
     }
     Ok(())
+}
+
+// PostgreSQL REL_17_4 src/include/catalog/pg_control.h, Linux amd64 ABI.
+// The pinned Zonky package uses little-endian LP64, an 88-byte CheckPoint,
+// sizeof(ControlFileData)=296, and offsetof(ControlFileData, crc)=288.
+// fixtures/pgutil-layout.fixture checks these against the upstream C header.
+const PG17_CONTROL_CRC_OFFSET: usize = 288;
+const PG17_CONTROL_FILE_SIZE: usize = 8192;
+
+fn crc32c(bytes: &[u8]) -> u32 {
+    let mut crc = u32::MAX;
+    for byte in bytes {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            crc = (crc >> 1) ^ (0x82f6_3b78 & 0_u32.wrapping_sub(crc & 1));
+        }
+    }
+    !crc
+}
+
+fn pg17_system_identifier(bytes: &[u8]) -> Result<u64> {
+    if bytes.len() != PG17_CONTROL_FILE_SIZE {
+        return Err("cold pg_control must be a complete PG17 control file".into());
+    }
+    // Decode fixed-width fields explicitly. Never cast untrusted disk bytes.
+    let control_version = u32::from_le_bytes(bytes[8..12].try_into()?);
+    if control_version != 1700 {
+        return Err("cold pg_control has an unsupported format or byte order".into());
+    }
+    let stored_crc =
+        u32::from_le_bytes(bytes[PG17_CONTROL_CRC_OFFSET..PG17_CONTROL_CRC_OFFSET + 4].try_into()?);
+    // PostgreSQL src/common/controldata_utils.c covers exactly the bytes
+    // preceding crc, including ABI padding, and excludes trailing file padding.
+    if crc32c(&bytes[..PG17_CONTROL_CRC_OFFSET]) != stored_crc {
+        return Err("cold pg_control CRC-32C mismatch".into());
+    }
+    Ok(u64::from_le_bytes(bytes[..8].try_into()?))
+}
+
+fn cold_cluster_identity(data: &Path) -> Result<u64> {
+    if fs::read_to_string(data.join("PG_VERSION"))
+        .map_err(|_| "cold cluster PG_VERSION unavailable")?
+        .trim()
+        != "17"
+    {
+        return Err("cold cluster major version is unsupported".into());
+    }
+    let bytes =
+        fs::read(data.join("global/pg_control")).map_err(|_| "cold pg_control unavailable")?;
+    pg17_system_identifier(&bytes)
+}
+
+fn database_ready(config: &tl3_config::Config) -> Result<()> {
+    let settings = &config.store;
+    if !Path::new(&settings.host).is_absolute()
+        || settings.port != 5543
+        || settings.user != "tl3"
+        || settings.database != "tl3"
+    {
+        return Err("readiness requires the local TL3 socket on port 5543".into());
+    }
+    let mut options = postgres::Config::new();
+    options
+        .host(&settings.host)
+        .port(5543)
+        .user("tl3")
+        .dbname("postgres")
+        .connect_timeout(Duration::from_secs(2));
+    if let Some(path) = &settings.password_file {
+        let password = fs::read_to_string(path).map_err(|_| "cannot load database credential")?;
+        options.password(password.trim_end());
+    }
+    // A successful authenticated connection is sufficient. No SQL is issued.
+    // deploy.py bounds the entire helper process, including a stalled handshake.
+    options
+        .connect(postgres::NoTls)
+        .map_err(|_| "database readiness connection failed")?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod pg_control_tests {
+    use super::*;
+
+    fn initdb_control() -> Vec<u8> {
+        // Actual pinned Zonky 17.4.0 initdb, followed by zero file padding.
+        // Full file SHA-256: 219d725db03ff4d5b63dc88d2e3064331cc2489d145ca299bb6749ff4d507c48.
+        // Upstream C ABI and independent CRC binding: fixtures/pgutil-layout.fixture.
+        let prefix = "78a14ee0cd9ef06aa40600008979100c0100000000000000ce9ef06a00000000c88c4d0100000000c88c4d010000000001000000010000000100000001000000e202000000000000bb3400000100000000000000da02000001000000010000000100000000000000ce9ef06a0000000000000000000000000000000000000000e803000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000064000000080000000a000000000000004000000000000000080000000000000087d63241002000000000020000200000000000014000000020000000cc07000000080000010000000000000043977413eeebaff250b36f9c3eb19d3f1876e64b3cc9f22c78f2deed2b8e21800e3455d100000000";
+        let mut bytes = hex::decode(prefix).unwrap();
+        assert_eq!(bytes.len(), 296);
+        bytes.resize(PG17_CONTROL_FILE_SIZE, 0);
+        bytes
+    }
+
+    #[test]
+    fn actual_pg17_initdb_identity_and_castagnoli_check_vector() {
+        use sha2::Digest;
+
+        assert_eq!(crc32c(b"123456789"), 0xe306_9283);
+        assert_eq!(
+            hex::encode(sha2::Sha256::digest(initdb_control())),
+            "219d725db03ff4d5b63dc88d2e3064331cc2489d145ca299bb6749ff4d507c48"
+        );
+        assert_eq!(
+            pg17_system_identifier(&initdb_control()).unwrap(),
+            7_705_833_569_499_652_472
+        );
+    }
+
+    #[test]
+    fn crc_covers_every_preceding_byte_and_excludes_file_padding() {
+        for offset in 0..PG17_CONTROL_CRC_OFFSET + 4 {
+            let mut bytes = initdb_control();
+            bytes[offset] ^= 1;
+            assert!(pg17_system_identifier(&bytes).is_err(), "offset {offset}");
+        }
+        for offset in [292, 295, 296, 8191] {
+            let mut bytes = initdb_control();
+            bytes[offset] ^= 1;
+            assert_eq!(
+                pg17_system_identifier(&bytes).unwrap(),
+                7_705_833_569_499_652_472
+            );
+        }
+    }
+
+    #[test]
+    fn truncated_control_and_other_control_format_refuse() {
+        let mut bytes = initdb_control();
+        for length in [0, 8, 287, 288, 291, 295, 8191] {
+            assert!(pg17_system_identifier(&bytes[..length]).is_err());
+        }
+        bytes[8..12].copy_from_slice(&1600_u32.to_le_bytes());
+        let crc = crc32c(&bytes[..PG17_CONTROL_CRC_OFFSET]);
+        bytes[PG17_CONTROL_CRC_OFFSET..PG17_CONTROL_CRC_OFFSET + 4]
+            .copy_from_slice(&crc.to_le_bytes());
+        assert!(pg17_system_identifier(&bytes).is_err());
+    }
+
+    #[test]
+    fn cold_directory_requires_pg_version_17() {
+        let scratch = tempfile::tempdir().unwrap();
+        fs::create_dir(scratch.path().join("global")).unwrap();
+        fs::write(scratch.path().join("global/pg_control"), initdb_control()).unwrap();
+        assert!(cold_cluster_identity(scratch.path()).is_err());
+        for version in ["16\n", "18\n", "garbled\n"] {
+            fs::write(scratch.path().join("PG_VERSION"), version).unwrap();
+            assert!(cold_cluster_identity(scratch.path()).is_err());
+        }
+        fs::write(scratch.path().join("PG_VERSION"), "17\n").unwrap();
+        assert_eq!(
+            cold_cluster_identity(scratch.path()).unwrap(),
+            7_705_833_569_499_652_472
+        );
+    }
 }
 
 fn database(config: &tl3_config::Config) -> Result<()> {

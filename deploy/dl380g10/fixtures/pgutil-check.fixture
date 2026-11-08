@@ -1,0 +1,44 @@
+#!/bin/bash
+set -euo pipefail
+export CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0
+export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+export CARGO_TARGET_DIR=/mnt/shared/agent-artifacts/fresh-init-pgutil/target
+export RUSTFLAGS='-C codegen-units=1 -C link-arg=-Wl,--threads=1'
+export TL3_FRESH_PG_BIN=/mnt/shared/agent-artifacts/fresh-init-pgutil/pinned-pg/bin
+export TL3_DEPLOY_HELPER="$CARGO_TARGET_DIR/debug/examples/tl3-deploy"
+/usr/bin/python3 - <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+def git(*args):
+    return subprocess.check_output(['/usr/bin/git',*args], text=True, timeout=30).strip()
+head = git('rev-parse','HEAD^')
+stamp, = git('diff','--name-only',head,'HEAD').splitlines()
+assert json.loads(Path(stamp).read_text())['head'] == head
+assert stamp.startswith('.pbrun-closure.') and stamp.endswith('.json')
+capture = 'pbrun_result.' + stamp.removeprefix('.pbrun-closure.').removesuffix('.json') + '.txt'
+assert git('status','--porcelain') == '?? ' + capture
+# Only PB's exact action-owned capture is excluded, in this disposable repo.
+exclude = Path(git('rev-parse','--git-path','info/exclude'))
+exclude.parent.mkdir(parents=True,exist_ok=True)
+with exclude.open('a') as stream:
+    stream.write('\n/' + capture + '\n')
+assert git('status','--porcelain') == ''
+for relative in git('diff','--name-only','746c9797d3841baf8c018f26bbcbcd1b85cd00a4',head).splitlines():
+    committed = subprocess.check_output(['/usr/bin/git','show',head + ':' + relative], timeout=30)
+    assert Path(relative).read_bytes() == committed
+    print(hashlib.sha256(committed).hexdigest(), relative, flush=True)
+print('EXACT_SOURCE',head,git('rev-parse',head + '^{tree}'),'PB_CAPTURE_ONLY',capture,flush=True)
+PY
+/home/rob/.cargo/bin/rustfmt --check --edition 2024 deploy/dl380g10/helper.rs
+/home/rob/.cargo/bin/cargo build --locked -p tl3-controller --example tl3-deploy
+/usr/bin/python3 -m unittest discover -s deploy/dl380g10 -p test_deploy.py -v
+/usr/bin/python3 -m unittest discover -s deploy/dl380g10 -p test_mlflow_deploy.py -v
+/usr/bin/python3 -m unittest discover -s deploy/dl380g10 -p test_flux_deploy.py -v
+/usr/bin/python3 deploy/dl380g10/fixtures/pgutil-green.fixture
+/home/rob/.cargo/bin/cargo test --locked -p tl3-controller --example tl3-deploy pg_control_tests -- --test-threads=1
+/home/rob/.cargo/bin/cargo test --locked -p tl3-controller --example tl3-deploy fresh_reset_preserves_unrelated_database_and_refuses_live_sessions -- --test-threads=1
+/home/rob/.cargo/bin/cargo clippy --locked -p tl3-controller --example tl3-deploy -- -D warnings
+/usr/bin/git diff --exit-code
+printf 'QUALIFICATION_PASS\n'

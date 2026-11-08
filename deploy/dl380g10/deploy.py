@@ -33,6 +33,7 @@ PG_URL = ("https://repo1.maven.org/maven2/io/zonky/test/postgres/"
           f"embedded-postgres-binaries-linux-amd64/{PG_VERSION}/"
           f"embedded-postgres-binaries-linux-amd64-{PG_VERSION}.jar")
 PG_SHA256 = "d9d216d3c1c119ad31b8a8de60b3cf2826516f711a04d3745ef4f1913f21a938"
+PG_EXECUTABLES = ("initdb", "pg_ctl", "postgres")
 TOKENIZER_URL = "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken"
 TOKENIZER_SHA256 = "446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d"
 TOKENIZER_KEY = hashlib.sha1(TOKENIZER_URL.encode()).hexdigest()
@@ -118,6 +119,19 @@ def checked_download(url, digest, target):
         os.replace(download, target)
 
 
+def pg_executable(binaries, name):
+    if name not in PG_EXECUTABLES:
+        raise RuntimeError("executable is outside the pinned Postgres package")
+    return binaries / "bin" / name
+
+
+def verify_postgres_executables(binaries):
+    for name in PG_EXECUTABLES:
+        executable = pg_executable(binaries, name)
+        if not executable.is_file() or not os.access(executable, os.X_OK):
+            raise RuntimeError("incomplete versioned Postgres installation")
+
+
 def postgres(home):
     root, config, binaries = paths(home)
     private_dir(root)
@@ -132,9 +146,9 @@ def postgres(home):
                     raise RuntimeError("unexpected Zonky archive")
                 with tarfile.open(fileobj=io.BytesIO(jar.read(archives[0])), mode="r:xz") as tar:
                     tar.extractall(directory / "unpacked", filter="data")
+            verify_postgres_executables(directory / "unpacked")
             os.rename(directory / "unpacked", binaries)
-    if not (binaries / "bin/postgres").is_file():
-        raise RuntimeError("incomplete versioned Postgres installation")
+    verify_postgres_executables(binaries)
     credential = config / "secrets/postgres-password"
     if (root / "postgres/data").exists() and not credential.exists():
         raise RuntimeError("existing Postgres data needs its original password file; refusing to generate another")
@@ -158,7 +172,7 @@ def initdb(home):
         return
     with tempfile.TemporaryDirectory(prefix="initdb-", dir=data.parent) as directory:
         stage = Path(directory) / "data"
-        run([binaries / "bin/initdb", "-D", stage, "-U", "tl3", "--encoding=UTF8",
+        run([pg_executable(binaries, "initdb"), "-D", stage, "-U", "tl3", "--encoding=UTF8",
              "--locale=C", "--auth=scram-sha-256", f"--pwfile={credential}"])
         socket_dir = str(root / "postgres/socket").replace("'", "''")
         with (stage / "postgresql.conf").open("a") as output:
@@ -713,7 +727,7 @@ def fresh_init(args):
               ("home", "head", "lane", "binaries", "state_manifest", "backup")}
     fields.update(capability_sha256=hashlib.sha256(capability).hexdigest(),
                   expires_monotonic=time.monotonic() + 3600,
-                  system_identifier=cold_cluster_identity(args.home, args.backup))
+                  system_identifier=cold_cluster_identity(helper, args.backup))
     write_file(context, json.dumps(fields).encode())
     root = paths(args.home)[0]
     install_selected_binaries(args.binaries, root)
@@ -722,8 +736,7 @@ def fresh_init(args):
     run(["systemctl", "--user", "start", "tl3-postgres.service"], timeout=150)
     if unit_state("tl3-postgres.service") != "active":
         raise RuntimeError("Postgres did not become active")
-    _, _, postgres_bin = paths(args.home)
-    run([postgres_bin / "bin/pg_isready", "-h", str(root / "postgres/socket"), "-p", "5543"], timeout=15)
+    wait_for_postgres(helper, config)
     require_stopped(*CLIENT_UNITS)
     run([root / "bin/tl3-deploy", "fresh-database", config, context], cwd=SOURCE, timeout=3400,
         input=capability + b"\n")
@@ -775,14 +788,23 @@ def install_selected_binaries(binaries, root):
         raise RuntimeError("installed release binary verification failed")
 
 
-def cold_cluster_identity(home, backup):
-    _, _, pg = paths(home)
-    output = run([pg / "bin/pg_controldata", backup / "data"], timeout=30,
-                 env=os.environ | {"LC_ALL": "C"}).decode()
-    match = re.search(r"^Database system identifier:\s*([0-9]+)\s*$", output, re.MULTILINE)
-    if not match:
+def cold_cluster_identity(helper, backup):
+    identifier = run([helper, "cold-cluster-identity", backup / "data"], timeout=30).decode().strip()
+    if not re.fullmatch(r"[0-9]+", identifier):
         raise RuntimeError("cold backup has no verified Postgres system identifier")
-    return match[1]
+    return identifier
+
+
+def wait_for_postgres(helper, config):
+    # Bound both retry count and each process, including authentication I/O.
+    for attempt in range(3):
+        try:
+            run([helper, "database-ready", config], timeout=4)
+            return
+        except RuntimeError:
+            if attempt == 2:
+                raise RuntimeError("Postgres did not become ready; output suppressed") from None
+            time.sleep(0.5)
 
 
 def authorize_fresh_database(context, database_config, capability=b""):
@@ -818,6 +840,8 @@ def authorize_fresh_database(context, database_config, capability=b""):
             raise RuntimeError("file reset no longer matches the fresh-init boundary")
     if config != database_config:
         raise RuntimeError("database reset config scope mismatch")
+    if cold_cluster_identity(args.binaries / "tl3-deploy", args.backup) != identifier:
+        raise RuntimeError("cold cluster differs from the reset context identity")
     # Atomic consumption happens before any SQL mutation. A failed/drop-unknown
     # attempt needs a new orchestrated backup and token, never a context replay.
     consumed = context.with_suffix(".consumed")

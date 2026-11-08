@@ -1,0 +1,115 @@
+"""Verify this unit's terminal records, logs, CAS payloads, cleanup and source."""
+import hashlib
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+OUT = Path('/mnt/shared/agent-artifacts/fresh-init-pgutil')
+QUEUE = Path('/mnt/shared/prismabuild-fleet/pb-queue')
+BASE = '746c9797d3841baf8c018f26bbcbcd1b85cd00a4'
+BASELINE = '084ebe102c5824d98d35f2965bcb7312c72ac0629a7a814608e0a7fcd4fb1518'
+LAYOUT = '4f24ea217a836c09596befa064fb3d3caaf3dbcdb65352686e8280cacea652aa'
+final_key, = sys.argv[1:]
+assert re.fullmatch('[0-9a-f]{64}', final_key)
+first = json.loads((QUEUE / 'done' / (BASELINE + '.json')).read_text())
+sys.path.insert(0, str(Path(first['worker_script']).parents[1] / 'src'))
+from prismabuild.core import PrismaBuildCAS
+
+records = []
+for role,key in [('baseline_RED',BASELINE), ('authoritative_layout',LAYOUT), ('final_GREEN',final_key)]:
+    path = QUEUE / 'done' / (key + '.json')
+    record = json.loads(path.read_text())
+    assert record['action_key'] == key and record['status'] == 'executed'
+    detail = record['detail']
+    assert detail['returncode'] == 0
+    cleanup = record['resource_scope_cleanup']
+    assert cleanup['complete'] and cleanup['export']['empty'] and cleanup['export']['settled']
+    assert cleanup['export']['released'] and cleanup['export']['stopped'] and not cleanup['export']['tickets_pending']
+    assert cleanup['telemetry']['complete'] and cleanup['telemetry']['process_io']['processes_live'] == 0
+    assert not cleanup['telemetry']['oom_kill']
+    streams = {}
+    for stream in ['stdout','stderr']:
+        descriptor = detail[stream + '_log']
+        raw = (QUEUE / descriptor['path']).read_bytes()
+        assert len(raw) == descriptor['bytes']
+        assert hashlib.sha256(raw).hexdigest() == descriptor['sha256']
+        streams[stream] = raw.decode()
+    publications = []
+    for line in streams['stdout'].splitlines():
+        try:
+            value = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(value,dict) and value.get('status') == 'published' and 'receipt' in value:
+            publications.append(value)
+    publication, = publications
+    cas = PrismaBuildCAS(record['cas_root'])
+    action = cas.read_action_request(key)
+    assert action is not None
+    own_receipt = cas.lookup_execution(action, publication['receipt']['receipt_sha256'])
+    assert own_receipt == publication['receipt']
+    assert cas.lookup(action) is not None
+    if role == 'baseline_RED':
+        assert 'EXPECTED_RED' in streams['stdout'] and 'SCRATCH_CLEANUP_PASS' in streams['stdout']
+    elif role == 'authoritative_layout':
+        assert 'LAYOUT_SCRATCH_CLEANUP_PASS' in streams['stdout']
+    else:
+        assert 'QUALIFICATION_PASS' in streams['stdout']
+        assert 'Ran 75 tests' in streams['stdout']
+        assert 'test result: ok. 4 passed' in streams['stdout']
+        assert 'test result: ok. 1 passed' in streams['stdout']
+        final_snapshot = record['checkout_snapshot']
+        final_log = streams['stdout']
+    records.append({'role':role, 'key':key, 'terminal':str(path), 'host':record['claimed_host'],
+                    'action_returncode':0, 'stdout':detail['stdout_log'], 'stderr':detail['stderr_log'],
+                    'receipt_sha256':own_receipt['receipt_sha256'], 'result':own_receipt['result'],
+                    'cleanup_empty':True, 'peak_memory_bytes':cleanup['telemetry']['memory_peak_bytes'],
+                    'source_snapshot':record['checkout_snapshot']})
+
+def git(*args):
+    return subprocess.check_output(['/usr/bin/git',*args], timeout=30).decode().strip()
+head = git('rev-parse','HEAD^')
+tree = git('rev-parse',head + '^{tree}')
+assert final_snapshot['parent'] == head
+# The audit itself also has one PB-owned capture in its disposable checkout.
+stamp, = git('diff','--name-only',head,'HEAD').splitlines()
+assert stamp.startswith('.pbrun-closure.') and stamp.endswith('.json')
+capture = 'pbrun_result.' + stamp.removeprefix('.pbrun-closure.').removesuffix('.json') + '.txt'
+assert git('status','--porcelain') == '?? ' + capture
+assert json.loads((OUT / 'green.json').read_text())['source_head'] == head
+assert json.loads((OUT / 'green.json').read_text())['execution_snapshot'] == final_snapshot['commit']
+changed = git('diff','--name-only',BASE,head).splitlines()
+assert all(path.startswith('deploy/dl380g10/') for path in changed)
+hashes = {}
+for relative in changed:
+    raw = Path(relative).read_bytes()
+    committed = subprocess.check_output(['/usr/bin/git','show',head + ':' + relative], timeout=30)
+    assert raw == committed
+    hashes[relative] = hashlib.sha256(raw).hexdigest()
+    assert relative in final_log, 'final qualification did not print source hash for ' + relative
+for shared in ['crates/kernel','Cargo.toml','Cargo.lock','crates/controller/Cargo.toml','crates/controller/BUILD.bazel','MODULE.bazel','MODULE.bazel.lock','tools/bazel']:
+    assert git('diff','--name-only',BASE,head,'--',shared) == '', shared
+failed = []
+for key in ['00143e0fdd90b9598e373e6bd3f2907e657d1c506e83d51bff75656b647a49a3',
+            '3e05887b995a8fca4f1d4f2cab53b114e393654f991a8e0a5de6141056e5f5e8',
+            '20ecc3fee7124944b2f9d9394a77cac1760b342e304f9c85cb7aa895d51c2a81',
+            'c8d99c6e77eb51e7ef931e82ee23a288d43f38cf832646929282e12063f73b74']:
+    path = QUEUE / 'failed' / (key + '.json')
+    record = json.loads(path.read_text())
+    assert record['detail']['returncode'] != 0
+    failed.append({'key':path.stem,'verdict':'FAILED','terminal':str(path)})
+report = {'verdict':'PASS', 'base':BASE,'head':head,'tree':tree,'per_file_sha256':hashes,
+          'actions':records,'retained_failures':failed,'green':json.loads((OUT / 'green.json').read_text()),
+          'archive_bin_inventory':sorted(path.name for path in (OUT / 'pinned-pg/bin').iterdir()),
+          'limits':{'cpu':2,'memory_gib':8,'cargo_jobs':2,'native_threads':1,'codegen_units':1,'linker_threads':1,'gpu':0,'priority':-10},
+          'skips':['captain integrated gates','live/native/deployment acceptance','kernel/Verus/Kani campaigns'],
+          'generated_scope':'rustfmt helper.rs only; no dependency or build registration changes',
+          'snapshot_note':'PB executes a child snapshot with one closure stamp. Final source parent and all changed file bytes are verified. Only the exact PB-owned capture log is ignored in the disposable fixture repository.',
+          'placement_note':'Initial untagged baseline was client-pinned to dl380g10; subsequent runs explicitly allow any eligible x86 worker because the pinned PG package is amd64.',
+          'missing_tools':'bison/flex absent on coordinator; scoped packages used inside admitted C header probe'}
+(OUT / 'sealed-evidence.json').write_text(json.dumps(report,indent=2) + '\n')
+(OUT / 'source.diff').write_bytes(subprocess.check_output(['/usr/bin/git','diff','--binary',BASE,head],timeout=30))
+print(json.dumps(report), flush=True)
+print('TERMINAL_LOG_CAS_CLEANUP_AUDIT_PASS', flush=True)

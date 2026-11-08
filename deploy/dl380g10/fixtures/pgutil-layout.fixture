@@ -1,0 +1,61 @@
+"""Compile the authoritative PG17 header, then bind an actual initdb control file."""
+import hashlib
+import io
+import json
+from pathlib import Path
+import subprocess
+import tarfile
+import tempfile
+import urllib.request
+
+out = Path('/mnt/shared/agent-artifacts/fresh-init-pgutil')
+url = 'https://ftp.postgresql.org/pub/source/v17.4/postgresql-17.4.tar.bz2'
+archive = out / 'postgresql-17.4.tar.bz2'
+if not archive.exists():
+    archive.write_bytes(urllib.request.urlopen(url, timeout=60).read())
+expected = urllib.request.urlopen(url + '.sha256', timeout=60).read().decode().split()[0]
+assert hashlib.sha256(archive.read_bytes()).hexdigest() == expected
+with tempfile.TemporaryDirectory(prefix='pg17-layout-') as temporary:
+    scratch = Path(temporary)
+    with tarfile.open(archive) as tar:
+        tar.extractall(scratch, filter='data')
+    source = scratch / 'postgresql-17.4'
+    # configure needs bison/flex version probes even for this header-only job.
+    # Use scoped package tools, never install or change a shared toolchain.
+    tools = scratch / 'tools'
+    tools.mkdir()
+    subprocess.run(['apt-get', 'download', 'bison', 'flex'], cwd=tools, check=True, timeout=120)
+    for package in tools.glob('*.deb'):
+        subprocess.run(['dpkg-deb', '-x', str(package), str(tools / 'root')], check=True, timeout=30)
+    with (out / 'pg17-configure.log').open('wb') as log:
+        subprocess.run([str(source / 'configure'), '--without-icu', '--without-readline', '--without-zlib',
+                        'BISON=' + str(tools / 'root/usr/bin/bison'), 'FLEX=' + str(tools / 'root/usr/bin/flex')],
+                       cwd=source, check=True, stdout=log, stderr=subprocess.STDOUT, timeout=180)
+    probe = scratch / 'probe.c'
+    probe.write_text('''#include "c.h"
+#include "catalog/pg_control.h"
+#include <stddef.h>
+#include <stdio.h>
+#undef printf
+int main(void) {
+    printf("{\\"control_version\\":%d,\\"file_size\\":%d,\\"struct_size\\":%zu,\\"checkpoint_size\\":%zu,\\"crc_offset\\":%zu,\\"identifier_offset\\":%zu,\\"version_offset\\":%zu}\\n", PG_CONTROL_VERSION, PG_CONTROL_FILE_SIZE, sizeof(ControlFileData), sizeof(CheckPoint), offsetof(ControlFileData, crc), offsetof(ControlFileData, system_identifier), offsetof(ControlFileData, pg_control_version));
+}
+''')
+    subprocess.run(['cc', '-I' + str(source / 'src/include'), str(probe), '-o', str(scratch / 'probe')], check=True, timeout=30)
+    layout = json.loads(subprocess.check_output([str(scratch / 'probe')], timeout=10))
+    assert layout == dict(control_version=1700, file_size=8192, struct_size=296, checkpoint_size=88, crc_offset=288, identifier_offset=0, version_offset=8), layout
+    data = (out / 'pg_control.initdb').read_bytes()
+    crc = 0xffffffff
+    for byte in data[:layout['crc_offset']]:
+        crc ^= byte
+        for _ in range(8):
+            crc = (crc >> 1) ^ (0x82f63b78 if crc & 1 else 0)
+    assert (crc ^ 0xffffffff) == int.from_bytes(data[288:292], 'little')
+    assert not any(data[296:])
+    layout.update(source_url=url, source_sha256=expected, control_sha256=hashlib.sha256(data).hexdigest(),
+                  system_identifier=str(int.from_bytes(data[:8], 'little')), crc32c=crc ^ 0xffffffff,
+                  header_sha256=hashlib.sha256((source / 'src/include/catalog/pg_control.h').read_bytes()).hexdigest())
+    (out / 'pg17-layout.json').write_text(json.dumps(layout, indent=2) + '\n')
+    (out / 'pg17-control-prefix.hex').write_text(data[:296].hex() + '\n')
+    print(json.dumps(layout), flush=True)
+print('LAYOUT_SCRATCH_CLEANUP_PASS', flush=True)
