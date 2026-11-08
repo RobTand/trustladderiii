@@ -291,13 +291,14 @@ def action(module, directory, schedule):
     return recording.finish(result)
 
 
-TRANSPORT_FIELDS = ('action_key', 'wait_reference', 'receipts', 'tree')
+NATIVE_KEY = 'worker:' + 'a' * 64
+SEMANTIC_FIELDS = ('status', 'execution', 'totals', 'proof', 'selectors', 'origin', 'message')
 
 
 def summary_facts(schedule, facts=None):
     """The action-side facts a summary consumer reads, as worker() fed them before Flux."""
     if facts is not None:
-        return facts, None
+        return facts, facts
     summary = {'status': 'completed', 'tests': [],
                'totals': {'passed': schedule['initial'], 'failed': 0, 'error': 0, 'skipped': 0}, 'note': ''}
     if schedule.get('proof_bytes') is None:
@@ -327,46 +328,66 @@ def legacy_summary(facts):
         return legacy_worker._summary(deepcopy(ending), key)
 
 
+def native_receipt():
+    from pb_fixtures import run_binding
+    return {'backend': 'flux', 'wait_reference': NATIVE_KEY, 'run_binding': run_binding(NATIVE_KEY),
+            'receipt_sha256': 'b' * 64, 'ending': 'passed'}
+
+
 def native_summary(facts):
-    """The real run_tests consumer of a verified Flux payload carrying these facts."""
+    """The real Flux consumer layer of run_tests for a verified payload carrying these facts.
+
+    This is the tool's inner run(): the layer the PB _summary reader and finish()
+    occupied. The outer run_tests wrapper's failure baseline is a separate step.
+    """
     from tl3_workers import flux_execution
     from tl3_workers.tools import Worktree
-    key = 'worker:' + 'a' * 64
-    from pb_fixtures import run_binding
-    receipt = {'backend': 'flux', 'wait_reference': key, 'run_binding': run_binding(key),
-               'receipt_sha256': 'b' * 64, 'ending': 'passed'}
     with tempfile.TemporaryDirectory(prefix='harness-native-summary-') as name, \
             pytest.MonkeyPatch.context() as patch, Worktree(name) as tree:
         patch.setattr(flux_execution, 'activation', lambda settings: None)
         patch.setattr(flux_execution, 'allocate', lambda settings: ('a' * 64, Path(name)))
-        patch.setattr(flux_execution, 'prepare', lambda *args, **kwargs: {'key': key})
+        patch.setattr(flux_execution, 'prepare', lambda *args, **kwargs: {'key': NATIVE_KEY})
         patch.setattr(flux_execution, 'execute', lambda plan, **kwargs: {
             'kind': 'tests', 'summary': deepcopy(facts), 'symptom_runs': [], 'symptom_receipts': [],
-            'receipts': [receipt]})
+            'receipts': [native_receipt()]})
         patch.setattr(tests_tool, '_stage', lambda *args, **kwargs: 'c' * 40)
         patch.setattr(tests_tool, '_git', lambda *args: 'c' * 40)
         settings = tests_tool.TestSettings('sha256:' + '1' * 64,
                                            execution={'backend': 'flux', 'profile': '/recorded/execution.json'})
-        result = tests_tool.make_test_tool(tree, settings)(['t.py'])
-    assert result.get('wait_reference', key) == key
-    return result
+        run_tests = tests_tool.make_test_tool(tree, settings)
+        [run] = [cell.cell_contents for name_, cell in zip(run_tests.__code__.co_freevars, run_tests.__closure__)
+                 if name_ == 'run']
+        return run(['t.py'])
 
 
-def consumer_body(result):
-    """Summary, proof and refusal content; the transport receipt is backend-specific.
+def compare_consumers(legacy_facts, native_facts, context, reference=None):
+    """The recorded consumer's verdict, then the canonical native envelope.
 
-    The native receipt is larger, so the final envelope may keep fewer display
-    entries. Status, refusal, proof, totals and every other field must match, and
-    the kept entries must be ones the reference kept or would have kept.
+    #823 moved the summary bound before receipt decoration, so the two pre-bound
+    payloads differ by design; their verdict fields must not. The native envelope
+    must be exactly the canonical bound of its verified payload plus the native
+    receipt, and must equal the reference's entries and note whenever both fit.
     """
-    return {name: value for name, value in result.items() if name not in TRANSPORT_FIELDS + ('tests', 'note')}
-
-
-def same_consumer(reference, native, context):
-    assert consumer_body(reference) == consumer_body(native), (context, reference, native)
-    kept = [json.dumps(entry, sort_keys=True) for entry in reference.get('tests', [])]
-    assert all(json.dumps(entry, sort_keys=True) in kept for entry in native.get('tests', [])), context
-    assert ('Truncated' in native.get('note', '')) or native.get('tests') == reference.get('tests'), context
+    from tl3_harness.supervision import model_result
+    legacy = legacy_summary(legacy_facts) if reference is None else reference
+    semantic = tests_tool._verified_test_summary(deepcopy(native_facts), [])
+    native = native_summary(native_facts)
+    assert native['wait_reference'] == NATIVE_KEY, (context, native)
+    decorated = model_result({**deepcopy(semantic), 'wait_reference': NATIVE_KEY, 'receipts': [native_receipt()]})
+    expected = tests_tool.bounded(decorated, limit=test_tool.SUMMARY_BYTES - 512)
+    expected = tests_tool.bounded({**expected, 'tree': 'c' * 40}, limit=test_tool.SUMMARY_BYTES)
+    assert native == expected, (context, 'native envelope is not the canonical bound of the same payload')
+    assert len(json.dumps(native).encode()) <= test_tool.SUMMARY_BYTES, context
+    for name_ in SEMANTIC_FIELDS:
+        assert native.get(name_) == legacy.get(name_), (context, name_, legacy.get(name_), native.get(name_))
+    fits = len(json.dumps({**decorated, 'tree': 'c' * 40}).encode()) <= test_tool.SUMMARY_BYTES - 512
+    if fits:
+        assert native.get('tests') == semantic.get('tests') and native.get('note') == semantic.get('note'), \
+            (context, 'a native envelope that fits keeps every verified entry and note')
+        if 'Truncated' not in str(legacy.get('note', '')):
+            assert native.get('tests') == legacy.get('tests') and native.get('note') == legacy.get('note'), \
+                (context, 'entries or note changed although both envelopes fit')
+    return native
 
 
 def lifecycle(module, directory, schedule):
@@ -585,9 +606,8 @@ def decide(schedule):
         vector = json.loads((REFERENCE / 'repeated-run.json').read_text())
         assert old[1] == ('result', vector['action'])
         before = legacy_summary(old[1][1])
-        after = native_summary(new[1][1])
         assert before == vector['worker'], ('recorded worker parity vector changed', before)
-        same_consumer(vector['worker'], after, 'native consumer changed the complete repeated-run summary')
+        compare_consumers(old[1][1], new[1][1], 'repeated-run vector', reference=vector['worker'])
     boundaries = 0
     coverage = set()
     for mode in ('run_current', 'run', 'main'):
@@ -601,12 +621,9 @@ def decide(schedule):
         observed = compare_crashes(lifecycle, legacy_worker, tests_tool, {**schedule, 'base':base})
         boundaries += observed[3]
         coverage.update(call[0] for call in observed[0])
-    legacy_facts, native_facts = summary_facts(schedule)
-    same_consumer(legacy_summary(legacy_facts), native_summary(native_facts), ('summary consumer changed', schedule))
+    compare_consumers(*summary_facts(schedule), ('default summary', schedule))
     for size in ([] if REFUSALS_CHECKED else [14_000, 14_500, 20_000, 750_000, 800_000, 1_050_000]):
-        legacy_facts, native_facts = summary_facts({**schedule, 'proof_bytes':size})
-        old_result, new_result = legacy_summary(legacy_facts), native_summary(native_facts)
-        same_consumer(old_result, new_result, ('proof size', size))
+        compare_consumers(*summary_facts({**schedule, 'proof_bytes':size}), ('proof size', size))
     REFUSALS_CHECKED = True
     return {'equal':True, 'crash_boundaries':boundaries, 'coverage':sorted(coverage)}
 

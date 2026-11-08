@@ -95,8 +95,8 @@ class ForcingInfrastructureError(Exception):
         # Only identifiers from trusted boundary diagnostics go into controller incidents.
         def token(value):
             return value if isinstance(value, str) and re.fullmatch(r'[a-z0-9_]{1,64}', value) else 'unknown'
-        key = evidence.get('action_key')
-        key = key if isinstance(key, str) and re.fullmatch(r'[a-f0-9]{64}', key) else 'not_admitted'
+        key = evidence.get('wait_reference')
+        key = key if isinstance(key, str) and re.fullmatch(r'worker:[a-f0-9]{64}', key) else 'not_admitted'
         super().__init__(f"Forcing rehearsal {stage}: action={key}; "
                          f"phase={token(execution.get('phase'))}; "
                          f"outcome={token(execution.get('outcome'))}; "
@@ -209,7 +209,7 @@ class ForcingRehearsals:
                             'execution': {'phase': 'reattachment', 'outcome': 'transport_failure',
                                           'termination_reason': 'pending_candidate_mismatch'}}
                 if self.active['inflight']:
-                    evidence['action_key'] = self.active['inflight']['key']
+                    evidence['wait_reference'] = self.active['inflight']['key']
                 self.infrastructure = {**deepcopy(pending), stage: evidence, 'stage': stage,
                                        'status': 'infrastructure_error', 'message': evidence['message']}
                 return deepcopy(self.infrastructure)

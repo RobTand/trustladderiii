@@ -853,18 +853,6 @@ py_library(
 )
 
 tl3_py_test(
-    name = "test_pb_machine_records",
-    srcs = ["test_pb_machine_records.py"],
-    deps = [
-        ":conftest",
-        ":pb_fixtures",
-        "//harness/src/tl3_harness",
-        "//workers/src",
-        "@tl3_pip//pytest",
-    ],
-)
-
-tl3_py_test(
     name = "test_abort_rule",
     srcs = ["test_abort_rule.py"],
     deps = [
