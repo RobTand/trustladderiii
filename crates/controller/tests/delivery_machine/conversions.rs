@@ -26,7 +26,7 @@ pub(crate) fn stored_state(state: tl3_delivery::State) -> tl3_store::EffectState
 
 pub(crate) fn delivery_ack(ack: Ack) -> tl3_delivery::Ack {
     match ack {
-        Ack::Confirmed => tl3_delivery::Ack::Confirmed,
+        Ack::Confirmed | Ack::DeliveryAccepted => tl3_delivery::Ack::Confirmed,
         Ack::Retryable => tl3_delivery::Ack::Retryable,
         Ack::Permanent => tl3_delivery::Ack::Permanent,
         Ack::BodyPolicyRefused => tl3_delivery::Ack::BodyPolicyRefused,

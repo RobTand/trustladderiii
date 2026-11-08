@@ -144,6 +144,19 @@ impl Controller {
             .find(|e| tl3_delivery::key_matches(e.key.as_bytes(), key.as_bytes()))
             .ok_or(Error::Invalid("completion has no pending effect"))?;
         let delivery: Delivery = decode_stored(effect.payload.clone())?;
+        if completion.ack == Ack::DeliveryAccepted && !matches!(delivery.output,
+            DeliveryOutput::Effect { kind: tl3_kernel::EffectKind::Enqueue, .. })
+        {
+            return Err(Error::Invalid("delivery acceptance requires the handoff effect"));
+        }
+        if completion.ack == Ack::Confirmed
+            && effect.state != EffectState::Cancelling
+            && matches!(delivery.output, DeliveryOutput::Effect {
+                kind: tl3_kernel::EffectKind::Enqueue, ..
+            })
+        {
+            return Err(Error::Invalid("live handoff requires typed delivery acceptance"));
+        }
         if completion.ack == Ack::Permanent
             && publication_failure::handles(&delivery)
             && completion.diagnostic.is_none()
@@ -180,6 +193,7 @@ impl Controller {
         if let Some(class) = completion.failure_class.as_deref() {
             self.failure_allowance(snapshot, key, class, &mut commit)?;
         }
+        self.accepted_delivery_refusal(snapshot, &delivery, &completion, &mut commit)?;
         let plan = tl3_delivery::completion(
             executor::delivery_state(effect.state),
             executor::delivery_ack(completion.ack),
@@ -311,7 +325,7 @@ impl Controller {
                 to: EffectState::Cancelled,
             });
         }
-        if completion.ack == Ack::Confirmed {
+        if matches!(completion.ack, Ack::Confirmed | Ack::DeliveryAccepted) {
             if matches!(
                 delivery.output,
                 DeliveryOutput::Effect {
@@ -331,7 +345,6 @@ impl Controller {
                     id: marker.clone(),
                 });
             }
-            self.record_progress(snapshot, &mut commit, key, completion.progress.as_ref())?;
         }
         // Upstream facts remain evidence even when the attempted write was refused.
         for (index, observation) in completion.observations.iter().enumerate() {

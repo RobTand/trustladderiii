@@ -2113,7 +2113,14 @@ pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
             "permission"
         }
         crate::Error::Io(_) => "transport",
-
+        crate::Error::Adapter(error) => match error.downcast_ref::<tl3_worktrees::Error>() {
+            // Git's own message showed a network or remote cause.
+            Some(tl3_worktrees::Error::Network { .. }) => "git_remote",
+            _ => error
+                .downcast_ref::<tl3_github::Error>()
+                .map_or("transport", |error| error.failure_class().as_str()),
+        },
+        crate::Error::MessageRejected => "message_rejected",
         _ => "setup",
     }
 }

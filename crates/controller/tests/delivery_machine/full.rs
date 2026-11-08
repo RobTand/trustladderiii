@@ -54,7 +54,6 @@ struct Completion {
     diagnostic: Option<Diagnostic>,
     ack: Ack,
     failure_class: Option<String>,
-    progress: Option<Value>,
     observations: Vec<Observation>,
 }
 trait Postmortem {
@@ -366,11 +365,6 @@ fn completion(sample: u8) -> Completion {
         } else {
             Some("pr_policy".into())
         },
-        progress: if sample & 8 == 0 {
-            None
-        } else {
-            Some(json!("progress"))
-        },
         observations: vec![
             Observation::ScratchSaved {
                 node: NodeId(0),
@@ -456,7 +450,7 @@ fn compiled_shells_and_boundary_conversions_are_verbatim() {
     assert!(include_str!("current-shell.rs").contains(&current[start..end]));
     let base = include_str!("base-integration-shell.rs.txt");
     let end = base.find("    fn apply(").unwrap();
-    assert!(include_str!("old-shell.rs").contains(&base[..end]));
+    assert!(include_str!("old-shell.rs").contains(&super::target_shell(&base[..end])));
     let production = include_str!("../../src/executor.rs");
     assert!(production.contains(include_str!("conversions.rs")));
 }

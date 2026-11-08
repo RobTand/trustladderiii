@@ -13,9 +13,6 @@ mod executor {
     pub use tl3_controller::executor::*;
 }
 mod adapters {
-    pub mod mergify {
-        pub const REQUEUE_PROGRESS_PREFIX: &str = "mergify:awaiting-requeue:";
-    }
     pub mod prismabuild {
         pub const HARNESS: &str = "harness";
     }
@@ -135,18 +132,11 @@ trait LocalCompletion {
 }
 impl LocalCompletion for Completion {
     fn releases_holds(&self) -> bool {
-        if self.progress.is_some() && self.observations.is_empty() {
-            return false;
-        }
         !self.observations.iter().any(|o| {
             matches!(
                 o,
                 Observation::Progress { .. }
                     | Observation::Quota { .. }
-                    | Observation::Kernel(Event::Fact {
-                        fact: Fact::UpstreamStalled,
-                        ..
-                    })
             )
         })
     }
@@ -213,6 +203,21 @@ macro_rules! controller {
             fn observe(&self, key: &str, o: Observation) -> Result<()> {
                 io::observe(key, o)
             }
+            // Scripted model-quota projection. Real quota reservation and
+            // ladder evidence remain covered by quota_hold's controller tests.
+            fn quota_retry(&self, _: &mut AllowanceState, resume:u64, _:u64)->Result<Option<u64>> { Ok(Some(resume)) }
+            fn release_terminal_model_probes(&self,_s:&Snapshot,_c:&mut Commit,_node:Option<NodeId>)->Result<()> { io::record("release_terminal_model_probes",Value::Null);Ok(()) }
+            fn retire_completed_model_attempts(&self,_s:&Snapshot,_c:&mut Commit)->Result<()> { io::record("retire_completed_model_attempts",Value::Null);Ok(()) }
+            fn failure_allowance(&self,_s:&Snapshot,key:&str,class:&str,c:&mut Commit)->Result<()> {
+                io::record("failure_allowance",json!([key,class]));
+                c.rows.push(put("failure_allowances",key.into(),json!(class)));Ok(())
+            }
+            fn accepted_delivery_refusal(&self,_s:&Snapshot,d:&Delivery,completion:&Completion,c:&mut Commit)->Result<()> {
+                if completion.ack == Ack::DeliveryAccepted && completion.diagnostic.is_some() {
+                    c.rows.push(put("accepted_refusals",d.key.clone(),json!(completion.diagnostic)));
+                }
+                Ok(())
+            }
             fn retire_wait(&self, _: &Snapshot, d: &Delivery, c: &mut Commit) -> Result<()> {
                 io::record("retire_wait", json!(d.key));
                 c.rows.push(RowChange::Delete { table: "waits".into(), id: d.key.clone() });
@@ -267,6 +272,7 @@ macro_rules! controller {
         ) -> Result<()> {
             let mut c = Controller::new();
             match entry {
+                io::Entry::DrainObservations => io::drain_observations(),
                 io::Entry::Failed(code) | io::Entry::FailedOther(code) => {
                     c.look_failed(state, io::error(code))
                 }
@@ -312,24 +318,5 @@ fn delivery(key: &str) -> Delivery {
 #[path = "looks_io/properties.rs"]
 mod properties;
 
-trait LocalQueueFact {
-    fn setup(&self) -> bool;
-    fn recorded(&self, s: &Snapshot) -> Result<bool>;
-}
-impl LocalQueueFact for tl3_controller::adapters::mergify::QueueFact {
-    fn setup(&self) -> bool {
-        use tl3_controller::adapters::mergify::Evidence;
-        matches!(
-            self.evidence,
-            Evidence::ChecksUnavailable { .. }
-                | Evidence::CheckMissing { .. }
-                | Evidence::CheckReported { .. }
-                | Evidence::QueueBlocked { .. }
-        )
-    }
-    fn recorded(&self, _: &Snapshot) -> Result<bool> {
-        Ok(io::read("queue.recorded", json!(self))? & 1 != 0)
-    }
-}
 #[path = "looks_io/d2.rs"]
 mod d2;

@@ -35,8 +35,13 @@ impl Controller {
     fn failed_notice(&mut self,_s:&Snapshot,d:&Delivery,class:&str,c:&mut Commit)->Result<()> {
         c.rows.push(put("notice_failure",d.key.clone(),json!(class)));Ok(())
     }
-    fn record_progress(&mut self,_s:&Snapshot,c:&mut Commit,key:&str,progress:Option<&Value>)->Result<()> {
-        c.rows.push(put("progress",key.into(),json!(progress)));Ok(())
+    fn accepted_delivery_refusal(&self,_s:&Snapshot,d:&Delivery,completion:&Completion,c:&mut Commit)->Result<()> {
+        // The production helper is a scripted boundary here. Its staged row is
+        // committed with the receipt, never by a separate fixture transaction.
+        if completion.ack == Ack::DeliveryAccepted && completion.diagnostic.is_some() {
+            c.rows.push(put("accepted_refusals",d.key.clone(),json!(completion.diagnostic)));
+        }
+        Ok(())
     }
     fn queue_observation(&mut self,_s:&Snapshot,c:&mut Commit,key:&str,index:usize,o:&Observation)->Result<()> {
         c.rows.push(put("inbox",format!("{key}:{index}"),json!(o)));Ok(())

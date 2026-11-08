@@ -13,6 +13,7 @@ pub(super) enum Entry {
     Stall,
     Progress(u8),
     Quota(u8),
+    DrainObservations,
 }
 #[derive(Clone, Debug, Default)]
 pub(super) struct Schedule {
@@ -105,17 +106,17 @@ pub(super) fn error(code: u8) -> Error {
             retry_after: Duration::from_millis(1500),
         },
         2 => Error::Permanent {
-            class: "queue_command_refused",
+            class: "direct_merge_refused",
             source: "refused".into(),
         },
         3 => Error::Io(std::io::ErrorKind::PermissionDenied.into()),
         4 => Error::Io(std::io::ErrorKind::ConnectionReset.into()),
-        5 => Error::Adapter(Box::new(tl3_mergify::Error::ChangedDuringRead)),
+        5 => Error::Permanent { class:"inconsistent_read",source:"changed during read".into() },
         6 => Error::Adapter(Box::new(tl3_github::Error::Http { status: 404 })),
         7 => Error::Adapter(Box::new(tl3_github::Error::Http { status: 500 })),
         8 => Error::Store(tl3_store::Error::OwnershipLost),
         9 => Error::StoredJson(serde_json::from_str::<Value>("invalid").unwrap_err()),
-        10 => Error::Adapter(Box::new(tl3_mergify::Error::HeadChanged)),
+        10 => Error::Permanent { class:"head_changed",source:"head changed".into() },
         _ => Error::Adapter(Box::new(tl3_github::Error::Transport)),
     }
 }
@@ -159,7 +160,7 @@ impl Store {
                     row.value["effect"] = json!("other-effect");
                 }
                 if word & 8 != 0 {
-                    row.value["signature"]["class"] = json!("queue_command_refused");
+                    row.value["signature"]["class"] = json!("direct_merge_refused");
                 }
             }
         }
@@ -184,7 +185,7 @@ impl Store {
         Ok(Some(Effect {
             key: key.into(),
             epoch: tl3_store::Epoch::try_from(1).unwrap(),
-            kind: "mergify".into(),
+            kind: "Delivery".into(),
             payload: json!(delivery(key)),
             state: match word % 4 {
                 1 => EffectState::Confirmed,
@@ -276,7 +277,7 @@ impl Adapter {
             },
             5 => Look::Found(Box::new(completion(0))),
             6 => Look::Alive {
-                progress: adapters::mergify::REQUEUE_PROGRESS_PREFIX.into(),
+                progress: "checkpoint".into(),
             },
             7 | 8 => Look::Waiting {
                 wait: tl3_store::ExternalWait {
@@ -290,16 +291,20 @@ impl Adapter {
                 },
                 checkout: "checkout".into(),
             },
-            9 => Look::Found(Box::new(completion(1))),
+            9 => Look::Alive { progress:"checkpoint".into() },
             10 => Look::Found(Box::new(completion(2))),
             11 => Look::Found(Box::new(completion(3))),
-            12 => Look::Found(Box::new(queue_completion(true))),
-            _ => Look::Found(Box::new(queue_completion(false))),
+            12 => Look::Found(Box::new(completion(4))),
+            _ => Look::Found(Box::new(completion(5))),
         })
     }
     pub fn stop_stalled(&self, d: &Delivery) -> Result<Completion> {
         let word = read("stop_stalled", json!(d.key))?;
-        Ok(completion((word % 4) ^ 2))
+        if with(|r| r.schedule.worker) {
+            Ok(Completion::confirmed(vec![Observation::Kernel(Event::Reply {
+                node:d.node(),generation:world().nodes[0].generation,reply:tl3_kernel::Reply::RunFailed,
+            })]))
+        } else { Ok(completion((word % 4) ^ 2)) }
     }
     pub fn app_login(&self, installation: u64) -> Option<String> {
         let _ = read("app_login", json!(installation));
@@ -333,42 +338,13 @@ impl Adapter {
         })
     }
 }
-fn queue_completion(setup: bool) -> Completion {
-    use tl3_controller::adapters::mergify::{Evidence, QueueFact};
-    Completion::confirmed(vec![Observation::Queue(QueueFact {
-        repository: repository(),
-        number: 100,
-        evidence: if setup {
-            Evidence::ChecksUnavailable {
-                permissions: vec!["checks".into()],
-            }
-        } else {
-            Evidence::Merged {
-                head: "head".into(),
-                checks_passed: true,
-            }
-        },
-    })])
-}
 fn completion(code: u8) -> Completion {
-    let mut c = Completion::confirmed(if code >= 2 {
+    Completion::confirmed(if code >= 2 {
         vec![Observation::Kernel(Event::Fact {
             node: NodeId(0),
-            fact: Fact::UpstreamStalled,
+            fact: Fact::Priority(tl3_kernel::Priority::P1),
         })]
-    } else {
-        vec![]
-    });
-    if code & 1 != 0 {
-        c.progress = Some(executor::ProgressToken::Mergify(
-            tl3_controller::adapters::mergify::Progress {
-                merged_at: Some("checkpoint".into()),
-                merge_commit_sha: None,
-                queue_check: None,
-            },
-        ));
-    }
-    c
+    } else { vec![] })
 }
 pub(super) fn held() -> bool {
     with(|r| r.schedule.held)
@@ -403,6 +379,12 @@ pub(super) fn observe(key: &str, observation: Observation) -> Result<()> {
             r.files.insert("kernel-state".into(), serde_json::to_vec(&json!({"phase":node.phase,"waiting_incident":node.waiting_incident,"run_incidents":node.run_incidents,"needs_rob":node.incident_needs_rob})).unwrap());
         }
     })
+}
+pub(super) fn drain_observations() -> Result<()> {
+    let pending = with(|r| r.files.iter().filter_map(|(key,value)|
+        key.starts_with("observations/").then(|| (key.clone(),value.clone()))).collect::<Vec<_>>());
+    for (key,bytes) in pending { observe(&key,serde_json::from_slice(&bytes).unwrap())?; }
+    Ok(())
 }
 fn initial(s: &Schedule) -> AllowanceState {
     let mut d = delivery("effect-1");
@@ -453,7 +435,7 @@ fn initial(s: &Schedule) -> AllowanceState {
     }
 
     if s.progress {
-        a.progress = Some(adapters::mergify::REQUEUE_PROGRESS_PREFIX.into());
+        a.progress = Some("checkpoint".into());
     }
     a
 }
@@ -474,17 +456,22 @@ pub(super) fn run(s: &Schedule, new: bool, cut: Option<(usize, bool)>) -> Run {
     other_state.read_incidents = 0;
     other_state.incident = None;
     let mut world = World::new(&[1], 1);
-    let mut node = tl3_kernel::Node::new(tl3_kernel::RepoId(0));
-    node.phase = Phase::AwaitingDelivery;
-    node.pr_open = true;
-    node.had_pr = true;
-    node.head = Some(tl3_kernel::HeadId(0));
-    node.checked = node.head;
-    node.approved = node.head;
+    if s.worker {
+        world = tl3_kernel::step(world,Event::NewRequest {repo:tl3_kernel::RepoId(0),priority:tl3_kernel::Priority::Unranked}).world;
+        let seq = world.nodes[0].effect.unwrap().seq;
+        world = tl3_kernel::step(world,Event::Ack {node:NodeId(0),seq,ack:Ack::Confirmed}).world;
+    } else {
+        let mut node = tl3_kernel::Node::new(tl3_kernel::RepoId(0));
+        node.phase = Phase::AwaitingDelivery;
+        node.pr_open=true;node.had_pr=true;
+        node.head=Some(tl3_kernel::HeadId(0));node.checked=node.head;node.approved=node.head;
+        world.nodes.push(node);
+    }
+    let node = &mut world.nodes[0];
+    node.run_failures = u8::from(s.worker);
     node.waiting_incident = s.incident && s.kernel_incident;
     node.run_incidents = s.incidents.max(u8::from(node.waiting_incident));
     node.incident_needs_rob = node.waiting_incident && s.needs_rob;
-    world.nodes.push(node);
     let mut files = BTreeMap::new();
     files.insert(
         "allowances/effect-1".into(),
@@ -496,8 +483,11 @@ pub(super) fn run(s: &Schedule, new: bool, cut: Option<(usize, bool)>) -> Run {
     );
     let node = &world.nodes[0];
     files.insert("kernel-state".into(), serde_json::to_vec(&json!({"phase":node.phase,"waiting_incident":node.waiting_incident,"run_incidents":node.run_incidents,"needs_rob":node.incident_needs_rob})).unwrap());
+    if s.refused {
+        files.insert("publication_failures/effect-1".into(),serde_json::to_vec(&json!({"class":"direct_merge_refused"})).unwrap());
+    }
     if s.incident {
-        files.insert("incidents/1.read".into(), serde_json::to_vec(&json!({"id":"1.read","node":0,"open":true,"needs_rob":s.needs_rob,"blocking":false,"summary":"outage","signature":{"upstream":"Mergify","class":if s.refused {"queue_command_refused"} else {"transport"}},"effect":if s.kernel_incident { Value::Null } else { json!("effect-1") }})).unwrap());
+        files.insert("incidents/1.read".into(), serde_json::to_vec(&json!({"id":"1.read","node":0,"open":true,"needs_rob":s.needs_rob,"blocking":false,"summary":"outage","signature":{"upstream":"Delivery","class":if s.refused {"direct_merge_refused"} else {"transport"}},"effect":if s.kernel_incident { Value::Null } else { json!("effect-1") }})).unwrap());
     }
     ACTIVE.with(|r| {
         *r.borrow_mut() = Some(Recording {

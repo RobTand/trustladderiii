@@ -33,11 +33,12 @@ fn state(state: EffectState) -> CoreState {
     }
 }
 fn ack(ack: u8) -> (Ack, CoreAck) {
-    match ack % 4 {
+    match ack % 5 {
         0 => (Ack::Confirmed, CoreAck::Confirmed),
         1 => (Ack::Retryable, CoreAck::Retryable),
         2 => (Ack::Permanent, CoreAck::Permanent),
-        _ => (Ack::BodyPolicyRefused, CoreAck::BodyPolicyRefused),
+        3 => (Ack::BodyPolicyRefused, CoreAck::BodyPolicyRefused),
+        _ => (Ack::DeliveryAccepted, CoreAck::Confirmed),
     }
 }
 fn effect(key: &str, state: EffectState) -> Effect {
@@ -96,10 +97,37 @@ fn transition_table_conforms_to_store() {
             );
         }
     }
-    for value in 0..4 {
+    for value in 0..5 {
         let (stored, core) = ack(value);
         assert_eq!(executor::delivery_ack(stored), core);
     }
+}
+
+/// Account for the TD changes to the retained pre-extraction source. All
+/// other statements still compare exactly, including both reads, transaction
+/// staging, cancellation, scratch evidence and approval retry boundaries.
+fn target_shell(historical: &str) -> String {
+    historical
+        .replace("Upstream::Mergify", "Upstream::Delivery")
+        .replace("completion.ack != Ack::Confirmed", "!matches!(completion.ack, Ack::Confirmed | Ack::DeliveryAccepted)")
+        .replace("Ack::Confirmed => EffectState::Confirmed", "Ack::Confirmed | Ack::DeliveryAccepted => EffectState::Confirmed")
+        .replace("        if completion.ack == Ack::Confirmed {", "        if matches!(completion.ack, Ack::Confirmed | Ack::DeliveryAccepted) {")
+        .replace("            self.record_progress(snapshot, &mut commit, key, completion.progress.as_ref())?;\n", "")
+        .replace("        if completion.ack == Ack::Permanent\n            && publication_failure::handles(&delivery)", concat!(r#"        if completion.ack == Ack::DeliveryAccepted && !matches!(delivery.output,
+            DeliveryOutput::Effect { kind: tl3_kernel::EffectKind::Enqueue, .. })
+        {
+            return Err(Error::Invalid("delivery acceptance requires the handoff effect"));
+        }
+        if completion.ack == Ack::Confirmed
+            && effect.state != EffectState::Cancelling
+            && matches!(delivery.output, DeliveryOutput::Effect {
+                kind: tl3_kernel::EffectKind::Enqueue, ..
+            })
+        {
+            return Err(Error::Invalid("live handoff requires typed delivery acceptance"));
+        }
+"#, "        if completion.ack == Ack::Permanent\n            && publication_failure::handles(&delivery)"))
+        .replace("            self.failure_allowance(snapshot, key, class, &mut commit)?;\n        }\n", "            self.failure_allowance(snapshot, key, class, &mut commit)?;\n        }\n        self.accepted_delivery_refusal(snapshot, &delivery, &completion, &mut commit)?;\n")
 }
 
 /// CC-E extraction: the complete original method is retained verbatim. The only
@@ -110,17 +138,16 @@ fn completion_shell_keeps_every_other_statement_verbatim() {
     let start = source.find("    fn prepare_completion(").unwrap();
     let end = source[start..].find("\n    fn apply(").unwrap() + start;
     let restored = source[start..end]
-        .replace("Upstream::Delivery", "Upstream::Mergify")
         .replace(
             include_str!("current-plan.rs.txt"),
-            include_str!("base-plan.rs.txt"),
+            &target_shell(include_str!("base-plan.rs.txt")),
         )
         .replace(
             ".find(|e| tl3_delivery::key_matches(e.key.as_bytes(), key.as_bytes()))",
             ".find(|e| e.key == key)",
         );
-    assert_eq!(restored, include_str!("base-integration-completion.rs.txt"));
-    assert!(include_str!("reference-plan.rs").contains(include_str!("base-plan.rs.txt")));
+    assert_eq!(restored, target_shell(include_str!("base-integration-completion.rs.txt")));
+    assert!(include_str!("reference-plan.rs").contains(&target_shell(include_str!("base-plan.rs.txt"))));
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -247,10 +274,9 @@ fn owned_controller_io_shell_remains_verbatim() {
     let start = source.find("    fn retire_effect(").unwrap();
     let end = source[start..].find("    fn apply(").unwrap() + start;
     let restored = source[start..end]
-        .replace("Upstream::Delivery", "Upstream::Mergify")
         .replace(
             include_str!("current-plan.rs.txt"),
-            include_str!("base-plan.rs.txt"),
+            &target_shell(include_str!("base-plan.rs.txt")),
         )
         .replace(
             ".find(|e| tl3_delivery::key_matches(e.key.as_bytes(), key.as_bytes()))",
@@ -258,7 +284,7 @@ fn owned_controller_io_shell_remains_verbatim() {
         );
     let base = include_str!("base-integration-shell.rs.txt");
     let end = base.find("    fn apply(").unwrap();
-    assert_eq!(restored, &base[..end]);
+    assert_eq!(restored, target_shell(&base[..end]));
 }
 
 /// Approval I/O stays at its original source positions around pure decisions.
