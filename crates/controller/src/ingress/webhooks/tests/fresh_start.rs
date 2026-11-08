@@ -431,9 +431,25 @@ fn missing_cursor_blocks_history_fetch() {
 
 #[test]
 fn ingress_has_no_epoch_fallback() {
-    let epoch = ["UNIX", "EPOCH"].join("_");
-    assert!(!include_str!("../../../ingress.rs").contains(&epoch));
-    assert!(!include_str!("../../webhooks.rs").contains(&epoch));
+    let mut database = database::Database::start();
+    let settings = database.create("fresh_no_epoch");
+    let mut store = Store::open(&settings).unwrap();
+    assert!(matches!(
+        catch_up_state(&mut store.reader().unwrap()),
+        Err(Error::Invalid("GitHub catch-up cursor is not initialized"))
+    ));
+    let before = Utc::now().with_nanosecond(0).unwrap();
+    let catch_up = CatchUp::new(BTreeMap::new(), vec![]).unwrap();
+    assert!(catch_up.pass(&mut store, &bootstrap()).unwrap().is_empty());
+    let cursor: DateTime<Utc> =
+        crate::decode_stored(store.ingress_cursor("github-catch-up").unwrap().unwrap()).unwrap();
+    assert!(cursor >= before && cursor <= Utc::now());
+    assert_eq!(
+        store.ingress_cursor("github-world-start").unwrap(),
+        Some(json!(cursor))
+    );
+    assert!(store.pending_ingress().unwrap().is_empty());
+    database.stop();
 }
 
 #[test]
