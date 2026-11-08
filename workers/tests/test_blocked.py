@@ -14,10 +14,10 @@ from tl3_workers.tools import TOOL_FACTORIES, Worktree, build_tools
 from tl3_workers.turns import InvalidReply
 from message_invariants import maker_request, turn  # noqa: F401
 
-KEY = "c" * 64
-OTHER = "d" * 64
+KEY = "worker:" + "c" * 64
+OTHER = "worker:" + "d" * 64
 TOTALS = {"passed": 0, "failed": 0, "error": 0, "skipped": 0}
-INFRASTRUCTURE = {"status": "infrastructure_error", "message": "PrismaBuild failed.",
+INFRASTRUCTURE = {"status": "infrastructure_error", "message": "The run backend failed.",
                   "tests": [], "totals": TOTALS, "note": ""}
 COMPLETED = {"status": "completed", "tests": [], "totals": TOTALS, "note": ""}
 HELLO = ["test_greeting.py::test_hello"]
@@ -53,17 +53,17 @@ def run_maker(maker_request, monkeypatch, results, reply, selectors=None):  # no
                                     if isinstance(message, ToolMessage))
 
 
-def test_blocked_cites_an_infrastructure_action_key_from_this_run(maker_request, monkeypatch):  # noqa: F811
-    reply = {"kind": "blocked", "evidence": {"action_key": KEY},
-             "report": "PrismaBuild could not run the tests."}
-    result, _ = run_maker(maker_request, monkeypatch, [{**INFRASTRUCTURE, "action_key": KEY}], reply)
+def test_blocked_cites_an_infrastructure_wait_reference_from_this_run(maker_request, monkeypatch):  # noqa: F811
+    reply = {"kind": "blocked", "evidence": {"wait_reference": KEY},
+             "report": "The run backend could not run the tests."}
+    result, _ = run_maker(maker_request, monkeypatch, [{**INFRASTRUCTURE, "wait_reference": KEY}], reply)
     # Worker code adds the recorded class; the controller cites only that.
-    assert result == {**reply, "evidence": {"action_key": KEY, "class": "test_infrastructure"}}
+    assert result == {**reply, "evidence": {"wait_reference": KEY, "class": "test_infrastructure"}}
 
 
 def test_blocked_cites_a_recorded_tool_error(maker_request, monkeypatch):  # noqa: F811
     reply = {"kind": "blocked", "evidence": {"tool_error": "tool-error-1"},
-             "report": "The test tool could not submit to PrismaBuild."}
+             "report": "The test tool could not submit to the run backend."}
     result, seen = run_maker(maker_request, monkeypatch, [INFRASTRUCTURE], reply)
     assert "tool-error-1" in seen, "the model sees the id it may cite"
     assert result == {**reply, "evidence": {"tool_error": "tool-error-1", "tool": "run_tests",
@@ -71,14 +71,14 @@ def test_blocked_cites_a_recorded_tool_error(maker_request, monkeypatch):  # noq
 
 
 @pytest.mark.parametrize("results,evidence", [
-    ([{**COMPLETED, "action_key": KEY}], {"action_key": KEY}),
-    ([{**INFRASTRUCTURE, "action_key": KEY}], {"action_key": OTHER}),
+    ([{**COMPLETED, "wait_reference": KEY}], {"wait_reference": KEY}),
+    ([{**INFRASTRUCTURE, "wait_reference": KEY}], {"wait_reference": OTHER}),
     ([INFRASTRUCTURE], {"tool_error": "tool-error-2"}),
     # The tested code can cut a report short; that is not an environment failure.
-    ([{**INFRASTRUCTURE, "action_key": KEY, "origin": "test_run"}], {"action_key": KEY}),
+    ([{**INFRASTRUCTURE, "wait_reference": KEY, "origin": "test_run"}], {"wait_reference": KEY}),
     # A later completed run of the same tests retires the earlier failure.
-    ([{**INFRASTRUCTURE, "action_key": KEY}, {**COMPLETED, "action_key": OTHER}], {"action_key": KEY}),
-    ([INFRASTRUCTURE, {**COMPLETED, "action_key": OTHER}], {"tool_error": "tool-error-1"}),
+    ([{**INFRASTRUCTURE, "wait_reference": KEY}, {**COMPLETED, "wait_reference": OTHER}], {"wait_reference": KEY}),
+    ([INFRASTRUCTURE, {**COMPLETED, "wait_reference": OTHER}], {"tool_error": "tool-error-1"}),
 ])
 def test_blocked_without_recorded_evidence_becomes_cant_meet(maker_request, monkeypatch, results, evidence):  # noqa: F811
     reply = {"kind": "blocked", "evidence": evidence, "report": "The sandbox is broken."}
@@ -88,9 +88,9 @@ def test_blocked_without_recorded_evidence_becomes_cant_meet(maker_request, monk
 
 
 def test_completed_run_of_other_tests_keeps_the_evidence(maker_request, monkeypatch):  # noqa: F811
-    reply = {"kind": "blocked", "evidence": {"action_key": KEY}, "report": "PrismaBuild failed."}
+    reply = {"kind": "blocked", "evidence": {"wait_reference": KEY}, "report": "The run backend failed."}
     result, _ = run_maker(maker_request, monkeypatch,
-                          [{**INFRASTRUCTURE, "action_key": KEY}, {**COMPLETED, "action_key": OTHER}],
+                          [{**INFRASTRUCTURE, "wait_reference": KEY}, {**COMPLETED, "wait_reference": OTHER}],
                           reply, selectors=[HELLO, ["test_greeting.py::test_signature"]])
     assert result["kind"] == "blocked"
 
@@ -99,7 +99,7 @@ def test_blocked_needs_structured_evidence(maker_request, monkeypatch):  # noqa:
     reply = {"kind": "blocked", "report": "The sandbox is broken."}
     # The schema-invalid reply gets one repair turn (#289), which the fake fails too.
     with pytest.raises(InvalidReply) as raised:
-        run_maker(maker_request, monkeypatch, [{**INFRASTRUCTURE, "action_key": KEY}], reply)
+        run_maker(maker_request, monkeypatch, [{**INFRASTRUCTURE, "wait_reference": KEY}], reply)
     assert isinstance(raised.value.errors[0], ValidationError)
 
 
@@ -249,7 +249,7 @@ def test_a_retry_after_a_blocked_reply_cannot_cite_the_spent_failure(maker_reque
 
 def test_a_retry_after_a_blocked_reply_asks_for_a_new_observation(maker_request, monkeypatch, tmp_path):  # noqa: F811
     fresh = {"kind": "blocked", "evidence": {"tool_error": "tool-error-2"},
-             "report": "PrismaBuild still could not run the tests."}
+             "report": "The run backend still could not run the tests."}
     replies, seen = visit_runs(maker_request, monkeypatch, tmp_path, [
         ([HELLO, STALE], [INFRASTRUCTURE]),
         ([HELLO, fresh], [INFRASTRUCTURE]),
