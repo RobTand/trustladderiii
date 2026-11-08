@@ -526,3 +526,33 @@ fn azure_sas_rejects_empty_userinfo_but_keeps_at_signs_outside_authority() {
         "at sign outside authority changed SAS recognition"
     );
 }
+
+#[test]
+fn trace_clean_and_live_preserve_cleaned_json_text_and_its_measurement() {
+    let input = r#"{"z": 18446744073709551616, "a": 1E5, "m": [1.00, -0]}"#;
+    let shaped = command(json!({"op":"shape","input_json":input}));
+    let shaped = shaped["ok"]["result"]["value"].clone();
+    let cleaned = command(json!({"op":"clean","shaped":shaped.clone(),"limit":4096}));
+    let text = cleaned["ok"]["result"]["value"].as_str().unwrap();
+    assert_eq!(text, input);
+    let measured = command(json!({"op":"measure_json","input_json":text}));
+    let measured = measured["ok"]["result"]["value"].as_u64().unwrap();
+    let clean = command(json!({"op":"trace","request":{"op":"clean",
+        "contents":[shaped.clone()],"limits":[4096]}}));
+    assert_eq!(clean["ok"]["result"]["value"]["values"][0].as_str(), Some(text));
+    let live = command(json!({"op":"trace","request":{"op":"live",
+        "enabled":true,"root":false,"spans":0,"used":17,"contents":[shaped]}}));
+    let live = &live["ok"]["result"]["value"];
+    assert_eq!(live["values"][0].as_str(), Some(text));
+    assert_eq!(live["used"], json!(17 + measured));
+    assert_eq!(live["spans"], json!(1));
+}
+
+#[test]
+fn trace_number_validation_preserves_existing_nonfinite_rejection() {
+    for atom in ["NaN", "Infinity", "-Infinity"] {
+        let result = command(json!({"op":"trace","request":{"op":"clean",
+            "contents":[{"kind":"number","value":atom}],"limits":[4096]}}));
+        assert!(result.get("error").is_some());
+    }
+}
