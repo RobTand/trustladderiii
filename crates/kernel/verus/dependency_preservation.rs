@@ -188,6 +188,8 @@ proof fn early_waits(w: World, n: Node)
         matches!(n.phase, Phase::Ingesting | Phase::Auditing | Phase::Unplanned),
     ensures n.question.is_none(), waits(n.question),
         !n.credit.ready ==> zero_credit(n.credit),
+        !n.credit.ready ==> n.credit.start == 0 && n.credit.earned == 0
+            && n.credit.added == 0 && n.credit.spent == 0,
 {
     reveal(retirement::node_rules);
     reveal(zero_credit);
@@ -626,6 +628,8 @@ pub(super) proof fn remove_rules(before: World, after: World, i: int, kind: Prer
         }
         prerequisite_definition(after, owner);
         reveal(zero_credit);
+        assert(m.credit.start == n.credit.start && m.credit.earned == n.credit.earned
+            && m.credit.added == n.credit.added && m.credit.spent == n.credit.spent);
         assert((!delivered(t, owner) && early(n.phase)) ==> zero_credit(m.credit));
         assert forall|a: int| 0 <= a < t.len() implies row_ok(after, #[trigger] t[a]) by {
             let b = choose|b: int| 0 <= b < s.len() && t[a] == s[b] && !same_key(s[b], owner, kind, number);
