@@ -172,7 +172,7 @@ fn maker_input_stays_bounded_after_five_review_rounds() {
                 "brief": "Return hello.",
                 "goals": [{"id": "greeting", "description": "Return hello.", "verification": "test"}],
                 "plan": {"files": ["README.md"], "checks": [{"name": "hello", "kind": "demonstrating",
-                    "tests": ["test_greeting.py::test_hello"], "goal_ids": ["greeting"]}]},
+                    "tests": ["test_greeting.py::test_hello"], "goal_ids": [0]}]},
             }}),
         )
         .unwrap();
@@ -437,7 +437,7 @@ fn hostile_maker_head() {
                     ),
                     (
                         "plans",
-                        json!({"kind":"leaf","files":["README.md"],"checks":[{"kind":"demonstrating","node_ids":["test_value.py::test_value"],"goal_ids":[0],"forcing":{"symptom":"The value is late.","environment":{"VALUE_LATE":"1"},"patches":[]}}]}),
+                        json!({"kind":"leaf","files":["README.md"],"checks":[{"name":"value-is-correct","kind":"demonstrating","tests":["test_value.py::test_value"],"goal_ids":[0],"forcing":{"symptom":"The value is late.","environment":{"VALUE_LATE":"1"},"patches":[]}}]}),
                     ),
                     (
                         "feedback",
@@ -570,7 +570,7 @@ fn maker_checks_against_the_worktree_base(database: &str, stored_on: &str, resta
         ),
         (
             "plans",
-            json!({"kind":"leaf","files":["README.md"],"checks":[{"kind":"regression","node_ids":["test_value.py::test_value"],"goal_ids":[0]}]}),
+            json!({"kind":"leaf","files":["README.md"],"checks":[{"name":"value-is-correct","kind":"regression","tests":["test_value.py::test_value"],"goal_ids":[0]}]}),
         ),
         (
             "request_links",

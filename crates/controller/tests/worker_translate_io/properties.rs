@@ -142,7 +142,7 @@ fn reply(role: &str) -> Value {
         }
         "audit" => json!({"verdict":"agree","objections":[]}),
         "planner" => {
-            json!({"kind":"leaf","files":["safe.rs"],"checks":[{"kind":"regression","node_ids":["test_safe.py::test_safe"],"goal_ids":[0]}],"no_design_questions":true,"lands_on_its_own":true,"violations":[],"forecast":forecast()})
+            json!({"kind":"leaf","files":["safe.rs"],"checks":[{"name":"safe-behavior","kind":"regression","tests":["test_safe.py::test_safe"],"goal_ids":[0]}],"no_design_questions":true,"lands_on_its_own":true,"violations":[],"forecast":forecast()})
         }
         "maker" => {
             json!({"kind":"done","head":NEW_HEAD,"self_check":[{"goal_id":"goal-1","status":"met","evidence":"passed"}]})
@@ -570,7 +570,7 @@ fn mandatory_all_reply_outcomes_and_plan_budget() {
         );
     }
     let mut reply = reply("planner");
-    reply["checks"][0]["node_ids"] = json!(["x".repeat(4 * 1024 * 1024)]);
+    reply["checks"][0]["tests"] = json!(["x".repeat(4 * 1024 * 1024)]);
     let r = routed(&schedule("planner", reply));
     assert!(r.result.to_string().contains("PlanCantMeet"));
     let plans = r

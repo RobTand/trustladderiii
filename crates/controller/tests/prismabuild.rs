@@ -4794,7 +4794,7 @@ fn oversized_planner_reply_reaches_plan_feedback(settings: &tl3_config::Store) {
                         replies.set(replies.get() + 1);
                         serde_json::json!({
                             "kind":"leaf", "files":["value.py"], "checks":[{
-                                "kind":"regression", "node_ids":[format!("test_value.py::test_{}", "x".repeat(4 * 1024 * 1024))], "goal_ids":[0]}],
+                                "name":"oversized-selector", "kind":"regression", "tests":[format!("test_value.py::test_{}", "x".repeat(4 * 1024 * 1024))], "goal_ids":[0]}],
                             "no_design_questions":true, "lands_on_its_own":true, "violations":[],
                             "forecast":forecast
                         })

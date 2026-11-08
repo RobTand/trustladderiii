@@ -3765,6 +3765,31 @@ impl Controller {
                                 .map_err(Error::from)
                         })
                         .collect::<Result<Vec<_>>>()?;
+                    let brief = self
+                        .store
+                        .worker_document(&node.0.to_string(), "briefs")?
+                        .ok_or(Error::Invalid("planner admission needs the accepted brief"))?;
+                    let goals = crate::goals::identified(&brief["goals"])?;
+                    let required = goals
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, goal)| goal["stage"] != "publishing")
+                        .map(|(index, _)| tl3_contracts::GoalId(index as u64))
+                        .collect::<Vec<_>>();
+                    let admission = tl3_contracts::checks::admit_plan(
+                        &checks,
+                        goals.len(),
+                        &required,
+                    );
+                    if let Err(message) = admission {
+                        reply["violations"]
+                            .as_array_mut()
+                            .ok_or(Error::Invalid("planner violations must be an array"))?
+                            .push(json!(message));
+                        mapped = adapters::workers::protocol::MappedReply::Kernel(
+                            Reply::PlanCantMeet,
+                        );
+                    }
                     if let Err(error) = adapters::prismabuild::validate_plan_size(&checks) {
                         match error {
                             Error::Invalid(message) => {

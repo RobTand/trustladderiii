@@ -134,7 +134,7 @@ impl Daemon {
             "maker": {
                 "brief": "Return hello.",
                 "goals": [{"id": "greeting", "description": "Return hello.", "verification": "test"}],
-                "plan": {"files": ["greeting.py"], "checks": [{"name": "hello", "kind": "demonstrating", "tests": ["tests/test_greeting.py::test_hello"], "goal_ids": ["greeting"]}]}
+                "plan": {"files": ["greeting.py"], "checks": [{"name": "hello", "kind": "demonstrating", "tests": ["tests/test_greeting.py::test_hello"], "goal_ids": [0]}]}
             }
         })).unwrap();
         if matches!(mode, "steering-queue" | "steering-credit") {

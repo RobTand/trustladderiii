@@ -447,12 +447,16 @@ fn small_trace_content_keeps_its_fields_within_the_allocated_budget() {
     assert!(limit > 0 && limit < 512);
     let cleaned = command(json!({"op":"trace","request":{"op":"clean",
         "contents":[shaped.clone()],"limits":[limit]}}));
-    assert_eq!(cleaned["ok"]["result"]["value"]["values"], json!([value]));
+    let text = cleaned["ok"]["result"]["value"]["values"][0]
+        .as_str()
+        .unwrap();
+    assert!(text.len() as u64 <= limit);
+    assert_eq!(serde_json::from_str::<serde_json::Value>(text).unwrap(), value);
     let exhausted = command(json!({"op":"trace","request":{"op":"clean",
         "contents":[shaped],"limits":[0]}}));
     assert_eq!(
-        exhausted["ok"]["result"]["value"]["values"],
-        json!([{"truncated":true,"note":"trace content budget exhausted"}])
+        exhausted["ok"]["result"]["value"]["values"][0].as_str(),
+        Some(r#"{"truncated": true, "note": "trace content budget exhausted"}"#)
     );
 }
 

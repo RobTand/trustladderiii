@@ -96,7 +96,7 @@ fn tests() -> Value {
     json!({"image":format!("registry/image@sha256:{}","a".repeat(64)),"tools_path":"/tools","cpus":1.0,"mem_gb":1,"quiet_seconds":1})
 }
 fn maker(text: &str, bits: u16) -> Value {
-    let mut v = json!({"brief":text,"goals":[{"id":"g","description":text}],"footprint":["src.py"],"plan":{"files":["src.py"],"checks":[{"name":"check","kind":"regression","tests":["tests.py::test_a"],"goal_ids":["g"]}]},"attempt":1.0,"round":0.0,"tests":tests(),"context_size":1});
+    let mut v = json!({"brief":text,"goals":[{"id":"g","description":text}],"footprint":["src.py"],"plan":{"files":["src.py"],"checks":[{"name":"check","kind":"regression","tests":["tests.py::test_a"],"goal_ids":[0]}]},"attempt":1.0,"round":0.0,"tests":tests(),"context_size":1});
     if bits & 1 != 0 {
         v["round"] = json!(1);
         v["feedback"] = json!([{"kind":"failed_check","id":"f","reviewed_sha":"a".repeat(40),"resolved_round":1,"report":text,"goal_ids":[],"failed_tests":[{"test":"test_a","message":text}],"outside_paths":["src.py"],"outside_paths_total":1,"ci_checks":[{"name":"CI","summary":text,"url":null}]}]);

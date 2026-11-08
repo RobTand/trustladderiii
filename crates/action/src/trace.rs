@@ -86,7 +86,8 @@ pub enum Decision {
         truncated: bool,
     },
     Live {
-        values: Option<Vec<serde_json::Value>>,
+        /// Cleaned Python JSON text, preserving object order and numeric atoms.
+        values: Option<Vec<String>>,
         used: usize,
         spans: usize,
     },
@@ -98,11 +99,12 @@ pub enum Decision {
         fits: bool,
     },
     Clean {
-        values: Vec<serde_json::Value>,
+        /// Cleaned Python JSON text, preserving object order and numeric atoms.
+        values: Vec<String>,
     },
 }
-fn exhausted() -> serde_json::Value {
-    serde_json::json!({"truncated":true,"note":"trace content budget exhausted"})
+fn exhausted() -> String {
+    r#"{"truncated": true, "note": "trace content budget exhausted"}"#.into()
 }
 pub fn decide(request: Request, redactor: &mut Redactor) -> Result<Decision, String> {
     Ok(match request {
@@ -223,13 +225,12 @@ pub fn decide(request: Request, redactor: &mut Redactor) -> Result<Decision, Str
             for content in contents {
                 let limit = PAYLOAD_BYTES.min(TRACE_BYTES.saturating_sub(used));
                 let value = if limit >= 512 {
-                    serde_json::from_str(&redactor.clean(&content, limit)?)
-                        .map_err(|_| "invalid redacted trace JSON")?
+                    redactor.clean(&content, limit)?
                 } else {
                     exhausted()
                 };
                 used = used
-                    .checked_add(crate::structured::measure_json(&value.to_string())?)
+                    .checked_add(crate::structured::measure_json(&value)?)
                     .ok_or("trace size overflow")?;
                 values.push(value);
             }
@@ -271,8 +272,7 @@ pub fn decide(request: Request, redactor: &mut Redactor) -> Result<Decision, Str
                 values.push(if limit == 0 {
                     exhausted()
                 } else {
-                    serde_json::from_str(&redactor.clean(content, limit)?)
-                        .map_err(|_| "invalid redacted trace JSON")?
+                    redactor.clean(content, limit)?
                 });
             }
             Decision::Clean { values }

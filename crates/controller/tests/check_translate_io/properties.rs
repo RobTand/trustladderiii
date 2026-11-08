@@ -307,14 +307,14 @@ fn mandatory_preparation_all_read_parse_and_commit_errors() {
 }
 #[test]
 fn mandatory_preexisting_nonempty_adoption_plan_decode_failure() {
-    // Real maker_inputs adds goal_ids, but Check denies that field on this base.
-    // Keep the existing failure; this extraction does not change the schema.
-    let plan = json!({"kind":"leaf","files":["a.rs"],"checks":[{"kind":"regression","node_ids":["tests/a.py"],"goal_ids":[0]}]});
+    // Canonical Check rejects the obsolete node_ids wire field.
+    // Preserve adoption decode failure before any persisted rows or writes.
+    let plan = json!({"kind":"leaf","files":["a.rs"],"checks":[{"name":"adoption-check","kind":"regression","tests":["tests/a.py"],"node_ids":["tests/a.py"],"goal_ids":[0]}]});
     let r = compare(&schedule(
         Step::default(),
         fallback(Some(brief()), Some(plan)),
     ));
-    assert!(error(&r).contains("goal_ids"));
+    assert!(error(&r).contains("node_ids"));
     assert!(r.persisted_rows.is_empty());
     assert_eq!(r.writes, 0);
 }
