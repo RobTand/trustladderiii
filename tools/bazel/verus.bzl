@@ -783,6 +783,7 @@ def verus_proofs():
             "retries": ("kernel::retries#run_failed", 1),
             "acknowledgements_delivery_accepted": ("kernel::acknowledgements#delivery_accepted", 1),
             "acknowledgements_confirmed": ("kernel::acknowledgements#confirmed", 1),
+            "acknowledgements_confirmed_resources": ("kernel::acknowledgements#confirmed_resources", 1),
             "acknowledgements_confirmed_agenda": ("kernel::acknowledgements#confirmed_agenda", 1),
             "acknowledgements_delivery_failed": ("kernel::acknowledgements#delivery_failed", 1),
             "acknowledgements_effect_failed": ("kernel::acknowledgements#effect_failed", 1),

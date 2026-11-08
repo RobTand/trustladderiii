@@ -124,7 +124,7 @@ pub(super) fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
         !(old(m).phase is Closed || old(m).phase is Stopping) ==>
             final(m).pos == 0 && final(m).ticket.is_none() && final(m).question.is_none()
                 && !final(m).waiting_incident && !final(m).incident_needs_rob,
-] proof [reveal(retirement::stopped);] {
+] {
     kernel_snapshot! { before = *m }
     match m.phase {
         Phase::Closed(_) => {}
@@ -141,6 +141,9 @@ pub(super) fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
         }
     }
     kernel_proof! {
+        assert(*m == retirement::stopped(before@, outcome)) by {
+            reveal(retirement::stopped);
+        }
         allocation_stopping_lemmas::stopping_frame(before@, *m, outcome);
         allocation_stopping_lemmas::stopping_progress(before@, *m, outcome);
     }

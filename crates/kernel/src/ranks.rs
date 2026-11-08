@@ -308,6 +308,7 @@ pub(super) proof fn potential_member(nodes: Seq<Node>, index: int, end: nat,
 
 /// Q30/Q39 / #771: every nonempty finite line has an oldest eligible member.
 /// The caller supplies the actual ticket or priority/ticket key.
+#[verifier::spinoff_prover]
 pub(super) proof fn finite_minimum(nodes: Seq<Node>, end: nat, eligible: spec_fn(Node) -> bool,
     key: spec_fn(Node) -> nat)
     requires end <= nodes.len(), exists|i: int| 0 <= i < end && eligible(nodes[i]),
