@@ -134,10 +134,7 @@ pub(super) fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
             }
         }
         _ => {
-            m.question = None;
-            m.waiting_incident = false;
-            m.incident_needs_rob = false;
-            set_phase(m, Phase::Stopping(outcome));
+            enter_stopping_active(m, outcome);
         }
     }
     kernel_proof! {
@@ -147,6 +144,24 @@ pub(super) fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
         allocation_stopping_lemmas::stopping_frame(before@, *m, outcome);
         allocation_stopping_lemmas::stopping_progress(before@, *m, outcome);
     }
+}
+}
+
+kernel_fn! {
+/// The active stopping mutation retains an exact whole-node frame.
+fn enter_stopping_active(m: &mut Node, outcome: Outcome) -> (result: ()) [
+    requires !(old(m).phase is Closed || old(m).phase is Stopping),
+        old(m).generation < u64::MAX,
+    ensures *final(m) == (Node {
+        question: None, waiting_incident: false, incident_needs_rob: false,
+        phase: Phase::Stopping(outcome), pos: 0, ticket: None,
+        generation: (old(m).generation + 1) as u64, ..*old(m)
+    }),
+] {
+    m.question = None;
+    m.waiting_incident = false;
+    m.incident_needs_rob = false;
+    set_phase(m, Phase::Stopping(outcome));
 }
 }
 

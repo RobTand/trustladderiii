@@ -134,7 +134,9 @@ pub(super) fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
         final(m).fx_failures == 0, final(m).fx_incidents == 0,
         final(m).last_cmd == old(m).last_cmd,
 ] {
+    kernel_snapshot! { before_confirmed = *m }
     confirmed_resources(m, kind);
+    kernel_proof! { cleanup_lemmas::resource_distance(before_confirmed@, *m); }
     confirmed_agenda(m, kind);
 }
 }
@@ -151,10 +153,7 @@ fn confirmed_resources(m: &mut Node, kind: EffectKind) -> (result: ()) [
             worktree: if kind == EffectKind::RemoveWorktree { false } else { old(m).worktree },
             ..*old(m)
         }),
-        distance(*final(m)) == distance(*old(m)),
-        (settle_shape(*old(m)) ==> settle_shape(*final(m))),
 ] {
-    kernel_snapshot! { before_confirmed = *m }
     m.fx_failures = 0;
     m.fx_incidents = 0;
     match kind {
@@ -167,7 +166,6 @@ fn confirmed_resources(m: &mut Node, kind: EffectKind) -> (result: ()) [
         EffectKind::RemoveWorktree => m.worktree = false,
         _ => {}
     }
-    kernel_proof! { cleanup_lemmas::resource_distance(before_confirmed@, *m); }
 }
 }
 
