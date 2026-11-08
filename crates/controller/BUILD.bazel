@@ -22,11 +22,13 @@ tl3_crate(
     ],
     bins = [
         "tl3",
+        "tl3-run-backend",
         "tl3-worker-supervisor",
         "tl3d",
     ],
     examples = {
         "checker-vectors": "examples/checker-vectors.rs",
+        "fx-stage-packet": "examples/fx-stage-packet.rs",
         "p5-vectors": "examples/p5-vectors.rs",
         "pb_trial": "examples/pb_trial.rs",
         "tl3-deploy": "//deploy/dl380g10:helper.rs",

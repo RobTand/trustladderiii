@@ -2996,6 +2996,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "glob",
+ "schemars",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -3020,6 +3021,7 @@ dependencies = [
 name = "tl3-controller"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "fancy-regex 0.18.0",
  "hex",

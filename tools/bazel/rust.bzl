@@ -107,6 +107,7 @@ _CONTROLLER_WORKERS = [
     "test_test_p5_checker",
 ]
 _CONTROLLER_BINARIES = {
+    "test_test_run_backend_cli": [":tl3-run-backend"],
     "test_test_worker_supervisor": [":tl3-worker-supervisor"],
     "test_test_workers": [":tl3"],
     "test_test_console_commands": [":tl3d"],
@@ -435,6 +436,9 @@ def _crate_test(kind, package, name, source, harness, options):
             use_libtest_harness = harness,
             aliases = aliases(normal = True, normal_dev = True),
             deps = options["deps"],
-            gate_args = (["--libtest-select=loom_"] if name == "tl3_controller_loom" else
-                         (["--gate-group=" + group] if group else [])),
+            # Shared-mount Flux fixtures run in the admitted PB check script. RBE
+            # cannot create the fixed /mnt/shared output root; select its wire tests.
+            gate_args = (["--libtest-select=cli_schema", "--libtest-select=malformed_requests", "--libtest-select=optional_reviewed", "--libtest-select=protocol_bounds"] if name == "run_backend_cli" else
+                         (["--libtest-select=loom_"] if name == "tl3_controller_loom" else
+                          (["--gate-group=" + group] if group else []))),
         )

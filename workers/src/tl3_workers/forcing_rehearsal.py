@@ -138,7 +138,8 @@ class ForcingRehearsals:
 
     def submitted(self, key, base, tree):
         self.actions += 1
-        self.active['inflight'] = {'key': key, 'tree': tree, 'identity': self.worktree.pb_identity}
+        self.active['inflight'] = {'key': key, 'tree': tree, 'identity': self.worktree.pb_identity,
+                                   'backend': self.worktree.test_settings.backend}
         self.persist()
 
     def source(self, module):

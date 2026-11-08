@@ -654,14 +654,30 @@ fn decode_event(value: Value, role: Option<&str>, postmortem: bool, inputs: &Val
 
 fn external_wait(value: &Value) -> Option<tl3_store::ExternalWait> {
     let wait: tl3_store::ExternalWait = serde_json::from_value(value.get("wait")?.clone()).ok()?;
-    let owner_valid = wait.upstream == "prismabuild";
+    let owner_valid = matches!(wait.upstream.as_str(), "prismabuild" | "flux");
     let key_valid =
         !wait.key.is_empty() && wait.key.len() <= 256 && !wait.key.chars().any(char::is_control);
     (owner_valid
         && key_valid
-        && (wait.upstream != "prismabuild"
-            || wait.key.parse::<tl3_prismabuild::ActionKey>().is_ok()))
+        && match wait.upstream.as_str() {
+            "prismabuild" => wait.key.parse::<tl3_prismabuild::ActionKey>().is_ok(),
+            "flux" => wait
+                .key
+                .strip_prefix("worker:")
+                .is_some_and(|key| crate::run_backend::hex(key, 64)),
+            _ => false,
+        })
     .then_some(wait)
+}
+
+#[test]
+fn flux_external_wait_uses_worker_reference_not_native_job_id() {
+    let event = serde_json::json!({"wait": {"upstream": "flux", "key": format!("worker:{}", "a".repeat(64))}});
+    assert!(external_wait(&event).is_some());
+    for key in ["fABC", "worker:invalid", "a".repeat(64).as_str()] {
+        let event = serde_json::json!({"wait": {"upstream": "flux", "key": key}});
+        assert!(external_wait(&event).is_none());
+    }
 }
 
 pub(super) fn parse_reply(

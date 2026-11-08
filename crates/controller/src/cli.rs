@@ -352,7 +352,7 @@ fn production(config: tl3_config::Config) -> Result<()> {
     let mut sources = crate::ingress::Sources::default();
     sources.register(registration.webhooks);
     sources.register(registration.workers);
-    sources.register(registration.bell);
+    registration.bell.register(&mut sources);
     sources.register(crate::console::Wakes::new(config.store.clone()));
     sources.run(&mut controller)
 }

@@ -53,9 +53,9 @@ impl Executor for Fake {
     }
 }
 
-mod checks;
+pub(crate) mod checks;
 mod decide;
-mod results;
+pub(crate) mod results;
 mod source;
 pub(crate) use checks::validate_plan_size;
 pub use checks::{Check, CheckRun, Kind};

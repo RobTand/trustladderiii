@@ -24,3 +24,9 @@ py_binary(
     srcs = ["recover_setup_incidents.py"],
     visibility = ["//visibility:public"],
 )
+
+py_binary(
+    name = "fx2_stage_packet",
+    srcs = ["fx2_stage_packet.py"],
+    visibility = ["//visibility:public"],
+)

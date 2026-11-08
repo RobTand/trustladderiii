@@ -38,6 +38,9 @@
     },
     "publication_branch": {
       "$ref": "ingest-input.json#/$defs/publication_branch"
+    },
+    "tests": {
+      "$ref": "maker-input.json#/properties/tests"
     }
   },
   "required": [

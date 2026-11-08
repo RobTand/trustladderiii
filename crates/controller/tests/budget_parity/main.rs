@@ -114,6 +114,12 @@ fn io_checkpoint_mutants() {
     assert!(response["ok"] == true, "{}", response["error"]);
 }
 
+#[test]
+fn io_checkpoint_backend_migration_golden() {
+    let response = Python::new("io_migration_golden").check(&[0]);
+    assert!(response["ok"] == true, "{}", response["error"]);
+}
+
 macro_rules! case { ($($name:ident),*) => {$(#[test] fn $name() { parity(stringify!($name)); })*}; }
 case!(
     forecast,
