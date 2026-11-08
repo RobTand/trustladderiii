@@ -1379,7 +1379,7 @@ def _flux_planning(case, capabilities, checks):
 
 @pytest.mark.parametrize('case', FLUX_EVIDENCE_REPLAY['cases'], ids=lambda case: case['request'])
 def test_flux_planning_replay_injects_observer_duty_on_admitted_capability(case):
-    # #1574/#1455 at 1077: preflight injected prismabuild_pytest + cas_receipt, so the
+    # #1574/#1455 at 1077: preflight injected the removed PrismaBuild executor and receipt, so the
     # admitted Flux capability refused it and repair ended in cant_meet.
     capability = FLUX_EVIDENCE_REPLAY['admitted_capability']
     reply, objections = _flux_planning(case, [copy.deepcopy(capability)], [PROOF_CHECK])

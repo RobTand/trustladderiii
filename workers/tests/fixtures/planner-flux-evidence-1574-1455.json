@@ -11,7 +11,7 @@
    "briefs.evidence_contract",
    "audits.evidence_contract"
   ],
-  "note": "Sanitized projection of the first Flux planning window at tl3 1077eac5. The planner drafts were not retained; the live objection proves a proof check with subjects reached preflight. admitted_capability is what 1077 admitted: crates/config/src/lib.rs evidence_tools() with effective_tool_capabilities(2) (tessera test cpus 2, matching the native_threads_2 source rows), then the crates/controller/src/adapters/workers.rs:640-653 Flux rewrite. The recorded missing list [executor=prismabuild_pytest, artifacts=cas_receipt] confirms it."
+  "note": "Sanitized projection of the first Flux planning window at tl3 1077eac5. The planner drafts were not retained; the live objection proves a proof check with subjects reached preflight. admitted_capability is what 1077 admitted: crates/config/src/lib.rs evidence_tools() with effective_tool_capabilities(2) (tessera test cpus 2, matching the native_threads_2 source rows), then the crates/controller/src/adapters/workers.rs:640-653 Flux rewrite. The recorded missing list [executor=<removed PB executor>, artifacts=<removed PB receipt>] confirms it. live_evidence_objections name the removed PrismaBuild executor and receipt as placeholders; live_evidence_objection_sha256 hashes the recorded text."
  },
  "admitted_capability": {
   "tool": "run_tests",
@@ -261,7 +261,7 @@
    ],
    "live_plan_kind": "cant_meet",
    "live_evidence_objections": [
-    "Unsupported evidence requirement: Run the head observer against the base subject and the head subject. (executor=prismabuild_pytest, artifacts=cas_receipt).",
+    "Unsupported evidence requirement: Run the head observer against the base subject and the head subject. (executor=<removed PB executor>, artifacts=<removed PB receipt>).",
     "Return evidence_contract with source requirements and separately marked method choices."
    ],
    "live_other_objections": [
@@ -273,6 +273,10 @@
      "rule": "check.base_missing",
      "diagnostic": "Existing check must name a test defined at the base: tests/test_impacted_tests.py::test_which_helper_pytest_executed. A new assertion observer needs a demonstrating check; adding it only at head cannot repair an original-base regression."
     }
+   ],
+   "live_evidence_objection_sha256": [
+    "aa2a764d8a21950ae9bf5f5f1dd33ddb1c81a303441b6c0f89680fa17dd6b927",
+    "73e5a20334473b10d642b66e3cd59d40f487480420229810f032e6f4efda2669"
    ]
   },
   {
@@ -389,10 +393,14 @@
    ],
    "live_plan_kind": "cant_meet",
    "live_evidence_objections": [
-    "Unsupported evidence requirement: Run the head observer against the base subject and the head subject. (executor=prismabuild_pytest, artifacts=cas_receipt).",
+    "Unsupported evidence requirement: Run the head observer against the base subject and the head subject. (executor=<removed PB executor>, artifacts=<removed PB receipt>).",
     "Return evidence_contract with source requirements and separately marked method choices."
    ],
-   "live_other_objections": []
+   "live_other_objections": [],
+   "live_evidence_objection_sha256": [
+    "aa2a764d8a21950ae9bf5f5f1dd33ddb1c81a303441b6c0f89680fa17dd6b927",
+    "73e5a20334473b10d642b66e3cd59d40f487480420229810f032e6f4efda2669"
+   ]
   }
  ]
 }

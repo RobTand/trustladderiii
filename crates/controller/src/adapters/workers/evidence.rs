@@ -745,8 +745,8 @@ mod ingest_tests {
         }
     }
 
-    /// #1574/#1455 at 1077: the injected observer duty named prismabuild_pytest and
-    /// cas_receipt, so the admitted Flux capability refused it and planning ended in
+    /// #1574/#1455 at 1077: the injected observer duty named the removed PrismaBuild
+    /// executor and receipt, so the admitted Flux capability refused it and planning ended in
     /// cant_meet. The capability is what 1077 admitted for tessera (2 test CPUs).
     fn flux_1077_capability() -> Value {
         json!({"tool":"run_tests", "executor":"flux_pytest",
