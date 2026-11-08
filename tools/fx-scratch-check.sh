@@ -25,6 +25,13 @@ else
  check fmt /home/rob/.cargo/bin/cargo fmt --all
  git diff > "$fx_out/format.patch"
 fi
+# Canonical activation fixtures need the admitted shared root and serial execution.
+check activation-cli /home/rob/.cargo/bin/cargo build --bin tl3 --locked
+fx_cli_target=${CARGO_TARGET_DIR:-"$PWD/target"}
+case "$fx_cli_target" in /*) ;; *) fx_cli_target="$PWD/$fx_cli_target" ;; esac
+export TL3_BINARY="$fx_cli_target/debug/tl3"
+check activation /home/rob/.cargo/bin/cargo test -p tl3-controller --lib --locked adapters::flux_checks::activation::tests -- --include-ignored --test-threads=1
+check worker-activation /home/rob/.cargo/bin/cargo test -p tl3-controller --lib --locked direct_prepare_requires_deployment_activation_and_checks_actual_options -- --include-ignored --test-threads=1
 check python /home/rob/venvs/pb-cpu/bin/python -m pytest -q --basetemp="$fx_clone/pytest" harness/tests/test_scratch_cleanup.py harness/tests/test_launch_failure.py harness/tests/test_runtime_launcher.py
 for fx_test in ${FX_SCRATCH_TESTS:-generated_action_sigterm_unwinds_workspace generated_action_sigkill_reclaims_after_cancel_and_timeout terminal_scratch_guards_keep_ordinary_leftovers_and_reject_bad_external_evidence jobspec_and_native_access_environment_are_exact_and_exclude_caller_sentinels}; do
  check "$fx_test" /home/rob/.cargo/bin/cargo test -p tl3-controller --test run_backend_cli --locked "$fx_test" -- --exact --include-ignored --test-threads=1 --nocapture

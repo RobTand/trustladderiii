@@ -85,7 +85,7 @@ fn during_catch_up(settings: &tl3_config::Store) {
         receipt_store(settings),
         bootstrap(),
         b"test-secret".to_vec(),
-        Some(CatchUp::new(BTreeMap::from([(3, client(&api.uri()))])).unwrap()),
+        Some(CatchUp::new(BTreeMap::from([(3, client(&api.uri()))]), vec![]).unwrap()),
     )
     .unwrap();
     let address = source.address();
@@ -253,9 +253,21 @@ fn loop_scenarios(database: &mut support::Database) {
             Store::open(&settings).unwrap(),
             bootstrap(),
             b"test-secret".to_vec(),
-            Some(CatchUp::new(BTreeMap::from([(3, client(&api.uri()))])).unwrap()),
+            Some(CatchUp::new(BTreeMap::from([(3, client(&api.uri()))]), vec![]).unwrap()),
         )
         .unwrap();
+        let startup_cursor = Store::open(&settings)
+            .unwrap()
+            .ingress_cursor("github-catch-up")
+            .unwrap()
+            .expect("fresh startup commits its boundary before history fetch");
+        assert_eq!(
+            Store::open(&settings)
+                .unwrap()
+                .ingress_cursor("github-world-start")
+                .unwrap(),
+            Some(startup_cursor.clone())
+        );
         let address = source.address();
         let control = source.control();
         let (sender, wakes) = mpsc::channel();
@@ -295,12 +307,13 @@ fn loop_scenarios(database: &mut support::Database) {
                 calls.recv_timeout(Duration::from_millis(250)).is_err(),
                 "failed passes must wait for an event, without a timer"
             );
-            assert!(
+            assert_eq!(
                 Store::open(&settings)
                     .unwrap()
                     .ingress_cursor("github-catch-up")
-                    .unwrap()
-                    .is_none()
+                    .unwrap(),
+                Some(startup_cursor),
+                "a failed history fetch must leave the committed startup boundary unchanged"
             );
             assert_eq!(
                 post(address, "retry-event", false, fixture(false), true),

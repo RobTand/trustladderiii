@@ -65,13 +65,14 @@ fn fixture_credentials_are_fast_and_repeatable() {
 }
 
 #[test]
-fn flux_selection_holds_legacy_pb_bindings_without_reinterpreting_them() {
+fn flux_activation_refusal_preserves_legacy_pb_evidence() {
     for suffix in ["job", "wait", "done"] {
         for node in ["", "0"] {
             let root = tempfile::tempdir().unwrap();
             let mut config = config(root.path());
             config.execution_backend = tl3_config::ExecutionBackend::Flux;
             config.flux = Some(tl3_config::Flux {
+                activation: None,
                 instance_generation: "disposable-generation".into(),
                 executable: "/opt/flux/bin/flux".into(),
                 backend_cli: "/opt/tl3/bin/tl3-run-backend".into(),
@@ -102,13 +103,10 @@ fn flux_selection_holds_legacy_pb_bindings_without_reinterpreting_them() {
             let binding = directory.join(format!("legacy.{suffix}"));
             fs::write(&binding, "legacy PB evidence, deliberately not a Flux ID").unwrap();
             let error = match production::register(&config) {
-                Ok(_) => panic!("Flux silently adopted legacy PB evidence"),
+                Ok(_) => panic!("Flux accepted an absent activation record"),
                 Err(error) => error,
             };
-            assert!(
-                error.to_string().contains("drain or explicitly hold"),
-                "{error}"
-            );
+            assert!(error.to_string().contains("flux.activation"), "{error}");
             assert_eq!(
                 fs::read_to_string(binding).unwrap(),
                 "legacy PB evidence, deliberately not a Flux ID"
@@ -305,15 +303,12 @@ fn selected_flux_refuses_unprovisioned_runtime_without_pb_fallback() {
         Ok(_) => panic!("unprovisioned Flux selection entered a backend"),
         Err(error) => error,
     };
-    assert!(
-        error.to_string().contains("Flux runtime preparation"),
-        "{error}"
-    );
+    assert!(error.to_string().contains("flux.activation"), "{error}");
 }
 
 /// FX: actual production composition selects Flux without dereferencing absent PB settings.
 #[test]
-fn selected_flux_constructs_real_adapter_and_source_without_pb_or_native_launch() {
+fn selected_flux_registration_refuses_absent_activation_without_pb_or_native_launch() {
     let root = tempfile::tempdir().unwrap();
     let mut config = config(root.path());
     config.execution_backend = tl3_config::ExecutionBackend::Flux;
@@ -325,19 +320,14 @@ fn selected_flux_constructs_real_adapter_and_source_without_pb_or_native_launch(
     let mut ownership =
         tl3_controller::Ownership::claim(tl3_store::Store::open(&settings).unwrap()).unwrap();
     let mut registry = tl3_controller::executor::Registry::default();
-    let source = production::register_execution(
+    let result = production::register_execution(
         &config,
         &root.path().join("records"),
         &mut registry,
         &mut ownership,
-    )
-    .unwrap_or_else(|error| panic!("selected Flux production composition failed: {error}"));
-    assert!(matches!(source, production::CheckSource::Flux { .. }));
-    assert_eq!(
-        registry.registered_types().get(&Upstream::PrismaBuild),
-        Some(&"tl3_controller::adapters::flux_checks::Adapter")
     );
+    assert!(matches!(result,Err(ref error) if error.to_string() == "flux.activation"));
     assert!(!root.path().join("records/prismabuild").exists());
-    drop((source, registry, ownership));
+    drop((registry, ownership));
     database.stop();
 }

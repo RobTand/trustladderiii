@@ -1,0 +1,113 @@
+import contextlib
+import hashlib
+import importlib.util
+import io
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tarfile
+import tempfile
+import urllib.request
+import zipfile
+from types import SimpleNamespace
+from unittest.mock import patch
+
+OUT = Path('/mnt/shared/agent-artifacts/fresh-init-pgutil')
+BASE = 'ae284c1047efe61fef86da2c66be3008fb4b2916'
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+with tempfile.TemporaryDirectory(prefix='pgutil-baseline-') as tmp:
+    scratch = Path(tmp)
+    source = scratch / 'baseline'
+    source.mkdir()
+    archived = subprocess.check_output(['/usr/bin/git', 'archive', BASE], timeout=60)
+    with tarfile.open(fileobj=io.BytesIO(archived)) as archive:
+        archive.extractall(source, filter='data')
+    deploy = load('baseline_deploy', source / 'deploy/dl380g10/deploy.py')
+    archive = OUT / 'postgres.jar'
+    if not archive.exists():
+        try:
+            deploy.checked_download(deploy.PG_URL, deploy.PG_SHA256, archive)
+        except Exception as error:
+            print('PRIMARY_DOWNLOAD_FAILED', type(error).__name__, flush=True)
+            deploy.checked_download(deploy.PG_URL.replace('repo1.maven.org', 'repo.maven.apache.org'), deploy.PG_SHA256, archive)
+    assert hashlib.sha256(archive.read_bytes()).hexdigest() == deploy.PG_SHA256
+    pg = OUT / 'pinned-pg'
+    if not pg.exists():
+        with zipfile.ZipFile(archive) as jar:
+            txz, = [name for name in jar.namelist() if name.endswith('.txz')]
+            with tarfile.open(fileobj=io.BytesIO(jar.read(txz)), mode='r:xz') as tar:
+                tar.extractall(pg, filter='data')
+    inventory = sorted(p.name for p in (pg / 'bin').iterdir())
+    assert inventory == ['initdb', 'pg_ctl', 'postgres'], inventory
+    cluster = OUT / 'initdb-data'
+    if not cluster.exists():
+        subprocess.run([str(pg / 'bin/initdb'), '-D', str(cluster), '-U', 'tl3', '--auth=trust', '--no-locale'], check=True, capture_output=True, timeout=60)
+    home = scratch / 'home'
+    home.mkdir(mode=0o700)
+    root, config, binaries = deploy.paths(home)
+    binaries.parent.mkdir(parents=True, mode=0o700)
+    binaries.symlink_to(pg, target_is_directory=True)
+    shutil.copytree(cluster, root / 'postgres/data')
+    (root / 'postgres/socket').mkdir(mode=0o700)
+    controller = root / 'worker-runs/.controller'
+    names = ['direct-merge', 'workers', 'writer', 'github', 'mergify', 'prismabuild']
+    for name in names:
+        (controller / name).mkdir(parents=True, mode=0o700)
+    deploy.write_file(config / 'tl3.toml', b'[github]\nwebhook_listen="127.0.0.1:8742"\n')
+    deploy.write_file(config / 'production-ready', b'')
+    selected = home / 'selected'
+    selected.mkdir(mode=0o700)
+    for name in deploy.RELEASE_BINARIES:
+        deploy.write_file(selected / name, b'#!/bin/sh\nexit 0\n', 0o700)
+    hashes = {name: hashlib.sha256((selected / name).read_bytes()).hexdigest() for name in deploy.RELEASE_BINARIES}
+    deploy.write_file(selected / 'SOURCE.json', json.dumps({'head': BASE, 'binaries': hashes}).encode())
+    deploy.write_file(selected / 'SHA256SUMS', ''.join(f'{digest}  {name}\n' for name,digest in hashes.items()).encode())
+    args = SimpleNamespace(home=home, head=BASE, lane='release', binaries=selected, backup=home / 'backups/new', state_manifest=home / 'scope.json')
+    deploy.write_file(args.state_manifest, b'synthetic scope')
+    sources = {'data': root / 'postgres/data', 'config': config, 'controller': controller}
+    for path in sources.values():
+        path.chmod(0o700)
+    reset = ['controller/' + name for name in names]
+    states = {unit: 'inactive' for unit in [*deploy.CLIENT_UNITS, 'tl3-postgres.service']}
+    calls = []
+    real_run = deploy.run
+    def run(command, **kwargs):
+        argv = list(map(str, command))
+        calls.append(argv)
+        if argv[:2] == ['systemctl', '--user']:
+            if argv[2] == 'show':
+                return (states[argv[3]] + '\n').encode()
+            if argv[2] in ('stop', 'start'):
+                states[argv[3]] = 'inactive' if argv[2] == 'stop' else 'active'
+            return b''
+        if 'qualify-fresh' in argv:
+            return b''
+        return real_run(command, **kwargs)
+    try:
+        with patch.object(deploy, 'fresh_scope', return_value=(sources, reset, config / 'tl3.toml')), patch.object(deploy, 'run', side_effect=run):
+            deploy.fresh_init(args)
+    except FileNotFoundError as error:
+        assert error.filename == str(binaries / 'bin/pg_controldata'), error.filename
+        assert not (args.backup / 'reset-context.json').exists()
+        assert not any('fresh-database' in call for call in calls)
+        assert all(not list((controller / name).iterdir()) for name in names)
+        result = {'verdict':'EXPECTED_RED', 'exception': type(error).__name__, 'missing': 'bin/pg_controldata', 'baseline':BASE, 'archive_sha256':deploy.PG_SHA256, 'bin_inventory':inventory, 'backup_created':True, 'six_roots_empty':True, 'context_published':False, 'sql_capability_consumed':False, 'baseline_deploy_sha256':hashlib.sha256((source / 'deploy/dl380g10/deploy.py').read_bytes()).hexdigest()}
+        (OUT / 'baseline-red.json').write_text(json.dumps(result, indent=2) + '\n')
+        print(json.dumps(result), flush=True)
+    else:
+        raise AssertionError('baseline did not reproduce the named failure')
+    (OUT / 'pg_control.initdb').write_bytes((cluster / 'global/pg_control').read_bytes())
+    for name in ['src/include/catalog/pg_control.h', 'src/include/access/xlog_internal.h', 'src/include/port/pg_crc32c.h', 'src/common/controldata_utils.c']:
+        content = urllib.request.urlopen('https://raw.githubusercontent.com/postgres/postgres/REL_17_4/' + name, timeout=60).read()
+        (OUT / Path(name).name).write_bytes(content)
+    print((OUT / 'pg_control.h').read_text(), flush=True)
+    print((OUT / 'controldata_utils.c').read_text(), flush=True)
+print('SCRATCH_CLEANUP_PASS', flush=True)

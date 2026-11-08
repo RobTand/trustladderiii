@@ -1,0 +1,104 @@
+{
+  "admitted_source_equality_verified": true,
+  "deploy_py_changed": false,
+  "deployment_authority": false,
+  "exact_head_red": "../v2/RESCOPE.RED.CONTROL.audit.json",
+  "expiry": "Delete adapter and loading hook at K5",
+  "files": {
+    "K5-REMOVAL.md": {
+      "bytes": 794,
+      "sha256": "70ba0193b5bb93de947d953b19a1e07f274a02251b2b0d8d4078edc9143f4590"
+    },
+    "REVIEW-DISPOSITION.md": {
+      "bytes": 4813,
+      "sha256": "95cfc261eb3436d7c92c4bbb252b8f9a05eda55ea7b0efd12dfed62ab58f1e66"
+    },
+    "dev_evidence.baseline.py": {
+      "bytes": 23581,
+      "sha256": "c1e674e6172687c80f5a885e60f89d884da3dd639aa277df431b069db0f2560a"
+    },
+    "dev_evidence.candidate.py": {
+      "bytes": 24314,
+      "sha256": "10d4cedb8229f84a03c4723902f9a1e0d376a1fe3f2b830b5509b29456566816"
+    },
+    "pb_nightly.py": {
+      "bytes": 27571,
+      "sha256": "be2395828079fd9a69da8a3ec16ce1a57e809254c2b6e4420fb39725f0335a1e"
+    },
+    "qualified-derive_pb_sizing.py": {
+      "bytes": 7119,
+      "sha256": "094c79d5729241a063e35f3bae6fff6c795e556c68e050176c654335cb7d227f"
+    },
+    "source.patch": {
+      "bytes": 2307,
+      "sha256": "55ad028354a6582f5aa9f156d4ab97575b4dea3fec2327fbd0a308d0ba6a05cd"
+    },
+    "submit-fixtures.py": {
+      "bytes": 4103,
+      "sha256": "db35e81d513ae5ea4c395b644ed5f7f7a60b2204f9a519512a85504d52183a73"
+    },
+    "test_pb_nightly.py": {
+      "bytes": 38691,
+      "sha256": "4fa75276f9a482b17bd809b84b5dbe1472b9ac16b67f3cdc79373c49cfb1bb53"
+    }
+  },
+  "frozen_at": "2026-11-08T03:36:33.615521+00:00",
+  "github_route_preserved": true,
+  "green": {
+    "CAS_verified": true,
+    "cleanup_complete": true,
+    "key": "c253aa517777277e999613c4b8861af054c7e1f61555a8bfe1aed77996aab521",
+    "logs": {
+      "stderr": {
+        "bytes": 46,
+        "path": "attempts/c253aa517777277e999613c4b8861af054c7e1f61555a8bfe1aed77996aab521/49065a7018a2d29e8fb771921edead5800e76abb9b3fdd7ba49d49da2913d089/00000001.stderr.e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c.log",
+        "sha256": "e53e6c1a643c3ce9d00407937e7616ea827d5ad6f1f283a8b0e8c7f634c59a7c"
+      },
+      "stdout": {
+        "bytes": 9184,
+        "path": "attempts/c253aa517777277e999613c4b8861af054c7e1f61555a8bfe1aed77996aab521/49065a7018a2d29e8fb771921edead5800e76abb9b3fdd7ba49d49da2913d089/00000001.stdout.0dc56b9d9964f5f27328ee23067e2c076e3a6861f0cdfff7aaca2522e0c8b39b.log",
+        "sha256": "0dc56b9d9964f5f27328ee23067e2c076e3a6861f0cdfff7aaca2522e0c8b39b"
+      }
+    },
+    "payload": {
+      "bytes": 6307,
+      "sha256": "603438eeda33b11dea55924dcf893289ef592ac8c4751b0cc26b3dba94b21f21"
+    },
+    "receipt_sha256": "f519cccfbd22b867dd3d40b32bda85d61ad6d5abdd05501a1375f4658c5c8281",
+    "returncode": 0,
+    "source_parent": "7cba86d2e71ae39b246ec71b16e377da095e12dc",
+    "state": "done"
+  },
+  "information_only_never_index_replacement": true,
+  "informational_leaf": "edbb77262a4aa10b60d0904180fb7c14636b1de85c4fdab233a1292c2e1b5d0c",
+  "installed_preimage_sha256": "c1e674e6172687c80f5a885e60f89d884da3dd639aa277df431b069db0f2560a",
+  "oom_capped_observations_are_not_measured_peaks": true,
+  "oom_red": {
+    "CAS_verified": false,
+    "cleanup_complete": true,
+    "key": "654f4d18cd3d7089d7f770cff5dab69bae902fb7fb61f8bc3235707f5cbb9d0c",
+    "logs": {
+      "stderr": {
+        "bytes": 931,
+        "path": "attempts/654f4d18cd3d7089d7f770cff5dab69bae902fb7fb61f8bc3235707f5cbb9d0c/10510b28561738ddcdabd8982aaac0892e829438d57085af5e44d70e09c116ac/00000001.stderr.9dbefed48faed2c2f19f8e8eb5f5b29bc7194671d033e67149d9adce05382ee6.log",
+        "sha256": "9dbefed48faed2c2f19f8e8eb5f5b29bc7194671d033e67149d9adce05382ee6"
+      },
+      "stdout": {
+        "bytes": 859,
+        "path": "attempts/654f4d18cd3d7089d7f770cff5dab69bae902fb7fb61f8bc3235707f5cbb9d0c/10510b28561738ddcdabd8982aaac0892e829438d57085af5e44d70e09c116ac/00000001.stdout.777195ec4158d64f4b7418ee4f473052ae2e4119019eda903916e04666ac4c94.log",
+        "sha256": "777195ec4158d64f4b7418ee4f473052ae2e4119019eda903916e04666ac4c94"
+      }
+    },
+    "returncode": 1,
+    "source_parent": "7cba86d2e71ae39b246ec71b16e377da095e12dc",
+    "state": "failed"
+  },
+  "parent_disposition": "M1/M2 and OOM sizing correction fixed and PB-qualified; captain final disposition pending",
+  "review": "../v2/SONNET-HIGH-REVIEW.md",
+  "review_verdict": "REQUEST_CHANGES",
+  "schema": "tl3.ops.pb-nightly-adapter-source.v4",
+  "skips": 0,
+  "status": "PARENT_QUALIFIED_CAPTAIN_INTAKE_NOT_INSTALLED",
+  "successful_non_oom_measurement_actions": 78,
+  "test_count": 44
+}

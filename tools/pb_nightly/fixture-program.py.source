@@ -1,0 +1,36 @@
+import sys, types, unittest, tempfile, subprocess, pathlib, hashlib, json
+source, tests, reader_source, gate_source, sizing_source = sys.argv[1:6]
+pb = types.ModuleType('pb_nightly')
+sys.modules['pb_nightly'] = pb
+exec(compile(source, 'pb_nightly.py', 'exec'), pb.__dict__)
+reader_dir = tempfile.TemporaryDirectory(prefix='pb-nightly-safe-reader-')
+reader_path = pathlib.Path(reader_dir.name) / 'pb_record.py'
+reader_path.write_text(reader_source)
+pb.READER = str(reader_path)
+test = types.ModuleType('test_pb_nightly')
+test.GATE_SOURCE = gate_source
+test.SIZING_SOURCE = sizing_source
+exec(compile(tests, 'test_pb_nightly.py', 'exec'), test.__dict__)
+result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromModule(test))
+if not result.wasSuccessful(): raise SystemExit(1)
+print('DECLARED_SAFE_READER_SHA256 '+hashlib.sha256(reader_source.encode()).hexdigest(),flush=True)
+sys.path.append(pb.PB_SOURCE)
+from prismabuild.core import PrismaBuildCAS
+cas = PrismaBuildCAS(pb.CAS_ROOT)
+action = cas.read_action_request('5cb0194c77eb4fdb72f40f351065c0d73028066bcf850ec6600b45e3fc448224')
+snapshot = action['params']['checkout_snapshot']
+run = test.PbNightlyTests.run_identity_data
+pb.source_verifier(cas, run)(snapshot['input']['sha256'], snapshot['input']['bytes'], snapshot['commit'])
+gate, budgets = pb.frozen_policy(pathlib.Path.cwd(), run.head)
+actual=pb.authenticated_leaf(cas, pb.source_verifier(cas,run), gate,budgets, 'advance_auditing', '5cb0194c77eb4fdb72f40f351065c0d73028066bcf850ec6600b45e3fc448224', 0, run)
+assert actual['verdict'] == 'SUCCESSFUL'
+pb.validate_environment(action['environment']['variables'])
+print('ACTUAL_SEALED_SOURCE_AND_ENV_PASS', flush=True)
+with tempfile.TemporaryDirectory(prefix='pb-nightly-adapter-fixtures-') as tmp:
+    paths = []
+    for name, content in [('pb_nightly.py',source),('test_pb_nightly.py',tests),('derive_pb_sizing.py',sizing_source)]:
+        p=pathlib.Path(tmp)/name; p.write_text(content); paths.append(str(p))
+    subprocess.run(['/home/rob/.local/bin/uvx','--from','ruff==0.14.14','ruff','check','--select','E9,F',*paths],check=True)
+    candidate=pathlib.Path(tmp)/'dev_evidence.py';candidate.write_text(gate_source)
+    subprocess.run(['/home/rob/.local/bin/uvx','--from','ruff==0.14.14','ruff','check','--select','E9,F','--ignore','F401',str(candidate)],check=True)
+print('PB_NIGHTLY_ADAPTER_FIXTURES_V4 '+json.dumps({'tests':result.testsRun,'skips':len(result.skipped),'adapter_sha256':hashlib.sha256(source.encode()).hexdigest(),'tests_sha256':hashlib.sha256(tests.encode()).hexdigest(),'hook_sha256':hashlib.sha256(gate_source.encode()).hexdigest(),'sizing_source_sha256':hashlib.sha256(sizing_source.encode()).hexdigest()}),flush=True)

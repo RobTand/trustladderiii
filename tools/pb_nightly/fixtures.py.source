@@ -1,0 +1,528 @@
+import copy
+import json
+import hashlib
+import tempfile
+from pathlib import Path
+import unittest
+from unittest.mock import patch
+
+import pb_nightly as pb
+
+
+DRIVER_TEMPLATE = '"""Run one unchanged frozen Kani harness inside a PB-admitted exact-source clone."""\nimport hashlib\nimport importlib.util\nimport json\nimport os\nfrom pathlib import Path\nimport platform\nimport subprocess\nimport sys\nimport time\nimport unittest\n\nHEAD = "7cba86d2e71ae39b246ec71b16e377da095e12dc"\nTREE = "f23ebf101bab8def3856d0e2086ef89b3bbb8226"\n\n\ndef load_gate(root, expected):\n    for relative, digest in expected.items():\n        if hashlib.sha256((root / relative).read_bytes()).hexdigest() != digest:\n            raise ValueError("frozen input hash mismatch: " + relative)\n    sys.path.insert(0, str(root / "tools/ci"))\n    spec = importlib.util.spec_from_file_location("frozen_kani_gate", root / "tools/ci/kani_gate.py")\n    gate = importlib.util.module_from_spec(spec)\n    spec.loader.exec_module(gate)\n    return gate\n\n\ndef exact_source(root):\n    def git(*args):\n        return subprocess.check_output(["git", *args], cwd=root, timeout=30).decode().strip()\n    if git("rev-parse", "HEAD") != HEAD or git("rev-parse", "HEAD^{tree}") != TREE:\n        raise ValueError("not the frozen release source")\n    if git("status", "--porcelain=v1", "--untracked-files=all"):\n        raise ValueError("tracked/untracked source dirt refused")\n\n\ndef kani_version(output, expected):\n    version = output.splitlines()[0] if output.splitlines() else ""\n    if version != f"Kani Rust Verifier {expected} (cargo plugin)":\n        raise ValueError("installed Kani version mismatch; no shared toolchain mutation")\n    return version\n\n\ndef fixtures(gate):\n    class TransportTests(unittest.TestCase):\n        def test_version_with_cbmc_line(self):\n            self.assertEqual(kani_version("Kani Rust Verifier 0.68.0 (cargo plugin)\\nCBMC 6.11.0\\n", "0.68.0"),\n                             "Kani Rust Verifier 0.68.0 (cargo plugin)")\n            with self.assertRaises(ValueError):\n                kani_version("Kani Rust Verifier 0.69.0 (cargo plugin)\\nCBMC 6.11.0\\n", "0.68.0")\n\n        def test_complete_frozen_inventory(self):\n            self.assertEqual(set(gate.harnesses()), set(gate.load_budgets()))\n            self.assertEqual(len(gate.harnesses()), 78)\n\n        def test_success_requires_cover(self):\n            self.assertEqual(gate.verdict("VERIFICATION:- SUCCESSFUL\\n", 0, False)["verdict"], "FAILED")\n\n        def test_unsatisfied_cover_fails(self):\n            text = "VERIFICATION:- SUCCESSFUL\\n** 0 of 1 cover properties satisfied"\n            self.assertEqual(gate.verdict(text, 0, False)["verdict"], "FAILED")\n\n        def test_nonzero_fails(self):\n            text = "VERIFICATION:- SUCCESSFUL\\n** 1 of 1 cover properties satisfied"\n            self.assertEqual(gate.verdict(text, 1, False)["verdict"], "FAILED")\n\n        def test_complete_success(self):\n            text = "VERIFICATION:- SUCCESSFUL\\n** 1 of 1 cover properties satisfied"\n            self.assertEqual(gate.verdict(text, 0, False)["verdict"], "SUCCESSFUL")\n\n        def test_pending_only_existing_policy(self):\n            budgets = gate.load_budgets()\n            name = "gate_leaf_progress_w2"\n            timeout = {"name": name, "verdict": "TIMEOUT"}\n            self.assertEqual(gate.pending_result(name, timeout, budgets, "nightly")["verdict"], "PENDING")\n            self.assertEqual(gate.pending_result(name, {"verdict": "FAILED"}, budgets, "nightly")["verdict"], "FAILED")\n            self.assertEqual(gate.pending_result("apply_ci_failed", timeout, budgets, "nightly")["verdict"], "TIMEOUT")\n\n        def test_memory_and_time_are_frozen(self):\n            budgets = gate.load_budgets()\n            for name in gate.harnesses():\n                info = gate.budget(name, budgets)\n                self.assertGreaterEqual(info["memory_gb"], budgets[name]["peak_gb"])\n                self.assertLessEqual(info["timeout"], gate.PROVE_SECONDS)\n\n        def test_shard_identity_mismatch_refuses(self):\n            record = {"schema": gate.SCHEMA, "head": "0" * 40, "harnesses": ["apply_ci_failed"]}\n            with self.assertRaises(gate.KaniError):\n                gate.check_shard(json.dumps(record), HEAD, ["apply_ci_failed"])\n\n    result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(TransportTests))\n    return 0 if result.wasSuccessful() else 1\n\n\ndef leaf(gate, name, index, output, pb_source):\n    if platform.machine() != "x86_64":\n        raise ValueError("pinned Kani runtime requires x86_64")\n    budgets = gate.load_budgets()\n    if name not in gate.harnesses() or name not in budgets:\n        raise ValueError("unregistered harness refused")\n    output.mkdir(mode=0o700, parents=False, exist_ok=False)\n    logs = output / "kani-logs"\n    logs.mkdir(mode=0o700)\n    record = {"schema": gate.SCHEMA, "head": HEAD, "checkout": HEAD, "mode": "nightly",\n              "index": index, "harnesses": [name], "results": {}, "error": None}\n    started = time.monotonic()\n    status = 1\n    try:\n        version_output = subprocess.check_output(["cargo", "kani", "--version"], env=gate.child_env(), timeout=30).decode()\n        version = kani_version(version_output, gate.KANI_VERSION)\n        rust = subprocess.check_output(["rustc", "--version"], env=gate.child_env(), timeout=30).decode().strip()\n        if not rust.startswith("rustc " + gate.RUST_VERSION + " "):\n            raise ValueError("frozen Rust toolchain mismatch")\n        record["toolchain"] = {"kani": version, "kani_output": version_output, "rustc": rust}\n        code = gate.logged("codegen", ["cargo", "kani", "-p", "tl3-kernel", "--only-codegen"], logs / "codegen.log")\n        record["codegen_seconds"] = round(time.monotonic() - started, 1)\n        if code:\n            raise ValueError("unchanged Kani codegen exited " + str(code))\n        memory = gate.budget(name, budgets)["memory_gb"] + gate.RESERVED_GB\n        prover = gate.Prover([name], budgets, logs, cpus=1, memory_gb=memory, fail_fast=False)\n        record["results"] = {key: gate.pending_result(key, value, budgets, "nightly")\n                             for key, value in prover.run().items()}\n        status = 0 if set(record["results"]) == {name} and gate.acceptable(record["results"][name]) else 1\n    except (ValueError, OSError, subprocess.SubprocessError, gate.KaniError) as error:\n        record["error"] = str(error)\n    record["seconds"] = round(time.monotonic() - started, 1)\n    (output / gate.RESULT).write_text(json.dumps(record, indent=2, sort_keys=True) + "\\n")\n    exact_source(Path.cwd())\n    # Use PB\'s CAS implementation to publish the complete raw proof/codegen logs.\n    # The enclosing admitted action alone publishes its execution receipt.\n    sys.path.insert(0, pb_source)\n    from prismabuild.core import PrismaBuildCAS\n    cas = PrismaBuildCAS("/mnt/shared/prismabuild-fleet/cas")\n    artifacts = {}\n    for path in sorted(output.rglob("*")):\n        if path.is_file() and not path.is_symlink():\n            relative = path.relative_to(output).as_posix()\n            entry, _ = cas.ingest_input(path, input_id="kani." + relative.replace("/", "."))\n            artifacts[relative] = entry\n    evidence = {"schema": "tl3.pb-kani-leaf.v1", "head": HEAD, "tree": TREE,\n                "harness": name, "index": index, "record": record, "artifacts": artifacts,\n                "command_exit": status, "transport": "prismabuild", "source_clean_after": True}\n    print("PB_KANI_LEAF_V1 " + json.dumps(evidence, sort_keys=True), flush=True)\n    return status\n\n\ndef main(argv):\n    os.umask(0o077)\n    mode, hashes, *rest = argv\n    root = Path.cwd()\n    exact_source(root)\n    gate = load_gate(root, json.loads(hashes))\n    if mode == "fixtures":\n        return fixtures(gate)\n    if mode != "leaf" or len(rest) != 4:\n        raise ValueError("expected leaf harness index output PB_SOURCE")\n    return leaf(gate, rest[0], int(rest[1]), Path(rest[2]), rest[3])\n\n\nif __name__ == "__main__":\n    sys.exit(main(sys.argv[1:]))\n'
+
+
+class PbNightlyTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.gate, cls.budgets = pb.frozen_policy(Path.cwd(), pb.TEMPLATE_HEAD)
+        cls.source_hashes = {relative: hashlib.sha256(pb.git(Path.cwd(), "show", pb.TEMPLATE_HEAD + ":" + relative)).hexdigest()
+                             for relative in pb.SOURCE_PATHS}
+        cls.run_identity_data = pb.Run(pb.TEMPLATE_HEAD, pb.TEMPLATE_TREE, cls.source_hashes, pb.TEMPLATE_DRIVER_SHA256,
+                         "/mnt/shared/flux-out/tl3/ops-kani-nightly-20261108T0210Z-7cba86d2",
+                         {name: max(4, cls.gate.budget(name, cls.budgets)["memory_gb"] + cls.gate.RESERVED_GB) for name in cls.budgets})
+
+    def index(self):
+        return {"schema": "tl3.pb-kani-nightly.v2", "head": pb.TEMPLATE_HEAD, "tree": pb.TEMPLATE_TREE,
+                "mode": "nightly", "transport": "prismabuild", "errors": [], "driver_sha256": pb.TEMPLATE_DRIVER_SHA256,
+                "frozen_sources": self.source_hashes, "correlation": "ops-kani-nightly-20261108T0210Z-7cba86d2",
+                "leaves": {name: f"{i + 1:064x}" for i, name in enumerate(sorted(self.budgets))}}
+
+    def leaf(self, name="advance_auditing"):
+        result = {"name": name, "verdict": "SUCCESSFUL", "covers": [1, 1],
+                  "timeout": self.gate.budget(name, self.budgets)["timeout"]}
+        record = {"schema": self.gate.SCHEMA, "head": pb.TEMPLATE_HEAD, "checkout": pb.TEMPLATE_HEAD,
+                  "mode": "nightly", "harnesses": [name], "index": 0, "error": None,
+                  "results": {name: result}}
+        evidence = {"schema": "tl3.pb-kani-leaf.v1", "transport": "prismabuild", "head": pb.TEMPLATE_HEAD,
+                    "tree": pb.TEMPLATE_TREE, "harness": name, "index": 0, "command_exit": 0,
+                    "source_clean_after": True, "record": record}
+        return evidence, {self.gate.RESULT: json.dumps(record).encode(),
+                          "kani-logs/" + name + ".log": b"VERIFICATION:- SUCCESSFUL\n** 1 of 1 cover properties satisfied\n"}
+
+    def validate(self, evidence, artifacts):
+        return pb.validate_leaf(evidence["harness"], evidence, artifacts, self.gate, self.budgets, self.run_identity_data)
+
+    def test_complete_inventory(self):
+        result = pb.validate_index(self.index(), self.budgets,
+                                   lambda name, key, i: {"name": name, "verdict": "SUCCESSFUL"}, self.run_identity_data)
+        self.assertEqual(len(result), 78)
+
+    def test_77_of_78_refuses(self):
+        index = self.index()
+        index["leaves"].pop(next(iter(index["leaves"])))
+        with self.assertRaises(pb.Refuse):
+            pb.validate_index(index, self.budgets, lambda *args: None, self.run_identity_data)
+
+    def test_wrong_commit_index_refuses(self):
+        index = self.index()
+        index["head"] = "0" * 40
+        with self.assertRaises(pb.Refuse):
+            pb.validate_index(index, self.budgets, lambda *args: None, self.run_identity_data)
+
+    def test_github_identity_refuses(self):
+        index = self.index()
+        index["transport"] = "github-actions"
+        with self.assertRaises(pb.Refuse):
+            pb.validate_index(index, self.budgets, lambda *args: None, self.run_identity_data)
+
+    def test_duplicate_action_refuses(self):
+        index = self.index()
+        names = list(index["leaves"])
+        index["leaves"][names[1]] = index["leaves"][names[0]]
+        with self.assertRaises(pb.Refuse):
+            pb.validate_index(index, self.budgets, lambda *args: None, self.run_identity_data)
+
+    def test_success_requires_raw_satisfied_cover(self):
+        evidence, artifacts = self.leaf()
+        self.assertEqual(self.validate(evidence, artifacts)["verdict"], "SUCCESSFUL")
+        artifacts["kani-logs/advance_auditing.log"] = b"VERIFICATION:- SUCCESSFUL\n** 0 of 1 cover properties satisfied\n"
+        with self.assertRaises(pb.Refuse):
+            self.validate(evidence, artifacts)
+
+    def test_missing_artifact_refuses(self):
+        evidence, artifacts = self.leaf()
+        del artifacts[self.gate.RESULT]
+        with self.assertRaises(KeyError):
+            self.validate(evidence, artifacts)
+
+    def test_tampered_record_artifact_refuses(self):
+        evidence, artifacts = self.leaf()
+        tampered = copy.deepcopy(evidence["record"])
+        tampered["checkout"] = "0" * 40
+        artifacts[self.gate.RESULT] = json.dumps(tampered).encode()
+        with self.assertRaises(pb.Refuse):
+            self.validate(evidence, artifacts)
+
+    def test_wrong_leaf_commit_refuses(self):
+        evidence, artifacts = self.leaf()
+        evidence["head"] = "0" * 40
+        with self.assertRaises(pb.Refuse):
+            self.validate(evidence, artifacts)
+
+    def test_failed_command_dominates_successful_proof(self):
+        evidence, artifacts = self.leaf()
+        evidence["command_exit"] = 1
+        with self.assertRaises(pb.Refuse):
+            self.validate(evidence, artifacts)
+
+    def test_wrong_bound_refuses(self):
+        evidence, artifacts = self.leaf()
+        evidence["record"]["results"]["advance_auditing"]["timeout"] += 1
+        artifacts[self.gate.RESULT] = json.dumps(evidence["record"]).encode()
+        with self.assertRaises(pb.Refuse):
+            self.validate(evidence, artifacts)
+
+    def test_pending_stays_pending_under_frozen_policy(self):
+        name = "gate_leaf_progress_w2"
+        evidence, artifacts = self.leaf(name)
+        result = evidence["record"]["results"][name]
+        result.update(verdict="PENDING", pending="#806", outcome="TIMEOUT", seconds=result["timeout"], covers=None)
+        artifacts[self.gate.RESULT] = json.dumps(evidence["record"]).encode()
+        artifacts["kani-logs/" + name + ".log"] = b"solver reached hard timeout\n"
+        self.assertEqual(self.validate(evidence, artifacts)["verdict"], "PENDING")
+        result["verdict"] = "SUCCESSFUL"
+        artifacts[self.gate.RESULT] = json.dumps(evidence["record"]).encode()
+        with self.assertRaises(pb.Refuse):
+            self.validate(evidence, artifacts)
+
+    def test_pending_cannot_hide_counterexample(self):
+        name = "gate_leaf_progress_w2"
+        evidence, artifacts = self.leaf(name)
+        result = evidence["record"]["results"][name]
+        result.update(verdict="PENDING", pending="#806", outcome="TIMEOUT", seconds=result["timeout"])
+        artifacts[self.gate.RESULT] = json.dumps(evidence["record"]).encode()
+        artifacts["kani-logs/" + name + ".log"] = b"VERIFICATION:- FAILED\n"
+        with self.assertRaises(pb.Refuse):
+            self.validate(evidence, artifacts)
+
+    def test_pending_not_allowed_for_unregistered_harness(self):
+        evidence, artifacts = self.leaf()
+        result = evidence["record"]["results"]["advance_auditing"]
+        result.update(verdict="PENDING", pending="#806", outcome="KILLED")
+        artifacts[self.gate.RESULT] = json.dumps(evidence["record"]).encode()
+        with self.assertRaises(pb.Refuse):
+            self.validate(evidence, artifacts)
+
+    def test_pending_killed_needs_raw_kill_evidence(self):
+        name = "gate_leaf_progress_w2"
+        evidence, artifacts = self.leaf(name)
+        result = evidence["record"]["results"][name]
+        result.update(verdict="PENDING", pending="#806", outcome="KILLED", covers=None)
+        artifacts[self.gate.RESULT] = json.dumps(evidence["record"]).encode()
+        artifacts["kani-logs/" + name + ".log"] = b"unknown failure\n"
+        with self.assertRaises(pb.Refuse):
+            self.validate(evidence, artifacts)
+        artifacts["kani-logs/" + name + ".log"] = b"solver killed by signal 9\n"
+        self.assertEqual(self.validate(evidence, artifacts)["verdict"], "PENDING")
+
+    def test_duplicate_json_keys_refuse(self):
+        with self.assertRaises(pb.Refuse):
+            pb.loads('{"head":"a","head":"b"}')
+
+    def test_unsealed_parent_refuses(self):
+        class Cas:
+            def read_action_request(self, key):
+                return {"params": {"checkout_snapshot": {"parent": "0" * 40}}}
+
+            def lookup(self, action):
+                return {"action_key": "a" * 64}
+
+        with patch.object(pb, "terminal", return_value={"checkout_snapshot.parent": pb.TEMPLATE_HEAD}):
+            with self.assertRaises(pb.Refuse):
+                pb.authenticated_leaf(Cas(), lambda *args: True, self.gate, self.budgets,
+                                      "advance_auditing", "a" * 64, 0, self.run_identity_data)
+
+    def test_missing_cas_receipt_refuses(self):
+        class Cas:
+            def read_action_request(self, key):
+                return {"params": {}}
+
+            def lookup(self, action):
+                return None
+
+        with patch.object(pb, "terminal", return_value={}):
+            with self.assertRaises(pb.Refuse):
+                pb.authenticated_leaf(Cas(), lambda *args: True, self.gate, self.budgets,
+                                      "advance_auditing", "a" * 64, 0, self.run_identity_data)
+
+    def test_failed_pb_parent_refuses(self):
+        output = b"state: failed\naction_key: aaaa\ndetail.returncode: 1\n"
+        with patch.object(pb.subprocess, "check_output", return_value=output):
+            with self.assertRaises(pb.Refuse):
+                pb.terminal("aaaa")
+
+    def test_duplicate_terminal_field_refuses(self):
+        for first in ("state: failed", "state: done"):
+            raw = (first + "\nstate: done\naction_key: aaaa\ndetail.returncode: 0\n"
+                   'resource_scope_cleanup.flags: {"complete": true}\n').encode()
+            with patch.object(pb.subprocess, "check_output", return_value=raw):
+                with self.assertRaises(pb.Refuse):
+                    pb.terminal("aaaa")
+
+    def test_other_head_cannot_receive_pb_authority(self):
+        with patch.object(pb, "git", return_value=b"0" * 40):
+            self.assertIsNone(pb.proof("unused", "unused", lambda *args: "unused", "0" * 40))
+
+    def test_changed_or_extra_environment_refuses(self):
+        variables = {"HOME": "/home/rob", "PATH": pb.PB_SOURCE.removesuffix("/src") + "/tools:/home/rob/.cargo/bin:/usr/bin:/bin",
+                     "PYTHONDONTWRITEBYTECODE": "1", "CARGO_BUILD_JOBS": "1", "OMP_NUM_THREADS": "1",
+                     "MKL_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "RAYON_NUM_THREADS": "1",
+                     "TOKIO_WORKER_THREADS": "1", "RUST_TEST_THREADS": "1", "CUDA_VISIBLE_DEVICES": "",
+                     "PRISMABUILD_CONTAINER_MARKER": "pb-assigned", "PRISMABUILD_CONTAINER_OWNER": "pb-assigned"}
+        pb.validate_environment(variables)
+        changed = dict(variables, RUSTFLAGS="--cfg hide_proofs")
+        with self.assertRaises(pb.Refuse):
+            pb.validate_environment(changed)
+        changed = dict(variables, PATH="/tmp/untrusted/bin")
+        with self.assertRaises(pb.Refuse):
+            pb.validate_environment(changed)
+
+
+    def test_same_fingerprint_other_commit_refuses(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp) / ("0" * 40)
+            directory.mkdir(mode=0o700)
+            path = directory / "PB-NIGHTLY-INDEX.json"
+            path.write_text(json.dumps(self.index()))
+            path.chmod(0o600)
+            with patch.object(pb, "INDEX_ROOT", Path(temp)), patch.object(pb, "git", return_value=b"0" * 40):
+                with self.assertRaises(pb.Refuse):
+                    pb.proof("unused", "same-fingerprint", lambda *args: "same-fingerprint", "0" * 40)
+
+    def test_run_pins_must_equal_own_git_objects(self):
+        index = self.index()
+        run = pb.run_identity(Path.cwd(), index, pb.TEMPLATE_HEAD)
+        self.assertEqual(run, self.run_identity_data._replace(memory_gib=None))
+        index["frozen_sources"] = {**self.source_hashes, "tools/ci/kani_gate.py": "0" * 64}
+        with self.assertRaises(pb.Refuse):
+            pb.run_identity(Path.cwd(), index, pb.TEMPLATE_HEAD)
+
+    def test_changed_tree_or_output_identity_refuses(self):
+        for field, value in (("tree", "0" * 40), ("correlation", "ops-kani-nightly-20261108T0210Z-deadbeef")):
+            index = self.index()
+            index[field] = value
+            with self.assertRaises(pb.Refuse):
+                pb.run_identity(Path.cwd(), index, pb.TEMPLATE_HEAD)
+
+    def test_driver_allows_only_exact_head_and_tree_literals(self):
+        pb.validate_driver(DRIVER_TEMPLATE, self.run_identity_data)
+        run = self.run_identity_data._replace(head="1" * 40, tree="2" * 40)
+        changed = DRIVER_TEMPLATE.replace(pb.TEMPLATE_HEAD, run.head).replace(pb.TEMPLATE_TREE, run.tree)
+        pb.validate_driver(changed, run)
+        with self.assertRaises(pb.Refuse):
+            pb.validate_driver(changed.replace("fail_fast=False", "fail_fast=True"), run)
+        with self.assertRaises(pb.Refuse):
+            pb.validate_driver(DRIVER_TEMPLATE, run)
+
+    def test_missing_or_altered_campaign_identity_refuses(self):
+        for field in ("head", "tree", "frozen_sources", "correlation", "driver_sha256"):
+            index = self.index()
+            index.pop(field)
+            with self.assertRaises(pb.Refuse):
+                pb.run_identity(Path.cwd(), index, pb.TEMPLATE_HEAD)
+        index = self.index()
+        index["head"] = "1" * 40
+        with self.assertRaises(pb.Refuse):
+            pb.run_identity(Path.cwd(), index, pb.TEMPLATE_HEAD)
+
+    def test_missing_or_nonempty_errors_refuses(self):
+        for errors in (None, ["bad"]):
+            index = self.index()
+            index["errors"] = errors
+            with self.assertRaises(pb.Refuse):
+                pb.validate_index(index, self.budgets, lambda *args: None, self.run_identity_data)
+
+    def test_accepts_new_campaign_only_at_its_exact_recorded_commit(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            clone = root / "source"
+            pb.subprocess.run(["git", "clone", "--quiet", "--shared", "--no-checkout", str(Path.cwd()), str(clone)], check=True)
+            head = pb.git(clone, "-c", "user.name=fixture", "-c", "user.email=fixture@invalid",
+                          "commit-tree", pb.TEMPLATE_TREE, "-p", pb.TEMPLATE_HEAD,
+                          "-m", "Synthetic campaign identity control").decode().strip()
+            pb.subprocess.run(["git", "-C", str(clone), "checkout", "--quiet", "--detach", head], check=True)
+            index = self.index()
+            index["head"] = head
+            index["correlation"] = "ops-kani-nightly-20261108T0210Z-" + head[:8]
+            driver = DRIVER_TEMPLATE.replace(pb.TEMPLATE_HEAD, head)
+            index["driver_sha256"] = hashlib.sha256(driver.encode()).hexdigest()
+            directory = root / "runs" / head
+            directory.parent.mkdir(mode=0o700)
+            directory.mkdir(mode=0o700)
+            path = directory / "PB-NIGHTLY-INDEX.json"
+            path.write_text(json.dumps(index))
+            path.chmod(0o600)
+            with patch.object(pb, "INDEX_ROOT", directory.parent), patch.object(
+                    pb, "validate_sizing", return_value=self.run_identity_data.memory_gib), patch.object(
+                    pb, "authenticated_leaf", side_effect=lambda cas, verify, gate, budgets, name, key, i, run:
+                    {"name": name, "verdict": "SUCCESSFUL"}):
+                result = pb.proof(clone, "same-fingerprint", lambda *args: "same-fingerprint", head)
+            self.assertEqual(result, ("pb-nightly:" + hashlib.sha256(path.read_bytes()).hexdigest(), head))
+            self.assertNotEqual(head, pb.TEMPLATE_HEAD)
+
+    def test_old_commit_leaf_cannot_qualify_another_run(self):
+        evidence, artifacts = self.leaf()
+        with self.assertRaises(pb.Refuse):
+            pb.validate_leaf(evidence["harness"], evidence, artifacts, self.gate, self.budgets,
+                             self.run_identity_data._replace(head="1" * 40))
+
+
+    def test_mutated_reviewed_policy_refuses_before_exec(self):
+        original = pb.git
+        for relative in pb.POLICY_PINS:
+            def mutated(repo, *args):
+                raw = original(repo, *args)
+                return raw + b"\n# mutated policy fixture\n" if args == ("show", pb.TEMPLATE_HEAD + ":" + relative) else raw
+            with patch.object(pb, "git", side_effect=mutated):
+                with self.assertRaisesRegex(pb.Refuse, "reviewed nightly policy bytes changed"):
+                    pb.frozen_policy(Path.cwd(), pb.TEMPLATE_HEAD)
+
+    def test_explicit_requested_head_mismatch_refuses_with_pb_index(self):
+        with patch.object(pb, "git", return_value=pb.TEMPLATE_HEAD.encode()), patch.object(pb.Path, "exists", return_value=True):
+            with self.assertRaisesRegex(pb.Refuse, "requested candidate differs"):
+                pb.proof("unused", "same-fingerprint", lambda *args: "same-fingerprint", "0" * 40)
+
+    def test_sizing_is_measured_max_plus_exact_margin(self):
+        table = pb.sizing_table(self.budgets, lambda name, key: 12 * 2**30)
+        row = table["leaves"]["apply_dependency_remove"]
+        self.assertEqual(row, {"measured_peak_bytes": 12 * 2**30, "reservation_gib": 15})
+        peak = self.budgets["advance_auditing"]["peak_gb"]
+        with patch.object(pb, "measured_peak", return_value=12 * 2**30):
+            reservations = pb.validate_sizing(table, self.budgets, object())
+            self.assertEqual(reservations["apply_dependency_remove"], 15)
+            for wrong in (14, 16):
+                changed = copy.deepcopy(table)
+                changed["leaves"]["apply_dependency_remove"]["reservation_gib"] = wrong
+                with self.assertRaisesRegex(pb.Refuse, "campaign sizing differs"):
+                    pb.validate_sizing(changed, self.budgets, object())
+        self.assertGreater(peak, 0)
+
+    def test_missing_sizing_or_inventory_refuses(self):
+        with patch.object(pb, "measured_peak", return_value=12 * 2**30):
+            with self.assertRaisesRegex(pb.Refuse, "campaign sizing differs"):
+                pb.validate_sizing(None, self.budgets, object())
+        incomplete = dict(self.budgets)
+        incomplete.pop("advance_auditing")
+        with self.assertRaisesRegex(pb.Refuse, "sizing inventory mismatch"):
+            pb.sizing_table(incomplete, lambda *args: 1)
+
+    def test_sizing_uses_largest_measurement_including_information_only(self):
+        def measured(name, key):
+            return (15 if key == pb.MEASUREMENT_KEYS["apply_dependency_remove"][-1] else 12) * 2**30
+        table = pb.sizing_table(self.budgets, measured)
+        self.assertEqual(table["leaves"]["apply_dependency_remove"]["reservation_gib"], 19)
+
+    def test_missing_scope_measurement_refuses(self):
+        fields = ("state: done\naction_key: key\ndetail.returncode: 0\ndetail.resource_telemetry.oom_kill: 0\nresource_scope_cleanup.flags: {\"complete\": true}\n"
+                  "checkout_snapshot.parent: " + pb.TEMPLATE_HEAD + "\ncheckout_snapshot.commit: stamp\n"
+                  "checkout_snapshot.input.sha256: input\n")
+        command = ["python3", "-B", "deploy/dl380g10/exact-source.py", pb.TEMPLATE_HEAD,
+                   "python3", "-B", "-c", DRIVER_TEMPLATE, "leaf", "{}", "apply_dependency_remove", "33", "out", pb.PB_SOURCE]
+        params = {"checkout_snapshot": {"parent": pb.TEMPLATE_HEAD, "commit": "stamp", "subdirectory": ".",
+                  "input": {"sha256": "input"}}, "command": command, "cwd": "unused", "demand": {},
+                  "execution_timeout_s": 3600, "placement": {}, "retry_policy": {}}
+        cas = unittest.mock.Mock()
+        cas.read_action_request.return_value = {"params": params}
+        with patch.object(pb.subprocess, "check_output", return_value=fields.encode()):
+            with self.assertRaisesRegex(pb.Refuse, "missing whole-scope sizing measurement"):
+                pb.measured_peak(cas, "apply_dependency_remove", "key")
+
+
+    def test_authenticated_leaf_refuses_changed_admission_and_dispatch(self):
+        import sys
+        sys.path.append(pb.PB_SOURCE)
+        from prismabuild.core import PrismaBuildCAS
+        cas = PrismaBuildCAS(pb.CAS_ROOT)
+        key = "5cb0194c77eb4fdb72f40f351065c0d73028066bcf850ec6600b45e3fc448224"
+        original = cas.read_action_request(key)
+        receipt = cas.lookup(original)
+        state = pb.terminal(key)
+        changes = [
+            (lambda p: p.update(unreviewed_mount="/unused"), "unexpected sealed PB action parameter"),
+            (lambda p: p["checkout_snapshot"].update(subdirectory="subdir"), "PB source subdirectory mismatch"),
+            (lambda p: p["checkout_snapshot"].update(commit="0" * 40), "PB terminal source mismatch"),
+            (lambda p: p["checkout_snapshot"]["input"].update(sha256="0" * 64), "PB terminal input mismatch"),
+            (lambda p: p["command"].append("extra"), "not the frozen exact-source PB invocation"),
+            (lambda p: p["command"].__setitem__(10, "another_harness"), "PB leaf dispatch mismatch"),
+            (lambda p: p["demand"].update(mem_gb=8), "PB memory/CPU admission mismatch"),
+            (lambda p: p.update(execution_timeout_s=4000), "PB admission bound/placement/retry policy mismatch"),
+            (lambda p: p.update(placement={"required_tags": ["host"]}), "PB admission bound/placement/retry policy mismatch"),
+            (lambda p: p.update(retry_policy={"max_attempts": 2, "retry_safe": True}), "PB admission bound/placement/retry policy mismatch"),
+        ]
+        for change, message in changes:
+            action = copy.deepcopy(original)
+            change(action["params"])
+            wrapped = unittest.mock.Mock(wraps=cas)
+            wrapped.read_action_request.return_value = action
+            wrapped.lookup.return_value = receipt
+            with self.subTest(message=message), patch.object(pb, "terminal", return_value=state):
+                with self.assertRaisesRegex(pb.Refuse, message):
+                    pb.authenticated_leaf(wrapped, lambda *args: True, self.gate, self.budgets,
+                                          "advance_auditing", key, 0, self.run_identity_data)
+        broken = dict(state)
+        ref = pb.loads(broken["detail.stdout_log"])
+        ref["sha256"] = "0" * 64
+        broken["detail.stdout_log"] = json.dumps(ref)
+        with patch.object(pb, "terminal", return_value=broken):
+            with self.assertRaisesRegex(pb.Refuse, "PB terminal log differs from CAS output"):
+                pb.authenticated_leaf(cas, lambda *args: True, self.gate, self.budgets,
+                                      "advance_auditing", key, 0, self.run_identity_data)
+
+    def test_source_sealing_refuses_files_beyond_stamp(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            repo = root / "fixture.git"
+            pb.subprocess.run(["git", "clone", "--quiet", "--bare", "--shared", str(Path.cwd()), str(repo)], check=True)
+            blob = pb.subprocess.check_output(["git", "-C", str(repo), "hash-object", "-w", "--stdin"], input=b"synthetic")
+            tree = pb.git(repo, "ls-tree", pb.TEMPLATE_TREE)
+            for name in (".pbrun-closure.aaaa.json", "unauthorized-source-file"):
+                tree += b"100644 blob " + blob.strip() + b"\t" + name.encode() + b"\n"
+            changed = pb.subprocess.check_output(["git", "-C", str(repo), "mktree"], input=tree).decode().strip()
+            commit = pb.git(repo, "-c", "user.name=fixture", "-c", "user.email=fixture@invalid",
+                            "commit-tree", changed, "-p", pb.TEMPLATE_HEAD, "-m", "source sealing negative").decode().strip()
+            pb.git(repo, "update-ref", "refs/heads/fixture", commit)
+            bundle = root / "source.bundle"
+            pb.git(repo, "bundle", "create", str(bundle), "refs/heads/fixture")
+            payload = bundle.read_bytes()
+            cas = unittest.mock.Mock()
+            cas.read_declared_blob.return_value = payload
+            with self.assertRaisesRegex(pb.Refuse, "unsealed source: snapshot differs beyond the PB stamp"):
+                pb.source_verifier(cas, self.run_identity_data)(hashlib.sha256(payload).hexdigest(), len(payload), commit)
+
+
+    def test_adapter_rejects_oom_capped_observation_as_peak(self):
+        fields = ("state: failed\naction_key: key\ndetail.returncode: 137\n"
+                  "detail.resource_telemetry.oom_kill: 3\n"
+                  "detail.resource_telemetry.memory_peak_bytes: 12884901888\n")
+        with patch.object(pb.subprocess, "check_output", return_value=fields.encode()):
+            with self.assertRaisesRegex(pb.Refuse, "resource failure is a lower bound, not a measured peak"):
+                pb.measured_peak(object(), "apply_dependency_remove", "key")
+
+    def test_sizing_script_rejects_oom_and_accepts_successful_measurement(self):
+        import types
+        module = types.ModuleType("derive_pb_sizing_fixture")
+        module.__file__ = "/private/derive_pb_sizing.py"
+        exec(compile(globals()["SIZING_SOURCE"], "derive_pb_sizing.py", "exec"), module.__dict__)
+        success = {"state": "done", "detail.returncode": "0", "detail.resource_telemetry.oom_kill": "0",
+                   "detail.resource_telemetry.memory_peak_bytes": "14137434112"}
+        self.assertEqual(module.scope_observation(success), 14137434112)
+        info = {"key": "edbb77262a4aa10b60d0904180fb7c14636b1de85c4fdab233a1292c2e1b5d0c",
+                "terminal_source_log_cleanup_CAS_verified": True, "deployment_authority": False,
+                "oom_kill": 0, "result": {"verdict": "SUCCESSFUL"}, "scope_peak_bytes": 14137434112}
+        self.assertEqual(module.informational_peak(info), 14137434112)
+        with self.assertRaisesRegex(ValueError, "resource failure is a lower bound, not a measured peak"):
+            module.informational_peak({**info, "oom_kill": 3})
+
+        for changed in ({"state": "failed", "detail.returncode": "137", "detail.resource_telemetry.oom_kill": "3"},
+                        {"detail.resource_telemetry.oom_kill": "1"}):
+            with self.assertRaisesRegex(ValueError, "resource failure is a lower bound, not a measured peak"):
+                module.scope_observation({**success, **changed})
+
+
+class CallerTests(unittest.TestCase):
+    def setUp(self):
+        import types
+        self.gate = types.ModuleType("dev_evidence_fixture")
+        self.gate.__file__ = "/fixture/dev_evidence.py"
+        exec(compile(globals()["GATE_SOURCE"], "dev_evidence.py", "exec"), self.gate.__dict__)
+        # Only external evidence and unrelated full-batch checks are mocked.
+        # The actual hook, adapter proof entry, and caller SHA propagation run.
+        self.addCleanup(patch.stopall)
+        patch.object(self.gate.importlib.util, "spec_from_file_location", return_value=object()).start()
+        patch.object(self.gate.importlib.util, "module_from_spec", return_value=pb).start()
+        fake_spec = unittest.mock.Mock()
+        fake_spec.loader.exec_module.side_effect = lambda module: None
+        self.gate.importlib.util.spec_from_file_location.return_value = fake_spec
+        patch.object(self.gate, "gh_json", return_value=None).start()
+        patch.object(self.gate, "is_ancestor", return_value=True).start()
+        patch.object(self.gate, "kani_required", return_value=True).start()
+        patch.object(self.gate, "verus_test_identity", return_value="unchanged").start()
+        patch.object(self.gate, "fingerprint", side_effect=lambda repo, sha: "old" if sha == "d" * 40 else "same-fingerprint").start()
+        patch.object(pb, "git", return_value=pb.TEMPLATE_HEAD.encode()).start()
+
+    def invoke(self, mode, requested):
+        if mode == "check":
+            return self.gate.check("unused", "d" * 40, requested, "/unused", postmerge=lambda sha: True,
+                                   inventory=lambda sha: None)
+        return self.gate.nightly_covers("unused", requested)
+
+    def test_both_callers_pass_exact_requested_head(self):
+        for mode in ("check", "covers"):
+            with patch.object(pb, "proof", return_value=("pb-nightly:fixture", pb.TEMPLATE_HEAD)) as proof:
+                self.invoke(mode, pb.TEMPLATE_HEAD)
+                self.assertEqual(proof.call_args.args[3], pb.TEMPLATE_HEAD)
+
+    def test_unchanged_fresh_init_helper_checks_actual_proved_head(self):
+        import ast
+        import types
+        # pb.git is patched for the caller negatives; fetch exact source through
+        # a separate subprocess so this fixture executes the real frozen guard.
+        source = pb.subprocess.check_output(["git", "show", pb.TEMPLATE_HEAD + ":deploy/dl380g10/deploy.py"]).decode()
+        node = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef)
+                    and n.name == "check_fresh_qualification")
+        namespace = {"SOURCE": Path.cwd(), "EVIDENCE_ROOT": Path("/unused")}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), "frozen-deploy.py", "exec"), namespace)
+        gate = self.gate
+        with patch.object(gate, "git", return_value=types.SimpleNamespace(stdout=pb.TEMPLATE_HEAD)), \
+                patch.object(gate, "BuildBuddy", return_value=object()), \
+                patch.object(gate, "verify_evidence", return_value=("fixture-base", {})), \
+                patch.object(gate, "verus_and_kernel_tests", return_value=None), \
+                patch.object(pb, "proof", return_value=("pb-nightly:fixture", pb.TEMPLATE_HEAD)):
+            namespace["check_fresh_qualification"](gate, types.SimpleNamespace(head=pb.TEMPLATE_HEAD, lane="dev"))
+            with self.assertRaisesRegex(RuntimeError, "chosen exact head"):
+                namespace["check_fresh_qualification"](gate, types.SimpleNamespace(head="0" * 40, lane="dev"))
+
+    def test_missing_pb_index_leaves_github_fallback_unchanged(self):
+        with patch.object(pb.Path, "exists", return_value=False), patch.object(self.gate, "gh_json", return_value=None) as gh:
+            self.assertIsNone(self.gate.nightly_proof("unused", "same-fingerprint", "0" * 40))
+            gh.assert_called_once()
+
+    def test_both_callers_refuse_requested_head_different_from_clone(self):
+        for mode in ("check", "covers"):
+            with patch.object(pb.Path, "exists", return_value=True), self.assertRaisesRegex(self.gate.Refuse, "PB nightly evidence did not authenticate"):
+                self.invoke(mode, "0" * 40)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

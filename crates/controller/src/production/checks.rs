@@ -33,7 +33,6 @@ pub fn register_execution(
 ) -> Result<CheckSource> {
     ownership.ensure_held()?;
     if let tl3_config::SelectedExecution::Flux(flux) = config.selected_execution()? {
-        require_drained_pb(&records.join("prismabuild"))?;
         let preparation = adapters::flux_checks::staging::Stager::new(config)?;
         let options = provision_flux_options(flux, ownership)?;
         let backend = std::sync::Arc::new(

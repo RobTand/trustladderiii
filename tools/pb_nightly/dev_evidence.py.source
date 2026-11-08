@@ -1,0 +1,484 @@
+"""Deploy evidence with separate Kani fingerprints and broad proof/test identities.
+
+CLI: dev_evidence.py REPO DEPLOYED_SHA CANDIDATE_SHA [EVIDENCE_DIR]
+     dev_evidence.py --nightly-covers REPO FULL_SHA
+     dev_evidence.py --full-suite-ok REPO FULL_SHA
+     dev_evidence.py --postmerge-ok FULL_SHA
+
+Content coverage requires authenticated post-merge CI or captain evidence whose
+BuildBuddy invocations and children succeeded at the same tree. A changed broad
+identity requires every Verus group and kernel test PASSED at matching inputs.
+Kani nightly evidence uses the unchanged legacy Kani fingerprint. Only the
+candidate tree decides Kani presence. A changed candidate-versus-deployed Kani
+fingerprint requires one nightly at the candidate fingerprint. Intermediate
+fingerprints never create nightly requirements. Unknown layouts and malformed
+candidate markers refuse.
+"""
+import hashlib, importlib.util, io, json, re, subprocess, sys, zipfile
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+EVIDENCE = HERE / "rust-fv/captain/evidence"
+SHA = re.compile(r"[0-9a-f]{40}")
+
+
+class Refuse(Exception):
+    pass
+
+
+def git(repo, *args, ok=(0,)):
+    p = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+    if p.returncode not in ok:
+        raise Refuse(f"git {' '.join(args)}: {p.stderr.strip()}")
+    return p
+
+
+def is_ancestor(repo, a, b):
+    return git(repo, "merge-base", "--is-ancestor", a, b, ok=(0, 1)).returncode == 0
+
+
+def tree(repo, sha):
+    p = git(repo, "rev-parse", "-q", "--verify", f"{sha}^{{tree}}", ok=(0, 1))
+    return p.stdout.strip() if p.returncode == 0 else None
+
+
+REPO_FULL = "RobTand/trustladderiii"
+
+
+def gh_json(path):
+    """GET a GitHub REST path as JSON; None on any failure (callers treat None as not proven)."""
+    p = subprocess.run(["gh", "api", path], capture_output=True, text=True, cwd="/tmp")
+    if p.returncode != 0:
+        return None
+    try:
+        return json.loads(p.stdout)
+    except ValueError:
+        return None
+
+
+def postmerge_ok(sha):
+    """True only for an authenticated, completed, successful Post-merge full run of gate.yml at exactly sha."""
+    d = gh_json(f"repos/{REPO_FULL}/commits/{sha}/check-runs?per_page=100&filter=latest")
+    if not d or not isinstance(d.get("check_runs"), list):
+        return False
+    runs = [c for c in d["check_runs"] if c.get("name") == "Post-merge full run"]
+    if not runs or any((c.get("app") or {}).get("slug") != "github-actions" for c in runs):
+        return False
+    for c in runs:
+        if c.get("head_sha") != sha or c.get("status") != "completed" or c.get("conclusion") != "success":
+            return False
+        m = re.search(rf"github\.com/{re.escape(REPO_FULL)}/actions/runs/(\d+)/job/(\d+)", c.get("details_url") or "")
+        if not m:
+            return False
+        run = gh_json(f"repos/{REPO_FULL}/actions/runs/{m.group(1)}")
+        job = gh_json(f"repos/{REPO_FULL}/actions/jobs/{m.group(2)}")
+        if not run or not job:
+            return False
+        if not (run.get("path") == ".github/workflows/gate.yml" and run.get("head_sha") == sha
+                and run.get("event") == "push" and run.get("head_branch") == "main"
+                and run.get("status") == "completed" and run.get("conclusion") == "success"
+                and (run.get("repository") or {}).get("full_name") == REPO_FULL):
+            return False
+        if not (job.get("run_id") == run.get("id") and job.get("run_attempt") == run.get("run_attempt")
+                and job.get("head_sha") == sha and job.get("conclusion") == "success"
+                and job.get("name") == "Post-merge full run"):
+            return False
+    return True
+
+
+def gh_bytes(path):
+    """GET a GitHub REST path as raw bytes (artifact zips); None on any failure."""
+    p = subprocess.run(["gh", "api", path], capture_output=True, cwd="/tmp")
+    return p.stdout if p.returncode == 0 else None
+
+
+def nightly_result_ok(repo, artifact_id, sha):
+    """True only if the artifact's kani-result.json proves exactly sha: nightly mode, head == sha, passed,
+    no errors, every verdict SUCCESSFUL/PENDING, and the result set == the harness inventory at sha.
+    (review-devlane-gate-v3 must-fix 2: a successful rerun must not promote a failed attempt's artifact.)"""
+    raw = gh_bytes(f"repos/{REPO_FULL}/actions/artifacts/{artifact_id}/zip")
+    if not raw:
+        return False
+    try:
+        r = json.loads(zipfile.ZipFile(io.BytesIO(raw)).read("kani-result.json"))
+    except (KeyError, ValueError, zipfile.BadZipFile):
+        return False
+    if not (isinstance(r, dict) and r.get("mode") == "nightly" and r.get("head") == sha
+            and r.get("passed") is True and r.get("errors") == [] and isinstance(r.get("results"), dict)):
+        return False
+    try:
+        budgets = json.loads(git(repo, "show", f"{sha}:tools/ci/kani-budgets.json").stdout)
+    except (Refuse, ValueError):
+        return False
+    if budgets.get("schema") != "tl3.kani-budgets.v1" or not isinstance(budgets.get("harnesses"), dict):
+        return False
+    want = set(budgets["harnesses"])
+    res = r["results"]
+    if not want or set(res) != want:
+        return False
+    return all(isinstance(v, dict) and v.get("name") == k and v.get("verdict") in ("SUCCESSFUL", "PENDING")
+               for k, v in res.items())
+
+
+def nightly_proof(repo, fp_target, requested_head=None):
+    """(run id, proved SHA) of a successful kani-nightly whose artifact names a commit with fp_target AND whose
+    kani-result.json verifies (nightly_result_ok), else None."""
+    # The unchanged fresh-init helper separately requires proof[1] == args.head.
+    # Other callers supply their requested SHA explicitly. Removed with PB at K5.
+    if requested_head is None:
+        requested_head = git(repo, "rev-parse", "HEAD").stdout.strip()
+    try:
+        spec = importlib.util.spec_from_file_location("tl3_pb_nightly", HERE / "pb_nightly.py")
+        adapter = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(adapter)
+        pb_proof = adapter.proof(repo, fp_target, fingerprint, requested_head)
+    except Exception:
+        raise Refuse("PB nightly evidence did not authenticate") from None
+    if pb_proof is not None:
+        return pb_proof
+    d = gh_json(f"repos/{REPO_FULL}/actions/workflows/kani-nightly.yml/runs?status=success&per_page=30")
+    for r in (d or {}).get("workflow_runs", []):
+        if not (r.get("conclusion") == "success" and r.get("status") == "completed"
+                and r.get("event") in ("schedule", "workflow_dispatch") and r.get("head_branch") == "main"
+                and r.get("path") == ".github/workflows/kani-nightly.yml"
+                and (r.get("repository") or {}).get("full_name") == REPO_FULL):
+            continue
+        arts = gh_json(f"repos/{REPO_FULL}/actions/runs/{r.get('id')}/artifacts") or {}
+        for a in arts.get("artifacts", []):
+            m = re.fullmatch(r"kani-nightly-([0-9a-f]{40})", a.get("name") or "")
+            if not m or tree(repo, m.group(1)) is None or a.get("expired"):
+                continue
+            try:
+                if fingerprint(repo, m.group(1)) != fp_target:
+                    continue
+            except Refuse:
+                continue
+            if nightly_result_ok(repo, a.get("id"), m.group(1)):
+                return r.get("id"), m.group(1)
+    return None
+
+
+KANI_MARKERS = (
+    "tools/ci/kani-budgets.json", "tools/ci/kani_gate.py",
+    ".github/workflows/kani-nightly.yml", "crates/kernel/src/proofs.rs",
+)
+
+
+def kani_required(repo, sha):
+    """Kani remains until all four markers are absent at this immutable SHA."""
+    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise Refuse(f"{sha!r} is not a full SHA")
+    git(repo, "rev-parse", "--verify", f"{sha}^{{commit}}")
+    present = False
+    for path in KANI_MARKERS:
+        entry = git(repo, "ls-tree", sha, "--", path).stdout.strip()
+        if not entry:
+            continue
+        if entry.split("\t", 1)[0].split()[:2] not in (["100644", "blob"], ["100755", "blob"]):
+            raise Refuse(f"{path} must be a regular file")
+        present = True
+    return present
+
+
+def verus_test_identity(repo, sha):
+    """Broad identity for Verus and kernel tests, independent of Kani decisions."""
+    return fingerprint(repo, sha, mode="--identity")
+
+
+class BuildBuddy:
+    """Reads BuildBuddy's own records through bb_logs.py (which holds and scrubs the key)."""
+
+    def __init__(self):
+        spec = importlib.util.spec_from_file_location("bb_logs", HERE / "bb_logs.py")
+        self.bb = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.bb)
+
+    def record(self, invocation_id, children=False):
+        body = {"selector": {"invocation_id": invocation_id}}
+        if children:
+            body["include_child_invocations"] = True
+        found = self.bb.call("GetInvocation", body).get("invocation", [])
+        return found[0] if found else None
+
+    def targets(self, invocation_id):
+        return self.bb.call("GetTarget", {"selector": {"invocation_id": invocation_id}}).get("target", []) or []
+
+    def log(self, invocation_id):
+        out, page, seen = [], "0000", set()
+        while page not in seen and len(seen) < 200:
+            seen.add(page)
+            r = self.bb.call("GetLog", {"selector": {"invocation_id": invocation_id}, "page_token": page})
+            out.append((r.get("log") or {}).get("contents", ""))
+            following = r.get("nextPageToken", r.get("next_page_token", ""))
+            if not following or following == page:
+                break
+            page = following
+        return self.bb.scrub("".join(out))
+
+
+def succeeded(record):
+    """bbrun.succeeded: Remote Run uses OK, Bazel children use SUCCESS; conflicts fail closed."""
+    if record.get("invocationStatus") != "COMPLETE_INVOCATION_STATUS" or record.get("success") is not True:
+        return False
+    code = record.get("bazelExitCode", record.get("bazel_exit_code"))
+    return code in ("OK", "SUCCESS") if code else True
+
+
+def child_ids(record):
+    ids = []
+    for c in record.get("childInvocations", record.get("child_invocations", [])) or []:
+        cid = c.get("invocationId", c.get("invocation_id")) if isinstance(c, dict) else None
+        if not cid:
+            raise Refuse("child invocation without an id")
+        ids.append(cid)
+    return ids
+
+
+def expected_verus(repo, sha):
+    text = git(repo, "show", f"{sha}:tools/bazel/verus.bzl").stdout
+    m = re.search(r'package_name\(\) == "crates/kernel":(.*?)(?:\n    if native\.package_name\(\)|\Z)', text, re.S)
+    if not m:
+        raise Refuse("verus.bzl has no crates/kernel block")
+    g = re.search(r"groups = \{(.*?)\n        \}", m.group(1), re.S)
+    if not g:
+        raise Refuse("verus.bzl crates/kernel block has no groups dict")
+    names = re.findall(r'^\s*"(\w+)": \("[^"]+", \d+\),\s*$', g.group(1), re.M)
+    entries = [l for l in g.group(1).splitlines() if l.strip() and not l.strip().startswith("#")]
+    if len(entries) != len(names):
+        raise Refuse(f"verus.bzl kernel groups: parsed {len(names)} of {len(entries)} entries; extend dev_evidence.py")
+    if not names:
+        raise Refuse("no Verus kernel groups parsed from verus.bzl")
+    if re.search(r'verus_test\(\s*name = "(?!verus_" \+ name)', m.group(1)):
+        raise Refuse("verus.bzl kernel block declares a verus_test outside the groups loop; extend dev_evidence.py")
+    return {f"//crates/kernel:verus_{n}" for n in names}
+
+
+def expected_kernel_test_stems(repo, sha):
+    files = git(repo, "ls-tree", "--name-only", f"{sha}:crates/kernel/tests").stdout.split()
+    stems = {f[:-3] for f in files if f.endswith(".rs")}
+    dirs = git(repo, "ls-tree", "-d", "--name-only", f"{sha}:crates/kernel/tests").stdout.split()
+    for d in dirs:
+        if git(repo, "cat-file", "-e", f"{sha}:crates/kernel/tests/{d}/main.rs", ok=(0, 1, 128)).returncode == 0:
+            stems.add(d)
+    if not stems:
+        raise Refuse("no kernel integration tests found")
+    return stems
+
+
+def verify_evidence(repo, bb, sha, path):
+    try:
+        ev = json.loads(path.read_text())
+    except (OSError, ValueError) as e:
+        raise Refuse(f"evidence {path.name} unreadable: {e}")
+    if not isinstance(ev, dict) or ev.get("sha") != sha:
+        raise Refuse(f"evidence {path.name}: 'sha' must be {sha}")
+    base = ev.get("base")
+    if not isinstance(base, str) or not SHA.fullmatch(base):
+        raise Refuse(f"evidence {path.name}: 'base' must be a full SHA")
+    if base == sha or not is_ancestor(repo, base, sha):
+        raise Refuse(f"evidence {path.name}: base {base[:8]} is not a proper ancestor of {sha[:8]}")
+    reviews = ev.get("reviews")
+    if not isinstance(reviews, list) or not reviews or not all(isinstance(r, str) and r for r in reviews):
+        raise Refuse(f"evidence {path.name}: needs at least one review link")
+    invs = ev.get("invocations")
+    if not isinstance(invs, list) or not invs:
+        raise Refuse(f"evidence {path.name}: no invocations")
+    want_tree = tree(repo, sha)
+
+    def same_tree(rec, what):
+        commit = rec.get("commitSha") or rec.get("commit_sha") or ""
+        if not SHA.fullmatch(commit):
+            raise Refuse(f"{what}: records no commit")
+        if tree(repo, commit) is None:
+            raise Refuse(f"{what}: its commit {commit[:8]} is not in the local clone (git fetch)")
+        if tree(repo, commit) != want_tree:
+            raise Refuse(f"{what}: ran at {commit[:8]}, whose tree differs from {sha[:8]}")
+
+    groups = {}
+    for inv in invs:
+        iid, group = (inv or {}).get("id"), (inv or {}).get("group")
+        if not isinstance(iid, str) or not re.fullmatch(r"[0-9a-f-]{36}", iid) or not isinstance(group, str) or not group:
+            raise Refuse(f"evidence {path.name}: invocation entries need a BuildBuddy 'id' and a 'group'")
+        rec = bb.record(iid, children=True)
+        if not rec:
+            raise Refuse(f"invocation {iid}: not found on BuildBuddy")
+        if not succeeded(rec):
+            raise Refuse(f"invocation {iid} ({group}): not a completed success "
+                         f"({rec.get('invocationStatus')}, success={rec.get('success')}, {rec.get('bazelExitCode')})")
+        same_tree(rec, f"invocation {iid}")
+        tests = [iid] if rec.get("command") == "test" else []
+        for cid in child_ids(rec):
+            crec = bb.record(cid)
+            if not crec:
+                raise Refuse(f"invocation {iid}: child {cid} not found")
+            if not succeeded(crec):
+                raise Refuse(f"invocation {iid}: child invocation {cid} ({crec.get('command')}) did not pass")
+            same_tree(crec, f"invocation {iid} child {cid}")   # review must-fix 6: bind children to the tree
+            if crec.get("command") == "test":
+                tests.append(cid)
+        groups.setdefault(group, []).append((iid, rec, tests))
+    return base, groups
+
+
+def verus_and_kernel_tests(repo, bb, sha, groups):
+    """None if the evidence's 'verus' and 'kernel-tests' groups cover every kernel group/test at sha, else reason."""
+    for g in ("verus", "kernel-tests"):
+        if g not in groups:
+            return f"missing group {g}"
+
+    def passed_labels(group):
+        seen = {}
+        for _iid, _rec, tests in groups[group]:
+            for tid in tests:
+                for t in bb.targets(tid):
+                    label, status = t.get("label", ""), t.get("status", "")
+                    if seen.get(label) != "PASSED":
+                        seen[label] = status
+        return {l for l, s in seen.items() if s == "PASSED"}, {l: s for l, s in seen.items() if s != "PASSED"}
+    ok, _bad = passed_labels("verus")
+    need = expected_verus(repo, sha)
+    if need - ok:
+        return f"verus group: not PASSED: {', '.join(sorted(need - ok)[:6])}"
+    ok, bad = passed_labels("kernel-tests")
+    # BUILT = built but not run (non-test targets, or tests excluded by a tag filter such as -verus): neutral.
+    # Completeness is enforced below by the required PASSED set, so a required target left BUILT still refuses.
+    kernel_bad = {l: s for l, s in bad.items() if l.startswith("//crates/kernel:") and s != "BUILT"}
+    if kernel_bad:
+        return f"kernel-tests group: {', '.join(f'{l}={s}' for l, s in list(kernel_bad.items())[:6])}"
+    for stem in sorted(expected_kernel_test_stems(repo, sha)):
+        pat = re.compile(rf"//crates/kernel:test_test_{re.escape(stem)}(-[\w-]+)?$")
+        if not any(pat.match(l) for l in ok):
+            return f"kernel-tests group: no PASSED target for crates/kernel/tests/{stem}.rs"
+    if not any(l.startswith("//crates/kernel:lib_test_") for l in ok):
+        return "kernel-tests group: no PASSED kernel lib test target"
+    return None
+
+
+def commit_inventory(repo, bb, sha):
+    """None if BuildBuddy's own successful test invocations AT sha PASSED every expected kernel Verus group and
+    kernel test (expected set derived from git, not from Bazel discovery), else the reason.
+    (review-devlane-gate-v5 must-fix: an authenticated full run proves the job passed, not what it ran.)"""
+    try:
+        runs = bb.bb.call("GetInvocation", {"selector": {"commit_sha": sha}}).get("invocation", [])
+    except SystemExit as e:
+        return f"BuildBuddy query failed: {e}"
+    tids = [r["id"]["invocationId"] for r in runs
+            if r.get("command") == "test" and succeeded(r) and (r.get("commitSha") or "") == sha]
+    if not tids:
+        return f"no successful BuildBuddy test invocation recorded at {sha[:8]}"
+    return verus_and_kernel_tests(repo, bb, sha, {"verus": [(None, None, tids)], "kernel-tests": [(None, None, tids)]})
+
+
+def fingerprint(repo, sha, mode="--kani"):
+    p = subprocess.run([sys.executable, "-I", str(HERE / "kernel_fingerprint.py"), mode, repo, sha], capture_output=True, text=True)
+    if p.returncode != 0 or not re.fullmatch(r"[0-9a-f]{16}", p.stdout.strip()):
+        raise Refuse(f"kernel fingerprint of {sha[:8]} refused: {(p.stderr or p.stdout).strip()}")   # must-fix 7
+    return p.stdout.strip()
+
+
+def check(repo, deployed, candidate, evidence_dir, bb=None, postmerge=postmerge_ok, nightly=None, inventory=None):
+    """The candidate tree alone decides Kani presence and the required nightly.
+
+    Walk intermediate evidence for content coverage and matching proof/test
+    inputs, never to demand Kani nightlies at intermediate fingerprints.
+    """
+    nightly = nightly or (lambda fp: nightly_proof(repo, fp, candidate))
+    if inventory is None:
+        def inventory(sha):
+            nonlocal bb
+            bb = bb or BuildBuddy()
+            return commit_inventory(repo, bb, sha)
+    for s in (deployed, candidate):
+        if not SHA.fullmatch(s):
+            raise Refuse(f"{s!r} is not a full SHA")
+    if not is_ancestor(repo, deployed, candidate):
+        raise Refuse(f"{candidate[:8]} does not descend from the deployed {deployed[:8]} (rollback: TL3_DEPLOY_ROLLBACK=1)")
+    fp_dep, fp_cand = fingerprint(repo, deployed), fingerprint(repo, candidate)
+    vt_cand = verus_test_identity(repo, candidate)
+    needs_kani = kani_required(repo, candidate)
+    chain, visited, cur, vk_from = [], [], candidate, None
+    for _ in range(200):
+        if cur == deployed:
+            chain.append(f"{cur[:8]} is the deployed SHA")
+            break
+        if not is_ancestor(repo, deployed, cur):   # must-fix 4: never cross behind the deployed boundary
+            raise Refuse(f"the chain reached {cur[:8]}, which is not at or after the deployed {deployed[:8]}")
+        visited.append(cur)
+        if postmerge(cur):
+            chain.append(f"{cur[:8]} authenticated Post-merge full run (covers its ancestors)")
+            if vk_from is None and verus_test_identity(repo, cur) == vt_cand and inventory(cur) is None:
+                vk_from = f"authenticated Post-merge full run at {cur[:8]} (kernel inventory PASSED on BuildBuddy)"
+            break
+        path = Path(evidence_dir) / f"{cur}.json"
+        if not path.is_file():
+            raise Refuse(f"no captain evidence for {cur[:8]} ({path}) and no authenticated Post-merge full run there")
+        bb = bb or BuildBuddy()
+        base, groups = verify_evidence(repo, bb, cur, path)
+        if not is_ancestor(repo, deployed, base):
+            raise Refuse(f"evidence {cur[:8]}: base {base[:8]} is behind the deployed {deployed[:8]}")
+        if vk_from is None and verus_test_identity(repo, cur) == vt_cand and verus_and_kernel_tests(repo, bb, cur, groups) is None:
+            vk_from = f"evidence groups verus + kernel-tests at {cur[:8]}"
+        chain.append(f"{cur[:8]} evidence OK (base {base[:8]}; groups {', '.join(sorted(groups))})")
+        cur = base
+    else:
+        raise Refuse("evidence chain longer than 200 links")
+    vt_dep = verus_test_identity(repo, deployed)
+    if needs_kani and fp_cand != fp_dep:
+        proof = nightly(fp_cand)
+        if not proof:
+            raise Refuse(f"kernel proof inputs changed since {deployed[:8]} ({fp_dep} -> {fp_cand}); no successful "
+                         f"kani-nightly whose proved commit (artifact name) has fingerprint {fp_cand}; dispatch kani-nightly on main")
+        chain.append(f"kernel changed {fp_dep} -> {fp_cand}: Kani by kani-nightly run {proof[0]} proving {proof[1][:8]}")
+    # Verus + kernel tests: required whenever their full input identity changed (review v4 must-fix 1),
+    # independently of the Kani fingerprint (a Verus-only or test-only change leaves that unchanged).
+    if vt_cand != vt_dep:
+        if vk_from is None:
+            for s in visited:
+                if verus_test_identity(repo, s) == vt_cand and postmerge(s) and inventory(s) is None:
+                    vk_from = f"authenticated Post-merge full run at {s[:8]} (kernel inventory PASSED on BuildBuddy)"
+                    break
+        if vk_from is None:
+            raise Refuse(f"kernel proof/test inputs changed since {deployed[:8]} (identity {vt_dep} -> {vt_cand}); no "
+                         f"verified Verus + kernel tests for the candidate's inputs (authenticated Post-merge full run, "
+                         f"or evidence groups verus + kernel-tests, at a SHA with the same identity)")
+        chain.append(f"Verus + kernel tests ({vt_cand}) by {vk_from}")
+    return chain
+
+
+def nightly_covers(repo, sha):
+    if not isinstance(sha, str) or not SHA.fullmatch(sha):
+        raise Refuse(f"{sha!r} is not a full SHA")
+    if not kani_required(repo, sha):
+        # No-Kani release evidence still refuses unknown proof/test layouts.
+        verus_test_identity(repo, sha)
+        return f"Kani release rule: {sha[:8]} has no Kani markers; no Kani evidence required"
+    proof = nightly_proof(repo, fingerprint(repo, sha), sha)
+    if not proof:
+        raise Refuse(f"no successful kani-nightly proves {sha[:8]}'s kernel fingerprint")
+    return f"Kani release rule: kani-nightly run {proof[0]} proved {proof[1][:8]}, same kernel inputs as {sha[:8]}"
+
+
+if __name__ == "__main__":
+    try:
+        if sys.argv[1] == "--full-suite-ok":
+            repo, sha = sys.argv[2:4]
+            if not postmerge_ok(sha):
+                raise Refuse(f"no authenticated Post-merge full run at {sha[:8]}")
+            why = commit_inventory(repo, BuildBuddy(), sha)
+            if why:
+                raise Refuse(f"authenticated Post-merge full run at {sha[:8]}, but kernel inventory not proven: {why}")
+            print(f"release gate: authenticated Post-merge full run at {sha[:8]}; kernel Verus + tests PASSED on BuildBuddy")
+        elif sys.argv[1] == "--postmerge-ok":
+            if not postmerge_ok(sys.argv[2]):
+                raise Refuse(f"no authenticated Post-merge full run at {sys.argv[2][:8]}")
+            print(f"release gate: authenticated Post-merge full run at {sys.argv[2][:8]}")
+        elif sys.argv[1] == "--nightly-covers":
+            repo, sha = sys.argv[2:4]
+            print(nightly_covers(repo, sha))
+        else:
+            repo, deployed, candidate = sys.argv[1:4]
+            for line in check(repo, deployed, candidate, sys.argv[4] if len(sys.argv) > 4 else EVIDENCE):
+                print("dev lane:", line)
+    except Refuse as e:
+        print(f"dev lane refused: {e}", file=sys.stderr)
+        sys.exit(1)

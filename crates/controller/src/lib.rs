@@ -99,6 +99,10 @@ use tl3_store::{Commit, Effect, EffectState, EffectTransition, RowChange, Snapsh
 pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("unsupported store state: catch-up cursor without world start; fresh-init required")]
+    CatchUpWithoutWorldStart,
+    #[error("unsupported store state: world start without catch-up cursor; fresh-init required")]
+    WorldStartWithoutCatchUp,
     #[error("replay-check: {0}")]
     Replay(String),
     #[error("{0}")]

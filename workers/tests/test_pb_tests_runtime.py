@@ -26,6 +26,18 @@ def test_flux_worker_settings_do_not_require_pb_tools_or_environment(monkeypatch
     assert settings.tools_path is None
 
 
+def test_flux_activation_transports_only_the_selected_profile_and_image(monkeypatch):
+    from tl3_workers import flux_execution
+    from tl3_workers.pb_tests import TestSettings
+    settings = TestSettings(image='sha256:' + '1' * 64,
+                            execution={'backend': 'flux', 'profile': '/fixture/attempt/execution.json'})
+    documents = []
+    monkeypatch.setattr(flux_execution, 'control', lambda document: documents.append(document))
+    flux_execution.activation(settings)
+    assert documents == [{'op': 'activation', 'profile': settings.execution['profile'],
+                          'image': settings.image}]
+
+
 @pytest.mark.parametrize('backend', ['prismabuild', 'flux'])
 def test_selected_flux_rehearsal_retains_backend_in_contract(rehearsal, tmp_path, backend):
     ledger, root, inputs, _ = rehearsal
@@ -63,7 +75,7 @@ def test_selected_flux_maker_reaches_activation_hold_without_pb_transport(rehear
     monkeypatch.setattr(pb_tests, '_json_command', forbidden)
     from tl3_workers import flux_execution
     from tl3_harness.supervision import ExecutionFailure, ExecutionOutcome
-    def held():
+    def held(settings):
         raise ExecutionFailure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'admission', 'runtime_activation_held')
     monkeypatch.setattr(flux_execution, 'activation', held)
     monkeypatch.setattr(pb_tests, 'bounded', lambda value, **kwargs: value)
@@ -101,7 +113,7 @@ def test_selected_flux_maker_consumes_verified_payload_and_checkpoints_before_di
             for index in range(len(runs))]
     retained = []
     worktree.pb_submitted = lambda key, base, tree: retained.append((key, base, tree))
-    monkeypatch.setattr(flux_execution, 'activation', lambda: None)
+    monkeypatch.setattr(flux_execution, 'activation', lambda settings: None)
     monkeypatch.setattr(flux_execution, 'allocate', lambda settings: ('a' * 64, tmp_path))
     monkeypatch.setattr(pb_tests, '_stage', lambda *args, **kwargs: 'b' * 40)
     monkeypatch.setattr(pb_tests, '_git', lambda *args: 'c' * 40)
@@ -173,7 +185,7 @@ def test_flux_observation_uses_generated_wire_and_explicit_payload(tmp_path, mon
     plan = {'cli': str(cli), 'config': str(tmp_path / 'options.json'), 'key': 'worker:' + 'a' * 64,
             'owner': owner, 'attach': {'op': 'attach', **owner},
             'bounds': {'cli_envelope_bytes': len(schema.read_bytes()), 'payload_bytes': len(raw)}}
-    monkeypatch.setattr(flux_execution, 'activation', lambda: None)
+    monkeypatch.setattr(flux_execution, 'activation', lambda settings: None)
     events = []
     if response == 'verified':
         result = flux_execution.execute(plan, resumed=True, emit=events.append)

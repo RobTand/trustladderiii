@@ -1,0 +1,15 @@
+{
+  "provenance": "DELIBERATE FAULT for canary 2: interpreter path absent; not the observed interpreter",
+  "fault_input": {
+    "producer_option": "--container-interpreter",
+    "value": "/opt/tl3/bin/python-canary2-absent"
+  },
+  "absence_status": "Program-lead declared absent canary path; no extra image/container probe authorized or performed",
+  "observed_interpreter_claim": false,
+  "image": "dl380g10:5000/tl3/sandbox@sha256:c83b5ef13adb2024eba6e80cfc41a6da5905df7b128eabbd05fac7b8371db8f6",
+  "source": "42b68e30fcb3d37cc03c0a70166af9e912b25dc6",
+  "fault_boundary": "After real durable begin, sealed Podman invocation attempts the deliberately absent entrypoint. Entry exec or launch must fail, no payload result.",
+  "expected": "Typed setup/launch failure with cause within seconds, complete attach/native terminal and full cleanup/no debt; UNKNOWN/hang/success/missing evidence STOP",
+  "baseline_observed_interpreter": "/opt/tl3/bin/python is historical success baseline only, not the injected value",
+  "fix_scope": "Integrated launch failure + corrected fixture + scratch cancellation/reclamation; fresh native pins only"
+}

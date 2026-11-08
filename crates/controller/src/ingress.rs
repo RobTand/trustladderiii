@@ -8,7 +8,7 @@ use crate::{
     Bootstrap, Controller, Error, IssueChange, LabelledIssue, Repository, Result, cli::Input,
     executor::Observation,
 };
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -199,6 +199,7 @@ pub(crate) fn translate(delivery: GitHubDelivery, bootstrap: &Bootstrap) -> Vec<
                 if change.event == "labeled"
                     && let Some(issue) = changes.issues.iter().find(|issue| issue.number == number)
                     && issue.pull_request.is_none()
+                    && issue.state == "open"
                 {
                     result.push(Input::LabelledIssue(LabelledIssue {
                         delivery: format!(
@@ -685,30 +686,165 @@ fn comment_input(
     })
 }
 
+fn initialize_intake(
+    store: &mut Store,
+    bootstrap: &Bootstrap,
+    entries: &[tl3_config::InitialIntake],
+    clock: impl FnOnce() -> DateTime<Utc>,
+    mut fetch: impl FnMut(&Repository, u64) -> Result<tl3_github::Issue>,
+) -> Result<()> {
+    match (
+        store.ingress_cursor("github-catch-up")?,
+        store.ingress_cursor("github-world-start")?,
+    ) {
+        (Some(_), Some(_)) => {
+            eprintln!("initial_intake ignored: GitHub catch-up cursor already exists");
+            return Ok(());
+        }
+        (Some(_), None) => return Err(Error::CatchUpWithoutWorldStart),
+        (None, Some(_)) => return Err(Error::WorldStartWithoutCatchUp),
+        (None, None) => {}
+    }
+    let startup = clock()
+        .with_nanosecond(0)
+        .expect("zero nanoseconds is valid");
+    let mut deliveries = Vec::new();
+    let mut admitted = std::collections::BTreeSet::new();
+    for (index, entry) in entries.iter().enumerate() {
+        let invalid = |field| {
+            Error::Adapter(Box::new(io::Error::other(format!(
+                "initial_intake[{index}] issue #{}: {field}",
+                entry.number
+            ))))
+        };
+        if entry.number == 0 {
+            return Err(invalid("number must be positive"));
+        }
+        let repo = bootstrap
+            .repos
+            .iter()
+            .find(|repo| {
+                repo.owner.eq_ignore_ascii_case(&entry.owner)
+                    && repo.name.eq_ignore_ascii_case(&entry.repo)
+            })
+            .ok_or_else(|| invalid("owner/repo is not served"))?;
+        if !admitted.insert((
+            repo.owner.to_ascii_lowercase(),
+            repo.name.to_ascii_lowercase(),
+            entry.number,
+        )) {
+            continue;
+        }
+        let issue = fetch(repo, entry.number).map_err(|_| invalid("current issue fetch failed"))?;
+        if issue.number != entry.number {
+            return Err(invalid("number does not match current issue"));
+        }
+        if issue.state != "open" {
+            return Err(invalid("state must be open"));
+        }
+        if issue.pull_request.is_some() {
+            return Err(invalid("pull_request must be absent"));
+        }
+        if !issue.labels.iter().any(|label| label.name == "tl3") {
+            return Err(invalid("labels must contain tl3"));
+        }
+        let id = format!(
+            "initial-intake:{}/{}:{}",
+            entry.owner, entry.repo, entry.number
+        );
+        let delivery = GitHubDelivery::Webhook(Box::new(webhook::Delivery {
+            id: id.clone(),
+            event: Some(Event::IssueLabeled {
+                context: webhook::Context {
+                    repository: tl3_github::Repository {
+                        id: 0,
+                        name: repo.name.clone(),
+                        owner: tl3_github::Actor {
+                            id: 0,
+                            login: repo.owner.clone(),
+                        },
+                    },
+                    installation_id: repo.installation,
+                },
+                issue,
+                label: tl3_github::Label { name: "tl3".into() },
+                actor: tl3_github::Actor {
+                    id: bootstrap.rob,
+                    login: String::new(),
+                },
+            }),
+            event_name: "issues".into(),
+            payload: serde_json::Value::Null,
+        }));
+        deliveries.push((id, serde_json::to_vec(&delivery)?));
+    }
+    store.begin_input()?;
+    let commit = (|| {
+        store.receive_catch_up("github-world-start", &[], &json!(startup))?;
+        store.receive_catch_up("github-catch-up", &deliveries, &json!(startup))
+    })();
+    if let Err(error) = commit {
+        store.finish_input(false)?;
+        return Err(error.into());
+    }
+    store.finish_input(true)?;
+    Ok(())
+}
+
 #[derive(Clone)]
 pub struct CatchUp {
     clients: BTreeMap<u64, GitHub>,
     runtime: &'static tokio::runtime::Runtime,
+    initial_intake: Vec<tl3_config::InitialIntake>,
 }
 impl CatchUp {
-    pub fn new(clients: BTreeMap<u64, GitHub>) -> Result<Self> {
+    pub fn new(
+        clients: BTreeMap<u64, GitHub>,
+        initial_intake: Vec<tl3_config::InitialIntake>,
+    ) -> Result<Self> {
         Ok(Self {
             clients,
             runtime: crate::executor::runtime()?,
+            initial_intake,
         })
     }
+    fn initialize(&self, store: &mut Store, bootstrap: &Bootstrap) -> Result<()> {
+        initialize_intake(
+            store,
+            bootstrap,
+            &self.initial_intake,
+            Utc::now,
+            |repo, number| {
+                let client = self
+                    .clients
+                    .get(&repo.installation)
+                    .ok_or(Error::Invalid("missing GitHub installation client"))?;
+                self.runtime
+                    .block_on(client.issue(&format!("{}/{}", repo.owner, repo.name), number))
+                    .map_err(|_| Error::Invalid("initial intake issue fetch failed"))
+            },
+        )
+    }
     pub fn pass(&self, store: &mut Store, bootstrap: &Bootstrap) -> Result<Vec<Input>> {
+        self.initialize(store, bootstrap)?;
         let since: DateTime<Utc> = store
             .ingress_cursor("github-catch-up")?
             .map(crate::decode_stored)
             .transpose()?
-            .unwrap_or(DateTime::UNIX_EPOCH);
+            .ok_or(Error::Invalid("GitHub catch-up cursor is not initialized"))?;
         let snapshot = store.load()?;
-        self.fetch(since, snapshot, bootstrap)?.persist(store)
+        let world_start = crate::decode_stored(
+            store
+                .ingress_cursor("github-world-start")?
+                .ok_or(Error::CatchUpWithoutWorldStart)?,
+        )?;
+        self.fetch(since, world_start, snapshot, bootstrap)?
+            .persist(store)
     }
     fn fetch(
         &self,
         since: DateTime<Utc>,
+        world_start: DateTime<Utc>,
         snapshot: tl3_store::Snapshot,
         bootstrap: &Bootstrap,
     ) -> Result<CatchUpBatch> {
@@ -785,10 +921,15 @@ impl CatchUp {
                         repo.installation,
                     )
                 })?;
-            cursor = Some(cursor.map_or(result.next_cursor, |old: DateTime<Utc>| {
-                old.min(result.next_cursor)
-            }));
+            let next_cursor = result.next_cursor.max(since);
+            cursor = Some(cursor.map_or(next_cursor, |old: DateTime<Utc>| old.min(next_cursor)));
             for mut changes in result.repositories {
+                changes
+                    .comments
+                    .retain(|comment| comment.created_at >= world_start);
+                changes
+                    .labels
+                    .retain(|(_, change)| change.created_at >= world_start);
                 for (number, _) in &changes.labels {
                     if !changes.issues.iter().any(|issue| issue.number == *number) {
                         changes.issues.push(
@@ -888,6 +1029,10 @@ impl WebhookReceiver {
         }
         if secret.is_empty() {
             return Err(Error::Invalid("webhook secret is empty"));
+        }
+        let mut store = store;
+        if let Some(catch_up) = &catch_up {
+            catch_up.initialize(&mut store, &bootstrap)?;
         }
         let catch_up_reader = catch_up.as_ref().map(|_| store.reader()).transpose()?;
         let server = http::Server::bind(address)?;

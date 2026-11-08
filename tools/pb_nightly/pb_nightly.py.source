@@ -1,0 +1,351 @@
+"""Authenticate exact-commit PB Kani nightlies. Delete with the hook at K5."""
+import functools
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+import types
+from typing import NamedTuple
+
+TEMPLATE_HEAD = "7cba86d2e71ae39b246ec71b16e377da095e12dc"
+TEMPLATE_TREE = "f23ebf101bab8def3856d0e2086ef89b3bbb8226"
+TEMPLATE_DRIVER_SHA256 = "a8f24e7c8d9b14fc337f297b1aee592436d0ac95ec14f03a862e5e42092c6eae"
+INDEX_ROOT = Path("/home/rob/tmp/tl3-build/ops/pb-nightly-adapter/runs")
+READER = "/home/rob/tmp/tl3-build/pb_record.py"
+CAS_ROOT = "/mnt/shared/prismabuild-fleet/cas"
+QUEUE_ROOT = Path("/mnt/shared/prismabuild-fleet/pb-queue")
+MARKER = "PB_KANI_LEAF_V1 "
+PB_SOURCE = "/mnt/shared/prismabuild-fleet/runtime-generations/48e44590a200-1793987666-a734f5927b96/src"
+SOURCE_PATHS = (".github/workflows/kani-nightly.yml", "tools/ci/kani-budgets.json", "tools/ci/kani_gate.py")
+
+POLICY_PINS = {'.github/workflows/kani-nightly.yml': 'c35ac055a811ac2da768914cbcbf9baeedb561bc80d715383bc67981904bb9c2', 'tools/ci/kani-budgets.json': '05e7fe718fd68505220935f2aeb5848d5bd86856e8e2656f9043f03b470a9f5b', 'tools/ci/kani_gate.py': '575e7c736c492189be5f037a8779ff2630701cad066af333f49078b9418ee3e8', 'tools/ci/child_env.py': 'b94314760748f7f18909e035ccf3bfc92f1305344f7cfa643ec57d9cf92cf58c'}
+MEASUREMENT_KEYS = {'advance_auditing': ['5cb0194c77eb4fdb72f40f351065c0d73028066bcf850ec6600b45e3fc448224'], 'advance_checking': ['b1a7ef13f818df19a07405dad0271f263ca8e2eea084b0b3e30f9d9b0d00e5e9'], 'advance_ingesting': ['26c88988f190631b71708a455659824b5b84124ba38b3d77cec13112bf0865fc'], 'advance_making': ['00381886b3a39a922161fbabad9246ccf1fe874b10f074d58c8c9706cd565c00'], 'advance_planning': ['e4e6bba99df367685d81f5a6fb8b2c06c617bf6e1edcd30ee6e10106a1ee9ee6'], 'advance_publishing': ['ac610ab6154f4f8d7ad19eb3b4c22689f0d2d0b1834c0e4f36952ca65b1bb9ef'], 'advance_queued': ['e779fa8ac305a2f343aeb1ef6134a0c1a2e2ecf10bddefef817ab2ff45567179'], 'advance_ready': ['efd33bae8b00a19d5d6d2df5855f906c9334856eacf8daf9ff8dfdcb3576d6ce'], 'advance_rebasing': ['572bfd0ace69ef6f72597ebb05875ff68328e24ec17fd954ca9e0d34b2567785'], 'advance_reviewing': ['5300d6909db84b8812a0afa54c15c91417800697f19cbe8b2192ddfaf0f0aed7'], 'advance_stopping': ['d5bc4a5c8cf76102416ce99b5654bbc2e9fd16b22862fb89578ba1bd3f2d87e5'], 'advance_unplanned': ['cfa312ea505613a555abc28c49846438eb22f327a38df187ae2e33c7588fb68a'], 'apply_ack_body_policy_refused': ['b90c6cea408f0d5e8ee81812fcb444631699ad2f8caba3747005e4a7ce39e667'], 'apply_ack_confirmed': ['adc69c2d9d28625250349bf0437c7a54544efa4c8b454a79d689ba42715b7489'], 'apply_ack_permanent': ['997313529d934eb6277820b2bc4940dbfb246e415025f3c5a548c4289f8bb2f8'], 'apply_ack_retryable': ['7053205310a842cfa6eedf529eef6e5807ca9626be0b0acd28924aec3f13211c'], 'apply_adoption_at_most_once': ['c487a701100bebb1ff778852df8388a70b1202de9dcb42f4b3a77738d63af049'], 'apply_adoption_has_no_maker_credit': ['ee91fcccca01d5670b3a226c229c88294df47728b4c1a1dcff77cb748e22c80f'], 'apply_answer_add_credit': ['bf7020e7438643ef52904b82756b61e6d5044673e0c9f78f9fb0c4b7b00f5e52'], 'apply_answer_change_request': ['8af9bb091e6fa343bc98831059de165c59429f990d7c14f8d6bf8660be9d9ade'], 'apply_answer_continue': ['51683d5f567136770a2f51f0b8be6bafc5016c1c3dc9dec70f3a282a6f74fc24'], 'apply_answer_mark_handled': ['eb246580ac7bc4418d990bc76e55fb24f54157088ebabb19bbc1b4e21210df39'], 'apply_answer_retry': ['8c472aaee15bcfc0650531045cfaf862db553f667deaf146ffe98ad1766d4cf1'], 'apply_answer_stop': ['d94046dbee5e7cfb292852f2cba23a9da3d3b471c7b96fb9ea9507958da5487b'], 'apply_answer_try_again': ['59431c45c31b393cd0458b754bca8b39b27c901aa1342061660e47aabf870beb'], 'apply_answer_unclear': ['628c35838f250e8b31b6549299cfbfcb0cd73076db03bdd0976eca6b6aca8afa'], 'apply_approved': ['73974006d37dcb517a9b9d9aed5f5a9c1b3fcf1dc04c7c38d4cab2ec8764dc7b'], 'apply_audit_agrees': ['5b221f2fafdb2cefbffc5706adbd803902703fe7d443a17a9785c3b84d91c617'], 'apply_change_request': ['55da06e48fb53ecab9dd8db5ba273b2ee3dfbddc1ede24863c5b8ce2131f4417'], 'apply_changes_requested': ['2500185e68f11b2648938d8872db6b2d547a08f5137df489f774a93d254b51fb'], 'apply_checks_done': ['896a2ef70b57335c07acecea2f63af04ce896d7b15495b044b4b16206e06c3d3'], 'apply_ci_failed': ['dfaaaea2a7b6789cbb1ff3f281b8a267ac1eb74dce41bc2c5e87182fb727b100'], 'apply_dependency_registration': ['d64a5ce9ef75603a9c0be0d81089d32e5aefa62c89fe007603983f1eac510d90'], 'apply_dependency_remove': ['edbb77262a4aa10b60d0904180fb7c14636b1de85c4fdab233a1292c2e1b5d0c'], 'apply_ingest_done': ['82fbb23e78f859225322892e6433fe39dd74dca83dd23de255336bc9546040e2'], 'apply_ingest_early_end': ['e98eb8b1afe52eca8aa4c4f9d812a609b0dcedd2bea15c58ed4cdf7a013a3081'], 'apply_maker_cant_meet': ['07e4f76357adafce706ae55af32b93a0fa322508d20ecde5e322bf3f96c856fc'], 'apply_maker_done': ['8b6b41e15decde08b91f202b9a1b4528bb7033f217b51a9e835fd1518f95d1f9'], 'apply_maker_needs_files': ['59a38c8eb63ecc6bc106037e4b131b35774f1b7b999a4505e71b996ea647c61a'], 'apply_maker_out_of_room': ['2b053efb734c52b84812dfb10ca74e7faa99c7d0c54faad9700f220d6a2dcde8'], 'apply_new_adoption': ['cf904faac6dfb0efaea151d341538541fb93f6c7f07fffd5c84b75d0b872659e'], 'apply_new_request': ['d9bfeeb394ec0d58910891a11d3088c27d7660bb9126201966390be218c803ec'], 'apply_outside_push': ['5634f23398eae1b21b2b63a4d005aaf6ab52e953939e1cd3ff6113ad1bdbc869'], 'apply_pause': ['8252e143b9b66a459a4929a6f48bda92ccd231ca01938d0f2b7d7e78c2f64643'], 'apply_plan_cant_meet': ['952c0a85eb2aa38362e303ff4b926d662f91cd7c8e649b774783a2ec1b83cdb3'], 'apply_plan_leaf': ['9e3e3007ddc669a99db2afc67083c562ccb1c8078484ba98cfc34d9525d10d90'], 'apply_plan_split': ['7a3bd55cf1c144c6671cdc1d463c97d94ff0f0c5a2fea8af9bda507a905f60fb'], 'apply_protected_paths': ['6505ed3bb03d16b49a977be893bf9d4a6a606591ec52d9a6bad2e841651dbba0'], 'apply_publishing_ci_earlier_step': ['6bdc765322d9dbd413dc56f12e2c90746469e1955feafa55615470b47e8d1b96'], 'apply_publishing_ci_tests': ['67e028d077080c2da2dbcff9dd901135d5ca2c80e3d3150c688ad417687a2cfb'], 'apply_rebase_clean': ['afe140b268b19546c87d62b5fe7681abd2134d756ab4925242432e783e9242a2'], 'apply_rebase_needs_changes': ['6a1ca9174ad99fbe5ee55e1fe85ea5904ae6a789b55c60837992fe537c1b3412'], 'apply_rebase_progress_gate': ['e2e6f1c41b85c297fe34fd529af8445529bd76a3163a2676687ecb04a7f6d0b5'], 'apply_resume': ['7a9b030480c00d142e1df0fa367fd8d5d6abe0ec0b6cf25679d442058f1b3e7c'], 'apply_reviewer_out_of_room': ['c28f3d01b8b2a9d7e3e6f50a8566b03f00940829bd501c86deb3dbf11a01d36d'], 'apply_run_failed': ['b5afe9439682a82ab6019c8a0cfce639dedb02d386eb37867013826094ab722a'], 'apply_stop': ['102a0d85e372a3bc28909672293c7567613b9ceedf909aed2dc413bbd2b29781'], 'apply_upstream_stalled': ['d492fcbc396f3b811ae97048df51d21faabfe8e0fc952265eaae7889e773ca34'], 'dependency_delivered_releases': ['615ac8b4668d20d42ab6a29935c34ac5b5788b60298dccf7ebcb35b56cc6ae94'], 'dependency_no_cycle': ['e13521fdd25f8529baf52bb45acb5a1a1a7b892394da7a5e32dbcee7a8308a6a'], 'dependency_waiting_holds_nothing': ['e73584550fa341c11d0468335f20a74be6d88ac7cff52b496b8aba6e2d0515c1'], 'fail_fast_changes_requested': ['34d197ab73f792e6b4945edc75a01911d0ae5a7f25247ff0881567164ad5cba1'], 'fail_fast_checks_done': ['3c50a1d602ee3a79e138fd0b45e9e1d2128797a6556048739bbdd9128ce19738'], 'fail_fast_ci_failed_publishing': ['64addf428351b89019e82c4fc79b14754e116c047e9543f7cb0c2ba72371d47a'], 'fail_fast_ci_failed_queued': ['495e19ff59ee99ba803b36735d44b84981dda074db30f2a144d7734725cd33ed'], 'fail_fast_maker_cant_meet': ['bc83b4306d9a4a0dd2052dbe905b91e2c28a9bdcbd63fab3c0be7c4c9d2a8164'], 'fail_fast_maker_needs_files': ['3cbfc69e7fc237d8e6f086d2b43b7fbe277390471ad4604b1d8fca53a6aa5d06'], 'fail_fast_maker_out_of_room': ['25460f61e9a2abeec3c28048561d41421a03b82aa7545385a7fe32240c144111'], 'fail_fast_plan_cant_meet': ['5fb9bc87ea9342ed9c7498d268f47637564f714ab55ab0e52785524104b1cbc8'], 'fail_fast_reviewer_out_of_room': ['38c867c0d0776abd3bbb15df21d750c741193ee03aa1768dbc315ceb5f02226e'], 'gate_grant_w2': ['685ae3274054923beed4e4e1f56acba10017b0d48a9c885edaea02d52b5b11b2'], 'gate_grant_w3': ['82012ff737d791b3e73b844c2f012380eb68ed86f2a6f365f0e668071e4709fe'], 'gate_leaf_progress_w2': ['42ddf14d164ce9f16a8c538b50087930d4f98bfd16331d965beac315053b8e1b'], 'gate_leaf_progress_w3': ['4234d8ec4dea42799217686cee33f74676baa31239cddda64eb026bea37b93a6'], 'gate_planning_w2': ['8c09febaafe6bf2bbdbc21e2bd025e8e9cd97db0db14964a5667036a1738197b'], 'gate_planning_w3': ['06b77afcf9156ac731fb3c64fca7f81d6999d77d8e438aaf6c36852991a6e0e1'], 'pool_grant_is_priority_ordered': ['5ea629c7f821fa851b405968b2b1551e817aa8b5eaa7361d1fd579053f88464d'], 'pool_order_is_strict_priority': ['a3e5648f488c967edc4c7ef268cf11ccfd8912cfb1a46f0a1b9e30b99baed1a2']}
+
+
+class Run(NamedTuple):
+    head: str
+    tree: str
+    source_hashes: dict
+    driver_sha256: str
+    output_root: str
+    memory_gib: dict | None = None
+
+
+
+class Refuse(ValueError):
+    pass
+
+
+def require(condition, message):
+    if not condition:
+        raise Refuse(message)
+
+
+def unique(pairs):
+    result = {}
+    for key, value in pairs:
+        require(key not in result, "duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def loads(raw):
+    return json.loads(raw, object_pairs_hook=unique)
+
+
+def git(repo, *args):
+    return subprocess.check_output(["git", "-C", str(repo), *args], stderr=subprocess.DEVNULL, timeout=60)
+
+
+def pinned_sources(repo, head):
+    actual = {path: hashlib.sha256(git(repo, "show", head + ":" + path)).hexdigest()
+              for path in POLICY_PINS}
+    require(actual == POLICY_PINS, "reviewed nightly policy bytes changed")
+    return {path: actual[path] for path in SOURCE_PATHS}
+
+
+def frozen_policy(repo, head):
+    pinned_sources(repo, head)
+    # Execute only reviewed policy bytes at the exact commit.
+    child = types.ModuleType("child_env")
+    exec(compile(git(repo, "show", head + ":tools/ci/child_env.py"), "frozen-child-env", "exec"), child.__dict__)
+    old = sys.modules.get("child_env")
+    sys.modules["child_env"] = child
+    try:
+        gate = types.ModuleType("frozen_kani_gate")
+        gate.__file__ = str(Path(repo) / "tools/ci/kani_gate.py")
+        exec(compile(git(repo, "show", head + ":tools/ci/kani_gate.py"), "frozen-kani-gate", "exec"), gate.__dict__)
+    finally:
+        if old is None:
+            sys.modules.pop("child_env", None)
+        else:
+            sys.modules["child_env"] = old
+    budgets = loads(git(repo, "show", head + ":tools/ci/kani-budgets.json"))
+    require(budgets["schema"] == "tl3.kani-budgets.v1", "budget schema mismatch")
+    return gate, budgets["harnesses"]
+
+
+def validate_leaf(name, evidence, artifacts, gate, budgets, run):
+    require(evidence.get("schema") == "tl3.pb-kani-leaf.v1", "leaf schema mismatch")
+    require(evidence.get("transport") == "prismabuild", "PB evidence cannot claim GitHub transport")
+    require(evidence.get("head") == run.head and evidence.get("tree") == run.tree, "leaf source mismatch")
+    require(evidence.get("harness") == name, "leaf harness mismatch")
+    require(type(evidence.get("command_exit")) is int and evidence["command_exit"] == 0, "leaf command failed")
+    require(evidence.get("source_clean_after") is True, "leaf source cleanliness missing")
+    record = evidence["record"]
+    require(record.get("schema") == gate.SCHEMA and record.get("head") == record.get("checkout") == run.head,
+            "shard source/schema mismatch")
+    require(record.get("mode") == "nightly" and record.get("harnesses") == [name], "shard scope mismatch")
+    require(record.get("index") == evidence.get("index"), "shard index mismatch")
+    require(record.get("error") is None and set(record.get("results", {})) == {name}, "incomplete or failed shard")
+    require(loads(artifacts[gate.RESULT]) == record, "shard record differs from authenticated artifact")
+    result = record["results"][name]
+    require(result.get("name") == name and result.get("timeout") == gate.budget(name, budgets)["timeout"],
+            "harness identity or frozen bound mismatch")
+    text = artifacts["kani-logs/" + name + ".log"].decode(errors="replace")
+    verdict = result.get("verdict")
+    if verdict == "SUCCESSFUL":
+        require(result.get("pending") == budgets[name].get("pending") and not result.get("outcome"),
+                "pending cannot be promoted to success")
+        raw = gate.verdict(text, 0, False)
+        require(raw["verdict"] == "SUCCESSFUL" and raw["covers"] == result.get("covers"),
+                "raw proof/cover results do not establish success")
+    elif verdict == "PENDING":
+        require(budgets[name].get("pending") == result.get("pending") == "#806", "unregistered pending result")
+        require(result.get("outcome") in ("TIMEOUT", "KILLED"), "pending is not an allowed frozen outcome")
+        require("VERIFICATION:- FAILED" not in text, "pending cannot hide a counterexample")
+        require(result.get("outcome") != "TIMEOUT" or result.get("seconds", -1) >= result["timeout"],
+                "pending timeout has no elapsed bound")
+        raw = gate.verdict(text, 0, result["outcome"] == "TIMEOUT")
+        require(raw["verdict"] == result["outcome"], "raw pending result contradicts frozen policy")
+    else:
+        raise Refuse("harness did not satisfy the frozen nightly policy")
+    return result
+
+
+def validate_index(index, budgets, read_leaf, run):
+    require(index.get("errors") == [], "nightly aggregate has missing or nonempty errors")
+    require(index.get("schema") == "tl3.pb-kani-nightly.v2", "index schema mismatch")
+    require(index.get("head") == run.head and index.get("tree") == run.tree, "index must name its exact run commit")
+    require(index.get("mode") == "nightly" and index.get("transport") == "prismabuild", "index transport/mode mismatch")
+    require(index.get("driver_sha256") == run.driver_sha256, "index driver mismatch")
+    rows = index.get("leaves")
+    require(isinstance(rows, dict) and len(rows) == 78 and set(rows) == set(budgets), "not the complete frozen 78-harness inventory")
+    require(all(isinstance(key, str) and re.fullmatch("[0-9a-f]{64}", key) for key in rows.values()), "invalid action key")
+    require(len(set(rows.values())) == len(rows), "one action must not stand in for two harnesses")
+    results = {}
+    for i, name in enumerate(sorted(rows)):
+        result = read_leaf(name, rows[name], i)
+        require(result.get("name") == name, "collector returned another harness")
+        results[name] = result
+    return results
+
+
+def terminal(key):
+    raw = subprocess.check_output(["python3", "-I", READER, key, "--log", "--retained-output"], timeout=30).decode()
+    fields = unique(line.split(": ", 1) for line in raw.splitlines() if ": " in line)
+    require(fields.get("state") == "done" and fields.get("action_key") == key
+            and fields.get("detail.returncode") == "0", "PB parent is not terminal done/0")
+    require(loads(fields["resource_scope_cleanup.flags"]).get("complete") is True, "PB cleanup is not complete")
+    return fields
+
+
+PARAM_KEYS = {"checkout_snapshot", "command", "cwd", "demand", "execution_timeout_s", "placement", "retry_policy"}
+
+
+def measured_peak(cas, name, key):
+    raw = subprocess.check_output(["python3", "-I", READER, key, "--log", "--retained-output"], timeout=30).decode()
+    fields = unique(line.split(": ", 1) for line in raw.splitlines() if ": " in line)
+    require(fields.get("action_key") == key and fields.get("state") in ("done", "failed"),
+            "sizing measurement is not terminal")
+    require(fields.get("state") == "done" and fields.get("detail.returncode") == "0"
+            and fields.get("detail.resource_telemetry.oom_kill") == "0",
+            "resource failure is a lower bound, not a measured peak")
+    require(loads(fields["resource_scope_cleanup.flags"]).get("complete") is True,
+            "sizing measurement cleanup incomplete")
+    action = cas.read_action_request(key)
+    require(action is not None and set(action["params"]) == PARAM_KEYS, "sizing measurement action changed")
+    params = action["params"]
+    snapshot = params["checkout_snapshot"]
+    require(snapshot.get("parent") == fields.get("checkout_snapshot.parent") == TEMPLATE_HEAD
+            and snapshot.get("commit") == fields.get("checkout_snapshot.commit")
+            and snapshot.get("subdirectory") == "."
+            and snapshot["input"]["sha256"] == fields.get("checkout_snapshot.input.sha256"),
+            "sizing measurement source mismatch")
+    command = params["command"]
+    require(len(command) == 14 and command[:7] == ["python3", "-B", "deploy/dl380g10/exact-source.py",
+            TEMPLATE_HEAD, "python3", "-B", "-c"] and command[8] == "leaf" and command[10] == name
+            and hashlib.sha256(command[7].encode()).hexdigest() == TEMPLATE_DRIVER_SHA256,
+            "sizing measurement is not the original harness/driver")
+    peak = fields.get("detail.resource_telemetry.memory_peak_bytes", "")
+    require(re.fullmatch("[0-9]+", peak) and int(peak) > 0, "missing whole-scope sizing measurement")
+    return int(peak)
+
+
+def sizing_table(budgets, read_peak):
+    require(set(budgets) == set(MEASUREMENT_KEYS) and len(budgets) == 78, "sizing inventory mismatch")
+    rows = {}
+    for name, policy in budgets.items():
+        # All 78 frozen harnesses have measured BB peaks. The unmeasured-worker-slot
+        # fallback is not exercised by this inventory and cannot invent a peak.
+        historical = policy.get("peak_gb")
+        require(type(historical) in (int, float) and math.isfinite(historical) and historical > 0,
+                "no measured peak; largest admissible worker slot must be established before publication")
+        peak = max(math.ceil(historical * 2**30), *(read_peak(name, key) for key in MEASUREMENT_KEYS[name]))
+        reservation = (peak * 5 + 4 * 2**30 - 1) // (4 * 2**30)
+        rows[name] = {"measured_peak_bytes": peak, "reservation_gib": reservation}
+    return {"schema": "tl3.pb-kani-sizing.v1", "policy": "measured-peak-plus-25-percent", "leaves": rows}
+
+
+def validate_sizing(table, budgets, cas):
+    expected = sizing_table(budgets, lambda name, key: measured_peak(cas, name, key))
+    require(table == expected, "campaign sizing differs from measured peak plus 25 percent")
+    return {name: row["reservation_gib"] for name, row in table["leaves"].items()}
+
+
+def validate_environment(variables):
+    expected = {"HOME": "/home/rob", "PATH": PB_SOURCE.removesuffix("/src") + "/tools:/home/rob/.cargo/bin:/usr/bin:/bin",
+                "PYTHONDONTWRITEBYTECODE": "1", "CARGO_BUILD_JOBS": "1", "OMP_NUM_THREADS": "1",
+                "MKL_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "RAYON_NUM_THREADS": "1",
+                "TOKIO_WORKER_THREADS": "1", "RUST_TEST_THREADS": "1", "CUDA_VISIBLE_DEVICES": ""}
+    bookkeeping = {"PRISMABUILD_CONTAINER_MARKER", "PRISMABUILD_CONTAINER_OWNER"}
+    require(set(variables) == set(expected) | bookkeeping
+            and all(variables[key] == value for key, value in expected.items()),
+            "PB proof environment differs from the sealed allowlist")
+
+
+def source_verifier(cas, run):
+    @functools.lru_cache(maxsize=8)
+    def verify(input_digest, input_bytes, snapshot_commit):
+        payload = cas.read_declared_blob({"sha256": input_digest, "bytes": input_bytes},
+                                        max_bytes=512 * 1024 * 1024, where="PB nightly source bundle")
+        with tempfile.TemporaryDirectory(prefix="tl3-pb-nightly-source-") as temp:
+            root = Path(temp)
+            bundle = root / "source.bundle"
+            bundle.write_bytes(payload)
+            repo = root / "source.git"
+            subprocess.run(["git", "clone", "--quiet", "--bare", str(bundle), str(repo)], check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+            require(git(repo, "rev-parse", run.head + "^{tree}").decode().strip() == run.tree, "frozen source tree mismatch")
+            delta = git(repo, "diff", "--no-renames", "--name-only", run.head, snapshot_commit).decode().splitlines()
+            require(len(delta) == 1 and re.fullmatch(r"\.pbrun-closure\.[0-9a-f]+\.json", delta[0]),
+                    "unsealed source: snapshot differs beyond the PB stamp")
+        return True
+    return verify
+
+
+def authenticated_leaf(cas, verify_source, gate, budgets, name, key, index, run):
+    state = terminal(key)
+    action = cas.read_action_request(key)
+    require(action is not None, "missing sealed PB action")
+    receipt = cas.lookup(action)
+    require(receipt is not None and receipt.get("action_key") == key, "missing authenticated CAS receipt")
+    params = action["params"]
+    require(set(params) == PARAM_KEYS, "unexpected sealed PB action parameter")
+    snapshot = params["checkout_snapshot"]
+    require(snapshot.get("subdirectory") == ".", "PB source subdirectory mismatch")
+    require(snapshot.get("parent") == state.get("checkout_snapshot.parent") == run.head, "unsealed or wrong PB source parent")
+    require(snapshot.get("commit") == state.get("checkout_snapshot.commit"), "PB terminal source mismatch")
+    require(snapshot["input"]["sha256"] == state.get("checkout_snapshot.input.sha256"), "PB terminal input mismatch")
+    verify_source(snapshot["input"]["sha256"], snapshot["input"]["bytes"], snapshot["commit"])
+    command = params["command"]
+    require(command[:7] == ["python3", "-B", "deploy/dl380g10/exact-source.py", run.head, "python3", "-B", "-c"]
+            and len(command) == 14, "not the frozen exact-source PB invocation")
+    require(hashlib.sha256(command[7].encode()).hexdigest() == run.driver_sha256, "PB proof driver was changed")
+    validate_driver(command[7], run)
+    require(command[8] == "leaf" and command[10:12] == [name, str(index)], "PB leaf dispatch mismatch")
+    require(loads(command[9]) == run.source_hashes and command[12] == run.output_root + "/" + name
+            and command[13] == PB_SOURCE, "PB leaf input/output/runtime dependency mismatch")
+    require(run.memory_gib is not None and name in run.memory_gib, "missing sealed memory reservation")
+    memory = run.memory_gib[name]
+    require(params["demand"] == {"cpu": 1, "mem_gb": memory}, "PB memory/CPU admission mismatch")
+    require(params.get("execution_timeout_s") == 3600
+            and params.get("placement") == {"required_tags": ["x86"]}
+            and params.get("retry_policy") == {"max_attempts": 1, "retry_safe": False},
+            "PB admission bound/placement/retry policy mismatch")
+    validate_environment(action["environment"]["variables"])
+    payload = cas.read_declared_blob(receipt["result"], max_bytes=16 * 1024 * 1024, where="PB nightly output")
+    reference = loads(state["detail.stdout_log"])
+    path = (QUEUE_ROOT / reference["path"]).resolve()
+    require(path.is_relative_to(QUEUE_ROOT.resolve()), "PB log path escape")
+    log = path.read_bytes()
+    require(len(log) == reference["bytes"] and hashlib.sha256(log).hexdigest() == reference["sha256"]
+            and payload in log, "PB terminal log differs from CAS output")
+    markers = [loads(line[len(MARKER):]) for line in payload.decode().splitlines() if line.startswith(MARKER)]
+    require(len(markers) == 1, "missing or ambiguous authenticated leaf evidence")
+    evidence = markers[0]
+    require(evidence.get("index") == index, "leaf evidence index mismatch")
+    artifacts = {}
+    for relative, ref in evidence["artifacts"].items():
+        require(not Path(relative).is_absolute() and ".." not in Path(relative).parts, "artifact path escape")
+        artifacts[relative] = cas.read_declared_blob(ref, max_bytes=256 * 1024 * 1024, where="PB nightly raw artifact")
+    return validate_leaf(name, evidence, artifacts, gate, budgets, run)
+
+
+def validate_driver(source, run):
+    # Only the two identity literals may differ from the already-qualified driver.
+    head_line = 'HEAD = "' + run.head + '"'
+    tree_line = 'TREE = "' + run.tree + '"'
+    require(source.splitlines().count(head_line) == source.splitlines().count(tree_line) == 1,
+            "driver lacks its exact run identity")
+    normalized = source.replace(head_line, 'HEAD = "' + TEMPLATE_HEAD + '"', 1)
+    normalized = normalized.replace(tree_line, 'TREE = "' + TEMPLATE_TREE + '"', 1)
+    require(hashlib.sha256(normalized.encode()).hexdigest() == TEMPLATE_DRIVER_SHA256,
+            "PB proof driver changed beyond the two source identity literals")
+
+
+def run_identity(repo, index, candidate_head):
+    head, tree = index.get("head"), index.get("tree")
+    require(isinstance(head, str) and re.fullmatch("[0-9a-f]{40}", head)
+            and isinstance(tree, str) and re.fullmatch("[0-9a-f]{40}", tree), "invalid run Git identity")
+    require(head == candidate_head, "same fingerprint cannot substitute another run commit")
+    require(git(repo, "rev-parse", head + "^{tree}").decode().strip() == tree, "run tree mismatch")
+    hashes = pinned_sources(repo, head)
+    require(index.get("frozen_sources") == hashes, "run source pins differ from exact Git objects")
+    correlation = index.get("correlation")
+    require(isinstance(correlation, str) and re.fullmatch(
+        r"ops-kani-nightly-[0-9]{8}T[0-9]{4}(?:[0-9]{2})?Z-" + head[:8], correlation),
+        "invalid run output identity")
+    driver = index.get("driver_sha256")
+    require(isinstance(driver, str) and re.fullmatch("[0-9a-f]{64}", driver), "invalid run driver digest")
+    return Run(head, tree, hashes, driver, "/mnt/shared/flux-out/tl3/" + correlation)
+
+
+def proof(repo, fp_target, fingerprint, requested_head):
+    candidate_head = git(repo, "rev-parse", "HEAD").decode().strip()
+    require(re.fullmatch("[0-9a-f]{40}", candidate_head), "invalid candidate commit")
+    path = INDEX_ROOT / candidate_head / "PB-NIGHTLY-INDEX.json"
+    if not path.exists():
+        return None
+    require(candidate_head == requested_head, "requested candidate differs from exact-source HEAD")
+    for directory in (INDEX_ROOT, path.parent):
+        info = directory.lstat()
+        require(stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid() and not info.st_mode & 0o022,
+                "PB run directory must be private and owned")
+    require(not any(parent.is_symlink() for parent in path.parents), "symlinked PB index ancestor")
+    info = path.lstat()
+    require(stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and stat.S_IMODE(info.st_mode) == 0o600
+            and info.st_size <= 256 * 1024, "PB index must be an owned bounded private regular file")
+    index_bytes = path.read_bytes()
+    require(len(index_bytes) <= 256 * 1024, "PB index byte bound exceeded")
+    index = loads(index_bytes)
+    run = run_identity(repo, index, candidate_head)
+    require(not git(repo, "status", "--porcelain=v1", "--untracked-files=all", "--ignored").strip(),
+            "candidate source is dirty")
+    require(fingerprint(repo, candidate_head) == fp_target, "PB nightly fingerprint mismatch")
+    gate, budgets = frozen_policy(repo, run.head)
+    sys.path.append(PB_SOURCE)
+    from prismabuild.core import PrismaBuildCAS
+    cas = PrismaBuildCAS(CAS_ROOT)
+    reservations = validate_sizing(index.get("sizing"), budgets, cas)
+    run = run._replace(memory_gib=reservations)
+    verify_source = source_verifier(cas, run)
+    validate_index(index, budgets,
+                   lambda name, key, i: authenticated_leaf(cas, verify_source, gate, budgets, name, key, i, run), run)
+    return "pb-nightly:" + hashlib.sha256(index_bytes).hexdigest(), run.head

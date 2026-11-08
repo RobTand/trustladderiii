@@ -18,9 +18,9 @@ def control(document):
     return reply_check.run_check(['worker-execution'], document, name='worker execution', timeout=60)['result']
 
 
-def activation():
+def activation(settings):
     try:
-        control({'op': 'activation'})
+        control({'op': 'activation', 'profile': settings.execution['profile'], 'image': settings.image})
     except reply_check.ReplyCheckInfrastructureError as error:
         raise ExecutionFailure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'admission', 'runtime_activation_held') from error
 
@@ -117,7 +117,8 @@ def _blob(reference, bound):
 
 
 def execute(plan, *, resumed=False, emit=lambda event: None):
-    activation()
+    # Callers must validate activation(settings) before preparing or resuming this plan.
+    # Rust Prepare gates new requests; Resume keeps its original retained binding.
     if not resumed:
         # The caller checkpoints the opaque reference before this boundary.
         _command(plan, plan['submit'])

@@ -34,7 +34,10 @@ enum Command {
         served_tree: String,
         contract: String,
     },
-    Activation,
+    Activation {
+        profile: PathBuf,
+        image: String,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -46,7 +49,8 @@ struct Prepared {
 }
 
 fn profile(path: &Path) -> Result<(Profile, backend::Options)> {
-    let profile: Profile = serde_json::from_slice(&durable::read(path).map_err(backend_error)?)?;
+    let profile: Profile = serde_json::from_slice(&durable::read(path).map_err(backend_error)?)
+        .map_err(|_| Error::Invalid("worker.profile"))?;
     if profile.schema != "tl3.worker_execution.v1"
         || path != profile.attempt.join("execution.json")
         || !backend::absolute(&profile.waits_root)
@@ -69,8 +73,25 @@ fn profile(path: &Path) -> Result<(Profile, backend::Options)> {
             "execution profile belongs to another worker checkout",
         ));
     }
-    let options = serde_json::from_slice(&durable::read(&profile.options).map_err(backend_error)?)?;
+    let options = serde_json::from_slice(
+        &durable::read(&profile.options)
+            .map_err(|_| Error::Invalid("flux.activation.backend_options"))?,
+    )
+    .map_err(|_| Error::Invalid("flux.activation.backend_options"))?;
     Ok((profile, options))
+}
+
+fn activation(
+    profile: &Profile,
+    options: &backend::Options,
+) -> Result<crate::adapters::flux_checks::activation::RuntimeActivation> {
+    crate::adapters::flux_checks::activation::RuntimeActivation::load_bound(
+        profile.activation.as_ref(),
+        &profile.runtime_bundles,
+        profile.container_mode,
+        &profile.staging_root,
+        options,
+    )
 }
 
 fn root(profile: &Profile, call: &str) -> Result<PathBuf> {
@@ -215,15 +236,33 @@ fn response(prepared: &Prepared, profile: &Profile, options: &backend::Options) 
 
 fn execute(command: Command) -> Result<Value> {
     match command {
-        Command::Activation => {
-            crate::adapters::flux_checks::staging::require_runtime_activation()?;
-            Ok(json!({"allowed": true}))
+        Command::Activation {
+            profile: path,
+            image,
+        } => {
+            let (profile, options) = profile(&path)?;
+            let activation = activation(&profile, &options)?;
+            activation.validate_image(&image)?;
+            let reservation = reservation(1, 1, 1)?;
+            let runtime = crate::adapters::flux_checks::staging::select_runtime(
+                &profile.runtime_bundles,
+                &image,
+                profile.container_mode,
+                &reservation,
+                vec![],
+            )?;
+            activation.validate_prepared(&runtime, &reservation)?;
+            Ok(
+                json!({"activation_sha256": profile.activation.as_ref().expect("validated activation").sha256,
+                      "manifest_sha256": runtime.bundle.sha256}),
+            )
         }
         Command::Allocate {
             profile: path,
             call,
         } => {
-            let (profile, _) = profile(&path)?;
+            let (profile, options) = profile(&path)?;
+            activation(&profile, &options)?;
             let root = root(&profile, &call)?;
             fs::create_dir(&root)?;
             fs::set_permissions(&root, fs::Permissions::from_mode(0o700))?;
@@ -271,6 +310,8 @@ fn execute(command: Command) -> Result<Value> {
             arguments,
         } => {
             let (profile, options) = profile(&path)?;
+            let activation = activation(&profile, &options)?;
+            activation.validate_image(&image)?;
             if !backend::hex(&served_tree, 40)
                 || !backend::hex(&contract, 64)
                 || arguments.len() > 256
@@ -324,6 +365,7 @@ fn execute(command: Command) -> Result<Value> {
                 &reservation,
                 runner_args,
             )?;
+            activation.validate_prepared(&runtime, &reservation)?;
             let mut files = Vec::new();
             inventory(&root, &root, &mut files)?;
             files.sort_by(|a, b| a.path.cmp(&b.path));
@@ -458,6 +500,156 @@ mod tests {
         assert_eq!(
             generated, committed,
             "regenerate with tl3 worker-execution schema"
+        );
+    }
+
+    #[test]
+    #[ignore = "PB fixture: canonical shared bundle paths and uid 1000"]
+    fn direct_prepare_requires_deployment_activation_and_checks_actual_options() {
+        let mut fixture = crate::adapters::flux_checks::activation::tests::Fixture::new();
+        let checkout = crate::git_tests::Repo::new();
+        let attempt = fixture.root.path().join("attempt");
+        fs::create_dir(&attempt).unwrap();
+        let path = attempt.join("execution.json");
+        let options = crate::production::flux_options(&fixture.flux);
+        fs::create_dir_all(options.bootstrap.config.parent().unwrap()).unwrap();
+        fs::write(
+            &options.bootstrap.config,
+            serde_json::to_vec(&options).unwrap(),
+        )
+        .unwrap();
+        let mut profile = Profile {
+            activation: None,
+            schema: "tl3.worker_execution.v1".into(),
+            attempt: attempt.clone(),
+            checkout: fs::canonicalize(&checkout.path).unwrap(),
+            delivery: checkout.delivery(),
+            options: options.bootstrap.config.clone(),
+            job_environment: options.journal_root.join("job-environment.json"),
+            staging_root: fixture.flux.staging_root.clone(),
+            runtime_bundles: fixture.flux.runtime_bundles.clone(),
+            container_mode: fixture.flux.container_mode,
+            waits_root: fixture.root.path().join("waits"),
+        };
+        fs::write(attempt.join("request.json"),serde_json::to_vec(&json!({"worktree":checkout.path,"inputs":{"tests":{"execution":{"profile":path}}}})).unwrap()).unwrap();
+        let command = || Command::Prepare {
+            profile: path.clone(),
+            call: "a".repeat(64),
+            served_tree: "b".repeat(40),
+            contract: "c".repeat(64),
+            generator: false,
+            image: fixture.flux.container_image.clone(),
+            cpus: 1,
+            mem_gb: 1,
+            parallel: 1,
+            quiet_seconds: 10,
+            walltime_seconds: 60,
+            arguments: vec![],
+        };
+        fs::write(&path, serde_json::to_vec(&profile).unwrap()).unwrap();
+        let error = execute(command()).unwrap_err().to_string();
+        assert_eq!(error, "flux.activation");
+        assert!(
+            !fixture.flux.staging_root.exists(),
+            "direct Prepare wrote input before refusing activation"
+        );
+        profile.activation = fixture.flux.activation.clone();
+        fs::write(&path, serde_json::to_vec(&profile).unwrap()).unwrap();
+        let result = execute(Command::Activation {
+            profile: path.clone(),
+            image: fixture.flux.container_image.clone(),
+        })
+        .unwrap();
+        assert!(result.get("allowed").is_none());
+        assert_eq!(
+            result["activation_sha256"],
+            fixture.flux.activation.as_ref().unwrap().sha256
+        );
+        assert!(
+            execute(command())
+                .unwrap_err()
+                .to_string()
+                .contains("worker input was not allocated")
+        );
+        let mut changed = options.clone();
+        changed.instance_generation = "private-changed-generation".into();
+        fs::write(
+            &options.bootstrap.config,
+            serde_json::to_vec(&changed).unwrap(),
+        )
+        .unwrap();
+        let error = execute(command()).unwrap_err().to_string();
+        assert_eq!(error, "flux.activation.instance_generation_sha256");
+        assert!(!error.contains("private-changed-generation"));
+        fs::write(
+            &options.bootstrap.config,
+            serde_json::to_vec(&options).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            &profile.job_environment,
+            serde_json::to_vec(&crate::production::flux_job_environment()).unwrap(),
+        )
+        .unwrap();
+        let allocated = execute(Command::Allocate {
+            profile: path.clone(),
+            call: "a".repeat(64),
+        })
+        .unwrap();
+        let root = PathBuf::from(allocated["root"].as_str().unwrap());
+        git(&root, &["init", "--quiet"]).unwrap();
+        fs::write(root.join("action.py"), b"pass\n").unwrap();
+        fs::write(root.join("worker-input.json"), b"{}").unwrap();
+        let prepared = execute(Command::Prepare {
+            profile: path.clone(),
+            call: "a".repeat(64),
+            served_tree: "b".repeat(40),
+            contract: durable::digest(b"{}"),
+            generator: false,
+            image: fixture.flux.container_image.clone(),
+            cpus: 1,
+            mem_gb: 1,
+            parallel: 1,
+            quiet_seconds: 10,
+            walltime_seconds: 60,
+            arguments: vec![],
+        })
+        .unwrap();
+        assert_eq!(
+            prepared["submit"]["request"]["runtime"]["manifest_digest"],
+            fixture.record.profiles[0].manifest_sha256
+        );
+        assert_eq!(
+            prepared["submit"]["intent"]["instance"],
+            options.instance_generation
+        );
+        assert!(prepared["key"].as_str().unwrap().starts_with("worker:"));
+        // Record profile/manifest substitution must also fail before input allocation.
+        fixture.record.profiles[0].image.profile = "unqualified".into();
+        fixture.seal_record();
+        profile.activation = fixture.flux.activation.clone();
+        fs::write(&path, serde_json::to_vec(&profile).unwrap()).unwrap();
+        fs::write(
+            &options.bootstrap.config,
+            serde_json::to_vec(&options).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            execute(Command::Prepare {
+                profile: path,
+                call: "a".repeat(64),
+                served_tree: "b".repeat(40),
+                contract: "c".repeat(64),
+                generator: true,
+                image: fixture.flux.container_image.clone(),
+                cpus: 1,
+                mem_gb: 1,
+                parallel: 1,
+                quiet_seconds: 10,
+                walltime_seconds: 60,
+                arguments: vec![],
+            })
+            .is_err()
         );
     }
 

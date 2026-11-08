@@ -10,14 +10,14 @@ pub use waits::Waits;
 #[derive(Clone)]
 pub(super) enum Selected {
     PrismaBuild(tl3_config::PrismaBuild),
-    Flux(tl3_config::Flux),
+    Flux(Box<tl3_config::Flux>),
 }
 
 impl Selected {
     pub(super) fn new(config: &tl3_config::Config) -> Result<Self> {
         Ok(match config.selected_execution()? {
             tl3_config::SelectedExecution::PrismaBuild(pb) => Self::PrismaBuild(pb.clone()),
-            tl3_config::SelectedExecution::Flux(flux) => Self::Flux(flux.clone()),
+            tl3_config::SelectedExecution::Flux(flux) => Self::Flux(Box::new(flux.clone())),
         })
     }
 
@@ -64,6 +64,7 @@ impl Selected {
         }
         let options = crate::production::flux_options(flux);
         let profile = Profile {
+            activation: flux.activation.clone(),
             schema: "tl3.worker_execution.v1".into(),
             attempt: fs::canonicalize(attempt)?,
             checkout: fs::canonicalize(
@@ -92,6 +93,8 @@ impl Selected {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Profile {
+    #[serde(default)]
+    pub activation: Option<tl3_config::FluxActivation>,
     pub schema: String,
     pub attempt: PathBuf,
     pub checkout: PathBuf,
@@ -251,6 +254,7 @@ mod tests {
         let attempt = root.join("attempt-00000000");
         fs::create_dir(&attempt).unwrap();
         let flux = tl3_config::Flux {
+            activation: None,
             instance_generation: "fixture/00000000000000000000000000000000".into(),
             executable: "/fixture/flux".into(),
             backend_cli: "/fixture/tl3-run-backend".into(),
@@ -262,7 +266,7 @@ mod tests {
             output_root: root.join("output"),
             container_image: format!("sha256:{}", "a".repeat(64)),
         };
-        let selected = Selected::Flux(flux.clone());
+        let selected = Selected::Flux(Box::new(flux.clone()));
         let mut worker = json!({"worktree": repo.path, "inputs": {"tests": selected.inputs(&flux.container_image,
             tl3_config::TestDemand::default(), &attempt.join("execution.json"))}});
         selected

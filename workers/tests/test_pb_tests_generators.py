@@ -43,7 +43,7 @@ def test_selected_flux_generator_retains_unknown_and_imports_once(generator_repo
     prepared, attached = [], []
     monkeypatch.setattr(generator, 'require_admission', lambda: None)
     monkeypatch.setattr(generator, 'container_command', lambda tree, container, argv, cidfile: argv)
-    monkeypatch.setattr(flux_execution, 'activation', lambda: None)
+    monkeypatch.setattr(flux_execution, 'activation', lambda settings: None)
     monkeypatch.setattr(flux_execution, 'allocate', lambda settings: ('a' * 64, root))
     def prepare(settings, call, root, served, contract, **kwargs):
         assert kwargs['generator'] is True

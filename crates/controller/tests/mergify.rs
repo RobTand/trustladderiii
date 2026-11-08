@@ -661,6 +661,16 @@ fn queued_for_clock(
         .connect(postgres::NoTls)
         .unwrap();
     support::controller_restart::wait_for_owner_release(&mut barrier);
+    let mut ingress = Store::open(settings).unwrap();
+    if ingress.ingress_cursor("github-catch-up").unwrap().is_none() {
+        ingress.begin_input().unwrap();
+        for source in ["github-world-start", "github-catch-up"] {
+            ingress
+                .receive_catch_up(source, &[], &json!("2026-01-01T00:00:00Z"))
+                .unwrap();
+        }
+        ingress.finish_input(true).unwrap();
+    }
     let repository = config.repos[0].clone();
     let mut registry = adapters::simulation(root).unwrap();
     let mut adapter = api
@@ -790,7 +800,7 @@ fn pull_event(api: &Server, action: &str) -> Value {
     body
 }
 fn catch_up(settings: &tl3_config::Store, api: &Server, controller: &mut Controller) {
-    let source = CatchUp::new(api.clients()).unwrap();
+    let source = CatchUp::new(api.clients(), vec![]).unwrap();
     for _ in 0..2 {
         let inputs = source
             .pass(&mut Store::open(settings).unwrap(), &bootstrap())
@@ -1229,7 +1239,7 @@ fn queue_failure(settings: &tl3_config::Store, conflict: bool, infra: bool) {
         deliver(settings, &api, "check_run", &body);
     }
     // Catch-up and the enqueue watch see the same upstream check before either is consumed.
-    let inputs = CatchUp::new(api.clients())
+    let inputs = CatchUp::new(api.clients(), vec![])
         .unwrap()
         .pass(&mut Store::open(settings).unwrap(), &bootstrap())
         .unwrap();
@@ -1365,7 +1375,7 @@ fn person_actions(settings: &tl3_config::Store, action: &str) {
         _ => unreachable!(),
     }
     deliver(settings, &api, "pull_request", &body);
-    let inputs = CatchUp::new(api.clients())
+    let inputs = CatchUp::new(api.clients(), vec![])
         .unwrap()
         .pass(&mut Store::open(settings).unwrap(), &bootstrap())
         .unwrap();
@@ -2585,9 +2595,21 @@ fn failed_catch_up_retries_held_enqueue(settings: &tl3_config::Store) {
         Store::open(settings).unwrap(),
         bootstrap(),
         b"test-secret".to_vec(),
-        Some(CatchUp::new(api.clients()).unwrap()),
+        Some(CatchUp::new(api.clients(), vec![]).unwrap()),
     )
     .unwrap();
+    let startup_cursor = Store::open(settings)
+        .unwrap()
+        .ingress_cursor("github-catch-up")
+        .unwrap()
+        .expect("fresh startup commits its boundary before history fetch");
+    assert_eq!(
+        Store::open(settings)
+            .unwrap()
+            .ingress_cursor("github-world-start")
+            .unwrap(),
+        Some(startup_cursor.clone())
+    );
     let control = source.control();
     let (sender, receiver) = mpsc::channel();
     let running = thread::spawn(move || source.run(sender));
@@ -2602,12 +2624,13 @@ fn failed_catch_up_retries_held_enqueue(settings: &tl3_config::Store) {
             .unwrap()
             .is_empty()
     );
-    assert!(
+    assert_eq!(
         Store::open(settings)
             .unwrap()
             .ingress_cursor("github-catch-up")
-            .unwrap()
-            .is_none()
+            .unwrap(),
+        Some(startup_cursor),
+        "a failed history fetch must leave the committed startup boundary unchanged"
     );
     ingress::apply(&mut controller, wake).unwrap();
     drain(&mut controller);

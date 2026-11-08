@@ -1,9 +1,11 @@
 import importlib.util
+import ast
 import io
 import contextlib
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import socket
 import stat
@@ -20,51 +22,108 @@ deploy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(deploy)
 
 
-class ExactSourceTests(unittest.TestCase):
-    def setUp(self):
-        self.scratch = tempfile.TemporaryDirectory(prefix="tl3-exact-source-fixture-")
-        self.addCleanup(self.scratch.cleanup)
-        self.source = Path(self.scratch.name) / "repo"
-        self.source.mkdir()
-        self.environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
-        self.git("init", "--quiet")
-        self.git("commit", "--quiet", "--allow-empty", "-m", "fixture base")
-        launcher = self.source / "deploy/dl380g10/exact-source.py"
-        launcher.parent.mkdir(parents=True)
-        launcher.write_bytes(Path(__file__).with_name("exact-source.py").read_bytes())
-        self.git("add", ".")
-        self.git("commit", "--quiet", "-m", "selected source")
-        self.head = self.git("rev-parse", "HEAD").decode().strip()
-        # Model PB's tracked child stamp without requiring the test's checkout
-        # or Bazel runfiles to contain Git history.
-        (self.source / "pb-fixture-stamp").write_text("synthetic PB child stamp\n")
-        self.git("add", ".")
-        self.git("commit", "--quiet", "-m", "PB snapshot fixture")
-        self.launcher = launcher
+def postgres_references(python, rust, units):
+    """Audit paths derived from paths(home)'s PG tree, plus Rust/units commands."""
+    references = set()
+    for function in ast.walk(ast.parse(python)):
+        if not isinstance(function, ast.FunctionDef):
+            continue
+        pg_roots = set()
+        for node in ast.walk(function):
+            if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+                    and isinstance(node.value.func, ast.Name) and node.value.func.id == "paths"):
+                for target in node.targets:
+                    if isinstance(target, ast.Tuple):
+                        pg_roots.add(target.elts[2].id)
+        for node in ast.walk(function):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "pg_executable":
+                if not isinstance(node.args[1], ast.Constant):
+                    if function.name != "verify_postgres_executables":
+                        raise AssertionError("dynamic PG executable outside the declared-set verifier")
+                else:
+                    references.add(node.args[1].value)
+            if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+                left = node.left
+                while isinstance(left, ast.BinOp):
+                    left = left.left
+                if isinstance(left, ast.Name) and left.id in pg_roots:
+                    raise AssertionError("PG tree paths must use pg_executable")
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name) and node.func.value.id in pg_roots
+                    and node.func.attr in ("joinpath",)):
+                raise AssertionError("PG tree paths must use pg_executable")
+    for root, executable in re.findall(r'Command::new\(([^()]+)\.join\("([^\"]+)"\)\)', rust):
+        # These are the only PGtree roots in helper.rs's disposable-cluster tests.
+        if root in ("binary", "self.0"):
+            references.add(executable)
+    references.update(re.findall(r'postgresql-[^/\s]+/bin/([^\s]+)', units))
+    return references
 
-    def git(self, *args):
-        return subprocess.check_output(["git", "-c", "user.name=Deployment fixture",
-                                       "-c", "user.email=fixture@example.invalid",
-                                       "-c", "commit.gpgsign=false", *args], cwd=self.source,
-                                      env=self.environment, stderr=subprocess.PIPE, timeout=15)
 
-    def test_pb_snapshot_executes_exact_selected_source(self):
-        result = subprocess.run([
-            "python3", "-I", str(self.launcher), self.head,
-            "python3", "-c",
-            "import subprocess,sys; from pathlib import Path; "
-            "assert subprocess.check_output(['git','rev-parse','HEAD']).decode().strip()==sys.argv[1]; "
-            "assert not subprocess.check_output(['git','status','--porcelain']); "
-            "assert not Path('pb-fixture-stamp').exists()", self.head,
-        ], env=self.environment, cwd=self.source, capture_output=True, timeout=90)
-        self.assertEqual(result.returncode, 0, result.stderr.decode())
+class PostgresPackageTests(unittest.TestCase):
+    def test_pg_tree_executables_are_declared(self):
+        python = (deploy.HERE / "deploy.py").read_text()
+        rust = (deploy.HERE / "helper.rs").read_text()
+        units = "\n".join(path.read_text() for path in (deploy.HERE / "units").glob("*.service"))
+        references = postgres_references(python, rust, units)
+        self.assertLessEqual(references, set(deploy.PG_EXECUTABLES))
+        self.assertIn("initdb", references)
+        self.assertIn("pg_ctl", references)
+        for utility in ("pg_controldata", "pg_isready", "psql", "vacuumdb"):
+            mutant = python.replace('data = root / "postgres/data"',
+                                    f'data = binaries / "bin/{utility}"', 1)
+            with self.assertRaisesRegex(AssertionError, "PG tree paths"):
+                postgres_references(mutant, rust, units)
+            with self.assertRaisesRegex(RuntimeError, "outside"):
+                deploy.pg_executable(Path("/synthetic/pg"), utility)
 
-    def test_review_exact_source_ignores_inherited_git_repository_overrides(self):
-        environment = self.environment | {"GIT_DIR": "/nonexistent/deploy-git-override", "GIT_WORK_TREE": "/nonexistent"}
-        result = subprocess.run(["python3", "-I", str(self.launcher), self.head,
-                                 "git", "merge-base", "--is-ancestor", self.head + "^", self.head],
-                                env=environment, capture_output=True, timeout=90)
-        self.assertEqual(result.returncode, 0, result.stderr.decode())
+    def test_install_checks_entire_declared_set_before_publishing_and_on_reuse(self):
+        for missing in deploy.PG_EXECUTABLES:
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as temporary:
+                home = Path(temporary)
+                _, _, binaries = deploy.paths(home)
+                binaries.mkdir(parents=True)
+                for name in deploy.PG_EXECUTABLES:
+                    if name != missing:
+                        deploy.write_file(deploy.pg_executable(binaries, name), b"#!/bin/sh\nexit 0\n", 0o700)
+                with self.assertRaisesRegex(RuntimeError, "incomplete"):
+                    deploy.postgres(home)
+                self.assertFalse((deploy.paths(home)[1] / "secrets").exists())
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            _, _, binaries = deploy.paths(home)
+            def extract(tar, destination, **kwargs):
+                for name in deploy.PG_EXECUTABLES[:-1]:
+                    deploy.write_file(deploy.pg_executable(destination, name), b"#!/bin/sh\n", 0o700)
+            txz = io.BytesIO()
+            with deploy.tarfile.open(fileobj=txz, mode="w:xz"):
+                pass
+            jar = io.BytesIO()
+            with deploy.zipfile.ZipFile(jar, "w") as archive:
+                archive.writestr("postgres.txz", txz.getvalue())
+            def download(url, digest, destination):
+                destination.write_bytes(jar.getvalue())
+            with patch.object(deploy, "checked_download", side_effect=download), \
+                 patch.object(deploy.tarfile.TarFile, "extractall", extract):
+                with self.assertRaisesRegex(RuntimeError, "incomplete"):
+                    deploy.postgres(home)
+            self.assertFalse(binaries.exists())
+
+    def test_readiness_retries_refusal_and_timeout_with_bounded_processes(self):
+        for failure in ("connection refused", "tl3-deploy timed out; output suppressed"):
+            with self.subTest(failure=failure), \
+                 patch.object(deploy, "run", side_effect=[RuntimeError(failure), b""]) as run, \
+                 patch.object(deploy.time, "sleep") as sleep:
+                deploy.wait_for_postgres(Path("/selected/tl3-deploy"), Path("/synthetic/config"))
+                self.assertEqual(run.call_count, 2)
+                self.assertTrue(all(call.kwargs["timeout"] == 4 for call in run.call_args_list))
+                sleep.assert_called_once_with(0.5)
+        with patch.object(deploy, "run", side_effect=RuntimeError("refused")) as run, \
+             patch.object(deploy.time, "sleep") as sleep:
+            with self.assertRaisesRegex(RuntimeError, "did not become ready"):
+                deploy.wait_for_postgres(Path("/selected/tl3-deploy"), Path("/synthetic/config"))
+            self.assertEqual(run.call_count, 3)
+            self.assertEqual(sleep.call_count, 2)
 
 
 class ReleasePublicationTests(unittest.TestCase):
@@ -128,6 +187,8 @@ class FreshInitTests(unittest.TestCase):
     def transport_run(self, command, **kwargs):
         argv = list(map(str, command))
         self.calls.append(argv)
+        if "cold-cluster-identity" in argv:
+            return b"12345\n"
         if argv[:3] == ["systemctl", "--user", "show"]:
             if "--property=NRestarts" in argv:
                 return b"0\n"
@@ -465,6 +526,22 @@ class FreshInitTests(unittest.TestCase):
         self.assertFalse(any("qualify-fresh" in call for call in self.calls))
         self.assertNotIn(capability.decode(), context.read_text())
 
+    def test_context_identity_mismatch_refuses_before_capability_consumption(self):
+        deploy.cold_backup(self.sources, self.backup)
+        context = self.backup / "reset-context.json"
+        capability = b"e" * 64
+        fields = {"home": str(self.home), "head": "a" * 40, "lane": "release",
+                  "binaries": str(self.home / "selected"), "state_manifest": str(self.home / "scope.json"),
+                  "backup": str(self.backup), "capability_sha256": hashlib.sha256(capability).hexdigest(),
+                  "expires_monotonic": time.monotonic() + 500, "system_identifier": "99999"}
+        deploy.write_file(context, json.dumps(fields).encode())
+        self.states.update({unit: "inactive" for unit in deploy.CLIENT_UNITS})
+        self.states["tl3-postgres.service"] = "active"
+        with patch.object(deploy, "fresh_scope", return_value=(self.sources, (), self.config / "tl3.toml")):
+            with self.assertRaisesRegex(RuntimeError, "context identity"):
+                deploy.authorize_fresh_database(context, self.config / "tl3.toml", capability)
+        self.assertFalse(context.with_suffix(".consumed").exists())
+
     def test_review_stability_detects_dependent_crash(self):
         self.states.update({unit: "active" for unit in
                             ("tl3d.service", "tl3-mlflow.service", "tl3-status.service", "tl3-console.service")})
@@ -552,7 +629,8 @@ class DeployTests(unittest.TestCase):
     def test_existing_data_never_gets_a_replacement_password(self):
         root, config, binaries = deploy.paths(self.home)
         (binaries / "bin").mkdir(parents=True)
-        (binaries / "bin/postgres").touch()
+        for name in deploy.PG_EXECUTABLES:
+            deploy.write_file(deploy.pg_executable(binaries, name), b"#!/bin/sh\nexit 0\n", 0o700)
         (root / "postgres/data").mkdir(parents=True)
         with self.assertRaisesRegex(RuntimeError, "original password"):
             deploy.postgres(self.home)
@@ -580,12 +658,17 @@ class DeployTests(unittest.TestCase):
     def test_unit_syntax_and_ordering(self):
         units = self.home / "units"
         units.mkdir()
+        postgres_bin = deploy.paths(self.home)[2]
+        for name in deploy.PG_EXECUTABLES:
+            deploy.write_file(deploy.pg_executable(postgres_bin, name), b"#!/bin/sh\nexit 0\n", 0o700)
         for source in [*(deploy.HERE / "units").glob("*.service"), *(deploy.HERE / "units").glob("*.slice")]:
             lines = []
             for line in source.read_text().replace("%h", str(self.home)).splitlines():
                 key, _, command = line.partition("=")
                 if key in ("ExecStart", "ExecStartPre", "ExecStartPost", "ExecStop"):
                     executable = Path(command.split()[0])
+                    if executable.is_relative_to(postgres_bin):
+                        self.assertEqual(executable, deploy.pg_executable(postgres_bin, executable.name))
                     if not executable.is_relative_to(self.home):
                         # CI runners lack host binaries such as cloudflared, so every
                         # command runs a stub and verify checks syntax and ordering.
@@ -866,7 +949,8 @@ class DeployTests(unittest.TestCase):
     def test_postgres_setup_creates_the_console_credential_once(self):
         root, config, binaries = deploy.paths(self.home)
         (binaries / "bin").mkdir(parents=True)
-        (binaries / "bin/postgres").write_text("")
+        for name in deploy.PG_EXECUTABLES:
+            deploy.write_file(deploy.pg_executable(binaries, name), b"#!/bin/sh\nexit 0\n", 0o700)
         with contextlib.redirect_stdout(io.StringIO()):
             deploy.postgres(self.home)
         secret = config / "secrets/console-postgres-password"

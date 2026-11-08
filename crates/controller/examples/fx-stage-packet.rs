@@ -204,6 +204,7 @@ fn prepare(
     repo.selected_tests = None;
     repo.always_tests.clear();
     config.flux = Some(tl3_config::Flux {
+        activation: None,
         instance_generation: options.instance_generation.clone(),
         uri: options.uri.clone(),
         executable: "/no-native-execution/flux".into(),

@@ -2065,3 +2065,58 @@ fn removed_postmortem_daily_limit_is_rejected_clearly() {
     assert!(error.contains("postmortems_per_day"), "{error}");
     assert!(error.contains("unknown field"), "{error}");
 }
+
+#[test]
+fn flux_activation_pin_paths_and_images_are_explicit_and_digest_only() {
+    let mut document = flux_document();
+    for image in [
+        "registry.invalid/profile:latest",
+        "registry.invalid/profile",
+        "sha256:abc",
+    ] {
+        document["flux"]["container_image"] = image.into();
+        let error = Config::parse(&toml::to_string(&document).unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("flux.container_image"));
+        assert!(!error.contains(image));
+    }
+    document = flux_document();
+    document["flux"].as_table_mut().unwrap().insert(
+        "activation".into(),
+        toml::toml! {record="relative/activation.json" sha256="bad"}.into(),
+    );
+    assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
+    document["flux"]["activation"]["record"] = "/fixture/activation.json".into();
+    document["flux"]["activation"]["sha256"] = "a".repeat(64).into();
+    Config::parse(&toml::to_string(&document).unwrap()).unwrap();
+}
+
+#[test]
+fn initial_intake_defaults_empty_and_accepts_only_explicit_issue_fields() {
+    assert!(Config::parse(EXAMPLE).unwrap().initial_intake.is_empty());
+    let document = format!(
+        "initial_intake = [{{ owner = 'owner', repo = 'sandbox', number = 1455 }}, {{ owner = 'owner', repo = 'sandbox', number = 1574 }}]\n{EXAMPLE}"
+    );
+    let config = Config::parse(&document).unwrap();
+    assert_eq!(
+        config
+            .initial_intake
+            .iter()
+            .map(|entry| entry.number)
+            .collect::<Vec<_>>(),
+        [1455, 1574]
+    );
+    assert_eq!(config.initial_intake[0].owner, "owner");
+    assert_eq!(config.initial_intake[0].repo, "sandbox");
+    for entry in [
+        "{ owner = 'owner', repo = 'sandbox' }",
+        "{ owner = 'owner', repo = 'sandbox', number = -1 }",
+        "{ owner = 'owner', repo = 'sandbox', number = 1, secret = 'synthetic-secret' }",
+    ] {
+        let error = Config::parse(&format!("initial_intake = [{entry}]\n{EXAMPLE}"))
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains("synthetic-secret"), "{error}");
+    }
+}
