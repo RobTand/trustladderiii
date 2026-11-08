@@ -251,6 +251,12 @@ marker alone never clears this guard, and build reuse does not bypass it.
 failed command. It grants no successful verdict. Unknown cleanup remains held;
 a failed fresh-init with verified closure can use a new backup and cycle as above.
 
+An ended job without a payload result may receive a typed `FAILED` closure only
+from bound Flux terminal records and independent exact cgroup/scratch absence.
+It grants no PASS or deployment receipt. Missing identity or cleanup remains
+held, and no evidence is deleted. See [failed terminal closure](DEPLOY-ADMISSION.md).
+Manual evidence-preserving recovery remains until FX-L1 deploys.
+
 A successful command alone is insufficient. The versioned wrapper receipt binds
 intent, source tree, nativeID, terminal observations and output hashes. It requires
 the recorded sdexec cgroup to be empty or removed and the exact owned scratch

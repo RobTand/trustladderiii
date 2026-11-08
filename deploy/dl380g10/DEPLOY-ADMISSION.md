@@ -49,6 +49,14 @@ exceptions, a missing user slice and other cgroup layouts. Those cases need
 additional identity evidence or the separately authorized operator procedure.
 They cannot be inferred safe from missing files.
 
+A real payload killed mid-run by SIGTERM can leave scratch behind because it
+has no SIGTERM cleanup handler. Closure then refuses. Any operator recovery
+must follow the separately authorized evidence-preserving procedure before
+reattaching the original job; this closure does not authorize scratch removal.
+Reboot, remount or a user-manager restart can also change recorded physical
+identities and hold later admissions. A FAILED closure proves job cleanup only,
+not the safety or completeness of partial deployment side effects.
+
 ## Retained format and replay
 
 `closed.json` contains `schema`, `outcome`, `intent`, `generation`, `job_id`,
