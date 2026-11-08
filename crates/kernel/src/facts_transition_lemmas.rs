@@ -39,7 +39,7 @@ pub(super) proof fn frame_consequences(before: World, after: World, i: usize,
 pub(super) proof fn priority_result(before: World, after: World, i: usize,
     out_before: Outbox, out_after: Outbox, priority: Priority)
     requires i < before.nodes@.len(),
-        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        after.nodes@ =~= before.nodes@.update(i as int, after.nodes@[i as int]),
         after.nodes@[i as int] == (if before.nodes@[i as int].phase is Closed { before.nodes@[i as int] }
             else { Node { priority, ..before.nodes@[i as int] } }),
         after == (World { nodes: after.nodes, ..before }), out_after == out_before,
