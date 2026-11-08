@@ -418,8 +418,8 @@ def _crate_test(kind, package, name, source, harness, options):
         compile_data = compile_data + _CONTROLLER_TEST_DATA + _CONTROLLER_TEST_COMPILE_DATA.get(source, [])
         if kind == "lib":
             compile_data = compile_data + _CONTROLLER_RUNTIME.get("lib_test_tl3_controller" if name == "tl3_controller_loom" else "lib_test_" + name, [])
-            if name == "tl3_controller":
-                compile_data = compile_data + native.glob(["qualification/fx-exact42b/*.json", "tools/generate_fx_qualification.py"])
+        if name in ["tl3_controller", "tl3_controller_loom", "generate-fx-qualification"]:
+            compile_data = compile_data + native.glob(["qualification/fx-exact42b/*.json", "tools/generate_fx_qualification.rs"])
     for group in _GATE_GROUPS.get(binary, [""]):
         suffix = "-" + group if group else ""
         tl3_rust_test(
