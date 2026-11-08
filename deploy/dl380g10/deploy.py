@@ -404,21 +404,56 @@ def validate_backup_destination(backup):
     owned_directory(backup.parent)
 
 
-def preflight_backup(sources, backup):
+# Backup estimate excludes the existing 90s stability interval. The remaining
+# 510s is an explicit margin, including the payload's 50s cleanup allowance.
+FRESH_BACKUP_BUDGET_S = 4800
+FRESH_STABILITY_S = 90
+FRESH_MARGIN_S = 510
+
+
+def preflight_fresh_budget(args):
+    """Conservative metadata inventory before either admission stage submits.
+
+    Count the entire runs root, including retained attempts, rather than trust
+    a potentially incomplete archive list. Full scope validation still runs in
+    fresh_init before any service stop or capability creation.
+    """
+    root, config_dir, _ = paths(args.home)
+    config = config_dir / "tl3.toml"
+    private_file(config)
+    private_file(args.state_manifest)
+    plan = json.loads(args.state_manifest.read_bytes())
+    if (plan.get("schema") != "tl3.fresh-init.v1" or plan.get("head") != args.head
+            or plan.get("config_sha256") != hashlib.sha256(config.read_bytes()).hexdigest()
+            or not isinstance(plan.get("tablespaces"), dict)):
+        raise RuntimeError("budget inventory requires the exact fresh-init manifest and config")
+    data = tomllib.loads(config.read_text())
+    sources = {"data": root / "postgres/data", "config": config_dir,
+               "runs": Path(data["workers"]["runs"])}
+    sources.update({f"tablespace-{name}": Path(path) for name, path in plan["tablespaces"].items()})
+    for path in sources.values():
+        owned_directory(path)
+    # Only file metadata is read here, including for database/tablespace roots.
+    # The full in-job preflight repeats scope and non-database integrity checks.
+    preflight_backup(sources, args.backup, metadata_only=True)
+
+
+def preflight_backup(sources, backup, *, metadata_only=False):
     validate_backup_destination(backup)
     # Non-database roots can be validated while services still run. The cold
     # boundary repeats these checks after stop; no live database bytes are read.
     for name, path in sources.items():
-        if name != "data" and not name.startswith("tablespace-"):
+        if not metadata_only and name != "data" and not name.startswith("tablespace-"):
             tree_manifest(path)
     total = sum(item.lstat().st_size for path in sources.values()
                 for item in path.rglob("*") if stat.S_ISREG(item.lstat().st_mode))
     # Conservative transfer budget, not a measured throughput claim. At most
     # three complete cluster hashes plus copy/fsync; no full source rehash at reset.
     estimated = 1800 + total * 8 / (20 * 1024 * 1024)
-    if estimated > 6900:
-        raise RuntimeError("backup inventory exceeds the admitted 7200s action budget; resize before outage")
-    print(f"Backup preflight: {total} bytes; budget estimate {estimated:.0f}s of 6900s")
+    if estimated > FRESH_BACKUP_BUDGET_S:
+        raise RuntimeError("backup estimate exceeds 4800s; reserve 90s stability and 510s margin before admission")
+    print(f"Backup preflight: {total} bytes; budget estimate {estimated:.0f}s of "
+          f"{FRESH_BACKUP_BUDGET_S}s, plus {FRESH_STABILITY_S}s stability and {FRESH_MARGIN_S}s margin")
 
 
 def cold_backup(sources, backup):
@@ -1282,7 +1317,7 @@ def check(home):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=["install", "initdb", "start", "check", "service", "model-defaults", "install-mlflow",
-                                            "stop-runs", "fresh-init", "qualify-fresh", "authorize-fresh-database"])
+                                            "stop-runs", "fresh-init", "qualify-fresh", "preflight-fresh-budget", "authorize-fresh-database"])
     parser.add_argument("--home", type=Path, default=Path.home())
     parser.add_argument("--binaries", type=Path, default=SOURCE / "target/release")
     parser.add_argument("--status-listen", default="192.168.1.107:8033")
@@ -1303,6 +1338,11 @@ def main():
         if not args.context or not args.database_config:
             parser.error("database authorization requires --context and --database-config")
         authorize_fresh_database(args.context, args.database_config, sys.stdin.buffer.read(65))
+        return 0
+    if args.command == "preflight-fresh-budget":
+        if not args.state_manifest or not args.backup or not args.backup.is_absolute():
+            parser.error("budget preflight requires --state-manifest and absolute --backup")
+        preflight_fresh_budget(args)
         return 0
     if args.command == "fresh-init":
         if not args.state_manifest or not args.backup or not args.backup.is_absolute():

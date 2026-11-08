@@ -154,10 +154,12 @@ whose full SHA-256 is
 `219d725db03ff4d5b63dc88d2e3064331cc2489d145ca299bb6749ff4d507c48`.
 These fixtures exercise synthetic boundaries and do not qualify a live deployment.
 
-The native Flux actions have a 7200-second walltime, with the payload child
-bounded at 7150 seconds. Preflight estimates inventory transfer cost conservatively
+The native Flux actions have a 5400-second walltime, with the payload child
+bounded at 5350 seconds. Preflight estimates inventory transfer cost conservatively
 at 20 MiB/s with eight I/O passes plus 1800 seconds overhead; it refuses a predicted
-budget above 6900 seconds before any stop. This is a sizing bound, not a measured
+backup estimate above 4800 seconds before either new stage submits and again
+before any stop. This leaves 90 seconds for stability and 510 seconds of margin
+inside the job. This is a planning estimate, not a measured
 live cold-copy timing claim. The data root is read for its initial hash, copy
 verification and SQL-boundary copy verification, without rehashing it at file reset.
 Actual fleet/cold-copy timing still requires deployment acceptance.
@@ -214,7 +216,7 @@ rebind and native qualification, never newest-instance discovery.
 
 Build requests one task, eight CPUs and eight one-GiB memory leaves. Cargo
 parallelism remains two and native library threads remain one. Fresh-init requests
-one task, one CPU and two one-GiB memory leaves. Both request7200seconds and
+one task, one CPU and two one-GiB memory leaves. Both request5400seconds and
 `host:dl380g10`, because release artifacts, user services and the Postgres socket
 are local. The explicit slot resources contain memory alongside cores, with no
 `-N1` or fixed node wrapper. Admitted memory differs from the standing75%/no-swap
@@ -229,7 +231,10 @@ the original jobspec. Raw operational output, manifest paths and all dispatch
 records remain private. Do not publish raw jobspecs or output logs.
 
 Each dispatch lives in a unique0700directory under
-`/mnt/shared/flux-vanilla/deploy`. Intent and exact source/tree are durable before
+`/home/rob/.local/share/tl3/deploy-admission`. The shared directory
+`/mnt/shared/flux-vanilla/deploy` is rob-owned0755 and contains only
+`deploy.lock`. Invalid layouts refuse; no legacy evidence migration occurs.
+See [Flux deployment owner limits](FLUX-OWNER-LIMITS.md). Intent and exact source/tree are durable before
 submission. The native jobID is saved immediately. Set
 `TL3_FLUX_DEPLOY_REATTACH` to the printed dispatch path after a disconnect. The
 caller waits by savedID through `wait-event clean`, then collects status,

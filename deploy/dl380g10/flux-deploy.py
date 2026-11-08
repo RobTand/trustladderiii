@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Exact-source native deployment admission, with private replayable evidence."""
 import argparse
-from contextlib import contextmanager
 import fcntl
 import hashlib
 import json
+import math
 import os
-from pathlib import Path
+import pwd
 import re
 import shutil
 import signal
@@ -16,6 +16,8 @@ import subprocess
 import sys
 import tempfile
 import uuid
+from contextlib import contextmanager
+from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parents[2]
 PREFIX = Path('/home/rob/flux-vanilla/0.91.0-0.56.0')
@@ -24,7 +26,9 @@ URI = f'local://{PREFIX}/runs/fv1-model/run/local-0'
 GENERATION = 'fv1-model/f107a7b075094ef6839e3a545b5dd711'
 # Owner's observed native starttime binds this generation, not newest-run discovery.
 STARTTIME = '1794024934.96'
-STORE = Path('/mnt/shared/flux-vanilla/deploy')
+LOCK_ROOT = Path('/mnt/shared/flux-vanilla/deploy')
+STORE = Path('/home/rob/.local/share/tl3/deploy-admission')
+WALLTIME_S = 5400
 SOURCE_STORE = Path('/home/rob/.local/share/tl3-deploy-sources')
 UPSTREAM = 'https://github.com/RobTand/trustladderiii.git'
 SCRATCH = Path('/var/tmp/flux-vanilla')
@@ -170,7 +174,7 @@ def plan(head, tree, stage, lane, release, manifest, backup, out):
             'release': str(release), 'manifest': str(manifest) if stage != 'build' else None,
             'backup': str(backup) if stage != 'build' else None,
             'out': str(out), 'name': f'tl3-deploy-{out.parent.name}-{stage}',
-            'cpus': cpus, 'memory_gib': memory, 'walltime_s': 7200, 'environment': environment}
+            'cpus': cpus, 'memory_gib': memory, 'walltime_s': WALLTIME_S, 'environment': environment}
 
 
 def jobspec(intent, request_digest):
@@ -179,7 +183,7 @@ def jobspec(intent, request_digest):
                'payload', str(out / 'intent.json'), request_digest]
     args = ['submit', '--dry-run', '--env=-*']
     args += [f'--env={key}={value}' for key, value in sorted(intent['environment'].items())]
-    args += ['-n1', f"-c{intent['cpus']}", '-t7200s', '--requires=host:dl380g10',
+    args += ['-n1', f"-c{intent['cpus']}", f'-t{WALLTIME_S}s', '--requires=host:dl380g10',
              f"--job-name={intent['name']}", f'--cwd={SOURCE}', '--input=/dev/null',
              f'--output={out}/stdout', f'--error={out}/stderr', *command]
     rc, raw, _ = native(*args)
@@ -195,10 +199,11 @@ def jobspec(intent, request_digest):
     resources[0]['with'].append({'type': 'memory', 'count': intent['memory_gib']})
     system = spec['attributes']['system']
     if (system['environment'] != intent['environment'] or system['cwd'] != str(SOURCE)
-            or system['duration'] != 7200 or spec['tasks'][0]['command'] != command):
+            or system['duration'] != WALLTIME_S or spec['tasks'][0]['command'] != command):
         raise RuntimeError('native environment/command/cwd/walltime mismatch')
     spec['attributes']['user'] = {'tl3_deploy_intent': request_digest, 'generation': GENERATION,
                                    'source_head': intent['head'], 'source_tree': intent['tree']}
+    validate_spec(intent, request_digest, spec)
     return spec
 
 
@@ -206,6 +211,28 @@ def validate_spec(intent, request_digest, spec):
     resources = spec['resources']
     system = spec['attributes']['system']
     tasks = spec['tasks']
+    # Check actual native shape, independently of the saved intent's numbers.
+    for value, maximum in ((intent['cpus'], 8), (intent['memory_gib'], 32),
+                           (intent['walltime_s'], WALLTIME_S),
+                           (system['duration'], WALLTIME_S)):
+        if type(value) not in (int, float) or not math.isfinite(value) or not 0 < value <= maximum:
+            raise RuntimeError('owner resource limit refused')
+    if (type(intent['cpus']) is not int or type(intent['memory_gib']) is not int
+            or system.get('exclusive', False) is not False
+            or system.get('constraints') != {'hostlist': ['dl380g10']}
+            or type(resources) is not list or len(resources) != 1
+            or set(resources[0]) != {'type', 'count', 'label', 'with'}
+            or type(resources[0]['label']) is not str or not resources[0]['label']
+            or type(resources[0]['count']) is not int
+            or resources[0]['count'] != 1
+            or type(resources[0]['with']) is not list
+            or len(resources[0]['with']) != 2):
+        raise RuntimeError('owner host/resource shape refused')
+    for leaf, kind, maximum in zip(resources[0]['with'], ('core', 'memory'), (8, 32)):
+        if (set(leaf) != {'type', 'count'} or leaf['type'] != kind
+                or type(leaf['count']) is not int or not 0 < leaf['count'] <= maximum):
+            raise RuntimeError('owner resource leaf refused')
+
     command = ['/usr/bin/python3', '-I', str(SOURCE / 'deploy/dl380g10/flux-deploy.py'),
                'payload', str(Path(intent['out']) / 'intent.json'), request_digest]
     if (len(resources) != 1 or resources[0]['type'] != 'slot' or resources[0]['count'] != 1
@@ -248,7 +275,7 @@ def collect(intent, request_digest, spec, identifier):
     out = Path(intent['out'])
     if not original_matches(identifier, spec):
         raise RuntimeError('original native intent mismatch')
-    wait_rc, wait, wait_error = native('job', 'wait-event', '--format=json', identifier, 'clean', timeout=7500)
+    wait_rc, wait, wait_error = native('job', 'wait-event', '--format=json', identifier, 'clean', timeout=WALLTIME_S + 180)
     save(out / 'wait.json', wait)
     save(out / 'wait.stderr', wait_error)
     if wait_rc == 124:
@@ -438,7 +465,7 @@ def payload(intent_path, expected):
         with subprocess.Popen([str(value) for value in command], cwd=SOURCE, env=environment,
                               stdin=subprocess.DEVNULL, start_new_session=True) as child:
             try:
-                rc = child.wait(timeout=7150)
+                rc = child.wait(timeout=WALLTIME_S - 50)
             finally:
                 # Kill only this child's process group, including leftovers after parent success.
                 try:
@@ -521,15 +548,56 @@ def require_closed(out):
         raise RuntimeError('unresolved prior dispatch; reattach its original ID') from error
 
 
+def owned_ancestry(path):
+    owner = pwd.getpwnam('rob').pw_uid
+    for parent in path.parents:
+        try:
+            info = parent.lstat()
+        except FileNotFoundError:
+            continue
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid not in (0, owner)
+                or (info.st_mode & 0o022 and not info.st_mode & stat.S_ISVTX)):
+            raise RuntimeError('unsafe admission ancestry')
+
+
+def lock_layout():
+    # Never repair an existing invalid layout or put evidence/temporary files here.
+    owner = pwd.getpwnam('rob').pw_uid
+    if os.getuid() != owner:
+        raise RuntimeError('rob-owned coordinator required')
+    owned_ancestry(LOCK_ROOT)
+    try:
+        LOCK_ROOT.mkdir(mode=0o755)
+    except FileExistsError:
+        pass
+    else:
+        # mkdir honors the coordinator's private umask; only a new directory is set.
+        LOCK_ROOT.chmod(0o755)
+    info = LOCK_ROOT.lstat()
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != owner
+            or stat.S_IMODE(info.st_mode) != 0o755):
+        raise RuntimeError('owner lock directory must be rob-owned 0755')
+    if any(path.name != 'deploy.lock' for path in LOCK_ROOT.iterdir()):
+        raise RuntimeError('foreign owner lock entry refused')
+
+
 @contextmanager
 def serialized_admission(reattach):
-    descriptor = os.open(STORE / 'deploy.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    lock_layout()
+    path = LOCK_ROOT / 'deploy.lock'
+    descriptor = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
     with os.fdopen(descriptor, 'a') as lock:
-        private(STORE / 'deploy.lock')
+        private(path)
+        info = os.fstat(lock.fileno())
+        named = path.lstat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                or info.st_mode & 0o077 or info.st_nlink != 1
+                or (info.st_dev, info.st_ino) != (named.st_dev, named.st_ino)):
+            raise RuntimeError('lock identity refused')
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_layout()
+        private(STORE, True)
         for sibling in STORE.iterdir():
-            if sibling.name == 'deploy.lock':
-                continue
             private(sibling, True)
             if sibling == reattach:
                 continue
@@ -566,8 +634,18 @@ def main():
     # Also guard direct invocation. Dry-run in the canonical shell never bypasses its gate.
     checked(['/usr/bin/python3', '-I', SOURCE / 'deploy/dl380g10/deploy.py', 'qualify-fresh',
              '--head', args.head, '--lane', args.lane], cwd=SOURCE, timeout=610)
-    STORE.mkdir(mode=0o700, exist_ok=True)
+    # Reattaching a submitted fresh job must collect its original ID even when
+    # that job has already created the backup. It cannot make a new submission.
+    if args.reattach is None or not any(os.path.lexists(args.reattach / 'fresh-init' / marker)
+                                      for marker in ('dispatched.json', 'binding.json')):
+        checked(['/usr/bin/python3', '-I', SOURCE / 'deploy/dl380g10/deploy.py', 'preflight-fresh-budget',
+                 '--head', args.head, '--state-manifest', args.manifest, '--backup', args.backup],
+                cwd=SOURCE, timeout=610)
+    owned_ancestry(STORE)
+    STORE.mkdir(mode=0o700, parents=True, exist_ok=True)
     private(STORE, True)
+    if stat.S_IMODE(STORE.lstat().st_mode) != 0o700:
+        raise RuntimeError('private evidence store must be 0700')
     with serialized_admission(args.reattach):
         dispatch = args.reattach or STORE / uuid.uuid4().hex
         if dispatch.parent != STORE:
