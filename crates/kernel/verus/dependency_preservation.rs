@@ -680,7 +680,8 @@ pub(super) proof fn remove_rules(before: World, after: World, i: int, kind: Prer
 /// With unique keys, the real lookup determines the handler's exact table.
 pub(super) proof fn fact_table(before: World, after: World, i: int, target: DependencyTarget,
     status: DependencyStatus, existing: Option<usize>)
-    requires fact_result(before, after, i, target, status), declarations_unique(before),
+    requires fact_result(before, after, i, target, status),
+        declarations_unique(before) || existing is None,
         found(before, i, target, existing),
     ensures after.dependencies@ == if target_ok(before, i, target)
             && writes_row(before, i, target, status, existing) {
