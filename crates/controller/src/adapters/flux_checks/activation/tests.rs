@@ -2,6 +2,9 @@ use super::*;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
+#[path = "../../../../tools/generate_fx_qualification.rs"]
+mod qualification_generator;
+
 fn assert_refusal<T>(result: Result<T>, field: &str) {
     assert_eq!(
         result
@@ -463,23 +466,9 @@ fn environment_override_child() {
 #[test]
 fn qualification_regeneration_is_byte_identical() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let output = std::process::Command::new("/usr/bin/python3")
-        .args([
-            "-I",
-            root.join("tools/generate_fx_qualification.py")
-                .to_str()
-                .unwrap(),
-            "--output",
-            "/dev/stdout",
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(output.stdout, PIN);
+    let output = qualification_generator::generate(&root.join("qualification/fx-exact42b"));
+    assert!(output.is_ok(), "{}", output.as_ref().unwrap_err());
+    assert_eq!(output.unwrap(), PIN);
 }
 
 #[test]

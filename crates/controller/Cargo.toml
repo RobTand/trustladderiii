@@ -49,6 +49,10 @@ hmac = "0.12"
 hex = "0.4"
 
 [[example]]
+name = "generate-fx-qualification"
+path = "tools/generate_fx_qualification.rs"
+
+[[example]]
 name = "tl3-deploy"
 path = "../../deploy/dl380g10/helper.rs"
 

@@ -1,7 +1,8 @@
 # FX activation binding
 
 The compiled `src/adapters/flux_checks/activation/qualification.json` pin records completed historical qualification.
-`../tools/generate_fx_qualification.py` derives it from the retained manifests,
+`cargo run -p tl3-controller --example generate-fx-qualification -- --check`
+uses `../tools/generate_fx_qualification.rs` to derive it from the retained manifests,
 acceptance records, parent audits, and the parent's exact reconciliation ruling
 in `fx-exact42b/`. The generator checks their original SHA256 values before
 reading them. The regeneration test requires byte-for-byte equality.
