@@ -1358,7 +1358,7 @@ impl Outbox {
                 out@ == old(out)@ + occupied(self.items@, index as nat),
             decreases OUTBOX - index,
         ] {
-            if let Some(item) = self.items[index] { out.push(item); }
+            if let Some(item) = self.items[index] { out.push(item); out.push(item); }
             kernel_proof! {
                 assert(occupied(self.items@, (index + 1) as nat) == match self.items@[index as int] {
                     Some(o) => occupied(self.items@, index as nat).push(o),
