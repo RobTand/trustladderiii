@@ -765,7 +765,7 @@ fn planner_leaf_admission_rejects_blank_and_duplicate_names_before_maker() {
     ] {
         let mut w = resource_world::World::new();
         let forecast = json!({"tokenizer":"o200k_base","brief_tokens":1,
-            "file_tokens":{},"overhead_tokens":0,"tokens":1,"fit_tokens":100,
+            "file_tokens":{"behavior.py":0},"overhead_tokens":0,"tokens":1,"fit_tokens":100,
             "context_tokens":150,"fits":true});
         deliver(
             &mut w,
@@ -776,7 +776,7 @@ fn planner_leaf_admission_rejects_blank_and_duplicate_names_before_maker() {
                 {"description":"Publish the change","verification":"review","stage":"publishing",
                     "publication":{"non_draft":true,"body_lines":[],"proof":false}},
                 {"description":"Second behavior","verification":"test"}],
-            "memory_ids":[],"files":[],"merge_prerequisites":[],"forecast":forecast}),
+            "memory_ids":[],"files":["behavior.py"],"merge_prerequisites":[],"forecast":forecast}),
         );
         deliver(&mut w, "audit", json!({"verdict":"agree","objections":[]}));
         assert!(matches!(
@@ -786,7 +786,7 @@ fn planner_leaf_admission_rejects_blank_and_duplicate_names_before_maker() {
         deliver(
             &mut w,
             "planner",
-            json!({"kind":"leaf","files":[],
+            json!({"kind":"leaf","files":["behavior.py"],
             "checks":[
                 {"name":names[0],"kind":"regression","tests":["tests/first.py::test_first"],"goal_ids":[0]},
                 {"name":names[1],"kind":"regression","tests":["tests/second.py::test_second"],"goal_ids":[2]}],
