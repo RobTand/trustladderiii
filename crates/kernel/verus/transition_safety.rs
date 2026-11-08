@@ -25,9 +25,7 @@ pub(super) open spec fn node_step(b: Node, n: Node) -> bool {
     n.proposed == b.proposed
         && (b.adopted ==> n.adopted)
         && n.next_seq >= b.next_seq
-        && (b.phase is Closed ==> n.phase == b.phase
-            || (n.phase == Phase::Closed(Outcome::Merged)
-                && matches!(b.phase, Phase::Closed(Outcome::Stopped) | Phase::Closed(Outcome::Replaced))))
+        && (b.phase is Closed ==> n.phase == b.phase)
         && n.credit.earned as int <= b.credit.earned as int + 1
         && (n.credit.earned > b.credit.earned
             ==> !b.credit.merge_credited && n.credit.merge_credited)

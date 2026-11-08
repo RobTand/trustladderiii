@@ -40,7 +40,7 @@ pub(super) proof fn conflict_rule(b: Node)
         let n = retirement::fact_node(b, Fact::Conflict);
         if b.phase == Phase::AwaitingDelivery || b.phase == Phase::Publishing {
             n.phase == (if b.phase == Phase::AwaitingDelivery {
-                Phase::Ready(Resume::Rebasing) } else { Phase::Rebasing })
+                Phase::Ready(Resume::Rebasing) } else { Phase::Ready(Resume::Rebasing) })
                 && n.generation == b.generation + 1
                 && n.credit == b.credit && n.holds == b.holds
         } else { n == b }
