@@ -41,8 +41,6 @@ pub(super) fn mark_handled(m: &mut Node) -> (result: ()) [
         final(m).phase == old(m).phase,
         final(m).last_cmd == old(m).last_cmd,
         final(m).proposed == old(m).proposed, final(m).adopted == old(m).adopted,
-        final(m).review_stop == old(m).review_stop, final(m).attempt == old(m).attempt,
-        final(m).replanned == old(m).replanned,
 ] {
     kernel_snapshot! { before_handled = *m }
     if let Some(Item::Teardown(kind)) = m.current() {
@@ -84,8 +82,6 @@ fn mark_handled_resources(m: &mut Node, kind: EffectKind) -> (result: ()) [
         final(m).pr_open == if kind == EffectKind::ClosePr { false } else { old(m).pr_open },
         final(m).worktree == if kind == EffectKind::RemoveWorktree { false } else { old(m).worktree },
         final(m).proposed == old(m).proposed, final(m).adopted == old(m).adopted,
-        final(m).review_stop == old(m).review_stop, final(m).attempt == old(m).attempt,
-        final(m).replanned == old(m).replanned,
 ] {
     match kind {
         EffectKind::StopRun => {
