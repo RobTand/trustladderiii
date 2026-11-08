@@ -154,14 +154,25 @@ fn stopping_entry(m: &mut Node, outcome: Outcome) -> (result: ()) [
             }
             kernel_proof! { assert(*m == retirement::stopped(before@, outcome)); }
         }
-        _ => {
-            m.question = None;
-            m.waiting_incident = false;
-            m.incident_needs_rob = false;
-            set_phase(m, Phase::Stopping(outcome));
-            kernel_proof! { assert(*m == retirement::stopped(before@, outcome)); }
-        }
+        _ => stopping_active(m, outcome),
     }
+}
+}
+
+kernel_fn! {
+/// Stop and replacement rows / #771: an open phase clears its question and
+/// incident, then enters Stopping through set_phase, cancelling any effect.
+fn stopping_active(m: &mut Node, outcome: Outcome) -> (result: ()) [
+    requires !(old(m).phase is Closed || old(m).phase is Stopping),
+        old(m).generation < u64::MAX,
+    ensures *final(m) == retirement::stopped(*old(m), outcome),
+] {
+    kernel_snapshot! { before = *m }
+    m.question = None;
+    m.waiting_incident = false;
+    m.incident_needs_rob = false;
+    set_phase(m, Phase::Stopping(outcome));
+    kernel_proof! { allocation_stopping_lemmas::stopped_cases(before@, outcome); }
 }
 }
 
