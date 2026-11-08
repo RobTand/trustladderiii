@@ -20,53 +20,6 @@ deploy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(deploy)
 
 
-class ExactSourceTests(unittest.TestCase):
-    def setUp(self):
-        self.scratch = tempfile.TemporaryDirectory(prefix="tl3-exact-source-fixture-")
-        self.addCleanup(self.scratch.cleanup)
-        self.source = Path(self.scratch.name) / "repo"
-        self.source.mkdir()
-        self.environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
-        self.git("init", "--quiet")
-        self.git("commit", "--quiet", "--allow-empty", "-m", "fixture base")
-        launcher = self.source / "deploy/dl380g10/exact-source.py"
-        launcher.parent.mkdir(parents=True)
-        launcher.write_bytes(Path(__file__).with_name("exact-source.py").read_bytes())
-        self.git("add", ".")
-        self.git("commit", "--quiet", "-m", "selected source")
-        self.head = self.git("rev-parse", "HEAD").decode().strip()
-        # Model PB's tracked child stamp without requiring the test's checkout
-        # or Bazel runfiles to contain Git history.
-        (self.source / "pb-fixture-stamp").write_text("synthetic PB child stamp\n")
-        self.git("add", ".")
-        self.git("commit", "--quiet", "-m", "PB snapshot fixture")
-        self.launcher = launcher
-
-    def git(self, *args):
-        return subprocess.check_output(["git", "-c", "user.name=Deployment fixture",
-                                       "-c", "user.email=fixture@example.invalid",
-                                       "-c", "commit.gpgsign=false", *args], cwd=self.source,
-                                      env=self.environment, stderr=subprocess.PIPE, timeout=15)
-
-    def test_pb_snapshot_executes_exact_selected_source(self):
-        result = subprocess.run([
-            "python3", "-I", str(self.launcher), self.head,
-            "python3", "-c",
-            "import subprocess,sys; from pathlib import Path; "
-            "assert subprocess.check_output(['git','rev-parse','HEAD']).decode().strip()==sys.argv[1]; "
-            "assert not subprocess.check_output(['git','status','--porcelain']); "
-            "assert not Path('pb-fixture-stamp').exists()", self.head,
-        ], env=self.environment, cwd=self.source, capture_output=True, timeout=90)
-        self.assertEqual(result.returncode, 0, result.stderr.decode())
-
-    def test_review_exact_source_ignores_inherited_git_repository_overrides(self):
-        environment = self.environment | {"GIT_DIR": "/nonexistent/deploy-git-override", "GIT_WORK_TREE": "/nonexistent"}
-        result = subprocess.run(["python3", "-I", str(self.launcher), self.head,
-                                 "git", "merge-base", "--is-ancestor", self.head + "^", self.head],
-                                env=environment, capture_output=True, timeout=90)
-        self.assertEqual(result.returncode, 0, result.stderr.decode())
-
-
 class ReleasePublicationTests(unittest.TestCase):
     def test_failed_copy_does_not_publish_or_wedge_release_retry(self):
         script = Path(__file__).with_name("build-release.sh").resolve()

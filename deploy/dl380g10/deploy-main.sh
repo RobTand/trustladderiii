@@ -30,39 +30,24 @@ if (git('rev-parse', '--show-toplevel').decode() != str(tree)
     raise SystemExit('exact source identity, cleanliness or complete history refused')
 git('rev-list', '--objects', '--missing=error', sys.argv[2])
 PY
-tools=/mnt/shared/prismabuild-fleet/repo/tools
 notes=/home/rob/tmp/tl3-build
 manifest=${TL3_FRESH_STATE_MANIFEST:?set the reviewed private exact-state manifest}
 backup=${TL3_COLD_BACKUP:?set a new private cold-backup destination}
 lane=${TL3_DEPLOY_LANE:-release}
 case "$lane" in dev|release) ;; *) echo 'unknown qualification lane'; exit 1;; esac
-export CARGO_TARGET_DIR=$notes/deploy-cargo-target-$sha
-release=$notes/release-$sha
 cd "$tree"
 timeout --kill-after=5s 610s python3 -I deploy/dl380g10/deploy.py qualify-fresh --head "$sha" --lane "$lane"
 if [ "${TL3_DEPLOY_DRY_RUN:-0}" = 1 ]; then
   echo "exact-head qualification passed; dry run ends before build or service changes"
   exit 0
 fi
-# This build exports to dl380g10's local artifact directory. Installation needs
-# that user's local units/socket/home. Both have an actual host dependency.
-if [ ! -f "$release/SOURCE.json" ]; then
-  python3 "$tools/pbrun.py" --cwd "$tree" --tag dl380g10 --cpus 2 --demand mem_gb=8 \
-    --timeout-s 7200 --wait-s 7200 \
-    --env PATH=/home/rob/.cargo/bin:/home/rob/.local/bin:/usr/local/bin:/usr/bin:/bin \
-    --env CARGO_TARGET_DIR="$CARGO_TARGET_DIR" --env CARGO_BUILD_JOBS=2 --env OMP_NUM_THREADS=1 --env MKL_NUM_THREADS=1 \
-    --env OPENBLAS_NUM_THREADS=1 --env RAYON_NUM_THREADS=1 \
-    -- python3 -I deploy/dl380g10/exact-source.py "$sha" bash deploy/dl380g10/build-release.sh "$release" "$sha"
+# Native admission owns build and fresh-init. Explicit reattach reuses a dispatch;
+# a lost reply never creates a replacement job.
+reattach=()
+if [[ -n ${TL3_FLUX_DEPLOY_REATTACH:-} ]]; then
+  reattach=(--reattach "$TL3_FLUX_DEPLOY_REATTACH")
 fi
-python3 "$tools/pbrun.py" --cwd "$tree" --tag dl380g10 --cpus 1 --demand mem_gb=2 \
-  --timeout-s 7200 --wait-s 7200 \
-  --env PATH=/home/rob/.local/bin:/usr/local/bin:/usr/bin:/bin --env XDG_RUNTIME_DIR=/run/user/1000 \
-  --env TL3_DEPLOY_NONCE="$(date -u +%Y%m%dT%H%M%S%N)" \
-  --env OMP_NUM_THREADS=1 --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 \
-  -- python3 -I deploy/dl380g10/exact-source.py "$sha" python3 -I deploy/dl380g10/deploy.py fresh-init --head "$sha" --lane "$lane" \
-      --binaries "$release" --state-manifest "$manifest" --backup "$backup"
-# pbrun's synchronous verdict verifies the terminal outcome and CAS receipt.
-# The selected helper never starts a previous binary after a failure.
+python3 -I "$tree/deploy/dl380g10/flux-deploy.py" admit "$sha" "$lane" "$manifest" "$backup" "${reattach[@]}"
 printf '%s\n' "$sha" > "$notes/deployed-sha"
 printf -- '- %s DEPLOYED %s fresh-init; exact qualification, verified cold backup, current schema and bounded stability passed.\n' \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$sha" >> "$notes/state.md"
