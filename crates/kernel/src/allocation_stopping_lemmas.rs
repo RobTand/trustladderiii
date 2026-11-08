@@ -20,6 +20,21 @@ pub(super) proof fn stopping_distance(n: Node)
     reveal(distance);
 }
 
+/// #806 stopping row: the exact stopped result of each entry branch, so the
+/// executable caller never unfolds the whole stopped definition.
+pub(super) proof fn stopped_cases(n: Node, outcome: Outcome)
+    ensures
+        n.phase is Closed ==> retirement::stopped(n, outcome) == n,
+        n.phase is Stopping ==> retirement::stopped(n, outcome) == (if outcome == Outcome::Merged {
+            Node { phase: Phase::Stopping(Outcome::Merged), ..n }
+        } else { n }),
+        !(n.phase is Closed || n.phase is Stopping) ==> retirement::stopped(n, outcome)
+            == retirement::phased(Node { question: None, waiting_incident: false,
+                incident_needs_rob: false, ..n }, Phase::Stopping(outcome)),
+{
+    reveal(retirement::stopped);
+}
+
 /// #805 / #806 stopping row: compose exact handler output with rank bounds.
 pub(super) proof fn stopping_progress(before: Node, after: Node, outcome: Outcome)
     requires after == retirement::stopped(before, outcome),
