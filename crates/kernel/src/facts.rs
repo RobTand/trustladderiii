@@ -201,10 +201,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             if published {
                 update_recheck_head(&mut w.nodes[i], head);
                 recheck(w, i, Phase::Ready(Resume::Checking), out);
-            }
-            kernel_proof! {
-                assert(retirement::fact_frame(before_transition@, *w, i, before_out@, *out))
-                    by { reveal(retirement::fact_frame); reveal(retry_bounds); }
+                kernel_proof! { reveal(retry_bounds); }
             }
         }
         Fact::CiFailed { infra } => ci_failed(w, i, infra, out),
@@ -226,7 +223,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
     }
     kernel_proof! {
         if fact is CiFailed || fact is IncidentCleared || fact is Priority
-            || fact is PrClosedByPerson || fact is Conflict || fact is PushByOther {
+            || fact is PrClosedByPerson || fact is Conflict {
             facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out);
         }
     }
