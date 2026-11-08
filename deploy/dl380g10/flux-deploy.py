@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exact-source native deployment admission, with private replayable evidence."""
 import argparse
+from contextlib import contextmanager
 import fcntl
 import hashlib
 import json
@@ -32,6 +33,9 @@ HOME = '/home/rob'
 PATH = '/home/rob/.cargo/bin:/home/rob/.local/bin:/usr/local/bin:/usr/bin:/bin'
 THREADS = {key: '1' for key in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS',
                               'OPENBLAS_NUM_THREADS', 'RAYON_NUM_THREADS')}
+OBSERVED_FILES = ('intent.json', 'jobspec.json', 'submit.stdout', 'submit.stderr', 'binding.json',
+                  'wait.json', 'wait.stderr', 'status.json', 'status.stderr', 'terminal-query.json',
+                  'eventlog.jsonl', 'eventlog.stderr', 'stdout', 'stderr', 'result.json')
 SUPERVISOR = {'PATH': f'{PREFIX}/install/bin:{PREFIX}/deps/bin:/usr/bin:/bin',
               'HOME': HOME, 'XDG_RUNTIME_DIR': '/run/user/1000', 'FLUX_URI': URI,
               'LD_LIBRARY_PATH': f'{PREFIX}/install/lib:{PREFIX}/deps/lib', **THREADS}
@@ -270,20 +274,21 @@ def collect(intent, request_digest, spec, identifier):
     history = [json.loads(line) for line in events.splitlines()]
     names = [event['name'] for event in history]
     finishes = [event['context']['status'] for event in history if event['name'] == 'finish']
-    if (wait_rc or status_rc or event_rc or not isinstance(parsed, dict)
+    if (wait_rc or event_rc or not isinstance(parsed, dict)
             or parsed_wait.get('name') != 'clean'
             or names.count('clean') != 1 or names.count('start') != 1
             or id_rc or parsed.get('id') != int(numeric_id)
-            or parsed.get('exception_occurred') is not False
-            or type(parsed.get('waitstatus')) is not int or parsed['waitstatus'] != 0
-            or type(parsed.get('result')) is not int or parsed['result'] != 1
-            or finishes != [0] or type(finishes[0]) is not int or 'exception' in names
+            or type(parsed.get('exception_occurred')) is not bool
+            or type(parsed.get('waitstatus')) is not int or parsed['waitstatus'] < 0
+            or type(parsed.get('result')) is not int or parsed['result'] not in (1, 2, 4, 8)
+            or len(finishes) != 1 or type(finishes[0]) is not int
+            or finishes != [parsed['waitstatus']]
             or names.index('start') > names.index('finish') or names.index('finish') > names.index('clean')):
         raise RuntimeError('native terminal failure/unknown; evidence retained')
     result = load(out / 'result.json')
     if (result.get('schema') != 'tl3.deploy.payload.v1' or result.get('intent') != request_digest
             or result.get('job_id') != identifier or type(result.get('returncode')) is not int
-            or result['returncode'] != 0 or type(result.get('cgroup_inode')) is not int
+            or type(result.get('cgroup_inode')) is not int
             or result['cgroup_inode'] <= 0
             or result.get('source_tree') != intent['tree'] or result.get('scratch_removed') is not True):
         raise RuntimeError('payload receipt failure/mismatch')
@@ -313,9 +318,7 @@ def collect(intent, request_digest, spec, identifier):
         raise RuntimeError('owned scratch remains')
     binding()
     files = {}
-    for name in ('intent.json', 'jobspec.json', 'submit.stdout', 'submit.stderr', 'binding.json',
-                 'wait.json', 'wait.stderr', 'status.json', 'status.stderr', 'terminal-query.json',
-                 'eventlog.jsonl', 'eventlog.stderr', 'stdout', 'stderr', 'result.json'):
+    for name in OBSERVED_FILES:
         path = out / name
         if name in ('stdout', 'stderr'):
             info = path.lstat()
@@ -330,6 +333,11 @@ def collect(intent, request_digest, spec, identifier):
                'generation': GENERATION, 'job_id': identifier, 'files': files,
                'owned_scope_empty': True, 'owned_scratch_removed': True,
                'limitation': 'wrapper observations, no native attestation or PB CAS'}
+    # Closure proves no remaining job, including after a failed command. It grants no PASS.
+    save(out / 'closed.json', receipt | {'schema': 'tl3.deploy.closed.v1'})
+    if (status_rc or parsed['exception_occurred'] or parsed['waitstatus'] != 0
+            or parsed['result'] != 1 or 'exception' in names or result['returncode'] != 0):
+        raise RuntimeError('native terminal failure; closed evidence retained')
     save(out / 'receipt.json', receipt)
     return digest(encoded(receipt))
 
@@ -487,6 +495,53 @@ def admit_stages(head, tree, lane, release, manifest, backup, dispatch, build_di
     return receipts
 
 
+def require_closed(out):
+    try:
+        closed = load(out / 'closed.json')
+        intent = load(out / 'intent.json')
+        bound = load(out / 'binding.json')
+        request_digest = digest(encoded(intent))
+        if (closed['schema'] != 'tl3.deploy.closed.v1'
+                or closed['intent'] != request_digest or bound['intent'] != request_digest
+                or closed['generation'] != GENERATION or bound['generation'] != GENERATION
+                or closed['job_id'] != job_id(bound['job_id'].encode())
+                or closed['owned_scope_empty'] is not True
+                or closed['owned_scratch_removed'] is not True
+                or set(closed['files']) != set(OBSERVED_FILES)
+                or bound['jobspec_sha256'] != digest(encoded(load(out / 'jobspec.json')))):
+            raise RuntimeError('inconsistent closed-job evidence')
+        for name, reference in closed['files'].items():
+            path = out / name
+            private(path)
+            with path.open('rb') as stream:
+                if (hashlib.file_digest(stream, 'sha256').hexdigest() != reference['sha256']
+                        or path.stat().st_size != reference['bytes']):
+                    raise RuntimeError('closed-job evidence changed')
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise RuntimeError('unresolved prior dispatch; reattach its original ID') from error
+
+
+@contextmanager
+def serialized_admission(reattach):
+    descriptor = os.open(STORE / 'deploy.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, 'a') as lock:
+        private(STORE / 'deploy.lock')
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        for sibling in STORE.iterdir():
+            if sibling.name == 'deploy.lock':
+                continue
+            private(sibling, True)
+            if sibling == reattach:
+                continue
+            for name in ('build', 'fresh-init'):
+                out = sibling / name
+                if out.exists() or out.is_symlink():
+                    private(out, True)
+                    if any(os.path.lexists(out / marker) for marker in ('dispatched.json', 'binding.json')):
+                        require_closed(out)
+        yield
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='mode', required=True)
@@ -513,15 +568,14 @@ def main():
              '--head', args.head, '--lane', args.lane], cwd=SOURCE, timeout=610)
     STORE.mkdir(mode=0o700, exist_ok=True)
     private(STORE, True)
-    dispatch = args.reattach or STORE / uuid.uuid4().hex
-    if dispatch.parent != STORE:
-        raise RuntimeError('dispatch outside approved private store')
-    if args.reattach is None:
-        dispatch.mkdir(mode=0o700)
-    private(dispatch, True)
-    print(f'Deployment evidence/reattach: {dispatch}', flush=True)
-    with (dispatch / 'lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    with serialized_admission(args.reattach):
+        dispatch = args.reattach or STORE / uuid.uuid4().hex
+        if dispatch.parent != STORE:
+            raise RuntimeError('dispatch outside approved private store')
+        if args.reattach is None:
+            dispatch.mkdir(mode=0o700)
+        private(dispatch, True)
+        print(f'Deployment evidence/reattach: {dispatch}', flush=True)
         release = Path(f'/home/rob/tmp/tl3-build/release-{args.head}')
         receipts = admit_stages(args.head, tree, args.lane, release, args.manifest,
                                 args.backup, dispatch, args.build_dispatch)

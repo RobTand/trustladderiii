@@ -197,6 +197,15 @@ eventlog and private retained outputs. After an uncertain submission it queries
 its unique name once and checks the exact original jobspec. Zero, multiple or
 contradictory matches remain UNKNOWN. No blind resubmission occurs.
 
+A store-wide nonblocking lock serializes coordinators through both stages.
+After a coordinator dies, a new cycle refuses while any earlier submitted job
+lacks hash-bound terminal and independent cgroup/scratch closure evidence.
+Reattach the original dispatch to collect that evidence. A refusal or accepted
+marker alone never clears this guard, and build reuse does not bypass it.
+`closed.json` records only terminal completion and cleanup, including after a
+failed command. It grants no successful verdict. Unknown cleanup remains held;
+a failed fresh-init with verified closure can use a new backup and cycle as above.
+
 A successful command alone is insufficient. The versioned wrapper receipt binds
 intent, source tree, nativeID, terminal observations and output hashes. It requires
 the recorded sdexec cgroup to be empty or removed and the exact owned scratch

@@ -1,5 +1,6 @@
 """Hermetic fake-native controls. These tests never invoke a real Flux client."""
 import copy
+import fcntl
 import hashlib
 import importlib.util
 import os
@@ -42,6 +43,7 @@ class FluxAdmissionTests(unittest.TestCase):
         self.matches = 1
         self.lost_reply = False
         self.terminal_failure = False
+        self.command_failure = 0
         self.bad_result = False
         self.bad_status = False
         self.bad_original = False
@@ -76,7 +78,7 @@ class FluxAdmissionTests(unittest.TestCase):
             for name in ('stdout', 'stderr'):
                 fx.save(self.out / name, b'fixture output\n')
             fx.save(self.out / 'result.json', {'schema': 'tl3.deploy.payload.v1', 'intent': expected,
-                    'job_id': self.identifier, 'returncode': 0, 'source_tree': self.intent['tree'],
+                    'job_id': self.identifier, 'returncode': self.command_failure, 'source_tree': self.intent['tree'],
                     'scratch_removed': True, 'cgroup': '/fixture-absent/flux-jobs.slice/shell-fixture:sys.service',
                     'cgroup_inode': 123})
             if self.lost_reply:
@@ -102,10 +104,11 @@ class FluxAdmissionTests(unittest.TestCase):
                 fx.save(self.out / 'result.json', {'schema': 'malformed'})
             return 0, fx.encoded({'name': 'clean'}), b''
         if args[:2] == ('job', 'status'):
-            value = {} if self.bad_status else {'id': 42, 'exception_occurred': False, 'waitstatus': 0, 'result': 1}
-            return (1 if self.terminal_failure else 0), fx.encoded(value), b''
+            value = {} if self.bad_status else {'id': 42, 'exception_occurred': False,
+                    'waitstatus': self.command_failure << 8, 'result': 2 if self.command_failure else 1}
+            return (1 if self.terminal_failure else self.command_failure), fx.encoded(value), b''
         if args[:2] == ('job', 'eventlog'):
-            value = [{'name': 'start'}, {'name': 'finish', 'context': {'status': 0}}, {'name': 'clean'}]
+            value = [{'name': 'start'}, {'name': 'finish', 'context': {'status': self.command_failure << 8}}, {'name': 'clean'}]
             if self.terminal_failure:
                 value.insert(1, {'name': 'exception', 'context': {'type': 'exec', 'severity': 0}})
             return 0, b'\n'.join(fx.encoded(row) for row in value), b''
@@ -309,6 +312,113 @@ class FluxAdmissionTests(unittest.TestCase):
              patch.object(fx.sys, 'argv', ['flux-deploy.py', 'admit', 'a' * 40, 'dev', '/fixture/manifest', '/fixture/backup']):
             with self.assertRaises(RuntimeError):
                 fx.main()
+        self.assertEqual(self.submissions(), 0)
+
+    def coordinator(self, store, *extra):
+        with patch.object(fx, 'STORE', store), \
+             patch.object(fx, 'source_identity', return_value='b' * 40), \
+             patch.object(fx, 'checked', return_value=b''), \
+             patch.object(fx.sys, 'argv', ['flux-deploy.py', 'admit', 'a' * 40, 'dev',
+                                         '/fixture/manifest', '/fixture/backup', *extra]):
+            fx.main()
+
+    def test_store_lock_excludes_a_second_coordinator(self):
+        store = self.root / 'store'
+        store.mkdir()
+        with (store / 'deploy.lock').open('a') as lock, \
+             patch.object(fx, 'admit_stages', return_value={}) as admitted:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with self.assertRaises(BlockingIOError):
+                self.coordinator(store)
+            admitted.assert_not_called()
+        self.assertEqual(self.submissions(), 0)
+
+    def test_unresolved_sibling_blocks_new_cycle_even_with_refusal_or_build_reuse(self):
+        for marker in ('dispatched.json', 'binding.json'):
+            with self.subTest(marker=marker):
+                store = self.root / marker
+                old = store / 'old-cycle'
+                stage = old / 'fresh-init'
+                stage.mkdir(parents=True)
+                fx.save(stage / marker, {})
+                fx.save(stage / 'refusal.json', {'reason': 'transport_unknown'})
+                fx.save(old / 'refusal.json', {'reason': 'transport_unknown'})
+                fx.save(old / 'accepted.json', {})
+                with patch.object(fx, 'admit_stages', return_value={}) as admitted:
+                    with self.assertRaises(RuntimeError):
+                        self.coordinator(store, '--build-dispatch', str(old))
+                    admitted.assert_not_called()
+                self.assertEqual([path.name for path in store.iterdir() if path.is_dir()], ['old-cycle'])
+        self.assertEqual(self.submissions(), 0)
+
+    def test_store_lock_spans_both_stages_and_is_released_afterward(self):
+        store = self.root / 'store'
+        def admitted(*args):
+            with (store / 'deploy.lock').open('a') as contender:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return {}
+        with patch.object(fx, 'admit_stages', side_effect=admitted):
+            self.coordinator(store)
+        with (store / 'deploy.lock').open('a') as contender:
+            fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.assertEqual(self.submissions(), 0)
+
+    def test_closed_failure_allows_new_cycle_without_becoming_a_pass(self):
+        self.command_failure = 7
+        with self.assertRaises(RuntimeError):
+            fx.stage(self.intent)
+        self.assertTrue((self.out / 'closed.json').exists())
+        self.assertTrue((self.out / 'refusal.json').exists())
+        self.assertFalse((self.out / 'receipt.json').exists())
+        with patch.object(fx, 'admit_stages', return_value={}) as admitted:
+            self.coordinator(self.root)
+            admitted.assert_called_once()
+        self.assertEqual(self.submissions(), 1)
+
+    def test_unknown_cleanup_blocks_new_cycle_after_terminal_failure(self):
+        self.command_failure = 7
+        self.bad_result = True
+        with self.assertRaises(RuntimeError):
+            fx.stage(self.intent)
+        self.assertFalse((self.out / 'closed.json').exists())
+        with patch.object(fx, 'admit_stages', return_value={}) as admitted:
+            with self.assertRaises(RuntimeError):
+                self.coordinator(self.root)
+            admitted.assert_not_called()
+        self.assertEqual(self.submissions(), 1)
+
+    def test_refusal_after_disconnect_blocks_new_cycle_but_allows_original_reattach(self):
+        self.disconnect = True
+        with self.assertRaises(RuntimeError):
+            fx.stage(self.intent)
+        self.assertFalse((self.out / 'closed.json').exists())
+        with patch.object(fx, 'admit_stages', return_value={}) as admitted:
+            with self.assertRaises(RuntimeError):
+                self.coordinator(self.root)
+            admitted.assert_not_called()
+            self.coordinator(self.root, '--reattach', str(self.out.parent))
+            admitted.assert_called_once()
+        self.disconnect = False
+        fx.stage(self.intent)
+        self.assertEqual(self.submissions(), 1)
+
+    def test_changed_closed_evidence_refuses_new_cycle(self):
+        fx.stage(self.intent)
+        fx.save(self.out / 'stdout', b'changed after collection')
+        with patch.object(fx, 'admit_stages', return_value={}) as admitted:
+            with self.assertRaises(RuntimeError):
+                self.coordinator(self.root)
+            admitted.assert_not_called()
+
+    def test_reattach_cannot_bypass_a_different_unresolved_dispatch(self):
+        other = self.root / 'other-cycle' / 'build'
+        other.mkdir(parents=True)
+        fx.save(other / 'dispatched.json', {})
+        with patch.object(fx, 'admit_stages', return_value={}) as admitted:
+            with self.assertRaises(RuntimeError):
+                self.coordinator(self.root, '--reattach', str(self.out.parent))
+            admitted.assert_not_called()
         self.assertEqual(self.submissions(), 0)
 
     def test_supervisor_environment_is_separate_from_caller(self):
