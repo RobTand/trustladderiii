@@ -157,7 +157,7 @@ impl RunBackend for Backend {
                 backend: BackendTag::Flux,
                 instance: intent.instance.clone(),
                 uri: intent.uri.clone(),
-                job: "f123".into(),
+                job: canonical_job_id("f123").unwrap(),
             },
             intent,
         };
