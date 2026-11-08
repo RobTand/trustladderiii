@@ -68,10 +68,29 @@ fn substring(text: &str, start: usize, end: usize) -> &str {
     &text[byte_at(text, start)..byte_at(text, end)]
 }
 fn measured(value: &SummaryValue) -> Result<usize> {
-    PythonEnvelope
-        .serialize(value)
-        .map(|bytes| bytes.len())
-        .map_err(|error| format!("redaction serialization: {error:?}"))
+    Ok(utf8_json(value)?.len())
+}
+// Trace content uses Python's ensure_ascii=False, independently of the proved
+// summary envelope. Retain object order, numeric atoms and default separators.
+fn utf8_json(value: &SummaryValue) -> Result<String> {
+    Ok(match value {
+        SummaryValue::Null => "null".into(),
+        SummaryValue::Bool(value) => value.to_string(),
+        SummaryValue::Number(value) => value.as_str().into(),
+        SummaryValue::String(value) => {
+            serde_json::to_string(&scalar(value)?).map_err(|error| error.to_string())?
+        }
+        SummaryValue::Array(values) => format!(
+            "[{}]",
+            values.iter().map(utf8_json).collect::<Result<Vec<_>>>()?.join(", ")
+        ),
+        SummaryValue::Object(fields) => format!(
+            "{{{}}}",
+            fields.iter().map(|(key, value)| {
+                Ok(format!("{}: {}", utf8_json(&SummaryValue::String(key.clone()))?, utf8_json(value)?))
+            }).collect::<Result<Vec<_>>>()?.join(", ")
+        ),
+    })
 }
 fn parse(text: &str) -> Result<SummaryValue> {
     SummaryValue::from_python_json(text).map_err(|error| format!("redaction JSON: {error:?}"))
@@ -265,6 +284,68 @@ impl Redactor {
         self.truncated |= value.lead || value.parts.len() > 1;
         if measured(&SummaryValue::String(PythonText::from(out.as_str())))? <= limit {
             return Ok(out);
+        }
+        self.truncated = true;
+        Ok(BUDGET_NOTE.into())
+    }
+    fn reclip(&self, value: &Clip, limit: usize) -> Result<Clip> {
+        let total: usize = value.parts.iter().map(|part| part.end - part.start).sum();
+        if total <= limit {
+            return Ok(value.clone());
+        }
+        let tail = |part: &Window, limit: usize| -> Result<(usize, bool)> {
+            let cut = part.end.saturating_sub(limit).max(part.start);
+            let suffix = substring(&part.source, cut, part.end);
+            if let Some(newline) = suffix.find('\n') {
+                let newline = cut + suffix[..newline].chars().count();
+                if part.end - newline > limit / 2 {
+                    return Ok((self.settle(&part.source, newline + 1, part.end)?, true));
+                }
+            }
+            Ok((self.settle(&part.source, cut, part.end)?, false))
+        };
+        let first = &value.parts[0];
+        let mut result = value.clone();
+        let head = limit / 4;
+        if value.parts.len() == 1 {
+            let (begin, whole_lines) = tail(first, limit)?;
+            let mut newest = first.clone();
+            newest.start = begin;
+            if whole_lines {
+                result.parts = vec![newest];
+                result.lead = true;
+            } else {
+                let mut oldest = first.clone();
+                oldest.end = first.start + head;
+                result.parts = vec![oldest, newest];
+                result.gap = begin.saturating_sub(first.start + head);
+            }
+        } else {
+            let last = &value.parts[1];
+            let mut oldest = first.clone();
+            oldest.end = first.end.min(first.start + head);
+            let mut newest = last.clone();
+            newest.start = tail(last, limit - head)?.0;
+            result.gap = result.gap
+                .checked_add(first.end - oldest.end + newest.start - last.start)
+                .ok_or("shaped redaction gap overflow")?;
+            result.parts = vec![oldest, newest];
+        }
+        Ok(result)
+    }
+    fn clean_leaf_clip(&mut self, value: &Clip, limit: usize) -> Result<String> {
+        let mut chars = STRING_CHARS.min(limit.saturating_sub(64));
+        for _ in 0..4 {
+            if chars < 32 {
+                break;
+            }
+            let clipped = self.reclip(value, chars)?;
+            let out = self.clean_clip(&clipped, PAYLOAD_BYTES)?;
+            let used = measured(&SummaryValue::String(PythonText::from(out.as_str())))?;
+            if used <= limit.saturating_sub(16) {
+                return Ok(out);
+            }
+            chars = chars.saturating_mul(limit.saturating_sub(64)) / used;
         }
         self.truncated = true;
         Ok(BUDGET_NOTE.into())
@@ -539,21 +620,18 @@ impl Redactor {
         }
         Ok(match value {
             Shaped::Text(value) => {
-                SummaryValue::String(PythonText::from(self.clean_clip(value, limit)?.as_str()))
+                SummaryValue::String(PythonText::from(self.clean_leaf_clip(value, limit)?.as_str()))
             }
             Shaped::Json { value, raw } => {
                 let cleaned = self.clean_value(value, limit / 2, depth + 1)?;
                 let encoded = if let Some(raw) = raw
                     && parse(raw).ok().as_ref() == Some(&cleaned)
+                    && raw.chars().count() <= (limit / 6).saturating_sub(64)
                 {
-                    self.text(raw, STRING_CHARS)?
+                    let clip = self.clip(raw, raw.chars().count())?;
+                    self.clean_leaf_clip(&clip, limit)?
                 } else {
-                    String::from_utf8(
-                        PythonEnvelope
-                            .serialize(&cleaned)
-                            .map_err(|error| format!("{error:?}"))?,
-                    )
-                    .map_err(|error| error.to_string())?
+                    utf8_json(&cleaned)?
                 };
                 SummaryValue::String(PythonText::from(encoded.as_str()))
             }
@@ -615,13 +693,11 @@ impl Redactor {
     pub fn clean(&mut self, value: &Shaped, limit: usize) -> Result<String> {
         value.validate(0)?;
         let value = self.clean_value(value, limit.min(PAYLOAD_BYTES), 0)?;
-        let bytes = PythonEnvelope
-            .serialize(&value)
-            .map_err(|error| format!("{error:?}"))?;
-        if bytes.len() > limit.min(PAYLOAD_BYTES) {
+        let text = utf8_json(&value)?;
+        if text.len() > limit.min(PAYLOAD_BYTES) {
             return Err("redacted payload exceeds publication byte budget".into());
         }
-        String::from_utf8(bytes).map_err(|error| error.to_string())
+        Ok(text)
     }
     pub fn payload(&mut self, input_json: &str, limit: usize) -> Result<String> {
         let shaped = self.shape(input_json, PAYLOAD_BYTES)?;
