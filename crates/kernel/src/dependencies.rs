@@ -336,6 +336,28 @@ pub(super) open spec fn withheld_after(before: Node, table: Seq<Dependency>, nod
         && before.credit.ready)
 }
 
+/// K4a: the owner's credit hold after the real handler reconciles it. Opaque so
+/// the large handler query never unfolds the delivery quantifier for it.
+#[verifier::opaque]
+pub(super) open spec fn owner_withheld(before: Node, after: World, i: int) -> bool {
+    after.nodes@[i].credit.withheld == withheld_after(before, after.dependencies@, NodeId(i as u64))
+}
+
+/// K4a: withhold_dependency_credit's exact result, restated over the final table.
+pub(super) proof fn owner_withheld_bridge(mid: World, after: World, before: Node, i: int)
+    requires 0 <= i < mid.nodes@.len(), after.dependencies@ == mid.dependencies@,
+        mid.nodes@[i].credit.withheld == before.credit.withheld,
+        mid.nodes@[i].planning_started == before.planning_started,
+        mid.nodes@[i].phase == before.phase, mid.nodes@[i].credit.ready == before.credit.ready,
+        after.nodes@[i].credit.withheld == (mid.nodes@[i].credit.withheld
+            || (!prerequisites_delivered(mid, NodeId(i as u64)) && !mid.nodes@[i].planning_started
+                && early(mid.nodes@[i].phase) && mid.nodes@[i].credit.ready)),
+    ensures owner_withheld(before, after, i),
+{
+    reveal(owner_withheld);
+    prerequisite_definition(mid, NodeId(i as u64));
+}
+
 /// K4a: exact table and owner-credit result of dependency_fact, for any world.
 /// Other node fields and world fields are given by dependency_frame.
 #[verifier::opaque]
@@ -1237,8 +1259,9 @@ impl World {
                 self.dependencies@.len() == before_table@.len(),
                 forall|k: int| read <= k < before_table@.len()
                     ==> self.dependencies@[k] == before_table@[k],
-                self.dependencies@.subrange(0, write as int)
-                    == kept(before_table@.subrange(0, read as int), node, kind, number),
+                kept(before_table@.subrange(0, read as int), node, kind, number).len() == write,
+                forall|k: int| 0 <= k < write ==> self.dependencies@[k]
+                    == kept(before_table@.subrange(0, read as int), node, kind, number)[k],
             decreases self.dependencies.len() - read,
         ] {
             kernel_snapshot! { body_table = self.dependencies@ }
@@ -1250,11 +1273,9 @@ impl World {
             }
             kernel_proof! {
                 kept_step(before_table@, read as int, node, kind, number);
-                if write != body_write@ {
-                    assert(self.dependencies@.subrange(0, write as int)
-                        =~= body_table@.subrange(0, body_write@ as int).push(d));
-                } else {
-                    assert(self.dependencies@ == body_table@);
+                assert forall|k: int| 0 <= k < write implies self.dependencies@[k]
+                    == kept(before_table@.subrange(0, read as int + 1), node, kind, number)[k] by {
+                    if k < body_write@ { assert(self.dependencies@[k] == body_table@[k]); }
                 }
             }
             read += 1;
@@ -1263,6 +1284,9 @@ impl World {
             assert(before_table@.subrange(0, read as int) =~= before_table@);
         }
         self.dependencies.truncate(write);
+        kernel_proof! {
+            assert(self.dependencies@ =~= kept(before_table@, node, kind, number));
+        }
         self.nodes[i].waiting_prerequisite = self.first_undelivered(node).map(|d| d.target.number);
         self.nodes[i].credit.withheld =
             !self.dependencies_delivered(node) && self.nodes[i].credit.ready;
@@ -1333,6 +1357,7 @@ impl World {
         self.record_dependency(i, existing, dependency, out);
         kernel_proof! {
             writes::pack(before_delivery@.dependencies@, self.dependencies@, existing, dependency);
+            reveal(owner_withheld);
             reveal(fact_result);
             assert(found(before_delivery@, i as int, target, existing));
             assert(fact_result(before_delivery@, *self, i as int, target, status));
@@ -1488,8 +1513,7 @@ impl World {
                             && old(self).nodes@[0].credit.ready), ..old(self).nodes@[0].credit },
                     ..old(self).nodes@[0]
                 }),
-            final(self).nodes@[i as int].credit.withheld == withheld_after(old(self).nodes@[i as int],
-                final(self).dependencies@, NodeId(i as u64)),
+            owner_withheld(old(self).nodes@[i as int], *final(self), i as int),
     ] proof [reveal(dependency_frame); reveal(prerequisites_delivered); reveal(delivered);] {
         kernel_snapshot! { before_record = *self }
         let node = NodeId(i as u64);
@@ -1534,9 +1558,11 @@ impl World {
                 assert(self.nodes@[0].waiting_prerequisite == if dependency.status == DependencyStatus::Delivered { None } else { Some(2761u64) });
             }
         }
+        kernel_snapshot! { before_withhold = *self }
         self.withhold_dependency_credit(i);
         kernel_proof! {
             writes::finish(before_record@.dependencies@, self.dependencies@, existing, dependency);
+            owner_withheld_bridge(before_withhold@, *self, before_record@.nodes@[i as int], i as int);
         }
     }
     }

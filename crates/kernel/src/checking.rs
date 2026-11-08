@@ -22,6 +22,28 @@ pub(super) proof fn accepted_parts(w: World)
     reveal(accepted);
 }
 
+/// Acceptance depends only on the world's views and scalar configuration.
+pub(super) proof fn accepted_frame(before: World, after: World)
+    requires accepted(before), after.nodes@ == before.nodes@,
+        after.dependencies@ == before.dependencies@, after.gates@ == before.gates@,
+        after.pool_capacity == before.pool_capacity, after.next_ticket == before.next_ticket,
+        after.next_question == before.next_question, after.file_sets@ == before.file_sets@,
+    ensures accepted(after),
+{
+    reveal(accepted);
+    reveal(progress_gate_apply::accepted);
+    dependencies::frame_preserves(before, after);
+    assert forall|j: int| 0 <= j < after.nodes@.len()
+        implies retirement::node_rules(after, #[trigger] after.nodes@[j]) by {
+        retirement::node_frame(before, after, before.nodes@[j]);
+    }
+    assert forall|a: int, b: int| 0 <= a < b < after.nodes@.len()
+        implies progress_gate_apply::pair(after, a, b) by {
+        footprint::storage_frame(before, after, before.nodes@[a].footprint, before.nodes@[b].footprint);
+        assert(progress_gate_apply::pair(before, a, b));
+    }
+}
+
 /// The complete acceptance, spelled out for proof consumers.
 pub(super) proof fn accepted_definition(w: World)
     ensures accepted(w) == (dependencies::rules_ok(w)
