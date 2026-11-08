@@ -8,6 +8,10 @@ pub(super) mod lemmas;
 #[path = "../verus/dependency_writes.rs"]
 mod writes;
 
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/dependency_preservation.rs"]
+mod preservation;
+
 #[cfg_attr(
     all(feature = "serde", not(kani)),
     derive(serde::Serialize, serde::Deserialize)
@@ -230,6 +234,151 @@ pub(super) proof fn rules_checked(w: World)
         implies dependency_checked(w, w.dependencies@[j]) by {
         assert(row_ok(w, w.dependencies@[j]));
     }
+}
+
+/// K4a: expose the production graph acyclicity definition to proof consumers.
+pub(super) proof fn acyclic_definition(w: World)
+    ensures acyclic(w) == (forall|from: NodeId, to: NodeId| active_edge(w, from, to)
+        ==> !reachable(w, to, from)),
+{
+    reveal(acyclic);
+}
+
+/// Endpoint fields read by the complete dependency acceptance.
+/// K4a: requested by K4c settle/frame consumers.
+pub(super) open spec fn same_endpoint(a: Node, b: Node) -> bool {
+    a.phase == b.phase && a.planning_started == b.planning_started
+        && waits(a.question) == waits(b.question)
+        && a.holds == b.holds && a.pool == b.pool
+        && a.ticket.is_none() == b.ticket.is_none() && a.run.is_none() == b.run.is_none()
+        && a.repo == b.repo && a.credit.withheld == b.credit.withheld
+        && zero_credit(a.credit) == zero_credit(b.credit)
+}
+
+/// K4a: the real lookup key of a declaration.
+pub(super) open spec fn same_key(d: Dependency, node: NodeId, kind: PrerequisiteKind,
+    number: u64) -> bool {
+    d.node == node && d.target.kind == kind && d.target.number == number
+}
+
+/// K4a: prepare_dependency's target validation.
+pub(super) open spec fn target_ok(w: World, i: int, target: DependencyTarget) -> bool {
+    target.number > 0 && match target.request {
+        None => true,
+        Some(n) => n.0 < w.nodes@.len() && w.nodes@[n.0 as int].repo == w.nodes@[i].repo,
+    }
+}
+
+/// K4a / #839: the handler's revocation guard for an existing declaration.
+pub(super) open spec fn revocable_owner(n: Node) -> bool {
+    !n.planning_started
+        && matches!(n.phase, Phase::Ingesting | Phase::Auditing | Phase::Unplanned
+            | Phase::AwaitingRob | Phase::Stopping(_) | Phase::Closed(_))
+        && waits(n.question)
+        && (n.phase != Phase::Unplanned
+            || (!n.holds && !n.pool && n.ticket.is_none() && n.run.is_none()))
+}
+
+/// K4a: the row the real handler stores; a Pending request edge is rejected
+/// exactly when it would close a cycle in the actual pre-state graph.
+pub(super) open spec fn declared(w: World, i: int, target: DependencyTarget,
+    status: DependencyStatus) -> Dependency {
+    Dependency { node: NodeId(i as u64), target, status,
+        rejected: status == DependencyStatus::Pending && match target.request {
+            Some(t) => reachable(w, t, NodeId(i as u64)), None => false,
+        } }
+}
+
+/// K4a: the lookup result, without assuming key uniqueness.
+pub(super) open spec fn found(w: World, i: int, target: DependencyTarget,
+    existing: Option<usize>) -> bool {
+    match existing {
+        None => forall|j: int| 0 <= j < w.dependencies@.len()
+            ==> !same_key(#[trigger] w.dependencies@[j], NodeId(i as u64), target.kind, target.number),
+        Some(k) => k < w.dependencies@.len()
+            && same_key(w.dependencies@[k as int], NodeId(i as u64), target.kind, target.number),
+    }
+}
+
+/// K4a: whether the real handler writes, given the row its lookup found.
+/// This is update_allowed plus the duplicate-Pending no-op, verbatim.
+pub(super) open spec fn writes_row(w: World, i: int, target: DependencyTarget,
+    status: DependencyStatus, existing: Option<usize>) -> bool {
+    match existing {
+        None => !w.nodes@[i].planning_started
+            && matches!(w.nodes@[i].phase, Phase::Ingesting | Phase::Auditing | Phase::Unplanned),
+        Some(k) => {
+            let previous = w.dependencies@[k as int];
+            !previous.rejected && (previous.status == DependencyStatus::Pending
+                || (previous.status == DependencyStatus::Abandoned && status == DependencyStatus::Delivered)
+                || (revocable_owner(w.nodes@[i]) && status == DependencyStatus::Pending))
+            && !(previous.status == DependencyStatus::Pending && status == DependencyStatus::Pending
+                && target.request == previous.target.request)
+        },
+    }
+}
+
+/// K4a: owner credit after the real handler reconciles its wait flags.
+pub(super) open spec fn withheld_after(before: Node, table: Seq<Dependency>, node: NodeId) -> bool {
+    before.credit.withheld || (!delivered(table, node) && !before.planning_started
+        && matches!(before.phase, Phase::Ingesting | Phase::Auditing | Phase::Unplanned)
+        && before.credit.ready)
+}
+
+/// K4a: exact table and owner-credit result of dependency_fact, for any world.
+/// Other node fields and world fields are given by dependency_frame.
+#[verifier::opaque]
+pub closed spec fn fact_result(before: World, after: World, i: int, target: DependencyTarget,
+    status: DependencyStatus) -> bool {
+    let unchanged = after.dependencies@ == before.dependencies@
+        && after.nodes@[i].credit.withheld == before.nodes@[i].credit.withheld;
+    if !target_ok(before, i, target) { unchanged } else {
+        exists|existing: Option<usize>| found(before, i, target, existing)
+            && if writes_row(before, i, target, status, existing) {
+                writes::write(before.dependencies@, after.dependencies@, existing,
+                    declared(before, i, target, status))
+                && after.nodes@[i].credit.withheld == withheld_after(before.nodes@[i],
+                    after.dependencies@, NodeId(i as u64))
+            } else { unchanged }
+    }
+}
+
+/// K4a: rows kept by the real stable in-place compaction.
+pub(super) open spec fn kept(s: Seq<Dependency>, node: NodeId, kind: PrerequisiteKind,
+    number: u64) -> Seq<Dependency>
+    decreases s.len(),
+{
+    if s.len() == 0 { Seq::empty() } else {
+        let rest = kept(s.drop_last(), node, kind, number);
+        if same_key(s.last(), node, kind, number) { rest } else { rest.push(s.last()) }
+    }
+}
+
+/// K4a: exact table and owner-credit result of remove_dependency, for any world.
+#[verifier::opaque]
+pub closed spec fn remove_result(before: World, after: World, i: int, kind: PrerequisiteKind,
+    number: u64) -> bool {
+    if before.nodes@[i].phase != Phase::Ingesting || before.nodes@[i].planning_started {
+        after.dependencies@ == before.dependencies@
+            && after.nodes@[i].credit.withheld == before.nodes@[i].credit.withheld
+    } else {
+        after.dependencies@ == kept(before.dependencies@, NodeId(i as u64), kind, number)
+            && after.nodes@[i].credit.withheld == (!delivered(after.dependencies@, NodeId(i as u64))
+                && before.nodes@[i].credit.ready)
+    }
+}
+
+/// K4a: one compaction step keeps or drops exactly the next original row.
+pub(super) proof fn kept_step(s: Seq<Dependency>, read: int, node: NodeId,
+    kind: PrerequisiteKind, number: u64)
+    requires 0 <= read < s.len(),
+    ensures kept(s.subrange(0, read + 1), node, kind, number) == if same_key(s[read], node, kind, number) {
+            kept(s.subrange(0, read), node, kind, number)
+        } else { kept(s.subrange(0, read), node, kind, number).push(s[read]) },
+{
+    let t = s.subrange(0, read + 1);
+    assert(t.drop_last() =~= s.subrange(0, read));
+    assert(t.last() == s[read]);
 }
 
 pub(super) open spec fn same_declaration(a: Dependency, b: Dependency) -> bool {
@@ -1062,24 +1211,46 @@ impl World {
             final(self).nodes@[i as int].credit.earned == old(self).nodes@[i as int].credit.earned,
             final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
             final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
-    ] {
+            remove_result(*old(self), *final(self), i as int, kind, number),
+            dependency_frame(*old(self), *final(self), i as int),
+    ] proof [reveal(remove_result); reveal(dependency_frame); reveal(prerequisites_delivered);] {
         if self.nodes[i].phase != Phase::Ingesting || self.nodes[i].planning_started {
             return;
         }
         let node = NodeId(i as u64);
+        kernel_snapshot! { before_table = self.dependencies@ }
         let mut read = 0usize;
         let mut write = 0usize;
         kernel_while! { (read < self.dependencies.len()) [
             invariant write <= read <= self.dependencies.len(),
+                self.dependencies@.len() == before_table@.len(),
+                forall|k: int| read <= k < before_table@.len()
+                    ==> self.dependencies@[k] == before_table@[k],
+                self.dependencies@.subrange(0, write as int)
+                    == kept(before_table@.subrange(0, read as int), node, kind, number),
             decreases self.dependencies.len() - read,
         ] {
+            kernel_snapshot! { body_table = self.dependencies@ }
+            kernel_snapshot! { body_write = write }
             let d = self.dependencies[read];
             if d.node != node || d.target.kind != kind || d.target.number != number {
                 self.dependencies[write] = d;
                 write += 1;
             }
+            kernel_proof! {
+                kept_step(before_table@, read as int, node, kind, number);
+                if write != body_write@ {
+                    assert(self.dependencies@.subrange(0, write as int)
+                        =~= body_table@.subrange(0, body_write@ as int).push(d));
+                } else {
+                    assert(self.dependencies@ == body_table@);
+                }
+            }
             read += 1;
         } }
+        kernel_proof! {
+            assert(before_table@.subrange(0, read as int) =~= before_table@);
+        }
         self.dependencies.truncate(write);
         self.nodes[i].waiting_prerequisite = self.first_undelivered(node).map(|d| d.target.number);
         self.nodes[i].credit.withheld =
@@ -1133,6 +1304,7 @@ impl World {
                 ==> delivery_changed(*old(self), *final(self), i as int, target)
                     && progress::progress_measure(*final(self)) + 1 == progress::progress_measure(*old(self))
                     && edges_indexable(*final(self))),
+            fact_result(*old(self), *final(self), i as int, target, status),
     ] {
         kernel_snapshot! { before_delivery = *self }
         kernel_snapshot! { before_out = *out }
@@ -1142,10 +1314,18 @@ impl World {
                 if dependency_retirement::edge_domain(*self) && i == 0 && target == self.dependencies@[0].target {
                     assert(dependency_retirement::fact_result(before_delivery@, *self, status, before_out@, *out));
                 }
+                reveal(fact_result);
+                assert(fact_result(before_delivery@, *self, i as int, target, status));
             }
             return;
         };
         self.record_dependency(i, existing, dependency, out);
+        kernel_proof! {
+            writes::pack(before_delivery@.dependencies@, self.dependencies@, existing, dependency);
+            reveal(fact_result);
+            assert(found(before_delivery@, i as int, target, existing));
+            assert(fact_result(before_delivery@, *self, i as int, target, status));
+        }
         kernel_proof! {
             reveal(dependency_frame);
             if status == DependencyStatus::Delivered && delivery_input(before_delivery@, i as int, target) {
@@ -1181,6 +1361,15 @@ impl World {
                             ..self.dependencies@[k as int] }),
                     _ => false,
                 }),
+            match result {
+                None => !target_ok(*self, i as int, target)
+                    || exists|e: Option<usize>| found(*self, i as int, target, e)
+                        && !writes_row(*self, i as int, target, status, e),
+                Some((e, d)) => target_ok(*self, i as int, target)
+                    && found(*self, i as int, target, e)
+                    && writes_row(*self, i as int, target, status, e)
+                    && d == declared(*self, i as int, target, status),
+            },
     ] proof [reveal(delivery_input);] {
         if target.number == 0 {
             return None;
@@ -1210,11 +1399,17 @@ impl World {
                     Cont::Ingesting | Cont::Auditing | Cont::Unplanned | Cont::Stop(_) | Cont::Nowhere))
                 && (owner.phase != Phase::Unplanned
                     || (!owner.holds && !owner.pool && owner.ticket.is_none() && owner.run.is_none()));
+            kernel_proof! {
+                assert(revocable == revocable_owner(self.nodes@[i as int]));
+                assert(found(*self, i as int, target, existing));
+            }
             if !update_allowed(previous.status, previous.rejected, status, revocable) {
+                kernel_proof! { assert(!writes_row(*self, i as int, target, status, existing)); }
                 return None;
             }
             if previous.status == DependencyStatus::Pending
                 && status == DependencyStatus::Pending && target.request == previous.target.request {
+                kernel_proof! { assert(!writes_row(*self, i as int, target, status, existing)); }
                 return None;
             }
         } else if self.nodes[i].planning_started
@@ -1223,6 +1418,10 @@ impl World {
                 Phase::Ingesting | Phase::Auditing | Phase::Unplanned
             )
         {
+            kernel_proof! {
+                assert(found(*self, i as int, target, existing));
+                assert(!writes_row(*self, i as int, target, status, existing));
+            }
             return None;
         }
         let rejected = if status == DependencyStatus::Pending {
@@ -1237,6 +1436,11 @@ impl World {
             status,
             rejected,
         };
+        kernel_proof! {
+            assert(found(*self, i as int, target, existing));
+            assert(writes_row(*self, i as int, target, status, existing));
+            assert(dependency == declared(*self, i as int, target, status));
+        }
         Some((existing, dependency))
     }
     }
@@ -1273,6 +1477,8 @@ impl World {
                             && old(self).nodes@[0].credit.ready), ..old(self).nodes@[0].credit },
                     ..old(self).nodes@[0]
                 }),
+            final(self).nodes@[i as int].credit.withheld == withheld_after(old(self).nodes@[i as int],
+                final(self).dependencies@, NodeId(i as u64)),
     ] proof [reveal(dependency_frame); reveal(prerequisites_delivered); reveal(delivered);] {
         kernel_snapshot! { before_record = *self }
         let node = NodeId(i as u64);
@@ -1364,5 +1570,47 @@ pub(super) proof fn empty_delivered(w: World, node: NodeId)
     ensures delivered(w.dependencies@, node),
 {
     reveal(delivered);
+}
+
+/// K4a registration/no-cycle: the real dependency_fact handler preserves the
+/// complete checker acceptance in every finite world.
+pub(super) proof fn fact_preserves(before: World, after: World, i: int, target: DependencyTarget,
+    status: DependencyStatus)
+    requires checking::accepted(before), dependency_frame(before, after, i),
+        fact_result(before, after, i, target, status),
+        0 <= i < before.nodes@.len(), before.nodes@.len() <= u64::MAX,
+    ensures checking::accepted(after),
+{
+    checking::accepted_parts(before);
+    checking::accepted_parts(after);
+    preservation::fact_rules(before, after, i, target, status);
+    preservation::checker_frame(before, after, i);
+}
+
+/// K4a removal: the real remove_dependency handler preserves the complete
+/// checker acceptance in every finite world.
+pub(super) proof fn remove_preserves(before: World, after: World, i: int, kind: PrerequisiteKind,
+    number: u64)
+    requires checking::accepted(before), dependency_frame(before, after, i),
+        remove_result(before, after, i, kind, number),
+        0 <= i < before.nodes@.len(), before.nodes@.len() <= u64::MAX,
+    ensures checking::accepted(after),
+{
+    checking::accepted_parts(before);
+    checking::accepted_parts(after);
+    preservation::remove_rules(before, after, i, kind, number);
+    preservation::checker_frame(before, after, i);
+}
+
+/// K4a: exact dependency-table equality plus equal endpoint fields preserve
+/// rules_ok. A table-only frame is not sufficient and is not claimed.
+pub(super) proof fn frame_preserves(before: World, after: World)
+    requires rules_ok(before), after.dependencies@ == before.dependencies@,
+        after.nodes@.len() == before.nodes@.len(),
+        forall|j: int| 0 <= j < before.nodes@.len()
+            ==> same_endpoint(#[trigger] before.nodes@[j], after.nodes@[j]),
+    ensures rules_ok(after),
+{
+    preservation::table_frame(before, after);
 }
 }

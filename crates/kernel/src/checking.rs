@@ -15,6 +15,13 @@ pub closed spec fn accepted(w: World) -> bool {
     dependencies::rules_ok(w) && progress_gate_apply::accepted(w)
 }
 
+/// The complete acceptance as its dependency and non-dependency parts.
+pub(super) proof fn accepted_parts(w: World)
+    ensures accepted(w) == (dependencies::rules_ok(w) && progress_gate_apply::accepted(w)),
+{
+    reveal(accepted);
+}
+
 /// The complete acceptance, spelled out for proof consumers.
 pub(super) proof fn accepted_definition(w: World)
     ensures accepted(w) == (dependencies::rules_ok(w)
