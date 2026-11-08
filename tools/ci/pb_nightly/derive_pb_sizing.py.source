@@ -1,0 +1,121 @@
+"""Derive a measured peak+25% admission table. Never submits or grants release authority."""
+import hashlib
+import json
+import math
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+CYCLE = ROOT / 'cycles/20261108T0139Z-7cba86d2e71ae39b246ec71b16e377da095e12dc'
+PLAN = CYCLE / 'PB-NIGHTLY-PLAN.v3.json'
+
+
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def scope_observation(fields):
+    if (fields.get('state') != 'done' or fields.get('detail.returncode') != '0'
+            or int(fields.get('detail.resource_telemetry.oom_kill', '-1')) != 0):
+        raise ValueError('resource failure is a lower bound, not a measured peak')
+    value = int(fields.get('detail.resource_telemetry.memory_peak_bytes', '0'))
+    if value <= 0:
+        raise ValueError('missing measured scope peak')
+    return value
+
+
+def informational_peak(info):
+    if (info.get('key') != 'edbb77262a4aa10b60d0904180fb7c14636b1de85c4fdab233a1292c2e1b5d0c'
+            or info.get('terminal_source_log_cleanup_CAS_verified') is not True
+            or info.get('deployment_authority') is not False):
+        raise ValueError('informational result provenance mismatch')
+    if info.get('oom_kill') != 0 or info.get('result', {}).get('verdict') != 'SUCCESSFUL':
+        raise ValueError('resource failure is a lower bound, not a measured peak')
+    peak = info.get('scope_peak_bytes')
+    if type(peak) is not int or peak <= 0:
+        raise ValueError('missing measured scope peak')
+    return peak
+
+
+def derive():
+    rows = []
+    authenticated_path = CYCLE / 'PB-MEASURED-SIZING-AUTHENTICATED.json'
+    authenticated = json.loads(authenticated_path.read_text()) if authenticated_path.exists() else None
+    info_path = CYCLE / 'PB-INFORMATIONAL-apply_dependency_remove.AUDIT.json'
+    info = json.loads(info_path.read_text()) if info_path.exists() else None
+    plan = json.loads(PLAN.read_text())
+    for leaf in plan['harnesses']:
+        name = leaf['name']
+        observations = []
+        resource_lower_bounds = []
+        peak = leaf.get('peak_gb_historical')
+        if isinstance(peak, (int, float)) and peak > 0:
+            observations.append({'kind': 'frozen_buildbuddy_peak', 'peak_gib': peak,
+                                 'path': str(PLAN), 'sha256': digest(PLAN)})
+        audit = CYCLE / 'PB-LEAF-AUDITS' / (name + '.json')
+        if audit.exists():
+            record = json.loads(audit.read_text())
+            if record.get('terminal_source_log_cleanup_CAS_verified') is not True:
+                raise ValueError('unauthenticated audit: ' + name)
+            peak = record['result'].get('peak_gb')
+            if isinstance(peak, (int, float)) and peak > 0:
+                observations.append({'kind': 'authenticated_pb_proof_peak', 'peak_gib': peak,
+                                     'key': record['key'], 'path': str(audit), 'sha256': digest(audit)})
+        terminal = CYCLE / 'PB-LEAF-AUDITS' / (name + '.terminal.txt')
+        if terminal.exists():
+            pairs = [line.split(': ', 1) for line in terminal.read_text().splitlines() if ': ' in line]
+            fields = dict(pairs)
+            if len(fields) != len(pairs):
+                raise ValueError('duplicate terminal field')
+            if fields.get('state') not in ('done', 'failed'):
+                raise ValueError('nonterminal measurement: ' + name)
+            if int(fields.get('detail.resource_telemetry.oom_kill', '0')) > 0:
+                resource_lower_bounds.append({'kind': 'resource_failure_lower_bound_NOT_A_PEAK',
+                                              'lower_bound_bytes': int(fields['detail.resource_telemetry.memory_peak_bytes']),
+                                              'key': fields['action_key'], 'path': str(terminal), 'sha256': digest(terminal)})
+            else:
+                peak = scope_observation(fields)
+                observations.append({'kind': 'pb_whole_scope_peak', 'peak_bytes': peak,
+                                     'peak_gib': peak / 2**30, 'key': fields['action_key'],
+                                     'path': str(terminal), 'sha256': digest(terminal)})
+        if authenticated is not None:
+            measured_row = authenticated['leaves'][name]
+            observations.append({'kind': 'all_original_plus_informational_scope_peaks_authenticated',
+                                 'peak_bytes': measured_row['measured_peak_bytes'],
+                                 'peak_gib': measured_row['measured_peak_bytes'] / 2**30,
+                                 'path': str(authenticated_path), 'sha256': digest(authenticated_path)})
+        if info is not None and name == 'apply_dependency_remove':
+            info_peak = informational_peak(info)
+            observations.append({'kind': 'information_only_rerun_scope_peak', 'peak_bytes': info_peak,
+                                 'peak_gib': info_peak / 2**30, 'key': info['key'],
+                                 'path': str(info_path), 'sha256': digest(info_path)})
+        if observations:
+            measured = max(row['peak_gib'] for row in observations)
+            reservation = math.ceil(measured * 1.25)
+            if resource_lower_bounds and measured * 2**30 <= max(row['lower_bound_bytes'] for row in resource_lower_bounds):
+                reservation = None
+        else:
+            measured, reservation = None, None
+        rows.append({'index': leaf['index'], 'name': name, 'measured_peak_gib': measured,
+                     'reservation_gib': reservation, 'cpu': 1, 'native_threads': 1,
+                     'observations': observations,
+                     'resource_lower_bounds_NOT_PEAKS': resource_lower_bounds,
+                     'needs_largest_admissible_slot': reservation is None})
+    if len(rows) != 78 or len({row['name'] for row in rows}) != 78:
+        raise ValueError('incomplete frozen inventory')
+    return {'schema': 'tl3.ops.pb-kani-sizing.v1', 'measurement_source_head': plan['head'],
+            'status': 'DRAFT_FOR_ACTIVATION_HEAD_NOT_SUBMITTED_NOT_RELEASE_AUTHORITY',
+            'policy': 'maximum measured BB/PB peak *1.25, minimum integer GiB ceiling; no extra padding',
+            'missing_peak_policy': 'largest admissible slot on an eligible worker that fits it',
+            'harness_count': 78, 'harnesses': rows,
+            'informational_rerun_result_incorporated': info is not None,
+            'must_refresh_before_freezing_activation_campaign': True}
+
+
+if __name__ == '__main__':
+    result = derive()
+    output = ROOT / 'ACTIVATION-CAMPAIGN-SIZING.draft.json'
+    output.write_text(json.dumps(result, indent=2, sort_keys=True) + '\n')
+    print(json.dumps({'path': str(output), 'sha256': digest(output), 'rows': len(result['harnesses']),
+                      'missing_measurements': sum(row['needs_largest_admissible_slot'] for row in result['harnesses']),
+                      'minimum_gib': min(row['reservation_gib'] for row in result['harnesses'] if row['reservation_gib']),
+                      'maximum_gib': max(row['reservation_gib'] for row in result['harnesses'] if row['reservation_gib'])}, indent=2))
