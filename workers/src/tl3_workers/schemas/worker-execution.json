@@ -132,11 +132,19 @@
         "op": {
           "type": "string",
           "const": "activation"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
       "required": [
-        "op"
+        "op",
+        "profile",
+        "image"
       ]
     }
   ]

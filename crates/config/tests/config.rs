@@ -2065,3 +2065,29 @@ fn removed_postmortem_daily_limit_is_rejected_clearly() {
     assert!(error.contains("postmortems_per_day"), "{error}");
     assert!(error.contains("unknown field"), "{error}");
 }
+
+#[test]
+fn flux_activation_pin_paths_and_images_are_explicit_and_digest_only() {
+    let mut document = flux_document();
+    for image in [
+        "registry.invalid/profile:latest",
+        "registry.invalid/profile",
+        "sha256:abc",
+    ] {
+        document["flux"]["container_image"] = image.into();
+        let error = Config::parse(&toml::to_string(&document).unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("flux.container_image"));
+        assert!(!error.contains(image));
+    }
+    document = flux_document();
+    document["flux"].as_table_mut().unwrap().insert(
+        "activation".into(),
+        toml::toml! {record="relative/activation.json" sha256="bad"}.into(),
+    );
+    assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
+    document["flux"]["activation"]["record"] = "/fixture/activation.json".into();
+    document["flux"]["activation"]["sha256"] = "a".repeat(64).into();
+    Config::parse(&toml::to_string(&document).unwrap()).unwrap();
+}

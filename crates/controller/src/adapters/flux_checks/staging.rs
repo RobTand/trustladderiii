@@ -7,6 +7,7 @@ use tl3_worktrees::Worktrees;
 /// Production staging settings. Job environment is supplied by the one production mapper.
 pub struct Stager {
     config: tl3_config::Flux,
+    activation: super::activation::RuntimeActivation,
     images: crate::adapters::images::Images,
     protected: crate::scope::ProtectedPaths,
     global_protected: Vec<String>,
@@ -22,6 +23,7 @@ impl Stager {
         };
         Ok(Self {
             config: flux.clone(),
+            activation: super::activation::RuntimeActivation::load(flux)?,
             images: crate::adapters::images::Images::new(&config.github.repos),
             protected: crate::scope::ProtectedPaths::new(&config.github.repos),
             global_protected: config.planning.protected_paths.clone(),
@@ -72,6 +74,8 @@ impl Stager {
 
     /// Build immutable input and shared runtime identities without launching native work.
     pub fn prepare_request(&self, delivery: &Delivery) -> Result<PreparedCheck> {
+        self.activation
+            .validate_options(&crate::production::flux_options(&self.config))?;
         let reservation = self.reservation(delivery)?;
         let image = self
             .images
@@ -98,6 +102,7 @@ impl Stager {
             &reservation,
             arguments,
         )?;
+        self.activation.validate_prepared(&prepared, &reservation)?;
         let backend::ExecutionRuntime::RootlessPodman { trusted_root, .. } =
             &prepared.runtime.runtime
         else {
@@ -146,20 +151,13 @@ impl Stager {
     }
 }
 
-/// Activate only after the prepared profile has binding and cleanup qualification evidence.
-pub(crate) fn require_runtime_activation() -> Result<()> {
-    Err(Error::Invalid(
-        "Flux runtime preparation requires qualified binding and cleanup evidence before activation",
-    ))
-}
-
 impl Preparation for Stager {
     fn prepare(&mut self, delivery: &Delivery) -> Result<PreparedCheck> {
-        require_runtime_activation()?;
         self.prepare_request(delivery)
     }
     fn capacity(&self, delivery: &Delivery) -> Result<(backend::Reservation, backend::Placement)> {
-        require_runtime_activation()?;
+        self.activation
+            .validate_options(&crate::production::flux_options(&self.config))?;
         let reservation = self.reservation(delivery)?;
         let image = self
             .images
@@ -171,6 +169,7 @@ impl Preparation for Stager {
             &reservation,
             vec![],
         )?;
+        self.activation.validate_prepared(&prepared, &reservation)?;
         Ok((reservation, prepared.runtime.placement()))
     }
 }
@@ -332,6 +331,9 @@ pub fn select_runtime(
     reservation: &backend::Reservation,
     arguments: Vec<String>,
 ) -> Result<backend::PreparedRuntime> {
+    if !tl3_config::immutable_image(image) {
+        return Err(Error::Invalid("flux.activation.image"));
+    }
     let mut selected = None;
     for bundle in bundles {
         let prepared = backend::prepared::prepare_runtime(bundle, reservation, arguments.clone())

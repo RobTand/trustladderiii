@@ -577,10 +577,20 @@ pub enum ContainerMode {
     OwnScope,
 }
 
+/// Deployment-owned immutable planned acceptance scope, hash-pinned by configuration.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FluxActivation {
+    pub record: PathBuf,
+    pub sha256: String,
+}
+
 /// Provisioned access to one Flux instance. A URI is not an instance generation.
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Flux {
+    #[serde(default)]
+    pub activation: Option<FluxActivation>,
     pub instance_generation: String,
     pub executable: PathBuf,
     pub backend_cli: PathBuf,
@@ -614,6 +624,21 @@ impl std::fmt::Debug for Flux {
 
 impl Flux {
     fn validate(&self) -> Result<(), Error> {
+        if let Some(activation) = &self.activation {
+            absolute("flux.activation.record", &activation.record)?;
+            if activation
+                .record
+                .components()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
+                || activation.sha256.len() != 64
+                || !activation
+                    .sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            {
+                return Err(invalid("flux.activation", "record and sha256"));
+            }
+        }
         let generation = self.instance_generation.as_str();
         let (run, invocation) = generation
             .split_once('/')
@@ -1570,7 +1595,7 @@ fn endpoint(field: &str, url: &Url) -> Result<(), Error> {
     Ok(())
 }
 
-fn immutable_image(image: &str) -> bool {
+pub fn immutable_image(image: &str) -> bool {
     let reference = if let Some((repository, digest)) = image.split_once('@') {
         if repository.is_empty()
             || !repository

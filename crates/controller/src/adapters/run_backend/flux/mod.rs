@@ -16,6 +16,11 @@ use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
+/// Offline validation only. Native instance generation remains guarded at execution.
+pub(crate) fn validate_prepared_runtime(prepared: &PreparedRuntime) -> Result<()> {
+    validate::runtime_preflight(&prepared.runtime)
+}
+
 #[derive(Clone)]
 pub struct Flux {
     options: Options,

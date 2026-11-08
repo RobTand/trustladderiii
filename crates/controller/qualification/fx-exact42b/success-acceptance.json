@@ -1,0 +1,250 @@
+{
+  "attach_count": 1,
+  "cancel_count": 0,
+  "checks": [
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/request.json",
+    "BlobRef /mnt/shared/flux-out/tl3/.runtime/294d58f0b5feb517d7b70426e0b292b74b91aad03b55483bb9a84e57feb9930a/preflight.json",
+    "BlobRef /mnt/shared/flux-out/tl3/images-20261106T220205Z/image-map.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/original-jobspec.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/cleanup-26fd09befe5b3489728ea631a5896c0142ca5522173be6c136cbe54cee9fef39.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/cleanup-36848288fc0bbbed7581709bf3a00675750ce203f3d7b44bd7aac3640cf08046.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/events.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/eventlog.jsonl",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/native-status.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/native-status-process.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/native-jobs.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/native-allocation.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/retained-stdout",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/retained-stderr",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/retained-submit.stderr",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/retained-submit-status.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/retained-report.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/retained-payload.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/scratch-absence-4373827655f7ab34c3d49f9cb1b665cb1eb4d814d59ddfc1aefab5d14d7a302d.input.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/scratch-absence-4373827655f7ab34c3d49f9cb1b665cb1eb4d814d59ddfc1aefab5d14d7a302d.stdout",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/scratch-absence-4373827655f7ab34c3d49f9cb1b665cb1eb4d814d59ddfc1aefab5d14d7a302d.stderr",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/scratch-absence-4373827655f7ab34c3d49f9cb1b665cb1eb4d814d59ddfc1aefab5d14d7a302d.status.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/retained-report.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/cleanup-26fd09befe5b3489728ea631a5896c0142ca5522173be6c136cbe54cee9fef39.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/cleanup-36848288fc0bbbed7581709bf3a00675750ce203f3d7b44bd7aac3640cf08046.json",
+    "BlobRef /mnt/shared/flux-out/tl3/.runtime/294d58f0b5feb517d7b70426e0b292b74b91aad03b55483bb9a84e57feb9930a/preflight.json",
+    "BlobRef /mnt/shared/flux-out/tl3/images-20261106T220205Z/image-map.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/receipt.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/cleanup-26fd09befe5b3489728ea631a5896c0142ca5522173be6c136cbe54cee9fef39.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/cleanup-36848288fc0bbbed7581709bf3a00675750ce203f3d7b44bd7aac3640cf08046.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/original-jobspec.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/allocation-eab0c693e78620ae8a8af2b8b82dddcd0da3534391446834e02e09a6cfae4247.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/topology-ce2f372efda5c074655ccb24683f765ae095f4e3d74605417b601cfb44572a31.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/retained-payload.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/allocation-eab0c693e78620ae8a8af2b8b82dddcd0da3534391446834e02e09a6cfae4247.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/topology-ce2f372efda5c074655ccb24683f765ae095f4e3d74605417b601cfb44572a31.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/allocation-eab0c693e78620ae8a8af2b8b82dddcd0da3534391446834e02e09a6cfae4247.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/topology-ce2f372efda5c074655ccb24683f765ae095f4e3d74605417b601cfb44572a31.json",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/host.stdout",
+    "BlobRef /mnt/shared/flux-out/tl3/fxr-success-42b-20261107t230950z/host.stderr",
+    "receipt exact",
+    "accepted binding",
+    "Passed ChecksCompleted",
+    "report identity",
+    "receipt identity",
+    "all launches owned and covered exactly",
+    "tl3-test-b2f5d85b5d264009a9c216849ea72412 unique launch_intent",
+    "tl3-test-b2f5d85b5d264009a9c216849ea72412 unique container_processes",
+    "tl3-test-b2f5d85b5d264009a9c216849ea72412 unique launch_binding",
+    "tl3-test-b2f5d85b5d264009a9c216849ea72412 unique qualification",
+    "tl3-test-b2f5d85b5d264009a9c216849ea72412 unique launcher_exit",
+    "tl3-test-b2f5d85b5d264009a9c216849ea72412 unique cleanup_result",
+    "tl3-test-b2f5d85b5d264009a9c216849ea72412 unique container_processes_stopped",
+    "tl3-test-b2f5d85b5d264009a9c216849ea72412 ordered begin capture bind qualified cleanup cessation",
+    "tl3-test-b2f5d85b5d264009a9c216849ea72412 bind identity",
+    "tl3-test-b2f5d85b5d264009a9c216849ea72412 qualified facts identity",
+    "tl3-test-b2f5d85b5d264009a9c216849ea72412 exact cleanup ownership",
+    "tl3-test-b2f5d85b5d264009a9c216849ea72412 exact ID name labels absence",
+    "tl3-test-b2f5d85b5d264009a9c216849ea72412 InJob scope None",
+    "tl3-test-b2f5d85b5d264009a9c216849ea72412 captured pidfds ceased before close",
+    "tl3-test-b2f5d85b5d264009a9c216849ea72412 no pending",
+    "tl3-test-ad7c6a3f581e4d14846f6b58a19fe5af unique launch_intent",
+    "tl3-test-ad7c6a3f581e4d14846f6b58a19fe5af unique container_processes",
+    "tl3-test-ad7c6a3f581e4d14846f6b58a19fe5af unique launch_binding",
+    "tl3-test-ad7c6a3f581e4d14846f6b58a19fe5af unique qualification",
+    "tl3-test-ad7c6a3f581e4d14846f6b58a19fe5af unique launcher_exit",
+    "tl3-test-ad7c6a3f581e4d14846f6b58a19fe5af unique cleanup_result",
+    "tl3-test-ad7c6a3f581e4d14846f6b58a19fe5af unique container_processes_stopped",
+    "tl3-test-ad7c6a3f581e4d14846f6b58a19fe5af ordered begin capture bind qualified cleanup cessation",
+    "tl3-test-ad7c6a3f581e4d14846f6b58a19fe5af bind identity",
+    "tl3-test-ad7c6a3f581e4d14846f6b58a19fe5af qualified facts identity",
+    "tl3-test-ad7c6a3f581e4d14846f6b58a19fe5af exact cleanup ownership",
+    "tl3-test-ad7c6a3f581e4d14846f6b58a19fe5af exact ID name labels absence",
+    "tl3-test-ad7c6a3f581e4d14846f6b58a19fe5af InJob scope None",
+    "tl3-test-ad7c6a3f581e4d14846f6b58a19fe5af captured pidfds ceased before close",
+    "tl3-test-ad7c6a3f581e4d14846f6b58a19fe5af no pending",
+    "exactly two runtime journals no stale launch",
+    "no cancellation",
+    "native Start Finish0 Clean",
+    "actual payload PASS",
+    "correct real red_message judgment",
+    "actual base assertion head passed phases",
+    "actual head and base raw execution logs",
+    "source daytime summary numeric convention reported",
+    "own scratch released after both cessation",
+    "scratch exact external corroboration only",
+    "scratch generation_before",
+    "scratch generation_after",
+    "generation-before-submit.stdout",
+    "generation-before-attach.stdout",
+    "generation-after-attach.stdout",
+    "no pending all stopped",
+    "no own debt files",
+    "complete single attach",
+    "pre-dispatch map all6 full schema validation",
+    "output authority and sole config",
+    "resources exact"
+  ],
+  "containers": [
+    {
+      "cessation": {
+        "captured": 2,
+        "confirmed": true,
+        "event": "container_processes_stopped",
+        "finished_monotonic_ns": 777267673285073,
+        "started_monotonic_ns": 777267673227304
+      },
+      "conmon_pid": 912702,
+      "container_id": "b7924b297ea2f48527320d653ec03c45575440b9f442769e04f18c2377843571",
+      "execution": "tl3-test-b2f5d85b5d264009a9c216849ea72412",
+      "launcher_exit": {
+        "command_released": true,
+        "event": "launcher_exit",
+        "execution": "tl3-test-b2f5d85b5d264009a9c216849ea72412",
+        "exit_code": 1,
+        "monotonic_ns": 777267162788283,
+        "natural_exit": true,
+        "stderr_tail": ""
+      },
+      "name": "tl3-2d2bd525e233525aebef901959b640a7bdd7b6b94dd453144761914bf2f9cbb8",
+      "payload_pid": 912705,
+      "source_close_order": "supervision.py380-409: processes_stopped and record before os.close"
+    },
+    {
+      "cessation": {
+        "captured": 2,
+        "confirmed": true,
+        "event": "container_processes_stopped",
+        "finished_monotonic_ns": 777269098241641,
+        "started_monotonic_ns": 777269098190988
+      },
+      "conmon_pid": 913443,
+      "container_id": "349d5d41aa2cc6d90d1884c25ae6ce43fdcb221b6be21c919ab6fcfb5ddf9166",
+      "execution": "tl3-test-ad7c6a3f581e4d14846f6b58a19fe5af",
+      "launcher_exit": {
+        "command_released": true,
+        "event": "launcher_exit",
+        "execution": "tl3-test-ad7c6a3f581e4d14846f6b58a19fe5af",
+        "exit_code": 0,
+        "monotonic_ns": 777268589438730,
+        "natural_exit": true,
+        "stderr_tail": ""
+      },
+      "name": "tl3-cd19683f429ce6e593b088d08c4e5dbb8ace5ea6fa42829421330d0632754a82",
+      "payload_pid": 913445,
+      "source_close_order": "supervision.py380-409: processes_stopped and record before os.close"
+    }
+  ],
+  "job": "fDHquNYRE7",
+  "live_calls_in_audit": 0,
+  "map_timing": "all six full source-schema checks completed and fsynced PRE-dispatch using sole ctrl-core map67799f3e",
+  "memory_wording": "declared memory admitted, runaways killed, aggregate capped",
+  "no_debt": true,
+  "no_stale_launch": true,
+  "numeric_note": "Daytime report tests_started0/cases[] is source collector convention; authoritative typed checks payload retains actual base assertion/head passed phases and red_message match. No numeric waiver or validator change.",
+  "original_STOPs": "preserved unchanged",
+  "payload_sha256": "8fa36d69ac7997670395f7192e791358dd3f03c454b1ec1de27df631357864b0",
+  "payload_verdict": "pass",
+  "proof": {
+    "base_tree_sha256": "8319ac58d3cb8474ba4bac0751ed485b79c0c26ed26f16c13bf9ee3d401d6ef5",
+    "declaration": {
+      "observer_support": [],
+      "red_message": "sandbox value must be 2",
+      "subjects": [
+        "value.py::value"
+      ]
+    },
+    "head_tree_sha256": "97ca0996c68ab66f6c941809198b59ea37c264263a184a7547587d2402bc27c5",
+    "mode": "head-observer",
+    "observer_sha256": {
+      "test_value.py::test_value": "4f8931b998281d8b140f586619d9b5492c0c3eb1f21e91ef3bd1a5e60b204f43"
+    },
+    "red_classes": {
+      "test_value.py::test_value": "assertion"
+    },
+    "red_message_matches": {
+      "test_value.py::test_value": "message"
+    },
+    "rule": "subject-observer-v1",
+    "source_base_tree_sha256": "8319ac58d3cb8474ba4bac0751ed485b79c0c26ed26f16c13bf9ee3d401d6ef5",
+    "subjects": {
+      "value.py::value": {
+        "base": "d0e858d3de994fc5cdba99e6db8712efda20ff8cfa5b9b73c190e2758615cb11",
+        "head": "2ebecf666e6e2236da5a102470a74fbe3fea27fba317e592cad07c3da62c9629"
+      }
+    },
+    "support_sha256": {}
+  },
+  "receipt_sha256": "b997e5dee92a196b5c51e092d28cb279491376171955837672f3427c4fb95212",
+  "report_outcome": "ChecksCompleted",
+  "report_sha256": "2cb6e3a42566bba7b81a6678227665e2cfee1cbbc8ac66af679a976a259641d1",
+  "scratch": "own action workspace finally removed root; external observer confirms absent; no external reclamation",
+  "source": "42b68e30fcb3d37cc03c0a70166af9e912b25dc6",
+  "status": "PASS",
+  "submit_count": 1,
+  "terminal": "Passed",
+  "tests": [
+    {
+      "base": "assertion",
+      "head": "passed",
+      "message": "",
+      "passed": true,
+      "phases": {
+        "base": {
+          "call": {
+            "assertion": true,
+            "exception": "builtins.AssertionError",
+            "outcome": "failed"
+          },
+          "setup": {
+            "assertion": false,
+            "exception": "",
+            "outcome": "passed"
+          },
+          "teardown": {
+            "assertion": false,
+            "exception": "",
+            "outcome": "passed"
+          },
+          "test": "test_value.py::test_value"
+        },
+        "head": {
+          "call": {
+            "assertion": false,
+            "exception": "",
+            "outcome": "passed"
+          },
+          "setup": {
+            "assertion": false,
+            "exception": "",
+            "outcome": "passed"
+          },
+          "teardown": {
+            "assertion": false,
+            "exception": "",
+            "outcome": "passed"
+          },
+          "test": "test_value.py::test_value"
+        }
+      },
+      "pre_existing": false,
+      "test": "test_value.py::test_value"
+    }
+  ],
+  "unique_BlobRefs": 27
+}

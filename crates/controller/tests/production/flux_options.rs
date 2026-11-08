@@ -4,6 +4,7 @@ use tl3_store::Store;
 
 pub(super) fn flux(root: &Path) -> tl3_config::Flux {
     tl3_config::Flux {
+        activation: None,
         instance_generation: "fv1-model/61f47a7f95af46d794ca89c3a71f0654".into(),
         executable: "/opt/flux/bin/flux".into(),
         backend_cli: "/opt/tl3/bin/tl3-run-backend".into(),

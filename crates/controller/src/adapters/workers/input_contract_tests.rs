@@ -300,6 +300,7 @@ fn real_builders(flux: bool) {
     if flux {
         config.execution_backend = tl3_config::ExecutionBackend::Flux;
         config.flux = Some(tl3_config::Flux {
+            activation: None,
             instance_generation: "fixture/00000000000000000000000000000000".into(),
             executable: "/fixture/flux".into(),
             backend_cli: "/fixture/tl3-run-backend".into(),

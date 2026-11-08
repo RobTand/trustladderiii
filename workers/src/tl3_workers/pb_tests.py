@@ -481,7 +481,7 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
             if not isinstance(settings, TestSettings):
                 return infrastructure("Test settings were not supplied by the role.")
             if settings.backend == 'flux':
-                flux_execution.activation()
+                flux_execution.activation(settings)
             base_sha = getattr(worktree, "check_base_sha", None) if base else None
             if base and (not isinstance(base_sha, str)
                          or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", base_sha)

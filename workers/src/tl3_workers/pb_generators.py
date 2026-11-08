@@ -174,7 +174,7 @@ def make_generator_tool(worktree, *, restore_only=False):
                 raise ValueError("Generator action input tree is stale; restore the submitted input before reattachment.")
             resumed = state.get('phase') == 'submitted'
             if settings.backend == 'flux':
-                flux_execution.activation()
+                flux_execution.activation(settings)
             if not resumed:
                 call = None
                 if settings.backend == 'flux':
