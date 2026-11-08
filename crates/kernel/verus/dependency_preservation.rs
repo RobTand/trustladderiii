@@ -387,6 +387,7 @@ proof fn written_blocked(before: World, after: World, i: int, target: Dependency
         forall|j: int| 0 <= j < before.dependencies@.len()
             ==> row_ok(before, #[trigger] before.dependencies@[j]),
         retirement::node_rules(before, before.nodes@[i]), 0 <= i < before.nodes@.len(),
+        i <= u64::MAX,
     ensures (declared(before, i, target, status).rejected
             || declared(before, i, target, status).status != DependencyStatus::Delivered)
             ==> !before.nodes@[i].planning_started && waits(before.nodes@[i].question)
@@ -399,6 +400,10 @@ proof fn written_blocked(before: World, after: World, i: int, target: Dependency
             let previous = before.dependencies@[k as int];
             assert(row_ok(before, previous));
             assert(previous.node == NodeId(i as u64));
+            assert(previous.node.0 as int == i);
+            if revocable_owner(n) {
+                assert(!n.planning_started && waits(n.question) && blocked_phase(n.phase));
+            }
         }
     }
 }
@@ -621,11 +626,27 @@ pub(super) proof fn remove_rules(before: World, after: World, i: int, kind: Prer
         }
         prerequisite_definition(after, owner);
         reveal(zero_credit);
+        assert((!delivered(t, owner) && early(n.phase)) ==> zero_credit(m.credit));
         assert forall|a: int| 0 <= a < t.len() implies row_ok(after, #[trigger] t[a]) by {
             let b = choose|b: int| 0 <= b < s.len() && t[a] == s[b] && !same_key(s[b], owner, kind, number);
-            assert(row_ok(before, s[b]));
-            prerequisite_definition(after, t[a].node);
-            prerequisite_definition(before, t[a].node);
+            let x = s[b];
+            assert(row_ok(before, x));
+            prerequisite_definition(after, x.node);
+            prerequisite_definition(before, x.node);
+            if x.node.0 < before.nodes@.len() {
+                if x.node == owner {
+                    assert(x.node.0 as int == i);
+                } else {
+                    assert(x.node.0 as int != i);
+                    assert(delivered(t, x.node) == delivered(s, x.node));
+                    assert(after.nodes@[x.node.0 as int] == before.nodes@[x.node.0 as int]);
+                }
+            }
+            if let Some(r) = x.target.request {
+                if r.0 < before.nodes@.len() {
+                    assert(after.nodes@[r.0 as int].repo == before.nodes@[r.0 as int].repo);
+                }
+            }
         }
         assert forall|j: int| 0 <= j < after.nodes@.len() && #[trigger] after.nodes@[j].credit.withheld
             implies exists|k: int| 0 <= k < t.len() && t[k].node == NodeId(j as u64) by {
