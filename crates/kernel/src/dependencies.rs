@@ -330,9 +330,12 @@ pub(super) open spec fn writes_row(w: World, i: int, target: DependencyTarget,
 }
 
 /// K4a: owner credit after the real handler reconciles its wait flags.
-pub(super) open spec fn withheld_after(before: Node, after: World, node: NodeId) -> bool {
-    before.credit.withheld || (!prerequisites_delivered(after, node) && !before.planning_started
-        && early(before.phase) && before.credit.ready)
+/// Opaque over the owner's relevant fields, so handlers pass it through by
+/// congruence without unfolding delivery over a written table.
+#[verifier::opaque]
+pub(super) open spec fn withheld_after(withheld: bool, started: bool, phase: Phase, ready: bool,
+    after: World, node: NodeId) -> bool {
+    withheld || (!prerequisites_delivered(after, node) && !started && early(phase) && ready)
 }
 
 /// K4a: exact table and owner-credit result of dependency_fact, for any world.
@@ -347,8 +350,8 @@ pub closed spec fn fact_result(before: World, after: World, i: int, target: Depe
             && if writes_row(before, i, target, status, existing) {
                 writes::write(before.dependencies@, after.dependencies@, existing,
                     declared(before, i, target, status))
-                && after.nodes@[i].credit.withheld == withheld_after(before.nodes@[i],
-                    after, NodeId(i as u64))
+                && after.nodes@[i].credit.withheld == withheld_after(before.nodes@[i].credit.withheld, before.nodes@[i].planning_started,
+                    before.nodes@[i].phase, before.nodes@[i].credit.ready, after, NodeId(i as u64))
             } else { unchanged }
     }
 }
@@ -1190,7 +1193,7 @@ impl World {
             final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
             final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
             final(self).nodes@[i as int].credit.withheld
-                == withheld_after(old(self).nodes@[i as int], *final(self), NodeId(i as u64)),
+                == withheld_after(old(self).nodes@[i as int].credit.withheld, old(self).nodes@[i as int].planning_started, old(self).nodes@[i as int].phase, old(self).nodes@[i as int].credit.ready, *final(self), NodeId(i as u64)),
     ] {
         kernel_snapshot! { before_withhold = *self }
         if !self.dependencies_delivered(NodeId(i as u64))
@@ -1210,6 +1213,11 @@ impl World {
                 == prerequisites_delivered(before_withhold@, NodeId(i as u64))) by {
                 reveal(prerequisites_delivered);
             }
+            assert(self.nodes@[i as int].credit.withheld == withheld_after(
+                before_withhold@.nodes@[i as int].credit.withheld,
+                before_withhold@.nodes@[i as int].planning_started,
+                before_withhold@.nodes@[i as int].phase, before_withhold@.nodes@[i as int].credit.ready,
+                *self, NodeId(i as u64))) by { reveal(withheld_after); }
         }
     }
     }
@@ -1528,7 +1536,7 @@ impl World {
                     ..old(self).nodes@[0]
                 }),
             final(self).nodes@[i as int].credit.withheld
-                == withheld_after(old(self).nodes@[i as int], *final(self), NodeId(i as u64)),
+                == withheld_after(old(self).nodes@[i as int].credit.withheld, old(self).nodes@[i as int].planning_started, old(self).nodes@[i as int].phase, old(self).nodes@[i as int].credit.ready, *final(self), NodeId(i as u64)),
     ] proof [reveal(dependency_frame); reveal(prerequisites_delivered); reveal(delivered);] {
         kernel_snapshot! { before_record = *self }
         let node = NodeId(i as u64);
