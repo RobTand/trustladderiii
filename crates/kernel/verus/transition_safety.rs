@@ -176,7 +176,7 @@ pub(super) open spec fn apply_frame(before: World, after: World) -> bool {
 pub(super) open spec fn advance_frame(before: World, after: World, i: int, moved: bool,
     out: Seq<Option<Out>>) -> bool {
     if moved {
-        0 <= i < before.nodes@.len() && after.nodes@.len() == before.nodes@.len()
+        0 <= i < before.nodes@.len() && settle_frame(before, after)
             && forall|j: int| 0 <= j < before.nodes@.len() && j != i
                 ==> #[trigger] after.nodes@[j] == before.nodes@[j]
     } else {
@@ -357,6 +357,35 @@ pub(super) proof fn outputs(before: World, after: World, t: Transition, out: Seq
             Transition::Settle => false },
     ensures outputs_ok(before, after, out, match t {
             Transition::Apply(event) => apply_exempt(event), _ => None }),
+{
+    reveal(transition_safety);
+}
+
+/// K4b: settle's emitted outputs are the concatenation of its passes' suffixes.
+/// Outboxes only append, so a later outbox keeps every earlier slot.
+pub(super) proof fn emitted_concat(o0: Outbox, o1: Outbox, o2: Outbox)
+    requires o0.len <= o1.len <= o2.len <= OUTBOX,
+        forall|k: int| 0 <= k < o1.len ==> #[trigger] o2.items@[k] == o1.items@[k],
+    ensures emitted(o0, o2) == emitted(o0, o1) + emitted(o1, o2),
+{
+    assert(o1.items@.len() == OUTBOX && o2.items@.len() == OUTBOX);
+    assert(emitted(o0, o2) =~= emitted(o0, o1) + emitted(o1, o2));
+}
+
+/// K4b: a settle that has taken no pass yet.
+pub(super) proof fn settle_start(w: World)
+    ensures transition_safety(w, w, Transition::Settle, Seq::empty()),
+{
+    reveal(transition_safety);
+}
+
+/// K4b: extend a settle by one internal advance, moving or stuttering, and
+/// concatenate the emitted suffixes.
+pub(super) proof fn transition_compose(w0: World, w1: World, w2: World, node: usize, moved: bool,
+    first: Seq<Option<Out>>, next: Seq<Option<Out>>)
+    requires transition_safety(w0, w1, Transition::Settle, first),
+        transition_safety(w1, w2, Transition::Advance { node, moved }, next),
+    ensures transition_safety(w0, w2, Transition::Settle, first + next),
 {
     reveal(transition_safety);
 }
