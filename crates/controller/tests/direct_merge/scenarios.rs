@@ -537,6 +537,50 @@ fn r1_actions_infrastructure_and_pending_are_classified_by_q47() {
     }
 }
 
+#[test]
+fn waiting_direct_infrastructure_preserves_credit_and_findings() {
+    let mut database = support::Database::start();
+    for conclusion in ["startup_failure", "timed_out", "cancelled"] {
+        let settings = database.create(&format!("direct_waiting_infra_{conclusion}"));
+        let fixture = DirectFixture::new();
+        fixture.check(None);
+        fixture.api.state.lock().unwrap().head_checks.iter_mut()
+            .find(|check| check["id"] == 1100).unwrap()["app"]["slug"] = json!("github-actions");
+        let (mut controller, delivery) = fixture.start(&settings);
+        drain(&mut controller);
+        let before = controller.world().unwrap();
+        assert_eq!(before.nodes[0].phase, Phase::AwaitingDelivery);
+        assert!(before.check().is_ok());
+        let findings = |snapshot: tl3_store::Snapshot| {
+            snapshot.rows.into_iter()
+                .filter(|row| matches!(row.table.as_str(), "maker_findings" | "findings"))
+                .map(|row| (row.table, row.id, row.value)).collect::<Vec<_>>()
+        };
+        let before_findings = findings(controller.snapshot().unwrap());
+        fixture.check(Some(conclusion));
+        fixture.api.state.lock().unwrap().head_checks.iter_mut()
+            .find(|check| check["id"] == 1100).unwrap()["app"]["slug"] = json!("github-actions");
+        fixture.check_event(&settings);
+        drain(&mut controller);
+        let snapshot = controller.snapshot().unwrap();
+        let row = snapshot.rows.iter().find(|row| row.table == "delivery_outcomes"
+            && row.id.ends_with("/head-ci:1100")).expect("authenticated current-head CI receipt");
+        let failure = &row.value["outcome"]["CiFailed"];
+        assert_eq!(failure["infra"], json!(true));
+        assert_eq!(failure["head"], json!(delivery.head_sha.unwrap()));
+        assert!(failure["evidence"]["cause"]["Change"].is_object());
+        let facts: Vec<_> = r1_kernel_facts(&settings).into_iter()
+            .filter_map(|fact| fact.get("CiFailed").cloned()).collect();
+        assert_eq!(facts, vec![json!({"infra": true})]);
+        let after = controller.world().unwrap();
+        assert!(after.check().is_ok());
+        assert_eq!(after.nodes[0].credit, before.nodes[0].credit);
+        assert_eq!(after, before, "waiting infrastructure failure must stutter the real kernel world");
+        assert_eq!(findings(snapshot), before_findings, "infrastructure must not produce failed-round findings");
+        assert!(fixture.direct.lock().unwrap().puts.is_empty());
+    }
+}
+
 fn direct_catch_up(fixture: &DirectFixture, controller: &mut Controller, changed: bool) {
     use tl3_controller::ingress::GitHubTranslator;
     let pull = fixture.api.state.lock().unwrap().pull.clone();
