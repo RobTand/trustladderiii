@@ -167,6 +167,71 @@ pub(super) open spec fn dependencies_checked(world: World) -> bool {
             ==> dependency_checked(world, world.dependencies@[j])
 }
 
+/// K4a: a blocked owner's question returns only to a pre-planning or teardown step.
+pub(super) open spec fn waits(question: Option<Question>) -> bool {
+    match question {
+        None => true,
+        Some(q) => matches!(q.cont,
+            Cont::Ingesting | Cont::Auditing | Cont::Unplanned | Cont::Stop(_) | Cont::Nowhere),
+    }
+}
+
+/// K4a: one row passes every per-declaration check of the real checker.
+pub(super) open spec fn row_ok(w: World, d: Dependency) -> bool {
+    let owner = w.nodes@[d.node.0 as int];
+    d.node.0 < w.nodes@.len() && d.target.number > 0
+        && (match d.target.request { None => true, Some(n) => n.0 < w.nodes@.len()
+            && w.nodes@[n.0 as int].repo == owner.repo })
+        && ((d.rejected || d.status != DependencyStatus::Delivered) ==>
+            !owner.planning_started && waits(owner.question)
+            && matches!(owner.phase, Phase::Ingesting | Phase::Auditing | Phase::Unplanned
+                | Phase::AwaitingRob | Phase::Stopping(_) | Phase::Closed(_)))
+        && (!prerequisites_delivered(w, d.node)
+            && matches!(owner.phase, Phase::Ingesting | Phase::Auditing | Phase::Unplanned)
+            ==> zero_credit(owner.credit))
+        && (owner.phase == Phase::Unplanned && !prerequisites_delivered(w, d.node)
+            ==> !owner.holds && !owner.pool && owner.ticket.is_none() && owner.run.is_none())
+}
+
+/// K4a: every node with withheld credit owns at least one declaration.
+pub(super) open spec fn credit_declared(w: World) -> bool {
+    forall|j: int| 0 <= j < w.nodes@.len() && #[trigger] w.nodes@[j].credit.withheld
+        ==> exists|k: int| 0 <= k < w.dependencies@.len()
+            && w.dependencies@[k].node == NodeId(j as u64)
+}
+
+/// K4a: exact acceptance of the real check_dependencies, including acyclicity
+/// of the production graph. No world-size, settledness or fixture restriction.
+#[verifier::opaque]
+pub closed spec fn rules_ok(w: World) -> bool {
+    credit_declared(w)
+        && (forall|j: int| 0 <= j < w.dependencies@.len() ==> row_ok(w, #[trigger] w.dependencies@[j]))
+        && declarations_unique(w)
+        && acyclic(w)
+}
+
+/// K4a: expose the complete dependency acceptance to consumers outside this module.
+pub(super) proof fn rules_definition(w: World)
+    ensures rules_ok(w) == (credit_declared(w)
+        && (forall|j: int| 0 <= j < w.dependencies@.len() ==> row_ok(w, #[trigger] w.dependencies@[j]))
+        && declarations_unique(w) && acyclic(w)),
+{
+    reveal(rules_ok);
+}
+
+/// K4a: the complete dependency acceptance recovers the older progress projection.
+pub(super) proof fn rules_checked(w: World)
+    requires rules_ok(w),
+    ensures dependencies_checked(w), edges_indexable(w),
+{
+    reveal(rules_ok);
+    reveal(edges_indexable);
+    assert forall|j: int| 0 <= j < w.dependencies@.len()
+        implies dependency_checked(w, w.dependencies@[j]) by {
+        assert(row_ok(w, w.dependencies@[j]));
+    }
+}
+
 pub(super) open spec fn same_declaration(a: Dependency, b: Dependency) -> bool {
     a.node == b.node && a.target.kind == b.target.kind && a.target.number == b.target.number
 }
@@ -730,12 +795,18 @@ impl World {
             (self.dependencies@.len() == 0
                 && forall|j: int| 0 <= j < self.nodes@.len() ==> !self.nodes@[j].credit.withheld)
                 ==> result.is_ok(),
-    ] proof [reveal(dependencies_checked); reveal(edges_indexable); reveal(no_active_graph_edges); reveal(zero_credit);] {
+            result.is_ok() == rules_ok(*self),
+    ] proof [reveal(dependencies_checked); reveal(edges_indexable); reveal(no_active_graph_edges); reveal(zero_credit);
+        reveal(rules_ok);] {
         let mut node_index = 0usize;
         kernel_while! { (node_index < self.nodes.len()) [
             invariant node_index <= self.nodes.len(), self.nodes@.len() <= u64::MAX as int,
+                forall|j: int| 0 <= j < node_index && #[trigger] self.nodes@[j].credit.withheld
+                    ==> exists|k: int| 0 <= k < self.dependencies@.len()
+                        && self.dependencies@[k].node == NodeId(j as u64),
             decreases self.nodes.len() - node_index,
         ] {
+            kernel_proof! { reveal(rules_ok); }
             let node = &self.nodes[node_index];
             if node.credit.withheld {
                 kernel_proof! {
@@ -756,7 +827,13 @@ impl World {
                         !found && dependency_retirement::edge_domain(*self) ==> edge == 0,
                         !found ==> forall|j: int| 0 <= j < edge
                             ==> self.dependencies@[j].node != NodeId(node_index as u64),
+                        found ==> edge < self.dependencies.len()
+                            && self.dependencies@[edge as int].node == NodeId(node_index as u64),
                     ensures found || edge == self.dependencies.len(),
+                        found ==> edge < self.dependencies.len()
+                            && self.dependencies@[edge as int].node == NodeId(node_index as u64),
+                        !found ==> forall|j: int| 0 <= j < self.dependencies@.len()
+                            ==> self.dependencies@[j].node != NodeId(node_index as u64),
                         progress_unplanned_witness::fixture_edges(*self)
                             ==> node_index == 0 && self.dependencies@.len() > 0,
                         !found && progress_unplanned_witness::fixture_edges(*self) ==> edge == 0,
@@ -771,23 +848,35 @@ impl World {
                 } }
                 kernel_proof! {
                     if progress_unplanned_witness::fixture_edges(*self) { assert(found); }
+                    if !found { assert(!credit_declared(*self)); }
                 }
                 if !found { return Err(Broken::Dependencies); }
+                kernel_proof! {
+                    assert(self.dependencies@[edge as int].node == NodeId(node_index as u64));
+                }
             }
             node_index += 1;
         } }
         if self.dependencies.is_empty() {
+            kernel_proof! {
+                reveal(acyclic);
+                reveal(active_edge);
+                assert(credit_declared(*self));
+            }
             return Ok(());
         }
         let mut index = 0usize;
         kernel_while! { (index < self.dependencies.len()) [
             invariant index <= self.dependencies.len(), self.nodes@.len() <= u64::MAX as int,
                 forall|j: int| 0 <= j < index ==> dependency_checked(*self, self.dependencies@[j]),
+                forall|j: int| 0 <= j < index ==> row_ok(*self, #[trigger] self.dependencies@[j]),
+                credit_declared(*self),
                 dependency_retirement::edge_domain(*self) && index > 0 ==> dependency_retirement::edge_rules(*self),
                 forall|a: int, b: int| 0 <= a < b < index
                     ==> !same_declaration(self.dependencies@[a], self.dependencies@[b]),
             decreases self.dependencies.len() - index,
         ] {
+            kernel_proof! { reveal(rules_ok); reveal(zero_credit); }
             let dependency = &self.dependencies[index];
             let Some(owner) = self.index(dependency.node) else {
                 return Err(Broken::Dependencies);
@@ -820,7 +909,15 @@ impl World {
                 }
                 if d.node == dependency.node && d.target.kind == dependency.target.kind
                     && d.target.number == dependency.target.number
-                { return Err(Broken::Dependencies); }
+                {
+                    kernel_proof! {
+                        reveal(rules_ok);
+                        assert(same_declaration(self.dependencies@[previous as int],
+                            self.dependencies@[index as int]));
+                        assert(!declarations_unique(*self));
+                    }
+                    return Err(Broken::Dependencies);
+                }
                 previous += 1;
             } }
             if (dependency.rejected || dependency.status != DependencyStatus::Delivered)
@@ -866,6 +963,7 @@ impl World {
                     return Err(Broken::Dependencies);
                 }
             }
+            kernel_proof! { assert(row_ok(*self, self.dependencies@[index as int])); }
             index += 1;
         } }
         if !self.dependency_graph_acyclic() {
