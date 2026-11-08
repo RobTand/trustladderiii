@@ -219,6 +219,8 @@ def cases(kind):
             yield 'priority-' + repr(value), {'operation': 'priority', 'value': value}
         settings = {'image': IMAGE, 'tools_path': '/fixture/tools'}
         yield 'settings-default', {'operation': 'settings', 'value': settings}
+        yield 'settings-execution-with-tools', {'operation': 'settings', 'value': {
+            **settings, 'execution': {'backend': 'flux', 'profile': '/fixture/profile.json'}}}
         for name, item in variants(settings, [('mutable-image', 'image', 'ubuntu:latest'),
                                              ('relative-tools', 'tools_path', 'relative'),
                                              ('cpus-zero', 'cpus', 0), ('mem-bool', 'mem_gb', True),

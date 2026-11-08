@@ -1877,7 +1877,28 @@
           "tools_path": "/fixture/tools",
           "cpus": 1,
           "mem_gb": 2,
-          "quiet_seconds": 120
+          "quiet_seconds": 120,
+          "execution": null
+        }
+      }
+    },
+    {
+      "case": "settings-execution-with-tools",
+      "input": {
+        "operation": "settings",
+        "value": {
+          "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tools_path": "/fixture/tools",
+          "execution": {
+            "backend": "flux",
+            "profile": "/fixture/profile.json"
+          }
+        }
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Use the controller's selected execution profile"
         }
       }
     },

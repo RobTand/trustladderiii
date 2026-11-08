@@ -31,13 +31,14 @@ def test_discovered_roles_have_prompts_and_schemas_without_orphans():
                         # #832-K worker event contract, outside every model prompt.
                         "plan-check-provenance.json",
                         # #826 operator diagnostic contract, outside every model prompt.
-                        "execution-failure.json"}
+                        "execution-failure.json", "worker-execution.json"}
     Draft202012Validator.check_schema(schema("check-report"))
     Draft202012Validator.check_schema(schema("decision-context"))
     Draft202012Validator.check_schema(schema("budget-wire"))
     Draft202012Validator.check_schema(schema("quota-event"))
     Draft202012Validator.check_schema(schema("harness-wire"))
     Draft202012Validator.check_schema(schema("execution-failure"))
+    Draft202012Validator.check_schema(schema("worker-execution"))
     Draft202012Validator.check_schema(schema("plan-check-provenance"))
     role_pattern = schema("request")["properties"]["role"]
     assert "enum" not in role_pattern
