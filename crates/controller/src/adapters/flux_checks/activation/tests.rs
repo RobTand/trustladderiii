@@ -2,6 +2,16 @@ use super::*;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
+fn assert_refusal<T>(result: Result<T>, field: &str) {
+    assert_eq!(
+        result
+            .err()
+            .expect("expected activation refusal")
+            .to_string(),
+        field
+    );
+}
+
 pub(crate) struct Fixture {
     pub root: tempfile::TempDir,
     pub flux: tl3_config::Flux,
@@ -238,11 +248,17 @@ fn absent_wrong_hash_unknown_qualification_and_generation_refuse_with_fields_onl
     );
     fixture.flux.activation = original;
     fixture.flux.activation.as_mut().unwrap().sha256 = "0".repeat(64);
-    assert!(RuntimeActivation::load(&fixture.flux).is_err());
+    assert_refusal(
+        RuntimeActivation::load(&fixture.flux),
+        "flux.activation.sha256",
+    );
     fixture.seal_record();
     fixture.record.qualification_sha256 = "0".repeat(64);
     fixture.seal_record();
-    assert!(RuntimeActivation::load(&fixture.flux).is_err());
+    assert_refusal(
+        RuntimeActivation::load(&fixture.flux),
+        "flux.activation.qualification_sha256",
+    );
     fixture.record.qualification_sha256 = qualification_sha256();
     fixture.seal_record();
     fixture.flux.instance_generation = "private-generation-do-not-print".into();
@@ -294,7 +310,10 @@ fn bundle_set_hash_profile_preflight_options_and_cli_substitution_refuse() {
     let mut fixture = Fixture::new();
     fixture.record.profiles[0].manifest_sha256 = "0".repeat(64);
     fixture.seal_record();
-    assert!(RuntimeActivation::load(&fixture.flux).is_err());
+    assert_refusal(
+        RuntimeActivation::load(&fixture.flux),
+        "flux.activation.manifest_sha256",
+    );
     fixture.record.profiles[0].manifest_sha256 = fixture.flux.runtime_bundles[0]
         .parent()
         .unwrap()
@@ -305,7 +324,10 @@ fn bundle_set_hash_profile_preflight_options_and_cli_substitution_refuse() {
         .into();
     fixture.record.profiles[0].preflight.sha256 = "0".repeat(64);
     fixture.seal_record();
-    assert!(RuntimeActivation::load(&fixture.flux).is_err());
+    assert_refusal(
+        RuntimeActivation::load(&fixture.flux),
+        "flux.activation.profile",
+    );
     fixture.record.profiles[0].preflight.sha256 =
         durable::digest(&fs::read(&fixture.record.profiles[0].preflight.path).unwrap());
     fixture.seal_record();
@@ -321,12 +343,18 @@ fn bundle_set_hash_profile_preflight_options_and_cli_substitution_refuse() {
     assert!(error.ends_with("flux.activation.backend_options_sha256"));
     assert!(!error.contains("/private/options-value"));
     fs::write(&fixture.flux.backend_cli, b"changed CLI").unwrap();
-    assert!(RuntimeActivation::load(&fixture.flux).is_err());
+    assert_refusal(
+        RuntimeActivation::load(&fixture.flux),
+        "flux.activation.backend_cli_sha256",
+    );
     fixture
         .flux
         .runtime_bundles
         .push(fixture.flux.runtime_bundles[0].clone());
-    assert!(RuntimeActivation::load(&fixture.flux).is_err());
+    assert_refusal(
+        RuntimeActivation::load(&fixture.flux),
+        "flux.activation.profiles",
+    );
 }
 
 #[test]
@@ -341,12 +369,18 @@ fn sealed_but_unqualified_full_closure_and_fault_interpreter_refuse() {
     .unwrap();
     fixture.update_code_inventory(helper);
     fixture.replace_bundle();
-    assert!(RuntimeActivation::load(&fixture.flux).is_err());
+    assert_refusal(
+        RuntimeActivation::load(&fixture.flux),
+        "flux.activation.code_inventory",
+    );
     drop(fixture);
     let mut fixture = Fixture::new();
     fixture.input.container_interpreter = "/opt/tl3/bin/python-canary2-absent".into();
     fixture.replace_bundle();
-    assert!(RuntimeActivation::load(&fixture.flux).is_err());
+    assert_refusal(
+        RuntimeActivation::load(&fixture.flux),
+        "flux.activation.metadata",
+    );
 }
 
 #[test]
@@ -370,7 +404,10 @@ fn missing_changed_cleanup_and_extra_unlisted_module_refuse() {
                 fs::write(root.join("extra-helper.py"), b"extra").unwrap();
             }
         }
-        assert!(RuntimeActivation::load(&fixture.flux).is_err());
+        assert_refusal(
+            RuntimeActivation::load(&fixture.flux),
+            "flux.activation.bundle",
+        );
     }
 }
 
@@ -420,11 +457,10 @@ fn tags_runtime_substitution_and_environment_override_cannot_grant_activation() 
 fn environment_override_child() {
     let mut fixture = Fixture::new();
     fixture.flux.activation = None;
-    assert!(RuntimeActivation::load(&fixture.flux).is_err());
+    assert_refusal(RuntimeActivation::load(&fixture.flux), "flux.activation");
 }
 
 #[test]
-#[ignore = "PB fixture: canonical shared bundle paths and retained qualification inputs"]
 fn qualification_regeneration_is_byte_identical() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let output = std::process::Command::new("/usr/bin/python3")

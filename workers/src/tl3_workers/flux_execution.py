@@ -117,6 +117,8 @@ def _blob(reference, bound):
 
 
 def execute(plan, *, resumed=False, emit=lambda event: None):
+    # Callers must validate activation(settings) before preparing or resuming this plan.
+    # Rust Prepare gates new requests; Resume keeps its original retained binding.
     if not resumed:
         # The caller checkpoints the opaque reference before this boundary.
         _command(plan, plan['submit'])

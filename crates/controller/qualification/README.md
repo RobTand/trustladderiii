@@ -29,7 +29,10 @@ generation guard remains authoritative at execution.
 format. The schema is `tl3.fx_activation.v1`. `qualification_sha256` is the
 SHA256 of the compiled pin. `producer_commit` is the frozen deploy candidate
 used by ops to publish the new profile bundles, and must match each bundle.
-It does not replace qualification by exact code equality.
+Before provisioning, ops must compare `producer_commit` with the exact
+captain fast-forward SHA that will be deployed, and check every listed bundle
+against that same SHA. Retain that equality in the deploy runbook. Refuse
+provisioning on a mismatch. It does not replace qualification by exact code equality.
 
 `identity` hashes the UTF-8 bytes from Rust `serde_json::to_vec` for each field.
 The generation, endpoint, staging root, and complete effective `Options` have
@@ -66,3 +69,7 @@ RBE cannot create the fixed shared runtime root. Run the activation and worker
 execution test selections with `--include-ignored --test-threads=1` in an admitted
 job. The environment-override helper also runs as an isolated test subprocess.
 These tests publish synthetic bundles only, never images or production profiles.
+
+`tools/fx-scratch-check.sh` registers the activation and direct worker-Prepare
+fixtures in the admitted PB lane with serial execution. Qualification
+regeneration is also a default, non-ignored Rust test.
