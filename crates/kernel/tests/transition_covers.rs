@@ -209,6 +209,170 @@ fn the_pool_key_is_strict_priority_then_ticket() {
     assert!(passes_older && tie);
 }
 
+/// Several requests in one repository with gate width `width`, driven through
+/// the real `step` like the Kani gate fixtures' leaves.
+struct Gate {
+    w: World,
+}
+
+impl Gate {
+    fn new(width: u8) -> Gate {
+        Gate {
+            w: World::new(&[width], 8),
+        }
+    }
+
+    fn send(&mut self, event: Event) {
+        let StepResult { world, .. } = step(self.w.clone(), event);
+        assert!(world.valid(), "invalid world after {event:?}:\n{world:#?}");
+        self.w = world;
+    }
+
+    fn node(&self, i: usize) -> Node {
+        self.w.nodes[i]
+    }
+
+    fn confirm(&mut self, i: usize) {
+        for _ in 0..64 {
+            let Some(e) = self.node(i).effect else { return };
+            self.send(Event::Ack {
+                node: NodeId(i as u64),
+                seq: e.seq,
+                ack: if e.kind == EffectKind::Enqueue {
+                    Ack::DeliveryAccepted
+                } else {
+                    Ack::Confirmed
+                },
+            });
+        }
+        panic!("effects never stopped");
+    }
+
+    fn reply(&mut self, i: usize, reply: Reply) {
+        self.confirm(i);
+        let generation = self.node(i).generation;
+        self.send(Event::Reply {
+            node: NodeId(i as u64),
+            generation,
+            reply,
+        });
+        self.confirm(i);
+    }
+
+    /// A new request, ingested and audited, still unplanned.
+    fn request(&mut self) -> usize {
+        self.send(Event::NewRequest {
+            repo: RepoId(0),
+            priority: Priority::Unranked,
+        });
+        let i = self.w.nodes.len() - 1;
+        self.confirm(i);
+        self.reply(i, Reply::IngestDone { size: 1 });
+        i
+    }
+
+    /// Audit and plan a leaf over `files`; it then holds a slot or waits.
+    fn plan(&mut self, i: usize, files: &[u64]) {
+        self.reply(i, Reply::AuditAgrees);
+        assert!(matches!(self.node(i).phase, Phase::Planning { .. }));
+        let footprint = self.w.intern_footprint(files.iter().map(|f| FileId(*f)));
+        self.reply(
+            i,
+            Reply::PlanLeaf {
+                footprint,
+                fits: true,
+            },
+        );
+    }
+
+    fn holds(&self, i: usize) -> bool {
+        self.node(i).holds
+    }
+
+    fn waiting(&self, i: usize) -> bool {
+        matches!(self.node(i).phase, Phase::Ready(_)) && self.node(i).ticket.is_some()
+    }
+
+    /// Rob stops request i; its teardown runs to Closed through real acks.
+    fn stop(&mut self, i: usize) {
+        let id = self.node(i).last_cmd + 1;
+        self.send(Event::Command {
+            node: NodeId(i as u64),
+            id,
+            command: Command::Stop,
+        });
+        self.confirm(i);
+        assert!(matches!(self.node(i).phase, Phase::Closed(_)));
+    }
+}
+
+/// Kani `gate_leaf_progress_*` cover "an oldest waiter progresses from a full
+/// gate when its last blocker completes". The younger overlapping waiter has
+/// the lower index, so settle visits it first, and it still cannot take the
+/// freed slot.
+#[test]
+fn an_oldest_waiter_takes_the_slot_its_last_blocker_frees() {
+    let mut g = Gate::new(2);
+    let a = g.request();
+    g.plan(a, &[0]);
+    let b = g.request();
+    g.plan(b, &[1]);
+    assert!(g.holds(a) && g.holds(b), "the W=2 gate is full");
+    let younger = g.request();
+    let oldest = g.request();
+    g.plan(oldest, &[0]);
+    g.plan(younger, &[0]);
+    assert!(g.waiting(oldest) && g.waiting(younger));
+    assert!(g.node(oldest).ticket < g.node(younger).ticket);
+    let ticket = g.node(younger).ticket;
+    g.stop(a);
+    assert!(g.holds(oldest) && g.node(oldest).ticket.is_none());
+    assert!(!g.holds(younger) && g.node(younger).ticket == ticket);
+    assert!(g.holds(b));
+}
+
+/// Kani cover "an older leaf progresses while a disjoint overtaker remains
+/// active": a truly disjoint younger leaf passes a file-blocked older waiter,
+/// and the older one still gets the slot when its blocker completes.
+#[test]
+fn a_disjoint_overtaker_does_not_starve_the_older_waiter() {
+    let mut g = Gate::new(2);
+    let a = g.request();
+    g.plan(a, &[0]);
+    let older = g.request();
+    let younger = g.request();
+    g.plan(older, &[0]);
+    assert!(g.waiting(older), "an overlapping holder blocks the older leaf");
+    g.plan(younger, &[1]);
+    assert!(g.holds(younger), "the disjoint younger leaf passes");
+    assert!(g.waiting(older));
+    g.stop(a);
+    assert!(g.holds(older) && g.holds(younger));
+}
+
+/// Kani cover "passes a waiter blocked by an older overlapping waiter": a
+/// younger leaf disjoint from both waiters passes one that is itself held back
+/// by the oldest waiter, and the oldest still progresses afterwards.
+#[test]
+fn a_leaf_passes_a_waiter_held_back_by_an_older_overlapping_waiter() {
+    let mut g = Gate::new(3);
+    let a = g.request();
+    g.plan(a, &[0]);
+    let oldest = g.request();
+    let middle = g.request();
+    let youngest = g.request();
+    g.plan(oldest, &[0, 1]);
+    g.plan(middle, &[1]);
+    assert!(g.waiting(oldest), "the holder's file blocks the oldest");
+    assert!(g.waiting(middle), "the older overlapping waiter holds back the middle leaf");
+    g.plan(youngest, &[2]);
+    assert!(g.holds(youngest), "a leaf disjoint from both waiters passes");
+    g.stop(a);
+    assert!(g.holds(oldest));
+    assert!(g.waiting(middle), "the middle leaf still overlaps the new holder");
+    assert!(g.holds(youngest));
+}
+
 /// A Ready slot waiter is not in the pool line.
 #[test]
 fn a_slot_waiter_has_no_pool_key() {
