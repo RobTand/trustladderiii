@@ -224,9 +224,6 @@ pub(super) fn slot_free(w: &World, i: usize) -> (result: bool) [
             open_prefix_monotone(w.nodes@, j as nat + 1, w.nodes@.len());
         }
         if j != i && n.holds && n.repo == me.repo {
-            if !w.footprints_disjoint(n.footprint, me.footprint) {
-                return false;
-            }
             holders += 1;
         }
         j += 1;
@@ -328,7 +325,7 @@ pub(super) fn first_in_line(w: &World, i: usize) -> (result: bool) [
             continue;
         }
         kernel_proof! { assert(!oldest_waiter(*w, i as int)); }
-        if !w.footprints_disjoint(waiter.footprint, me.footprint) { return false; }
+
         if theirs >= first_runnable || !slot_free(w, index) { continue; }
         if !older_overlap(w, index, theirs) { first_runnable = theirs; }
     } }

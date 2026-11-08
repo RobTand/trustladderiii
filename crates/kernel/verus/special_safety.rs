@@ -8,7 +8,7 @@ verus! {
 /// so the rebase fuel rule applies only to a reply the request is awaiting.
 pub(super) proof fn rebase_await_gate(n: Node)
     requires n.phase == Phase::Rebasing,
-    ensures (current_item(n) == Some(Item::Await)) == (n.pos == 1),
+    ensures (current_item(n) == Some(Item::Await)) == (n.pos == 0),
         (current_item(n) == Some(Item::StartRebase)) == (n.pos == 0),
         n.pos >= 2 ==> current_item(n).is_none(),
 {
