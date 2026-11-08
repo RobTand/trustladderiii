@@ -107,6 +107,7 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
 }
 }
 
+#[cfg(verus_keep_ghost)]
 verus! {
 /// TryAgain / #771: the first attempt restarts before the continuation.
 pub(super) open spec fn try_again_node(n: Node) -> Node {
