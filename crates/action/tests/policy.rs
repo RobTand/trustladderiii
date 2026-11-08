@@ -451,7 +451,10 @@ fn small_trace_content_keeps_its_fields_within_the_allocated_budget() {
         .as_str()
         .unwrap();
     assert!(text.len() as u64 <= limit);
-    assert_eq!(serde_json::from_str::<serde_json::Value>(text).unwrap(), value);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(text).unwrap(),
+        value
+    );
     let exhausted = command(json!({"op":"trace","request":{"op":"clean",
         "contents":[shaped],"limits":[0]}}));
     assert_eq!(
@@ -543,7 +546,10 @@ fn trace_clean_and_live_preserve_cleaned_json_text_and_its_measurement() {
     let measured = measured["ok"]["result"]["value"].as_u64().unwrap();
     let clean = command(json!({"op":"trace","request":{"op":"clean",
         "contents":[shaped.clone()],"limits":[4096]}}));
-    assert_eq!(clean["ok"]["result"]["value"]["values"][0].as_str(), Some(text));
+    assert_eq!(
+        clean["ok"]["result"]["value"]["values"][0].as_str(),
+        Some(text)
+    );
     let live = command(json!({"op":"trace","request":{"op":"live",
         "enabled":true,"root":false,"spans":0,"used":17,"contents":[shaped]}}));
     let live = &live["ok"]["result"]["value"];

@@ -228,11 +228,14 @@
               "minimum": 0
             },
             "values": {
+              "description": "Cleaned Python JSON text, preserving object order and numeric atoms.",
               "type": [
                 "array",
                 "null"
               ],
-              "items": true
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
@@ -275,8 +278,11 @@
           "type": "object",
           "properties": {
             "values": {
+              "description": "Cleaned Python JSON text, preserving object order and numeric atoms.",
               "type": "array",
-              "items": true
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [

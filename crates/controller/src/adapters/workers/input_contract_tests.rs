@@ -767,30 +767,55 @@ fn planner_leaf_admission_rejects_blank_and_duplicate_names_before_maker() {
         let forecast = json!({"tokenizer":"o200k_base","brief_tokens":1,
             "file_tokens":{},"overhead_tokens":0,"tokens":1,"fit_tokens":100,
             "context_tokens":150,"fits":true});
-        deliver(&mut w, "ingest", json!({"kind":"brief","brief":"Preserve behavior",
+        deliver(
+            &mut w,
+            "ingest",
+            json!({"kind":"brief","brief":"Preserve behavior",
             "goals":[
                 {"description":"First behavior","verification":"test"},
                 {"description":"Publish the change","verification":"review","stage":"publishing",
                     "publication":{"non_draft":true,"body_lines":[],"proof":false}},
                 {"description":"Second behavior","verification":"test"}],
-            "memory_ids":[],"files":[],"merge_prerequisites":[],"forecast":forecast}));
+            "memory_ids":[],"files":[],"merge_prerequisites":[],"forecast":forecast}),
+        );
         deliver(&mut w, "audit", json!({"verdict":"agree","objections":[]}));
-        assert!(matches!(w.controller.world().unwrap().nodes[0].phase, Phase::Planning { .. }));
-        deliver(&mut w, "planner", json!({"kind":"leaf","files":[],
+        assert!(matches!(
+            w.controller.world().unwrap().nodes[0].phase,
+            Phase::Planning { .. }
+        ));
+        deliver(
+            &mut w,
+            "planner",
+            json!({"kind":"leaf","files":[],
             "checks":[
                 {"name":names[0],"kind":"regression","tests":["tests/first.py::test_first"],"goal_ids":[0]},
                 {"name":names[1],"kind":"regression","tests":["tests/second.py::test_second"],"goal_ids":[2]}],
-            "no_design_questions":true,"lands_on_its_own":true,"forecast":forecast,"violations":[]}));
+            "no_design_questions":true,"lands_on_its_own":true,"forecast":forecast,"violations":[]}),
+        );
         let snapshot = w.controller.snapshot().unwrap();
-        let plan = &snapshot.rows.iter().find(|row| row.table == "plans" && row.id == "0").unwrap().value;
+        let plan = &snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == "plans" && row.id == "0")
+            .unwrap()
+            .value;
         assert_eq!(plan["checks"][0]["goal_ids"], json!([0]));
         assert_eq!(plan["checks"][1]["goal_ids"], json!([2]));
-        assert_eq!(matches!(w.controller.world().unwrap().nodes[0].phase, Phase::Making), valid);
+        assert_eq!(
+            matches!(w.controller.world().unwrap().nodes[0].phase, Phase::Making),
+            valid
+        );
         if valid {
             assert_eq!(plan["violations"], json!([]));
         } else {
-            assert!(plan["violations"].as_array().unwrap().iter().any(|value|
-                value.as_str() == Some("check names must be nonblank and unique within the plan")));
+            assert!(
+                plan["violations"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|value| value.as_str()
+                        == Some("check names must be nonblank and unique within the plan"))
+            );
         }
     }
 }
