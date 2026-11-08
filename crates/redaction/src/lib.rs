@@ -925,12 +925,10 @@ pub fn generated_harness_policy() -> String {
 }
 
 #[cfg(test)]
-fn worker_python() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../workers/.venv/bin/python")
-}
-#[cfg(test)]
 fn python_command() -> std::process::Command {
-    let mut command = std::process::Command::new(worker_python());
+    let interpreter = std::env::var_os("TL3_TEST_PYTHON")
+        .expect("TL3_TEST_PYTHON must name the pinned test interpreter");
+    let mut command = std::process::Command::new(interpreter);
     command.env_clear();
     for key in [
         "PATH",
