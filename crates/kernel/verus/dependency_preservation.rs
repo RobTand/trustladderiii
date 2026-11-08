@@ -981,13 +981,12 @@ pub(super) fn delivered_admits(mut world: World, i: usize) -> (result: (World, b
     requires checking::accepted(world), world_headroom(world), storage_ordered(world),
         i < world.nodes@.len(), i <= u64::MAX,
         world.nodes@[i as int].phase == Phase::Unplanned,
-    ensures ({
-            let n = world.nodes@[i as int];
-            result.1 == (!n.paused && !n.waiting_incident && n.effect.is_none()
-                && delivered(world.dependencies@, NodeId(i as u64))
-                && n.repo.0 < world.gates@.len()
-                && slot_waiters(world.nodes@, world.nodes@.len(), n.repo) < world.gates@[n.repo.0 as int].w)
-        }),
+    ensures result.1 == (!world.nodes@[i as int].paused && !world.nodes@[i as int].waiting_incident
+            && world.nodes@[i as int].effect.is_none()
+            && delivered(world.dependencies@, NodeId(i as u64))
+            && world.nodes@[i as int].repo.0 < world.gates@.len()
+            && slot_waiters(world.nodes@, world.nodes@.len(), world.nodes@[i as int].repo)
+                < world.gates@[world.nodes@[i as int].repo.0 as int].w),
         result.1 ==> result.0.nodes@[i as int].phase == (Phase::Planning { must_split: false })
             && result.0.nodes@[i as int].planning_started
             && result.0.nodes@[i as int].credit
