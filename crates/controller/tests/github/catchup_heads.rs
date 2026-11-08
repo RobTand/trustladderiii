@@ -84,7 +84,7 @@ fn missing_head(settings: &tl3_config::Store, endpoint: &str, status: u16) {
     check["head_sha"] = json!(LOCAL);
     api.state.lock().unwrap().checks.push(check);
     reject(&api, &format!("commits/{LOCAL}/{endpoint}"), status);
-    let catch_up = CatchUp::new(BTreeMap::from([(3, client(&api.uri()))])).unwrap();
+    let catch_up = CatchUp::new(BTreeMap::from([(3, client(&api.uri()))]), vec![]).unwrap();
     assert!(
         catch_up.pass(&mut store, &bootstrap()).is_ok(),
         "catch-up must skip an unknown tracked head ({endpoint} HTTP {status})"
@@ -110,7 +110,7 @@ fn failed_request(settings: &tl3_config::Store, endpoint: &str, status: u16) {
     let api = Server::new();
     let root = tempfile::tempdir().unwrap();
     let mut store = track(settings, &api, root.path());
-    let catch_up = CatchUp::new(BTreeMap::from([(3, client(&api.uri()))])).unwrap();
+    let catch_up = CatchUp::new(BTreeMap::from([(3, client(&api.uri()))]), vec![]).unwrap();
     catch_up.pass(&mut store, &bootstrap()).unwrap();
     let cursor = store.ingress_cursor("github-catch-up").unwrap();
     let pending = store.pending_ingress().unwrap();

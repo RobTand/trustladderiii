@@ -772,7 +772,7 @@ pub(super) fn delegated_restart(settings: &tl3_config::Store) {
     edited["updated_at"] = json!(Utc::now());
     api.state.lock().unwrap().catch_up_comments = Some(vec![edited.clone()]);
     let mut catch_up_store = Store::open(settings).unwrap();
-    let catch_up = CatchUp::new(BTreeMap::from([(3, client(&api.uri()))])).unwrap();
+    let catch_up = CatchUp::new(BTreeMap::from([(3, client(&api.uri()))]), vec![]).unwrap();
     catch_up.pass(&mut catch_up_store, &bootstrap()).unwrap();
     drain(&mut controller);
     let classified = controller

@@ -35,6 +35,8 @@ fn invalid(field: impl Into<String>, message: impl Into<String>) -> Error {
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
+    pub initial_intake: Vec<InitialIntake>,
+    #[serde(default)]
     pub operations: Option<Operations>,
     #[serde(default)]
     pub store: Store,
@@ -57,6 +59,14 @@ pub struct Config {
     #[serde(default)]
     pub console: Option<Console>,
     pub allowances: Allowances,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InitialIntake {
+    pub owner: String,
+    pub repo: String,
+    pub number: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]

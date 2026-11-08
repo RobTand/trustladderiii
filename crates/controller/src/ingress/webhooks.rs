@@ -77,7 +77,7 @@ pub(super) fn fetch_catch_up(
             let since = cursor
                 .map(crate::decode_stored)
                 .transpose()?
-                .unwrap_or(DateTime::UNIX_EPOCH);
+                .ok_or(Error::Invalid("GitHub catch-up cursor is not initialized"))?;
             catch_up.fetch(since, snapshot, &bootstrap)
         }))
         .unwrap_or(Err(Error::Invalid("GitHub catch-up panicked")));
@@ -114,7 +114,8 @@ impl Fetcher for CatchUp {
 
 #[cfg(all(test, not(loom)))]
 impl Webhooks {
-    fn bind_with_fetcher(store: Store, fetcher: Arc<dyn Fetcher>) -> Result<Self> {
+    fn bind_with_fetcher(mut store: Store, fetcher: Arc<dyn Fetcher>) -> Result<Self> {
+        initialize_intake(&mut store, &tests::bootstrap(), &[], Utc::now, |_, _| unreachable!())?;
         let reader = store.reader()?;
         let mut source = WebhookReceiver::bind(
             "127.0.0.1:0".parse().unwrap(),

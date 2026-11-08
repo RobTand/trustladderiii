@@ -790,7 +790,7 @@ fn pull_event(api: &Server, action: &str) -> Value {
     body
 }
 fn catch_up(settings: &tl3_config::Store, api: &Server, controller: &mut Controller) {
-    let source = CatchUp::new(api.clients()).unwrap();
+    let source = CatchUp::new(api.clients(), vec![]).unwrap();
     for _ in 0..2 {
         let inputs = source
             .pass(&mut Store::open(settings).unwrap(), &bootstrap())
@@ -1229,7 +1229,7 @@ fn queue_failure(settings: &tl3_config::Store, conflict: bool, infra: bool) {
         deliver(settings, &api, "check_run", &body);
     }
     // Catch-up and the enqueue watch see the same upstream check before either is consumed.
-    let inputs = CatchUp::new(api.clients())
+    let inputs = CatchUp::new(api.clients(), vec![])
         .unwrap()
         .pass(&mut Store::open(settings).unwrap(), &bootstrap())
         .unwrap();
@@ -1365,7 +1365,7 @@ fn person_actions(settings: &tl3_config::Store, action: &str) {
         _ => unreachable!(),
     }
     deliver(settings, &api, "pull_request", &body);
-    let inputs = CatchUp::new(api.clients())
+    let inputs = CatchUp::new(api.clients(), vec![])
         .unwrap()
         .pass(&mut Store::open(settings).unwrap(), &bootstrap())
         .unwrap();
@@ -2585,7 +2585,7 @@ fn failed_catch_up_retries_held_enqueue(settings: &tl3_config::Store) {
         Store::open(settings).unwrap(),
         bootstrap(),
         b"test-secret".to_vec(),
-        Some(CatchUp::new(api.clients()).unwrap()),
+        Some(CatchUp::new(api.clients(), vec![]).unwrap()),
     )
     .unwrap();
     let control = source.control();

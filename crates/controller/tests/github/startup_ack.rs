@@ -85,7 +85,7 @@ fn during_catch_up(settings: &tl3_config::Store) {
         receipt_store(settings),
         bootstrap(),
         b"test-secret".to_vec(),
-        Some(CatchUp::new(BTreeMap::from([(3, client(&api.uri()))])).unwrap()),
+        Some(CatchUp::new(BTreeMap::from([(3, client(&api.uri()))]), vec![]).unwrap()),
     )
     .unwrap();
     let address = source.address();
@@ -253,7 +253,7 @@ fn loop_scenarios(database: &mut support::Database) {
             Store::open(&settings).unwrap(),
             bootstrap(),
             b"test-secret".to_vec(),
-            Some(CatchUp::new(BTreeMap::from([(3, client(&api.uri()))])).unwrap()),
+            Some(CatchUp::new(BTreeMap::from([(3, client(&api.uri()))]), vec![]).unwrap()),
         )
         .unwrap();
         let address = source.address();

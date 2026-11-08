@@ -154,7 +154,7 @@ fn register_owned(
         Store::open(&config.store)?,
         bootstrap,
         secret,
-        Some(CatchUp::new(clients)?),
+        Some(CatchUp::new(clients, config.initial_intake.clone())?),
     )?;
     Ok(Registration {
         adapters,

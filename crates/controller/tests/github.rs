@@ -1039,7 +1039,7 @@ fn gap_catch_up(settings: &tl3_config::Store) {
         Store::open(settings).unwrap(),
         bootstrap(),
         b"test-secret".to_vec(),
-        Some(CatchUp::new(BTreeMap::from([(3, client(&api.uri()))])).unwrap()),
+        Some(CatchUp::new(BTreeMap::from([(3, client(&api.uri()))]), vec![]).unwrap()),
     )
     .unwrap();
     let address = source.address();
@@ -1084,7 +1084,7 @@ fn gap_catch_up(settings: &tl3_config::Store) {
             .count(),
         0
     );
-    let catch_up = CatchUp::new(BTreeMap::from([(3, client(&api.uri()))])).unwrap();
+    let catch_up = CatchUp::new(BTreeMap::from([(3, client(&api.uri()))]), vec![]).unwrap();
     catch_up.pass(&mut store, &bootstrap()).unwrap();
     drain(&mut controller);
     assert_eq!(controller.world().unwrap().nodes.len(), 1);
@@ -1958,7 +1958,7 @@ fn catch_up_preserves_evidence(settings: &tl3_config::Store) {
         state.catch_up_evidence = true;
     }
     let root = tempfile::tempdir().unwrap();
-    let catch_up = CatchUp::new(BTreeMap::from([(3, client(&api.uri()))])).unwrap();
+    let catch_up = CatchUp::new(BTreeMap::from([(3, client(&api.uri()))]), vec![]).unwrap();
     let mut store = Store::open(settings).unwrap();
     let mut older = fixture(false);
     older["issue"].as_object_mut().unwrap().remove("title");
