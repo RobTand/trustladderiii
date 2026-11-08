@@ -775,10 +775,26 @@ class Fixtures(unittest.TestCase):
         self.evidence.joinpath('checkout-bootstrap.json').write_bytes(D['encoded'](results))
 
     def test_genuine_clone_singleton_size(self):
-        saved = D['loads'](gzip.decompress((HERE / 'clone-singleton-argv.fixture.json.gz').read_bytes()))
+        historical = D['loads'](gzip.decompress((HERE / 'clone-singleton-argv.fixture.json.gz').read_bytes()))
+        self.assertEqual(historical['schema'], 'tl3.measurement.historical-singleton-input.v1')
+        retained = base64.b64decode(historical['argv_gzip_base64'], validate=True)
+        self.assertEqual(D['digest'](retained), '27e7a555e71a0597c4ac15dd2e6391224c44c5cfe9f897da91de1e146ced9dda')
+        saved = D['loads'](gzip.decompress(retained))
         self.assertEqual(D['digest'](D['encoded'](saved)), '488c6377a1c2ad68c1a872cc6a58d15c95559ef3c6ad251354e45a6a7d73829e')
         old = S['stock_size'](saved)
-        self.assertEqual(old['estimated_serialized_bytes'], 127680)
+        self.assertEqual(historical['historical_source'], 'e935630d61367d0f8438b90be70db63870fe7b0c')
+        self.assertEqual(historical['argv_sha256'], D['digest'](D['encoded'](saved)))
+        self.assertEqual(historical['client_sha256'], '89adf0520f367f7f14e3081a0bbd68ef71075fe03b2ad5ddf88c3fc237985f96')
+        self.assertEqual(historical['scanner_sha256'], 'decd9ce671299ece1b245811af459349ed9932ee9b81b2c4c7a13cf96b94f609')
+        historical_request = base64.b64decode(historical['request_json_base64'], validate=True)
+        self.assertEqual(D['digest'](historical_request), historical['request_json_sha256'])
+        request = D['loads'](historical_request)
+        self.assertEqual(request['commit_sha'], saved[saved.index('--commit') + 1])
+        self.assertEqual(request['branch'], saved[saved.index('--branch') + 1])
+        historical_size = 4 * ((len(historical_request) + 8192 + 2) // 3)
+        self.assertEqual(historical_size, 127680)
+        self.assertEqual(old['limit_bytes'], 122880)
+        self.assertGreater(historical_size, old['limit_bytes'])
         self.assertFalse(old['fits'])
         index = saved.index('-c')
         decoded = S['unpack_transport'](saved[index + 2], saved[index + 3])
@@ -795,7 +811,10 @@ class Fixtures(unittest.TestCase):
         self.assertLessEqual(size['estimated_serialized_bytes'], size['limit_bytes'] - S['BATCH_SAFETY_MARGIN'])
         index = command.index('-c')
         self.assertEqual(S['unpack_transport'](command[index + 2], command[index + 3], self.source), decoded)
-        self.evidence.joinpath('clone-singleton-size.json').write_bytes(D['encoded']({'red': old, 'green': size}))
+        historical_identity = {key: value for key, value in historical.items() if not key.endswith('_base64')}
+        historical_identity.update(request_json_bytes=len(historical_request), estimated_serialized_bytes=historical_size)
+        self.evidence.joinpath('clone-singleton-size.json').write_bytes(D['encoded'](
+            {'historical': historical_identity, 'red': old, 'green': size}))
 
     def test_same_invocation_and_hold(self):
         parent = '12345678-1234-1234-1234-123456789abc'
