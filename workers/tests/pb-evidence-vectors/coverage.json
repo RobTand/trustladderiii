@@ -58,7 +58,7 @@
     },
     "Invalid\\ summary\\ structure": {
       "sources": [
-        "pb_tests._summary"
+        "pb_tests._verified_test_summary"
       ],
       "cases": [
         "ending-summary/shape-note",
@@ -204,6 +204,14 @@
         "post-wait-consistency/selectors-option",
         "post-wait-consistency/selectors-parent",
         "post-wait-consistency/selectors-too-long"
+      ]
+    },
+    "Use\\ the\\ controller's\\ selected\\ execution\\ profile": {
+      "sources": [
+        "pb_tests.TestSettings.__post_init__"
+      ],
+      "cases": [
+        "post-wait-consistency/settings-execution-with-tools"
       ]
     },
     "duplicate\\ generator\\ output": {
@@ -520,7 +528,7 @@
     },
     "missing\\ symptom\\ run\\ receipt": {
       "sources": [
-        "pb_tests._summary"
+        "pb_tests._verified_test_summary"
       ],
       "cases": [
         "ending-summary/symptom-missing"
@@ -596,7 +604,7 @@
     },
     "symptom\\ run\\ receipt\\ changed": {
       "sources": [
-        "pb_tests._summary"
+        "pb_tests._verified_test_summary"
       ],
       "cases": [
         "ending-summary/symptom-run-index",
@@ -1072,26 +1080,6 @@
         "ending-summary/summary-bytes-above"
       ]
     },
-    "pb_tests._summary: bounded(result, limit=SUMMARY_BYTES - 2048)": {
-      "values": [
-        14336
-      ],
-      "cases": [
-        "ending-summary/action-summary-bytes-below",
-        "ending-summary/action-summary-bytes-at",
-        "ending-summary/action-summary-bytes-above"
-      ]
-    },
-    "pb_tests._summary: count < 0": {
-      "values": [
-        0
-      ],
-      "cases": [
-        "ending-summary/executed",
-        "ending-summary/totals-negative",
-        "ending-summary/totals-bool"
-      ]
-    },
     "pb_tests._summary: ending['attempt'] > 0": {
       "values": [
         0
@@ -1149,6 +1137,26 @@
         "ending-summary/log-bytes-at",
         "ending-summary/log-bytes-above",
         "ending-summary/log-size-negative"
+      ]
+    },
+    "pb_tests._verified_test_summary: bounded(result, limit=SUMMARY_BYTES - 2048)": {
+      "values": [
+        14336
+      ],
+      "cases": [
+        "ending-summary/action-summary-bytes-below",
+        "ending-summary/action-summary-bytes-at",
+        "ending-summary/action-summary-bytes-above"
+      ]
+    },
+    "pb_tests._verified_test_summary: count < 0": {
+      "values": [
+        0
+      ],
+      "cases": [
+        "ending-summary/executed",
+        "ending-summary/totals-negative",
+        "ending-summary/totals-bool"
       ]
     },
     "test_tool.bounded: default limit=SUMMARY_BYTES - 2048": {

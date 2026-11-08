@@ -230,10 +230,26 @@ pub type Feedbackitem = Validated<FeedbackitemFields, FeedbackIdentity>;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct Tests {
+#[schemars(extend("oneOf" = serde_json::json!([
+    {"required": ["tools_path"], "not": {"required": ["execution"]}},
+    {"required": ["execution"], "not": {"required": ["tools_path"]}}
+])))]
+pub struct TestsFields {
     pub image: ImageDigest,
-    #[schemars(extend("minLength" = 1))]
-    pub tools_path: AbsolutePath,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "AbsolutePath", extend("minLength" = 1))]
+    pub tools_path: Option<AbsolutePath>,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "WorkerExecution")]
+    pub execution: Option<WorkerExecution>,
     #[serde(
         default,
         deserialize_with = "present",
@@ -256,6 +272,24 @@ pub struct Tests {
     #[schemars(with = "Natural<1>")]
     pub quiet_seconds: Option<Natural<1>>,
 }
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "backend", rename_all = "snake_case", deny_unknown_fields)]
+pub enum WorkerExecution {
+    Flux { profile: AbsolutePath },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TestExecutor;
+impl Rule<TestsFields> for TestExecutor {
+    fn validate(value: &TestsFields) -> Result<(), String> {
+        if value.tools_path.is_some() == value.execution.is_some() {
+            return Err("test settings require exactly one execution backend".into());
+        }
+        Ok(())
+    }
+}
+pub type Tests = Validated<TestsFields, TestExecutor>;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

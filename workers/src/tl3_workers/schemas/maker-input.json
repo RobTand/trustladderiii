@@ -524,10 +524,54 @@
     },
     "tests": {
       "additionalProperties": false,
+      "oneOf": [
+        {
+          "not": {
+            "required": [
+              "execution"
+            ]
+          },
+          "required": [
+            "tools_path"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "tools_path"
+            ]
+          },
+          "required": [
+            "execution"
+          ]
+        }
+      ],
       "properties": {
         "cpus": {
           "minimum": 1,
           "type": "integer"
+        },
+        "execution": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "backend": {
+                  "const": "flux",
+                  "type": "string"
+                },
+                "profile": {
+                  "pattern": "^/",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "backend",
+                "profile"
+              ],
+              "type": "object"
+            }
+          ]
         },
         "image": {
           "pattern": "^(?:[\\w./:-]+@)?sha256:[0-9a-f]{64}$",
@@ -548,8 +592,7 @@
         }
       },
       "required": [
-        "image",
-        "tools_path"
+        "image"
       ],
       "type": "object"
     }

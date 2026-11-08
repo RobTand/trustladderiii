@@ -109,6 +109,7 @@ _CONTROLLER_WORKERS = [
     "test_test_p5_checker",
 ]
 _CONTROLLER_BINARIES = {
+    "test_test_run_backend_cli": [":tl3-run-backend"],
     "test_test_worker_supervisor": [":tl3-worker-supervisor"],
     "test_test_workers": [":tl3"],
     "test_test_console_commands": [":tl3d"],
@@ -156,6 +157,7 @@ _CONTROLLER_RUNTIME = {
 # Shared modules and runtime fixtures outside tests/NAME/. The per-test glob
 # includes its own module tree; these are the cross-tree reads Cargo cannot see.
 _CONTROLLER_TEST_SOURCES = {
+    "tests/run_backend_cli.rs": ["tests/python/fx_native_scratch_helper.py", "tests/python/fx_scratch_helper.py"],
     "tests/direct_merge.rs": ["tests/mergify.rs", "tests/mergify/**", "tests/support/**", "tests/fixtures/mergify/**"],
     "tests/input_resources.rs": ["tests/support/**"],
     "src/lib.rs": ["tests/worker_events_io/**", "tests/support/input_resource_world.rs", "tests/fail_fast/pb-2781.json", "tests/fixtures/dispatch_recovery_original.rs", "tests/fixtures/dispatch-recovery.proptest-regressions", "tests/fixtures/dispatch-conformance.proptest-regressions", "tests/fixtures/dispatch-conformance-regressions.json", "tests/fixtures/dispatch-restart-regressions.json"],
@@ -437,6 +439,13 @@ def _crate_test(kind, package, name, source, harness, options):
             use_libtest_harness = harness,
             aliases = aliases(normal = True, normal_dev = True),
             deps = options["deps"],
-            gate_args = (["--libtest-select=loom_"] if name == "tl3_controller_loom" else
-                         (["--gate-group=" + group] if group else [])),
+            # Shared-mount Flux fixtures run in the admitted PB check script. RBE
+            # cannot create the fixed /mnt/shared output root; select its wire tests.
+            # The two retained launch-failure lib fixtures likewise execute in PB.
+            gate_args = (["--libtest-select=cli_schema", "--libtest-select=malformed_requests", "--libtest-select=optional_reviewed", "--libtest-select=protocol_bounds"] if name == "run_backend_cli" else
+                         (["--libtest-select=loom_"] if name == "tl3_controller_loom" else
+                          (["--libtest-select=staging_namespace_survives_consumer_argument_validation"] if kind == "example" and name == "fx-stage-packet" else
+                           (["--skip=adapters::run_backend::flux::launch_failure::tests::retained_fbelmqkrh5_success_keeps_its_checks_verdict_and_evidence",
+                            "--skip=adapters::run_backend::flux::launch_failure::tests::retained_fbpzb5i8yp_without_launcher_exit_cannot_be_upgraded"] if kind == "lib" and name == "tl3_controller" else
+                            (["--gate-group=" + group] if group else []))))),
         )

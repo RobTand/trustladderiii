@@ -53,6 +53,8 @@ def run_checks(repo, *a, **kw):
     return []
 ''')
             (trusted / "execution.py").write_text('import json\nrequire_admission = lambda: None\nresult_json = json.dumps\n')
+            (trusted / "runtime.py").write_text(
+                'from contextlib import nullcontext\ncancellation_unwind = nullcontext\n')
             (staged / "request.json").write_text(json.dumps({"effect_key": "fixture", "head": head,
                 "base": head, "plan": [], "image": "fixture"}))
             env.update(GIT_DIR=str(root / "foreign/.git"), GIT_WORK_TREE=str(root / "foreign"),

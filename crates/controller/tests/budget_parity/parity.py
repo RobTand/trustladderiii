@@ -53,6 +53,10 @@ def facts_history(messages):
 
 
 def run(mode, schedules):
+    if mode == "io_migration_golden":
+        from schedule import compare
+        compare(old, [[0]])
+        return
     if mode == "shrinking_probe":
         assert all(n <= 3 for schedule in schedules for n in schedule), schedules
         return

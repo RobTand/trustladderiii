@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "trusted"))
 from tl3_harness import Check, Container, Forcing, Proof, HarnessInputError, Kind, run_checks
 from tl3_harness.execution import require_admission, result_json
 from tl3_harness.trees import git
+from tl3_harness.runtime import cancellation_unwind
 
 
 def decode(request):
@@ -41,7 +42,7 @@ def decode(request):
 require_admission()
 root = Path(__file__).resolve().parent
 request = json.loads((root / "request.json").read_text())
-with tempfile.TemporaryDirectory(prefix="tl3-controller-checks-") as directory:
+with cancellation_unwind(), tempfile.TemporaryDirectory(prefix="tl3-controller-checks-") as directory:
     repo = Path(directory) / "served"
     git(root, "clone", "--quiet", "--template=", "--", str(root / "served.bundle"), str(repo))
     git(repo, "checkout", "--quiet", "--detach", request["head"])

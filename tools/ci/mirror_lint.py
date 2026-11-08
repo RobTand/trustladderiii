@@ -15,6 +15,7 @@ import tokenize
 ROOT = Path(__file__).resolve().parents[2]
 ALLOWLIST = Path('tools/ci/mirror-allowlist.json')
 MANIFEST = Path('crates/contracts/generated/manifest.json')
+RUN_BACKEND_DRIFT_TEST = Path('crates/controller/tests/run_backend_cli.rs')
 TEST_DIRS = {'test', 'tests', 'fixture', 'fixtures', 'testdata', '__tests__'}
 DECLARATION = re.compile(
     r'\b(?:mirror\s+of\b|(?<!git )mirrors\s+(?!(?:and|or|are|the|a|an|in|for|to|from)\b)'
@@ -220,6 +221,9 @@ def source_paths(value, file, root, production):
 
 
 def generated_paths(root):
+    paths = set()
+    drift_tests = [root / RUN_BACKEND_DRIFT_TEST,
+                   root / "crates/controller/src/adapters/workers/execution/inputs.rs"]
     manifest = root / MANIFEST
     if manifest.exists():
         data = json.loads(manifest.read_text())
@@ -227,16 +231,18 @@ def generated_paths(root):
         records = data.get('files', data.get('outputs')) if isinstance(data, dict) else data
         if not isinstance(records, list):
             raise ValueError(f'{MANIFEST}: expected files/outputs list')
-        paths = set()
         for record in records:
             path = record['path'] if isinstance(record, dict) else record
             if not isinstance(path, str) or Path(path).is_absolute() or '..' in Path(path).parts:
                 raise ValueError(f'{MANIFEST}: invalid output path')
             paths.add(Path(path))
-        return paths
-    return {(drift.parent / value).resolve().relative_to(root)
-            for drift in root.glob('crates/*/tests/schema_drift.rs')
-            for _, value in rust_includes(rust_tokens(drift.read_text()))}
+    else:
+        drift_tests.extend(root.glob('crates/*/tests/schema_drift.rs'))
+    for drift in drift_tests:
+        if drift.exists():
+            paths.update((drift.parent / value).resolve().relative_to(root)
+                         for _, value in rust_includes(rust_tokens(drift.read_text())))
+    return paths
 
 
 def shingles(text, suffix):
