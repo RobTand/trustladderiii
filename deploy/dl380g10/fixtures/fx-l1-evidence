@@ -87,8 +87,11 @@ def qualify():
                     '1077eac532135570ce3610960982786e8c48bfb8', expected], cwd=ROOT, check=True)
     print(json.dumps({'expected_head': expected, 'source_sha256': sources,
                       'syntax_and_diff_checks': 'PASS'}, sort_keys=True), flush=True)
-    subprocess.run([sys.executable, '-B', '-m', 'unittest', 'discover',
-                    '-s', 'deploy/dl380g10', '-p', 'test_*.py', '-v'], cwd=ROOT, check=True)
+    # Original 62 admission fixtures + 18 OWNER-LIMITS + additive FX-L1 cases.
+    # Helper/PGUTIL execution belongs to its unchanged predecessor qualification.
+    subprocess.run([sys.executable, '-B', '-m', 'unittest', '-v', 'test_flux_deploy',
+                    'test_deploy.ReleasePublicationTests', 'test_deploy.FreshInitTests',
+                    'test_deploy.ExternalCallerTests'], cwd=ROOT / 'deploy/dl380g10', check=True)
     lint_sources = [ROOT / name for name in owned if not name.endswith('.md')]
     command = ['/home/rob/.local/bin/uv', 'tool', 'run', '--from', 'ruff==0.14.14', 'ruff',
                'check', '--isolated', '--select', 'E9,F', '--output-format=json']

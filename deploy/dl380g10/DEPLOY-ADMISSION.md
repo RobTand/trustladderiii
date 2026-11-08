@@ -79,7 +79,9 @@ source, original/effective fixture hashes, assertions and setup/runtime errors.
 Its fixture adaptations preserve each source's walltime and lock layout.
 Production baseline bytes are loaded unchanged into a temporary directory.
 
-Run this script and the affected `test_flux_deploy.py` suite only through
+`green` runs the focused original admission companions and the full current
+Flux fixture module, with syntax and baseline-compared Ruff checks. It excludes
+unchanged helper, PGUTIL and MLflow suites. Run both modes only through
 PrismaBuild or approved free remote execution. The original M1 diff adds eight
 test methods and one `coordinator` helper, despite the review's count of nine
 new tests. The evidence matrix retains every actual method and records that
