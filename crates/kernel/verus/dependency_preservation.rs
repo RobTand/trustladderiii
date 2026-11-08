@@ -139,8 +139,7 @@ pub(super) proof fn checker_frame(before: World, after: World, i: int)
     requires progress_gate_apply::accepted(before), dependency_frame(before, after, i),
         0 <= i < before.nodes@.len(),
         after.nodes@[i].credit.withheld ==> before.nodes@[i].credit.withheld
-            || (before.nodes@[i].credit.ready && matches!(before.nodes@[i].phase,
-                Phase::Ingesting | Phase::Auditing | Phase::Unplanned)),
+            || (before.nodes@[i].credit.ready && early(before.nodes@[i].phase)),
     ensures progress_gate_apply::accepted(after),
 {
     reveal(dependency_frame);
@@ -387,8 +386,7 @@ proof fn written_blocked(before: World, after: World, i: int, target: Dependency
     ensures (declared(before, i, target, status).rejected
             || declared(before, i, target, status).status != DependencyStatus::Delivered)
             ==> !before.nodes@[i].planning_started && waits(before.nodes@[i].question)
-                && matches!(before.nodes@[i].phase, Phase::Ingesting | Phase::Auditing
-                    | Phase::Unplanned | Phase::AwaitingRob | Phase::Stopping(_) | Phase::Closed(_)),
+                && blocked_phase(before.nodes@[i].phase),
 {
     let n = before.nodes@[i];
     match existing {
@@ -474,8 +472,7 @@ pub(super) proof fn fact_rules(before: World, after: World, i: int, target: Depe
         0 <= i < before.nodes@.len(), before.nodes@.len() <= u64::MAX,
     ensures rules_ok(after),
         after.nodes@[i].credit.withheld ==> before.nodes@[i].credit.withheld
-            || (before.nodes@[i].credit.ready && matches!(before.nodes@[i].phase,
-                Phase::Ingesting | Phase::Auditing | Phase::Unplanned)),
+            || (before.nodes@[i].credit.ready && early(before.nodes@[i].phase)),
 {
     reveal(fact_result);
     reveal(progress_gate_apply::accepted);
@@ -574,8 +571,7 @@ pub(super) proof fn remove_rules(before: World, after: World, i: int, kind: Prer
         0 <= i < before.nodes@.len(), before.nodes@.len() <= u64::MAX,
     ensures rules_ok(after),
         after.nodes@[i].credit.withheld ==> before.nodes@[i].credit.withheld
-            || (before.nodes@[i].credit.ready && matches!(before.nodes@[i].phase,
-                Phase::Ingesting | Phase::Auditing | Phase::Unplanned)),
+            || (before.nodes@[i].credit.ready && early(before.nodes@[i].phase)),
 {
     reveal(remove_result);
     reveal(dependency_frame);

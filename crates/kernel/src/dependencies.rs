@@ -171,6 +171,17 @@ pub(super) open spec fn dependencies_checked(world: World) -> bool {
             ==> dependency_checked(world, world.dependencies@[j])
 }
 
+/// K4a: phases before planning admission.
+pub(super) open spec fn early(p: Phase) -> bool {
+    matches!(p, Phase::Ingesting | Phase::Auditing | Phase::Unplanned)
+}
+
+/// K4a: phases in which an owner may hold a blocked declaration.
+pub(super) open spec fn blocked_phase(p: Phase) -> bool {
+    matches!(p, Phase::Ingesting | Phase::Auditing | Phase::Unplanned
+        | Phase::AwaitingRob | Phase::Stopping(_) | Phase::Closed(_))
+}
+
 /// K4a: a blocked owner's question returns only to a pre-planning or teardown step.
 pub(super) open spec fn waits(question: Option<Question>) -> bool {
     match question {
@@ -306,7 +317,7 @@ pub(super) open spec fn writes_row(w: World, i: int, target: DependencyTarget,
     status: DependencyStatus, existing: Option<usize>) -> bool {
     match existing {
         None => !w.nodes@[i].planning_started
-            && matches!(w.nodes@[i].phase, Phase::Ingesting | Phase::Auditing | Phase::Unplanned),
+            && early(w.nodes@[i].phase),
         Some(k) => {
             let previous = w.dependencies@[k as int];
             !previous.rejected && (previous.status == DependencyStatus::Pending
