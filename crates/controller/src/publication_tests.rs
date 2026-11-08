@@ -131,16 +131,13 @@ fn td_completion_checks_typed_receipts_and_retains_only_live_hydrated_watches() 
         );
 
         if cancel {
-            controller
-                .observe(
-                    "td-stop-before-acceptance",
-                    Observation::Kernel(Event::Command {
-                        node: NodeId(0),
-                        id: 1,
-                        command: tl3_kernel::Command::Stop,
-                    }),
-                )
-                .unwrap();
+            assert!(
+                tl3_store::ConsoleCommands::open(&settings)
+                    .unwrap()
+                    .submit("00000000-0000-4000-8000-000000000001", 0, &json!({"kind": "stop"}))
+                    .unwrap()
+            );
+            ingress::drain(&mut controller).unwrap();
             assert!(controller.drive_once().unwrap());
             let cancelling = controller.snapshot().unwrap();
             assert_eq!(

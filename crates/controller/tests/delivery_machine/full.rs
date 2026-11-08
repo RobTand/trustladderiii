@@ -450,8 +450,10 @@ fn compiled_shells_and_boundary_conversions_are_verbatim() {
     assert!(include_str!("current-shell.rs").contains(&current[start..end]));
     let base = include_str!("base-integration-shell.rs.txt");
     let end = base.find("    fn apply(").unwrap();
-    assert!(super::historical_completion_frame(include_str!("old-shell.rs"))
-        .contains(&super::target_shell(&base[..end])));
+    assert!(
+        super::historical_completion_frame(include_str!("old-shell.rs"))
+            .contains(&super::target_shell(&base[..end]))
+    );
     let production = include_str!("../../src/executor.rs");
     assert!(production.contains(include_str!("conversions.rs")));
 }
