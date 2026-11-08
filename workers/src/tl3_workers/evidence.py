@@ -32,9 +32,8 @@ _ROUTE_CLAUSES = {
     'execution': {
         'clauses': (
             r"run (?:any required development checks|development tests|development pytest|validation) "
-            r"(?:only )?through (?:admitted prismabuild with the published entrypoints|"
-            r"prismabuild|tl3's normal admitted prismabuild `run_tests`)",
-            r"execute the development test suite via (?:buildbuddy|prismabuild)",
+            r"(?:only )?(?:through|on) (?:(?:the )?(?:admitted )?(?:flux|test runner|run backend)|tl3's (?:normal )?admitted `run_tests`)",
+            r"execute the development test suite via (?:buildbuddy|flux)",
             r"no checks were run during this issue-only triage",
             r"no actual tests have run for this source scope analysis",
             r"free remote compute exceptions and ci ownership remain rob's policy",
