@@ -660,6 +660,7 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "special_safety": ("kernel::special_safety", 2),
             "kernel_clones": ("kernel#*::clone", 33),
             "queries_wait_clone": ("kernel::queries#Wait::clone", 1),
             "kernel_credit_added_step_budget": ("kernel#CREDIT_ADDED_STEP_BUDGET", 1),
@@ -855,7 +856,7 @@ def verus_proofs():
             "progress": ("kernel::progress", 12),
             "dependencies_empty_delivered": ("kernel::dependencies#empty_delivered", 1),
             "dependencies_delivered_definition": ("kernel::dependencies#delivered_definition", 1),
-            "scheduler": ("kernel::scheduler", 13),
+            "scheduler": ("kernel::scheduler", 14),
             "step_with_passes": ("kernel::steps#step_with_passes", 1),
             "step_checked": ("kernel::steps#step_checked", 1),
             "steps": ("kernel::steps#step", 1),

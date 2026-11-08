@@ -2273,6 +2273,9 @@ mod progress_unplanned_waiting;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/progress_unplanned_witness.rs"]
 mod progress_unplanned_witness;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/special_safety.rs"]
+mod special_safety;
 
 #[cfg(verus_keep_ghost)]
 verus! {
