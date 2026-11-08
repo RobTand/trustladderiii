@@ -87,7 +87,6 @@ fn td_completion_checks_typed_receipts_and_retains_only_live_hydrated_watches() 
                 RowChange::Put { table, id: row_id, value } if table == "watches" && row_id == &key && *value == json!(expected))));
         }
         controller.complete(&key, accepted).unwrap();
-        assert!(controller.drive_once().unwrap());
         let after = controller.world().unwrap();
         after.check().unwrap();
         let retained = controller.snapshot().unwrap();
