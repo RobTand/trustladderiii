@@ -662,6 +662,7 @@ def verus_proofs():
         groups = {
             "pool_key": ("kernel#pool_key", 1),
             "special_safety": ("kernel::special_safety", 2),
+            "transition_composition": ("kernel::transition_composition", 5),
             "kernel_clones": ("kernel#*::clone", 33),
             "queries_wait_clone": ("kernel::queries#Wait::clone", 1),
             "kernel_credit_added_step_budget": ("kernel#CREDIT_ADDED_STEP_BUDGET", 1),
@@ -685,6 +686,7 @@ def verus_proofs():
             "kernel_node_pause_move_due": ("kernel#Node::pause_move_due", 1),
             "kernel_outbox": ("kernel#OUTBOX", 1),
             "kernel_outbox_drain_into": ("kernel#Outbox::drain_into", 2),
+            "kernel_outbox_occupied": ("kernel#occupied", 1),
             "kernel_outbox_new": ("kernel#Outbox::new", 1),
             "kernel_outbox_push": ("kernel#Outbox::push", 1),
             "kernel_phase_holding": ("kernel#Phase::holding", 1),
