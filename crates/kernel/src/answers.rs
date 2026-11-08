@@ -134,7 +134,7 @@ fn clarify_node(m: &mut Node, next_question: &mut u64, i: usize, q: Question,
     *next_question += 1;
     m.question = Some(Question {
         id: next,
-        clarified: true,
+        clarified: q.clarified,
         ..q
     });
     notice(out, i, Notice::Ask { question: next });
@@ -183,7 +183,6 @@ fn retry_answer_node(m: &mut Node, i: usize, q: Question, out: &mut Outbox) -> (
     m.attempt = 1;
     m.review_restarted = false;
     m.round = 0;
-    m.replanned = false;
     continue_node(
         m,
         i,
