@@ -1,6 +1,6 @@
 {
   "crate:tl3-contracts": {
-    "max_fanout": 96,
+    "max_fanout": 103,
     "reason": "planner-contracts #730/#819: Rust-sourced wire contracts (tl3-contracts) linked by tl3-controller; schema generation adds contract sources",
     "sources": 29
   },
@@ -15,7 +15,7 @@
     "sources": 12
   },
   "crate:tl3-harness-core": {
-    "max_fanout": 106,
+    "max_fanout": 112,
     "reason": "Wave B harness decision crate for #730 (#824).",
     "sources": 21
   },
@@ -29,6 +29,7 @@
       "//crates/controller:bin_test_tl3d",
       "//crates/controller:example_test_checker-vectors",
       "//crates/controller:example_test_fx-stage-packet",
+      "//crates/controller:example_test_generate-fx-qualification",
       "//crates/controller:example_test_p5-vectors",
       "//crates/controller:example_test_pb_trial",
       "//crates/controller:example_test_tl3-deploy",
@@ -109,6 +110,7 @@
       "//crates/controller:test_test_writer_references",
       "//crates/controller:test_test_writer_trace",
       "//deploy/dl380g10:test_deploy",
+      "//deploy/dl380g10:test_flux_deploy",
       "//deploy/dl380g10:test_mlflow_deploy"
     ],
     "issue": 938,
