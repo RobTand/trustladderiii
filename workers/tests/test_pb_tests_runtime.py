@@ -26,6 +26,32 @@ def test_flux_worker_settings_do_not_require_pb_tools_or_environment(monkeypatch
     assert settings.tools_path is None
 
 
+def test_test_settings_require_the_selected_flux_execution_profile():
+    from pathlib import Path
+    from tl3_workers.pb_tests import TestSettings
+    image = 'sha256:' + '1' * 64
+    execution = {'backend': 'flux', 'profile': '/fixture/attempt/execution.json'}
+    with pytest.raises(TypeError):
+        TestSettings(image, tools_path=Path('/fixture/prismabuild/tools'))
+    with pytest.raises(ValueError, match='execution profile'):
+        TestSettings(image)
+    for invalid in ({'backend': 'flux', 'profile': 'relative.json'}, {'backend': 'other', 'profile': '/p.json'},
+                    {**execution, 'tools_path': '/fixture/prismabuild/tools'}):
+        with pytest.raises(ValueError, match='execution profile'):
+            TestSettings(image, execution=invalid)
+    assert TestSettings(image, execution=dict(execution)).execution == execution
+
+
+def test_worker_facts_and_test_transport_carry_no_prismabuild_fallback():
+    from tl3_workers import facts, pb_tests
+    capture = facts.Facts({'model': {'name': 'fixture'}})
+    assert not hasattr(capture, 'prismabuild')
+    assert 'prismabuild' not in capture.row('succeeded')
+    assert not hasattr(facts, 'record_prismabuild_fallback')
+    assert [name for name in ('_machine_record_supported', '_json_command', '_stdout_json_command',
+                              '_summary', '_failure_receipt') if hasattr(pb_tests, name)] == []
+
+
 def test_flux_activation_transports_only_the_selected_profile_and_image(monkeypatch):
     from tl3_workers import flux_execution
     from tl3_workers.pb_tests import TestSettings

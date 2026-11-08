@@ -270,7 +270,7 @@ def generated_scope_request(doc):
     doc["inputs"]["issue"]["body"] = (
         "Do not hand-edit generated BUILD files; configured regeneration is permitted.")
     doc["inputs"]["tool_capabilities"] = [{
-        "tool": "run_generator", "executor": "prismabuild_generator", "runner_features": [],
+        "tool": "run_generator", "executor": "flux_generator", "runner_features": [],
         "artifacts": [], "methods": [], "protected_files": []}]
     return doc
 
@@ -362,6 +362,25 @@ def test_generated_scope_source_and_capability_controls(request_doc, monkeypatch
     assert audit["verdict"] == ("disagree" if conflict else "agree")
     if conflict:
         assert any(source in objection and "issue.body" in objection for objection in audit["objections"])
+
+
+def test_generated_scope_follows_the_admitted_run_generator_tool_not_its_executor_name():
+    from tl3_workers.generated_scope import generation_scope_conflicts
+    issue = {"title": "Regenerate outputs", "body": "Never regenerate generated files."}
+    brief = {"kind": "brief", "brief": "Change the generator input.", "goals": []}
+
+    def conflicts(*capabilities):
+        return generation_scope_conflicts({"issue": issue, "tool_capabilities": list(capabilities)}, brief)
+
+    def capability(tool, executor):
+        return {"tool": tool, "executor": executor, "runner_features": [], "artifacts": [],
+                "methods": [], "protected_files": []}
+
+    expected = [("issue.body", "Never regenerate generated files.")]
+    assert conflicts(capability("run_generator", "flux_generator")) == expected
+    assert conflicts(capability("run_generator", "any_backend_generator")) == expected
+    assert conflicts(capability("run_tests", "flux_pytest")) == []
+    assert conflicts() == []
 
 
 def test_tool_call_in_a_repair_turn_is_never_executed(maker_request, monkeypatch):
