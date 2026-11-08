@@ -123,31 +123,50 @@ fn historical_completion_frame(source: &str) -> String {
     let mut frame = source.to_owned();
     for (anchor, expected) in [
         ("        if completion.ack == Ack::DeliveryAccepted\n", 2),
-        ("        if completion.ack == Ack::Confirmed\n            && effect.state != EffectState::Cancelling", 1),
+        (
+            "        if completion.ack == Ack::Confirmed\n            && effect.state != EffectState::Cancelling",
+            1,
+        ),
     ] {
         let mut removed = 0;
         while let Some(start) = frame.find(anchor) {
             let mut parentheses = 0;
             let mut braces = 0;
             let mut body = false;
-            let end = frame[start..].char_indices().find_map(|(offset, ch)| {
-                match ch {
-                    '(' => parentheses += 1,
-                    ')' => parentheses -= 1,
-                    '{' if body || parentheses == 0 => { body = true; braces += 1; }
-                    '}' if body => braces -= 1,
-                    _ => {}
-                }
-                (body && braces == 0).then_some(start + offset + ch.len_utf8())
-            }).expect("complete acceptance block in production");
+            let end = frame[start..]
+                .char_indices()
+                .find_map(|(offset, ch)| {
+                    match ch {
+                        '(' => parentheses += 1,
+                        ')' => parentheses -= 1,
+                        '{' if body || parentheses == 0 => {
+                            body = true;
+                            braces += 1;
+                        }
+                        '}' if body => braces -= 1,
+                        _ => {}
+                    }
+                    (body && braces == 0).then_some(start + offset + ch.len_utf8())
+                })
+                .expect("complete acceptance block in production");
             assert_eq!(&frame[end..end + 1], "\n");
             frame.replace_range(start..end + 1, "");
             removed += 1;
         }
-        assert_eq!(removed, expected, "each target block has a real-interface counterpart");
+        assert_eq!(
+            removed, expected,
+            "each target block has a real-interface counterpart"
+        );
     }
-    frame.replace("        // Acceptance retains the dispatch-hydrated PR binding for future wakes.\n", "")
-        .replace("        // A cancelling receipt never confirms, so it cannot recreate a watch.\n", "")
+    frame
+        .replace(
+            "        // Acceptance retains the dispatch-hydrated PR binding for future wakes.\n",
+            "",
+        )
+        .replace(
+            "        // A cancelling receipt never confirms, so it cannot recreate a watch.\n",
+            "",
+        )
 }
 
 /// CC-E extraction: the complete original method is retained verbatim. The only
