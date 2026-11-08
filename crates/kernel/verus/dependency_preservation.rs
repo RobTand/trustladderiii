@@ -1023,6 +1023,7 @@ pub(super) fn delivered_admits(mut world: World, i: usize) -> (result: (World, b
                 == (Credit { withheld: false, ..world.nodes@[i as int].credit }),
         !result.1 ==> result.0.nodes@ == world.nodes@ && result.0.next_ticket == world.next_ticket,
         result.0.dependencies@ == world.dependencies@,
+        result.0.nodes@.len() == world.nodes@.len(),
 {
     let ghost before = world;
     proof {
@@ -1099,6 +1100,7 @@ fn registration_covers() -> (result: (World, World))
         assert(!writes_row(s, 0, target, DependencyStatus::Pending, None));
     }
     let (refused, _) = registration(started, 0, target, DependencyStatus::Pending);
+    proof { reveal(dependency_frame); }
     (accepted, refused)
 }
 
@@ -1227,6 +1229,7 @@ fn removal_covers() -> (result: (World, World))
     let (world, _) = registration(world, 0, second, DependencyStatus::Pending);
     let ghost w1 = world;
     proof {
+        reveal(dependency_frame);
         assert(found(w1, 0, second, Some(1usize)));
         assert(writes_row(w1, 0, second, DependencyStatus::Abandoned, Some(1usize)));
     }
