@@ -37,20 +37,30 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         final(w).nodes@[i as int].proposed == old(w).nodes@[i as int].proposed,
         final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
         (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase),
+        handler_safety::command_step(old(w).nodes@[i as int], final(w).nodes@[i as int]),
 ] proof [reveal(distance);] {
-    let Some(q) = w.nodes[i].question else { return };
+    kernel_snapshot! { before_answer = w.nodes@[i as int] }
+    let Some(q) = w.nodes[i].question else {
+        kernel_proof! { handler_safety::field_step(before_answer@, w.nodes@[i as int]); }
+        return;
+    };
     if q.id != id {
+        kernel_proof! { handler_safety::field_step(before_answer@, w.nodes@[i as int]); }
         return; // an answer to a question that is no longer open
     }
     match w.nodes[i].phase {
         Phase::Stopping(_) => match answer {
-            Answer::Retry => w.nodes[i].question = None,
+            Answer::Retry => {
+                w.nodes[i].question = None;
+                kernel_proof! { handler_safety::field_step(before_answer@, w.nodes@[i as int]); }
+            }
             Answer::MarkHandled => {
                 let m = &mut w.nodes[i];
                 m.question = None;
                 mark_handled(m);
+                kernel_proof! { handler_safety::field_step(before_answer@, w.nodes@[i as int]); }
             }
-            _ => {}
+            _ => { kernel_proof! { handler_safety::field_step(before_answer@, w.nodes@[i as int]); } }
         },
         Phase::AwaitingRob => {
             if answer == Answer::Unclear {
@@ -64,14 +74,20 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
                         ..q
                     });
                     notice(out, i, Notice::Ask { question: next });
+                    kernel_proof! { handler_safety::clarify_step(before_answer@, q, next); }
                 }
+                kernel_proof! { if q.clarified { handler_safety::field_step(before_answer@, w.nodes@[i as int]); } }
                 return;
             }
             if !allowed(q.kind, answer) {
+                kernel_proof! { handler_safety::field_step(before_answer@, w.nodes@[i as int]); }
                 return;
             }
             match answer {
-                Answer::Continue => go_on(w, i, q, 0, out),
+                Answer::Continue => {
+                    go_on(w, i, q, 0, out);
+                    kernel_proof! { handler_safety::continue_step(before_answer@, w.nodes@[i as int]); }
+                }
                 Answer::TryAgain => {
                     let m = &mut w.nodes[i];
                     m.attempt = 1;
@@ -88,9 +104,11 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
                         0,
                         out,
                     );
+                    kernel_proof! { handler_safety::continue_step(before_answer@, w.nodes@[i as int]); }
                 }
                 Answer::AddCredit(k) => {
                     go_on(w, i, q, k, out);
+                    kernel_proof! { handler_safety::continue_step(before_answer@, w.nodes@[i as int]); }
                 }
                 Answer::ChangeRequest => {
                     kernel_snapshot! { before_replace = w.nodes@[i as int] }
@@ -98,6 +116,7 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
                     kernel_proof! {
                         assert(w.nodes@[i as int].proposed == before_replace@.proposed && w.nodes@[i as int].adopted == before_replace@.adopted)
                             by { reveal(retirement::stopped); }
+                        handler_safety::stop_step(before_replace@, Outcome::Replaced);
                     }
                 }
                 Answer::Stop => {
@@ -106,12 +125,13 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
                     kernel_proof! {
                         assert(w.nodes@[i as int].proposed == before_stop@.proposed && w.nodes@[i as int].adopted == before_stop@.adopted)
                             by { reveal(retirement::stopped); }
+                        handler_safety::stop_step(before_stop@, Outcome::Stopped);
                     }
                 }
-                _ => {}
+                _ => { kernel_proof! { handler_safety::field_step(before_answer@, w.nodes@[i as int]); } }
             }
         }
-        _ => {}
+        _ => { kernel_proof! { handler_safety::field_step(before_answer@, w.nodes@[i as int]); } }
     }
 }
 }
