@@ -682,6 +682,9 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "dependencies_remove_noop": ("kernel::dependencies#remove_noop", 1),
+            "dependencies_remove_bridge": ("kernel::dependencies#remove_bridge", 1),
+            "dependencies_field_frame": ("kernel::dependencies#field_frame", 1),
             "checking_accepted_parts": ("kernel::checking#accepted_parts", 1),
             "checking_accepted_frame": ("kernel::checking#accepted_frame", 1),
             "checking_accepted_definition": ("kernel::checking#accepted_definition", 1),
