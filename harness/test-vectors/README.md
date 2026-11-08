@@ -87,7 +87,7 @@ the named property instead of comparing its output with Python's `expected`:
 
 - `serialized_size_le_envelope_for_any_group_count`: the output fits the input
   `limit` for any group count. The 48-check grouped base fixture follows
-  `pb_tests.py`'s aggregate shape with real `Summary` outputs and PB receipts.
+  `tests_tool.py`'s aggregate shape with real `Summary` outputs and PB-era receipts.
   Python's fallback retains enough receipts to exceed the 16 KiB envelope.
   The fixture measures 66,155 bytes before bounding and 19,055 bytes afterward.
 - `red_survives_whenever_any_entry_survives_with_proof_and_totals_kept`: keep

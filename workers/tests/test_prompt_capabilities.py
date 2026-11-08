@@ -11,13 +11,13 @@ def prompt_text(role):
 
 # #648 condensed ingest and audit; the planner keeps its wording until it is condensed.
 CAPABILITIES = {
-    "planner": ("the maker has TL3 worktree file tools, run_tests through PrismaBuild and read-only recall",
+    "planner": ("the maker has TL3 worktree file tools, run_tests on the admitted test runner and read-only recall",
                 "the reviewer has read-only worktree tools, the supplied diff and check verdicts",
                 "Do not require another repo, a fetched page or a shell"),
-    "ingest": ("The maker has worktree file tools, run_tests through PrismaBuild and read-only recall",
+    "ingest": ("The maker has worktree file tools, run_tests on the admitted test runner and read-only recall",
                "The reviewer has read-only worktree tools, the diff and the check verdicts",
                "Never require another repository, a fetched page or a shell"),
-    "audit": ("The maker has worktree file tools, run_tests through PrismaBuild and read-only recall",
+    "audit": ("The maker has worktree file tools, run_tests on the admitted test runner and read-only recall",
               "The reviewer has read-only worktree tools, the diff and the check verdicts",
               "The brief must not require another repository, a fetched page or a shell"),
 }

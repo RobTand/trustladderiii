@@ -74,7 +74,7 @@ def teardown_error(scenario):
 
 
 def grouped_base(count, *, errors=0):
-    """pb_tests.run_tests' grouped base shape, built from real Summary outputs."""
+    """tests_tool.run_tests' grouped base shape, built from real Summary outputs."""
     groups = []
     for index in range(count):
         summary = test_tool.Summary()

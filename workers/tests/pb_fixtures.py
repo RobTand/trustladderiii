@@ -1,104 +1,205 @@
-"""PrismaBuild CLI and checkout fixtures shared by worker contract tests."""
+"""Execution backend and checkout fixtures shared by worker contract tests."""
+import hashlib
 import json
+from pathlib import Path
 import subprocess
 
 import pytest
 
-from tl3_workers.pb_tests import TestSettings
+from tl3_workers.tests_tool import TestSettings
 from tl3_workers.tools import Worktree, build_tools
 
 
 IMAGE = "sha256:" + "1" * 64
-KEY = "a" * 64
+KEY = "worker:" + "a" * 64
+FLUX_EXECUTION = {"backend": "flux", "profile": "/fixture/attempt/execution.json"}
+
+
+def flux_settings(**resources):
+    return TestSettings(IMAGE, execution=dict(FLUX_EXECUTION), **resources)
+
+
+JOB_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+
+def flux_job_id(number):
+    """A canonical Flux f58 job ID, as run_backend.rs canonical_job_id accepts."""
+    digits = ""
+    while True:
+        number, digit = divmod(number, 58)
+        digits = JOB_ALPHABET[digit] + digits
+        if not number:
+            return "f" + digits
+
+
+def run_binding(key):
+    """The RunBinding the Flux backend attaches for a worker run (run_backend.rs RunBinding).
+
+    Fields follow BackendId and SubmissionIntent: Flux tag, instance generation,
+    local:/// URI, canonical f58 job ID, worker-tools owner, the worker-<hex>
+    correlation for this wait reference, the request digest and the flux-out directory.
+    """
+    correlation = key.replace("worker:", "worker-")
+    instance, uri = "tl3-fixture", "local:///run/flux/fixture"
+    return {"id": {"backend": "flux", "instance": instance, "uri": uri,
+                   "job": flux_job_id(int(key.removeprefix("worker:")[:12], 16) + 1)},
+            "intent": {"backend": "flux", "instance": instance, "uri": uri, "owner": "worker-tools",
+                       "correlation": correlation,
+                       "request_digest": hashlib.sha256(correlation.encode()).hexdigest(),
+                       "output_dir": "/mnt/shared/flux-out/tl3/" + correlation}}
+
+
+FAKES = {}
+
+
+class FluxFake:
+    """Replace only the Rust worker-execution control and shared CLI wire.
+
+    The worker's real flux_execution.execute, payload blob checks and receipt
+    mapping run. Each new submission runs ``job(root, document)`` once on its
+    staged input root, as the admitted job would, and returns ``(kind, document,
+    symptom_runs)``. Rust releases a payload only for a completed report, so a
+    non-passed ending refuses the payload like the shared CLI's error frame.
+    """
+
+    def __init__(self, state, job):
+        self.state, self.job = Path(state), job
+        self.prepared, self.plans, self.roots, self.payloads = [], {}, {}, {}
+        self.submitted, self.attached, self.resumed = [], [], []
+        self.ending = "passed"
+        self.observation = None
+        self.on_payload = None
+
+    def install(self, monkeypatch):
+        from tl3_workers import flux_execution
+        monkeypatch.setattr(flux_execution, "control", self.control)
+        monkeypatch.setattr(flux_execution, "_command", self.command)
+        monkeypatch.setitem(FAKES, str(self.state), self)
+        return self
+
+    def control(self, document):
+        op = document["op"]
+        if op == "activation":
+            return {}
+        if op == "allocate":
+            root = self.state / f"flux-input-{len(self.roots)}"
+            root.mkdir(parents=True)
+            self.roots[document["call"]] = root
+            return {"root": str(root)}
+        if op == "prepare":
+            key = "worker:" + ("a" * 64 if not self.prepared else f"{len(self.prepared):064x}")
+            self.prepared.append({"key": key, "root": self.roots[document["call"]], "document": document})
+            self.plans[key] = {"key": key, "cli": "fixture-flux", "config": "fixture",
+                               "bounds": {"payload_bytes": 32 * 1048576, "cli_envelope_bytes": 65536},
+                               "submit": {"op": "submit", "key": key}, "attach": {"op": "attach", "key": key},
+                               "owner": {"key": key}}
+            return self.plans[key]
+        if op == "resume":
+            self.resumed.append(document["key"])
+            if document["key"] not in self.plans:
+                raise ValueError("fixture Flux refused an unknown retained binding")
+            return self.plans[document["key"]]
+        raise AssertionError(op)
+
+    def _blob(self, document):
+        raw = json.dumps(document).encode()
+        path = self.state / f"flux-blob-{len(list(self.state.glob('flux-blob-*')))}.json"
+        path.write_bytes(raw)
+        return {"path": str(path), "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+
+    def command(self, plan, command):
+        key, op = plan["key"], command["op"]
+        if op == "submit":
+            self.submitted.append(key)
+            return {}
+        if op == "attach":
+            self.attached.append(key)
+            if self.observation is not None:
+                return {"observation": self.observation(key)}
+            return {"observation": {"kind": "terminal", "binding": run_binding(key),
+                                    "terminal": {"ending": self.ending, "reason": "exited",
+                                                 "receipt": {"sha256": "b" * 64}}}}
+        if op == "worker_payload":
+            if command["terminal"]["ending"] != "passed":
+                raise ValueError("Shared execution retained an unknown or refused outcome")
+            if key not in self.payloads:
+                [prepared] = [item for item in self.prepared if item["key"] == key]
+                kind, document, symptoms = self.job(prepared["root"], prepared["document"])
+                if kind == "generator":
+                    payload = {"kind": kind, "artifact": self._blob(document)}
+                else:
+                    payload = {"kind": kind, "summary": self._blob(document),
+                               "symptom_runs": [self._blob(run) for run in symptoms]}
+                self.payloads[key] = payload
+                if self.on_payload is not None:
+                    self.on_payload(payload)
+            return {"payload": self.payloads[key]}
+        raise AssertionError(op)
+
+
+def canned_tests_job(state):
+    """Check the staged input like the admitted action, then return the canned summary."""
+    state = Path(state)
+
+    def job(root, document):
+        root = Path(root)
+        assert (root / "trusted/tl3_harness/runner.py").is_file()
+        assert (root / "action.py").is_file()
+        assert not (root / "checkout/.git").exists()
+        (state / "submitted.json").write_text(json.dumps(document))
+        (state / "tree.txt").write_text(subprocess.run(
+            ["git", "write-tree", "--prefix=checkout/"], cwd=root,
+            capture_output=True, text=True, check=True).stdout.strip())
+        return "tests", json.loads((state / "response.json").read_text()), []
+    return job
+
+
+def action_payload(stdout):
+    """Read the staged action's summary and symptom records, as the Rust worker protocol does."""
+    from tl3_harness.test_tool import PREFIX
+    summaries = [json.loads(line[len(PREFIX):]) for line in stdout.splitlines() if line.startswith(PREFIX)]
+    symptoms = [json.loads(line.removeprefix("TL3_SYMPTOM_RUN ")) for line in stdout.splitlines()
+                if line.startswith("TL3_SYMPTOM_RUN ")]
+    assert len(summaries) == 1, stdout[-2000:]
+    return "tests", summaries[0], symptoms
+
+
+def generator_job(root, document):
+    from tl3_harness import generator
+    contract = json.loads((Path(root) / "generator.json").read_text())
+    return "generator", generator.run(Path(root) / "checkout", generator.Container(document["image"]),
+                                      **contract), []
 
 
 @pytest.fixture(autouse=True)
-def supported_fake_runtime(monkeypatch):
-    """Avoid per-fixture probes. Real probes run in test_pb_machine_records."""
-    from tl3_workers import pb_tests
-    monkeypatch.setattr(pb_tests, "_machine_record_supported", lambda runtime: True)
-
-
-def machine_cli(source):
-    """Adapt receipt-producing fakes to PB's private descriptor protocol."""
-    return '''import builtins
-import fcntl
-import json
-import os
-import sys
-if sys.argv[1:] == ["--machine-record-capability"]:
-    print('{"schema":"prismabuild.machine_record_capability.v1","machine_record_fd":1}')
-    raise SystemExit(0)
-if "--machine-record-fd" in sys.argv:
-    index = sys.argv.index("--machine-record-fd")
-    record_fd = int(sys.argv[index + 1])
-    del sys.argv[index:index + 2]
-    fcntl.fcntl(record_fd, fcntl.F_SETFD, fcntl.FD_CLOEXEC)
-    public_print = builtins.print
-    def emit_record(document, *args, **kwargs):
-        os.write(record_fd, (document + "\\n").encode())
-        public_print(document, *args, **kwargs)
-    builtins.print = emit_record
-''' + source
+def supported_fake_runtime(tmp_path, monkeypatch):
+    """The admitted Flux backend, replaced only at its control and CLI wire."""
+    return FluxFake(tmp_path / "tools", canned_tests_job(tmp_path / "tools")).install(monkeypatch)
 
 
 @pytest.fixture
-def submission(tmp_path):
+def submission(tmp_path, supported_fake_runtime):
     root = tmp_path / "worktree"
     root.mkdir()
     (root / "uncommitted.py").write_bytes(b"current dirty bytes\x00\xff")
     (root / ".gitignore").write_text("uncommitted.py\n")
-    scripts = tmp_path / "tools"
-    scripts.mkdir()
-    (scripts / "pbrun.py").write_text('''
-import json
-from pathlib import Path
-import sys
-here = Path(__file__).parent
-args = sys.argv[1:]
-root = Path(args[args.index("--cwd") + 1])
-assert (root / "checkout/uncommitted.py").read_bytes() == b"current dirty bytes\\x00\\xff"
-assert (root / "trusted/tl3_harness/runner.py").is_file()
-assert (root / "action.py").is_file()
-assert not (root / "checkout/.git").exists()
-(here / "submitted.json").write_text(json.dumps(args))
-import subprocess
-(here / "tree.txt").write_text(subprocess.run(["git", "write-tree", "--prefix=checkout/"], cwd=root,
-                                              capture_output=True, text=True, check=True).stdout.strip())
-print(json.dumps({"schema": "prismabuild.submission.v1", "action_key": "a" * 64}))
-''')
-    (scripts / "pbwait.py").write_text('''
-import hashlib
-import json
-from pathlib import Path
-import sys
-here = Path(__file__).parent
-(here / "waited.json").write_text(json.dumps(sys.argv[1:]))
-result = json.loads((here / "response.json").read_text())
-log = here / "action.log"
-raw = ("TL3_TEST_SUMMARY " + json.dumps(result) + "\\n").encode()
-log.write_bytes(raw)
-ending = {"action_key": "a" * 64, "status": "executed", "succeeded": True, "exit_code": 0,
-          "result": {"verified": True, "receipt_sha256": "b" * 64,
-                     "stdout": {"path": str(log), "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}}}
-if (here / "override.json").exists():
-    ending.update(json.loads((here / "override.json").read_text()))
-print(json.dumps({"schema": "prismabuild.endings.v1", "complete": True, "endings": [ending]}))
-''')
-    for name in ("pbrun.py", "pbwait.py"):
-        script = scripts / name
-        script.write_text(machine_cli(script.read_text()))
-    return root, scripts
+    state = tmp_path / "tools"
+    state.mkdir(exist_ok=True)
+    job = canned_tests_job(state)
+
+    def checked(staged, document):
+        assert (Path(staged) / "checkout/uncommitted.py").read_bytes() == b"current dirty bytes\x00\xff"
+        return job(staged, document)
+    supported_fake_runtime.job = checked
+    return root, state
 
 
-def call(submission, response, tests=None, override=None):
-    root, scripts = submission
-    (scripts / "response.json").write_text(json.dumps(response))
-    if override is not None:
-        (scripts / "override.json").write_text(json.dumps(override))
+def call(submission, response, tests=None):
+    root, state = submission
+    (state / "response.json").write_text(json.dumps(response))
     with Worktree(root) as tree:
-        tree.test_settings = TestSettings(IMAGE, scripts)
-        tool = build_tools(tree, {"run_tests": "Run worktree tests through PrismaBuild."})[0]
+        tree.test_settings = flux_settings()
+        tool = build_tools(tree, {"run_tests": "Run worktree tests on the admitted test runner."})[0]
         assert set(tool.args) == {"tests", "base", "repeat", "parallel", "priority"}
         return tool.invoke({} if tests is None else {"tests": tests})
 
@@ -138,10 +239,10 @@ Path("tests/BUILD.bazel").write_text(output)
 
 
 def configured_generator(root, tmp_path, *, protected=(), files=None):
-    from tl3_workers.pb_generators import make_generator_tool
+    from tl3_workers.generators import make_generator_tool
     tree = Worktree(root)
     tree.test_checkout = root
-    tree.test_settings = TestSettings(IMAGE, tmp_path / "tools")
+    tree.test_settings = flux_settings()
     tree.generated_files = ["**/BUILD.bazel"]
     tree.generator = "python3 generate.py"
     tree.protected_paths = protected

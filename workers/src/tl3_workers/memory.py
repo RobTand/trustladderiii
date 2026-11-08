@@ -99,7 +99,7 @@ class Summary:
                 result = result if isinstance(result, dict) else {}
                 activity["tests"].append(bounded({
                     "selectors": args.get("tests"), "status": result.get("status", "tool_error" if error else "unknown"),
-                    "action_key": result.get("action_key"), "totals": result.get("totals"),
+                    "wait_reference": result.get("wait_reference"), "totals": result.get("totals"),
                     "tests": [{"test": item.get("test"), "outcome": item.get("outcome")}
                               for item in result.get("tests", [])[:16]],
                 }))
