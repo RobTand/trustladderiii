@@ -134,7 +134,11 @@ fn td_completion_checks_typed_receipts_and_retains_only_live_hydrated_watches() 
             assert!(
                 tl3_store::ConsoleCommands::open(&settings)
                     .unwrap()
-                    .submit("00000000-0000-4000-8000-000000000001", 0, &json!({"kind": "stop"}))
+                    .submit(
+                        "00000000-0000-4000-8000-000000000001",
+                        0,
+                        &json!({"kind": "stop"})
+                    )
                     .unwrap()
             );
             ingress::drain(&mut controller).unwrap();

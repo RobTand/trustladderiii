@@ -1824,8 +1824,9 @@ impl Controller {
             to: state,
         });
         // Acceptance retains the dispatch-hydrated PR binding for future wakes.
-        // A cancelling receipt never confirms, so it cannot recreate a watch.
+        // A cancelling receipt is terminal bookkeeping, never a new acceptance.
         if completion.ack == Ack::DeliveryAccepted
+            && effect.state != EffectState::Cancelling
             && state == EffectState::Confirmed
             && snapshot
                 .rows

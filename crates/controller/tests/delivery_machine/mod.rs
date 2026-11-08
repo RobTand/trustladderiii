@@ -164,7 +164,7 @@ fn historical_completion_frame(source: &str) -> String {
             "",
         )
         .replace(
-            "        // A cancelling receipt never confirms, so it cannot recreate a watch.\n",
+            "        // A cancelling receipt is terminal bookkeeping, never a new acceptance.\n",
             "",
         )
 }
