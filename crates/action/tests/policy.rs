@@ -529,7 +529,7 @@ fn azure_sas_rejects_empty_userinfo_but_keeps_at_signs_outside_authority() {
 
 #[test]
 fn trace_clean_and_live_preserve_cleaned_json_text_and_its_measurement() {
-    let input = r#"{"z": 18446744073709551616, "a": 1E5, "m": [1.00, -0]}"#;
+    let input = r#"{"z": 18446744073709551616, "a": 1E5, "m": [1.00, -0, 1E999]}"#;
     let shaped = command(json!({"op":"shape","input_json":input}));
     let shaped = shaped["ok"]["result"]["value"].clone();
     let cleaned = command(json!({"op":"clean","shaped":shaped.clone(),"limit":4096}));
