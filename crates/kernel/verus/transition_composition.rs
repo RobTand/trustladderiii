@@ -98,7 +98,6 @@ pub(super) proof fn occupied_concat(a: Seq<Option<Out>>, b: Seq<Option<Out>>)
 /// premise each caller proves from the actual writes (new, push, I-D2).
 pub(super) proof fn drain_is_emitted(fresh: Outbox, o: Outbox)
     requires empty_outbox(fresh), o.items@.len() == OUTBOX, o.len <= OUTBOX,
-        forall|k: int| o.len <= k < OUTBOX ==> o.items@[k].is_none(),
     ensures fresh.len == 0,
         occupied(o.items@, OUTBOX as nat)
             == occupied(transition_safety::emitted(fresh, o), o.len as nat),
