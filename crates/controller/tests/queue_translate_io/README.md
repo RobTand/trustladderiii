@@ -1,5 +1,8 @@
 S-once rebases the Queue reference to f5b0ba2fb16a686232c08fe5cee907f1d43c5258.
-The reference arm is SHA-256 pinned. The current arm is checked against lib.rs.
+The reference arm is SHA-256 pinned. R2 removed the comparison of the moved
+current arm against lib.rs. This suite now compares historical arms until
+ctrl-core S7a deletes it. Production feedback is covered by the controller
+interface tests in adapters::workers::feedback_tests.
 The reference compiles that base's controller-core translate source under a
 local crate alias, also SHA-256 pinned. The current body calls the production
 core. This keeps the old/new dispatch signatures independent. Refresh both
@@ -33,6 +36,5 @@ cases cover empty/nonempty CI checks, tests, permissions, queue conditions and
 plan entries; app IDs, changed paths, plans and previous SHA presence/absence;
 malformed bindings/incidents/plans, invalid SHAs and intern errors. Helper copies
 are compared to both the pinned old blobs and current production source. The
-only changed production shell body, Queue translation, is compiled separately
-on each side; new pure decisions are exercised only by the current body and
-verified directly in controller-core. No changed function is a shared shim.
+historical Queue translation body is compiled separately on each side; the
+current copy exercises pure decisions verified in controller-core. No changed function is a shared shim.

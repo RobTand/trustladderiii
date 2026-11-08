@@ -109,8 +109,8 @@ the audit's objections. Missing materials block dispatch.
 Maker materials use a `maker` object in that same per-node record. It contains
 the node's `brief`, `goals` with stable string IDs, `plan.checks`, and any
 accumulated `feedback`. A fix round requires feedback. The controller records
-failed checks, review requests and can't-meet reports in `maker_findings` in the
-same transaction as the kernel reply. The supervisor adds these to supplied
+failed checks, review requests and can't-meet reports in the canonical `feedback`
+document's `maker` array, in the same transaction as the kernel reply. The supervisor adds these to supplied
 findings on every subsequent attempt.
 The maker sees a bounded view of that history (#316). A finding that a later review or
 check superseded is sent as a one-line record: kind, id, title and `resolved_round`, the
@@ -119,8 +119,8 @@ it. The latest review, the reviewed head's findings and an unsuperseded check fa
 their full text. `current_review_findings` lists ids only. The store keeps every finding,
 and the reviewer reads the full history.
 
-Supersession is positional, by the append order of `maker_findings` (`lib.rs` only
-pushes to it):
+Supersession is positional, by the append order of `feedback.maker`.
+`feedback.rs` owns those appends:
 
 - A newer check failure collapses the older ones.
 - A newer review collapses the findings of older reviews. That is safe because the
@@ -214,7 +214,7 @@ The merged PrismaBuild checks observation supplies changed paths and up to 20
 failing test IDs with messages capped at 1,000 characters each. The trusted
 harness retains pytest assertion messages; older reports without messages still
 parse and receive an explicit fallback. The controller records paths outside the
-node's footprint and failed tests in `maker_findings`. Missing goal materials
+node's footprint and failed tests in `feedback.maker`. Missing goal materials
 retain unbound findings with an empty goal list and a log entry. Invalid goal IDs
 return an error. CI feedback keeps up to 20 checks, with 1,000-character summaries,
 4,096-character links and a 16,000-character finding report.
@@ -872,10 +872,9 @@ be extended in config, but the slice-one defaults cannot be removed.
 `plans` holds the latest schema-valid planner reply, accepted or rejected.
 Malformed output fails the run and does not replace it. The controller does not
 write unused `plan_reports` or `reviews` documents. Review blockers are retained
-in `maker_findings`; accepted review visits are retained in `reviewer_session`.
-`findings` includes rejected-plan reasons and reports for the next planner run.
-Callers that record failed checks or review findings append them to that same
-text-list document before requesting a re-plan.
+in `feedback.maker`; accepted review visits are retained in `reviewer_session`.
+`feedback.planner` includes rejected-plan reasons and reports for the next planner
+run. On re-plan, the feedback module copies the maker reports into that text list.
 
 Every `Ask` notice atomically stores `question_context`, keyed by question ID,
 and carries it as `Delivery.question_context`. `Store::question_context(id)` reads

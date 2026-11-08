@@ -5,14 +5,14 @@
     "sources": 29
   },
   "crate:tl3-controller-core": {
-    "max_fanout": 97,
+    "max_fanout": 96,
     "reason": "ctrl-core #730: new decision-only crate tl3-controller-core (no adapter dependencies) linked by tl3-controller",
-    "sources": 35
+    "sources": 32
   },
   "crate:tl3-delivery": {
     "reason": "controller-core #730: dependency-free effect-delivery decisions and protocol mirror linked by tl3-controller",
     "sources": 12,
-    "max_fanout": 103
+    "max_fanout": 102
   },
   "crate:tl3-harness-core": {
     "max_fanout": 224,

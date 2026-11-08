@@ -437,7 +437,8 @@ pub(super) fn reproducing_fix(settings: &tl3_config::Store, rebase: bool) {
     }
     flow.until(|phase| phase == Phase::Making);
     let feedback = store
-        .worker_document("0", "maker_findings")
+        .worker_document("0", "feedback")
+        .map(|document| document.map(|value| value["maker"].clone()))
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -664,7 +665,8 @@ pub(super) fn outside_paths_bounded(settings: &tl3_config::Store) {
     assert!(flow.controller.drive_once().unwrap());
     let feedback = Store::open(settings)
         .unwrap()
-        .worker_document("0", "maker_findings")
+        .worker_document("0", "feedback")
+        .map(|document| document.map(|value| value["maker"].clone()))
         .unwrap()
         .unwrap();
     let finding = &feedback[0];
@@ -697,7 +699,8 @@ pub(super) fn recorded_failure_feedback(settings: &tl3_config::Store) {
     flow.until(|phase| phase == Phase::Making);
     let findings = Store::open(settings)
         .unwrap()
-        .worker_document("0", "maker_findings")
+        .worker_document("0", "feedback")
+        .map(|document| document.map(|value| value["maker"].clone()))
         .unwrap()
         .unwrap();
     assert_eq!(findings[0]["failed_tests"][0]["message"], message);
@@ -769,16 +772,21 @@ pub(super) fn review_feedback(settings: &tl3_config::Store) {
     assert!(
         Store::open(settings)
             .unwrap()
-            .worker_document("0", "findings")
+            .worker_document("0", "feedback")
+            .map(|document| document.map(|value| value["planner"].clone()))
             .unwrap()
-            .is_none()
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .is_empty()
     );
 
     flow.until(|phase| matches!(phase, Phase::Planning { .. }));
     assert!(flow.controller.world().unwrap().nodes[0].replanned);
     let findings = Store::open(settings)
         .unwrap()
-        .worker_document("0", "findings")
+        .worker_document("0", "feedback")
+        .map(|document| document.map(|value| value["planner"].clone()))
         .unwrap()
         .unwrap();
     assert!(findings.as_array().unwrap().iter().any(|finding| {

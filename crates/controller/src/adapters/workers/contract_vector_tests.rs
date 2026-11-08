@@ -73,7 +73,8 @@ fn maker_feedback_accepts_every_failing_harness_vector() {
             outside_paths_total: 0,
             ci_checks: vec![],
         };
-        let items = findings::bounded_feedback(vec![serde_json::to_value(finding).unwrap()], None);
+        let items =
+            crate::feedback::bounded_feedback(vec![serde_json::to_value(finding).unwrap()], None);
         let value = json!(items);
         let errors: Vec<_> = feedback
             .iter_errors(&value)

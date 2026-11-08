@@ -835,9 +835,9 @@ fn activate_handler(c: &mut Controller, repo: &Repo, case: InputCase) {
         let snapshot = c.snapshot().unwrap();
         let mut commit = Commit::new("prior-conflict", json!(null), &snapshot);
         commit.rows.push(put(
-            "rebase_conflicts",
+            "feedback",
             "0".into(),
-            json!({"head":repo.head}),
+            json!({"generation":world.nodes[0].generation,"maker":[],"planner":[],"conflict":{"head":repo.head,"target":repo.base,"files":["README.md"]}}),
         ));
         c.store.commit(&commit).unwrap();
     }
@@ -871,7 +871,7 @@ fn assert_handler_reached(case: InputCase, before: &Snapshot, after: &Snapshot) 
         InputCase::WorktreePrepared | InputCase::CheckPlan => "check_plans",
         InputCase::Checks => "check_evidence",
         InputCase::CheckExecutionFailure => "check_execution_failures",
-        InputCase::RebaseConflict | InputCase::Rebased => "rebase_conflicts",
+        InputCase::RebaseConflict | InputCase::Rebased => "feedback",
         InputCase::PullRequest => "pull_requests",
         InputCase::PrivateIntake | InputCase::PrivateReplacement => "requests",
         InputCase::PrivateIssueChange => crate::ISSUE_EDITS,

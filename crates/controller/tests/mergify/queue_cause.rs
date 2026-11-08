@@ -428,7 +428,8 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str) {
             assert!(text.contains("Remote Bazel selection and shards"));
             let findings = Store::open(settings)
                 .unwrap()
-                .worker_document("0", "maker_findings")
+                .worker_document("0", "feedback")
+                .map(|document| document.map(|value| value["maker"].clone()))
                 .unwrap()
                 .unwrap();
             assert!(
