@@ -66,6 +66,12 @@ mod retirement_terminal_fact_witness;
 #[path = "../verus/retirement_witness.rs"]
 mod retirement_witness;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/transition_safety.rs"]
+mod transition_safety;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/apply_safety.rs"]
+mod apply_safety;
+#[cfg(verus_keep_ghost)]
 verus! {
 /// #806: domain of the retired two-node Kani consistency checks.
 pub closed spec fn retirement_domain(w: World) -> bool { retirement::domain(w) }
