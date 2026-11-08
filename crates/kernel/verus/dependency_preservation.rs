@@ -907,6 +907,7 @@ pub(super) fn removal(mut world: World, i: usize, kind: PrerequisiteKind, number
     let ghost before = world;
     world.remove_dependency(i, kind, number);
     proof {
+        field_frame(before, world, i as int);
         remove_preserves(before, world, i as int, kind, number);
         remove_table(before, world, i as int, kind, number);
         kept_rows(before.dependencies@, NodeId(i as u64), kind, number);

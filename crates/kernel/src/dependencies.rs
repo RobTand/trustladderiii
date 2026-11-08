@@ -349,9 +349,20 @@ pub(super) proof fn owner_withheld_bridge(mid: World, after: World, before: Node
         mid.nodes@[i].credit.withheld == before.credit.withheld,
         mid.nodes@[i].planning_started == before.planning_started,
         mid.nodes@[i].phase == before.phase, mid.nodes@[i].credit.ready == before.credit.ready,
-        after.nodes@[i].credit.withheld == (mid.nodes@[i].credit.withheld
-            || (!prerequisites_delivered(mid, NodeId(i as u64)) && !mid.nodes@[i].planning_started
-                && early(mid.nodes@[i].phase) && mid.nodes@[i].credit.ready)),
+        after.nodes@[i] == (Node {
+            credit: Credit {
+                withheld: mid.nodes@[i].credit.withheld
+                    || (!prerequisites_delivered(mid, NodeId(i as u64))
+                        && !mid.nodes@[i].planning_started
+                        && (match mid.nodes@[i].phase {
+                            Phase::Ingesting | Phase::Auditing | Phase::Unplanned => true,
+                            _ => false,
+                        })
+                        && mid.nodes@[i].credit.ready),
+                ..mid.nodes@[i].credit
+            },
+            ..mid.nodes@[i]
+        }),
     ensures owner_withheld(before, after, i),
 {
     reveal(owner_withheld);
@@ -385,6 +396,51 @@ pub(super) open spec fn kept(s: Seq<Dependency>, node: NodeId, kind: Prerequisit
         let rest = kept(s.drop_last(), node, kind, number);
         if same_key(s.last(), node, kind, number) { rest } else { rest.push(s.last()) }
     }
+}
+
+/// K4a: remove_dependency's no-op branch.
+pub(super) proof fn remove_noop(before: World, after: World, i: int, kind: PrerequisiteKind, number: u64)
+    requires 0 <= i < before.nodes@.len(),
+        before.nodes@[i].phase != Phase::Ingesting || before.nodes@[i].planning_started,
+        after.dependencies@ == before.dependencies@,
+        after.nodes@[i].credit.withheld == before.nodes@[i].credit.withheld,
+    ensures remove_result(before, after, i, kind, number),
+{
+    reveal(remove_result);
+}
+
+/// K4a: remove_dependency's compaction branch, from the handler's own facts.
+pub(super) proof fn remove_bridge(before: World, mid: World, after: World, i: int,
+    kind: PrerequisiteKind, number: u64)
+    requires 0 <= i < before.nodes@.len(), before.nodes@[i].phase == Phase::Ingesting,
+        !before.nodes@[i].planning_started,
+        mid.dependencies@ == kept(before.dependencies@, NodeId(i as u64), kind, number),
+        after.dependencies@ == mid.dependencies@,
+        mid.nodes@[i].credit.ready == before.nodes@[i].credit.ready,
+        after.nodes@[i].credit.withheld
+            == (!prerequisites_delivered(mid, NodeId(i as u64)) && mid.nodes@[i].credit.ready),
+    ensures remove_result(before, after, i, kind, number),
+{
+    reveal(remove_result);
+    prerequisite_definition(mid, NodeId(i as u64));
+}
+
+/// K4a: the field-wise frame both dependency handlers export, packaged.
+pub(super) proof fn field_frame(before: World, after: World, i: int)
+    requires 0 <= i < before.nodes@.len(),
+        after.nodes@[i] == (Node {
+            waiting_prerequisite: after.nodes@[i].waiting_prerequisite,
+            credit: Credit { withheld: after.nodes@[i].credit.withheld, ..before.nodes@[i].credit },
+            ..before.nodes@[i]
+        }),
+        after.next_ticket == before.next_ticket, after.next_question == before.next_question,
+        after.gates@ == before.gates@, after.pool_capacity == before.pool_capacity,
+        after.fail_fast == before.fail_fast, after.file_sets@ == before.file_sets@,
+        after.nodes@.len() == before.nodes@.len(),
+        forall|j: int| 0 <= j < before.nodes@.len() && j != i ==> after.nodes@[j] == before.nodes@[j],
+    ensures dependency_frame(before, after, i),
+{
+    reveal(dependency_frame);
 }
 
 /// K4a: exact table and owner-credit result of remove_dependency, for any world.
@@ -1245,9 +1301,10 @@ impl World {
             final(self).nodes@[i as int].credit.added == old(self).nodes@[i as int].credit.added,
             final(self).nodes@[i as int].credit.spent == old(self).nodes@[i as int].credit.spent,
             remove_result(*old(self), *final(self), i as int, kind, number),
-            dependency_frame(*old(self), *final(self), i as int),
-    ] proof [reveal(remove_result); reveal(dependency_frame); reveal(prerequisites_delivered);] {
+    ] {
+        kernel_snapshot! { before_remove = *self }
         if self.nodes[i].phase != Phase::Ingesting || self.nodes[i].planning_started {
+            kernel_proof! { remove_noop(before_remove@, *self, i as int, kind, number); }
             return;
         }
         let node = NodeId(i as u64);
@@ -1288,8 +1345,12 @@ impl World {
             assert(self.dependencies@ =~= kept(before_table@, node, kind, number));
         }
         self.nodes[i].waiting_prerequisite = self.first_undelivered(node).map(|d| d.target.number);
+        kernel_snapshot! { before_hold = *self }
         self.nodes[i].credit.withheld =
             !self.dependencies_delivered(node) && self.nodes[i].credit.ready;
+        kernel_proof! {
+            remove_bridge(before_remove@, before_hold@, *self, i as int, kind, number);
+        }
     }
     }
 
