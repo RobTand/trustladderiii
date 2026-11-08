@@ -550,16 +550,23 @@ fn real_github_transport_keeps_prestartup_comments_and_closed_labels_out() {
             if path == "/app/installations/1/access_tokens" {
                 return ResponseTemplate::new(201).set_body_json(json!({"token":"synthetic-token","expires_at":"2099-01-01T00:00:00Z"}));
             }
-            if path == "/repos/synthetic/project/issues/1455" {
-                let mut store = Store::open(&read_settings).unwrap();
-                assert!(store.ingress_cursor("github-catch-up").unwrap().is_none(), "validation precedes commit");
-                assert!(store.pending_ingress().unwrap().is_empty());
+            let validation = path == "/repos/synthetic/project/issues/1455";
+            std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    let mut store = Store::open(&read_settings).unwrap();
+                    if validation {
+                        assert!(store.ingress_cursor("github-catch-up").unwrap().is_none(), "validation precedes commit");
+                        assert!(store.pending_ingress().unwrap().is_empty());
+                    } else {
+                        assert_eq!(store.ingress_cursor("github-world-start").unwrap(),Some(json!(boundary)), "history requires durable immutable boundary");
+                        assert!(store.ingress_cursor("github-catch-up").unwrap().is_some());
+                        assert!(store.pending_ingress().unwrap().iter().any(|row|row.delivery_key == "initial-intake:synthetic/project:1455"),"initial intake must be durable before history");
+                    }
+                }).join().unwrap();
+            });
+            if validation {
                 return ResponseTemplate::new(200).set_body_json(json!(current(1455)));
             }
-            let mut store = Store::open(&read_settings).unwrap();
-            assert_eq!(store.ingress_cursor("github-world-start").unwrap(),Some(json!(boundary)), "history requires durable immutable boundary");
-            assert!(store.ingress_cursor("github-catch-up").unwrap().is_some());
-            assert!(store.pending_ingress().unwrap().iter().any(|row|row.delivery_key == "initial-intake:synthetic/project:1455"),"initial intake must be durable before history");
             let body = match path {
                 "/repos/synthetic/project/issues" => {
                     let mut closed = current(42); closed.state = "closed".into();
