@@ -2167,7 +2167,7 @@ pub fn pool_key(n: &Node) -> (result: Option<(Priority, u64)>) [
 
 #[cfg(verus_keep_ghost)]
 verus! {
-spec fn pool_spec_key(n: Node) -> Option<(Priority, u64)> {
+pub open spec fn pool_spec_key(n: Node) -> Option<(Priority, u64)> {
     if n.phase is Ready { None } else {
         match n.ticket { Some(ticket) => Some((n.priority, ticket)), None => None }
     }
