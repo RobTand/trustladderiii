@@ -568,21 +568,82 @@ fn real_github_transport_keeps_prestartup_comments_and_closed_labels_out() {
             ResponseTemplate::new(200).set_body_json(body)
         }).mount(&server).await;
     });
-    let client = GitHub::new(AppConfig {
-        id:123,slug:"synthetic".into(),pem:include_str!(concat!(env!("CARGO_MANIFEST_DIR"),"/../mergify/tests/fixtures/throwaway-key.pem")).into(),webhook_secret:"synthetic".into()
-    },1,ClientOptions { api_url:format!("{}/",server.uri()).parse().unwrap(),max_retries:0,max_wait:Duration::ZERO,mutation_interval:Duration::ZERO,..ClientOptions::default() }).unwrap();
+    let client = GitHub::new(
+        AppConfig {
+            id: 123,
+            slug: "synthetic".into(),
+            pem: include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../mergify/tests/fixtures/throwaway-key.pem"
+            ))
+            .into(),
+            webhook_secret: "synthetic".into(),
+        },
+        1,
+        ClientOptions {
+            api_url: format!("{}/", server.uri()).parse().unwrap(),
+            max_retries: 0,
+            max_wait: Duration::ZERO,
+            mutation_interval: Duration::ZERO,
+            ..ClientOptions::default()
+        },
+    )
+    .unwrap();
     let mut store = Store::open(&settings).unwrap();
-    initialize_intake(&mut store,&served(),&[entry(1455)],||t0,|_,number|runtime.block_on(client.issue("synthetic/project",number)).map_err(Error::from)).unwrap();
-    let catchup = CatchUp::new(BTreeMap::from([(1,client)]), vec![]).unwrap();
-    catchup.fetch(t0,store.load().unwrap(),&served()).unwrap().persist(&mut store).unwrap();
-    let inputs = persisted_inputs(&mut store,&served());
-    let admissions:Vec<_> = inputs.iter().filter_map(|input| match input {Input::LabelledIssue(issue) =>Some(issue.number),_=>None}).collect();
-    assert_eq!(admissions,[1455,1455],"initial intake and overlap event only");
-    let comments:Vec<_> = inputs.iter().filter_map(|input| match input {Input::Observation { observation:Observation::GitHubComment { comment,.. },.. }=>Some(comment.id),_=>None}).collect();
-    assert_eq!(comments,[2],"old Rob approval, even edited after startup, must not replay");
+    initialize_intake(
+        &mut store,
+        &served(),
+        &[entry(1455)],
+        || t0,
+        |_, number| {
+            runtime
+                .block_on(client.issue("synthetic/project", number))
+                .map_err(Error::from)
+        },
+    )
+    .unwrap();
+    let catchup = CatchUp::new(BTreeMap::from([(1, client)]), vec![]).unwrap();
+    catchup
+        .fetch(t0, store.load().unwrap(), &served())
+        .unwrap()
+        .persist(&mut store)
+        .unwrap();
+    let inputs = persisted_inputs(&mut store, &served());
+    let admissions: Vec<_> = inputs
+        .iter()
+        .filter_map(|input| match input {
+            Input::LabelledIssue(issue) => Some(issue.number),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        admissions,
+        [1455, 1455],
+        "initial intake and overlap event only"
+    );
+    let comments: Vec<_> = inputs
+        .iter()
+        .filter_map(|input| match input {
+            Input::Observation {
+                observation: Observation::GitHubComment { comment, .. },
+                ..
+            } => Some(comment.id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        comments,
+        [2],
+        "old Rob approval, even edited after startup, must not replay"
+    );
     let root = tempfile::tempdir().unwrap();
-    let mut controller = Controller::open(Store::open(&settings).unwrap(),crate::adapters::simulation(root.path()).unwrap(),served()).unwrap();
+    let mut controller = Controller::open(
+        Store::open(&settings).unwrap(),
+        crate::adapters::simulation(root.path()).unwrap(),
+        served(),
+    )
+    .unwrap();
     drain(&mut controller).unwrap();
-    assert_eq!(controller.world().unwrap().nodes.len(),1);
+    assert_eq!(controller.world().unwrap().nodes.len(), 1);
     database.stop();
 }
