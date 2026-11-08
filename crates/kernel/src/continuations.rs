@@ -34,6 +34,9 @@ pub(super) fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
         final(w).nodes@[i as int].question.is_none(),
         final(w).nodes@[i as int].proposed == old(w).nodes@[i as int].proposed,
         final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
+        final(w).nodes@[i as int].review_stop == old(w).nodes@[i as int].review_stop,
+        final(w).nodes@[i as int].attempt == old(w).nodes@[i as int].attempt,
+        final(w).nodes@[i as int].replanned == old(w).nodes@[i as int].replanned,
         final(w).next_ticket == old(w).next_ticket,
         final(w).next_question == old(w).next_question,
         final(w).gates@ == old(w).gates@,
@@ -62,7 +65,8 @@ pub(super) fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
             kernel_snapshot! { before_stop = *m }
             enter_stopping(m, o);
             kernel_proof! {
-                assert((*m).proposed == before_stop@.proposed && (*m).adopted == before_stop@.adopted)
+                assert((*m).proposed == before_stop@.proposed && (*m).adopted == before_stop@.adopted
+                    && (*m).attempt == before_stop@.attempt && (*m).replanned == before_stop@.replanned)
                     by { reveal(retirement::stopped); }
             }
         }
@@ -70,7 +74,8 @@ pub(super) fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
             kernel_snapshot! { before_nowhere = *m }
             enter_stopping(m, Outcome::Stopped);
             kernel_proof! {
-                assert((*m).proposed == before_nowhere@.proposed && (*m).adopted == before_nowhere@.adopted)
+                assert((*m).proposed == before_nowhere@.proposed && (*m).adopted == before_nowhere@.adopted
+                    && (*m).attempt == before_nowhere@.attempt && (*m).replanned == before_nowhere@.replanned)
                     by { reveal(retirement::stopped); }
             }
         }

@@ -44,6 +44,11 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         final(w).nodes@[i as int].proposed == old(w).nodes@[i as int].proposed,
         final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
         (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase),
+        final(w).nodes@[i as int].review_stop == old(w).nodes@[i as int].review_stop,
+        final(w).nodes@[i as int].attempt <= (if old(w).nodes@[i as int].attempt > 1 { old(w).nodes@[i as int].attempt } else { 1u8 }),
+        old(w).nodes@[i as int].replanned || !final(w).nodes@[i as int].replanned,
+        (final(w).nodes@[i as int].phase is Planning ==> old(w).nodes@[i as int].phase is Planning || old(w).nodes@[i as int].phase == Phase::AwaitingRob),
+        !transition_safety::asks_cant_meet(old(w).nodes@[i as int], final(w).nodes@[i as int]),
 ] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(retirement::stopped);] {
     if id <= w.nodes[i].last_cmd {
         kernel_proof! { reveal(progress_gate_apply::resume_post); reveal(progress_gate_apply::resumed); }
