@@ -443,6 +443,7 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::pool_spec_key": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::emitted": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::node_step": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::nodes_step": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -525,7 +526,6 @@ def verus_proofs():
             "kernel::gate_apply_checker_accepted": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::unplanned_first_selection": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::unplanned_check_domain": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
-            "kernel::pool_key": "Diagnostic pool-order tuple; real scheduling and its order predicates are verified.",
             "kernel::Phase::name": "Read-only phase label; ordinary Rust outside the scoped Verus core.",
             "kernel::Priority::is_unranked": "Read-only classification API; ordinary Rust outside the scoped Verus core.",
             "kernel::Outbox::get": "Read-only outbox inspection used by tests and adapters.",
@@ -683,6 +683,10 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "pool_key": ("kernel#pool_key", 1),
+            "special_safety": ("kernel::special_safety", 2),
+            "transition_composition": ("kernel::transition_composition", 5),
+            "kernel_outbox_occupied": ("kernel#occupied", 1),
             "transition_safety_intro": ("kernel::transition_safety#intro", 1),
             "transition_safety_frame": ("kernel::transition_safety#frame", 1),
             "transition_safety_nodes": ("kernel::transition_safety#nodes", 1),
@@ -892,7 +896,7 @@ def verus_proofs():
             "progress": ("kernel::progress", 12),
             "dependencies_empty_delivered": ("kernel::dependencies#empty_delivered", 1),
             "dependencies_delivered_definition": ("kernel::dependencies#delivered_definition", 1),
-            "scheduler": ("kernel::scheduler", 13),
+            "scheduler": ("kernel::scheduler", 14),
             "step_with_passes": ("kernel::steps#step_with_passes", 1),
             "step_checked": ("kernel::steps#step_checked", 1),
             "steps": ("kernel::steps#step", 1),

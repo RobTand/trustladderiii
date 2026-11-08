@@ -1,5 +1,41 @@
 //! Q30/Q39 / #805: real scheduler queries and dispatcher.
 use super::*;
+#[cfg(verus_keep_ghost)]
+use vstd::prelude::*;
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// K4c gate slot: slot holders in `repo` among the first `end` nodes, other than `skip`,
+/// counted exactly as the executable slot scan counts them.
+pub(super) open spec fn other_holders(nodes: Seq<Node>, end: nat, repo: RepoId, skip: int) -> nat
+    decreases end,
+{
+    if end == 0 { 0 } else {
+        other_holders(nodes, (end - 1) as nat, repo, skip)
+            + if end - 1 != skip && nodes[end - 1].holds && nodes[end - 1].repo == repo { 1nat } else { 0nat }
+    }
+}
+
+/// K4c gate slot: exactly when the executable slot scan grants node i a slot:
+/// a valid repository, room in its width, and no overlapping other holder.
+pub(super) open spec fn slot_spec(w: World, i: int) -> bool {
+    w.nodes@[i].repo.0 < w.gates@.len()
+        && other_holders(w.nodes@, w.nodes@.len(), w.nodes@[i].repo, i)
+            < w.gates@[w.nodes@[i].repo.0 as int].w
+        && forall|j: int| 0 <= j < w.nodes@.len() && j != i && w.nodes@[j].holds
+            && w.nodes@[j].repo == w.nodes@[i].repo
+            ==> footprint::disjoint(w, w.nodes@[j].footprint, w.nodes@[i].footprint)
+}
+
+/// K4c gate fairness: some same-repository slot waiter older than `ticket`
+/// needs a file node i also needs.
+pub(super) open spec fn overlapped_by_older(w: World, i: int, ticket: u64) -> bool {
+    exists|k: int| 0 <= k < w.nodes@.len() && w.nodes@[k].phase is Ready
+        && w.nodes@[k].repo == w.nodes@[i].repo && w.nodes@[k].ticket.is_some()
+        && w.nodes@[k].ticket.unwrap() < ticket
+        && !footprint::disjoint(w, w.nodes@[k].footprint, w.nodes@[i].footprint)
+}
+}
 
 kernel_fn! {
 /// #771: source-connected scheduler wrapper. Context queries are read at the
@@ -176,6 +212,14 @@ pub(super) fn slot_free(w: &World, i: usize) -> (result: bool) [
         && w.gates@[w.nodes@[i as int].repo.0 as int].w > 0
         && (forall|j: int| 0 <= j < w.nodes@.len() && j != i ==> !w.nodes@[j].holds))
         ==> result,
+        // K4c gate slot: a free slot leaves room in the width and overlaps no other holder.
+        result ==> w.nodes@[i as int].repo.0 < w.gates@.len()
+            && other_holders(w.nodes@, w.nodes@.len(), w.nodes@[i as int].repo, i as int)
+                < w.gates@[w.nodes@[i as int].repo.0 as int].w
+            && forall|j: int| 0 <= j < w.nodes@.len() && j != i && w.nodes@[j].holds
+                && w.nodes@[j].repo == w.nodes@[i as int].repo
+                ==> footprint::disjoint(*w, w.nodes@[j].footprint, w.nodes@[i as int].footprint),
+        result == slot_spec(*w, i as int),
 ] {
     let me = &w.nodes[i];
     let _gate_count = w.gates.len();
@@ -190,6 +234,9 @@ pub(super) fn slot_free(w: &World, i: usize) -> (result: bool) [
             holders as int <= open_prefix(w.nodes@, j as nat),
             ((forall|k: int| 0 <= k < w.nodes@.len() && k != i ==> !w.nodes@[k].holds)
                 ==> holders == 0),
+            holders as int == other_holders(w.nodes@, j as nat, me.repo, i as int),
+            forall|k: int| 0 <= k < j && k != i && w.nodes@[k].holds && w.nodes@[k].repo == me.repo
+                ==> footprint::disjoint(*w, w.nodes@[k].footprint, me.footprint),
         decreases w.nodes.len() - j,
     ] {
         let n = &w.nodes[j];
@@ -229,12 +276,17 @@ kernel_fn! {
 #[allow(clippy::collapsible_if)]
 pub(super) fn older_overlap(w: &World, i: usize, ticket: u64) -> (result: bool) [
     requires i < w.nodes@.len(), scheduling_safe(*w),
+    ensures result == overlapped_by_older(*w, i as int, ticket),
 ] {
     let waiter = &w.nodes[i];
     let mut index = 0usize;
     kernel_while! { (index < w.nodes.len()) [
         invariant index <= w.nodes.len(), i < w.nodes.len(), scheduling_safe(*w),
             *waiter == w.nodes@[i as int],
+            forall|k: int| 0 <= k < index ==> !(w.nodes@[k].phase is Ready
+                && w.nodes@[k].repo == waiter.repo && w.nodes@[k].ticket.is_some()
+                && w.nodes@[k].ticket.unwrap() < ticket
+                && !footprint::disjoint(*w, w.nodes@[k].footprint, waiter.footprint)),
         decreases w.nodes.len() - index,
     ] {
         let older = &w.nodes[index];
@@ -257,6 +309,22 @@ kernel_fn! {
 pub(super) fn first_in_line(w: &World, i: usize) -> (result: bool) [
     requires i < w.nodes@.len(), scheduling_safe(*w),
     ensures oldest_waiter(*w, i as int) ==> result,
+        result ==> w.nodes@[i as int].ticket.is_some(),
+        // K4c pool order: the pool line is exactly the declared priority/ticket order.
+        !(w.nodes@[i as int].phase is Ready) ==> result == oldest_waiter(*w, i as int),
+        // K4c gate fairness: no grant passes an older overlapping same-repository waiter.
+        result && w.nodes@[i as int].phase is Ready ==> forall|j: int| 0 <= j < w.nodes@.len()
+            && w.nodes@[j].phase is Ready && w.nodes@[j].repo == w.nodes@[i as int].repo
+            && w.nodes@[j].ticket.is_some()
+            && w.nodes@[j].ticket.unwrap() < w.nodes@[i as int].ticket.unwrap()
+            ==> footprint::disjoint(*w, w.nodes@[j].footprint, w.nodes@[i as int].footprint),
+        // K4c gate fairness: no grant passes an older same-repository waiter that could
+        // itself take a slot now (free slot, no older overlapping waiter of its own).
+        result && w.nodes@[i as int].phase is Ready ==> forall|j: int| 0 <= j < w.nodes@.len()
+            && w.nodes@[j].phase is Ready && w.nodes@[j].repo == w.nodes@[i as int].repo
+            && w.nodes@[j].ticket.is_some()
+            && w.nodes@[j].ticket.unwrap() < w.nodes@[i as int].ticket.unwrap()
+            ==> !(slot_spec(*w, j) && !overlapped_by_older(*w, j, w.nodes@[j].ticket.unwrap())),
 ] {
     let me = &w.nodes[i];
     let Some(mine) = me.ticket else { return false };
@@ -265,6 +333,7 @@ pub(super) fn first_in_line(w: &World, i: usize) -> (result: bool) [
         kernel_while! { (index < w.nodes.len()) [
             invariant index <= w.nodes.len(), i < w.nodes.len(),
                 *me == w.nodes@[i as int], !(me.phase is Ready), me.ticket == Some(mine),
+                forall|k: int| 0 <= k < index ==> !pool_precedes(w.nodes@[k], w.nodes@[i as int]),
             decreases w.nodes.len() - index,
         ] {
             if earlier_in_pool(&w.nodes[index], me) { return false; }
@@ -278,6 +347,16 @@ pub(super) fn first_in_line(w: &World, i: usize) -> (result: bool) [
         invariant j <= w.nodes.len(), i < w.nodes.len(), scheduling_safe(*w),
             *me == w.nodes@[i as int], me.phase is Ready, me.ticket == Some(mine),
             oldest_waiter(*w, i as int) ==> first_runnable == mine,
+            forall|k: int| 0 <= k < j && w.nodes@[k].phase is Ready
+                && w.nodes@[k].repo == me.repo && w.nodes@[k].ticket.is_some()
+                && w.nodes@[k].ticket.unwrap() < mine
+                ==> footprint::disjoint(*w, w.nodes@[k].footprint, me.footprint),
+            first_runnable <= mine,
+            forall|k: int| 0 <= k < j && w.nodes@[k].phase is Ready
+                && w.nodes@[k].repo == me.repo && w.nodes@[k].ticket.is_some()
+                && w.nodes@[k].ticket.unwrap() < mine
+                && slot_spec(*w, k) && !overlapped_by_older(*w, k, w.nodes@[k].ticket.unwrap())
+                ==> first_runnable <= w.nodes@[k].ticket.unwrap(),
         decreases w.nodes.len() - j,
     ] {
         let index = j;

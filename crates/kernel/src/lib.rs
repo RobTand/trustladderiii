@@ -1284,6 +1284,17 @@ verus! {
 pub closed spec fn empty_outbox(out: Outbox) -> bool {
     out.len == 0 && out.items@ == Seq::new(OUTBOX as nat, |i: int| None)
 }
+
+/// K4c settle outputs: slots [0, end) of an outbox's storage with every None
+/// dropped, in slot order. `drain_into` appends exactly this for end == OUTBOX.
+pub(crate) open spec fn occupied(items: Seq<Option<Out>>, end: nat) -> Seq<Out>
+    decreases end,
+{
+    if end == 0 { Seq::empty() } else {
+        let prefix = occupied(items, (end - 1) as nat);
+        match items[end - 1] { Some(o) => prefix.push(o), None => prefix }
+    }
+}
 }
 
 kernel_fn! {
@@ -1345,13 +1356,22 @@ impl Outbox {
     kernel_fn! {
     /// #771: append occupied slots in the same order as iter.flatten.copied.
     fn drain_into(&self, out: &mut Vec<Out>) -> (result: ()) [
+    ensures final(out)@ == old(out)@ + occupied(self.items@, OUTBOX as nat),
     ] {
         let mut index = 0usize;
         kernel_while! { (index < OUTBOX) [
             invariant index <= OUTBOX, self.items@.len() == OUTBOX,
+                out@ == old(out)@ + occupied(self.items@, index as nat),
             decreases OUTBOX - index,
         ] {
             if let Some(item) = self.items[index] { out.push(item); }
+            kernel_proof! {
+                assert(occupied(self.items@, (index + 1) as nat) == match self.items@[index as int] {
+                    Some(o) => occupied(self.items@, index as nat).push(o),
+                    None => occupied(self.items@, index as nat),
+                });
+                assert(out@ =~= old(out)@ + occupied(self.items@, (index + 1) as nat));
+            }
             index += 1;
         } }
     }
@@ -2162,13 +2182,28 @@ spec fn scheduling_safe(w: World) -> bool {
 
 /// A node's place in the agent pool's line (Q39), lowest first: its priority,
 /// then the older ticket. None unless it waits for the pool.
-pub fn pool_key(n: &Node) -> Option<(Priority, u64)> {
-    let ticket = n.ticket.filter(|_| !matches!(n.phase, Phase::Ready(_)))?;
-    Some((n.priority, ticket))
+kernel_fn! {
+pub fn pool_key(n: &Node) -> (result: Option<(Priority, u64)>) [
+    ensures result == pool_spec_key(*n),
+] {
+    if matches!(n.phase, Phase::Ready(_)) {
+        return None;
+    }
+    match n.ticket {
+        Some(ticket) => Some((n.priority, ticket)),
+        None => None,
+    }
+}
 }
 
 #[cfg(verus_keep_ghost)]
 verus! {
+pub open spec fn pool_spec_key(n: Node) -> Option<(Priority, u64)> {
+    if n.phase is Ready { None } else {
+        match n.ticket { Some(ticket) => Some((n.priority, ticket)), None => None }
+    }
+}
+
 spec fn priority_number(priority: Priority) -> nat {
     match priority {
         Priority::P0 => 0, Priority::P1 => 1, Priority::P2 => 2,
@@ -2279,6 +2314,12 @@ mod progress_unplanned_waiting;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/progress_unplanned_witness.rs"]
 mod progress_unplanned_witness;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/special_safety.rs"]
+mod special_safety;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/transition_composition.rs"]
+mod transition_composition;
 
 #[cfg(verus_keep_ghost)]
 verus! {
