@@ -586,11 +586,7 @@ fn real_github_transport_keeps_prestartup_comments_and_closed_labels_out() {
         AppConfig {
             id: 123,
             slug: "synthetic".into(),
-            pem: include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../mergify/tests/fixtures/throwaway-key.pem"
-            ))
-            .into(),
+            pem: include_str!("../../../../../mergify/tests/fixtures/throwaway-key.pem").into(),
             webhook_secret: "synthetic".into(),
         },
         1,
