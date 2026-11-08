@@ -33,4 +33,28 @@ pub(super) proof fn frame_consequences(before: World, after: World, i: usize,
 {
     reveal(retirement::fact_frame);
 }
+
+/// #806 Conflict row (state-table.md:596, :622): the real two-branch handler's node
+/// update implies the exact fact_node result and the common handler frame.
+pub(super) proof fn conflict_result(before: World, after: World, i: usize,
+    out_before: Outbox, out_after: Outbox)
+    requires i < before.nodes@.len(),
+        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        after.nodes@[i as int] == (if before.nodes@[i as int].phase == Phase::AwaitingDelivery {
+                retirement::phased(before.nodes@[i as int], Phase::Ready(Resume::Rebasing))
+            } else if before.nodes@[i as int].phase == Phase::Publishing {
+                retirement::phased(before.nodes@[i as int], Phase::Rebasing)
+            } else { before.nodes@[i as int] }),
+        after.gates@ == before.gates@, after.file_sets@ == before.file_sets@,
+        after.dependencies@ == before.dependencies@, after.pool_capacity == before.pool_capacity,
+        after.fail_fast == before.fail_fast, after.next_ticket == before.next_ticket,
+        after.next_question == before.next_question, out_after == out_before,
+    ensures after.nodes@[i as int] == retirement::fact_node(before.nodes@[i as int], Fact::Conflict),
+        retirement::fact_frame(before, after, i, out_before, out_after),
+{
+    reveal(retirement::fact_frame);
+    reveal(retirement::fact_node);
+    assert forall|j: int| 0 <= j < before.nodes@.len() && j != i
+        implies after.nodes@[j] == before.nodes@[j] by {}
+}
 }
