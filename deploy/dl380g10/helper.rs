@@ -730,8 +730,8 @@ mod database_tests {
         // reaping or process discovery for this destructive-boundary test.
         let scratch = tempfile::tempdir().unwrap();
         let binary = std::env::var_os("TL3_TEST_POSTGRES_DIR")
-            .map(|root| PathBuf::from(root).join("bin"))
-            .or_else(|| std::env::var_os("TL3_FRESH_PG_BIN").map(PathBuf::from))
+            .map(|root| std::path::PathBuf::from(root).join("bin"))
+            .or_else(|| std::env::var_os("TL3_FRESH_PG_BIN").map(std::path::PathBuf::from))
             .expect("declare disposable Postgres binaries");
         let binary = binary.as_path();
         let data = scratch.path().join("data");
