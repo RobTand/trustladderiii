@@ -145,15 +145,15 @@ kernel_fn! {
 /// Confirmed-effect rows / #771: release the confirmed resource and reset the
 /// failure ladder, framed exactly so agenda advancement sees one node value.
 fn confirmed_resources(m: &mut Node, kind: EffectKind) -> (result: ()) [
-    ensures *final(m) == (Node {
-            fx_failures: 0, fx_incidents: 0,
-            run: if kind == EffectKind::StopRun { None } else { old(m).run },
-            pool: if kind == EffectKind::StopRun { false } else { old(m).pool },
-            job: if kind == EffectKind::WithdrawJob { None } else { old(m).job },
-            pr_open: if kind == EffectKind::ClosePr { false } else { old(m).pr_open },
-            worktree: if kind == EffectKind::RemoveWorktree { false } else { old(m).worktree },
-            ..*old(m)
-        }),
+    ensures *final(m) == match kind {
+            EffectKind::StopRun => Node {
+                fx_failures: 0, fx_incidents: 0, run: None, pool: false, ..*old(m) },
+            EffectKind::WithdrawJob => Node { fx_failures: 0, fx_incidents: 0, job: None, ..*old(m) },
+            EffectKind::ClosePr => Node { fx_failures: 0, fx_incidents: 0, pr_open: false, ..*old(m) },
+            EffectKind::RemoveWorktree => Node {
+                fx_failures: 0, fx_incidents: 0, worktree: false, ..*old(m) },
+            _ => Node { fx_failures: 0, fx_incidents: 0, ..*old(m) },
+        },
 ] {
     m.fx_failures = 0;
     m.fx_incidents = 0;
