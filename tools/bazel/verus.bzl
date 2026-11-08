@@ -443,6 +443,7 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::answers::try_again_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::handler_safety::command_step": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::pool_spec_key": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::emitted": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -684,6 +685,11 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "answers_clarify_node": ("kernel::answers#clarify_node", 1),
+            "answers_retry_answer_node": ("kernel::answers#retry_answer_node", 1),
+            "continuations_continue_node": ("kernel::continuations#continue_node", 1),
+            "handler_safety_same_step": ("kernel::handler_safety#same_step", 1),
+            "handler_safety_step_identity": ("kernel::handler_safety#step_identity", 1),
             "handler_safety_stop_step": ("kernel::handler_safety#stop_step", 1),
             "handler_safety_field_step": ("kernel::handler_safety#field_step", 1),
             "handler_safety_clarify_step": ("kernel::handler_safety#clarify_step", 1),
@@ -851,10 +857,10 @@ def verus_proofs():
             "facts_merge": ("kernel::facts#pr_merged", 1),
             "facts_merge_open": ("kernel::facts#merge_open", 1),
             "commands": ("kernel::commands", 1),
-            "answers": ("kernel::answers", 1),
+            "answers": ("kernel::answers#on_answer", 1),
             "command_helpers_allowed": ("kernel::command_helpers#allowed", 1),
             "command_helpers_mark_handled": ("kernel::command_helpers#mark_handled", 1),
-            "continuations": ("kernel::continuations", 1),
+            "continuations": ("kernel::continuations#go_on", 1),
             "checking": ("kernel::checking#*World::check", 10),
             "checking_check_node": ("kernel::checking#World::check_node", 1),
             "checking_check_ready": ("kernel::checking#World::check_ready", 1),
