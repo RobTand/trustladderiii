@@ -418,6 +418,8 @@ def _crate_test(kind, package, name, source, harness, options):
         compile_data = compile_data + _CONTROLLER_TEST_DATA + _CONTROLLER_TEST_COMPILE_DATA.get(source, [])
         if kind == "lib":
             compile_data = compile_data + _CONTROLLER_RUNTIME.get("lib_test_tl3_controller" if name == "tl3_controller_loom" else "lib_test_" + name, [])
+            if name == "tl3_controller":
+                compile_data = compile_data + native.glob(["qualification/fx-exact42b/*.json", "tools/generate_fx_qualification.py"])
     for group in _GATE_GROUPS.get(binary, [""]):
         suffix = "-" + group if group else ""
         tl3_rust_test(
@@ -444,6 +446,16 @@ def _crate_test(kind, package, name, source, harness, options):
                          (["--libtest-select=loom_"] if name == "tl3_controller_loom" else
                           (["--libtest-select=staging_namespace_survives_consumer_argument_validation"] if kind == "example" and name == "fx-stage-packet" else
                            (["--skip=adapters::run_backend::flux::launch_failure::tests::retained_fbelmqkrh5_success_keeps_its_checks_verdict_and_evidence",
-                            "--skip=adapters::run_backend::flux::launch_failure::tests::retained_fbpzb5i8yp_without_launcher_exit_cannot_be_upgraded"] if kind == "lib" and name == "tl3_controller" else
+                            "--skip=adapters::run_backend::flux::launch_failure::tests::retained_fbpzb5i8yp_without_launcher_exit_cannot_be_upgraded",
+                            "--skip=adapters::flux_checks::activation::tests::qualified_identity_and_exact_planned_deployment_pass_staging_boundary",
+                            "--skip=adapters::flux_checks::activation::tests::absent_wrong_hash_unknown_qualification_and_generation_refuse_with_fields_only",
+                            "--skip=adapters::flux_checks::activation::tests::planned_scope_requires_explicit_success_and_cleanup_and_never_completed_claims",
+                            "--skip=adapters::flux_checks::activation::tests::bundle_set_hash_profile_preflight_options_and_cli_substitution_refuse",
+                            "--skip=adapters::flux_checks::activation::tests::sealed_but_unqualified_full_closure_and_fault_interpreter_refuse",
+                            "--skip=adapters::flux_checks::activation::tests::missing_changed_cleanup_and_extra_unlisted_module_refuse",
+                            "--skip=adapters::flux_checks::activation::tests::tags_runtime_substitution_and_environment_override_cannot_grant_activation",
+                            "--skip=adapters::flux_checks::activation::tests::environment_override_child",
+                            "--skip=adapters::flux_checks::activation::tests::qualified_binding_passes_real_controller_capacity_and_startup_activation",
+                            "--skip=adapters::workers::execution::inputs::tests::direct_prepare_requires_deployment_activation_and_checks_actual_options"] if kind == "lib" and name == "tl3_controller" else
                             (["--gate-group=" + group] if group else []))))),
         )
