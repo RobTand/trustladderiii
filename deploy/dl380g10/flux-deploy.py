@@ -271,6 +271,179 @@ def recover(intent, spec):
     return identifier
 
 
+FAILURE_FILES = (*OBSERVED_FILES, 'failure-identity.json', 'failure-cleanup.json')
+
+
+def failed_terminal(out, identifier):
+    """Parse only provable FAILED states. Missing payload output is never a verdict."""
+    query = load(out / 'terminal-query.json')
+    identity = load(out / 'failure-identity.json')
+    status_value = load(out / 'status.json')
+    wait = load(out / 'wait.json')
+    private(out / 'eventlog.jsonl')
+    history = [json.loads(line) for line in (out / 'eventlog.jsonl').read_bytes().splitlines()]
+    if not all(isinstance(value, dict) for value in (query, identity, status_value, wait)):
+        raise RuntimeError('malformed FAILED terminal records')
+    if (any(type(query.get(key)) is not int for key in ('wait_rc', 'event_rc', 'status_rc'))
+            or query['wait_rc'] != 0 or query['event_rc'] != 0 or wait.get('name') != 'clean'
+            or identity['job_id'] != identifier or identity['id_rc'] != 0
+            or identity['jobid_path_rc'] != 0 or identity['jobid_path'] != '/sys'
+            or type(identity['numeric_id']) is not int or identity['numeric_id'] <= 0
+            or type(status_value.get('id')) is not int
+            or status_value['id'] != identity['numeric_id']
+            or type(status_value.get('exception_occurred')) is not bool
+            or type(status_value.get('result')) is not int
+            or not history):
+        raise RuntimeError('FAILED terminal identity/query UNKNOWN')
+    for event in history:
+        if (not isinstance(event, dict) or type(event.get('name')) is not str
+                or type(event.get('timestamp')) not in (int, float)
+                or not math.isfinite(event['timestamp']) or event['timestamp'] < 0):
+            raise RuntimeError('malformed FAILED terminal event')
+    names = [event['name'] for event in history]
+    times = [event['timestamp'] for event in history]
+    if (names.count('submit') != 1 or names[0] != 'submit'
+            or names.count('clean') != 1 or names[-1] != 'clean'
+            or times != sorted(times)
+            or not isinstance(history[0].get('context'), dict)
+            or type(history[0]['context'].get('userid')) is not int
+            or history[0]['context']['userid'] != os.getuid()
+            or any(names.count(name) > 1 for name in ('alloc', 'start', 'finish', 'exception'))):
+        raise RuntimeError('contradictory FAILED terminal history')
+    exceptions = [event['context'] for event in history if event['name'] == 'exception']
+    exception = exceptions[0] if exceptions else None
+    if exception is not None:
+        if (not isinstance(exception, dict) or type(exception.get('type')) is not str or not exception['type']
+                or type(exception.get('severity')) is not int or exception['severity'] != 0
+                or status_value['exception_occurred'] is not True
+                or status_value.get('exception_type') != exception['type']
+                or type(status_value.get('exception_severity')) is not int
+                or status_value['exception_severity'] != 0):
+            raise RuntimeError('FAILED exception mismatch')
+    elif status_value['exception_occurred'] or any(
+            key in status_value for key in ('exception_type', 'exception_severity')):
+        raise RuntimeError('FAILED exception missing')
+    expected_result = {'cancel': 4, 'timeout': 8}.get(exception['type'], 2) if exception else 2
+    if status_value['result'] != expected_result:
+        raise RuntimeError('FAILED result mismatch')
+    if 'start' not in names:
+        if ('alloc' in names or 'finish' in names or exception is None
+                or type(status_value.get('waitstatus', -1)) is not int
+                or status_value.get('waitstatus', -1) != -1):
+            raise RuntimeError('pre-start FAILED state UNKNOWN')
+        phase, waitstatus, exit_code = 'NEVER_STARTED', None, 125
+    else:
+        if ('alloc' not in names or 'finish' not in names
+                or not names.index('alloc') < names.index('start') < names.index('finish') < names.index('clean')):
+            raise RuntimeError('started FAILED state UNKNOWN')
+        waitstatus = status_value.get('waitstatus')
+        finish = history[names.index('finish')]['context']['status']
+        if (type(waitstatus) is not int or not 0 < waitstatus <= 65535
+                or type(finish) is not int or finish != waitstatus):
+            raise RuntimeError('FAILED waitstatus mismatch')
+        exit_code = os.waitstatus_to_exitcode(waitstatus)
+        if exit_code < 0:
+            exit_code = 128 - exit_code
+        if exit_code == 0:
+            raise RuntimeError('missing payload result cannot prove FAILED')
+        if exception:
+            exit_code = max(exit_code, 125)
+        if exception and not names.index('start') < names.index('exception') < names.index('finish'):
+            raise RuntimeError('FAILED exception ordering mismatch')
+        phase = 'STARTED'
+    if type(query['status_rc']) is not int or query['status_rc'] != exit_code:
+        raise RuntimeError('FAILED status command mismatch')
+    return {'phase': phase, 'waitstatus': waitstatus, 'status_rc': exit_code,
+            'exception': exception}
+
+
+def failed_cleanup(identifier):
+    """Prove absence independently at exact sdexec names, never by native clean."""
+    owner = pwd.getpwnam('rob').pw_uid
+    if os.getuid() != owner or socket.gethostname().split('.')[0] != 'dl380g10':
+        raise RuntimeError('rob-owned dl380g10 FAILED observer required')
+    relative = Path(f'user.slice/user-{owner}.slice/user@{owner}.service/flux-jobs.slice')
+    slice_path = CGROUP_ROOT / relative
+    roots = {}
+    for root in (CGROUP_ROOT, SCRATCH):
+        owned_ancestry(root)
+        info = root.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid not in (0, owner):
+            raise RuntimeError('FAILED cleanup root UNKNOWN')
+        roots[str(root)] = {'device': info.st_dev, 'inode': info.st_ino, 'uid': info.st_uid}
+    path = CGROUP_ROOT
+    for part in relative.parts:
+        path = path / part
+        info = path.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid not in (0, owner):
+            raise RuntimeError('FAILED cgroup ancestry UNKNOWN')
+    before = slice_path.lstat()
+    if before.st_uid != owner:
+        raise RuntimeError('FAILED slice ownership UNKNOWN')
+    # Flux 0.91 bulk-exec labels use f58plain. sdexec adds :sys or :rank-sys.
+    # The pinned generation has three brokers. Check every possible rank spelling.
+    plain = 'f' + identifier[1:]
+    scopes = [slice_path / f'shell-{plain}:{suffix}.service'
+              for suffix in ('sys', '0-sys', '1-sys', '2-sys')]
+    scratch_paths = [SCRATCH / ('ƒ' + identifier[1:]), SCRATCH / plain]
+    for path in (*scopes, *scratch_paths):
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            # Without a payload inode, an existing empty scope has unknown origin.
+            raise RuntimeError('FAILED cgroup/scratch absence unproven')
+    for root in (CGROUP_ROOT, SCRATCH):
+        info = root.lstat()
+        if roots[str(root)] != {'device': info.st_dev, 'inode': info.st_ino, 'uid': info.st_uid}:
+            raise RuntimeError('FAILED cleanup root identity changed')
+    after = slice_path.lstat()
+    if (before.st_dev, before.st_ino, before.st_uid) != (after.st_dev, after.st_ino, after.st_uid):
+        raise RuntimeError('FAILED slice identity changed')
+    return {'schema': 'tl3.deploy.failed-cleanup.v1', 'job_id': identifier,
+            'host': 'dl380g10', 'roots': roots,
+            'slice': str(slice_path), 'slice_device': before.st_dev, 'slice_inode': before.st_ino,
+            'scope_paths_absent': [str(path) for path in scopes],
+            'scratch_paths_absent': [str(path) for path in scratch_paths]}
+
+
+def close_failed_without_result(intent, request_digest, spec, identifier, numeric_id, id_rc):
+    out = Path(intent['out'])
+    if os.path.lexists(out / 'receipt.json'):
+        raise RuntimeError('successful receipt cannot become FAILED')
+    path_rc, path, _ = native('getattr', 'jobid-path')
+    save(out / 'failure-identity.json', {'job_id': identifier, 'id_rc': id_rc,
+         'numeric_id': int(numeric_id), 'jobid_path_rc': path_rc,
+         'jobid_path': path.decode().strip()})
+    terminal = failed_terminal(out, identifier)
+    cleanup = failed_cleanup(identifier)
+    save(out / 'failure-cleanup.json', cleanup)
+    binding()
+    files = {}
+    for name in FAILURE_FILES:
+        path = out / name
+        if not os.path.lexists(path):
+            if name == 'result.json' or (name in ('stdout', 'stderr') and terminal['phase'] == 'NEVER_STARTED'):
+                files[name] = None
+                continue
+            raise RuntimeError('FAILED retained evidence missing')
+        if name in ('stdout', 'stderr'):
+            info = path.lstat()
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+                raise RuntimeError('unknown retained FAILED output')
+            path.chmod(0o600)
+        private(path)
+        data = path.read_bytes()
+        files[name] = {'sha256': digest(data), 'bytes': len(data)}
+    save(out / 'closed.json', {'schema': 'tl3.deploy.closed.v2', 'outcome': 'FAILED',
+         'intent': request_digest, 'generation': GENERATION, 'job_id': identifier,
+         'jobspec_sha256': digest(encoded(spec)), 'terminal': terminal, 'files': files,
+         'owned_scope_empty': True, 'owned_scratch_removed': True,
+         'limitation': 'wrapper observations, no native attestation or PB CAS'})
+    raise RuntimeError('native FAILED terminal; closure retained without PASS')
+
+
 def collect(intent, request_digest, spec, identifier):
     out = Path(intent['out'])
     if not original_matches(identifier, spec):
@@ -298,6 +471,9 @@ def collect(intent, request_digest, spec, identifier):
     parsed_wait = json.loads(wait) if wait_rc == 0 else {}
     parsed = json.loads(status)
     id_rc, numeric_id, _ = native('job', 'id', '--to=dec', identifier)
+    if (not os.path.lexists(out / 'result.json') and isinstance(parsed, dict)
+            and parsed.get('result') in (2, 4, 8)):
+        close_failed_without_result(intent, request_digest, spec, identifier, numeric_id, id_rc)
     history = [json.loads(line) for line in events.splitlines()]
     names = [event['name'] for event in history]
     finishes = [event['context']['status'] for event in history if event['name'] == 'finish']
@@ -527,18 +703,35 @@ def require_closed(out):
         closed = load(out / 'closed.json')
         intent = load(out / 'intent.json')
         bound = load(out / 'binding.json')
+        identifier = job_id(bound['job_id'].encode())
         request_digest = digest(encoded(intent))
-        if (closed['schema'] != 'tl3.deploy.closed.v1'
+        failed = closed['schema'] == 'tl3.deploy.closed.v2'
+        expected_files = FAILURE_FILES if failed else OBSERVED_FILES
+        if failed:
+            if (closed.get('outcome') != 'FAILED'
+                    or closed.get('jobspec_sha256') != bound['jobspec_sha256']
+                    or os.path.lexists(out / 'receipt.json')
+                    or closed['files'].get('result.json', False) is not None
+                    or closed['terminal'] != failed_terminal(out, identifier)
+                    or load(out / 'failure-cleanup.json') != failed_cleanup(identifier)):
+                raise RuntimeError('inconsistent FAILED closure')
+        if (closed['schema'] not in ('tl3.deploy.closed.v1', 'tl3.deploy.closed.v2')
                 or closed['intent'] != request_digest or bound['intent'] != request_digest
                 or closed['generation'] != GENERATION or bound['generation'] != GENERATION
-                or closed['job_id'] != job_id(bound['job_id'].encode())
+                or closed['job_id'] != identifier
                 or closed['owned_scope_empty'] is not True
                 or closed['owned_scratch_removed'] is not True
-                or set(closed['files']) != set(OBSERVED_FILES)
+                or set(closed['files']) != set(expected_files)
                 or bound['jobspec_sha256'] != digest(encoded(load(out / 'jobspec.json')))):
             raise RuntimeError('inconsistent closed-job evidence')
         for name, reference in closed['files'].items():
             path = out / name
+            if failed and reference is None:
+                if (name not in ('result.json', 'stdout', 'stderr')
+                        or (name != 'result.json' and closed['terminal']['phase'] != 'NEVER_STARTED')
+                        or os.path.lexists(path)):
+                    raise RuntimeError('FAILED absent evidence changed')
+                continue
             private(path)
             with path.open('rb') as stream:
                 if (hashlib.file_digest(stream, 'sha256').hexdigest() != reference['sha256']

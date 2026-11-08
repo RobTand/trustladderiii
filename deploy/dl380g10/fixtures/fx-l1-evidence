@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""Run source-specific synthetic regressions. Invoke only inside admitted compute."""
+import hashlib
+import importlib.util
+import os
+from collections import Counter
+import json
+from pathlib import Path
+import pwd
+import subprocess
+import sys
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[3]
+TEST = ROOT / 'deploy/dl380g10/test_flux_deploy.py'
+REQUIRED = [
+    'test_cancelled_before_start_without_result_allows_failed_closure',
+    'test_sigterm_mid_run_without_result_allows_failed_closure',
+]
+M1 = [
+    'test_store_lock_excludes_a_second_coordinator',
+    'test_unresolved_sibling_blocks_new_cycle_even_with_refusal_or_build_reuse',
+    'test_store_lock_spans_both_stages_and_is_released_afterward',
+    'test_closed_failure_allows_new_cycle_without_becoming_a_pass',
+    'test_unknown_cleanup_blocks_new_cycle_after_terminal_failure',
+    'test_refusal_after_disconnect_blocks_new_cycle_but_allows_original_reattach',
+    'test_changed_closed_evidence_refuses_new_cycle',
+    'test_reattach_cannot_bypass_a_different_unresolved_dispatch',
+]
+
+
+def run_source(source, methods, original_fixture=False):
+    raw = subprocess.check_output(['/usr/bin/git', 'show', f'{source}:deploy/dl380g10/flux-deploy.py'], cwd=ROOT)
+    fixture = (subprocess.check_output(['/usr/bin/git', 'show',
+               '746c9797d3841baf8c018f26bbcbcd1b85cd00a4:deploy/dl380g10/test_flux_deploy.py'],
+               cwd=ROOT).decode() if original_fixture else TEST.read_text())
+    original_fixture_sha = hashlib.sha256(fixture.encode()).hexdigest()
+    # Contemporary fixtures preserve the source's walltime and owner layout.
+    # This changes fixture setup only, never the loaded immutable production bytes.
+    if not original_fixture:
+        fixture = fixture.replace("self.assertIn('-t5400s', args)", "self.assertIn('-t7200s', args)")
+        fixture = fixture.replace("'duration': 5400,", "'duration': 7200,")
+    with tempfile.TemporaryDirectory(prefix='fx-l1-source-', dir='/tmp') as directory:
+        path = Path(directory) / 'deploy/dl380g10/flux-deploy.py'
+        path.parent.mkdir(parents=True)
+        path.write_bytes(raw)
+        spec = importlib.util.spec_from_file_location('immutable_flux', path)
+        fx = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fx)
+        if not hasattr(fx, 'pwd'):
+            fx.pwd = pwd  # synthetic process-UID ownership fixture, no production change
+        namespace = {'__file__': str(TEST), '__name__': 'source_specific_fixtures'}
+        exec(compile(fixture, str(TEST), 'exec'), namespace)
+        namespace['fx'] = fx
+        rows = []
+        for method in methods:
+            result = unittest.TextTestRunner(verbosity=2, stream=sys.stdout).run(
+                unittest.TestSuite([namespace['FluxAdmissionTests'](method)]))
+            rows.append({'test': method, 'tests_run': result.testsRun,
+                         'assertion_failures': len(result.failures), 'setup_or_runtime_errors': len(result.errors),
+                         'skips': result.skipped, 'passed': result.wasSuccessful(),
+                         'failure_details': [trace for _, trace in result.failures],
+                         'error_details': [trace for _, trace in result.errors]})
+        print(json.dumps({'source': source, 'source_sha256': hashlib.sha256(raw).hexdigest(),
+                          'fixture_sha256': hashlib.sha256(TEST.read_bytes()).hexdigest(),
+                          'original_fixture_sha256': original_fixture_sha,
+                          'effective_fixture_sha256': hashlib.sha256(fixture.encode()).hexdigest(),
+                          'rows': rows}, sort_keys=True))
+        return rows
+
+
+def qualify():
+    expected = os.environ['FXL1_EXPECTED_HEAD']
+    owned = ['deploy/dl380g10/flux-deploy.py', 'deploy/dl380g10/test_flux_deploy.py',
+             'deploy/dl380g10/DEPLOY-ADMISSION.md', 'deploy/dl380g10/fixtures/fx-l1-evidence']
+    sources = {}
+    for name in owned:
+        raw = (ROOT / name).read_bytes()
+        committed = subprocess.check_output(['/usr/bin/git', 'show', f'{expected}:{name}'], cwd=ROOT)
+        if raw != committed:
+            sys.exit(f'exact-head source mismatch: {name}')
+        sources[name] = {'sha256': hashlib.sha256(raw).hexdigest(), 'bytes': len(raw)}
+        if name.endswith('.py') or name.endswith('fx-l1-evidence'):
+            compile(raw, name, 'exec')
+    subprocess.run(['/usr/bin/git', 'diff', '--check',
+                    '1077eac532135570ce3610960982786e8c48bfb8', expected], cwd=ROOT, check=True)
+    print(json.dumps({'expected_head': expected, 'source_sha256': sources,
+                      'syntax_and_diff_checks': 'PASS'}, sort_keys=True), flush=True)
+    subprocess.run([sys.executable, '-B', '-m', 'unittest', 'discover',
+                    '-s', 'deploy/dl380g10', '-p', 'test_*.py', '-v'], cwd=ROOT, check=True)
+    lint_sources = [ROOT / name for name in owned if not name.endswith('.md')]
+    command = ['/home/rob/.local/bin/uv', 'tool', 'run', '--from', 'ruff==0.14.14', 'ruff',
+               'check', '--isolated', '--select', 'E9,F', '--output-format=json']
+    def lint(paths):
+        result = subprocess.run([*command, *map(str, paths)], stdout=subprocess.PIPE, check=False)
+        if result.returncode not in (0, 1):
+            sys.exit('ruff invocation failed')
+        rows = json.loads(result.stdout)
+        identities = Counter((Path(row['filename']).name, row['code'], row['message']) for row in rows)
+        return identities, rows
+    current, findings = lint(lint_sources)
+    with tempfile.TemporaryDirectory(prefix='fx-l1-lint-', dir='/tmp') as directory:
+        baseline_paths = []
+        for path in lint_sources[:2]:
+            target = Path(directory) / path.name
+            target.write_bytes(subprocess.check_output(['/usr/bin/git', 'show',
+                f'1077eac532135570ce3610960982786e8c48bfb8:deploy/dl380g10/{path.name}'], cwd=ROOT))
+            baseline_paths.append(target)
+        baseline, baseline_findings = lint(baseline_paths)
+    print(json.dumps({'lint': {'new_findings': list((current - baseline).elements()),
+                      'baseline': baseline_findings, 'current': findings}}, sort_keys=True), flush=True)
+    if current - baseline:
+        sys.exit('new ruff findings')
+    print('EXACT_HEAD_SYNTHETIC_GREEN; no new E9/F findings; no generated inputs changed', flush=True)
+
+
+if __name__ == '__main__' and sys.argv[1:] == ['green']:
+    qualify()
+elif __name__ == '__main__':
+    rows = run_source('746c9797d3841baf8c018f26bbcbcd1b85cd00a4', REQUIRED)
+    if any(row['setup_or_runtime_errors'] or row['assertion_failures'] != 1
+           or 'proven ended job wedges admission' not in row['failure_details'][0]
+           for row in rows):
+        sys.exit('required RED was not the intended closure assertion failure')
+    landed = run_source('746c9797d3841baf8c018f26bbcbcd1b85cd00a4', M1, True)
+    if any(not row['passed'] for row in landed):
+        sys.exit('landed M1 source-specific characterization failed')
+    precursor = run_source('591418e26bc1af62a84deca5175a61c392750ff4', M1, True)
+    if any(row['setup_or_runtime_errors'] or not row['assertion_failures'] for row in precursor):
+        sys.exit('M1 precursor test did not give an assertion RED; inspect matrix')
+    print('REQUIRED_RED_VERIFIED; M1 source-specific matrix retained')

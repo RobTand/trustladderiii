@@ -49,6 +49,9 @@ class FluxAdmissionTests(unittest.TestCase):
         self.identifier = 'ƒ123abc'
         self.calls = []
         self.spec = None
+        self.no_result = False
+        self.failure_status = None
+        self.failure_events = None
         self.matches = 1
         self.lost_reply = False
         self.terminal_failure = False
@@ -64,6 +67,8 @@ class FluxAdmissionTests(unittest.TestCase):
     def native(self, *args, **kwargs):
         self.calls.append(args)
         if args[0] == 'getattr':
+            if args[1] == 'jobid-path':
+                return 0, b'/sys', b''
             value = ('different' if self.drift else fx.STARTTIME) if args[1] == 'broker.starttime' else '3'
             return 0, value.encode(), b''
         if args[:2] == ('config', 'get'):
@@ -93,6 +98,11 @@ class FluxAdmissionTests(unittest.TestCase):
                     'job_id': self.identifier, 'returncode': self.command_failure, 'source_tree': self.intent['tree'],
                     'scratch_removed': True, 'cgroup': '/fixture-absent/flux-jobs.slice/shell-fixture:sys.service',
                     'cgroup_inode': 123})
+            if self.no_result:
+                (self.out / 'result.json').unlink()
+                if not any(row['name'] == 'start' for row in self.failure_events):
+                    (self.out / 'stdout').unlink()
+                    (self.out / 'stderr').unlink()
             if self.lost_reply:
                 return 74, b'', b'fixture lost submit reply\n'
             return 0, (self.identifier + '\n').encode(), b''
@@ -100,6 +110,8 @@ class FluxAdmissionTests(unittest.TestCase):
             return 0, fx.encoded({'jobs': [{'jobid': self.identifier, 'name': self.intent['name']}
                                           for _ in range(self.matches)]}), b''
         if args[:3] == ('job', 'info', '--original'):
+            if args[-2] != self.identifier:
+                return 1, b'', b'unknown fixture job ID'
             value = copy.deepcopy(self.spec)
             if self.bad_original:
                 value['attributes']['system']['cwd'] = '/contradiction'
@@ -116,10 +128,14 @@ class FluxAdmissionTests(unittest.TestCase):
                 fx.save(self.out / 'result.json', {'schema': 'malformed'})
             return 0, fx.encoded({'name': 'clean'}), b''
         if args[:2] == ('job', 'status'):
+            if self.failure_status is not None:
+                return self.failure_rc, fx.encoded(self.failure_status), b''
             value = {} if self.bad_status else {'id': 42, 'exception_occurred': False,
                     'waitstatus': self.command_failure << 8, 'result': 2 if self.command_failure else 1}
             return (1 if self.terminal_failure else self.command_failure), fx.encoded(value), b''
         if args[:2] == ('job', 'eventlog'):
+            if self.failure_events is not None:
+                return 0, b'\n'.join(fx.encoded(row) for row in self.failure_events), b''
             value = [{'name': 'start'}, {'name': 'finish', 'context': {'status': self.command_failure << 8}}, {'name': 'clean'}]
             if self.terminal_failure:
                 value.insert(1, {'name': 'exception', 'context': {'type': 'exec', 'severity': 0}})
@@ -779,6 +795,324 @@ class FluxAdmissionTests(unittest.TestCase):
                 self.coordinator(self.root, '--reattach', str(self.out.parent))
             admitted.assert_not_called()
         self.assertEqual(self.submissions(), 0)
+
+    def prepare_no_result(self, started):
+        self.failure_case = getattr(self, 'failure_case', 0) + 1
+        self.out = self.root / f'failure-{self.failure_case}' / 'build'
+        self.out.parent.mkdir()
+        self.intent = self.intent | {'out': str(self.out), 'name': f'tl3-deploy-failure-{self.failure_case}-build'}
+        patch.object(fx.socket, 'gethostname', return_value='dl380g10').start()
+        self.no_result = True
+        self.failure_rc = 143 if started else 125
+        self.failure_status = {'id': 42, 'exception_occurred': True,
+                               'exception_type': 'cancel', 'exception_severity': 0, 'result': 4}
+        self.failure_events = [{'name': 'submit', 'context': {'userid': os.getuid()}}]
+        if started:
+            self.failure_events += [{'name': 'alloc'}, {'name': 'start'}]
+            self.failure_status['waitstatus'] = 15
+        self.failure_events += [{'name': 'exception', 'context': {'type': 'cancel', 'severity': 0}}]
+        if started:
+            self.failure_events += [{'name': 'finish', 'context': {'status': 15}}]
+        self.failure_events += [{'name': 'clean'}]
+        for number, row in enumerate(self.failure_events):
+            row['timestamp'] = float(number + 1)
+        uid = os.getuid()
+        self.failure_slice = fx.CGROUP_ROOT / f'user.slice/user-{uid}.slice/user@{uid}.service/flux-jobs.slice'
+        self.failure_slice.mkdir(parents=True, exist_ok=True)
+
+    def assert_failed_closed(self):
+        with self.assertRaises((RuntimeError, OSError)):
+            fx.stage(self.intent)
+        self.assertTrue((self.out / 'closed.json').exists(), 'proven ended job wedges admission')
+        closed = fx.load(self.out / 'closed.json')
+        self.assertEqual(closed['schema'], 'tl3.deploy.closed.v2')
+        self.assertEqual(closed['outcome'], 'FAILED')
+        self.assertFalse((self.out / 'receipt.json').exists())
+        self.assertFalse((self.out.parent / 'accepted.json').exists())
+        self.assertFalse((self.out / 'result.json').exists())
+        with patch.object(fx, 'admit_stages', return_value={}) as admitted:
+            self.coordinator(self.root)
+            admitted.assert_called_once()
+        self.assertEqual(self.submissions(), 1)
+
+    def assert_failure_held(self):
+        submitted = self.submissions()
+        with self.assertRaises((RuntimeError, ValueError, KeyError, TypeError, OSError)):
+            fx.stage(self.intent)
+        self.assertFalse((self.out / 'closed.json').exists())
+        with patch.object(fx, 'admit_stages', return_value={}) as admitted:
+            with self.assertRaises(RuntimeError):
+                self.coordinator(self.root)
+            admitted.assert_not_called()
+        self.assertEqual(self.submissions(), submitted + 1)
+
+    def test_cancelled_before_start_without_result_allows_failed_closure(self):
+        self.prepare_no_result(False)
+        self.assert_failed_closed()
+
+    def test_sigterm_mid_run_without_result_allows_failed_closure(self):
+        self.prepare_no_result(True)
+        self.assert_failed_closed()
+
+    def test_no_result_contradictory_terminal_records_hold_admission(self):
+        cases = ('wrong-id', 'missing-id', 'success-result', 'wrong-result', 'missing-exception',
+                 'wrong-exception-type', 'nonfatal-exception', 'wrong-rc', 'wrong-waitstatus',
+                 'missing-clean', 'running', 'duplicate-start', 'missing-finish', 'missing-alloc',
+                 'reordered', 'bad-timestamp', 'wrong-uid', 'malformed-status', 'stopped')
+        for case in cases:
+            with self.subTest(case=case):
+                self.prepare_no_result(True)
+                if case == 'wrong-id':
+                    self.failure_status['id'] = 43
+                elif case == 'missing-id':
+                    del self.failure_status['id']
+                elif case == 'success-result':
+                    self.failure_status['result'] = 1
+                elif case == 'wrong-result':
+                    self.failure_status['result'] = 8
+                elif case == 'missing-exception':
+                    self.failure_status['exception_occurred'] = False
+                elif case == 'wrong-exception-type':
+                    self.failure_status['exception_type'] = 'timeout'
+                elif case == 'nonfatal-exception':
+                    self.failure_events[3]['context']['severity'] = 1
+                elif case == 'wrong-rc':
+                    self.failure_rc = 0
+                elif case == 'wrong-waitstatus':
+                    self.failure_status['waitstatus'] = 9
+                elif case in ('missing-clean', 'running', 'missing-finish', 'missing-alloc'):
+                    name = {'missing-clean': 'clean', 'running': 'clean',
+                            'missing-finish': 'finish', 'missing-alloc': 'alloc'}[case]
+                    self.failure_events = [row for row in self.failure_events if row['name'] != name]
+                elif case == 'duplicate-start':
+                    self.failure_events.insert(2, dict(self.failure_events[2]))
+                elif case == 'reordered':
+                    self.failure_events[2], self.failure_events[4] = self.failure_events[4], self.failure_events[2]
+                elif case == 'bad-timestamp':
+                    self.failure_events[2]['timestamp'] = float('nan')
+                elif case == 'wrong-uid':
+                    self.failure_events[0]['context']['userid'] = os.getuid() + 1
+                elif case == 'malformed-status':
+                    self.failure_status = []
+                elif case == 'stopped':
+                    self.failure_status['waitstatus'] = (19 << 8) | 127
+                    self.failure_events[4]['context']['status'] = self.failure_status['waitstatus']
+                self.assert_failure_held()
+
+    def test_prestart_allocation_or_finish_is_unknown(self):
+        for name in ('alloc', 'finish'):
+            with self.subTest(name=name):
+                self.prepare_no_result(False)
+                self.failure_events.insert(1, {'name': name, 'timestamp': 1.5, 'context': {'status': 15}})
+                self.assert_failure_held()
+
+    def test_no_result_cleanup_requires_absent_exact_scopes_and_scratch(self):
+        for name in ('sys', '0-sys', '1-sys', '2-sys', 'scratch-unicode', 'scratch-plain', 'symlink'):
+            with self.subTest(name=name):
+                self.prepare_no_result(True)
+                if name.startswith('scratch'):
+                    target = fx.SCRATCH / (self.identifier if name == 'scratch-unicode' else 'f' + self.identifier[1:])
+                    target.mkdir()
+                else:
+                    target = self.failure_slice / f'shell-f{self.identifier[1:]}:{name if name != "symlink" else "sys"}.service'
+                    if name == 'symlink':
+                        target.symlink_to(self.root / 'absent')
+                    else:
+                        target.mkdir()
+                        (target / 'cgroup.events').write_text('populated 0\n')
+                self.assert_failure_held()
+                if target.is_symlink():
+                    target.unlink()
+                else:
+                    for child in target.iterdir():
+                        child.unlink()
+                    target.rmdir()
+
+    def test_no_result_unknown_slice_owner_or_identity_holds(self):
+        self.prepare_no_result(True)
+        original = Path.lstat
+        def wrong_owner(path, *args, **kwargs):
+            info = original(path, *args, **kwargs)
+            if path == self.failure_slice:
+                return SimpleNamespace(st_mode=info.st_mode, st_uid=os.getuid() + 1,
+                                       st_dev=info.st_dev, st_ino=info.st_ino)
+            return info
+        with patch.object(Path, 'lstat', wrong_owner):
+            self.assert_failure_held()
+
+    def test_no_result_missing_slice_holds(self):
+        self.prepare_no_result(False)
+        self.failure_slice.rmdir()
+        self.assert_failure_held()
+
+    def test_failed_closure_mutation_or_new_result_blocks_next_admission(self):
+        self.prepare_no_result(True)
+        self.assert_failed_closed()
+        for name in ('eventlog.jsonl', 'failure-cleanup.json', 'binding.json', 'jobspec.json',
+                     'intent.json', 'stdout', 'failure-identity.json'):
+            with self.subTest(name=name):
+                path = self.out / name
+                original = path.read_bytes()
+                fx.save(path, original + b' ')
+                with patch.object(fx, 'admit_stages') as admitted:
+                    with self.assertRaises(RuntimeError):
+                        self.coordinator(self.root)
+                    admitted.assert_not_called()
+                fx.save(path, original)
+        fx.save(self.out / 'result.json', {})
+        with patch.object(fx, 'admit_stages') as admitted:
+            with self.assertRaises(RuntimeError):
+                self.coordinator(self.root)
+            admitted.assert_not_called()
+        self.assertEqual(self.submissions(), 1)
+
+    def test_failed_closure_cannot_exempt_an_unresolved_sibling(self):
+        self.prepare_no_result(False)
+        self.assert_failed_closed()
+        other = self.root / 'unresolved' / 'build'
+        other.mkdir(parents=True)
+        fx.save(other / 'dispatched.json', {})
+        with patch.object(fx, 'admit_stages') as admitted:
+            with self.assertRaises(RuntimeError):
+                self.coordinator(self.root, '--reattach', str(self.out.parent))
+            admitted.assert_not_called()
+        self.assertEqual(self.submissions(), 1)
+
+    def test_new_attempt_after_failed_closure_gets_new_job_id(self):
+        self.prepare_no_result(True)
+        self.assert_failed_closed()
+        previous = self.out
+        self.no_result = False
+        self.failure_status = None
+        self.failure_events = None
+        self.identifier = 'ƒ456def'
+        self.out = self.root / 'new-attempt' / 'build'
+        self.out.parent.mkdir()
+        self.intent = self.intent | {'out': str(self.out), 'name': 'tl3-deploy-new-attempt-build'}
+        with patch.object(fx, 'STORE', self.root):
+            with fx.serialized_admission(None):
+                fx.stage(self.intent)
+        self.assertEqual(self.submissions(), 2)
+        self.assertNotEqual(fx.load(previous / 'binding.json')['job_id'], fx.load(self.out / 'binding.json')['job_id'])
+        self.assertFalse((previous / 'receipt.json').exists())
+        self.assertTrue((self.out / 'receipt.json').exists())
+
+    def test_failed_closure_wrong_binding_or_outcome_refuses_without_submit(self):
+        self.prepare_no_result(False)
+        self.assert_failed_closed()
+        for name, key, value in (('binding.json', 'generation', 'other-generation'),
+                                  ('binding.json', 'job_id', 'ƒ456def'),
+                                  ('binding.json', 'intent', '0' * 64),
+                                  ('binding.json', 'jobspec_sha256', '0' * 64),
+                                  ('intent.json', 'generation', 'other-generation'),
+                                  ('closed.json', 'outcome', 'PASS')):
+            with self.subTest(name=name, key=key):
+                path = self.out / name
+                original = path.read_bytes()
+                altered = fx.load(path)
+                altered[key] = value
+                fx.save(path, altered)
+                with patch.object(fx, 'admit_stages') as admitted:
+                    with self.assertRaises(RuntimeError):
+                        self.coordinator(self.root)
+                    admitted.assert_not_called()
+                if name != 'closed.json':
+                    with self.assertRaises(RuntimeError):
+                        fx.stage(self.intent)
+                fx.save(path, original)
+        self.assertEqual(self.submissions(), 1)
+        self.assertFalse((self.out / 'receipt.json').exists())
+
+    def test_failed_closure_evidence_absence_is_bound(self):
+        self.prepare_no_result(False)
+        self.assert_failed_closed()
+        for name in ('stdout', 'stderr', 'receipt.json'):
+            with self.subTest(name=name):
+                fx.save(self.out / name, b'new file')
+                with patch.object(fx, 'admit_stages') as admitted:
+                    with self.assertRaises(RuntimeError):
+                        self.coordinator(self.root)
+                    admitted.assert_not_called()
+                (self.out / name).unlink()
+        self.assertEqual(self.submissions(), 1)
+
+    def test_failed_closure_host_generation_and_query_unknown_hold(self):
+        for case in ('wrong-host', 'wrong-generation', 'wrong-instance', 'id-query-failed', 'events-query-failed'):
+            with self.subTest(case=case):
+                self.prepare_no_result(True)
+                original = self.native
+                def native(*args, **kwargs):
+                    if case == 'wrong-instance' and args == ('getattr', 'jobid-path'):
+                        return 0, b'/other', b''
+                    if case == 'id-query-failed' and args[:2] == ('job', 'id'):
+                        return 74, b'42', b''
+                    if case == 'events-query-failed' and args[:2] == ('job', 'eventlog'):
+                        _, value, error = original(*args, **kwargs)
+                        return 74, value, error
+                    return original(*args, **kwargs)
+                if case == 'wrong-generation':
+                    self.drift = True
+                with patch.object(fx, 'native', native), patch.object(
+                        fx.socket, 'gethostname', return_value='other' if case == 'wrong-host' else 'dl380g10'):
+                    self.assert_failure_held()
+                self.drift = False
+
+    def test_started_exit_failure_without_exception_can_only_close_failed(self):
+        self.prepare_no_result(True)
+        self.failure_events = [row for row in self.failure_events if row['name'] != 'exception']
+        self.failure_events[-2]['context']['status'] = 7 << 8
+        self.failure_status = {'id': 42, 'exception_occurred': False, 'waitstatus': 7 << 8, 'result': 2}
+        self.failure_rc = 7
+        self.assert_failed_closed()
+
+    def test_failed_closure_recreated_cleanup_or_changed_root_blocks_next_admission(self):
+        self.prepare_no_result(True)
+        self.assert_failed_closed()
+        for target in (self.failure_slice / f'shell-f{self.identifier[1:]}:sys.service',
+                       fx.SCRATCH / self.identifier):
+            with self.subTest(path=target):
+                target.mkdir()
+                with patch.object(fx, 'admit_stages') as admitted:
+                    with self.assertRaises(RuntimeError):
+                        self.coordinator(self.root)
+                    admitted.assert_not_called()
+                target.rmdir()
+        original = Path.lstat
+        def changed_inode(path, *args, **kwargs):
+            info = original(path, *args, **kwargs)
+            if path == self.failure_slice:
+                return SimpleNamespace(st_mode=info.st_mode, st_uid=info.st_uid,
+                                       st_dev=info.st_dev, st_ino=info.st_ino + 1)
+            return info
+        with patch.object(Path, 'lstat', changed_inode), patch.object(fx, 'admit_stages') as admitted:
+            with self.assertRaises(RuntimeError):
+                self.coordinator(self.root)
+            admitted.assert_not_called()
+        self.assertEqual(self.submissions(), 1)
+
+    def test_occupied_or_foreign_scope_without_result_never_closes(self):
+        self.prepare_no_result(True)
+        scope = self.failure_slice / f'shell-f{self.identifier[1:]}:sys.service'
+        scope.mkdir()
+        (scope / 'cgroup.events').write_text('populated 1\n')
+        original = Path.lstat
+        def foreign(path, *args, **kwargs):
+            info = original(path, *args, **kwargs)
+            if path == scope:
+                return SimpleNamespace(st_mode=info.st_mode, st_uid=os.getuid() + 1,
+                                       st_dev=info.st_dev, st_ino=info.st_ino)
+            return info
+        with patch.object(Path, 'lstat', foreign):
+            self.assert_failure_held()
+
+    def test_reattach_failed_job_collects_original_id_without_resubmission(self):
+        self.prepare_no_result(True)
+        self.assert_failed_closed()
+        with self.assertRaises(RuntimeError):
+            fx.stage(self.intent)
+        self.assertEqual(self.submissions(), 1)
+        self.assertEqual(fx.load(self.out / 'closed.json')['outcome'], 'FAILED')
+        self.assertFalse((self.out / 'receipt.json').exists())
 
     def test_supervisor_environment_is_separate_from_caller(self):
         child = SimpleNamespace(pid=12345, returncode=0)
