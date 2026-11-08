@@ -62,4 +62,64 @@ pub(super) proof fn push_keeps_tail(o0: Outbox, o1: Outbox, x: Out)
         o1.items@[o0.len as int] == Some(x),
 {
 }
+
+/// Drains of consecutive output sequences concatenate: dropping None commutes
+/// with sequence concatenation, so per-pass drains compose like the relation's
+/// per-pass emitted suffixes.
+pub(super) proof fn occupied_concat(a: Seq<Option<Out>>, b: Seq<Option<Out>>)
+    ensures occupied(a + b, (a.len() + b.len()) as nat)
+        == occupied(a, a.len()) + occupied(b, b.len()),
+    decreases b.len(),
+{
+    if b.len() == 0 {
+        assert(a + b =~= a);
+        occupied_prefix(a + b, a, a.len());
+        assert(occupied(b, b.len()) =~= Seq::<Out>::empty());
+        assert(occupied(a, a.len()) + occupied(b, b.len()) =~= occupied(a, a.len()));
+    } else {
+        let b0 = b.drop_last();
+        occupied_concat(a, b0);
+        assert((a + b).drop_last() =~= a + b0);
+        occupied_prefix(a + b, a + b0, (a.len() + b0.len()) as nat);
+        occupied_prefix(b, b0, b0.len());
+        assert((a + b)[(a.len() + b.len()) - 1] == b[b.len() - 1]);
+        match b[b.len() - 1] {
+            Some(o) => {
+                assert(occupied(a, a.len()) + occupied(b0, b0.len()).push(o)
+                    =~= (occupied(a, a.len()) + occupied(b0, b0.len())).push(o));
+            }
+            None => {}
+        }
+    }
+}
+
+/// The real drain of one settle pass is its emitted suffix with None dropped.
+/// The pass starts from a fresh outbox, and the empty tail from `len` on is a
+/// premise each caller proves from the actual writes (new, push, I-D2).
+pub(super) proof fn drain_is_emitted(fresh: Outbox, o: Outbox)
+    requires empty_outbox(fresh), o.items@.len() == OUTBOX, o.len <= OUTBOX,
+        forall|k: int| o.len <= k < OUTBOX ==> o.items@[k].is_none(),
+    ensures fresh.len == 0,
+        occupied(o.items@, OUTBOX as nat)
+            == occupied(transition_safety::emitted(fresh, o), o.len as nat),
+{
+    reveal(empty_outbox);
+    let e = transition_safety::emitted(fresh, o);
+    assert(e =~= o.items@.subrange(0, o.len as int));
+    occupied_tail(o.items@, o.len as nat, OUTBOX as nat);
+    occupied_prefix(o.items@, e, o.len as nat);
+}
+
+/// Settle's Vec suffix after one more pass: if the Vec so far is the prefix plus
+/// the relation's emitted sequence with None dropped, appending the pass's drain
+/// keeps that correspondence for the concatenated relation output.
+pub(super) proof fn vec_suffix_step(prefix: Seq<Out>, vec: Seq<Out>, rel: Seq<Option<Out>>,
+    next: Seq<Option<Out>>, drained: Seq<Out>)
+    requires vec == prefix + occupied(rel, rel.len()),
+        drained == occupied(next, next.len()),
+    ensures vec + drained == prefix + occupied(rel + next, (rel + next).len()),
+{
+    occupied_concat(rel, next);
+    assert(vec + drained =~= prefix + (occupied(rel, rel.len()) + occupied(next, next.len())));
+}
 }
