@@ -387,7 +387,7 @@ fn reproduction(tests: bool) -> Schedule {
     s
 }
 fn plan(tag: &str) -> Value {
-    json!({"repository":format!("/safe/{tag}"),"base_sha":OLD_HEAD,"reviewed_sha":OLD_HEAD,"reproducing_unavailable":"safe optional evidence","selected_failures":["test_original.py::test_original"],"plan":[{"name":tag,"kind":"regression","tests":["test_safe.py::test_safe"]},{"name":"old reproduction","kind":"reproducing","tests":["test_old.py::test_old"]}]})
+    json!({"repository":format!("/safe/{tag}"),"base_sha":OLD_HEAD,"reviewed_sha":OLD_HEAD,"reproducing_unavailable":"safe optional evidence","selected_failures":["test_original.py::test_original"],"plan":[{"name":tag,"kind":"regression","tests":["test_safe.py::test_safe"],"goal_ids":[]},{"name":"old reproduction","kind":"reproducing","tests":["test_old.py::test_old"],"goal_ids":[]}]})
 }
 #[test]
 fn mandatory_reproductions_and_eager_second_plan_read() {
