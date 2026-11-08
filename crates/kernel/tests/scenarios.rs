@@ -656,7 +656,10 @@ fn unapproved_delivery_merges_report_incidents_and_finish_truthful_teardown() {
             "teardown must await its actual acknowledgement"
         );
         assert_eq!(run.node().effect.unwrap().kind, EffectKind::RemoveWorktree);
-        assert!(run.notices.contains(&Notice::Note(NoteKind::UnapprovedMerge)));
+        assert!(
+            run.notices
+                .contains(&Notice::Note(NoteKind::UnapprovedMerge))
+        );
         assert!(run.notices.contains(&Notice::Incident { needs_rob: false }));
         assert_eq!(run.w.check(), Ok(()));
 
