@@ -65,7 +65,7 @@ def enforce_budget(results, config, runner, outputs, baseline=None, cpu_seconds=
 def main():
     prepare()
     link_workspace()
-    os.environ['TL3_TEST_PYTHON'] = sys.executable
+    Path(os.environ['TEST_TMPDIR'], 'tl3-test-python').write_text(sys.executable, encoding='utf-8')
     executable, name, harness, worker_python, *arguments = sys.argv[1:]
     if worker_python != '-':
         use_worker_python(worker_python)

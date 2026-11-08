@@ -926,8 +926,16 @@ pub fn generated_harness_policy() -> String {
 
 #[cfg(test)]
 fn python_command() -> std::process::Command {
-    let interpreter = std::env::var_os("TL3_TEST_PYTHON")
-        .expect("TL3_TEST_PYTHON must name the pinned test interpreter");
+    let directory = std::env::var_os("TEST_TMPDIR")
+        .expect("TEST_TMPDIR must name the explicit test-fact directory");
+    let interpreter = std::fs::read_to_string(
+        std::path::PathBuf::from(directory).join("tl3-test-python"),
+    )
+    .expect("tl3-test-python must contain the pinned test interpreter path");
+    assert!(
+        std::path::Path::new(&interpreter).is_absolute(),
+        "tl3-test-python must contain an absolute interpreter path"
+    );
     let mut command = std::process::Command::new(interpreter);
     command.env_clear();
     for key in [
