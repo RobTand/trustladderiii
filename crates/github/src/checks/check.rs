@@ -4,7 +4,6 @@
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
-use super::{MERGIFY_APP_ID, MERGIFY_APP_SLUG, QUEUE_CHECK, QUEUE_RULE_CHECK};
 
 /// A check run's or check suite's `status`.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
@@ -146,10 +145,6 @@ pub enum Head {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 pub enum App {
-    /// Mergify's own app: its ID and slug both match.
-    Mergify,
-    /// The `mergify` slug with another app ID.
-    MergifySlug,
     /// The `github-actions` app.
     Actions,
     Other,
@@ -161,41 +156,11 @@ impl App {
     pub fn parse(app: Option<(u64, &str)>) -> Self {
         match app {
             None => Self::Missing,
-            Some((id, MERGIFY_APP_SLUG)) if id == MERGIFY_APP_ID => Self::Mergify,
-            Some((_, MERGIFY_APP_SLUG)) => Self::MergifySlug,
             Some((_, "github-actions")) => Self::Actions,
             Some(_) => Self::Other,
         }
     }
 
-    /// The slug is `mergify`, whatever the app ID.
-    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result =>
-        ensures result == matches!(self, Self::Mergify | Self::MergifySlug),
-    ))]
-    pub fn mergify_slug(self) -> bool {
-        matches!(self, Self::Mergify | Self::MergifySlug)
-    }
-}
-
-/// The check names Mergify's decisions single out.
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
-#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(kani, derive(kani::Arbitrary))]
-pub enum Name {
-    QueueCheck,
-    QueueRule,
-    Other,
-}
-
-impl Name {
-    pub fn parse(name: &str) -> Self {
-        match name {
-            QUEUE_CHECK => Self::QueueCheck,
-            QUEUE_RULE_CHECK => Self::QueueRule,
-            _ => Self::Other,
-        }
-    }
 }
 
 /// A UTC time as Unix seconds plus nanoseconds, ordered as chrono orders it.
@@ -221,7 +186,6 @@ pub struct CheckView {
     pub app: App,
     /// The interned `Option<app id>`.
     pub app_key: u32,
-    pub name: Name,
     /// The interned check name.
     pub name_key: u32,
     /// The check matches one of the caller's required contexts.

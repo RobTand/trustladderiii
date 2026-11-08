@@ -406,16 +406,21 @@ impl Respond for Api {
                     assert!(s.checks.iter().any(|c| c["name"] == APPROVAL_CHECK
                         && c["head_sha"] == *head
                         && c["app"]["id"] == 123));
+                    s.delivery_read=true;
+                    s.operations.push("accept-delivery".into());
+                    json!({"allow_merge_commit":true,"allow_squash_merge":true,"allow_rebase_merge":true})
+                },
+                ("PUT", "/pulls/100/merge") => {
+                    let head = &s.pull.as_ref().unwrap()["head"]["sha"];
+                    assert_eq!(body["sha"], *head, "Direct must pin the merge head");
                     let merge = Command::new("git")
                         .current_dir(&self.fixture.remote)
                         .args(["merge-tree", "--write-tree", "main", head.as_str().unwrap()])
                         .output()
                         .unwrap();
                     s.conflicting_handoff |= !merge.status.success();
-                    s.delivery_read=true;
-                    s.operations.push("accept-delivery".into());
-                    json!({"allow_merge_commit":true,"allow_squash_merge":true,"allow_rebase_merge":true})
-                },
+                    panic!("pending required checks must never authorize a merge PUT");
+                }
                 ("POST", "/pulls") => {
                     s.opens += 1;
                     s.operations.push("open".into());
@@ -551,6 +556,8 @@ impl Server {
     }
     fn register_delivery(&self,c:&mut Controller) {
         c.register_github_translator("delivery",adapters::direct_merge::Translator::new(self.clients()).unwrap().with_wakes(self.wakes.clone()));
+        // Register the durable consumer before the first incoming event.
+        tl3_controller::ingress::drain(c).unwrap();
     }
     fn clients(&self) -> BTreeMap<u64, GitHub> {
         BTreeMap::from([(
@@ -906,7 +913,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
                 assert!(drive_once(&mut c));
                 assert!(
                     !server.api.state.lock().unwrap().conflicting_handoff,
-                    "a conflicting checked head must rebase before delivery"
+                    "a conflicting checked head must rebase without a merge write"
                 );
                 if c.world().unwrap().nodes[0].phase == Phase::Rebasing {
                     break;

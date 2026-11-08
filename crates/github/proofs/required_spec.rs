@@ -185,7 +185,7 @@ fn required_check_oracle(check: CheckView, runner: bool) {
 /// these concrete executions establish every old cover, without an unwind.
 fn required_check_covers() {
     let mut check = CheckView { id: 0, head: Head::Current, app: App::Actions,
-        app_key: 0, name: Name::Other, name_key: 0, required: true,
+        app_key: 0, name_key: 0, required: true,
         status: Status::Completed, conclusion: Some(Conclusion::Success), completed_at: None };
     let r1 = required_check(check, false);
     assert(r1 == RequiredState::Passed);

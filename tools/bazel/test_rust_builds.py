@@ -104,7 +104,7 @@ class RustDependencyTests(unittest.TestCase):
                 name: {"path": "tests/" + name + ".rs"}
                 for name in ["core_defects", "workers", "publishing", "prismabuild",
                              "github", "hindsight", "writer_references", "writer_blocker",
-                             "mergify", "simulation"]})
+                             "direct_merge", "simulation"]})
 
     def dependencies(self, target):
         pending, found = [":" + target], set()
@@ -159,7 +159,7 @@ class RustDependencyTests(unittest.TestCase):
 
     def test_measured_controller_shard_configuration(self):
         for name, count in [("workers", 32), ("publishing", 38),
-                            ("mergify", 50), ("github-flow", 50),
+                            ("direct_merge", 8), ("github-flow", 50),
                             ("github-notices", 32), ("simulation", 16),
                             ("core_defects", 0)]:
             with self.subTest(name=name):

@@ -1234,7 +1234,7 @@ def verus_proofs():
             src = "proofs/check.rs",
             srcs = ["src/checks/check.rs", "src/checks/verification.rs"],
             module = "check",
-            expected_obligations = 12,
+            expected_obligations = 11,
             tags = ["rust", "verus"],
             size = "small",
             timeout = "short",
