@@ -50,7 +50,7 @@ pub(super) fn forcing(cpus: &str) -> String {
             "OMP_NUM_THREADS={cpus}, MKL_NUM_THREADS={cpus}, OPENBLAS_NUM_THREADS={cpus}",
             ". Keep these names out of forcing.environment, including when the requested value matches. ",
             "Represent the configured bound with runner_features=[native_threads_{cpus}] on ",
-            "prismabuild_pytest and retain its required run artifacts. Check tool_capabilities for support. ",
+            "flux_pytest and retain its required run artifacts. Check tool_capabilities for support. ",
             "forced_reproduction.environment describes only symptom mutations. ",
             "Delay is bounded to 5 seconds per call and ",
             "10 seconds per pytest test, shared across targets and forks; ",

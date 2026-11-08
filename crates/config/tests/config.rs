@@ -1853,6 +1853,20 @@ fn evidence_tools_are_explicit_configuration() {
                 .runner_features
                 .contains(&"native_threads_1".into())
         );
+        // Flux run facts only: Receipt.binding, the run receipt, Receipt.tree and its
+        // head sha, runner logs and Terminal.ending.
+        assert_eq!(planning.tool_capabilities[0].executor, "flux_pytest");
+        assert_eq!(
+            planning.tool_capabilities[0].artifacts,
+            [
+                "run_binding",
+                "receipt",
+                "input_tree",
+                "sha",
+                "logs",
+                "terminal_verdict"
+            ]
+        );
     }
     for cpus in [1, 4] {
         let tools = tl3_config::Planning::default().effective_tool_capabilities(cpus);

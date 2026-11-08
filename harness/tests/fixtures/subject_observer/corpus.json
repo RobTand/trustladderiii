@@ -56,13 +56,13 @@
     "source_obligations": [
       {
         "artifacts": [
-          "action_key",
-          "cas_receipt",
+          "run_binding",
+          "receipt",
           "sha",
           "logs",
           "terminal_verdict"
         ],
-        "executor": "prismabuild_pytest",
+        "executor": "flux_pytest",
         "methods": [
           "red_green",
           "base_head"
@@ -76,13 +76,13 @@
       },
       {
         "artifacts": [
-          "action_key",
-          "cas_receipt",
+          "run_binding",
+          "receipt",
           "sha",
           "logs",
           "terminal_verdict"
         ],
-        "executor": "prismabuild_pytest",
+        "executor": "flux_pytest",
         "methods": [
           "base_head"
         ],
@@ -112,13 +112,13 @@
     "source_obligations": [
       {
         "artifacts": [
-          "action_key",
-          "cas_receipt",
+          "run_binding",
+          "receipt",
           "sha",
           "logs",
           "terminal_verdict"
         ],
-        "executor": "prismabuild_pytest",
+        "executor": "flux_pytest",
         "methods": [
           "red_green"
         ],
@@ -136,13 +136,13 @@
       },
       {
         "artifacts": [
-          "action_key",
-          "cas_receipt",
+          "run_binding",
+          "receipt",
           "sha",
           "logs",
           "terminal_verdict"
         ],
-        "executor": "prismabuild_pytest",
+        "executor": "flux_pytest",
         "methods": [
           "base_head"
         ],
@@ -175,13 +175,13 @@
     "source_obligations": [
       {
         "artifacts": [
-          "action_key",
-          "cas_receipt",
+          "run_binding",
+          "receipt",
           "sha",
           "logs",
           "terminal_verdict"
         ],
-        "executor": "prismabuild_pytest",
+        "executor": "flux_pytest",
         "methods": [
           "base_head",
           "red_green"
@@ -200,13 +200,13 @@
       },
       {
         "artifacts": [
-          "action_key",
-          "cas_receipt",
+          "run_binding",
+          "receipt",
           "sha",
           "logs",
           "terminal_verdict"
         ],
-        "executor": "prismabuild_pytest",
+        "executor": "flux_pytest",
         "methods": [
           "base_head"
         ],

@@ -425,7 +425,7 @@ fn configured_evidence_preflight_does_not_accept_a_downgraded_leaf() {
         "artifacts":["invocation_url","sha","logs","terminal_verdict"],
         "methods":["red_green","forced_reproduction.contention_wrapper"], "protected_files":[]}]);
     let inputs = json!({"ingest":{"evidence_contract":contract}, "tool_capabilities":[{
-        "tool":"run_tests","executor":"prismabuild_pytest", "runner_features":["base_head"],
+        "tool":"run_tests","executor":"flux_pytest", "runner_features":["base_head"],
         "artifacts":["sha","logs","terminal_verdict"],"methods":["red_green"],"protected_files":[]}],
         "protected_paths":[], "forecast":{"fit_tokens":100,"context_tokens":150,"overhead_tokens":{"prompt":0}}});
     let reply = json!({"kind":"leaf","files":["greeting.py"],"checks":[],
@@ -464,7 +464,7 @@ fn configured_evidence_preflight_does_not_accept_a_downgraded_leaf() {
 fn configured_evidence_preflight_accepts_always_tests() {
     let contract = json!([{
         "requirement":"Run the repository's always_tests alongside the planned checks.",
-        "tool":"run_tests", "executor":"prismabuild_pytest", "runner_features":["always_tests"],
+        "tool":"run_tests", "executor":"flux_pytest", "runner_features":["always_tests"],
         "artifacts":["logs","terminal_verdict"], "methods":["head"], "protected_files":[]
     }]);
     let inputs = json!({

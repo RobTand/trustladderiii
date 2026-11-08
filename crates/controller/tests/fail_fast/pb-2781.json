@@ -107,14 +107,14 @@
         "evidence_contract": [
           {
             "tool": "run_tests",
-            "executor": "prismabuild_pytest",
+            "executor": "flux_pytest",
             "runner_features": [
               "native_threads_1",
               "base_head"
             ],
             "artifacts": [
-              "action_key",
-              "cas_receipt",
+              "run_binding",
+              "receipt",
               "logs",
               "terminal_verdict"
             ],
@@ -132,13 +132,13 @@
           },
           {
             "tool": "run_tests",
-            "executor": "prismabuild_pytest",
+            "executor": "flux_pytest",
             "runner_features": [
               "native_threads_1"
             ],
             "artifacts": [
-              "action_key",
-              "cas_receipt",
+              "run_binding",
+              "receipt",
               "logs",
               "terminal_verdict"
             ],
@@ -158,8 +158,8 @@
             "executor": "prismabuild_generator",
             "runner_features": [],
             "artifacts": [
-              "action_key",
-              "cas_receipt",
+              "run_binding",
+              "receipt",
               "output_tree",
               "logs",
               "terminal_verdict"
@@ -207,12 +207,12 @@
         "evidence_contract": [
           {
             "artifacts": [
-              "action_key",
-              "cas_receipt",
+              "run_binding",
+              "receipt",
               "logs",
               "terminal_verdict"
             ],
-            "executor": "prismabuild_pytest",
+            "executor": "flux_pytest",
             "methods": [
               "red_green",
               "head"
@@ -232,12 +232,12 @@
           },
           {
             "artifacts": [
-              "action_key",
-              "cas_receipt",
+              "run_binding",
+              "receipt",
               "logs",
               "terminal_verdict"
             ],
-            "executor": "prismabuild_pytest",
+            "executor": "flux_pytest",
             "methods": [
               "head"
             ],
@@ -255,14 +255,14 @@
           },
           {
             "tool": "run_tests",
-            "executor": "prismabuild_pytest",
+            "executor": "flux_pytest",
             "runner_features": [
               "native_threads_1",
               "base_head"
             ],
             "artifacts": [
-              "action_key",
-              "cas_receipt",
+              "run_binding",
+              "receipt",
               "logs",
               "terminal_verdict"
             ],
@@ -280,13 +280,13 @@
           },
           {
             "tool": "run_tests",
-            "executor": "prismabuild_pytest",
+            "executor": "flux_pytest",
             "runner_features": [
               "native_threads_1"
             ],
             "artifacts": [
-              "action_key",
-              "cas_receipt",
+              "run_binding",
+              "receipt",
               "logs",
               "terminal_verdict"
             ],
@@ -306,8 +306,8 @@
             "executor": "prismabuild_generator",
             "runner_features": [],
             "artifacts": [
-              "action_key",
-              "cas_receipt",
+              "run_binding",
+              "receipt",
               "input_tree",
               "output_tree",
               "artifact_sha256",
@@ -460,13 +460,13 @@
         "evidence_contract": [
           {
             "tool": "run_tests",
-            "executor": "prismabuild_pytest",
+            "executor": "flux_pytest",
             "runner_features": [
               "native_threads_1"
             ],
             "artifacts": [
-              "action_key",
-              "cas_receipt",
+              "run_binding",
+              "receipt",
               "sha",
               "logs",
               "terminal_verdict"
@@ -487,8 +487,8 @@
             "executor": "prismabuild_generator",
             "runner_features": [],
             "artifacts": [
-              "action_key",
-              "cas_receipt",
+              "run_binding",
+              "receipt",
               "input_tree",
               "output_tree",
               "artifact_sha256",
@@ -536,13 +536,13 @@
         "evidence_contract": [
           {
             "artifacts": [
-              "action_key",
-              "cas_receipt",
+              "run_binding",
+              "receipt",
               "sha",
               "logs",
               "terminal_verdict"
             ],
-            "executor": "prismabuild_pytest",
+            "executor": "flux_pytest",
             "methods": [
               "red_green"
             ],
@@ -560,8 +560,8 @@
           },
           {
             "artifacts": [
-              "action_key",
-              "cas_receipt",
+              "run_binding",
+              "receipt",
               "input_tree",
               "output_tree",
               "artifact_sha256",
@@ -584,13 +584,13 @@
           },
           {
             "tool": "run_tests",
-            "executor": "prismabuild_pytest",
+            "executor": "flux_pytest",
             "runner_features": [
               "native_threads_1"
             ],
             "artifacts": [
-              "action_key",
-              "cas_receipt",
+              "run_binding",
+              "receipt",
               "sha",
               "logs",
               "terminal_verdict"
@@ -608,13 +608,13 @@
           },
           {
             "tool": "run_tests",
-            "executor": "prismabuild_pytest",
+            "executor": "flux_pytest",
             "runner_features": [
               "native_threads_1"
             ],
             "artifacts": [
-              "action_key",
-              "cas_receipt",
+              "run_binding",
+              "receipt",
               "sha",
               "logs",
               "terminal_verdict"
@@ -632,13 +632,13 @@
           },
           {
             "tool": "run_tests",
-            "executor": "prismabuild_pytest",
+            "executor": "flux_pytest",
             "runner_features": [
               "native_threads_1"
             ],
             "artifacts": [
-              "action_key",
-              "cas_receipt",
+              "run_binding",
+              "receipt",
               "logs",
               "terminal_verdict"
             ],

@@ -28,11 +28,11 @@
           "exit status",
           "logs",
           "terminal records",
-          "cas_receipt",
+          "receipt",
           "skips",
           "missing tools"
         ],
-        "executor": "prismabuild_pytest",
+        "executor": "flux_pytest",
         "methods": [],
         "protected_files": [],
         "provenance": {
@@ -54,11 +54,11 @@
           "exit status",
           "logs",
           "terminal_verdict",
-          "cas_receipt",
+          "receipt",
           "skips",
           "missing tools"
         ],
-        "executor": "prismabuild_pytest",
+        "executor": "flux_pytest",
         "methods": [],
         "protected_files": [],
         "provenance": {
@@ -74,15 +74,15 @@
       },
       {
         "artifacts": [
-          "action_key",
+          "run_binding",
           "exit status",
           "logs",
           "terminal_verdict",
-          "cas_receipt",
+          "receipt",
           "skips",
           "missing tools"
         ],
-        "executor": "prismabuild_pytest",
+        "executor": "flux_pytest",
         "methods": [],
         "protected_files": [],
         "provenance": {
@@ -98,12 +98,12 @@
       },
       {
         "artifacts": [
-          "action_key",
-          "cas_receipt",
+          "run_binding",
+          "receipt",
           "logs",
           "terminal_verdict"
         ],
-        "executor": "prismabuild_pytest",
+        "executor": "flux_pytest",
         "methods": [
           "red_green",
           "subject_observer"
@@ -123,15 +123,15 @@
       },
       {
         "tool": "run_tests",
-        "executor": "prismabuild_pytest",
+        "executor": "flux_pytest",
         "runner_features": [
           "native_threads_2"
         ],
         "artifacts": [
-          "action_key",
+          "run_binding",
           "logs",
           "terminal_verdict",
-          "cas_receipt"
+          "receipt"
         ],
         "methods": [
           "head"
@@ -157,11 +157,11 @@
         "exit status",
         "logs",
         "terminal records",
-        "cas_receipt",
+        "receipt",
         "skips",
         "missing tools"
       ],
-      "executor": "prismabuild_pytest",
+      "executor": "flux_pytest",
       "methods": [],
       "protected_files": [],
       "provenance": {
@@ -183,11 +183,11 @@
         "exit status",
         "logs",
         "terminal_verdict",
-        "cas_receipt",
+        "receipt",
         "skips",
         "missing tools"
       ],
-      "executor": "prismabuild_pytest",
+      "executor": "flux_pytest",
       "methods": [],
       "protected_files": [],
       "provenance": {
@@ -203,15 +203,15 @@
     },
     {
       "artifacts": [
-        "action_key",
+        "run_binding",
         "exit status",
         "logs",
         "terminal_verdict",
-        "cas_receipt",
+        "receipt",
         "skips",
         "missing tools"
       ],
-      "executor": "prismabuild_pytest",
+      "executor": "flux_pytest",
       "methods": [],
       "protected_files": [],
       "provenance": {
@@ -227,12 +227,12 @@
     },
     {
       "artifacts": [
-        "action_key",
-        "cas_receipt",
+        "run_binding",
+        "receipt",
         "logs",
         "terminal_verdict"
       ],
-      "executor": "prismabuild_pytest",
+      "executor": "flux_pytest",
       "methods": [
         "red_green",
         "subject_observer"

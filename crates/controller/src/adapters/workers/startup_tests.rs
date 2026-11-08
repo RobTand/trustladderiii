@@ -127,7 +127,7 @@ fn planner_protected_paths_follow_the_request_repository() {
         let mut reply = json!({"kind":"leaf", "evidence_contract":[{
             "requirement":"Regenerate indexed Bazel outputs", "tool":"run_generator",
             "executor":"prismabuild_generator", "runner_features":["git_index", "scoped_outputs"],
-            "artifacts":["cas_receipt", "output_tree"], "methods":["configured_generation"], "protected_files":[],
+            "artifacts":["receipt", "output_tree"], "methods":["configured_generation"], "protected_files":[],
         }]});
         super::evidence::preflight("planner", &request["inputs"], &mut reply).unwrap();
         assert_eq!(reply["evidence_errors"] == json!([]), name == "TL3-SANDBOX");

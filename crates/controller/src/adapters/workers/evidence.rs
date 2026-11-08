@@ -2,6 +2,74 @@
 use crate::{Error, Result};
 use serde_json::{Value, json};
 
+/// Select the one admitted run_tests capability that meets a code-owned method duty.
+///
+/// `method`, `runner_features` and `artifacts` are the proof's minimum needs. The selected
+/// capability supplies the executor and its whole advertised artifact list, which
+/// contains every needed artifact. No support or several supporting capabilities add
+/// an explicit refusal and select nothing.
+fn method_requirement(
+    capabilities: &[Value],
+    requirement: &str,
+    method: &str,
+    runner_features: &[&str],
+    artifacts: &[&str],
+    errors: &mut Vec<String>,
+) -> Option<Value> {
+    let needs = [
+        ("methods", &[method][..]),
+        ("runner_features", runner_features),
+        ("artifacts", artifacts),
+    ];
+    let mut gaps: Vec<Vec<String>> = Vec::new();
+    let mut supporting: Vec<&Value> = Vec::new();
+    for capability in capabilities
+        .iter()
+        .filter(|capability| capability["tool"] == "run_tests")
+    {
+        let missing: Vec<String> = needs
+            .iter()
+            .flat_map(|(key, values)| values.iter().map(move |value| (*key, *value)))
+            .filter(|(key, value)| {
+                !capability[*key]
+                    .as_array()
+                    .is_some_and(|values| values.iter().any(|v| v == value))
+            })
+            .map(|(key, value)| format!("{key}={value}"))
+            .collect();
+        if missing.is_empty() && !supporting.contains(&capability) {
+            supporting.push(capability);
+        }
+        gaps.push(missing);
+    }
+    if let [capability] = supporting.as_slice() {
+        return Some(json!({
+            "requirement": requirement, "provenance": {"kind": "method"}, "tool": "run_tests",
+            "executor": capability["executor"], "runner_features": runner_features,
+            "artifacts": capability["artifacts"], "methods": [method], "protected_files": []}));
+    }
+    let missing = if supporting.is_empty() {
+        gaps.into_iter()
+            .min_by_key(Vec::len)
+            .unwrap_or_else(|| vec!["tool=run_tests".into()])
+    } else {
+        let mut executors: Vec<&str> = supporting
+            .iter()
+            .filter_map(|capability| capability["executor"].as_str())
+            .collect();
+        executors.sort_unstable();
+        vec![format!(
+            "ambiguous admitted run_tests capabilities: {}",
+            executors.join(", ")
+        )]
+    };
+    errors.push(format!(
+        "Unsupported evidence requirement: {requirement} ({}).",
+        missing.join(", ")
+    ));
+    None
+}
+
 pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) -> Result<()> {
     let goals = if role == "audit" {
         &inputs["ingest"]["goals"]
@@ -28,16 +96,20 @@ pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) -> Result
         return Ok(());
     }
     let mut contract = Vec::new();
+    let mut selection_errors = Vec::new();
     if role == "planner"
         && reply["checks"]
             .as_array()
             .is_some_and(|checks| checks.iter().any(|c| c.get("declared_symptom").is_some()))
     {
-        contract.push(json!({
-            "requirement":"Observe the declared exception at the original node and phase in a fixed campaign.",
-            "provenance":{"kind":"method"},
-            "tool":"run_tests", "executor":"prismabuild_pytest", "runner_features":["base_head", "repeat", "parallel"],
-            "artifacts":["cas_receipt", "logs", "sha", "terminal_verdict"], "methods":["declared_symptom"], "protected_files":[]}));
+        contract.extend(method_requirement(
+            capabilities,
+            "Observe the declared exception at the original node and phase in a fixed campaign.",
+            "declared_symptom",
+            &["base_head", "repeat", "parallel"],
+            &["receipt", "logs", "sha", "terminal_verdict"],
+            &mut selection_errors,
+        ));
     }
     // Source obligations persist; each role replaces the previous method choices.
     // Unmarked legacy contracts remain mandatory.
@@ -59,17 +131,20 @@ pub(super) fn preflight(role: &str, inputs: &Value, reply: &mut Value) -> Result
         && reply["checks"]
             .as_array()
             .is_some_and(|checks| checks.iter().any(|check| check.get("proof").is_some()))
+        && let Some(requirement) = method_requirement(
+            capabilities,
+            "Run the head observer against the base subject and the head subject.",
+            "subject_observer",
+            &["base_head"],
+            &["receipt", "terminal_verdict"],
+            &mut selection_errors,
+        )
+        && !contract.contains(&requirement)
     {
-        let requirement = json!({
-            "requirement":"Run the head observer against the base subject and the head subject.",
-            "provenance":{"kind":"method"}, "tool":"run_tests", "executor":"prismabuild_pytest",
-            "runner_features":["base_head"], "artifacts":["cas_receipt", "terminal_verdict"],
-            "methods":["subject_observer"], "protected_files":[]});
-        if !contract.contains(&requirement) {
-            contract.push(requirement);
-        }
+        contract.push(requirement);
     }
     let mut errors = branch_errors;
+    errors.append(&mut selection_errors);
     if role != "planner" && reply.get("evidence_contract").is_none() {
         return Err(Error::Invalid("worker evidence contract is missing"));
     }
@@ -250,9 +325,9 @@ mod proof_obligation_tests {
     #[test]
     fn declared_symptom_choice_is_replaceable_and_source_proof_persists() {
         for required_method in ["red_green", "declared_symptom"] {
-            let capability = json!({"tool":"run_tests", "executor":"prismabuild_pytest",
+            let capability = json!({"tool":"run_tests", "executor":"flux_pytest",
                 "runner_features":["base_head","repeat","parallel"],
-                "artifacts":["cas_receipt","logs","sha","terminal_verdict"],
+                "artifacts":["receipt","logs","sha","terminal_verdict"],
                 "methods":["red_green","declared_symptom"], "protected_files":[]});
             let mut source = capability.clone();
             source["requirement"] = json!("Prove the timeout.");
@@ -287,8 +362,8 @@ mod proof_obligation_tests {
 
     #[test]
     fn t613_replaces_method_choices_without_erasing_source_proof() {
-        let capability = json!({"tool":"run_tests", "executor":"prismabuild_pytest",
-            "runner_features":["base_head"], "artifacts":["cas_receipt","terminal_verdict"],
+        let capability = json!({"tool":"run_tests", "executor":"flux_pytest",
+            "runner_features":["base_head"], "artifacts":["receipt","terminal_verdict"],
             "methods":["red_green"], "protected_files":[]});
         let mut source = capability.clone();
         source["requirement"] = json!("Show assertion RED and GREEN.");
@@ -667,5 +742,126 @@ mod ingest_tests {
                 assert_eq!(reply, original);
             }
         }
+    }
+
+    /// #1574/#1455 at 1077: the injected observer duty named the removed PrismaBuild
+    /// executor and receipt, so the admitted Flux capability refused it and planning ended in
+    /// cant_meet. The capability is what 1077 admitted for tessera (2 test CPUs).
+    fn flux_1077_capability() -> Value {
+        json!({"tool":"run_tests", "executor":"flux_pytest",
+            "runner_features":["base_head","repeat","parallel","always_tests","native_threads_2"],
+            "artifacts":["run_binding","receipt","input_tree","logs","terminal_verdict"],
+            "methods":["red_green","declared_symptom","head","base_head","subject_observer",
+                "forced_reproduction.environment","forced_reproduction.patches"],
+            "protected_files":[]})
+    }
+
+    fn flux_planning(capabilities: Value, check: Value) -> Value {
+        // tessera#1574 retained source obligation (briefs.evidence_contract[0]).
+        let source = json!({"tool":"run_tests", "executor":"flux_pytest", "runner_features":["base_head"],
+            "artifacts":[], "methods":["red_green","subject_observer"], "protected_files":[],
+            "provenance":{"kind":"source", "source":"issue comment",
+                "quote":"The new negative test also needs proof that it can fail."},
+            "requirement":"The new negative regression must fail with an ordinary assertion against the old code."});
+        let inputs = json!({"tool_capabilities":capabilities, "ingest":{"evidence_contract":[source.clone()]},
+            "audit_evidence_contract":[source]});
+        let mut reply = json!({"kind":"leaf", "evidence_contract":[], "checks":[check]});
+        preflight("planner", &inputs, &mut reply).unwrap();
+        reply
+    }
+
+    const OBSERVER: &str = "Run the head observer against the base subject and the head subject.";
+
+    #[test]
+    fn flux_1574_observer_duty_uses_the_admitted_capability() {
+        let capability = flux_1077_capability();
+        let reply = flux_planning(
+            json!([capability]),
+            json!({"proof":{"subjects":["src/pkg.py::f"]}}),
+        );
+        assert_eq!(reply["kind"], "leaf", "{reply}");
+        assert_eq!(reply["evidence_errors"], json!([]));
+        let observer: Vec<&Value> = reply["evidence_contract"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|entry| entry["requirement"] == OBSERVER)
+            .collect();
+        assert_eq!(
+            observer,
+            [
+                &json!({"requirement":OBSERVER, "provenance":{"kind":"method"},
+            "tool":"run_tests", "executor":"flux_pytest", "runner_features":["base_head"],
+            "artifacts":capability["artifacts"], "methods":["subject_observer"], "protected_files":[]})
+            ]
+        );
+    }
+
+    #[test]
+    fn flux_method_duty_without_support_or_with_ambiguity_fails_closed() {
+        let mut lacking = flux_1077_capability();
+        lacking["methods"] = json!(["red_green", "subject_observer"]);
+        lacking["artifacts"] = json!(["run_binding", "receipt", "logs"]);
+        let reply = flux_planning(
+            json!([lacking]),
+            json!({"proof":{"subjects":["src/pkg.py::f"]}}),
+        );
+        assert_eq!(reply["kind"], "cant_meet", "{reply}");
+        assert!(
+            reply["evidence_contract"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|e| e["requirement"] != OBSERVER)
+        );
+        assert!(
+            reply["evidence_errors"]
+                .to_string()
+                .contains("artifacts=terminal_verdict"),
+            "{reply}"
+        );
+
+        let mut other = flux_1077_capability();
+        other["executor"] = json!("other_pytest");
+        let reply = flux_planning(
+            json!([flux_1077_capability(), other]),
+            json!({"proof":{"subjects":["src/pkg.py::f"]}}),
+        );
+        assert_eq!(reply["kind"], "cant_meet", "{reply}");
+        assert!(
+            reply["evidence_contract"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|e| e["requirement"] != OBSERVER)
+        );
+        assert!(
+            reply["evidence_errors"]
+                .to_string()
+                .contains("ambiguous admitted run_tests capabilities: flux_pytest, other_pytest"),
+            "{reply}"
+        );
+
+        // declared_symptom keeps its sha need; the 1077 list lacks sha, the Flux default has it.
+        let symptom = json!({"declared_symptom":{"node":"tests/t.py::t", "exception":"builtins.TimeoutError",
+            "phase":"call", "repeat":2, "parallel":0}});
+        let reply = flux_planning(json!([flux_1077_capability()]), symptom.clone());
+        assert!(
+            reply["evidence_errors"]
+                .to_string()
+                .contains("artifacts=sha"),
+            "{reply}"
+        );
+        let mut flux = flux_1077_capability();
+        flux["artifacts"] = json!([
+            "run_binding",
+            "receipt",
+            "input_tree",
+            "sha",
+            "logs",
+            "terminal_verdict"
+        ]);
+        let reply = flux_planning(json!([flux]), symptom);
+        assert_eq!(reply["evidence_errors"], json!([]), "{reply}");
     }
 }

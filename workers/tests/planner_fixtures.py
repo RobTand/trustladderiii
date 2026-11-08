@@ -307,9 +307,9 @@ def request156(planner_request, monkeypatch):
         {'description': 'Keep the no-submission control returning waiting with wait_s=0.0.',
          'verification': 'test'},
     ]
-    tool = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+    tool = {'tool': 'run_tests', 'executor': 'flux_pytest',
             'runner_features': ['base_head', 'native_threads_1'],
-            'artifacts': ['logs', 'terminal_verdict', 'cas_receipt'],
+            'artifacts': ['logs', 'terminal_verdict', 'receipt'],
             'methods': ['red_green'], 'protected_files': []}
     planner_request['inputs']['tool_capabilities'] = [tool]
     planner_request['inputs']['ingest']['evidence_contract'] = [
@@ -376,9 +376,9 @@ PROPOSED_EXPORTS = [f'{EXPORT_TESTS}::test_a_fast_writer_is_held_and_flushed_und
 def request165(planner_request, monkeypatch):
     planner_request['inputs']['repair_plan_consistency'] = True
     planner_request['inputs']['tool_capabilities'] = [
-        {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+        {'tool': 'run_tests', 'executor': 'flux_pytest',
          'runner_features': ['base_head', 'native_threads_1'],
-         'artifacts': ['logs', 'terminal_verdict', 'cas_receipt'],
+         'artifacts': ['logs', 'terminal_verdict', 'receipt'],
          'methods': ['red_green', 'forced_reproduction.patches'], 'protected_files': []}]
     root = Path(planner_request['worktree'])
     (root / EXPORT_TESTS).write_text(

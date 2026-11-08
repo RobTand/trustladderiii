@@ -157,8 +157,8 @@ def test_empty_subject_omission_preserves_capability_preflight(
 
     applicability_plan['checks'][1]['proof']['subjects'] = []
     applicability_plan['evidence_contract'] = []
-    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head'],
-                  'artifacts': ['cas_receipt', 'terminal_verdict'], 'methods': ['subject_observer'],
+    capability = {'tool': 'run_tests', 'executor': 'flux_pytest', 'runner_features': ['base_head'],
+                  'artifacts': ['receipt', 'terminal_verdict'], 'methods': ['subject_observer'],
                   'protected_files': []}
     planner_request['inputs']['tool_capabilities'] = [capability] if supported else []
     fixed = corrected(applicability_plan)
