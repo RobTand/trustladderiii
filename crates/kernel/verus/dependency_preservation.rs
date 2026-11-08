@@ -252,7 +252,7 @@ pub(super) open spec fn written(before: World, after: World, i: int, target: Dep
         && writes::write(before.dependencies@, after.dependencies@, existing,
             declared(before, i, target, status))
         && after.nodes@[i].credit.withheld == withheld_after(before.nodes@[i],
-            after.dependencies@, NodeId(i as u64))
+            after, NodeId(i as u64))
 }
 
 /// Exact row-level table facts of one handler write.
@@ -502,7 +502,7 @@ pub(super) proof fn fact_rules(before: World, after: World, i: int, target: Depe
                 writes::write(before.dependencies@, after.dependencies@, existing,
                     declared(before, i, target, status))
                 && after.nodes@[i].credit.withheld == withheld_after(before.nodes@[i],
-                    after.dependencies@, NodeId(i as u64))
+                    after, NodeId(i as u64))
             } else {
                 after.dependencies@ == before.dependencies@
                     && after.nodes@[i].credit.withheld == before.nodes@[i].credit.withheld
@@ -698,7 +698,7 @@ pub(super) proof fn fact_table(before: World, after: World, i: int, target: Depe
                 writes::write(before.dependencies@, after.dependencies@, e,
                     declared(before, i, target, status))
                 && after.nodes@[i].credit.withheld == withheld_after(before.nodes@[i],
-                    after.dependencies@, NodeId(i as u64))
+                    after, NodeId(i as u64))
             } else {
                 after.dependencies@ == before.dependencies@
                     && after.nodes@[i].credit.withheld == before.nodes@[i].credit.withheld
@@ -761,7 +761,7 @@ pub(super) proof fn fact_graph(before: World, after: World, i: int, target: Depe
                 writes::write(before.dependencies@, after.dependencies@, e,
                     declared(before, i, target, status))
                 && after.nodes@[i].credit.withheld == withheld_after(before.nodes@[i],
-                    after.dependencies@, NodeId(i as u64))
+                    after, NodeId(i as u64))
             } else {
                 after.dependencies@ == before.dependencies@
                     && after.nodes@[i].credit.withheld == before.nodes@[i].credit.withheld
