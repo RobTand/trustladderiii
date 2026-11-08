@@ -466,11 +466,13 @@ impl Redactor {
                         self.truncated = true;
                         break;
                     }
-                    let key_bytes = measured(&SummaryValue::String(PythonText::from(key.as_str())))?;
+                    let key_bytes =
+                        measured(&SummaryValue::String(PythonText::from(key.as_str())))?;
                     let available = remaining.saturating_sub(key_bytes + 8);
                     let share = available.min(ITEM_BYTES.max(available / (fields.len() - index)));
                     let item = self.reshape_value(item, share, depth + 1)?;
-                    remaining = remaining.saturating_sub(item.size()?.saturating_add(key_bytes + 6));
+                    remaining =
+                        remaining.saturating_sub(item.size()?.saturating_add(key_bytes + 6));
                     result.push((key.clone(), item));
                 }
                 result.reverse();
@@ -587,7 +589,8 @@ impl Redactor {
                         None
                     };
                     let key: String = key.chars().take(128).collect();
-                    let key_bytes = measured(&SummaryValue::String(PythonText::from(key.as_str())))?;
+                    let key_bytes =
+                        measured(&SummaryValue::String(PythonText::from(key.as_str())))?;
                     let available = remaining.saturating_sub(key_bytes + 8);
                     let share = available.min(ITEM_BYTES.max(available / (fields.len() - index)));
                     let item = if let Some(text) = substitute {
@@ -595,7 +598,8 @@ impl Redactor {
                     } else {
                         self.shape_value(value, share, depth + 1)?
                     };
-                    remaining = remaining.saturating_sub(key_bytes.saturating_add(item.size()?).saturating_add(6));
+                    remaining = remaining
+                        .saturating_sub(key_bytes.saturating_add(item.size()?).saturating_add(6));
                     result.push((key, item));
                 }
                 result.reverse();
@@ -682,7 +686,8 @@ impl Redactor {
                         break;
                     }
                     let key = self.text(key, 128)?;
-                    let key_bytes = measured(&SummaryValue::String(PythonText::from(key.as_str())))?;
+                    let key_bytes =
+                        measured(&SummaryValue::String(PythonText::from(key.as_str())))?;
                     let available = remaining.saturating_sub(key_bytes + 8);
                     let share = if roomy {
                         value.size()?.saturating_add(512)
