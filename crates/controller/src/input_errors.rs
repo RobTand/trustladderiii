@@ -529,12 +529,6 @@ impl Controller {
         Ok(true)
     }
 
-    /// State-table "Counter headroom" / Ack rows: the current queue fact first reconciles its
-    /// own missing acknowledgment. This is work required by that FIFO head,
-    /// not admission for an independent newer producer. Both the completion
-    /// and a refused completion still use the atomic queued-input transaction.
-
-
     /// Refusals have one incident projection. The kernel returns the unchanged
     /// input world; dependency callers must keep it rather than commit a prefix.
     /// On success callers use the returned result world, not the input reference.

@@ -2550,11 +2550,8 @@ impl Controller {
         let mut rows = Vec::new();
         for row in std::mem::take(&mut commit.rows) {
             if let RowChange::Put { table, value, .. } = &row
-                && ((table == "delivery_outcomes"
-                        && value["node"]
-                            .as_u64()
-                            .is_some_and(|node| closed.contains(&NodeId(node))))
-)
+                && table == "delivery_outcomes"
+                && value["node"].as_u64().is_some_and(|node| closed.contains(&NodeId(node)))
             {
                 continue;
             }

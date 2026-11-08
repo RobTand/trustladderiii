@@ -312,8 +312,6 @@ fn drain_on_wake(controller: &mut Controller) -> Result<bool> {
             break;
         }
     }
-    if deferred {
-    }
     Ok(deferred)
 }
 

@@ -1178,10 +1178,9 @@ impl crate::Controller {
                         .filter_map(|kind| value[kind].as_u64())
                         .sum::<u64>() as u32;
                 }
-                "delivery_outcomes" if value["node"] == json!(node) => {
-                    if value["outcome"]["Merged"]["checks_passed"] == false {
-                        history.escaped_ci = true;
-                    }
+                "delivery_outcomes" if value["node"] == json!(node)
+                    && value["outcome"]["Merged"]["checks_passed"] == false => {
+                    history.escaped_ci = true;
                 }
                 _ => {}
             }
