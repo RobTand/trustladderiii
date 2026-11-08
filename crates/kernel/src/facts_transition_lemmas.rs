@@ -45,10 +45,7 @@ pub(super) proof fn conflict_result(before: World, after: World, i: usize,
             } else if before.nodes@[i as int].phase == Phase::Publishing {
                 retirement::phased(before.nodes@[i as int], Phase::Rebasing)
             } else { before.nodes@[i as int] }),
-        after.gates@ == before.gates@, after.file_sets@ == before.file_sets@,
-        after.dependencies@ == before.dependencies@, after.pool_capacity == before.pool_capacity,
-        after.fail_fast == before.fail_fast, after.next_ticket == before.next_ticket,
-        after.next_question == before.next_question, out_after == out_before,
+        after == (World { nodes: after.nodes, ..before }), out_after == out_before,
     ensures after.nodes@[i as int] == retirement::fact_node(before.nodes@[i as int], Fact::Conflict),
         retirement::fact_frame(before, after, i, out_before, out_after),
 {
