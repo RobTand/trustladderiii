@@ -49,7 +49,13 @@ pub(super) fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
 ] {
+    kernel_snapshot! { before_go_on = w.nodes@[i as int] }
     continue_node(&mut w.nodes[i], i, q, deposit, out);
+    kernel_proof! {
+        if before_go_on@.phase == Phase::AwaitingRob {
+            handler_safety::continue_step(before_go_on@, w.nodes@[i as int]);
+        }
+    }
 }
 }
 
@@ -80,10 +86,8 @@ pub(super) fn continue_node(m: &mut Node, i: usize, q: Question, deposit: u8,
         final(m).proposed == old(m).proposed, final(m).adopted == old(m).adopted,
         final(m).review_stop == old(m).review_stop, final(m).attempt == old(m).attempt,
         final(m).replanned == old(m).replanned,
-        old(m).phase == Phase::AwaitingRob ==> handler_safety::command_step(*old(m), *final(m)),
         final(out).len <= old(out).len + 1,
 ] proof [reveal(distance);] {
-    kernel_snapshot! { before_continue = *m }
     m.credit.fund_and_pay(deposit, q.cost);
     m.question = None;
     match q.cont {
@@ -115,11 +119,6 @@ pub(super) fn continue_node(m: &mut Node, i: usize, q: Question, deposit: u8,
                     && (*m).attempt == before_nowhere@.attempt && (*m).replanned == before_nowhere@.replanned)
                     by { reveal(retirement::stopped); }
             }
-        }
-    }
-    kernel_proof! {
-        if before_continue@.phase == Phase::AwaitingRob {
-            handler_safety::continue_step(before_continue@, *m);
         }
     }
 }
