@@ -472,6 +472,7 @@ pub(super) fn run(s: &Schedule, new: bool, cut: Option<(usize, bool)>) -> Run {
     node.waiting_incident = s.incident && s.kernel_incident;
     node.run_incidents = s.incidents.max(u8::from(node.waiting_incident));
     node.incident_needs_rob = node.waiting_incident && s.needs_rob;
+    if node.waiting_incident && s.worker { node.run=None;node.pool=false; }
     let mut files = BTreeMap::new();
     files.insert(
         "allowances/effect-1".into(),
