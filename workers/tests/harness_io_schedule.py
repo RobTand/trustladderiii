@@ -291,59 +291,90 @@ def action(module, directory, schedule):
     return recording.finish(result)
 
 
-def worker(module, schedule, facts=None):
-    summaries = []
-    for index in (0, 1):
-        summaries.append({'status': 'completed', 'tests': [],
-                          'totals': {'passed': schedule['initial'] + index, 'failed': 0, 'error': 0, 'skipped': 0},
-                          'note': ''})
-    variants = [(test_tool.PREFIX + json.dumps(value) + '\n').encode() for value in summaries]
+TRANSPORT_FIELDS = ('action_key', 'wait_reference', 'receipts', 'tree')
+
+
+def summary_facts(schedule, facts=None):
+    """The action-side facts a summary consumer reads, as worker() fed them before Flux."""
     if facts is not None:
-        variants = [(test_tool.PREFIX + json.dumps(facts) + '\n').encode()] * 2
-    if schedule.get('proof_bytes') is not None:
-        facts = {**summaries[0], 'proof': {'mode': 'head-observer', 'payload': 'p' * schedule['proof_bytes']},
-                 'origin': 'test_run'}
-        # The reference is the complete former producer/consumer path. The new
-        # path sends raw facts to Rust before decorating the verified receipt.
-        producer = legacy_action.bounded if module is legacy_worker else test_tool.action_summary
-        variants = [(test_tool.PREFIX + json.dumps(producer(facts)) + '\n').encode()] * 2
-    raw = variants[0]
+        return facts, None
+    summary = {'status': 'completed', 'tests': [],
+               'totals': {'passed': schedule['initial'], 'failed': 0, 'error': 0, 'skipped': 0}, 'note': ''}
+    if schedule.get('proof_bytes') is None:
+        return summary, summary
+    raw = {**summary, 'proof': {'mode': 'head-observer', 'payload': 'p' * schedule['proof_bytes']},
+           'origin': 'test_run'}
+    return legacy_action.bounded(raw), test_tool.action_summary(raw)
+
+
+def legacy_summary(facts):
+    """The pre-extraction PB consumer: it read the verified action log once."""
+    raw = (test_tool.PREFIX + json.dumps(facts) + '\n').encode()
     key = 'a' * 64
     ending = {'action_key': key, 'status': 'executed', 'exit_code': 0, 'succeeded': True,
               'result': {'verified': True, 'receipt_sha256': 'b' * 64,
                          'stdout': {'path': 'scheduled-action.log', 'bytes': len(raw),
                                     'sha256': hashlib.sha256(raw).hexdigest()}}}
-    trace, calls = [], 0
     original = builtins.open
-
-    class Log(io.BytesIO):
-        def read(self, size=-1):
-            nonlocal calls
-            trace.append(('log-read', size))
-            # A second read observes different bytes. Re-reading is detectable.
-            value = variants[min(calls, 1)]
-            calls += 1
-            return value[:size] if size >= 0 else value
-
-        def __exit__(self, *args):
-            trace.append(('log-close',))
-            return super().__exit__(*args)
 
     def opened(path, mode='r', *args, **kwargs):
         if path == 'scheduled-action.log':
-            trace.append(('log-open', path, mode))
-            return Log()
+            return io.BytesIO(raw)
         return original(path, mode, *args, **kwargs)
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(builtins, 'open', opened)
-        result = module._summary(deepcopy(ending), key)
-    return trace, result, {}
+        return legacy_worker._summary(deepcopy(ending), key)
 
+
+def native_summary(facts):
+    """The real run_tests consumer of a verified Flux payload carrying these facts."""
+    from tl3_workers import flux_execution
+    from tl3_workers.tools import Worktree
+    key = 'worker:' + 'a' * 64
+    from pb_fixtures import run_binding
+    receipt = {'backend': 'flux', 'wait_reference': key, 'run_binding': run_binding(key),
+               'receipt_sha256': 'b' * 64, 'ending': 'passed'}
+    with tempfile.TemporaryDirectory(prefix='harness-native-summary-') as name, \
+            pytest.MonkeyPatch.context() as patch, Worktree(name) as tree:
+        patch.setattr(flux_execution, 'activation', lambda settings: None)
+        patch.setattr(flux_execution, 'allocate', lambda settings: ('a' * 64, Path(name)))
+        patch.setattr(flux_execution, 'prepare', lambda *args, **kwargs: {'key': key})
+        patch.setattr(flux_execution, 'execute', lambda plan, **kwargs: {
+            'kind': 'tests', 'summary': deepcopy(facts), 'symptom_runs': [], 'symptom_receipts': [],
+            'receipts': [receipt]})
+        patch.setattr(tests_tool, '_stage', lambda *args, **kwargs: 'c' * 40)
+        patch.setattr(tests_tool, '_git', lambda *args: 'c' * 40)
+        settings = tests_tool.TestSettings('sha256:' + '1' * 64,
+                                           execution={'backend': 'flux', 'profile': '/recorded/execution.json'})
+        result = tests_tool.make_test_tool(tree, settings)(['t.py'])
+    assert result.get('wait_reference', key) == key
+    return result
+
+
+def consumer_body(result):
+    """Summary, proof and refusal content; the transport receipt is backend-specific.
+
+    The native receipt is larger, so the final envelope may keep fewer display
+    entries. Status, refusal, proof, totals and every other field must match, and
+    the kept entries must be ones the reference kept or would have kept.
+    """
+    return {name: value for name, value in result.items() if name not in TRANSPORT_FIELDS + ('tests', 'note')}
+
+
+def same_consumer(reference, native, context):
+    assert consumer_body(reference) == consumer_body(native), (context, reference, native)
+    kept = [json.dumps(entry, sort_keys=True) for entry in reference.get('tests', [])]
+    assert all(json.dumps(entry, sort_keys=True) in kept for entry in native.get('tests', [])), context
+    assert ('Truncated' in native.get('note', '')) or native.get('tests') == reference.get('tests'), context
 
 
 def lifecycle(module, directory, schedule):
-    """Run the real staging and submission/reattachment shell with recorded edges."""
+    """Run the real staging shell with recorded edges.
+
+    The PB submission, wait and reattachment transport this once compared was
+    deleted with PrismaBuild; Flux transport is covered by the native worker tests.
+    """
     from tl3_workers.tools import Worktree
 
     source, staged = directory / 'source', directory / 'stage'
@@ -406,7 +437,7 @@ def lifecycle(module, directory, schedule):
 
     def read_bytes(path):
         nonlocal source_reads
-        if path.name in ('pb_tests.py', 'pb_tests.py.txt'):
+        if path.name in ('tests_tool.py', 'pb_tests.py.txt'):
             value = f'recorded trusted worker bytes {schedule["initial"] + source_reads}'.encode()
             source_reads += 1
             trace.append(('trusted-source-read', value.hex()))
@@ -427,41 +458,6 @@ def lifecycle(module, directory, schedule):
         return change(('stage-git', observed), lambda: 'c' * 40 if args[0] == 'write-tree' else '')
 
     proof = {'mode':'pytest-outcome', 'sample':schedule['initial']}
-    facts = {'status':'completed', 'tests':[], 'totals':dict.fromkeys(test_tool.OUTCOMES, 0), 'note':''}
-    if schedule.get('base'): facts['proof'] = proof
-    raw = (test_tool.PREFIX + json.dumps(facts) + '\n').encode()
-    key = 'a' * 64
-    ending = {'action_key':key, 'status':'executed', 'exit_code':0, 'succeeded':True,
-        'result':{'verified':True, 'receipt_sha256':'b' * 64,
-        'stdout':{'path':str(staged / 'action.log'), 'bytes':len(raw), 'sha256':hashlib.sha256(raw).hexdigest()}}}
-    waits = iter(schedule.get('waits', [False, True]))
-
-    def command(argv):
-        if 'pbrun.py' in argv[1]:
-            # Paths and Python executable are boundary inputs; compare stable paths.
-            args = [str(value).replace(str(directory), '<root>') for value in argv]
-            return change(('submit', args), lambda: (0, {'schema':'prismabuild.submission.v1', 'action_key':key}))
-        complete = bool(next(waits, True))
-        trace.append(('upstream-wait', key, complete))
-        value = deepcopy(ending)
-        if not complete: value['status'] = 'waiting'
-        return 0, {'schema':'prismabuild.endings.v1', 'complete':complete, 'endings':[value]}
-
-    class Log(io.BytesIO):
-        def __exit__(self, *args):
-            return change(('verified-log-close',), lambda: super(Log, self).__exit__(*args))
-
-        def read(self, size=-1):
-            trace.append(('verified-log-read', size))
-            return super().read(size)
-
-    original_builtin = builtins.open
-    def log_open(path, mode='r', *args, **kwargs):
-        if path == str(staged / 'action.log'):
-            trace.append(('verified-log-open', mode))
-            return Log(raw)
-        return original_builtin(path, mode, *args, **kwargs)
-
     def snapshot():
         state = {}
         for path in sorted(staged.rglob('*')):
@@ -510,22 +506,15 @@ def lifecycle(module, directory, schedule):
                 return deepcopy(proof)
             patch.setattr(module, 'export', export)
             patch.setattr(module, 'assemble_proof', assemble)
-        patch.setattr(module, '_git', git); patch.setattr(module, '_json_command', command)
+        patch.setattr(module, '_git', git)
         patch.setattr(module, 'scratch_environment', lambda: {})
-        patch.setattr(module.secrets, 'token_hex', lambda n: 'fresh')
-        patch.setattr(builtins, 'open', log_open)
-        if schedule.get('reattach'):
-            # The production contract hash is observed at the checkpoint boundary.
-            class Checkpoint(dict):
-                def pop(self, base, default=None):
-                    trace.append(('reattach-read', base, tree.pb_identity))
-                    return {'identity':tree.pb_identity, 'tree':'c' * 40, 'key':key}
-            tree.pb_reattach = Checkpoint()
-        def emit(value): return change(('progress-emit', value), lambda: None)
-        tree.pb_submitted = lambda *args: change(('checkpoint-write', args), lambda: None)
-        settings = module.TestSettings('sha256:' + '1' * 64, Path('/recorded-tools'))
+        base_sha = 'd' * 40 if schedule.get('base') else None
         try:
-            result = ('result', module.make_test_tool(tree, settings, emit=emit)(['t.py'], base=schedule.get('base', False), repeat=2))
+            # The run shell's staging sequence: stage, read a base proof, hash the trusted tree.
+            tree_id = module._stage(tree, staged, base_sha, checks=(), selected=('t.py',))
+            observed = json.loads((staged / 'proof.json').read_text()) if base_sha else None
+            trusted = module._git(staged, 'write-tree', '--prefix=trusted/').strip()
+            result = ('result', {'tree': tree_id, 'proof': observed, 'trusted': trusted})
         except Crash:
             result = ('crash',)
     return recording.finish(result)
@@ -595,10 +584,10 @@ def decide(schedule):
         equivalent(old, new, 'legacy run-list cap changed')
         vector = json.loads((REFERENCE / 'repeated-run.json').read_text())
         assert old[1] == ('result', vector['action'])
-        before = worker(legacy_worker, schedule, facts=old[1][1])
-        after = worker(tests_tool, schedule, facts=new[1][1])
-        assert before == after
-        assert after[1] == vector['worker'], ('complete worker parity vector changed', after)
+        before = legacy_summary(old[1][1])
+        after = native_summary(new[1][1])
+        assert before == vector['worker'], ('recorded worker parity vector changed', before)
+        same_consumer(vector['worker'], after, 'native consumer changed the complete repeated-run summary')
     boundaries = 0
     coverage = set()
     for mode in ('run_current', 'run', 'main'):
@@ -609,20 +598,15 @@ def decide(schedule):
         boundaries += observed[3]
         coverage.update(call[0] for call in observed[0])
     for base in (False, True):
-        for reattach in (False, True):
-            observed = compare_crashes(lifecycle, legacy_worker, tests_tool, {**schedule, 'base':base, 'reattach':reattach})
-            boundaries += observed[3]
-            coverage.update(call[0] for call in observed[0])
-    before = worker(legacy_worker, schedule)
-    after = worker(tests_tool, schedule)
-    assert before == after, ('worker log schedule changed', schedule, before, after)
+        observed = compare_crashes(lifecycle, legacy_worker, tests_tool, {**schedule, 'base':base})
+        boundaries += observed[3]
+        coverage.update(call[0] for call in observed[0])
+    legacy_facts, native_facts = summary_facts(schedule)
+    same_consumer(legacy_summary(legacy_facts), native_summary(native_facts), ('summary consumer changed', schedule))
     for size in ([] if REFUSALS_CHECKED else [14_000, 14_500, 20_000, 750_000, 800_000, 1_050_000]):
-        enlarged = {**schedule, 'proof_bytes':size}
-        old_trace, old_result, old_state = worker(legacy_worker, enlarged)
-        new_trace, new_result, new_state = worker(tests_tool, enlarged)
-        for result in [old_result, new_result]:
-            for receipt in result.get('receipts', []): receipt.pop('log_sha256')
-        assert (old_trace, old_result, old_state) == (new_trace, new_result, new_state), (size, old_result, new_result)
+        legacy_facts, native_facts = summary_facts({**schedule, 'proof_bytes':size})
+        old_result, new_result = legacy_summary(legacy_facts), native_summary(native_facts)
+        same_consumer(old_result, new_result, ('proof size', size))
     REFUSALS_CHECKED = True
     return {'equal':True, 'crash_boundaries':boundaries, 'coverage':sorted(coverage)}
 
