@@ -33,4 +33,22 @@ pub(super) proof fn frame_consequences(before: World, after: World, i: usize,
 {
     reveal(retirement::fact_frame);
 }
+
+/// #806 Priority row: the real handler's node update implies the exact fact_node
+/// result and the common handler frame, in its own query.
+pub(super) proof fn priority_result(before: World, after: World, i: usize,
+    out_before: Outbox, out_after: Outbox, priority: Priority)
+    requires i < before.nodes@.len(),
+        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        after.nodes@[i as int] == (if before.nodes@[i as int].phase is Closed { before.nodes@[i as int] }
+            else { Node { priority, ..before.nodes@[i as int] } }),
+        after == (World { nodes: after.nodes, ..before }), out_after == out_before,
+    ensures after.nodes@[i as int] == retirement::fact_node(before.nodes@[i as int], Fact::Priority(priority)),
+        retirement::fact_frame(before, after, i, out_before, out_after),
+{
+    reveal(retirement::fact_frame);
+    reveal(retirement::fact_node);
+    assert forall|j: int| 0 <= j < before.nodes@.len() && j != i
+        implies after.nodes@[j] == before.nodes@[j] by {}
+}
 }

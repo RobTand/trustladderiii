@@ -949,6 +949,7 @@ def verus_proofs():
             "allocation_incident_frame": ("kernel::allocation_incident_lemmas#incident_frame", 1),
             "facts_transition_frame": ("kernel::facts_transition_lemmas#frame_consequences", 1),
             "facts_conflict": ("kernel::facts#conflict", 1),
+            "facts_transition_priority": ("kernel::facts_transition_lemmas#priority_result", 1),
             "allocation_incident_resumed_result": ("kernel::allocation_incident_lemmas#resumed_result", 1),
             "allocation_incident_waiting_result": ("kernel::allocation_incident_lemmas#waiting_result", 1),
             "facts_ci_failed_retry_frame": ("kernel::facts_ci_failed_lemmas#retry_frame", 1),

@@ -161,10 +161,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 w.nodes[i].priority = priority;
             }
             kernel_proof! {
-                assert(w.nodes@[i as int] == retirement::fact_node(
-                    before_transition@.nodes@[i as int], Fact::Priority(priority))) by { reveal(retirement::fact_node); }
-                assert(retirement::fact_frame(before_transition@, *w, i, before_out@, *out))
-                    by { reveal(retirement::fact_frame); }
+                facts_transition_lemmas::priority_result(before_transition@, *w, i, before_out@, *out, priority);
             }
         }
         Fact::PrClosedByPerson => {
