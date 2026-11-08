@@ -25,8 +25,12 @@ from tl3_harness.trees import git, test_function_source
 from tl3_workers.tools import Worktree
 from tl3_workers.generated_scope import configured_outputs
 from tl3_workers.recall import check_citations
-from tl3_workers.turns import InvalidReply, REPAIR_MESSAGE_BYTES, Unrepairable
+from tl3_workers.turns import InvalidReply, Unrepairable
 from tl3_workers.rules import Allowed as WorkerAllowed, CantMeet, Edit, Name, Rule, at, evaluate, register
+
+
+# Complete planner consistency rows have their own UTF-8 message envelope.
+PLANNER_CONSISTENCY_MESSAGE_BYTES = 4_096
 
 
 # Frozen JSON values retain their wire types, including integers versus floats.
@@ -836,7 +840,7 @@ class PlanConsistencyError(ValueError):
             'inputs': inputs, 'base_nodes': base_nodes, 'base_sources': base_sources or {}})
         self.repair_text = render_all(self.rule_violations, role='planner')
         self.unavailable_reason = ('disabled' if not inputs.get('repair_plan_consistency', False) else
-                                   'message_limit' if len(self.repair_text.encode()) > REPAIR_MESSAGE_BYTES else None)
+                                   'message_limit' if len(self.repair_text.encode()) > PLANNER_CONSISTENCY_MESSAGE_BYTES else None)
         self.contract = self
         super().__init__(self.repair_text)
 
