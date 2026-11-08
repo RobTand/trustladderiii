@@ -43,11 +43,14 @@ if [ "${TL3_DEPLOY_DRY_RUN:-0}" = 1 ]; then
 fi
 # Native admission owns build and fresh-init. Explicit reattach reuses a dispatch;
 # a lost reply never creates a replacement job.
-reattach=()
+replay=()
 if [[ -n ${TL3_FLUX_DEPLOY_REATTACH:-} ]]; then
-  reattach=(--reattach "$TL3_FLUX_DEPLOY_REATTACH")
+  replay=(--reattach "$TL3_FLUX_DEPLOY_REATTACH")
 fi
-python3 -I "$tree/deploy/dl380g10/flux-deploy.py" admit "$sha" "$lane" "$manifest" "$backup" "${reattach[@]}"
+if [[ -n ${TL3_FLUX_DEPLOY_BUILD_DISPATCH:-} ]]; then
+  replay+=(--build-dispatch "$TL3_FLUX_DEPLOY_BUILD_DISPATCH")
+fi
+python3 -I "$tree/deploy/dl380g10/flux-deploy.py" admit "$sha" "$lane" "$manifest" "$backup" "${replay[@]}"
 printf '%s\n' "$sha" > "$notes/deployed-sha"
 printf -- '- %s DEPLOYED %s fresh-init; exact qualification, verified cold backup, current schema and bounded stability passed.\n' \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$sha" >> "$notes/state.md"

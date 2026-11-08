@@ -156,7 +156,13 @@ and never read a shared project checkout or PB snapshot. The replaced PB
 snapshot launcher is removed. Release output is staged privately and published
 atomically only when complete. Existing release output requires reattachment to
 its original dispatch, with a verified build receipt. Presence alone never skips
-build evidence.
+build evidence. After a failed fresh-init, keep the failed dispatch intact and set
+`TL3_FLUX_DEPLOY_BUILD_DISPATCH` to its original successful build dispatch. Supply
+a NEW backup path and current private manifest for the new cycle. The caller
+rechecks the saved build's original jobspec, terminal and cleanup evidence before
+admitting a new fresh-init. `TL3_FLUX_DEPLOY_REATTACH` resumes that new cycle by
+its own saved IDs. These options are mutually exclusive on invocation; the new
+cycle records its prior build reference for later reattachment.
 
 ## Native admission and reattachment
 

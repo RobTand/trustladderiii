@@ -230,6 +230,40 @@ class FluxAdmissionTests(unittest.TestCase):
             fx.stage(self.intent)
         self.assertEqual(self.submissions(), 1)
 
+    def test_new_fresh_attempt_reuses_only_verified_prior_build_with_new_backup(self):
+        fx.stage(self.intent)
+        release = Path(self.intent['release'])
+        release.mkdir()
+        cycle = self.root / 'new-cycle'
+        cycle.mkdir()
+        real_stage = fx.stage
+        fresh = []
+        def execute(intent):
+            if intent['stage'] == 'build':
+                return real_stage(intent)
+            fresh.append(intent)
+            return 'c' * 64
+        with patch.object(fx, 'STORE', self.root), patch.object(fx, 'stage', side_effect=execute):
+            fx.admit_stages('a' * 40, 'b' * 40, 'dev', release, self.root / 'new-manifest',
+                            self.root / 'NEW-backup', cycle, self.out.parent)
+            fx.admit_stages('a' * 40, 'b' * 40, 'dev', release, self.root / 'new-manifest',
+                            self.root / 'NEW-backup', cycle)
+        self.assertEqual(self.submissions(), 1)
+        self.assertEqual(fresh[0]['backup'], str(self.root / 'NEW-backup'))
+        self.assertEqual(fresh[0]['manifest'], str(self.root / 'new-manifest'))
+        self.assertNotEqual(fresh[0]['out'], str(self.out))
+        self.assertTrue((cycle / 'reused-build.json').exists())
+
+    def test_existing_release_without_original_build_binding_refuses(self):
+        release = Path(self.intent['release'])
+        release.mkdir()
+        with patch.object(fx, 'stage') as execute:
+            with self.assertRaises(RuntimeError):
+                fx.admit_stages('a' * 40, 'b' * 40, 'dev', release, self.root / 'manifest',
+                                self.root / 'backup', self.out.parent)
+        execute.assert_not_called()
+        self.assertEqual(self.submissions(), 0)
+
     def test_populated_scope_and_changed_identity_refuse_despite_native_clean(self):
         fx.stage(self.intent)
         (self.out / 'receipt.json').unlink()

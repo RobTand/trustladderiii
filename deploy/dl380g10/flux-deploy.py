@@ -163,7 +163,8 @@ def plan(head, tree, stage, lane, release, manifest, backup, out):
         environment['TL3_DEPLOY_NONCE'] = out.parent.name
     return {'schema': 'tl3.deploy.intent.v1', 'generation': GENERATION, 'uri': URI,
             'head': head, 'tree': tree, 'source': str(SOURCE), 'stage': stage, 'lane': lane,
-            'release': str(release), 'manifest': str(manifest), 'backup': str(backup),
+            'release': str(release), 'manifest': str(manifest) if stage != 'build' else None,
+            'backup': str(backup) if stage != 'build' else None,
             'out': str(out), 'name': f'tl3-deploy-{out.parent.name}-{stage}',
             'cpus': cpus, 'memory_gib': memory, 'walltime_s': 7200, 'environment': environment}
 
@@ -451,6 +452,40 @@ def payload(intent_path, expected):
         raise RuntimeError('payload or scratch cleanup failed')
 
 
+def admit_stages(head, tree, lane, release, manifest, backup, dispatch, build_dispatch=None):
+    receipts = {}
+    reused = dispatch / 'reused-build.json'
+    prior = load(reused) if reused.exists() else None
+    if prior is not None:
+        if prior.get('schema') != 'tl3.deploy.reused-build.v1':
+            raise RuntimeError('unknown build reuse record')
+        saved_dispatch = Path(prior['source_dispatch'])
+        if build_dispatch is not None and build_dispatch != saved_dispatch:
+            raise RuntimeError('build reuse identity changed')
+        build_dispatch = saved_dispatch
+    for name in ('build', 'fresh-init'):
+        build_out = dispatch / name
+        if name == 'build' and build_dispatch is not None:
+            if build_dispatch.parent != STORE:
+                raise RuntimeError('prior build outside approved private store')
+            private(build_dispatch, True)
+            build_out = build_dispatch / 'build'
+            private(build_out, True)
+            # A prior successful build must already exist. This route cannot submit.
+            private(build_out / 'binding.json')
+            private(build_out / 'receipt.json')
+        intent = plan(head, tree, name, lane, release, manifest, backup, build_out)
+        if name == 'build' and release.exists() and not (build_out / 'binding.json').exists():
+            raise RuntimeError('existing release requires an explicit verified original build dispatch')
+        receipts[name] = stage(intent)
+        if name == 'build' and build_dispatch is not None:
+            if prior is not None and prior['receipt_sha256'] != receipts[name]:
+                raise RuntimeError('reused build observation changed')
+            save(reused, {'schema': 'tl3.deploy.reused-build.v1',
+                 'source_dispatch': str(build_dispatch), 'receipt_sha256': receipts[name]})
+    return receipts
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='mode', required=True)
@@ -459,7 +494,9 @@ def main():
     admitted.add_argument('lane', choices=['dev', 'release'])
     admitted.add_argument('manifest', type=Path)
     admitted.add_argument('backup', type=Path)
-    admitted.add_argument('--reattach', type=Path)
+    replay = admitted.add_mutually_exclusive_group()
+    replay.add_argument('--reattach', type=Path)
+    replay.add_argument('--build-dispatch', type=Path)
     job = sub.add_parser('payload')
     job.add_argument('intent', type=Path)
     job.add_argument('digest')
@@ -485,13 +522,8 @@ def main():
     with (dispatch / 'lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         release = Path(f'/home/rob/tmp/tl3-build/release-{args.head}')
-        receipts = {}
-        # Build is always admitted; build-release refuses an existing directory. No presence-only skip.
-        for name in ('build', 'fresh-init'):
-            intent = plan(args.head, tree, name, args.lane, release, args.manifest, args.backup, dispatch / name)
-            if name == 'build' and release.exists() and not (dispatch / name / 'binding.json').exists():
-                raise RuntimeError('existing release needs its original dispatch and verified build receipt')
-            receipts[name] = stage(intent)
+        receipts = admit_stages(args.head, tree, args.lane, release, args.manifest,
+                                args.backup, dispatch, args.build_dispatch)
         save(dispatch / 'accepted.json', {'schema': 'tl3.deploy.cycle.v1', 'head': args.head,
                                          'tree': tree, 'receipts': receipts})
 
