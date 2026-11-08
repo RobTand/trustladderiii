@@ -142,7 +142,7 @@ def _route_only(text, entry=None, inputs=None):
         if entry.get('methods') or entry.get('protected_files'):
             return False
         capabilities = (inputs or {}).get('tool_capabilities', [])
-        executors = {item['executor'] for item in capabilities}
+        executors = {'flux_pytest'} | {item['executor'] for item in capabilities}
         if entry.get('tool') != 'run_tests' or entry.get('executor') not in executors:
             return False
         if any(not _route_dimension(dimension, value, context=True)

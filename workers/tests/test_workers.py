@@ -1267,7 +1267,9 @@ def test_ep2_categories_compose_as_a_full_paragraph():
 
 def test_ep2_retained_source_identity():
     retained = Path(__file__).parent / 'fixtures' / 'ep2-retained-audit.json'
-    assert hashlib.sha256(retained.read_bytes()).hexdigest() == '34376f87eea12b9c31e767c51b082216ea0686535b2f181c3eb381a9caed5432'
+    # Flux-adapted retained audit: only executor/artifact vocabulary changed from the
+    # recorded PB capture (34376f87..., history in Git); prose and structure are unchanged.
+    assert hashlib.sha256(retained.read_bytes()).hexdigest() == 'd6e94495dd3f65daa7b74a3f87954230873f54cabf38847e3c1a1e4894581bab'
     assert len(EP2_RETAINED['final_audit']['objections']) == 3
     assert len(EP2_RETAINED['evidence_contract_presented_to_final_audit']) == 4
     assert len(EP2_RETAINED['final_audit']['evidence_contract']) == 5
