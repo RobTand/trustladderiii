@@ -65,6 +65,17 @@ class DiscoveryTests(unittest.TestCase):
         for name in ['TEST_FIXTURE_TOKEN', 'RUNFILES_API_KEY', 'UNKNOWN_SETTING']:
             self.assertFalse(name in env, name)
 
+    def test_explicit_python_interpreter_preserves_existing_environment_stripping(self):
+        stripped = ['UNKNOWN_SETTING', 'PYTHON_BINARY', 'TL3_TEST_PYTHON_EXTRA',
+                    'TL3_TEST_PYTHON_TOKEN', 'TL3_TEST_PYTHON_API_KEY',
+                    'TEST_FIXTURE_TOKEN', 'RUNFILES_API_KEY', 'TEST_FIXTURE_token',
+                    'BUILDBUDDY_API_KEY', 'MERGIFY_TOKEN', 'GITHUB_TOKEN',
+                    'OTHER_API_KEY', 'OTHER_TOKEN']
+        source = {name: 'synthetic-fixture' for name in stripped}
+        source.update(TL3_TEST_PYTHON=sys.executable, PATH='/fixture/bin')
+        self.assertEqual(check.child_env(source),
+                         {'TL3_TEST_PYTHON': sys.executable, 'PATH': '/fixture/bin'})
+
     def test_python_children_do_not_inherit_runner_credentials(self):
         names = ['BUILDBUDDY_API_KEY', 'MERGIFY_TOKEN', 'GITHUB_TOKEN',
                  'OTHER_API_KEY', 'OTHER_TOKEN']
