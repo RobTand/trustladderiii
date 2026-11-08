@@ -442,7 +442,8 @@ def _crate_test(kind, package, name, source, harness, options):
             # The two retained launch-failure lib fixtures likewise execute in PB.
             gate_args = (["--libtest-select=cli_schema", "--libtest-select=malformed_requests", "--libtest-select=optional_reviewed", "--libtest-select=protocol_bounds"] if name == "run_backend_cli" else
                          (["--libtest-select=loom_"] if name == "tl3_controller_loom" else
-                          (["--skip=adapters::run_backend::flux::launch_failure::tests::retained_fbelmqkrh5_success_keeps_its_checks_verdict_and_evidence",
+                          (["--libtest-select=staging_namespace_survives_consumer_argument_validation"] if kind == "example" and name == "fx-stage-packet" else
+                           (["--skip=adapters::run_backend::flux::launch_failure::tests::retained_fbelmqkrh5_success_keeps_its_checks_verdict_and_evidence",
                             "--skip=adapters::run_backend::flux::launch_failure::tests::retained_fbpzb5i8yp_without_launcher_exit_cannot_be_upgraded"] if kind == "lib" and name == "tl3_controller" else
-                           (["--gate-group=" + group] if group else [])))),
+                            (["--gate-group=" + group] if group else []))))),
         )

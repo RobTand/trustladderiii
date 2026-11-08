@@ -729,9 +729,11 @@ mod database_tests {
         // An explicitly admitted disposable cluster. Do not use shared fixture
         // reaping or process discovery for this destructive-boundary test.
         let scratch = tempfile::tempdir().unwrap();
-        let binary =
-            std::env::var_os("TL3_FRESH_PG_BIN").expect("declare disposable Postgres binaries");
-        let binary = Path::new(&binary);
+        let binary = std::env::var_os("TL3_TEST_POSTGRES_DIR")
+            .map(|root| PathBuf::from(root).join("bin"))
+            .or_else(|| std::env::var_os("TL3_FRESH_PG_BIN").map(PathBuf::from))
+            .expect("declare disposable Postgres binaries");
+        let binary = binary.as_path();
         let data = scratch.path().join("data");
         let socket = scratch.path().join("socket");
         fs::create_dir(&socket).unwrap();
