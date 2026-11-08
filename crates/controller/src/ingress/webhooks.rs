@@ -85,11 +85,17 @@ pub(super) fn fetch_catch_up(
 fn catch_up_state(
     reader: &mut tl3_store::Reader,
 ) -> Result<(DateTime<Utc>, DateTime<Utc>, tl3_store::Snapshot)> {
-    let cursor = reader.ingress_cursor("github-catch-up")?
+    let cursor = reader
+        .ingress_cursor("github-catch-up")?
         .ok_or(Error::Invalid("GitHub catch-up cursor is not initialized"))?;
-    let world_start = reader.ingress_cursor("github-world-start")?
+    let world_start = reader
+        .ingress_cursor("github-world-start")?
         .ok_or(Error::CatchUpWithoutWorldStart)?;
-    Ok((crate::decode_stored(cursor)?, crate::decode_stored(world_start)?, reader.load()?))
+    Ok((
+        crate::decode_stored(cursor)?,
+        crate::decode_stored(world_start)?,
+        reader.load()?,
+    ))
 }
 
 pub(super) trait Fetcher: Send + Sync {

@@ -705,7 +705,9 @@ fn initialize_intake(
         (None, Some(_)) => return Err(Error::WorldStartWithoutCatchUp),
         (None, None) => {}
     }
-    let startup = clock().with_nanosecond(0).expect("zero nanoseconds is valid");
+    let startup = clock()
+        .with_nanosecond(0)
+        .expect("zero nanoseconds is valid");
     let mut deliveries = Vec::new();
     let mut admitted = std::collections::BTreeSet::new();
     for (index, entry) in entries.iter().enumerate() {
@@ -831,9 +833,13 @@ impl CatchUp {
             .transpose()?
             .ok_or(Error::Invalid("GitHub catch-up cursor is not initialized"))?;
         let snapshot = store.load()?;
-        let world_start = crate::decode_stored(store.ingress_cursor("github-world-start")?
-            .ok_or(Error::CatchUpWithoutWorldStart)?)?;
-        self.fetch(since, world_start, snapshot, bootstrap)?.persist(store)
+        let world_start = crate::decode_stored(
+            store
+                .ingress_cursor("github-world-start")?
+                .ok_or(Error::CatchUpWithoutWorldStart)?,
+        )?;
+        self.fetch(since, world_start, snapshot, bootstrap)?
+            .persist(store)
     }
     fn fetch(
         &self,

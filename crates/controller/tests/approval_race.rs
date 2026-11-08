@@ -1869,7 +1869,13 @@ fn gap_catchup_repairs_late_approval_after_closure() {
     // Recent cursor and empty pulls list exclude old closed PR updates.
     store.begin_input().unwrap();
     for source in ["github-world-start", "github-catch-up"] {
-        store.receive_catch_up(source, &[], &json!(chrono::Utc::now() - chrono::Duration::minutes(1))).unwrap();
+        store
+            .receive_catch_up(
+                source,
+                &[],
+                &json!(chrono::Utc::now() - chrono::Duration::minutes(1)),
+            )
+            .unwrap();
     }
     store.finish_input(true).unwrap();
     let inputs = catchup.pass(&mut store, &bootstrap()).unwrap();
@@ -2142,7 +2148,13 @@ fn deployed_main_outstanding_post_survives_upgrade_stop_and_gap() {
     let mut store = Store::open(&case.settings).unwrap();
     store.begin_input().unwrap();
     for source in ["github-world-start", "github-catch-up"] {
-        store.receive_catch_up(source, &[], &json!(chrono::Utc::now() - chrono::Duration::minutes(1))).unwrap();
+        store
+            .receive_catch_up(
+                source,
+                &[],
+                &json!(chrono::Utc::now() - chrono::Duration::minutes(1)),
+            )
+            .unwrap();
     }
     store.finish_input(true).unwrap();
     let inputs = catchup.pass(&mut store, &bootstrap()).unwrap();

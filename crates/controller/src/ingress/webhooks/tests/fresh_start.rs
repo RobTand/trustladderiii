@@ -287,7 +287,9 @@ fn precommit_crash_rolls_back_and_restart_captures_new_startup() {
     let settings = database.create("fresh_precommit");
     let mut store = Store::open(&settings).unwrap();
     store.set_boundary_hook(|point, key, _| {
-        if point == tl3_store::SavePoint::ReceiveCatchUpBeforeCommit && key == "catch-up:github-catch-up" {
+        if point == tl3_store::SavePoint::ReceiveCatchUpBeforeCommit
+            && key == "catch-up:github-catch-up"
+        {
             panic!("synthetic precommit crash");
         }
     });
@@ -305,7 +307,12 @@ fn precommit_crash_rolls_back_and_restart_captures_new_startup() {
     let mut store = Store::open(&settings).unwrap();
     assert!(store.ingress_cursor("github-catch-up").unwrap().is_none());
     assert!(store.pending_ingress().unwrap().is_empty());
-    assert!(store.ingress_cursor("github-world-start").unwrap().is_none());
+    assert!(
+        store
+            .ingress_cursor("github-world-start")
+            .unwrap()
+            .is_none()
+    );
     let restarted = instant() + chrono::Duration::seconds(10);
     initialize_intake(
         &mut store,
@@ -330,10 +337,20 @@ fn postcommit_crash_preserves_cursor_and_intake_before_any_catchup() {
     let mut database = database::Database::start();
     let settings = database.create("fresh_postcommit");
     let mut store = Store::open(&settings).unwrap();
-    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        initialize_intake(&mut store, &served(), &[entry(1455)], instant, |_, number| Ok(current(number))).unwrap();
-        panic!("synthetic crash after outer commit and before fetch");
-    })).is_err());
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            initialize_intake(
+                &mut store,
+                &served(),
+                &[entry(1455)],
+                instant,
+                |_, number| Ok(current(number)),
+            )
+            .unwrap();
+            panic!("synthetic crash after outer commit and before fetch");
+        }))
+        .is_err()
+    );
     drop(store);
     let mut store = Store::open(&settings).unwrap();
     initialize_intake(
@@ -633,14 +650,33 @@ fn real_github_transport_keeps_prestartup_comments_and_closed_labels_out() {
         [2, 3],
         "old Rob approval, even edited after startup, must not replay"
     );
-    let advanced: DateTime<Utc> = crate::decode_stored(store.ingress_cursor("github-catch-up").unwrap().unwrap()).unwrap();
+    let advanced: DateTime<Utc> =
+        crate::decode_stored(store.ingress_cursor("github-catch-up").unwrap().unwrap()).unwrap();
     assert!(advanced > boundary);
     catchup.pass(&mut store, &served()).unwrap();
-    assert_eq!(store.ingress_cursor("github-world-start").unwrap(), Some(json!(boundary)));
+    assert_eq!(
+        store.ingress_cursor("github-world-start").unwrap(),
+        Some(json!(boundary))
+    );
     let rows = store.pending_ingress().unwrap();
-    let GitHubDelivery::CatchUp { changes, .. } = replay(rows.last().unwrap()).unwrap() else { panic!("missing edited-comment recovery") };
-    assert_eq!(changes.comments.iter().map(|comment|comment.id).collect::<Vec<_>>(), [2,3], "postworld edits survive moving-cursor advancement; preworld edits stay excluded");
-    assert!(changes.comments.iter().all(|comment| comment.created_at < advanced && comment.updated_at > advanced));
+    let GitHubDelivery::CatchUp { changes, .. } = replay(rows.last().unwrap()).unwrap() else {
+        panic!("missing edited-comment recovery")
+    };
+    assert_eq!(
+        changes
+            .comments
+            .iter()
+            .map(|comment| comment.id)
+            .collect::<Vec<_>>(),
+        [2, 3],
+        "postworld edits survive moving-cursor advancement; preworld edits stay excluded"
+    );
+    assert!(
+        changes
+            .comments
+            .iter()
+            .all(|comment| comment.created_at < advanced && comment.updated_at > advanced)
+    );
     let root = tempfile::tempdir().unwrap();
     let mut controller = Controller::open(
         Store::open(&settings).unwrap(),
@@ -658,12 +694,32 @@ fn unsupported_cursor_without_world_start_refuses_startup_with_named_error() {
     let mut database = database::Database::start();
     let settings = database.create("fresh_unsupported_cursor");
     let mut store = Store::open(&settings).unwrap();
-    store.receive_catch_up("github-catch-up", &[], &json!(instant())).unwrap();
-    let error = initialize_intake(&mut store, &served(), &[entry(1455)], || panic!("unsupported state must not capture a new boundary"), |_, _| panic!("unsupported state must not fetch")).unwrap_err();
+    store
+        .receive_catch_up("github-catch-up", &[], &json!(instant()))
+        .unwrap();
+    let error = initialize_intake(
+        &mut store,
+        &served(),
+        &[entry(1455)],
+        || panic!("unsupported state must not capture a new boundary"),
+        |_, _| panic!("unsupported state must not fetch"),
+    )
+    .unwrap_err();
     assert!(matches!(error, Error::CatchUpWithoutWorldStart));
-    assert_eq!(error.to_string(), "unsupported store state: catch-up cursor without world start; fresh-init required");
-    assert_eq!(store.ingress_cursor("github-catch-up").unwrap(),Some(json!(instant())));
-    assert!(store.ingress_cursor("github-world-start").unwrap().is_none());
+    assert_eq!(
+        error.to_string(),
+        "unsupported store state: catch-up cursor without world start; fresh-init required"
+    );
+    assert_eq!(
+        store.ingress_cursor("github-catch-up").unwrap(),
+        Some(json!(instant()))
+    );
+    assert!(
+        store
+            .ingress_cursor("github-world-start")
+            .unwrap()
+            .is_none()
+    );
     assert!(store.pending_ingress().unwrap().is_empty());
     database.stop();
 }
@@ -679,19 +735,95 @@ fn startup_second_is_in_world_and_both_cursors_publish_at_outer_commit() {
     store.set_boundary_hook(move |point, _, _| {
         if point == tl3_store::SavePoint::ReceiveCatchUpAfterCommit {
             let mut read = Store::open(&observer).unwrap();
-            assert!(read.ingress_cursor("github-world-start").unwrap().is_none(),"savepoint release must not publish immutable boundary");
-            assert!(read.ingress_cursor("github-catch-up").unwrap().is_none(),"savepoint release must not publish moving cursor");
-            assert!(read.pending_ingress().unwrap().is_empty(),"savepoint release must not publish inputs");
-            releases.fetch_add(1,Ordering::SeqCst);
+            assert!(
+                read.ingress_cursor("github-world-start").unwrap().is_none(),
+                "savepoint release must not publish immutable boundary"
+            );
+            assert!(
+                read.ingress_cursor("github-catch-up").unwrap().is_none(),
+                "savepoint release must not publish moving cursor"
+            );
+            assert!(
+                read.pending_ingress().unwrap().is_empty(),
+                "savepoint release must not publish inputs"
+            );
+            releases.fetch_add(1, Ordering::SeqCst);
         }
     });
-    let exact:DateTime<Utc>="2026-11-08T05:00:00.750Z".parse().unwrap();
-    let boundary:DateTime<Utc>="2026-11-08T05:00:00Z".parse().unwrap();
-    initialize_intake(&mut store,&served(),&[entry(1455)],||exact,|_,number|Ok(current(number))).unwrap();
-    assert_eq!(observed.load(Ordering::SeqCst),2);
+    let exact: DateTime<Utc> = "2026-11-08T05:00:00.750Z".parse().unwrap();
+    let boundary: DateTime<Utc> = "2026-11-08T05:00:00Z".parse().unwrap();
+    initialize_intake(
+        &mut store,
+        &served(),
+        &[entry(1455)],
+        || exact,
+        |_, number| Ok(current(number)),
+    )
+    .unwrap();
+    assert_eq!(observed.load(Ordering::SeqCst), 2);
     let mut read = Store::open(&settings).unwrap();
-    assert_eq!(read.ingress_cursor("github-world-start").unwrap(),Some(json!(boundary)));
-    assert_eq!(read.ingress_cursor("github-catch-up").unwrap(),Some(json!(boundary)));
-    assert_eq!(read.pending_ingress().unwrap().len(),1);
+    assert_eq!(
+        read.ingress_cursor("github-world-start").unwrap(),
+        Some(json!(boundary))
+    );
+    assert_eq!(
+        read.ingress_cursor("github-catch-up").unwrap(),
+        Some(json!(boundary))
+    );
+    assert_eq!(read.pending_ingress().unwrap().len(), 1);
+    database.stop();
+}
+
+#[test]
+fn database_error_rolls_back_both_cursors_and_all_initial_inputs() {
+    let mut database = database::Database::start();
+    let settings = database.create("fresh_commit_error");
+    let mut fixture = postgres::Config::new()
+        .host(&settings.host)
+        .port(settings.port)
+        .dbname(&settings.database)
+        .user(&settings.user)
+        .password("tl3-disposable-test-password")
+        .connect(postgres::NoTls)
+        .unwrap();
+    fixture
+        .batch_execute(
+            "CREATE FUNCTION refuse_initial_cursor() RETURNS trigger LANGUAGE plpgsql AS $$
+             BEGIN
+                 IF NEW.source = 'github-catch-up' THEN
+                     RAISE EXCEPTION 'synthetic initial cursor write failure';
+                 END IF;
+                 RETURN NEW;
+             END $$;
+             CREATE TRIGGER refuse_initial_cursor BEFORE INSERT ON tl3_ingress_cursors
+             FOR EACH ROW EXECUTE FUNCTION refuse_initial_cursor()",
+        )
+        .unwrap();
+    let mut store = Store::open(&settings).unwrap();
+    assert!(
+        initialize_intake(
+            &mut store,
+            &served(),
+            &[entry(1455), entry(1574)],
+            instant,
+            |_, number| Ok(current(number))
+        )
+        .is_err()
+    );
+    assert!(store.ingress_cursor("github-world-start").unwrap().is_none());
+    assert!(store.ingress_cursor("github-catch-up").unwrap().is_none());
+    assert!(store.pending_ingress().unwrap().is_empty());
+    fixture
+        .batch_execute("DROP TRIGGER refuse_initial_cursor ON tl3_ingress_cursors")
+        .unwrap();
+    initialize_intake(
+        &mut store,
+        &served(),
+        &[entry(1455)],
+        instant,
+        |_, number| Ok(current(number)),
+    )
+    .unwrap();
+    assert_eq!(store.pending_ingress().unwrap().len(), 1);
     database.stop();
 }
