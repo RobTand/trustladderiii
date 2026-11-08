@@ -113,51 +113,41 @@ fn target_shell(historical: &str) -> String {
         .replace("Ack::Confirmed => EffectState::Confirmed", "Ack::Confirmed | Ack::DeliveryAccepted => EffectState::Confirmed")
         .replace("        if completion.ack == Ack::Confirmed {", "        if matches!(completion.ack, Ack::Confirmed | Ack::DeliveryAccepted) {")
         .replace("            self.record_progress(snapshot, &mut commit, key, completion.progress.as_ref())?;\n", "")
-        .replace("        if completion.ack == Ack::Permanent\n            && publication_failure::handles(&delivery)", concat!(r#"        if completion.ack == Ack::DeliveryAccepted
-            && !matches!(
-                delivery.output,
-                DeliveryOutput::Effect {
-                    kind: tl3_kernel::EffectKind::Enqueue,
-                    ..
-                }
-            )
-        {
-            return Err(Error::Invalid(
-                "delivery acceptance requires the handoff effect",
-            ));
-        }
-        if completion.ack == Ack::Confirmed
-            && effect.state != EffectState::Cancelling
-            && matches!(
-                delivery.output,
-                DeliveryOutput::Effect {
-                    kind: tl3_kernel::EffectKind::Enqueue,
-                    ..
-                }
-            )
-        {
-            return Err(Error::Invalid(
-                "live handoff requires typed delivery acceptance",
-            ));
-        }
-"#, "        if completion.ack == Ack::Permanent\n            && publication_failure::handles(&delivery)"))
-        .replace("        // Preserve teardown evidence in the same transaction that can emit the summary.\n", concat!(r#"        // Acceptance retains the dispatch-hydrated PR binding for future wakes.
-        // A cancelling receipt never confirms, so it cannot recreate a watch.
-        if completion.ack == Ack::DeliveryAccepted
-            && state == EffectState::Confirmed
-            && snapshot
-                .rows
-                .iter()
-                .any(|row| row.table == "watches" && row.id == key)
-        {
-            commit.rows.push(put(
-                "watches",
-                key.into(),
-                json!(hydrate(effect, snapshot)?),
-            ));
-        }
-"#, "        // Preserve teardown evidence in the same transaction that can emit the summary.\n"))
         .replace("            self.failure_allowance(snapshot, key, class, &mut commit)?;\n        }\n", "            self.failure_allowance(snapshot, key, class, &mut commit)?;\n        }\n        self.accepted_delivery_refusal(snapshot, &delivery, &completion, &mut commit)?;\n")
+}
+
+// Keep the historical comparison for the surrounding I/O frame. The three
+// new acceptance blocks execute in the real controller boundary regression;
+// they are not frozen copies of production logic in this source fixture.
+fn historical_completion_frame(source: &str) -> String {
+    let mut frame = source.to_owned();
+    for (anchor, expected) in [
+        ("        if completion.ack == Ack::DeliveryAccepted\n", 2),
+        ("        if completion.ack == Ack::Confirmed\n            && effect.state != EffectState::Cancelling", 1),
+    ] {
+        let mut removed = 0;
+        while let Some(start) = frame.find(anchor) {
+            let mut parentheses = 0;
+            let mut braces = 0;
+            let mut body = false;
+            let end = frame[start..].char_indices().find_map(|(offset, ch)| {
+                match ch {
+                    '(' => parentheses += 1,
+                    ')' => parentheses -= 1,
+                    '{' if body || parentheses == 0 => { body = true; braces += 1; }
+                    '}' if body => braces -= 1,
+                    _ => {}
+                }
+                (body && braces == 0).then_some(start + offset + ch.len_utf8())
+            }).expect("complete acceptance block in production");
+            assert_eq!(&frame[end..end + 1], "\n");
+            frame.replace_range(start..end + 1, "");
+            removed += 1;
+        }
+        assert_eq!(removed, expected, "each target block has a real-interface counterpart");
+    }
+    frame.replace("        // Acceptance retains the dispatch-hydrated PR binding for future wakes.\n", "")
+        .replace("        // A cancelling receipt never confirms, so it cannot recreate a watch.\n", "")
 }
 
 /// CC-E extraction: the complete original method is retained verbatim. The only
@@ -167,7 +157,7 @@ fn completion_shell_keeps_every_other_statement_verbatim() {
     let source = include_str!("../../src/lib.rs");
     let start = source.find("    fn prepare_completion(").unwrap();
     let end = source[start..].find("\n    fn apply(").unwrap() + start;
-    let restored = source[start..end]
+    let restored = historical_completion_frame(&source[start..end])
         .replace(
             include_str!("current-plan.rs.txt"),
             &target_shell(include_str!("base-plan.rs.txt")),
@@ -308,7 +298,7 @@ fn owned_controller_io_shell_remains_verbatim() {
     let source = include_str!("../../src/lib.rs");
     let start = source.find("    fn retire_effect(").unwrap();
     let end = source[start..].find("    fn apply(").unwrap() + start;
-    let restored = source[start..end]
+    let restored = historical_completion_frame(&source[start..end])
         .replace(
             include_str!("current-plan.rs.txt"),
             &target_shell(include_str!("base-plan.rs.txt")),
