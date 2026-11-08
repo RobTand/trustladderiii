@@ -139,7 +139,7 @@ def test_changed_or_stale_evidence_is_unusable(rehearsal, change):
     if change == 'base':
         base = 'f' * 40
     elif change == 'selectors':
-        checks[0]['node_ids'].append('tests/test_adoption.py::test_other')
+        checks[0]['tests'].append('tests/test_adoption.py::test_other')
     elif change == 'target':
         checks[0]['forcing']['patches'][0]['target'] = 'publisher.Publisher.decide'
     elif change == 'value':
