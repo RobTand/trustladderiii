@@ -2156,13 +2156,23 @@ spec fn scheduling_safe(w: World) -> bool {
 
 /// A node's place in the agent pool's line (Q39), lowest first: its priority,
 /// then the older ticket. None unless it waits for the pool.
-pub fn pool_key(n: &Node) -> Option<(Priority, u64)> {
+kernel_fn! {
+pub fn pool_key(n: &Node) -> (result: Option<(Priority, u64)>) [
+    ensures result == pool_spec_key(*n),
+] {
     let ticket = n.ticket.filter(|_| !matches!(n.phase, Phase::Ready(_)))?;
     Some((n.priority, ticket))
+}
 }
 
 #[cfg(verus_keep_ghost)]
 verus! {
+spec fn pool_spec_key(n: Node) -> Option<(Priority, u64)> {
+    if n.phase is Ready { None } else {
+        match n.ticket { Some(ticket) => Some((n.priority, ticket)), None => None }
+    }
+}
+
 spec fn priority_number(priority: Priority) -> nat {
     match priority {
         Priority::P0 => 0, Priority::P1 => 1, Priority::P2 => 2,
