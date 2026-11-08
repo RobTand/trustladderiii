@@ -170,6 +170,7 @@ fn stopping_active(m: &mut Node, outcome: Outcome) -> (result: ()) [
     kernel_snapshot! { before = *m }
     m.question = None;
     m.waiting_incident = false;
+    m.incident_needs_rob = false;
     set_phase(m, Phase::Stopping(outcome));
     kernel_proof! { allocation_stopping_lemmas::stopped_cases(before@, outcome); }
 }
