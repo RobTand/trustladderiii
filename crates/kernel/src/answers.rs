@@ -34,7 +34,10 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
-] proof [reveal(distance);] {
+        final(w).nodes@[i as int].proposed == old(w).nodes@[i as int].proposed,
+        final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
+        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase),
+] proof [reveal(distance); reveal(retirement::stopped);] {
     let Some(q) = w.nodes[i].question else { return };
     if q.id != id {
         return; // an answer to a question that is no longer open

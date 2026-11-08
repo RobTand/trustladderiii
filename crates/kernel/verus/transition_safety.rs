@@ -31,6 +31,7 @@ pub(super) open spec fn node_step(b: Node, n: Node) -> bool {
         && n.credit.earned as int <= b.credit.earned as int + 1
         && (n.credit.earned > b.credit.earned
             ==> !b.credit.merge_credited && n.credit.merge_credited)
+        && (b.credit.merge_credited ==> n.credit.merge_credited)
 }
 
 /// proofs.rs check_nodes over every node present before the transition.
@@ -184,6 +185,23 @@ pub(super) open spec fn advance_frame(before: World, after: World, i: int, moved
     }
 }
 
+/// K4b settle summary of every emitted effect: a valid node index and a key
+/// from that node's interval across the whole settle. Per-emission paused and
+/// Enqueue-head validity is each pass's Advance instance.
+pub(super) open spec fn settle_item(before: World, after: World, o: Option<Out>) -> bool {
+    match o {
+        Some(Out::Effect { node, seq, .. }) => node.0 < after.nodes@.len()
+            && seq < after.nodes@[node.0 as int].next_seq
+            && (node.0 < before.nodes@.len() ==> seq >= before.nodes@[node.0 as int].next_seq),
+        _ => true,
+    }
+}
+
+/// K4b: settle_item over the whole emitted suffix.
+pub(super) open spec fn settle_outputs(before: World, after: World, out: Seq<Option<Out>>) -> bool {
+    forall|k: int| 0 <= k < out.len() ==> settle_item(before, after, #[trigger] out[k])
+}
+
 /// K4 REPLAN settle frame: current settle keeps the node count, dependency
 /// table, gates, file sets, pool capacity, fail_fast and next question.
 pub(super) open spec fn settle_frame(before: World, after: World) -> bool {
@@ -307,7 +325,8 @@ pub(super) open spec fn transition_safety(before: World, after: World, t: Transi
             && event_rules(before, after, event),
         Transition::Advance { node, moved } => advance_frame(before, after, node as int, moved, out)
             && (moved ==> nodes_step(before, after) && outputs_ok(before, after, out, None)),
-        Transition::Settle => settle_frame(before, after),
+        Transition::Settle => settle_frame(before, after) && nodes_step(before, after)
+            && settle_outputs(before, after, out),
     }
 }
 
@@ -321,7 +340,8 @@ pub(super) proof fn intro(before: World, after: World, t: Transition, out: Seq<O
             && event_rules(before, after, event),
         Transition::Advance { node, moved } => advance_frame(before, after, node as int, moved, out)
             && (moved ==> nodes_step(before, after) && outputs_ok(before, after, out, None)),
-        Transition::Settle => settle_frame(before, after),
+        Transition::Settle => settle_frame(before, after) && nodes_step(before, after)
+            && settle_outputs(before, after, out),
     },
     ensures transition_safety(before, after, t, out),
 {
@@ -340,11 +360,10 @@ pub(super) proof fn frame(before: World, after: World, t: Transition, out: Seq<O
     reveal(transition_safety);
 }
 
-/// K4b: check_nodes for apply and for a moving advance.
+/// K4b: check_nodes for apply, a moving advance and a whole settle.
 pub(super) proof fn nodes(before: World, after: World, t: Transition, out: Seq<Option<Out>>)
     requires transition_safety(before, after, t, out),
-        match t { Transition::Apply(_) => true, Transition::Advance { moved, .. } => moved,
-            Transition::Settle => false },
+        match t { Transition::Advance { moved, .. } => moved, _ => true },
     ensures nodes_step(before, after),
 {
     reveal(transition_safety);
@@ -377,6 +396,8 @@ pub(super) proof fn settle_start(w: World)
     ensures transition_safety(w, w, Transition::Settle, Seq::empty()),
 {
     reveal(transition_safety);
+    assert forall|j: int| 0 <= j < w.nodes@.len()
+        implies node_step(w.nodes@[j], #[trigger] w.nodes@[j]) by {}
 }
 
 /// K4b: extend a settle by one internal advance, moving or stuttering, and
@@ -388,6 +409,52 @@ pub(super) proof fn transition_compose(w0: World, w1: World, w2: World, node: us
     ensures transition_safety(w0, w2, Transition::Settle, first + next),
 {
     reveal(transition_safety);
+    if moved {
+        nodes_step_trans(w0, w1, w2);
+        let out = first + next;
+        assert forall|k: int| 0 <= k < out.len() implies settle_item(w0, w2, #[trigger] out[k]) by {
+            if k < first.len() {
+                assert(out[k] == first[k]);
+                assert(settle_item(w0, w1, first[k]));
+            } else {
+                assert(out[k] == next[k - first.len()]);
+                assert(match next[k - first.len()] {
+                    Some(Out::Effect { node, seq, kind, head }) => node.0 < w2.nodes@.len()
+                        && effect_ok(w1, w2.nodes@[node.0 as int], node.0 as int, seq, kind, head,
+                            false),
+                    _ => true,
+                });
+            }
+        }
+    } else {
+        assert(first + next =~= first);
+    }
+}
+
+/// K4b: the emitted-effect summary of a whole settle.
+pub(super) proof fn settle_effects(before: World, after: World, out: Seq<Option<Out>>)
+    requires transition_safety(before, after, Transition::Settle, out),
+    ensures settle_outputs(before, after, out),
+{
+    reveal(transition_safety);
+}
+
+/// K4b: check_nodes composes, because merge credit is earned once and kept.
+pub(super) proof fn node_step_trans(a: Node, b: Node, c: Node)
+    requires node_step(a, b), node_step(b, c),
+    ensures node_step(a, c),
+{
+}
+
+/// K4b: check_nodes over every node composes across two transitions.
+pub(super) proof fn nodes_step_trans(w0: World, w1: World, w2: World)
+    requires nodes_step(w0, w1), nodes_step(w1, w2),
+    ensures nodes_step(w0, w2),
+{
+    assert forall|j: int| 0 <= j < w0.nodes@.len()
+        implies node_step(w0.nodes@[j], #[trigger] w2.nodes@[j]) by {
+        node_step_trans(w0.nodes@[j], w1.nodes@[j], w2.nodes@[j]);
+    }
 }
 
 /// K4b: Q54 check_fail_fast and the check_apply event rows for one apply.

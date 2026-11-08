@@ -32,6 +32,8 @@ pub(super) fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
         final(w).nodes@[i as int].credit.spent as int <= old(w).nodes@[i as int].credit.spent as int + 1,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
         final(w).nodes@[i as int].question.is_none(),
+        final(w).nodes@[i as int].proposed == old(w).nodes@[i as int].proposed,
+        final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
         final(w).next_ticket == old(w).next_ticket,
         final(w).next_question == old(w).next_question,
         final(w).gates@ == old(w).gates@,
@@ -40,7 +42,7 @@ pub(super) fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
-] proof [reveal(distance);] {
+] proof [reveal(distance); reveal(retirement::stopped);] {
     let m = &mut w.nodes[i];
     m.credit.fund_and_pay(deposit, q.cost);
     m.question = None;

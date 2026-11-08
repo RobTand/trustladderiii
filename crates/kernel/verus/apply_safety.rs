@@ -16,7 +16,7 @@ pub(super) proof fn apply_frame(before: World, after: World)
         forall|j: int| 0 <= j < before.file_sets@.len()
             ==> after.file_sets@[j] == before.file_sets@[j],
         forall|j: int| 0 <= j < before.nodes@.len()
-            ==> after.nodes@[j].repo == before.nodes@[j].repo,
+            ==> (#[trigger] after.nodes@[j]).repo == before.nodes@[j].repo,
     ensures transition_safety::apply_frame(before, after),
 {
 }

@@ -41,7 +41,10 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         final(out).len <= old(out).len + 1,
         command == Command::Resume ==> final(w).next_question == old(w).next_question,
         progress_gate_apply::resume_post(old(w).nodes@[i as int], final(w).nodes@[i as int], id, command),
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);] {
+        final(w).nodes@[i as int].proposed == old(w).nodes@[i as int].proposed,
+        final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
+        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase),
+] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(retirement::stopped);] {
     if id <= w.nodes[i].last_cmd {
         kernel_proof! { reveal(progress_gate_apply::resume_post); reveal(progress_gate_apply::resumed); }
         return; // a repeated command
