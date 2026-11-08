@@ -162,15 +162,16 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             }
             kernel_proof! {
                 assert(w.nodes@[i as int] == retirement::fact_node(
-                    before_transition@.nodes@[i as int], fact)) by { reveal(retirement::fact_node); }
-                assert(retirement::fact_frame(before_transition@, *w, i, before_out@, *out))
-                    by { reveal(retirement::fact_frame); }
+                    before_transition@.nodes@[i as int], Fact::Priority(priority))) by { reveal(retirement::fact_node); }
             }
         }
         Fact::PrClosedByPerson => {
             let m = &mut w.nodes[i];
             if !m.pr_open {
-                kernel_proof! { reveal(retirement::fact_node); }
+                kernel_proof! {
+                    assert(w.nodes@[i as int] == retirement::fact_node(
+                        before_transition@.nodes@[i as int], Fact::PrClosedByPerson)) by { reveal(retirement::fact_node); }
+                }
                 return;
             }
             m.pr_open = false;
@@ -180,9 +181,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             }
             kernel_proof! {
                 assert(w.nodes@[i as int] == retirement::fact_node(
-                    before_transition@.nodes@[i as int], fact)) by { reveal(retirement::fact_node); }
-                assert(retirement::fact_frame(before_transition@, *w, i, before_out@, *out))
-                    by { reveal(retirement::fact_frame); }
+                    before_transition@.nodes@[i as int], Fact::PrClosedByPerson)) by { reveal(retirement::fact_node); }
             }
         }
         Fact::PushByOther { head } => {
@@ -211,16 +210,13 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             }
             kernel_proof! {
                 assert(w.nodes@[i as int] == retirement::fact_node(
-                    before_transition@.nodes@[i as int], fact)) by { reveal(retirement::fact_node); }
-                assert(retirement::fact_frame(before_transition@, *w, i, before_out@, *out))
-                    by { reveal(retirement::fact_frame); }
+                    before_transition@.nodes@[i as int], Fact::Conflict)) by { reveal(retirement::fact_node); }
             }
         }
         Fact::IncidentCleared { by_rob } => incident_cleared(w, i, by_rob, out),
     }
     kernel_proof! {
-        if fact is CiFailed || fact is IncidentCleared || fact is Priority
-            || fact is PrClosedByPerson || fact is Conflict {
+        if fact is CiFailed || fact is IncidentCleared {
             facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out);
         }
     }
