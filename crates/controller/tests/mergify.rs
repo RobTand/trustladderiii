@@ -2598,6 +2598,18 @@ fn failed_catch_up_retries_held_enqueue(settings: &tl3_config::Store) {
         Some(CatchUp::new(api.clients(), vec![]).unwrap()),
     )
     .unwrap();
+    let startup_cursor = Store::open(settings)
+        .unwrap()
+        .ingress_cursor("github-catch-up")
+        .unwrap()
+        .expect("fresh startup commits its boundary before history fetch");
+    assert_eq!(
+        Store::open(settings)
+            .unwrap()
+            .ingress_cursor("github-world-start")
+            .unwrap(),
+        Some(startup_cursor.clone())
+    );
     let control = source.control();
     let (sender, receiver) = mpsc::channel();
     let running = thread::spawn(move || source.run(sender));
@@ -2612,12 +2624,13 @@ fn failed_catch_up_retries_held_enqueue(settings: &tl3_config::Store) {
             .unwrap()
             .is_empty()
     );
-    assert!(
+    assert_eq!(
         Store::open(settings)
             .unwrap()
             .ingress_cursor("github-catch-up")
-            .unwrap()
-            .is_none()
+            .unwrap(),
+        Some(startup_cursor),
+        "a failed history fetch must leave the committed startup boundary unchanged"
     );
     ingress::apply(&mut controller, wake).unwrap();
     drain(&mut controller);
