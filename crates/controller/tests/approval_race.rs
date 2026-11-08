@@ -1867,13 +1867,11 @@ fn gap_catchup_repairs_late_approval_after_closure() {
         tl3_controller::ingress::CatchUp::new(BTreeMap::from([(3, client)]), vec![]).unwrap();
     let mut store = Store::open(&case.settings).unwrap();
     // Recent cursor and empty pulls list exclude old closed PR updates.
-    store
-        .receive_catch_up(
-            "github-catch-up",
-            &[],
-            &json!(chrono::Utc::now() - chrono::Duration::minutes(1)),
-        )
-        .unwrap();
+    store.begin_input().unwrap();
+    for source in ["github-world-start", "github-catch-up"] {
+        store.receive_catch_up(source, &[], &json!(chrono::Utc::now() - chrono::Duration::minutes(1))).unwrap();
+    }
+    store.finish_input(true).unwrap();
     let inputs = catchup.pass(&mut store, &bootstrap()).unwrap();
     tl3_controller::ingress::drain(&mut controller).unwrap();
     for input in inputs {
@@ -2142,13 +2140,11 @@ fn deployed_main_outstanding_post_survives_upgrade_stop_and_gap() {
         tl3_controller::ingress::CatchUp::new(BTreeMap::from([(3, http_client(&case))]), vec![])
             .unwrap();
     let mut store = Store::open(&case.settings).unwrap();
-    store
-        .receive_catch_up(
-            "github-catch-up",
-            &[],
-            &json!(chrono::Utc::now() - chrono::Duration::minutes(1)),
-        )
-        .unwrap();
+    store.begin_input().unwrap();
+    for source in ["github-world-start", "github-catch-up"] {
+        store.receive_catch_up(source, &[], &json!(chrono::Utc::now() - chrono::Duration::minutes(1))).unwrap();
+    }
+    store.finish_input(true).unwrap();
     let inputs = catchup.pass(&mut store, &bootstrap()).unwrap();
     tl3_controller::ingress::drain(&mut controller).unwrap();
     for input in inputs {

@@ -81,6 +81,7 @@ impl Fetcher for PanicOnce {
     fn fetch(
         &self,
         _since: DateTime<Utc>,
+        _world_start: DateTime<Utc>,
         _snapshot: tl3_store::Snapshot,
         _bootstrap: &Bootstrap,
     ) -> Result<CatchUpBatch> {

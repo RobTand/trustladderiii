@@ -520,6 +520,14 @@ fn adapter_with_client(client: GitHub, root: &Path) -> adapters::github::Adapter
     .with_repositories(&repositories())
     .unwrap()
 }
+fn existing_github_world(store: &mut Store, start: chrono::DateTime<Utc>) {
+    store.begin_input().unwrap();
+    for source in ["github-world-start", "github-catch-up"] {
+        store.receive_catch_up(source, &[], &json!(start)).unwrap();
+    }
+    store.finish_input(true).unwrap();
+}
+
 fn controller(settings: &tl3_config::Store, root: &Path, uri: &str) -> Controller {
     let mut registry = adapters::simulation(root).unwrap();
     registry.register(Upstream::GitHub, adapter(uri, root));
@@ -1960,6 +1968,7 @@ fn catch_up_preserves_evidence(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
     let catch_up = CatchUp::new(BTreeMap::from([(3, client(&api.uri()))]), vec![]).unwrap();
     let mut store = Store::open(settings).unwrap();
+    existing_github_world(&mut store, "2026-01-01T00:00:00Z".parse().unwrap());
     let mut older = fixture(false);
     older["issue"].as_object_mut().unwrap().remove("title");
     store

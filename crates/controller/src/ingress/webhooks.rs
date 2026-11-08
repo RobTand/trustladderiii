@@ -70,15 +70,11 @@ pub(super) fn fetch_catch_up(
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let (cursor, snapshot) = catch_up_state(&mut reader).or_else(|_| {
+            let (since, world_start, snapshot) = catch_up_state(&mut reader).or_else(|_| {
                 reader.reconnect()?;
                 catch_up_state(&mut reader)
             })?;
-            let since = cursor
-                .map(crate::decode_stored)
-                .transpose()?
-                .ok_or(Error::Invalid("GitHub catch-up cursor is not initialized"))?;
-            catch_up.fetch(since, snapshot, &bootstrap)
+            catch_up.fetch(since, world_start, snapshot, &bootstrap)
         }))
         .unwrap_or(Err(Error::Invalid("GitHub catch-up panicked")));
         // Only the receipt loop inserts rows, so sequence order remains commit order.
@@ -88,14 +84,19 @@ pub(super) fn fetch_catch_up(
 
 fn catch_up_state(
     reader: &mut tl3_store::Reader,
-) -> tl3_store::Result<(Option<serde_json::Value>, tl3_store::Snapshot)> {
-    Ok((reader.ingress_cursor("github-catch-up")?, reader.load()?))
+) -> Result<(DateTime<Utc>, DateTime<Utc>, tl3_store::Snapshot)> {
+    let cursor = reader.ingress_cursor("github-catch-up")?
+        .ok_or(Error::Invalid("GitHub catch-up cursor is not initialized"))?;
+    let world_start = reader.ingress_cursor("github-world-start")?
+        .ok_or(Error::CatchUpWithoutWorldStart)?;
+    Ok((crate::decode_stored(cursor)?, crate::decode_stored(world_start)?, reader.load()?))
 }
 
 pub(super) trait Fetcher: Send + Sync {
     fn fetch(
         &self,
         since: DateTime<Utc>,
+        world_start: DateTime<Utc>,
         snapshot: tl3_store::Snapshot,
         bootstrap: &Bootstrap,
     ) -> Result<CatchUpBatch>;
@@ -105,10 +106,11 @@ impl Fetcher for CatchUp {
     fn fetch(
         &self,
         since: DateTime<Utc>,
+        world_start: DateTime<Utc>,
         snapshot: tl3_store::Snapshot,
         bootstrap: &Bootstrap,
     ) -> Result<CatchUpBatch> {
-        CatchUp::fetch(self, since, snapshot, bootstrap)
+        CatchUp::fetch(self, since, world_start, snapshot, bootstrap)
     }
 }
 

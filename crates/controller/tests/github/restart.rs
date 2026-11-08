@@ -772,6 +772,8 @@ pub(super) fn delegated_restart(settings: &tl3_config::Store) {
     edited["updated_at"] = json!(Utc::now());
     api.state.lock().unwrap().catch_up_comments = Some(vec![edited.clone()]);
     let mut catch_up_store = Store::open(settings).unwrap();
+    existing_github_world(&mut catch_up_store, Utc::now() - chrono::Duration::minutes(2));
+    catch_up_store.receive_catch_up("github-catch-up", &[], &json!(Utc::now() - chrono::Duration::seconds(30))).unwrap();
     let catch_up = CatchUp::new(BTreeMap::from([(3, client(&api.uri()))]), vec![]).unwrap();
     catch_up.pass(&mut catch_up_store, &bootstrap()).unwrap();
     drain(&mut controller);

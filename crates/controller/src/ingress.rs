@@ -8,7 +8,7 @@ use crate::{
     Bootstrap, Controller, Error, IssueChange, LabelledIssue, Repository, Result, cli::Input,
     executor::Observation,
 };
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -693,13 +693,19 @@ fn initialize_intake(
     clock: impl FnOnce() -> DateTime<Utc>,
     mut fetch: impl FnMut(&Repository, u64) -> Result<tl3_github::Issue>,
 ) -> Result<()> {
-    if store.ingress_cursor("github-catch-up")?.is_some() {
-        if !entries.is_empty() {
+    match (
+        store.ingress_cursor("github-catch-up")?,
+        store.ingress_cursor("github-world-start")?,
+    ) {
+        (Some(_), Some(_)) => {
             eprintln!("initial_intake ignored: GitHub catch-up cursor already exists");
+            return Ok(());
         }
-        return Ok(());
+        (Some(_), None) => return Err(Error::CatchUpWithoutWorldStart),
+        (None, Some(_)) => return Err(Error::WorldStartWithoutCatchUp),
+        (None, None) => {}
     }
-    let startup = clock();
+    let startup = clock().with_nanosecond(0).expect("zero nanoseconds is valid");
     let mut deliveries = Vec::new();
     let mut admitted = std::collections::BTreeSet::new();
     for (index, entry) in entries.iter().enumerate() {
@@ -770,7 +776,16 @@ fn initialize_intake(
         }));
         deliveries.push((id, serde_json::to_vec(&delivery)?));
     }
-    store.receive_catch_up("github-catch-up", &deliveries, &json!(startup))?;
+    store.begin_input()?;
+    let commit = (|| {
+        store.receive_catch_up("github-world-start", &[], &json!(startup))?;
+        store.receive_catch_up("github-catch-up", &deliveries, &json!(startup))
+    })();
+    if let Err(error) = commit {
+        store.finish_input(false)?;
+        return Err(error.into());
+    }
+    store.finish_input(true)?;
     Ok(())
 }
 
@@ -816,11 +831,14 @@ impl CatchUp {
             .transpose()?
             .ok_or(Error::Invalid("GitHub catch-up cursor is not initialized"))?;
         let snapshot = store.load()?;
-        self.fetch(since, snapshot, bootstrap)?.persist(store)
+        let world_start = crate::decode_stored(store.ingress_cursor("github-world-start")?
+            .ok_or(Error::CatchUpWithoutWorldStart)?)?;
+        self.fetch(since, world_start, snapshot, bootstrap)?.persist(store)
     }
     fn fetch(
         &self,
         since: DateTime<Utc>,
+        world_start: DateTime<Utc>,
         snapshot: tl3_store::Snapshot,
         bootstrap: &Bootstrap,
     ) -> Result<CatchUpBatch> {
@@ -902,10 +920,10 @@ impl CatchUp {
             for mut changes in result.repositories {
                 changes
                     .comments
-                    .retain(|comment| comment.created_at >= since);
+                    .retain(|comment| comment.created_at >= world_start);
                 changes
                     .labels
-                    .retain(|(_, change)| change.created_at >= since);
+                    .retain(|(_, change)| change.created_at >= world_start);
                 for (number, _) in &changes.labels {
                     if !changes.issues.iter().any(|issue| issue.number == *number) {
                         changes.issues.push(

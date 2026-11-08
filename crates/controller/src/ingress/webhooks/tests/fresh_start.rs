@@ -5,6 +5,7 @@ impl Fetcher for FreshStartHistory {
     fn fetch(
         &self,
         since: DateTime<Utc>,
+        _world_start: DateTime<Utc>,
         _snapshot: tl3_store::Snapshot,
         bootstrap: &Bootstrap,
     ) -> Result<CatchUpBatch> {
@@ -285,8 +286,8 @@ fn precommit_crash_rolls_back_and_restart_captures_new_startup() {
     let mut database = database::Database::start();
     let settings = database.create("fresh_precommit");
     let mut store = Store::open(&settings).unwrap();
-    store.set_boundary_hook(|point, _, _| {
-        if point == tl3_store::SavePoint::ReceiveCatchUpBeforeCommit {
+    store.set_boundary_hook(|point, key, _| {
+        if point == tl3_store::SavePoint::ReceiveCatchUpBeforeCommit && key == "catch-up:github-catch-up" {
             panic!("synthetic precommit crash");
         }
     });
@@ -304,6 +305,7 @@ fn precommit_crash_rolls_back_and_restart_captures_new_startup() {
     let mut store = Store::open(&settings).unwrap();
     assert!(store.ingress_cursor("github-catch-up").unwrap().is_none());
     assert!(store.pending_ingress().unwrap().is_empty());
+    assert!(store.ingress_cursor("github-world-start").unwrap().is_none());
     let restarted = instant() + chrono::Duration::seconds(10);
     initialize_intake(
         &mut store,
@@ -328,21 +330,10 @@ fn postcommit_crash_preserves_cursor_and_intake_before_any_catchup() {
     let mut database = database::Database::start();
     let settings = database.create("fresh_postcommit");
     let mut store = Store::open(&settings).unwrap();
-    store.set_boundary_hook(|point, _, _| {
-        if point == tl3_store::SavePoint::ReceiveCatchUpAfterCommit {
-            panic!("synthetic postcommit crash");
-        }
-    });
-    assert!(
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| initialize_intake(
-            &mut store,
-            &served(),
-            &[entry(1455)],
-            instant,
-            |_, number| Ok(current(number))
-        )))
-        .is_err()
-    );
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        initialize_intake(&mut store, &served(), &[entry(1455)], instant, |_, number| Ok(current(number))).unwrap();
+        panic!("synthetic crash after outer commit and before fetch");
+    })).is_err());
     drop(store);
     let mut store = Store::open(&settings).unwrap();
     initialize_intake(
@@ -398,6 +389,7 @@ fn missing_cursor_blocks_history_fetch() {
     impl Fetcher for Forbidden {
         fn fetch(
             &self,
+            _: DateTime<Utc>,
             _: DateTime<Utc>,
             _: tl3_store::Snapshot,
             _: &Bootstrap,
@@ -456,6 +448,7 @@ fn validation_window_overlap_deduplicates_by_issue_identity() {
         fn fetch(
             &self,
             since: DateTime<Utc>,
+            _world_start: DateTime<Utc>,
             _: tl3_store::Snapshot,
             _: &Bootstrap,
         ) -> Result<CatchUpBatch> {
@@ -529,9 +522,10 @@ fn real_github_transport_keeps_prestartup_comments_and_closed_labels_out() {
     let settings = database.create("fresh_http");
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let server = runtime.block_on(MockServer::start());
-    let t0 = Utc::now() - chrono::Duration::seconds(2);
-    let old = t0 - chrono::Duration::days(100);
-    let during_validation = t0 + chrono::Duration::seconds(1);
+    let t0: DateTime<Utc> = "2026-11-08T05:00:00.750Z".parse().unwrap();
+    let boundary = t0.with_nanosecond(0).unwrap();
+    let old = boundary - chrono::Duration::seconds(1);
+    let during_validation = boundary;
     let read_settings = settings.clone();
     runtime.block_on(async {
         Mock::given(wiremock::matchers::any()).respond_with(move |request: &wiremock::Request| {
@@ -546,21 +540,24 @@ fn real_github_transport_keeps_prestartup_comments_and_closed_labels_out() {
                 return ResponseTemplate::new(200).set_body_json(json!(current(1455)));
             }
             let mut store = Store::open(&read_settings).unwrap();
-            assert_eq!(store.ingress_cursor("github-catch-up").unwrap(),Some(json!(t0)), "history requires durable T0");
-            assert_eq!(store.pending_ingress().unwrap().len(),1,"initial intake must be durable before history");
+            assert_eq!(store.ingress_cursor("github-world-start").unwrap(),Some(json!(boundary)), "history requires durable immutable boundary");
+            assert!(store.ingress_cursor("github-catch-up").unwrap().is_some());
+            assert!(store.pending_ingress().unwrap().iter().any(|row|row.delivery_key == "initial-intake:synthetic/project:1455"),"initial intake must be durable before history");
             let body = match path {
                 "/repos/synthetic/project/issues" => {
                     let mut closed = current(42); closed.state = "closed".into();
                     json!([closed,current(1455),current(99)])
                 }
                 "/repos/synthetic/project/issues/comments" => json!([
-                    {"id":1,"body":"tl3 approve","user":{"id":1,"login":"synthetic-rob"},"created_at":old,"updated_at":during_validation,"issue_url":"https://api.github.com/repos/synthetic/project/issues/42"},
-                    {"id":2,"body":"tl3 approve","user":{"id":1,"login":"synthetic-rob"},"created_at":during_validation,"updated_at":during_validation,"issue_url":"https://api.github.com/repos/synthetic/project/issues/1455"}
+                    {"id":1,"body":"tl3 approve","user":{"id":1,"login":"synthetic-rob"},"created_at":old,"updated_at":Utc::now(),"issue_url":"https://api.github.com/repos/synthetic/project/issues/42"},
+                    {"id":2,"body":"tl3 approve","user":{"id":1,"login":"synthetic-rob"},"created_at":during_validation,"updated_at":Utc::now(),"issue_url":"https://api.github.com/repos/synthetic/project/issues/1455"},
+                    {"id":3,"body":"tl3 approve","user":{"id":1,"login":"synthetic-rob"},"created_at":during_validation,"updated_at":Utc::now(),"issue_url":"https://api.github.com/repos/synthetic/project/issues/1455"}
                 ]),
                 "/repos/synthetic/project/issues/events" => json!([
                     {"id":99,"event":"labeled","actor":{"id":1,"login":"synthetic-rob"},"issue":{"number":42},"label":{"name":"tl3"},"created_at":during_validation},
                     {"id":98,"event":"labeled","actor":{"id":1,"login":"synthetic-rob"},"issue":{"number":1455},"label":{"name":"tl3"},"created_at":during_validation},
-                    {"id":97,"event":"labeled","actor":{"id":1,"login":"synthetic-rob"},"issue":{"number":99},"label":{"name":"tl3"},"created_at":old}
+                    {"id":97,"event":"labeled","actor":{"id":1,"login":"synthetic-rob"},"issue":{"number":1455},"label":{"name":"tl3"},"created_at":during_validation},
+                    {"id":96,"event":"labeled","actor":{"id":1,"login":"synthetic-rob"},"issue":{"number":99},"label":{"name":"tl3"},"created_at":old}
                 ]),
                 "/repos/synthetic/project/pulls" => json!([]),
                 _ => panic!("unexpected synthetic endpoint {path}"),
@@ -604,7 +601,7 @@ fn real_github_transport_keeps_prestartup_comments_and_closed_labels_out() {
     .unwrap();
     let catchup = CatchUp::new(BTreeMap::from([(1, client)]), vec![]).unwrap();
     catchup
-        .fetch(t0, store.load().unwrap(), &served())
+        .fetch(boundary, boundary, store.load().unwrap(), &served())
         .unwrap()
         .persist(&mut store)
         .unwrap();
@@ -618,7 +615,7 @@ fn real_github_transport_keeps_prestartup_comments_and_closed_labels_out() {
         .collect();
     assert_eq!(
         admissions,
-        [1455, 1455],
+        [1455, 1455, 1455],
         "initial intake and overlap event only"
     );
     let comments: Vec<_> = inputs
@@ -633,9 +630,17 @@ fn real_github_transport_keeps_prestartup_comments_and_closed_labels_out() {
         .collect();
     assert_eq!(
         comments,
-        [2],
+        [2, 3],
         "old Rob approval, even edited after startup, must not replay"
     );
+    let advanced: DateTime<Utc> = crate::decode_stored(store.ingress_cursor("github-catch-up").unwrap().unwrap()).unwrap();
+    assert!(advanced > boundary);
+    catchup.pass(&mut store, &served()).unwrap();
+    assert_eq!(store.ingress_cursor("github-world-start").unwrap(), Some(json!(boundary)));
+    let rows = store.pending_ingress().unwrap();
+    let GitHubDelivery::CatchUp { changes, .. } = replay(rows.last().unwrap()).unwrap() else { panic!("missing edited-comment recovery") };
+    assert_eq!(changes.comments.iter().map(|comment|comment.id).collect::<Vec<_>>(), [2,3], "postworld edits survive moving-cursor advancement; preworld edits stay excluded");
+    assert!(changes.comments.iter().all(|comment| comment.created_at < advanced && comment.updated_at > advanced));
     let root = tempfile::tempdir().unwrap();
     let mut controller = Controller::open(
         Store::open(&settings).unwrap(),
@@ -645,5 +650,48 @@ fn real_github_transport_keeps_prestartup_comments_and_closed_labels_out() {
     .unwrap();
     drain(&mut controller).unwrap();
     assert_eq!(controller.world().unwrap().nodes.len(), 1);
+    database.stop();
+}
+
+#[test]
+fn unsupported_cursor_without_world_start_refuses_startup_with_named_error() {
+    let mut database = database::Database::start();
+    let settings = database.create("fresh_unsupported_cursor");
+    let mut store = Store::open(&settings).unwrap();
+    store.receive_catch_up("github-catch-up", &[], &json!(instant())).unwrap();
+    let error = initialize_intake(&mut store, &served(), &[entry(1455)], || panic!("unsupported state must not capture a new boundary"), |_, _| panic!("unsupported state must not fetch")).unwrap_err();
+    assert!(matches!(error, Error::CatchUpWithoutWorldStart));
+    assert_eq!(error.to_string(), "unsupported store state: catch-up cursor without world start; fresh-init required");
+    assert_eq!(store.ingress_cursor("github-catch-up").unwrap(),Some(json!(instant())));
+    assert!(store.ingress_cursor("github-world-start").unwrap().is_none());
+    assert!(store.pending_ingress().unwrap().is_empty());
+    database.stop();
+}
+
+#[test]
+fn startup_second_is_in_world_and_both_cursors_publish_at_outer_commit() {
+    let mut database = database::Database::start();
+    let settings = database.create("fresh_outer_commit");
+    let observer = settings.clone();
+    let mut store = Store::open(&settings).unwrap();
+    let observed = Arc::new(AtomicUsize::new(0));
+    let releases = Arc::clone(&observed);
+    store.set_boundary_hook(move |point, _, _| {
+        if point == tl3_store::SavePoint::ReceiveCatchUpAfterCommit {
+            let mut read = Store::open(&observer).unwrap();
+            assert!(read.ingress_cursor("github-world-start").unwrap().is_none(),"savepoint release must not publish immutable boundary");
+            assert!(read.ingress_cursor("github-catch-up").unwrap().is_none(),"savepoint release must not publish moving cursor");
+            assert!(read.pending_ingress().unwrap().is_empty(),"savepoint release must not publish inputs");
+            releases.fetch_add(1,Ordering::SeqCst);
+        }
+    });
+    let exact:DateTime<Utc>="2026-11-08T05:00:00.750Z".parse().unwrap();
+    let boundary:DateTime<Utc>="2026-11-08T05:00:00Z".parse().unwrap();
+    initialize_intake(&mut store,&served(),&[entry(1455)],||exact,|_,number|Ok(current(number))).unwrap();
+    assert_eq!(observed.load(Ordering::SeqCst),2);
+    let mut read = Store::open(&settings).unwrap();
+    assert_eq!(read.ingress_cursor("github-world-start").unwrap(),Some(json!(boundary)));
+    assert_eq!(read.ingress_cursor("github-catch-up").unwrap(),Some(json!(boundary)));
+    assert_eq!(read.pending_ingress().unwrap().len(),1);
     database.stop();
 }

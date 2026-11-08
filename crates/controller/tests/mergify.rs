@@ -661,6 +661,14 @@ fn queued_for_clock(
         .connect(postgres::NoTls)
         .unwrap();
     support::controller_restart::wait_for_owner_release(&mut barrier);
+    let mut ingress = Store::open(settings).unwrap();
+    if ingress.ingress_cursor("github-catch-up").unwrap().is_none() {
+        ingress.begin_input().unwrap();
+        for source in ["github-world-start", "github-catch-up"] {
+            ingress.receive_catch_up(source, &[], &json!("2026-01-01T00:00:00Z")).unwrap();
+        }
+        ingress.finish_input(true).unwrap();
+    }
     let repository = config.repos[0].clone();
     let mut registry = adapters::simulation(root).unwrap();
     let mut adapter = api

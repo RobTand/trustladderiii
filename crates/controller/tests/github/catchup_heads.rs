@@ -51,6 +51,7 @@ fn track(settings: &tl3_config::Store, api: &Server, root: &Path) -> Store {
     let mut controller = controller(settings, root, &api.uri());
     controller.intake(labelled()).unwrap();
     let mut store = Store::open(settings).unwrap();
+    existing_github_world(&mut store, Utc::now() - chrono::Duration::minutes(2));
     store.intern_commit("0", LOCAL).unwrap();
     store.intern_commit("0", PUSHED).unwrap();
     store
