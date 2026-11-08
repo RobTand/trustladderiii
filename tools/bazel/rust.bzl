@@ -42,7 +42,7 @@ _EXAMPLE_DATA = {
 }
 
 # Files other crates' tests read at run time.
-_RUNTIME = {"crates/redaction": ["//workers/tests:tracing_policy_inputs"], "crates/harness-core": [
+_RUNTIME = {"crates/action": ["//workers/tests:tracing_policy_inputs"], "crates/harness-core": [
     "//harness:core_vectors",
     "//harness:test-vectors/summary/python-envelope.json",
     "//harness:test-vectors/summary/python-numbers.json",
@@ -404,7 +404,7 @@ def _crate_test(kind, package, name, source, harness, options):
         compile_data = compile_data + ["//tools/bazel:verus.bzl"]
         if native.package_name() == "crates/mergify":
             sources = sources + native.glob(["proofs/enqueue_*.rs"])
-    if native.package_name() == "crates/store":
+    if native.package_name() in ["crates/store", "crates/action"]:
         compile_data = compile_data + native.glob(["tests/fixtures/**"], allow_empty = True)
     if native.package_name() == "crates/controller":
         sources = [":library_sources", source] + native.glob(
