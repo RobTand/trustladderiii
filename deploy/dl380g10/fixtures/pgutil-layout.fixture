@@ -3,12 +3,27 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import re
 import subprocess
+import sys
 import tarfile
 import tempfile
 import urllib.request
 
 out = Path('/mnt/shared/agent-artifacts/fresh-init-pgutil')
+if sys.argv[1:] == ['--refresh-fixture']:
+    data = (out / 'pg_control.initdb').read_bytes()
+    assert hashlib.sha256(data).hexdigest() == '219d725db03ff4d5b63dc88d2e3064331cc2489d145ca299bb6749ff4d507c48'
+    helper = Path('deploy/dl380g10/helper.rs').read_text()
+    helper, count = re.subn(r'let prefix = "[0-9a-f]+";', 'let prefix = "' + data[:296].hex() + '";', helper)
+    assert count == 1
+    source = Path('deploy/dl380g10/helper.rs')
+    source.write_text(helper)
+    subprocess.run(['/home/rob/.cargo/bin/rustfmt', '--edition', '2024', str(source)], check=True, timeout=30)
+    refreshed = out / 'helper.refreshed.rs'
+    refreshed.write_bytes(source.read_bytes())
+    print('FIXTURE_REFRESH_PASS',hashlib.sha256(refreshed.read_bytes()).hexdigest(),flush=True)
+    raise SystemExit(0)
 url = 'https://ftp.postgresql.org/pub/source/v17.4/postgresql-17.4.tar.bz2'
 archive = out / 'postgresql-17.4.tar.bz2'
 if not archive.exists():
@@ -52,6 +67,8 @@ int main(void) {
             crc = (crc >> 1) ^ (0x82f63b78 if crc & 1 else 0)
     assert (crc ^ 0xffffffff) == int.from_bytes(data[288:292], 'little')
     assert not any(data[296:])
+    embedded, = re.findall(r'let prefix = "([0-9a-f]+)";', Path('deploy/dl380g10/helper.rs').read_text())
+    assert bytes.fromhex(embedded) == data[:296], 'refresh the embedded real-layout fixture'
     layout.update(source_url=url, source_sha256=expected, control_sha256=hashlib.sha256(data).hexdigest(),
                   system_identifier=str(int.from_bytes(data[:8], 'little')), crc32c=crc ^ 0xffffffff,
                   header_sha256=hashlib.sha256((source / 'src/include/catalog/pg_control.h').read_bytes()).hexdigest())

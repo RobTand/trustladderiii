@@ -11,14 +11,14 @@ QUEUE = Path('/mnt/shared/prismabuild-fleet/pb-queue')
 BASE = '746c9797d3841baf8c018f26bbcbcd1b85cd00a4'
 BASELINE = '084ebe102c5824d98d35f2965bcb7312c72ac0629a7a814608e0a7fcd4fb1518'
 LAYOUT = '4f24ea217a836c09596befa064fb3d3caaf3dbcdb65352686e8280cacea652aa'
-final_key, *extra_failures = sys.argv[1:]
+final_key, generator_key, *extra_failures = sys.argv[1:]
 assert re.fullmatch('[0-9a-f]{64}', final_key)
 first = json.loads((QUEUE / 'done' / (BASELINE + '.json')).read_text())
 sys.path.insert(0, str(Path(first['worker_script']).parents[1] / 'src'))
 from prismabuild.core import PrismaBuildCAS
 
 records = []
-for role,key in [('baseline_RED',BASELINE), ('authoritative_layout',LAYOUT), ('final_GREEN',final_key)]:
+for role,key in [('baseline_RED',BASELINE), ('authoritative_layout',LAYOUT), ('fixture_generator',generator_key), ('final_GREEN',final_key)]:
     path = QUEUE / 'done' / (key + '.json')
     record = json.loads(path.read_text())
     assert record['action_key'] == key and record['status'] == 'executed'
@@ -55,6 +55,9 @@ for role,key in [('baseline_RED',BASELINE), ('authoritative_layout',LAYOUT), ('f
         assert 'EXPECTED_RED' in streams['stdout'] and 'SCRATCH_CLEANUP_PASS' in streams['stdout']
     elif role == 'authoritative_layout':
         assert 'LAYOUT_SCRATCH_CLEANUP_PASS' in streams['stdout']
+    elif role == 'fixture_generator':
+        assert 'FIXTURE_REFRESH_PASS' in streams['stdout']
+        generated_hash, = re.findall(r'FIXTURE_REFRESH_PASS ([0-9a-f]{64})', streams['stdout'])
     else:
         assert 'QUALIFICATION_PASS' in streams['stdout']
         assert 'Ran 75 tests' in streams['stdout']
@@ -89,6 +92,7 @@ for relative in changed:
     assert raw == committed
     hashes[relative] = hashlib.sha256(raw).hexdigest()
     assert relative in final_log, 'final qualification did not print source hash for ' + relative
+assert hashes['deploy/dl380g10/helper.rs'] == generated_hash
 for shared in ['crates/kernel','Cargo.toml','Cargo.lock','crates/controller/Cargo.toml','crates/controller/BUILD.bazel','MODULE.bazel','MODULE.bazel.lock','tools/bazel']:
     assert git('diff','--name-only',BASE,head,'--',shared) == '', shared
 failed = []
@@ -106,7 +110,7 @@ report = {'verdict':'PASS', 'base':BASE,'head':head,'tree':tree,'per_file_sha256
           'archive_bin_inventory':sorted(path.name for path in (OUT / 'pinned-pg/bin').iterdir()),
           'limits':{'cpu':2,'memory_gib':8,'cargo_jobs':2,'native_threads':1,'codegen_units':1,'linker_threads':1,'gpu':0,'priority':-10},
           'skips':['captain integrated gates','live/native/deployment acceptance','kernel/Verus/Kani campaigns'],
-          'generated_scope':'rustfmt helper.rs only; no dependency or build registration changes',
+          'generated_scope':'helper.rs formatting and actual initdb fixture prefix refresh; no dependency or build registration changes',
           'snapshot_note':'PB executes a child snapshot with one closure stamp. Final source parent and all changed file bytes are verified. Only the exact PB-owned capture log is ignored in the disposable fixture repository.',
           'placement_note':'Initial untagged baseline was client-pinned to dl380g10; subsequent runs explicitly allow any eligible x86 worker because the pinned PG package is amd64.',
           'missing_tools':'bison/flex absent on coordinator; scoped packages used inside admitted C header probe'}
