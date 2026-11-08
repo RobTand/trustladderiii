@@ -767,10 +767,10 @@ pub(super) fn correction(settings: &tl3_config::Store) {
 
 pub(super) fn queued_pause(settings: &tl3_config::Store) {
     let mut d = Daemon::start(settings, "steering-queue");
-    d.wait(|s| s.node()["phase"] == "Queued");
+    d.wait(|s| s.node()["phase"] == "AwaitingDelivery");
     d.send(14001, "Please pause");
     d.classified(14001);
-    assert_eq!(d.node()["phase"], "Queued");
+    assert_eq!(d.node()["phase"], "AwaitingDelivery");
     assert_eq!(d.node()["paused"], true);
     let head = d.node()["head"].as_u64().unwrap();
     let sha = d
@@ -1079,7 +1079,7 @@ pub(super) fn guidance(settings: &tl3_config::Store) {
 
 pub(super) fn credit(settings: &tl3_config::Store) {
     let mut d = Daemon::start(settings, "steering-credit");
-    d.wait(|s| s.node()["phase"] == "Queued");
+    d.wait(|s| s.node()["phase"] == "AwaitingDelivery");
     for index in 0..16 {
         if d.node()["question"]["kind"] == "OutOfCredit" {
             break;
@@ -1095,13 +1095,13 @@ pub(super) fn credit(settings: &tl3_config::Store) {
         d.wait(|s| {
             s.node()["generation"].as_u64().unwrap() > generation || !s.node()["question"].is_null()
         });
-        d.wait(|s| s.node()["phase"] == "Queued" || !s.node()["question"].is_null());
+        d.wait(|s| s.node()["phase"] == "AwaitingDelivery" || !s.node()["question"].is_null());
     }
     assert_eq!(d.node()["question"]["kind"], "OutOfCredit");
     let before = d.node()["credit"]["added"].as_u64().unwrap();
     d.send(20001, "Add 3 credits");
     d.classified(20001);
-    d.wait(|s| s.node()["phase"] == "Queued");
+    d.wait(|s| s.node()["phase"] == "AwaitingDelivery");
     assert_eq!(d.node()["credit"]["added"], before + 3);
     println!("test steering_add_credit_resumes_request ... ok");
 }

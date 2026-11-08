@@ -859,8 +859,8 @@ fn tl3d_wakes_for_a_filed_command() {
             .map(|row| row.value)
             .unwrap_or(Value::Null)
     };
-    wait_for(&mut daemon, "the request to queue", &mut || {
-        phase(&settings)["phase"] == "Queued"
+    wait_for(&mut daemon, "the request to await delivery", &mut || {
+        phase(&settings)["phase"] == "AwaitingDelivery"
     });
     let id = uuid(8000);
     assert!(
