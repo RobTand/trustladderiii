@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import socket
 import subprocess
 import tempfile
@@ -65,7 +66,8 @@ with tempfile.TemporaryDirectory(prefix='pgutil-green-') as temporary:
         (controller / name).mkdir(parents=True, mode=0o700)
     controller.parent.chmod(0o700)
     original_backup = home / 'backups/cold-backup-1'
-    original_backup.mkdir(parents=True, mode=0o700)
+    original_backup.parent.mkdir(mode=0o700)
+    original_backup.mkdir(mode=0o700)
     sentinel = original_backup / 'must-never-be-opened'
     sentinel.write_bytes(b'protected synthetic original backup')
     before = (sentinel.stat().st_ino, sentinel.stat().st_mtime_ns, sentinel.stat().st_atime_ns)
@@ -166,8 +168,19 @@ else:
             state_file = scratch / 'authorization-state.json'
             deploy.write_file(state_file, json.dumps({'source':str(SOURCE / 'deploy/dl380g10/deploy.py'),
                 'protected_backup':str(original_backup), 'states':states}).encode())
-            result = real_run(command, **kwargs, env=os.environ | {'PATH':str(shims) + os.pathsep + os.environ['PATH'],
-                                                                  'TL3_PGUTIL_STATE':str(state_file)})
+            environment = os.environ | {'PATH':str(shims) + os.pathsep + os.environ['PATH'],
+                                        'TL3_PGUTIL_STATE':str(state_file)}
+            with subprocess.Popen(argv, cwd=kwargs['cwd'], env=environment, stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True) as child:
+                try:
+                    result, errors = child.communicate(input=kwargs['input'], timeout=45)
+                except subprocess.TimeoutExpired:
+                    os.killpg(child.pid, signal.SIGKILL)
+                    child.communicate(timeout=5)
+                    raise AssertionError('synthetic SQL helper timed out') from None
+                deploy.write_file(OUT / 'synthetic-sql.stderr', errors)
+                assert child.returncode == 0, 'synthetic SQL helper failed; private stderr artifact retained'
+                assert b'synthetic-credential' not in result + errors
             assert b'current schema initialized and verified' in result
             capability_consumed.append(True)
             return result

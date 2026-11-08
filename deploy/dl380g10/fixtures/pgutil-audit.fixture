@@ -11,7 +11,7 @@ QUEUE = Path('/mnt/shared/prismabuild-fleet/pb-queue')
 BASE = '746c9797d3841baf8c018f26bbcbcd1b85cd00a4'
 BASELINE = '084ebe102c5824d98d35f2965bcb7312c72ac0629a7a814608e0a7fcd4fb1518'
 LAYOUT = '4f24ea217a836c09596befa064fb3d3caaf3dbcdb65352686e8280cacea652aa'
-final_key, = sys.argv[1:]
+final_key, *extra_failures = sys.argv[1:]
 assert re.fullmatch('[0-9a-f]{64}', final_key)
 first = json.loads((QUEUE / 'done' / (BASELINE + '.json')).read_text())
 sys.path.insert(0, str(Path(first['worker_script']).parents[1] / 'src'))
@@ -95,7 +95,8 @@ failed = []
 for key in ['00143e0fdd90b9598e373e6bd3f2907e657d1c506e83d51bff75656b647a49a3',
             '3e05887b995a8fca4f1d4f2cab53b114e393654f991a8e0a5de6141056e5f5e8',
             '20ecc3fee7124944b2f9d9394a77cac1760b342e304f9c85cb7aa895d51c2a81',
-            'c8d99c6e77eb51e7ef931e82ee23a288d43f38cf832646929282e12063f73b74']:
+            'c8d99c6e77eb51e7ef931e82ee23a288d43f38cf832646929282e12063f73b74', *extra_failures]:
+    assert re.fullmatch('[0-9a-f]{64}', key)
     path = QUEUE / 'failed' / (key + '.json')
     record = json.loads(path.read_text())
     assert record['detail']['returncode'] != 0
