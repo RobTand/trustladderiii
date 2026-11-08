@@ -400,10 +400,8 @@ pub(super) fn drain_observations() -> Result<()> {
     let pending = with(|r| {
         r.files
             .iter()
-            .filter_map(|(key, value)| {
-                key.starts_with("observations/")
-                    .then(|| (key.clone(), value.clone()))
-            })
+            .filter(|(key, _)| key.starts_with("observations/"))
+            .map(|(key, value)| (key.clone(), value.clone()))
             .collect::<Vec<_>>()
     });
     for (key, bytes) in pending {
