@@ -101,7 +101,10 @@ def allowlist_errors(current, previous):
     errors = []
     for key, entry in sorted(current.items()):
         crate = key.startswith('crate:')
-        reason = entry.get('reason') if crate and isinstance(entry, dict) else entry
+        relocation = key.startswith('relocation:')
+        reason = entry.get('reason') if (crate or relocation) and isinstance(entry, dict) else entry
+        if relocation:
+            errors += relocation_entry_errors(key, entry)
         if crate and (not isinstance(entry, dict) or type(entry.get('sources')) is not int
                       or entry['sources'] < 0):
             errors.append(f'allowlist exception {key} needs a nonnegative integer sources count')
@@ -110,15 +113,61 @@ def allowlist_errors(current, previous):
             errors.append(f'allowlist exception {key} needs a nonnegative integer max_fanout')
         if not isinstance(reason, str) or not reason.strip():
             errors.append(f'allowlist exception {key} needs a reason')
-        elif (crate or key not in previous) and not re.search(
+        elif not relocation and (crate or key not in previous) and not re.search(
                 r'(?<!\w)#[1-9][0-9]*(?!\w)|'
                 r'https://github\.com/RobTand/trustladderiii/issues/[1-9][0-9]*(?![\w/])', reason):
             errors.append(f'allowlist exception {key} needs a reason naming a program issue (#730, for example)')
         prior = previous.get(key)
-        prior_reason = prior.get('reason') if crate and isinstance(prior, dict) else prior
+        prior_reason = prior.get('reason') if (crate or relocation) and isinstance(prior, dict) else prior
         if key in previous and prior_reason != reason:
             errors.append(f'allowlist exception {key} reason cannot change')
     return errors
+
+
+def relocation_entry_errors(key, entry):
+    if not isinstance(entry, dict) or set(entry) != {'from', 'to', 'targets', 'issue', 'reason'}:
+        return [f'allowlist exception {key} needs from, to, targets, issue and reason fields']
+    errors = []
+    labels = [entry['from'], entry['to']]
+    if (any(not isinstance(label, str) or not re.fullmatch(r'//[^:\s]*:[^:\s]+', label)
+            for label in labels) or labels[0] == labels[1]
+            or key != f'relocation:{labels[0]}=>{labels[1]}'):
+        errors.append(f'allowlist exception {key} needs matching distinct from/to source labels')
+    targets = entry['targets']
+    if (not isinstance(targets, list) or not targets
+            or any(not isinstance(target, str) for target in targets)
+            or len(set(targets)) != len(targets)):
+        errors.append(f'allowlist exception {key} needs an explicit nonempty unique target list')
+    if type(entry['issue']) is not int or entry['issue'] <= 0:
+        errors.append(f'allowlist exception {key} needs a positive integer issue')
+    return errors
+
+
+def relocation_sources(base, head, allowlist):
+    credits, errors = {}, []
+    for key, entry in sorted(allowlist.items()):
+        if not key.startswith('relocation:') or allowlist_errors({key: entry}, {}):
+            continue
+        origin, destination = entry['from'], entry['to']
+        invalid = []
+        if origin not in base['loc']:
+            invalid.append(f'{key}: base source {origin} is missing')
+        if origin in head['loc'] or origin in head['node_types']:
+            invalid.append(f'{key}: original source {origin} must be deleted at head')
+        if destination not in head['loc']:
+            invalid.append(f'{key}: head source {destination} is missing')
+        for target in entry['targets']:
+            if origin not in base['reach'].get(target, ()):
+                invalid.append(f'{key}: base target {target} did not reach {origin}')
+            if target not in head['reach']:
+                invalid.append(f'{key}: head target {target} is missing')
+        errors += invalid
+        if invalid:
+            continue
+        for target in entry['targets']:
+            if destination not in base['reach'][target]:
+                credits.setdefault(target, set()).add(destination)
+    return credits, errors
 
 
 def bounded_crate_sources(base, head, allowlist, previous):
@@ -232,6 +281,8 @@ def check(base, head, changed, policy, allowlist=None, previous_allowlist=None, 
     allowlist = allowlist or {}
     previous_allowlist = previous_allowlist if previous_allowlist is not None else allowlist
     errors = allowlist_errors(allowlist, previous_allowlist)
+    relocations, relocation_errors = relocation_sources(base, head, allowlist)
+    errors += relocation_errors
     crate_sources, crate_errors = bounded_crate_sources(base, head, allowlist, previous_allowlist)
     errors += crate_errors
     fanout_sources, fanout_errors = bounded_crate_fanout(head, allowlist, crate_sources)
@@ -256,7 +307,10 @@ def check(base, head, changed, policy, allowlist=None, previous_allowlist=None, 
     compared = graph_impact.compare({**base, 'edge_groups': base_groups}, comparison_head, comparison_policy,
                                     changed_tests=changed, allowlist=allowlist, record_gains=record_gains)
     reach_head = crate_reach_head(base, comparison_head, crate_sources)
-    if crate_sources:
+    reach_head = {**reach_head, 'reach': {
+        target: sorted(set(sources) - relocations.get(target, set()))
+        for target, sources in reach_head['reach'].items()}}
+    if crate_sources or relocations:
         # Only per-test budgets and structural reach use the reach credits.
         # Fanout gets its own package-scoped credit below; SCC and edges stay full.
         budget_errors = graph_impact.compare(
