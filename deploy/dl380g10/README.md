@@ -13,33 +13,16 @@ The scripts suppress child output on failure because it can contain credentials.
 
 ## Prepare and start
 
-Build and validate from a clean commit through PrismaBuild, tagged `dl380g10`.
-`verify.sh` runs config tests, builds the three binaries, tests the installer,
-and runs `systemd-analyze --user verify` with temporary executable fixtures.
-Reserve 2 CPUs and 6 GiB, with `CARGO_BUILD_JOBS=2` and native threads bounded
-to one. Set `TL3_DEPLOY_ARTIFACTS` to a new absolute directory outside the repo
-to export `tl3`, `tl3d` and `tl3-deploy` on dl380g10. No credentials enter PB's snapshot.
+Use the exact-source native caller in [FRESH-INIT.md](FRESH-INIT.md) for release
+build and fresh-init admission. The selected full release SHA must pass the
+unchanged authenticated gate and matching nightly before admission. Prepare the
+private state inventory and new cold-backup path through the deployment operator.
 
-Then run on dl380g10, replacing `ARTIFACTS` and `IMAGE` with the admitted build
-directory and the installed harness's immutable image ID:
-
-```sh
-python3 deploy/dl380g10/deploy.py install --binaries ARTIFACTS --image IMAGE
-~/.local/share/tl3/bin/tl3-deploy app-check ~/.config/tl3/tl3.toml
-~/.local/share/tl3/bin/tl3-deploy operations ~/.config/tl3/tl3.toml
-python3 deploy/dl380g10/deploy.py install --binaries ARTIFACTS --image IMAGE
-python3 deploy/dl380g10/deploy.py start
-```
-
-`--image`, `--primary` and `--alternate` only shape a new `tl3.toml`. Once the
-file exists, a rerun keeps it and says which flags had no effect. Edit the file,
-or run `deploy.py model-defaults`, to change those settings later.
-
-For the same sequence with an issue-identity assertion and service restart
-checks, submit `bash deploy/dl380g10/prepare.sh --binaries ARTIFACTS --image IMAGE`
-through PrismaBuild with `--tag dl380g10`, 2 CPUs, 3 GiB, and
-`XDG_RUNTIME_DIR=/run/user/1000`. It installs twice to prove reruns preserve
-credentials and resources. The final check lists the steps still missing.
+Development validation retains PrismaBuild routing. `verify.sh` tests the
+installer with disposable fixtures and builds debug binaries. Those debug
+artifacts do not qualify a release or provide an alternative installation path.
+Initial account/config provisioning is a separate operator task. Existing release
+deployment preserves its models and credentials.
 
 `operations` is the only account write in preparation. It uses the existing App
 installation, searches all issue pages including closed issues, and matches the

@@ -22,7 +22,7 @@ integrated FX+S2 head. Building this tooling does not authorize a deployment.
 
 Prepare the selected binaries, immutable runtime, existing config, exact state
 inventory and external-work cleanup before the outage. The caller builds release
-artifacts through PrismaBuild when needed. It never changes model ladders,
+artifacts and admits fresh-init through the pinned native Flux caller. It never changes model ladders,
 credentials, Flux bindings, images or runtime bundles. It does not install or
 upgrade Python environments or the independently deployed console.
 
@@ -114,8 +114,8 @@ The helper performs this sequence:
    start MLflow, status and console. Require active units and 90 seconds of stable
    readiness of all four client units with zero restarts.
 
-The canonical PB actions have a 7200-second deadline, with the exact-source child
-bounded at 7100 seconds. Preflight estimates inventory transfer cost conservatively
+The native Flux actions have a 7200-second walltime, with the payload child
+bounded at 7150 seconds. Preflight estimates inventory transfer cost conservatively
 at 20 MiB/s with eight I/O passes plus 1800 seconds overhead; it refuses a predicted
 budget above 6900 seconds before any stop. This is a sizing bound, not a measured
 live cold-copy timing claim. The data root is read for its initial hash, copy
@@ -149,12 +149,80 @@ The source contract is recorded at
 SHA-256 `420ee06aa5cb1fd257e746409e05fe101a432059a013aaee06e40b5ba7be33e1`.
 Reconcile it against the chosen integrated FX head before deployment.
 
-The canonical caller runs each admitted action through `exact-source.py`. PrismaBuild seals a child snapshot with a tracked closure stamp; the launcher makes a private temporary clone on the PB workspace volume and checks out the selected
-qualified commit. It strips inherited GIT_* repository overrides and verifies
-complete history, the selected tree, and parent ancestry before executing.
-Cargo output is explicitly on the configured workspace volume, not TMPDIR.
-Release output is staged privately and atomically published only when complete;
-a failed build/copy does not publish a retry-wedging directory. Build and deployment retain their strict clean-tree checks. The snapshot itself remains unchanged.
+The canonical caller uses `flux-deploy.py` for native build and fresh-init admission.
+The external entry still prepares the dedicated exact-source clone. Native jobs
+read that clone, repeat HEAD, tree, full-history and complete porcelain checks,
+and never read a shared project checkout or PB snapshot. The replaced PB
+snapshot launcher is removed. Release output is staged privately and published
+atomically only when complete. Existing release output requires reattachment to
+its original dispatch, with a verified build receipt. Presence alone never skips
+build evidence. After a failed fresh-init, keep the failed dispatch intact and set
+`TL3_FLUX_DEPLOY_BUILD_DISPATCH` to its original successful build dispatch. Supply
+a NEW backup path and current private manifest for the new cycle. The caller
+rechecks the saved build's original jobspec, terminal and cleanup evidence before
+admitting a new fresh-init. `TL3_FLUX_DEPLOY_REATTACH` resumes that new cycle by
+its own saved IDs. These options are mutually exclusive on invocation; the new
+cycle records its prior build reference for later reattachment.
+
+## Native admission and reattachment
+
+The caller pins generation `fv1-model/f107a7b075094ef6839e3a545b5dd711`,
+rank-zero URI `local:///home/rob/flux-vanilla/0.91.0-0.56.0/runs/fv1-model/run/local-0`,
+and the owner's broker starttime `1794024934.96`. Unknown generation, size or
+sdexec configuration refuses. A restart requires an explicit reviewed source
+rebind and native qualification, never newest-instance discovery.
+
+Build requests one task, eight CPUs and eight one-GiB memory leaves. Cargo
+parallelism remains two and native library threads remain one. Fresh-init requests
+one task, one CPU and two one-GiB memory leaves. Both request7200seconds and
+`host:dl380g10`, because release artifacts, user services and the Postgres socket
+are local. The explicit slot resources contain memory alongside cores, with no
+`-N1` or fixed node wrapper. Admitted memory differs from the standing75%/no-swap
+unit cap and96G aggregate host cap. Real peak measurement remains a native
+acceptance requirement.
+
+Native jobspec generation starts with `--env=-*`. Only fixed PATH, HOME,
+XDG_RUNTIME_DIR, approved scratch, thread limits and stage-specific Cargo or nonce
+values enter `attributes.system.environment`. The CLI supervisor separately pins
+Flux URI, binary and library paths. Caller environment and API keys never enter
+the original jobspec. Raw operational output, manifest paths and all dispatch
+records remain private. Do not publish raw jobspecs or output logs.
+
+Each dispatch lives in a unique0700directory under
+`/mnt/shared/flux-vanilla/deploy`. Intent and exact source/tree are durable before
+submission. The native jobID is saved immediately. Set
+`TL3_FLUX_DEPLOY_REATTACH` to the printed dispatch path after a disconnect. The
+caller waits by savedID through `wait-event clean`, then collects status,
+eventlog and private retained outputs. After an uncertain submission it queries
+its unique name once and checks the exact original jobspec. Zero, multiple or
+contradictory matches remain UNKNOWN. No blind resubmission occurs.
+
+A store-wide nonblocking lock serializes coordinators through both stages.
+After a coordinator dies, a new cycle refuses while any earlier submitted job
+lacks hash-bound terminal and independent cgroup/scratch closure evidence.
+Reattach the original dispatch to collect that evidence. A refusal or accepted
+marker alone never clears this guard, and build reuse does not bypass it.
+`closed.json` records only terminal completion and cleanup, including after a
+failed command. It grants no successful verdict. Unknown cleanup remains held;
+a failed fresh-init with verified closure can use a new backup and cycle as above.
+
+A successful command alone is insufficient. The versioned wrapper receipt binds
+intent, source tree, nativeID, terminal observations and output hashes. It requires
+the recorded sdexec cgroup to be empty or removed and the exact owned scratch
+root to be absent. Native `clean` alone is insufficient. A failed parent, missing
+result, exception, malformed status or cleanup uncertainty refuses the cycle.
+There is no native attestation or PB CAS claim. The payload uses only approved
+btrfs scratch `/var/tmp/flux-vanilla/<f58ID>` and never changes CPU affinity.
+Fresh-init executes directly in the admitted job with host user-bus access. It
+does not submit a nested SSH or systemd payload to escape admission.
+
+Fixture controls use a fake native transport, IDs, status and receipts. They prove
+construction and refusal behavior only. They never qualify the native deployment.
+The first FX+S2 release keeps installed caller `a089` and PB admission. The bridge
+target ends2026-11-09UTC, subject to firstPBdeployment acceptance, this tooling's
+review/FF/install, nextFluxdeployment acceptance, the lead's explicit
+"Flux executor verified", and Rob's routing-policy sign-off. Installation and live
+acceptance belong to the parent. No candidate installation is part of this unit.
 
 The current matching-nightly policy remains mandatory while Kani exists. Its
 authoritative gate and nightly definition must change together in the Kani
