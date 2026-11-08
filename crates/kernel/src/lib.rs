@@ -2160,8 +2160,13 @@ kernel_fn! {
 pub fn pool_key(n: &Node) -> (result: Option<(Priority, u64)>) [
     ensures result == pool_spec_key(*n),
 ] {
-    let ticket = n.ticket.filter(|_| !matches!(n.phase, Phase::Ready(_)))?;
-    Some((n.priority, ticket))
+    if matches!(n.phase, Phase::Ready(_)) {
+        return None;
+    }
+    match n.ticket {
+        Some(ticket) => Some((n.priority, ticket)),
+        None => None,
+    }
 }
 }
 
