@@ -697,6 +697,21 @@ fn drain_with_budget(
         if ((idle && !observed) || reached_planner) && c.world().unwrap().nodes[0].phase == expected
         {
             deadline.check(Instant::now());
+            if expected == Phase::AwaitingDelivery {
+                let snapshot = c.snapshot().unwrap();
+                let watches: Vec<_> = snapshot.rows.iter().filter(|row|
+                    row.table == "watches" && row.value["output"]["Effect"]["kind"] == "Enqueue"
+                ).collect();
+                assert!(!watches.is_empty(), "accepted delivery must retain its outcome watch");
+                for watch in watches {
+                    let node = watch.value["output"]["Effect"]["node"].as_u64().unwrap().to_string();
+                    let binding = snapshot.rows.iter().find(|row|
+                        row.table == "pull_requests" && row.id == node).unwrap();
+                    assert!(binding.value["number"].is_u64());
+                    assert_eq!(watch.value["pull_request"], binding.value["number"],
+                        "accepted watch must retain the exact staged PR binding for later wakes");
+                }
+            }
             return;
         }
         if !changed {
@@ -729,9 +744,6 @@ fn webhook(c: &mut Controller, server: &Server, action: &str) {
     let mut store=Store::open(&settings).unwrap();
     store.receive_ingress("github-webhook",&format!("publishing-{action}-{sequence}"),"pull_request",&serde_json::to_vec(&body).unwrap()).unwrap();
     tl3_controller::ingress::drain(c).unwrap();
-    eprintln!("Direct wake {action}: {:?}", c.snapshot().unwrap().rows.iter()
-        .filter(|r| matches!(r.table.as_str(), "nodes" | "watches" | "allowances" | "incidents" | "inbox"))
-        .collect::<Vec<_>>());
 
 }
 fn patch_lines(diff: &Value) -> Vec<&str> {
@@ -2297,6 +2309,7 @@ fn main() {
         });
         scenario("publishing_database_stop", || database.stop());
         println!("test publishing_{mode} ... ok");
+        println!("1 publishing scenarios passed; no skips");
         return;
     }
     run_default();
