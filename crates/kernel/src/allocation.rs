@@ -128,21 +128,17 @@ pub(super) fn enter_stopping(m: &mut Node, outcome: Outcome) -> (result: ()) [
     kernel_snapshot! { before = *m }
     kernel_proof! { allocation_stopping_lemmas::stopped_cases(before@, outcome); }
     match m.phase {
-        Phase::Closed(_) => {
-            kernel_proof! { assert(*m == retirement::stopped(before@, outcome)); }
-        }
+        Phase::Closed(_) => {}
         Phase::Stopping(_) => {
             if outcome == Outcome::Merged {
                 m.phase = Phase::Stopping(Outcome::Merged);
             }
-            kernel_proof! { assert(*m == retirement::stopped(before@, outcome)); }
         }
         _ => {
             m.question = None;
             m.waiting_incident = false;
             m.incident_needs_rob = false;
             set_phase(m, Phase::Stopping(outcome));
-            kernel_proof! { assert(*m == retirement::stopped(before@, outcome)); }
         }
     }
     kernel_proof! {
