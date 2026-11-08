@@ -146,7 +146,6 @@ fn rerun_witnesses() {
 }
 
 use crate::{App, CheckView, Conclusion, Head, Status};
-use crate::check::Name;
 verus! {
 /// K-required-check: Q47, docs/state-machine.md:681-688 and state-table.md:540-541,549,575.
 /// The exact enum partition is preserved existing behaviour (no rule).
