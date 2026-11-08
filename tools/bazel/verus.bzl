@@ -458,7 +458,6 @@ def verus_proofs():
             "kernel::dependencies::found": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::dependencies::writes_row": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::dependencies::withheld_after": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
-            "kernel::dependencies::owner_withheld": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::dependencies::fact_result": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::dependencies::remove_result": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::dependencies::preservation::edges_within": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -682,8 +681,6 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
-            "dependencies_remove_noop": ("kernel::dependencies#remove_noop", 1),
-            "dependencies_remove_bridge": ("kernel::dependencies#remove_bridge", 1),
             "dependencies_field_frame": ("kernel::dependencies#field_frame", 1),
             "checking_accepted_parts": ("kernel::checking#accepted_parts", 1),
             "checking_accepted_frame": ("kernel::checking#accepted_frame", 1),
@@ -694,7 +691,6 @@ def verus_proofs():
             "dependencies_rules_definition": ("kernel::dependencies#rules_definition", 1),
             "dependencies_rules_checked": ("kernel::dependencies#rules_checked", 1),
             "dependencies_acyclic_definition": ("kernel::dependencies#acyclic_definition", 1),
-            "dependencies_owner_withheld_bridge": ("kernel::dependencies#owner_withheld_bridge", 1),
             "dependencies_kept": ("kernel::dependencies#kept", 1),
             "dependencies_kept_step": ("kernel::dependencies#kept_step", 1),
             "dependencies_fact_preserves": ("kernel::dependencies#fact_preserves", 1),
