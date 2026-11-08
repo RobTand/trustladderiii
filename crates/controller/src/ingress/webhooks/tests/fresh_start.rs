@@ -817,7 +817,12 @@ fn database_error_rolls_back_both_cursors_and_all_initial_inputs() {
         )
         .is_err()
     );
-    assert!(store.ingress_cursor("github-world-start").unwrap().is_none());
+    assert!(
+        store
+            .ingress_cursor("github-world-start")
+            .unwrap()
+            .is_none()
+    );
     assert!(store.ingress_cursor("github-catch-up").unwrap().is_none());
     assert!(store.pending_ingress().unwrap().is_empty());
     fixture
