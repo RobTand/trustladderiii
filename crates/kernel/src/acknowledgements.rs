@@ -145,18 +145,34 @@ kernel_fn! {
 /// Confirmed-effect rows / #771: release the confirmed resource and reset the
 /// failure ladder, framed exactly so agenda advancement sees one node value.
 fn confirmed_resources(m: &mut Node, kind: EffectKind) -> (result: ()) [
-    ensures *final(m) == match kind {
-            EffectKind::StopRun => Node {
-                fx_failures: 0, fx_incidents: 0, run: None, pool: false, ..*old(m) },
-            EffectKind::WithdrawJob => Node { fx_failures: 0, fx_incidents: 0, job: None, ..*old(m) },
-            EffectKind::ClosePr => Node { fx_failures: 0, fx_incidents: 0, pr_open: false, ..*old(m) },
-            EffectKind::RemoveWorktree => Node {
-                fx_failures: 0, fx_incidents: 0, worktree: false, ..*old(m) },
-            _ => Node { fx_failures: 0, fx_incidents: 0, ..*old(m) },
-        },
+    ensures *final(m) == (Node {
+            fx_failures: 0, fx_incidents: 0,
+            run: if kind == EffectKind::StopRun { None } else { old(m).run },
+            pool: if kind == EffectKind::StopRun { false } else { old(m).pool },
+            job: if kind == EffectKind::WithdrawJob { None } else { old(m).job },
+            pr_open: if kind == EffectKind::ClosePr { false } else { old(m).pr_open },
+            worktree: if kind == EffectKind::RemoveWorktree { false } else { old(m).worktree },
+            ..*old(m)
+        }),
 ] {
     m.fx_failures = 0;
     m.fx_incidents = 0;
+    release_confirmed(m, kind);
+}
+}
+
+kernel_fn! {
+/// Confirmed-effect rows / #771: release only the resource the effect confirmed.
+fn release_confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
+    ensures *final(m) == (Node {
+            run: if kind == EffectKind::StopRun { None } else { old(m).run },
+            pool: if kind == EffectKind::StopRun { false } else { old(m).pool },
+            job: if kind == EffectKind::WithdrawJob { None } else { old(m).job },
+            pr_open: if kind == EffectKind::ClosePr { false } else { old(m).pr_open },
+            worktree: if kind == EffectKind::RemoveWorktree { false } else { old(m).worktree },
+            ..*old(m)
+        }),
+] {
     match kind {
         EffectKind::StopRun => {
             m.run = None;
