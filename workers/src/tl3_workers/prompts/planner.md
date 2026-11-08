@@ -106,7 +106,7 @@ When tool_capabilities is supplied, return evidence_contract. It is an empty lis
 - Name each requirement's source requirement, tool, executor, runner_features, artifacts, methods and protected_files. Use empty lists for dimensions that it does not constrain. protected_files lists necessary edits, not reads. A capability that tool_capabilities does not list is unsupported. Keep an unrecognized requirement's exact name and meaning. Do not replace a mandatory run with a review goal, or substitute another executor's proof.
 - Record provenance: {"kind":"source","source":"issue.body or the source comment","quote":"exact source wording"} for an explicit source requirement, or {"kind":"method"} for a method that you chose. A method choice never adds a source obligation or a goal. Keep a method that the source requires, with its provenance.
 - Keep a required native-thread bound in runner_features with the run artifacts, not in a forcing's environment. always_tests and the other executor features reach you in tool_capabilities.
-- The run_tests receipt shows the action key, exit status and receipt and log digests only. If the request needs the command, the measured affinity or resource details, name that exact capability gap.
+- The run_tests receipt shows the wait reference, run binding, receipt digest and run ending only. If the request needs the command, the measured affinity or resource details, name that exact capability gap.
 
 ## Abort
 
