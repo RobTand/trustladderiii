@@ -281,7 +281,10 @@ pub fn daemon() -> Result<()> {
             Store::open(&config.store)?,
             bootstrap.clone(),
             secret,
-            Some(crate::ingress::CatchUp::new(catch_up_clients, config.initial_intake.clone())?),
+            Some(crate::ingress::CatchUp::new(
+                catch_up_clients,
+                config.initial_intake.clone(),
+            )?),
         )?;
         eprintln!("GitHub webhooks listening on {}", webhooks.address());
         sources.register(webhooks);

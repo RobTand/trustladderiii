@@ -703,17 +703,28 @@ fn initialize_intake(
     let mut deliveries = Vec::new();
     let mut admitted = std::collections::BTreeSet::new();
     for (index, entry) in entries.iter().enumerate() {
-        let invalid = |field| Error::Adapter(Box::new(io::Error::other(format!(
-            "initial_intake[{index}] issue #{}: {field}", entry.number
-        ))));
+        let invalid = |field| {
+            Error::Adapter(Box::new(io::Error::other(format!(
+                "initial_intake[{index}] issue #{}: {field}",
+                entry.number
+            ))))
+        };
         if entry.number == 0 {
             return Err(invalid("number must be positive"));
         }
-        let repo = bootstrap.repos.iter().find(|repo| {
-            repo.owner.eq_ignore_ascii_case(&entry.owner)
-                && repo.name.eq_ignore_ascii_case(&entry.repo)
-        }).ok_or_else(|| invalid("owner/repo is not served"))?;
-        if !admitted.insert((repo.owner.to_ascii_lowercase(), repo.name.to_ascii_lowercase(), entry.number)) {
+        let repo = bootstrap
+            .repos
+            .iter()
+            .find(|repo| {
+                repo.owner.eq_ignore_ascii_case(&entry.owner)
+                    && repo.name.eq_ignore_ascii_case(&entry.repo)
+            })
+            .ok_or_else(|| invalid("owner/repo is not served"))?;
+        if !admitted.insert((
+            repo.owner.to_ascii_lowercase(),
+            repo.name.to_ascii_lowercase(),
+            entry.number,
+        )) {
             continue;
         }
         let issue = fetch(repo, entry.number).map_err(|_| invalid("current issue fetch failed"))?;
@@ -729,7 +740,10 @@ fn initialize_intake(
         if !issue.labels.iter().any(|label| label.name == "tl3") {
             return Err(invalid("labels must contain tl3"));
         }
-        let id = format!("initial-intake:{}/{}:{}", entry.owner, entry.repo, entry.number);
+        let id = format!(
+            "initial-intake:{}/{}:{}",
+            entry.owner, entry.repo, entry.number
+        );
         let delivery = GitHubDelivery::Webhook(Box::new(webhook::Delivery {
             id: id.clone(),
             event: Some(Event::IssueLabeled {
@@ -737,13 +751,19 @@ fn initialize_intake(
                     repository: tl3_github::Repository {
                         id: 0,
                         name: repo.name.clone(),
-                        owner: tl3_github::Actor { id: 0, login: repo.owner.clone() },
+                        owner: tl3_github::Actor {
+                            id: 0,
+                            login: repo.owner.clone(),
+                        },
                     },
                     installation_id: repo.installation,
                 },
                 issue,
                 label: tl3_github::Label { name: "tl3".into() },
-                actor: tl3_github::Actor { id: bootstrap.rob, login: String::new() },
+                actor: tl3_github::Actor {
+                    id: bootstrap.rob,
+                    login: String::new(),
+                },
             }),
             event_name: "issues".into(),
             payload: serde_json::Value::Null,
@@ -772,12 +792,21 @@ impl CatchUp {
         })
     }
     fn initialize(&self, store: &mut Store, bootstrap: &Bootstrap) -> Result<()> {
-        initialize_intake(store, bootstrap, &self.initial_intake, Utc::now, |repo, number| {
-            let client = self.clients.get(&repo.installation)
-                .ok_or(Error::Invalid("missing GitHub installation client"))?;
-            self.runtime.block_on(client.issue(&format!("{}/{}", repo.owner, repo.name), number))
-                .map_err(|_| Error::Invalid("initial intake issue fetch failed"))
-        })
+        initialize_intake(
+            store,
+            bootstrap,
+            &self.initial_intake,
+            Utc::now,
+            |repo, number| {
+                let client = self
+                    .clients
+                    .get(&repo.installation)
+                    .ok_or(Error::Invalid("missing GitHub installation client"))?;
+                self.runtime
+                    .block_on(client.issue(&format!("{}/{}", repo.owner, repo.name), number))
+                    .map_err(|_| Error::Invalid("initial intake issue fetch failed"))
+            },
+        )
     }
     pub fn pass(&self, store: &mut Store, bootstrap: &Bootstrap) -> Result<Vec<Input>> {
         self.initialize(store, bootstrap)?;
@@ -869,12 +898,14 @@ impl CatchUp {
                     )
                 })?;
             let next_cursor = result.next_cursor.max(since);
-            cursor = Some(cursor.map_or(next_cursor, |old: DateTime<Utc>| {
-                old.min(next_cursor)
-            }));
+            cursor = Some(cursor.map_or(next_cursor, |old: DateTime<Utc>| old.min(next_cursor)));
             for mut changes in result.repositories {
-                changes.comments.retain(|comment| comment.created_at >= since);
-                changes.labels.retain(|(_, change)| change.created_at >= since);
+                changes
+                    .comments
+                    .retain(|comment| comment.created_at >= since);
+                changes
+                    .labels
+                    .retain(|(_, change)| change.created_at >= since);
                 for (number, _) in &changes.labels {
                     if !changes.issues.iter().any(|issue| issue.number == *number) {
                         changes.issues.push(

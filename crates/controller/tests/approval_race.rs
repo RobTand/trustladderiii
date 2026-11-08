@@ -1863,7 +1863,8 @@ fn gap_catchup_repairs_late_approval_after_closure() {
         },
     )
     .unwrap();
-    let catchup = tl3_controller::ingress::CatchUp::new(BTreeMap::from([(3, client)]), vec![]).unwrap();
+    let catchup =
+        tl3_controller::ingress::CatchUp::new(BTreeMap::from([(3, client)]), vec![]).unwrap();
     let mut store = Store::open(&case.settings).unwrap();
     // Recent cursor and empty pulls list exclude old closed PR updates.
     store
@@ -2138,7 +2139,8 @@ fn deployed_main_outstanding_post_survives_upgrade_stop_and_gap() {
     );
     let mut controller = case.open();
     let catchup =
-        tl3_controller::ingress::CatchUp::new(BTreeMap::from([(3, http_client(&case))]), vec![]).unwrap();
+        tl3_controller::ingress::CatchUp::new(BTreeMap::from([(3, http_client(&case))]), vec![])
+            .unwrap();
     let mut store = Store::open(&case.settings).unwrap();
     store
         .receive_catch_up(

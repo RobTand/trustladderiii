@@ -115,7 +115,13 @@ impl Fetcher for CatchUp {
 #[cfg(all(test, not(loom)))]
 impl Webhooks {
     fn bind_with_fetcher(mut store: Store, fetcher: Arc<dyn Fetcher>) -> Result<Self> {
-        initialize_intake(&mut store, &tests::bootstrap(), &[], Utc::now, |_, _| unreachable!())?;
+        initialize_intake(
+            &mut store,
+            &tests::bootstrap(),
+            &[],
+            Utc::now,
+            |_, _| unreachable!(),
+        )?;
         let reader = store.reader()?;
         let mut source = WebhookReceiver::bind(
             "127.0.0.1:0".parse().unwrap(),
