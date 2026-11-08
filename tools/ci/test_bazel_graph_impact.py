@@ -291,6 +291,54 @@ class BazelGraphTests(unittest.TestCase):
         result = self.check_crate(self.crate_graph(2, other=True), entries)
         self.assertEqual(result['errors'], [])
 
+    def relocation_graphs(self, *, never_old=False, old_present=False, other_new=False):
+        origin, destination = '//old:engine.rs', '//new:engine.rs'
+        anchor, outsider = '//shared:anchor.rs', '//other:extra.rs'
+        first, second = '//tests:first', '//tests:second'
+        base = adapter.from_deps({first: [origin], second: [anchor], origin: [], anchor: []},
+                                 [first, second], [origin, anchor])
+        deps = {first: [destination], second: [anchor], destination: [], anchor: []}
+        sources = [destination, anchor]
+        if never_old:
+            deps[second].append(destination)
+        if old_present:
+            deps[origin] = []
+            sources.append(origin)
+        if other_new:
+            deps[first].append(outsider)
+            deps[outsider] = []
+            sources.append(outsider)
+        head = adapter.from_deps(deps, [first, second], sources)
+        return base, head
+
+    def check_relocation(self, *, reason='Engine relocation; Refs #938.', **changes):
+        base, head = self.relocation_graphs(**changes)
+        entries = {'relocation://old:engine.rs=>//new:engine.rs': reason}
+        return adapter.check(base, head, set(head['reach']), adapter.baseline(base), entries, {})
+
+    def test_relocation_excuses_only_the_replacement_source(self):
+        self.assertEqual(self.check_relocation()['errors'], [])
+
+    def test_relocation_does_not_excuse_a_target_that_never_reached_old_source(self):
+        errors = '; '.join(self.check_relocation(never_old=True)['errors'])
+        self.assertIn('//tests:second', errors)
+        self.assertIn('existing test reach grew', errors)
+
+    def test_relocation_does_not_excuse_an_old_source_still_present(self):
+        errors = '; '.join(self.check_relocation(old_present=True)['errors'])
+        self.assertIn('//tests:first', errors)
+        self.assertIn('existing test reach grew', errors)
+
+    def test_relocation_requires_an_issue_reason(self):
+        errors = self.check_relocation(reason='Engine relocation.')['errors']
+        self.assertTrue(any('reason naming a program issue' in error for error in errors), errors)
+
+    def test_relocation_does_not_excuse_other_new_sources_on_the_same_target(self):
+        errors = '; '.join(self.check_relocation(other_new=True)['errors'])
+        self.assertIn('//tests:first', errors)
+        self.assertIn('//other:extra.rs', errors)
+        self.assertIn('existing test reach grew', errors)
+
     def test_comparison_inputs_keep_package_ceiling_at_base(self):
         base = adapter.from_deps(
             {'//crates/controller:existing': ['//pkg:a.py', '//pkg:b.py'],
