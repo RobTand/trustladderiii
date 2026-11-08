@@ -75,6 +75,7 @@ with tempfile.TemporaryDirectory(prefix='pgutil-green-') as temporary:
     flux = {'instance_generation':'synthetic-pgutil', 'uri':'local:///synthetic-pgutil/socket',
             'executable':str(scratch / 'unused-flux'), 'backend_cli':str(scratch / 'unused-backend'),
             'container_mode':'own_scope', 'container_image':'synthetic@sha256:' + 'a' * 64,
+            'environment':{'PATH':'/usr/bin:/bin', 'HOME':'/home/rob', 'XDG_RUNTIME_DIR':'/run/user/1000'},
             'runtime_bundles':['/mnt/shared/flux-out/tl3/.runtime/' + 'b' * 64 + '/manifest.json'],
             'staging_root':'/mnt/shared/tl3-inputs', 'output_root':'/mnt/shared/flux-out/tl3'}
     text = text.replace('# execution_backend = "flux"', 'execution_backend = "flux"')

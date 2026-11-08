@@ -31,6 +31,10 @@ for relative in git('diff','--name-only','746c9797d3841baf8c018f26bbcbcd1b85cd00
     print(hashlib.sha256(committed).hexdigest(), relative, flush=True)
 print('EXACT_SOURCE',head,git('rev-parse',head + '^{tree}'),'PB_CAPTURE_ONLY',capture,flush=True)
 PY
+if [[ ${1:-} == boundary ]]; then
+    /usr/bin/python3 deploy/dl380g10/fixtures/pgutil-green.fixture
+    exit
+fi
 /home/rob/.cargo/bin/rustfmt --check --edition 2024 deploy/dl380g10/helper.rs
 /home/rob/.cargo/bin/cargo build --locked -p tl3-controller --example tl3-deploy
 /usr/bin/python3 -m unittest discover -s deploy/dl380g10 -p test_deploy.py -v
