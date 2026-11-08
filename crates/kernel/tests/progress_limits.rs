@@ -16,7 +16,11 @@ fn confirm(world: World) -> World {
         Event::Ack {
             node: NodeId(0),
             seq: effect.seq,
-                ack: if effect.kind == EffectKind::Enqueue { Ack::DeliveryAccepted } else { Ack::Confirmed },
+            ack: if effect.kind == EffectKind::Enqueue {
+                Ack::DeliveryAccepted
+            } else {
+                Ack::Confirmed
+            },
         },
     )
 }

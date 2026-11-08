@@ -51,7 +51,8 @@ impl Node {
             EffectKind::StartRun(_) | EffectKind::StartRebase => self.run == Some(generation),
             EffectKind::SubmitChecks => self.job == Some(generation),
             EffectKind::Enqueue => {
-                self.phase == Phase::AwaitingDelivery && generation.checked_add(1) == Some(self.generation)
+                self.phase == Phase::AwaitingDelivery
+                    && generation.checked_add(1) == Some(self.generation)
             }
             _ => false,
         }

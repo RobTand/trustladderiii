@@ -132,13 +132,10 @@ trait LocalCompletion {
 }
 impl LocalCompletion for Completion {
     fn releases_holds(&self) -> bool {
-        !self.observations.iter().any(|o| {
-            matches!(
-                o,
-                Observation::Progress { .. }
-                    | Observation::Quota { .. }
-            )
-        })
+        !self
+            .observations
+            .iter()
+            .any(|o| matches!(o, Observation::Progress { .. } | Observation::Quota { .. }))
     }
 }
 const LADDER_OUT_MS: u64 = 30 * 60 * 1000;

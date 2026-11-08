@@ -113,26 +113,48 @@ fn target_shell(historical: &str) -> String {
         .replace("Ack::Confirmed => EffectState::Confirmed", "Ack::Confirmed | Ack::DeliveryAccepted => EffectState::Confirmed")
         .replace("        if completion.ack == Ack::Confirmed {", "        if matches!(completion.ack, Ack::Confirmed | Ack::DeliveryAccepted) {")
         .replace("            self.record_progress(snapshot, &mut commit, key, completion.progress.as_ref())?;\n", "")
-        .replace("        if completion.ack == Ack::Permanent\n            && publication_failure::handles(&delivery)", concat!(r#"        if completion.ack == Ack::DeliveryAccepted && !matches!(delivery.output,
-            DeliveryOutput::Effect { kind: tl3_kernel::EffectKind::Enqueue, .. })
+        .replace("        if completion.ack == Ack::Permanent\n            && publication_failure::handles(&delivery)", concat!(r#"        if completion.ack == Ack::DeliveryAccepted
+            && !matches!(
+                delivery.output,
+                DeliveryOutput::Effect {
+                    kind: tl3_kernel::EffectKind::Enqueue,
+                    ..
+                }
+            )
         {
-            return Err(Error::Invalid("delivery acceptance requires the handoff effect"));
+            return Err(Error::Invalid(
+                "delivery acceptance requires the handoff effect",
+            ));
         }
         if completion.ack == Ack::Confirmed
             && effect.state != EffectState::Cancelling
-            && matches!(delivery.output, DeliveryOutput::Effect {
-                kind: tl3_kernel::EffectKind::Enqueue, ..
-            })
+            && matches!(
+                delivery.output,
+                DeliveryOutput::Effect {
+                    kind: tl3_kernel::EffectKind::Enqueue,
+                    ..
+                }
+            )
         {
-            return Err(Error::Invalid("live handoff requires typed delivery acceptance"));
+            return Err(Error::Invalid(
+                "live handoff requires typed delivery acceptance",
+            ));
         }
 "#, "        if completion.ack == Ack::Permanent\n            && publication_failure::handles(&delivery)"))
         .replace("        // Preserve teardown evidence in the same transaction that can emit the summary.\n", concat!(r#"        // Acceptance retains the dispatch-hydrated PR binding for future wakes.
         // A cancelling receipt never confirms, so it cannot recreate a watch.
-        if completion.ack == Ack::DeliveryAccepted && state == EffectState::Confirmed
-            && snapshot.rows.iter().any(|row| row.table == "watches" && row.id == key)
+        if completion.ack == Ack::DeliveryAccepted
+            && state == EffectState::Confirmed
+            && snapshot
+                .rows
+                .iter()
+                .any(|row| row.table == "watches" && row.id == key)
         {
-            commit.rows.push(put("watches", key.into(), json!(hydrate(effect, snapshot)?)));
+            commit.rows.push(put(
+                "watches",
+                key.into(),
+                json!(hydrate(effect, snapshot)?),
+            ));
         }
 "#, "        // Preserve teardown evidence in the same transaction that can emit the summary.\n"))
         .replace("            self.failure_allowance(snapshot, key, class, &mut commit)?;\n        }\n", "            self.failure_allowance(snapshot, key, class, &mut commit)?;\n        }\n        self.accepted_delivery_refusal(snapshot, &delivery, &completion, &mut commit)?;\n")
@@ -154,8 +176,13 @@ fn completion_shell_keeps_every_other_statement_verbatim() {
             ".find(|e| tl3_delivery::key_matches(e.key.as_bytes(), key.as_bytes()))",
             ".find(|e| e.key == key)",
         );
-    assert_eq!(restored, target_shell(include_str!("base-integration-completion.rs.txt")));
-    assert!(include_str!("reference-plan.rs").contains(&target_shell(include_str!("base-plan.rs.txt"))));
+    assert_eq!(
+        restored,
+        target_shell(include_str!("base-integration-completion.rs.txt"))
+    );
+    assert!(
+        include_str!("reference-plan.rs").contains(&target_shell(include_str!("base-plan.rs.txt")))
+    );
 }
 
 #[derive(Debug, PartialEq, Eq)]

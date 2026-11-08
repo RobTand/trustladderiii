@@ -176,13 +176,13 @@ fn register_owned(
     let direct_wakes = adapters::direct_merge::Wakes::default();
     adapters.register(
         Upstream::Delivery,
-            adapters::direct_merge::Adapter::new(
-                clients.clone(),
-                epoch,
-                &records.join("direct-merge"),
-                config.store.clone(),
-            )?
-            .with_wakes(direct_wakes.clone()),
+        adapters::direct_merge::Adapter::new(
+            clients.clone(),
+            epoch,
+            &records.join("direct-merge"),
+            config.store.clone(),
+        )?
+        .with_wakes(direct_wakes.clone()),
     );
     let delivery =
         adapters::direct_merge::Translator::new(clients.clone())?.with_wakes(direct_wakes);

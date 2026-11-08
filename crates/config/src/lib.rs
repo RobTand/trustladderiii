@@ -1335,7 +1335,8 @@ mod delivery_tests {
         let queue: Repository = serde_json::from_str(original).unwrap();
         assert_eq!(queue.delivery, Delivery::Direct);
         let mode = "direct";
-        let value = serde_json::json!({"owner":"owner","name":"repo","installation_id":3,"delivery":mode});
+        let value =
+            serde_json::json!({"owner":"owner","name":"repo","installation_id":3,"delivery":mode});
         let repo: Repository = serde_json::from_value(value).unwrap();
         assert_eq!(serde_json::to_value(repo.delivery).unwrap(), mode);
         for mode in [

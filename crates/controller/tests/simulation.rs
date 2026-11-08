@@ -1563,7 +1563,7 @@ impl Executor for FaultyWorker {
                     return Ok(Reconciliation::Found(Box::new(Completion {
                         diagnostic: None,
                         failure_class: None,
-                                ack,
+                        ack,
                         observations: vec![],
                     })));
                 }
@@ -1795,7 +1795,10 @@ fn watches_and_pending(settings: &tl3_config::Store) {
                 }
                 assert!(controller.drive_once().unwrap());
             }
-            assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::AwaitingDelivery);
+            assert_eq!(
+                controller.world().unwrap().nodes[0].phase,
+                Phase::AwaitingDelivery
+            );
             controller
                 .observe(
                     "conflict",
@@ -2922,7 +2925,13 @@ fn postmortem_records(settings: &tl3_config::Store) {
         expected.insert(name, json!(total));
     }
     assert_eq!(phases, &serde_json::Value::Object(expected));
-    for phase in ["Making", "Checking", "Reviewing", "Publishing", "AwaitingDelivery"] {
+    for phase in [
+        "Making",
+        "Checking",
+        "Reviewing",
+        "Publishing",
+        "AwaitingDelivery",
+    ] {
         assert!(phases.get(phase).is_some(), "{phase}: {phases}");
     }
     assert!(

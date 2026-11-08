@@ -1024,7 +1024,10 @@ fn malformed_review_fixes(mut record: serde_json::Value) {
         }
         assert!(c.drive_once().unwrap());
     }
-    assert_eq!(c.world().unwrap().nodes[0].phase, tl3_kernel::Phase::AwaitingDelivery);
+    assert_eq!(
+        c.world().unwrap().nodes[0].phase,
+        tl3_kernel::Phase::AwaitingDelivery
+    );
     c.observe(
         "rebase",
         Observation::Kernel(Event::Fact {

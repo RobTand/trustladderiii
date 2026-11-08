@@ -99,7 +99,11 @@ impl Run {
             self.send(Event::Ack {
                 node: NodeId(0),
                 seq: e.seq,
-                ack: if e.kind == EffectKind::Enqueue { Ack::DeliveryAccepted } else { Ack::Confirmed },
+                ack: if e.kind == EffectKind::Enqueue {
+                    Ack::DeliveryAccepted
+                } else {
+                    Ack::Confirmed
+                },
             });
         }
         panic!("effects never stopped");

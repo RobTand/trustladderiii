@@ -361,23 +361,33 @@ impl Adapter {
     fn accept(&mut self, d: &Delivery) -> Result<()> {
         number(d)?;
         self.fence(d)?;
-        let head = d.head_sha.as_deref().ok_or(Error::Invalid("direct acceptance needs a head"))?;
+        let head = d
+            .head_sha
+            .as_deref()
+            .ok_or(Error::Invalid("direct acceptance needs a head"))?;
         let path = self.records.path(&d.key).with_extension("accepted");
         if let Some(accepted) = read_file::<Accepted>(&path)? {
-            if accepted.key != d.key || accepted.head != head || accepted.generation != d.generation {
+            if accepted.key != d.key || accepted.head != head || accepted.generation != d.generation
+            {
                 return Err(Error::Invalid("direct acceptance identity changed"));
             }
             return Ok(());
         }
-        self.write(Write::Acceptance, &path, &serde_json::to_vec(&Accepted {
-            key: d.key.clone(), head: head.into(), generation: d.generation,
-            waiting_through: None,
-        })?)
+        self.write(
+            Write::Acceptance,
+            &path,
+            &serde_json::to_vec(&Accepted {
+                key: d.key.clone(),
+                head: head.into(),
+                generation: d.generation,
+                waiting_through: None,
+            })?,
+        )
     }
     fn wait(&self, d: &Delivery) -> Result<()> {
         let path = self.records.path(&d.key).with_extension("accepted");
-        let mut accepted: Accepted = read_file(&path)?
-            .ok_or(Error::Invalid("Direct wait has no durable acceptance"))?;
+        let mut accepted: Accepted =
+            read_file(&path)?.ok_or(Error::Invalid("Direct wait has no durable acceptance"))?;
         accepted.waiting_through = Some(decide::consume(
             self.wakes.event(&d.key).unwrap_or(0),
             ingress_highwater(&self.store)?,
@@ -724,7 +734,12 @@ impl Adapter {
             Ok(mut completion) => {
                 if completion.ack == tl3_kernel::Ack::Permanent && completion.diagnostic.is_none() {
                     completion.diagnostic = Some(crate::publication_failure::Diagnostic::capture(
-                        d, None, completion.failure_class.as_deref().unwrap_or("direct_merge_refused"),
+                        d,
+                        None,
+                        completion
+                            .failure_class
+                            .as_deref()
+                            .unwrap_or("direct_merge_refused"),
                     )?);
                 }
                 completion.ack = tl3_kernel::Ack::DeliveryAccepted;
@@ -737,7 +752,9 @@ impl Adapter {
                 completion.failure_class = Some(crate::looks::failure_class(&error).into());
                 if matches!(error, Error::Permanent { .. }) {
                     completion.diagnostic = Some(crate::publication_failure::Diagnostic::capture(
-                        d, Some(&error), crate::looks::failure_class(&error),
+                        d,
+                        Some(&error),
+                        crate::looks::failure_class(&error),
                     )?);
                 }
                 Ok(completion)
@@ -757,9 +774,10 @@ impl Adapter {
         let event = self.wakes.event(&d.key).unwrap_or(0);
         let accepted: Accepted = read_file(&self.records.path(&d.key).with_extension("accepted"))?
             .ok_or(Error::Invalid("Direct attempt has no durable acceptance"))?;
-        let attempted = accepted.waiting_through.is_some() || intent
-            .as_ref()
-            .is_some_and(|i| i.action == "Merge" || i.consumed_through.is_some());
+        let attempted = accepted.waiting_through.is_some()
+            || intent
+                .as_ref()
+                .is_some_and(|i| i.action == "Merge" || i.consumed_through.is_some());
         let consumed = intent
             .as_ref()
             .and_then(|i| i.consumed_through)
@@ -950,7 +968,7 @@ impl Executor for Adapter {
         match self.accept(d) {
             Err(Error::ChecksPending) => return Ok(Look::Healthy),
             Err(error) => return Err(error),
-            Ok(()) => {},
+            Ok(()) => {}
         }
         let completion = match self.observations(d) {
             Ok(observations) => Completion::delivery_accepted(observations),
@@ -960,7 +978,9 @@ impl Executor for Adapter {
                 completion.failure_class = Some(crate::looks::failure_class(&error).into());
                 if matches!(error, Error::Permanent { .. }) {
                     completion.diagnostic = Some(crate::publication_failure::Diagnostic::capture(
-                        d, Some(&error), crate::looks::failure_class(&error),
+                        d,
+                        Some(&error),
+                        crate::looks::failure_class(&error),
                     )?);
                 }
                 completion
@@ -1066,11 +1086,14 @@ impl Executor for Adapter {
 }
 fn delivery_authority(n: &tl3_kernel::Node, d: &Delivery) -> bool {
     match n.phase {
-        Phase::Publishing => n.generation == d.generation && matches!(
-            (n.effect, d.output),
-            (Some(effect), Output::Effect { seq, kind: EffectKind::Enqueue, .. })
-                if effect.seq == seq && effect.kind == EffectKind::Enqueue && !effect.cancelling
-        ),
+        Phase::Publishing => {
+            n.generation == d.generation
+                && matches!(
+                    (n.effect, d.output),
+                    (Some(effect), Output::Effect { seq, kind: EffectKind::Enqueue, .. })
+                        if effect.seq == seq && effect.kind == EffectKind::Enqueue && !effect.cancelling
+                )
+        }
         Phase::AwaitingDelivery => d.generation.checked_add(1) == Some(n.generation),
         _ => false,
     }

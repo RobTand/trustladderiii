@@ -82,23 +82,41 @@ impl State {
         pull["merged"] = json!(false);
         pull["merged_at"] = Value::Null;
         pull["merge_commit_sha"] = json!("dddddddddddddddddddddddddddddddddddddddd");
-        Self { pull, posts: 0, pull_reads: 0, head_checks: vec![], statuses: json!([]),
-            required: false, required_app: 15368, classic: false,
-            classic_context_only: false, annotations: json!([]), body_patches: 0 }
+        Self {
+            pull,
+            posts: 0,
+            pull_reads: 0,
+            head_checks: vec![],
+            statuses: json!([]),
+            required: false,
+            required_app: 15368,
+            classic: false,
+            classic_context_only: false,
+            annotations: json!([]),
+            body_patches: 0,
+        }
     }
     fn merged(&mut self, unapproved: bool) {
         self.pull["state"] = json!("closed");
         self.pull["merged"] = json!(true);
         self.pull["merged_at"] = json!("2026-10-30T01:00:00Z");
-        if unapproved { self.pull["head"]["sha"] = json!("b".repeat(40)); }
+        if unapproved {
+            self.pull["head"]["sha"] = json!("b".repeat(40));
+        }
     }
 }
 #[derive(Clone)]
 struct Api(Arc<Mutex<State>>);
 impl support::github::Routes for State {
-    fn pulls(&self) -> Value { json!([self.pull]) }
-    fn checks(&self, _sha: &str) -> Value { json!(self.head_checks) }
-    fn pull_mut(&mut self) -> Option<&mut Value> { Some(&mut self.pull) }
+    fn pulls(&self) -> Value {
+        json!([self.pull])
+    }
+    fn checks(&self, _sha: &str) -> Value {
+        json!(self.head_checks)
+    }
+    fn pull_mut(&mut self) -> Option<&mut Value> {
+        Some(&mut self.pull)
+    }
     fn pull_patched(&mut self, body: &Value) {
         self.body_patches += usize::from(body.get("body").is_some());
     }
@@ -106,7 +124,9 @@ impl support::github::Routes for State {
 impl Respond for Api {
     fn respond(&self, request: &Request) -> ResponseTemplate {
         let mut state = self.0.lock().unwrap();
-        let normalized = request.url.path()
+        let normalized = request
+            .url
+            .path()
             .replace("/repos/RobTand/prismabuild", "/repos/owner/sandbox")
             .replace("/repos/RobTand/trustladderiii", "/repos/owner/sandbox");
         let path = normalized.as_str();
@@ -114,7 +134,9 @@ impl Respond for Api {
         if let Some(response) = support::github::access_token(path, 3, "disposable") {
             return response;
         }
-        if let Some(response) = support::github::respond(request, path, "/repos/owner/sandbox", &mut *state) {
+        if let Some(response) =
+            support::github::respond(request, path, "/repos/owner/sandbox", &mut *state)
+        {
             return response;
         }
         match (method, path) {
@@ -143,7 +165,9 @@ impl Respond for Api {
 #[derive(Clone)]
 struct Clock(std::rc::Rc<std::cell::Cell<std::time::SystemTime>>);
 impl tl3_controller::clock::Clock for Clock {
-    fn now(&self) -> std::time::SystemTime { self.0.get() }
+    fn now(&self) -> std::time::SystemTime {
+        self.0.get()
+    }
 }
 struct Server {
     _runtime: tokio::runtime::Runtime,

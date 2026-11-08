@@ -266,7 +266,9 @@ fn pinned_real_old_and_current_tail_and_helpers() {
         pins[1]
     );
     assert_eq!(
-        tail(include_str!("reference.rs")),
+        // TD compiles the historical tail with the renamed waiting phase.
+        // Restore only that spelling before checking the original pinned bytes.
+        tail(include_str!("reference.rs")).replace("Phase::AwaitingDelivery", "Phase::Queued"),
         include_str!("base-tail.rs.txt")
     );
     assert_eq!(

@@ -794,7 +794,10 @@ fn activate_handler(c: &mut Controller, repo: &Repo, case: InputCase) {
                     );
                     if case != InputCase::Reviewed {
                         reply(c, NodeId(0), Reply::Approved { head });
-                        assert_eq!(c.world().unwrap().nodes[0].phase, tl3_kernel::Phase::AwaitingDelivery);
+                        assert_eq!(
+                            c.world().unwrap().nodes[0].phase,
+                            tl3_kernel::Phase::AwaitingDelivery
+                        );
                         if !matches!(case, InputCase::CiFailed | InputCase::Merged) {
                             event(
                                 c,

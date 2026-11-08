@@ -30,7 +30,11 @@ fn reply(w: &mut World, node: NodeId, reply: Reply) {
             Event::Ack {
                 node,
                 seq: e.seq,
-                ack: if e.kind == EffectKind::Enqueue { Ack::DeliveryAccepted } else { Ack::Confirmed },
+                ack: if e.kind == EffectKind::Enqueue {
+                    Ack::DeliveryAccepted
+                } else {
+                    Ack::Confirmed
+                },
             },
         )
         .world;

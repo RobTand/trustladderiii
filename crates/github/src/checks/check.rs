@@ -4,7 +4,6 @@
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
-
 /// A check run's or check suite's `status`.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
@@ -160,7 +159,6 @@ impl App {
             Some(_) => Self::Other,
         }
     }
-
 }
 
 /// A UTC time as Unix seconds plus nanoseconds, ordered as chrono orders it.

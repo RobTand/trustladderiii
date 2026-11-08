@@ -144,18 +144,32 @@ impl Controller {
             .find(|e| e.key == key)
             .ok_or(Error::Invalid("completion has no pending effect"))?;
         let delivery: Delivery = decode_stored(effect.payload.clone())?;
-        if completion.ack == Ack::DeliveryAccepted && !matches!(delivery.output,
-            DeliveryOutput::Effect { kind: tl3_kernel::EffectKind::Enqueue, .. })
+        if completion.ack == Ack::DeliveryAccepted
+            && !matches!(
+                delivery.output,
+                DeliveryOutput::Effect {
+                    kind: tl3_kernel::EffectKind::Enqueue,
+                    ..
+                }
+            )
         {
-            return Err(Error::Invalid("delivery acceptance requires the handoff effect"));
+            return Err(Error::Invalid(
+                "delivery acceptance requires the handoff effect",
+            ));
         }
         if completion.ack == Ack::Confirmed
             && effect.state != EffectState::Cancelling
-            && matches!(delivery.output, DeliveryOutput::Effect {
-                kind: tl3_kernel::EffectKind::Enqueue, ..
-            })
+            && matches!(
+                delivery.output,
+                DeliveryOutput::Effect {
+                    kind: tl3_kernel::EffectKind::Enqueue,
+                    ..
+                }
+            )
         {
-            return Err(Error::Invalid("live handoff requires typed delivery acceptance"));
+            return Err(Error::Invalid(
+                "live handoff requires typed delivery acceptance",
+            ));
         }
         if completion.ack == Ack::Permanent
             && publication_failure::handles(&delivery)
@@ -229,10 +243,18 @@ impl Controller {
         });
         // Acceptance retains the dispatch-hydrated PR binding for future wakes.
         // A cancelling receipt never confirms, so it cannot recreate a watch.
-        if completion.ack == Ack::DeliveryAccepted && state == EffectState::Confirmed
-            && snapshot.rows.iter().any(|row| row.table == "watches" && row.id == key)
+        if completion.ack == Ack::DeliveryAccepted
+            && state == EffectState::Confirmed
+            && snapshot
+                .rows
+                .iter()
+                .any(|row| row.table == "watches" && row.id == key)
         {
-            commit.rows.push(put("watches", key.into(), json!(hydrate(effect, snapshot)?)));
+            commit.rows.push(put(
+                "watches",
+                key.into(),
+                json!(hydrate(effect, snapshot)?),
+            ));
         }
         // Preserve teardown evidence in the same transaction that can emit the summary.
         for observation in &completion.observations {

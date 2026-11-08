@@ -151,7 +151,9 @@ impl Translator {
         }
         let world = crate::snapshot::decode(snapshot)?;
         for (key, delivery) in deliveries {
-            let n = world.nodes.get(delivery.node().0 as usize)
+            let n = world
+                .nodes
+                .get(delivery.node().0 as usize)
                 .ok_or(Error::Invalid("missing watched direct node"))?;
             if !delivery_authority(n, &delivery) {
                 continue;
@@ -168,9 +170,7 @@ impl Translator {
                 )
             {
                 self.wakes.wake(&key, sequence);
-                inputs.push(Input::Look {
-                    key,
-                });
+                inputs.push(Input::Look { key });
             }
         }
         Ok(inputs)

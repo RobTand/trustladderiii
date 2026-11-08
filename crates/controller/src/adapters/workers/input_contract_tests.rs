@@ -569,7 +569,7 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
         "Checking",
         "Reviewing",
         "Publishing",
-        "Queued",
+        "AwaitingDelivery",
         "Rebasing",
         "AwaitingRob",
         "Stopping",

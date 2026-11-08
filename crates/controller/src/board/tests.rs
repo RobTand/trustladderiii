@@ -84,7 +84,11 @@ fn every_phase_maps_to_its_column_and_label() {
         (Phase::Checking, Column::Checking, "Running checks"),
         (Phase::Reviewing, Column::Reviewing, "Reviewing"),
         (Phase::Publishing, Column::Merging, "Publishing"),
-        (Phase::AwaitingDelivery, Column::Merging, "Awaiting delivery"),
+        (
+            Phase::AwaitingDelivery,
+            Column::Merging,
+            "Awaiting delivery",
+        ),
         (Phase::Rebasing, Column::Merging, "Updating the branch"),
         (Phase::AwaitingRob, Column::NeedsRob, "Awaiting Rob"),
     ];

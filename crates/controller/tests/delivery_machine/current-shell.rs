@@ -144,18 +144,32 @@ impl Controller {
             .find(|e| tl3_delivery::key_matches(e.key.as_bytes(), key.as_bytes()))
             .ok_or(Error::Invalid("completion has no pending effect"))?;
         let delivery: Delivery = decode_stored(effect.payload.clone())?;
-        if completion.ack == Ack::DeliveryAccepted && !matches!(delivery.output,
-            DeliveryOutput::Effect { kind: tl3_kernel::EffectKind::Enqueue, .. })
+        if completion.ack == Ack::DeliveryAccepted
+            && !matches!(
+                delivery.output,
+                DeliveryOutput::Effect {
+                    kind: tl3_kernel::EffectKind::Enqueue,
+                    ..
+                }
+            )
         {
-            return Err(Error::Invalid("delivery acceptance requires the handoff effect"));
+            return Err(Error::Invalid(
+                "delivery acceptance requires the handoff effect",
+            ));
         }
         if completion.ack == Ack::Confirmed
             && effect.state != EffectState::Cancelling
-            && matches!(delivery.output, DeliveryOutput::Effect {
-                kind: tl3_kernel::EffectKind::Enqueue, ..
-            })
+            && matches!(
+                delivery.output,
+                DeliveryOutput::Effect {
+                    kind: tl3_kernel::EffectKind::Enqueue,
+                    ..
+                }
+            )
         {
-            return Err(Error::Invalid("live handoff requires typed delivery acceptance"));
+            return Err(Error::Invalid(
+                "live handoff requires typed delivery acceptance",
+            ));
         }
         if completion.ack == Ack::Permanent
             && publication_failure::handles(&delivery)
@@ -220,10 +234,18 @@ impl Controller {
         });
         // Acceptance retains the dispatch-hydrated PR binding for future wakes.
         // A cancelling receipt never confirms, so it cannot recreate a watch.
-        if completion.ack == Ack::DeliveryAccepted && state == EffectState::Confirmed
-            && snapshot.rows.iter().any(|row| row.table == "watches" && row.id == key)
+        if completion.ack == Ack::DeliveryAccepted
+            && state == EffectState::Confirmed
+            && snapshot
+                .rows
+                .iter()
+                .any(|row| row.table == "watches" && row.id == key)
         {
-            commit.rows.push(put("watches", key.into(), json!(hydrate(effect, snapshot)?)));
+            commit.rows.push(put(
+                "watches",
+                key.into(),
+                json!(hydrate(effect, snapshot)?),
+            ));
         }
         // Preserve teardown evidence in the same transaction that can emit the summary.
         for observation in &completion.observations {
@@ -373,103 +395,6 @@ impl Controller {
         }
         evidence::retire_delivered(snapshot, &mut commit, &delivery, completion.ack);
         Ok(commit)
-    }
-
-    pub(crate) fn authorize_approval_retry(
-        &self,
-        snapshot: &Snapshot,
-        incident: &looks::Incident,
-        commit: &mut Commit,
-    ) {
-        if incident.signature.class != AMBIGUOUS || !incident.open {
-            return;
-        }
-        let Some(effect) = snapshot
-            .pending_effects
-            .iter()
-            .find(|effect| Some(&effect.key) == incident.effect.as_ref())
-        else {
-            return;
-        };
-        if tl3_delivery::can_authorize_approval_retry(crate::executor::delivery_state(effect.state))
-        {
-            commit.transitions.push(tl3_store::EffectTransition {
-                key: effect.key.clone(),
-                from: effect.state,
-                to: EffectState::Intended,
-            });
-            commit
-                .rows
-                .push(put(AUTHORIZATIONS, effect.key.clone(), json!(true)));
-            commit
-                .rows
-                .push(put(LINEAGE_SAFE, effect.key.clone(), json!(true)));
-        }
-    }
-    pub(crate) fn reconcile_approvals(&mut self, snapshot: &Snapshot) -> Result<bool> {
-        for row in snapshot.rows.iter().filter(|r| r.table == REPAIRS) {
-            let mut delivery: Delivery = crate::decode_stored(row.value.clone())?;
-            delivery.epoch = snapshot.epoch.get();
-            let repair_key = format!("approval-repair:{}", row.id);
-            if looks::outage_waiting(snapshot, &repair_key) {
-                continue;
-            }
-            let result = self
-                .adapters
-                .adapter(&delivery)
-                .and_then(|adapter| adapter.repair_approval(&delivery));
-            if !matches!(result, Ok((Reconciliation::Found(_), _))) {
-                let error = match result {
-                    Err(error) => error,
-                    _ => crate::Error::Invalid("approval repair has no matching evidence yet"),
-                };
-                let mut commit = Commit::new(
-                    format!(
-                        "approval-repair-failed:{}:{}",
-                        row.id,
-                        snapshot.revision.get()
-                    ),
-                    json!({"approval_repair_failed":row.id}),
-                    snapshot,
-                );
-                self.maintenance_failure(
-                    snapshot,
-                    &delivery,
-                    &repair_key,
-                    "approval_repair",
-                    error,
-                    &mut commit,
-                )?;
-                self.store.commit(&commit)?;
-                return Ok(true);
-            }
-            let mut commit = Commit::new(
-                format!("approval-reconciled:{}:{}", row.id, snapshot.revision.get()),
-                json!({"approval_reconciled":row.id}),
-                snapshot,
-            );
-            self.finish_maintenance(snapshot, &repair_key, &mut commit)?;
-            // Count only identity-checked copies from the adapter's successful repair.
-            // Sent intent overestimates unknown legacy/preflight attempts conservatively.
-            if let Ok((_, Some(copies))) = result
-                && tl3_delivery::accounts_for_dispatches(
-                    copies as u64,
-                    self.store.approval_dispatch_count(&row.id)? as u64,
-                )
-            {
-                commit.rows.push(RowChange::Delete {
-                    table: UNRESOLVED.into(),
-                    id: row.id.clone(),
-                });
-            }
-            commit.rows.push(RowChange::Delete {
-                table: REPAIRS.into(),
-                id: row.id.clone(),
-            });
-            self.store.commit(&commit)?;
-            return Ok(true);
-        }
-        Ok(false)
     }
 
 }

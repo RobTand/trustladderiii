@@ -1422,7 +1422,9 @@ impl Controller {
                     }
                     hook(Boundary::BeforeReconcile, &effect.key);
                     let reconciled = if effect.state == EffectState::Cancelling {
-                        self.adapters.adapter(&delivery)?.reconcile_cancellation(&delivery)
+                        self.adapters
+                            .adapter(&delivery)?
+                            .reconcile_cancellation(&delivery)
                     } else {
                         self.adapters.adapter(&delivery)?.reconcile(&delivery)
                     };
@@ -1733,18 +1735,32 @@ impl Controller {
             .find(|e| tl3_delivery::key_matches(e.key.as_bytes(), key.as_bytes()))
             .ok_or(Error::Invalid("completion has no pending effect"))?;
         let delivery: Delivery = decode_stored(effect.payload.clone())?;
-        if completion.ack == Ack::DeliveryAccepted && !matches!(delivery.output,
-            DeliveryOutput::Effect { kind: tl3_kernel::EffectKind::Enqueue, .. })
+        if completion.ack == Ack::DeliveryAccepted
+            && !matches!(
+                delivery.output,
+                DeliveryOutput::Effect {
+                    kind: tl3_kernel::EffectKind::Enqueue,
+                    ..
+                }
+            )
         {
-            return Err(Error::Invalid("delivery acceptance requires the handoff effect"));
+            return Err(Error::Invalid(
+                "delivery acceptance requires the handoff effect",
+            ));
         }
         if completion.ack == Ack::Confirmed
             && effect.state != EffectState::Cancelling
-            && matches!(delivery.output, DeliveryOutput::Effect {
-                kind: tl3_kernel::EffectKind::Enqueue, ..
-            })
+            && matches!(
+                delivery.output,
+                DeliveryOutput::Effect {
+                    kind: tl3_kernel::EffectKind::Enqueue,
+                    ..
+                }
+            )
         {
-            return Err(Error::Invalid("live handoff requires typed delivery acceptance"));
+            return Err(Error::Invalid(
+                "live handoff requires typed delivery acceptance",
+            ));
         }
         if completion.ack == Ack::Permanent
             && publication_failure::handles(&delivery)
@@ -1809,10 +1825,18 @@ impl Controller {
         });
         // Acceptance retains the dispatch-hydrated PR binding for future wakes.
         // A cancelling receipt never confirms, so it cannot recreate a watch.
-        if completion.ack == Ack::DeliveryAccepted && state == EffectState::Confirmed
-            && snapshot.rows.iter().any(|row| row.table == "watches" && row.id == key)
+        if completion.ack == Ack::DeliveryAccepted
+            && state == EffectState::Confirmed
+            && snapshot
+                .rows
+                .iter()
+                .any(|row| row.table == "watches" && row.id == key)
         {
-            commit.rows.push(put("watches", key.into(), json!(hydrate(effect, snapshot)?)));
+            commit.rows.push(put(
+                "watches",
+                key.into(),
+                json!(hydrate(effect, snapshot)?),
+            ));
         }
         // Preserve teardown evidence in the same transaction that can emit the summary.
         for observation in &completion.observations {
@@ -2551,7 +2575,9 @@ impl Controller {
         for row in std::mem::take(&mut commit.rows) {
             if let RowChange::Put { table, value, .. } = &row
                 && table == "delivery_outcomes"
-                && value["node"].as_u64().is_some_and(|node| closed.contains(&NodeId(node)))
+                && value["node"]
+                    .as_u64()
+                    .is_some_and(|node| closed.contains(&NodeId(node)))
             {
                 continue;
             }
@@ -2870,20 +2896,20 @@ impl Controller {
         };
 
         let mut ci_details = match &observation {
-                Observation::Outcome {
-                    outcome:
-                        outcome::Outcome::CiFailed {
-                            failed_tests,
-                            evidence,
-                            ..
-                        },
-                    ..
-                } => {
-                    let mut details = evidence.clone();
-                    details.failed_tests = failed_tests.clone();
-                    details
-                }
-                _ => Default::default(),
+            Observation::Outcome {
+                outcome:
+                    outcome::Outcome::CiFailed {
+                        failed_tests,
+                        evidence,
+                        ..
+                    },
+                ..
+            } => {
+                let mut details = evidence.clone();
+                details.failed_tests = failed_tests.clone();
+                details
+            }
+            _ => Default::default(),
         };
         ci_details = findings::bounded_ci_evidence(ci_details);
         let ci_checks = ci_details.checks.clone();
@@ -2999,10 +3025,10 @@ impl Controller {
                 receipt,
             } => {
                 let recorded = receipt.as_ref().is_some_and(|id| {
-                    snapshot.rows.iter().any(|row| {
-                        row.table == "delivery_outcomes"
-                            && row.id == *id
-                    })
+                    snapshot
+                        .rows
+                        .iter()
+                        .any(|row| row.table == "delivery_outcomes" && row.id == *id)
                 });
                 let Some(_receipt) = tl3_controller_core::translate::begin(recorded) else {
                     return Ok(None);
@@ -3035,7 +3061,8 @@ impl Controller {
                 }
                 if let Outcome::CiFailed { head, evidence, .. } = &mut outcome
                     && !tl3_controller_core::translate::head_current(
-                        self.head(node, head)?.0, current.head.map(|head| head.0),
+                        self.head(node, head)?.0,
+                        current.head.map(|head| head.0),
                     )
                 {
                     // Base records stale head evidence without attributing it or applying a fact.
@@ -4164,8 +4191,7 @@ fn observation_upstream(
         Observation::Progress { .. }
         | Observation::Quota { .. }
         | Observation::TraceLogsCapped { .. }
-        | Observation::Steering { .. }
- => None,
+        | Observation::Steering { .. } => None,
         Observation::GitHubComment { .. }
         | Observation::PrerequisiteRead { .. }
         | Observation::Prerequisite(_)
@@ -4186,9 +4212,9 @@ fn observation_upstream(
         | Observation::WorktreePrepared { .. }
         | Observation::ScratchSaved { .. }
         | Observation::ScratchPruned { .. } => Some(Upstream::Worktrees),
-        Observation::Outcome { .. }
-        | Observation::Merged { .. }
-        | Observation::CiFailed { .. } => Some(Upstream::Delivery),
+        Observation::Outcome { .. } | Observation::Merged { .. } | Observation::CiFailed { .. } => {
+            Some(Upstream::Delivery)
+        }
         Observation::Kernel(Event::Reply {
             node, generation, ..
         }) => snapshot

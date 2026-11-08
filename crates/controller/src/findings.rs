@@ -493,4 +493,3 @@ pub(crate) fn bounded_ci_evidence(mut details: CiEvidence) -> CiEvidence {
     }
     details
 }
-

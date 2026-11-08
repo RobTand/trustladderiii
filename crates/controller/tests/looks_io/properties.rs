@@ -240,25 +240,63 @@ fn source_pins_and_production_copies() {
     );
     let source = include_str!("../../src/looks.rs");
     let copy = include_str!("current.rs");
-    for name in ["look_state", "look_alive", "finish_stall", "rearm", "look_failed",
-                 "look_observations", "probe_passed", "save_allowance", "allowance_row",
-                 "progress_allowance", "quota_allowance", "expire_model_quotas"] {
+    for name in [
+        "look_state",
+        "look_alive",
+        "finish_stall",
+        "rearm",
+        "look_failed",
+        "look_observations",
+        "probe_passed",
+        "save_allowance",
+        "allowance_row",
+        "progress_allowance",
+        "quota_allowance",
+        "expire_model_quotas",
+    ] {
         if name == "quota_allowance" {
-            assert_eq!(format!("{:x}", Sha256::digest(function(copy,name,true))),
-                "110744e12e5b6193b0c1753b4b1d140b92b246a5e5b33807367ab975c0a52aed");
+            assert_eq!(
+                format!("{:x}", Sha256::digest(function(copy, name, true))),
+                "110744e12e5b6193b0c1753b4b1d140b92b246a5e5b33807367ab975c0a52aed"
+            );
         } else {
-            assert_eq!(function(source,name,true),function(copy,name,true),"{name}");
+            assert_eq!(
+                function(source, name, true),
+                function(copy, name, true),
+                "{name}"
+            );
         }
     }
-    for name in ["incident_needs_rob", "incident_id", "incident_note", "failure_class", "incident_summary"] {
-        assert_eq!(function(source,name,false),function(copy,name,false),"{name}");
+    for name in [
+        "incident_needs_rob",
+        "incident_id",
+        "incident_note",
+        "failure_class",
+        "incident_summary",
+    ] {
+        assert_eq!(
+            function(source, name, false),
+            function(copy, name, false),
+            "{name}"
+        );
     }
     // All unmodified reference methods still compare directly to their source.
-    for name in ["finish_stall", "rearm", "probe_passed", "save_allowance", "allowance_row",
-                 "progress_allowance", "quota_allowance", "expire_model_quotas"] {
-        assert_eq!(function(base,name,true),function(include_str!("reference.rs"),name,true),"{name}");
+    for name in [
+        "finish_stall",
+        "rearm",
+        "probe_passed",
+        "save_allowance",
+        "allowance_row",
+        "progress_allowance",
+        "quota_allowance",
+        "expire_model_quotas",
+    ] {
+        assert_eq!(
+            function(base, name, true),
+            function(include_str!("reference.rs"), name, true),
+            "{name}"
+        );
     }
-
 }
 
 /// Q7, state-table.md:274-275: first incidents permit probes. Fresh-load placement is preserved existing behaviour (no rule).
@@ -315,7 +353,9 @@ fn mandatory_worker_and_queue_stalls() {
         assert_eq!(state(&r)["failure"], expected);
         assert_eq!(r.trace.iter().any(|(op, _)| op == "stop_stalled"), worker);
         assert!(!r.trace.iter().any(|(op, _)| op == "observe"));
-        if worker { assert!(r.trace.iter().any(|(op, _)| op == "queue_observation")); }
+        if worker {
+            assert!(r.trace.iter().any(|(op, _)| op == "queue_observation"));
+        }
     }
 }
 
@@ -353,7 +393,12 @@ fn mandatory_kernel_incident_probe_clearance() {
 fn mandatory_stall_transition_persists() {
     let r = io::compare(&Schedule {
         worker: true,
-        entries: vec![Entry::Alive(false),Entry::DrainObservations,Entry::Alive(false),Entry::DrainObservations],
+        entries: vec![
+            Entry::Alive(false),
+            Entry::DrainObservations,
+            Entry::Alive(false),
+            Entry::DrainObservations,
+        ],
         ..Schedule::default()
     });
     let kernel: Value = serde_json::from_slice(&r.files["kernel-state"]).unwrap();
@@ -364,7 +409,7 @@ fn mandatory_stall_transition_persists() {
         worker: true,
         incident: true,
         kernel_incident: true,
-        entries: vec![Entry::Alive(false),Entry::DrainObservations],
+        entries: vec![Entry::Alive(false), Entry::DrainObservations],
         ..Schedule::default()
     });
     let kernel: Value = serde_json::from_slice(&held.files["kernel-state"]).unwrap();

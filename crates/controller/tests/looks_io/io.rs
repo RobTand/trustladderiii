@@ -111,12 +111,18 @@ pub(super) fn error(code: u8) -> Error {
         },
         3 => Error::Io(std::io::ErrorKind::PermissionDenied.into()),
         4 => Error::Io(std::io::ErrorKind::ConnectionReset.into()),
-        5 => Error::Permanent { class:"inconsistent_read",source:"changed during read".into() },
+        5 => Error::Permanent {
+            class: "inconsistent_read",
+            source: "changed during read".into(),
+        },
         6 => Error::Adapter(Box::new(tl3_github::Error::Http { status: 404 })),
         7 => Error::Adapter(Box::new(tl3_github::Error::Http { status: 500 })),
         8 => Error::Store(tl3_store::Error::OwnershipLost),
         9 => Error::StoredJson(serde_json::from_str::<Value>("invalid").unwrap_err()),
-        10 => Error::Permanent { class:"head_changed",source:"head changed".into() },
+        10 => Error::Permanent {
+            class: "head_changed",
+            source: "head changed".into(),
+        },
         _ => Error::Adapter(Box::new(tl3_github::Error::Transport)),
     }
 }
@@ -291,7 +297,9 @@ impl Adapter {
                 },
                 checkout: "checkout".into(),
             },
-            9 => Look::Alive { progress:"checkpoint".into() },
+            9 => Look::Alive {
+                progress: "checkpoint".into(),
+            },
             10 => Look::Found(Box::new(completion(2))),
             11 => Look::Found(Box::new(completion(3))),
             12 => Look::Found(Box::new(completion(4))),
@@ -301,10 +309,16 @@ impl Adapter {
     pub fn stop_stalled(&self, d: &Delivery) -> Result<Completion> {
         let word = read("stop_stalled", json!(d.key))?;
         if with(|r| r.schedule.worker) {
-            Ok(Completion::confirmed(vec![Observation::Kernel(Event::Reply {
-                node:d.node(),generation:world().nodes[0].generation,reply:tl3_kernel::Reply::RunFailed,
-            })]))
-        } else { Ok(completion((word % 4) ^ 2)) }
+            Ok(Completion::confirmed(vec![Observation::Kernel(
+                Event::Reply {
+                    node: d.node(),
+                    generation: world().nodes[0].generation,
+                    reply: tl3_kernel::Reply::RunFailed,
+                },
+            )]))
+        } else {
+            Ok(completion((word % 4) ^ 2))
+        }
     }
     pub fn app_login(&self, installation: u64) -> Option<String> {
         let _ = read("app_login", json!(installation));
@@ -344,7 +358,9 @@ fn completion(code: u8) -> Completion {
             node: NodeId(0),
             fact: Fact::Priority(tl3_kernel::Priority::P1),
         })]
-    } else { vec![] })
+    } else {
+        vec![]
+    })
 }
 pub(super) fn held() -> bool {
     with(|r| r.schedule.held)
@@ -381,9 +397,18 @@ pub(super) fn observe(key: &str, observation: Observation) -> Result<()> {
     })
 }
 pub(super) fn drain_observations() -> Result<()> {
-    let pending = with(|r| r.files.iter().filter_map(|(key,value)|
-        key.starts_with("observations/").then(|| (key.clone(),value.clone()))).collect::<Vec<_>>());
-    for (key,bytes) in pending { observe(&key,serde_json::from_slice(&bytes).unwrap())?; }
+    let pending = with(|r| {
+        r.files
+            .iter()
+            .filter_map(|(key, value)| {
+                key.starts_with("observations/")
+                    .then(|| (key.clone(), value.clone()))
+            })
+            .collect::<Vec<_>>()
+    });
+    for (key, bytes) in pending {
+        observe(&key, serde_json::from_slice(&bytes).unwrap())?;
+    }
     Ok(())
 }
 fn initial(s: &Schedule) -> AllowanceState {
@@ -457,14 +482,32 @@ pub(super) fn run(s: &Schedule, new: bool, cut: Option<(usize, bool)>) -> Run {
     other_state.incident = None;
     let mut world = World::new(&[1], 1);
     if s.worker {
-        world = tl3_kernel::step(world,Event::NewRequest {repo:tl3_kernel::RepoId(0),priority:tl3_kernel::Priority::Unranked}).world;
+        world = tl3_kernel::step(
+            world,
+            Event::NewRequest {
+                repo: tl3_kernel::RepoId(0),
+                priority: tl3_kernel::Priority::Unranked,
+            },
+        )
+        .world;
         let seq = world.nodes[0].effect.unwrap().seq;
-        world = tl3_kernel::step(world,Event::Ack {node:NodeId(0),seq,ack:Ack::Confirmed}).world;
+        world = tl3_kernel::step(
+            world,
+            Event::Ack {
+                node: NodeId(0),
+                seq,
+                ack: Ack::Confirmed,
+            },
+        )
+        .world;
     } else {
         let mut node = tl3_kernel::Node::new(tl3_kernel::RepoId(0));
         node.phase = Phase::AwaitingDelivery;
-        node.pr_open=true;node.had_pr=true;
-        node.head=Some(tl3_kernel::HeadId(0));node.checked=node.head;node.approved=node.head;
+        node.pr_open = true;
+        node.had_pr = true;
+        node.head = Some(tl3_kernel::HeadId(0));
+        node.checked = node.head;
+        node.approved = node.head;
         world.nodes.push(node);
     }
     let node = &mut world.nodes[0];
@@ -472,7 +515,10 @@ pub(super) fn run(s: &Schedule, new: bool, cut: Option<(usize, bool)>) -> Run {
     node.waiting_incident = s.incident && s.kernel_incident;
     node.run_incidents = s.incidents.max(u8::from(node.waiting_incident));
     node.incident_needs_rob = node.waiting_incident && s.needs_rob;
-    if node.waiting_incident && s.worker { node.run=None;node.pool=false; }
+    if node.waiting_incident && s.worker {
+        node.run = None;
+        node.pool = false;
+    }
     let mut files = BTreeMap::new();
     files.insert(
         "allowances/effect-1".into(),
@@ -485,7 +531,10 @@ pub(super) fn run(s: &Schedule, new: bool, cut: Option<(usize, bool)>) -> Run {
     let node = &world.nodes[0];
     files.insert("kernel-state".into(), serde_json::to_vec(&json!({"phase":node.phase,"waiting_incident":node.waiting_incident,"run_incidents":node.run_incidents,"needs_rob":node.incident_needs_rob})).unwrap());
     if s.refused {
-        files.insert("publication_failures/effect-1".into(),serde_json::to_vec(&json!({"class":"direct_merge_refused"})).unwrap());
+        files.insert(
+            "publication_failures/effect-1".into(),
+            serde_json::to_vec(&json!({"class":"direct_merge_refused"})).unwrap(),
+        );
     }
     if s.incident {
         files.insert("incidents/1.read".into(), serde_json::to_vec(&json!({"id":"1.read","node":0,"open":true,"needs_rob":s.needs_rob,"blocking":false,"summary":"outage","signature":{"upstream":"Delivery","class":if s.refused {"direct_merge_refused"} else {"transport"}},"effect":if s.kernel_incident { Value::Null } else { json!("effect-1") }})).unwrap());

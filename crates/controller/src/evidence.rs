@@ -324,10 +324,7 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
                 rows.insert((table.as_str(), id.as_str()), (arrival, value));
             }
             RowChange::Delete { table, id }
-                if !matches!(
-                    table.as_str(),
-                    "check_reports" | "delivery_outcomes"
-                ) =>
+                if !matches!(table.as_str(), "check_reports" | "delivery_outcomes") =>
             {
                 rows.remove(&(table.as_str(), id.as_str()));
             }
@@ -376,8 +373,7 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
                 let raw = &value["outcome"];
                 let mut compact = serde_json::Map::new();
                 if let Some((kind, detail)) = raw.as_object().and_then(|v| v.iter().next()) {
-                    let mut selected =
-                        fields(detail, &["head", "infra", "checks_passed"]);
+                    let mut selected = fields(detail, &["head", "infra", "checks_passed"]);
                     let details = &detail["evidence"];
                     let checks = details["checks"]
                         .as_array()
@@ -457,9 +453,11 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
                 .cloned(),
         );
     }
-    if let Some(outcome) = facts.outcomes.last().filter(|q| {
-        q.get("CiFailed").is_some() || q.get("Conflict").is_some()
-    }) {
+    if let Some(outcome) = facts
+        .outcomes
+        .last()
+        .filter(|q| q.get("CiFailed").is_some() || q.get("Conflict").is_some())
+    {
         facts.remaining_failures.push(outcome.clone());
     }
     let mut links = BTreeSet::new();
@@ -577,7 +575,7 @@ pub fn summary(delivery: &Delivery) -> Result<String> {
         lines.push("The request's independent audit agreed with its goals.".into());
     }
     if facts.outcomes.iter().any(|q| q.get("CiFailed").is_some()) {
-        lines.push("The delivery adapter later reported a check failure.".into());
+        lines.push("The delivery outcomes include a later check failure.".into());
     }
     if !facts.remaining_failures.is_empty() {
         lines.push("Recorded failures remain unresolved.".into());
@@ -1171,7 +1169,10 @@ mod tests {
         assert_eq!(input.facts["evidence"]["reviews"][0]["verdict"], "approve");
         assert_eq!(input.facts["evidence"]["pull_request_status"], "closed");
         assert_eq!(
-            input.facts["evidence"]["outcomes"].as_array().unwrap().len(),
+            input.facts["evidence"]["outcomes"]
+                .as_array()
+                .unwrap()
+                .len(),
             1
         );
         assert!(input.facts["unmet_goals"].as_array().unwrap().is_empty());

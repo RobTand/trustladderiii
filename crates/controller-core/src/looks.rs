@@ -188,7 +188,9 @@ pub fn stall_action(source: StallUpstream) -> StallAction {
     match source {
         StallUpstream::Workers => StallAction::StopWorker,
         StallUpstream::GitHub => StallAction::Unfinished,
-        StallUpstream::Delivery | StallUpstream::PrismaBuild | StallUpstream::Worktrees => StallAction::Ignore,
+        StallUpstream::Delivery | StallUpstream::PrismaBuild | StallUpstream::Worktrees => {
+            StallAction::Ignore
+        }
     }
 }
 

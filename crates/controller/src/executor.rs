@@ -341,7 +341,10 @@ pub struct Completion {
 
 impl Completion {
     pub fn delivery_accepted(observations: Vec<Observation>) -> Self {
-        Self { ack: Ack::DeliveryAccepted, ..Self::confirmed(observations) }
+        Self {
+            ack: Ack::DeliveryAccepted,
+            ..Self::confirmed(observations)
+        }
     }
 
     pub fn permanent(class: impl Into<String>) -> Self {
@@ -356,9 +359,7 @@ impl Completion {
         !self.observations.iter().any(|observation| {
             matches!(
                 observation,
-                Observation::Progress { .. }
-                    | Observation::Quota { .. }
-
+                Observation::Progress { .. } | Observation::Quota { .. }
             )
         })
     }

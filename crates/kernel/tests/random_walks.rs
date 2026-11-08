@@ -67,7 +67,13 @@ fn random_event(w: &mut World, pool: &[u64; 4], rng: &mut Rng) -> Event {
                     0 => Ack::Retryable,
                     1 => Ack::Permanent,
                     2 => Ack::Confirmed,
-                    _ => if e.kind == EffectKind::Enqueue { Ack::DeliveryAccepted } else { Ack::Confirmed },
+                    _ => {
+                        if e.kind == EffectKind::Enqueue {
+                            Ack::DeliveryAccepted
+                        } else {
+                            Ack::Confirmed
+                        }
+                    }
                 };
                 Event::Ack {
                     node,

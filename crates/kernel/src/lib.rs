@@ -1728,7 +1728,10 @@ pub fn proofs_of_phase(phase: Phase) -> &'static [&'static str] {
         Phase::Checking => &["advance_checking", "progress_from_checking"],
         Phase::Reviewing => &["advance_reviewing", "progress_from_reviewing"],
         Phase::Publishing => &["advance_publishing", "progress_from_publishing"],
-        Phase::AwaitingDelivery => &["advance_awaiting_delivery", "progress_from_awaiting_delivery"],
+        Phase::AwaitingDelivery => &[
+            "advance_awaiting_delivery",
+            "progress_from_awaiting_delivery",
+        ],
         Phase::Rebasing => &[
             "advance_rebasing",
             "progress_from_rebasing",

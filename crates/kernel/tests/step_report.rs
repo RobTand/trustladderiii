@@ -43,7 +43,11 @@ impl Run {
             self.send(Event::Ack {
                 node: NodeId(0),
                 seq: effect.seq,
-                ack: if effect.kind == EffectKind::Enqueue { Ack::DeliveryAccepted } else { Ack::Confirmed },
+                ack: if effect.kind == EffectKind::Enqueue {
+                    Ack::DeliveryAccepted
+                } else {
+                    Ack::Confirmed
+                },
             });
         }
         panic!("effects did not settle");
@@ -191,7 +195,11 @@ fn ci_failure_before_enqueue_reports_exactly_one_failed_round() {
         run.send(Event::Ack {
             node: NodeId(0),
             seq: effect.seq,
-                ack: if effect.kind == EffectKind::Enqueue { Ack::DeliveryAccepted } else { Ack::Confirmed },
+            ack: if effect.kind == EffectKind::Enqueue {
+                Ack::DeliveryAccepted
+            } else {
+                Ack::Confirmed
+            },
         });
     }
     panic!("publishing never reached Enqueue");
@@ -312,7 +320,10 @@ fn delivery_wait_conflict_enters_ready_rebasing_without_a_stop_report() {
     let mut run = Run::new();
     run.queued();
     let before = run.world.nodes[0];
-    let event = Event::Fact { node: NodeId(0), fact: Fact::Conflict };
+    let event = Event::Fact {
+        node: NodeId(0),
+        fact: Fact::Conflict,
+    };
     let (_, _, trace) = step_traced(run.world.clone(), event);
     let admitted = trace.first().expect("the actual apply boundary is traced");
     admitted.check().unwrap();
@@ -322,7 +333,10 @@ fn delivery_wait_conflict_enters_ready_rebasing_without_a_stop_report() {
     assert!(!admitted.nodes[0].holds);
     run.fact(Fact::Conflict);
     assert_eq!(run.world.nodes[0].phase, Phase::Rebasing);
-    assert!(run.world.nodes[0].holds, "settlement reacquires the free slot");
+    assert!(
+        run.world.nodes[0].holds,
+        "settlement reacquires the free slot"
+    );
     assert!(run.report.entries.is_empty());
 }
 

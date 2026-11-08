@@ -226,7 +226,13 @@ fn mandatory_d2_settled_completion_shapes() {
                     _ => 1,
                 }
             );
-            assert_eq!(r.trace.iter().filter(|(op, _)| op == "store.effect").count(), 2);
+            assert_eq!(
+                r.trace
+                    .iter()
+                    .filter(|(op, _)| op == "store.effect")
+                    .count(),
+                2
+            );
         }
     }
 }

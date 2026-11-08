@@ -262,11 +262,18 @@ fn stall_upstream(source: Upstream) -> decisions::StallUpstream {
     }
 }
 
-fn incident_view(snapshot: &Snapshot, incident: &Incident, delivery: &Delivery) -> decisions::IncidentView {
+fn incident_view(
+    snapshot: &Snapshot,
+    incident: &Incident,
+    delivery: &Delivery,
+) -> decisions::IncidentView {
     decisions::IncidentView {
         needs_rob: incident.needs_rob,
         refused_command: incident.signature.upstream == Upstream::Delivery
-            && snapshot.rows.iter().any(|row| row.table == "publication_failures" && row.id == delivery.key),
+            && snapshot
+                .rows
+                .iter()
+                .any(|row| row.table == "publication_failures" && row.id == delivery.key),
         own_effect: incident.effect.as_deref() == Some(&delivery.key),
     }
 }
@@ -532,8 +539,6 @@ impl Controller {
         self.allowances = allowances;
     }
 
-
-
     pub(crate) fn now_ms(&self) -> u64 {
         self.now()
             .duration_since(UNIX_EPOCH)
@@ -701,8 +706,10 @@ impl Controller {
             });
             if let Some(row) = incident {
                 let incident: Incident = crate::decode_stored(row.value.clone())?;
-                if decisions::incident_action(true, incident_view(snapshot, &incident, &state.delivery))
-                    == decisions::IncidentAction::Probe
+                if decisions::incident_action(
+                    true,
+                    incident_view(snapshot, &incident, &state.delivery),
+                ) == decisions::IncidentAction::Probe
                 {
                     match self
                         .adapters
@@ -724,7 +731,10 @@ impl Controller {
                 .find(|r| r.table == "incidents" && r.id == *id && r.value["open"] == true)
         {
             let incident: Incident = crate::decode_stored(row.value.clone())?;
-            match decisions::incident_action(false, incident_view(snapshot, &incident, &state.delivery)) {
+            match decisions::incident_action(
+                false,
+                incident_view(snapshot, &incident, &state.delivery),
+            ) {
                 decisions::IncidentAction::Hold => {
                     // A healthy GET cannot prove command restrictions were fixed (#608).
                     self.save_allowance(state)?;
@@ -868,34 +878,41 @@ impl Controller {
                     .store
                     .effect(&state.delivery.key)?
                     .expect("allowance effect");
-                    let found = serde_json::to_string(&completion)?;
-                    let action = state_decisions::found_action(
-                        effect.state.is_pending(),
-                        false,
-                        state.found.as_ref() != Some(&found),
-                        !completion.observations.is_empty(),
-                    );
-                    state.found = Some(found);
-                    if action != state_decisions::FoundAction::Skip {
-                        if completion.releases_holds() {
-                            self.retry_held_effects(upstream(state.delivery.output));
+                let found = serde_json::to_string(&completion)?;
+                let action = state_decisions::found_action(
+                    effect.state.is_pending(),
+                    false,
+                    state.found.as_ref() != Some(&found),
+                    !completion.observations.is_empty(),
+                );
+                state.found = Some(found);
+                if action != state_decisions::FoundAction::Skip {
+                    if completion.releases_holds() {
+                        self.retry_held_effects(upstream(state.delivery.output));
+                    }
+                    if action == state_decisions::FoundAction::Complete {
+                        self.complete(&effect.key, completion)?;
+                    } else {
+                        // The final save must retain the class recorded with the observations.
+                        if let Some(class) = &completion.failure_class {
+                            state.failure = Some(class.clone());
                         }
-                        if action == state_decisions::FoundAction::Complete {
-                            self.complete(&effect.key, completion)?;
-                        } else {
-                            // The final save must retain the class recorded with the observations.
-                            if let Some(class) = &completion.failure_class {
-                                state.failure = Some(class.clone());
-                            }
-                            let refusal = completion.ack == Ack::DeliveryAccepted && completion.diagnostic.is_some();
-                            self.look_observations(&state.delivery, completion)?;
-                            if refusal {
-                                state.incident = self.store.load()?.rows.iter()
-                                    .find(|row| row.table == "allowances" && row.id == state.delivery.key)
-                                    .and_then(|row| row.value["incident"].as_str().map(str::to_owned));
-                            }
+                        let refusal = completion.ack == Ack::DeliveryAccepted
+                            && completion.diagnostic.is_some();
+                        self.look_observations(&state.delivery, completion)?;
+                        if refusal {
+                            state.incident = self
+                                .store
+                                .load()?
+                                .rows
+                                .iter()
+                                .find(|row| {
+                                    row.table == "allowances" && row.id == state.delivery.key
+                                })
+                                .and_then(|row| row.value["incident"].as_str().map(str::to_owned));
                         }
                     }
+                }
             }
             Ok(Look::Absent) => {
                 let effect = self
@@ -1048,8 +1065,6 @@ impl Controller {
         Ok(())
     }
 
-
-
     fn look_alive(&mut self, state: &mut AllowanceState, changed: bool) -> Result<bool> {
         let now = self.now_ms();
         let allowance = self.allowance(&state.delivery).clone();
@@ -1071,10 +1086,13 @@ impl Controller {
                     return Ok(true);
                 }
                 decisions::StallAction::Unfinished => {
-                    self.look_failed(state, crate::Error::Permanent {
-                        class: "unfinished",
-                        source: "the upstream never acknowledged the request".into(),
-                    })?;
+                    self.look_failed(
+                        state,
+                        crate::Error::Permanent {
+                            class: "unfinished",
+                            source: "the upstream never acknowledged the request".into(),
+                        },
+                    )?;
                 }
                 // PrismaBuild owns progress. Worktrees has no progress contract.
                 decisions::StallAction::Ignore => {}
@@ -1266,50 +1284,106 @@ impl Controller {
         completion: &Completion,
         commit: &mut Commit,
     ) -> Result<()> {
-        let Some(diagnostic) = &completion.diagnostic else { return Ok(()); };
+        let Some(diagnostic) = &completion.diagnostic else {
+            return Ok(());
+        };
         if completion.ack != Ack::DeliveryAccepted
-            || !matches!(delivery.output, Out::Effect { kind: tl3_kernel::EffectKind::Enqueue, .. })
-        { return Ok(()); }
+            || !matches!(
+                delivery.output,
+                Out::Effect {
+                    kind: tl3_kernel::EffectKind::Enqueue,
+                    ..
+                }
+            )
+        {
+            return Ok(());
+        }
         let world = snapshot::decode(snapshot)?;
         let node = &world.nodes[delivery.node().0 as usize];
-        let publishing = node.phase == Phase::Publishing && node.generation == delivery.generation
+        let publishing = node.phase == Phase::Publishing
+            && node.generation == delivery.generation
             && matches!((node.effect, delivery.output),
                 (Some(effect), Out::Effect {seq, kind:tl3_kernel::EffectKind::Enqueue, ..})
                     if effect.seq == seq && effect.kind == tl3_kernel::EffectKind::Enqueue && !effect.cancelling);
-        if !(publishing || node.operation_pending(tl3_kernel::EffectKind::Enqueue, delivery.generation))
+        if !(publishing
+            || node.operation_pending(tl3_kernel::EffectKind::Enqueue, delivery.generation))
             || node.effect.is_some_and(|effect| effect.cancelling)
-            || snapshot.rows.iter().any(|row| row.table == "incidents"
-                && row.value["open"] == true && row.value["effect"] == delivery.key)
-        { return Ok(()); }
+            || snapshot.rows.iter().any(|row| {
+                row.table == "incidents"
+                    && row.value["open"] == true
+                    && row.value["effect"] == delivery.key
+            })
+        {
+            return Ok(());
+        }
         let id = incident_id(snapshot, "delivery");
-        let class = completion.failure_class.as_deref().unwrap_or("direct_merge_refused");
-        let signature = IncidentSignature { upstream: Upstream::Delivery, class: class.into() };
+        let class = completion
+            .failure_class
+            .as_deref()
+            .unwrap_or("direct_merge_refused");
+        let signature = IncidentSignature {
+            upstream: Upstream::Delivery,
+            class: class.into(),
+        };
         let request = crate::request(snapshot, delivery.node())?;
-        let summary = format!("{} {}", incident_summary(&request.title, &signature, false, None), diagnostic.render());
+        let summary = format!(
+            "{} {}",
+            incident_summary(&request.title, &signature, false, None),
+            diagnostic.render()
+        );
         let mut post = delivery.clone();
         post.key = format!("incident:{id}");
-        post.output = Out::Notice { node: delivery.node(), notice: tl3_kernel::Notice::Incident { needs_rob: false } };
+        post.output = Out::Notice {
+            node: delivery.node(),
+            notice: tl3_kernel::Notice::Incident { needs_rob: false },
+        };
         post.epoch = snapshot.epoch.get();
         post.note = Some(incident_note(&request.repo, request.issue, &summary));
         post.question_context = Some(json!({"issue_title":request.title,"signature":signature,
             "incident_id":id,"publication_diagnostic":diagnostic}));
         if let Some(o) = &self.bootstrap.operations {
-            post.repository = crate::Repository { owner:o.owner.clone(),name:o.name.clone(),installation:o.installation_id };
+            post.repository = crate::Repository {
+                owner: o.owner.clone(),
+                name: o.name.clone(),
+                installation: o.installation_id,
+            };
             post.issue = o.number;
         }
-        commit.rows.push(put("publication_failures", delivery.key.clone(), json!(diagnostic)));
-        commit.rows.push(put("incidents", id.clone(), json!(Incident {
-            id:id.clone(),node:Some(delivery.node()),input_failure:None,open:true,needs_rob:false,
-            blocking:false,summary,signature:signature.clone(),effect:Some(delivery.key.clone()),
-            post_key:Some(post.key.clone()),cause:Some(Cause::of(signature.upstream,class)),
-        })));
-        if let Some(row) = snapshot.rows.iter().find(|row| row.table == "allowances" && row.id == delivery.key) {
+        commit.rows.push(put(
+            "publication_failures",
+            delivery.key.clone(),
+            json!(diagnostic),
+        ));
+        commit.rows.push(put(
+            "incidents",
+            id.clone(),
+            json!(Incident {
+                id: id.clone(),
+                node: Some(delivery.node()),
+                input_failure: None,
+                open: true,
+                needs_rob: false,
+                blocking: false,
+                summary,
+                signature: signature.clone(),
+                effect: Some(delivery.key.clone()),
+                post_key: Some(post.key.clone()),
+                cause: Some(Cause::of(signature.upstream, class)),
+            }),
+        ));
+        if let Some(row) = snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == "allowances" && row.id == delivery.key)
+        {
             let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
             state.incident = Some(id);
             state.failure = Some(class.into());
             state.healthy = false;
             self.rearm(&mut state);
-            commit.rows.push(put("allowances", delivery.key.clone(), json!(state)));
+            commit
+                .rows
+                .push(put("allowances", delivery.key.clone(), json!(state)));
         }
         commit.rows.push(self.allowance_row(post.clone()));
         commit.effects.push(post.into_effect());
@@ -2220,10 +2294,6 @@ pub(crate) fn incident_summary(
     format!("For \"{title}\", {source} {reason}. {next}")
 }
 
-
-
-
-
 #[cfg(test)]
 mod git_failure_tests {
     use super::*;
@@ -2404,4 +2474,3 @@ fn wait_status(result: &Result<crate::executor::WaitRecord>) -> state_decisions:
         Err(_) => state_decisions::WaitStatus::Failed,
     }
 }
-

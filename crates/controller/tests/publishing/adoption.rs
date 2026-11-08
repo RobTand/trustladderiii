@@ -184,7 +184,7 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
     }
     registry.register(
         Upstream::Delivery,
-        server.delivery_adapter(settings,&root.path().join("delivery")),
+        server.delivery_adapter(settings, &root.path().join("delivery")),
     );
     let mut c = Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
     server.register_delivery(&mut c);
