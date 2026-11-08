@@ -1,6 +1,33 @@
 use serde_json::{Value, json};
 use tl3_action::structured::{PAYLOAD_BYTES, Redactor};
 #[test]
+fn cleaned_embedded_json_retains_unicode_with_python_layout() {
+    let secret = format!("TL3FAKE{}", "confidential".repeat(3));
+    let embedded = format!(r#"{{"note":"世界","password":"{secret}"}}"#);
+    let safe = Redactor::default()
+        .payload(&json!(embedded).to_string(), PAYLOAD_BYTES)
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<String>(&safe).unwrap(),
+        r#"{"note": "世界", "password": "[REDACTED]"}"#
+    );
+    assert!(!safe.contains(&secret));
+}
+#[test]
+fn embedded_raw_json_layout_is_reused_only_with_original_budget_headroom() {
+    let embedded = r#"{"note":"ordinary content"}"#;
+    for (limit, expected) in [
+        (512, r#"{"note": "ordinary content"}"#),
+        (PAYLOAD_BYTES, embedded),
+    ] {
+        let safe = Redactor::default()
+            .payload(&json!(embedded).to_string(), limit)
+            .unwrap();
+        assert_eq!(serde_json::from_str::<String>(&safe).unwrap(), expected);
+        assert!(safe.len() <= limit);
+    }
+}
+#[test]
 fn structured_credentials_and_sensitive_file_results_never_publish() {
     let secret = "zE9pR4cV7xB2nM8aQ6tK";
     for input in [
