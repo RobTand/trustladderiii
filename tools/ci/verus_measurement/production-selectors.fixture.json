@@ -1,9 +1,9 @@
 {
-  "source_head": "e67492a4892684a5b0ee23f80df9070d912c9978",
+  "source_head": "7bf84b3c17f10bfb81398e6a5f80fe3dbce2a6de",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "3ab8cfe4d55ec588a68ece068d1bfa1ba2b4e048d898680b556e570606099f79",
-  "groups": 343,
-  "obligations": 540,
+  "source_sha256": "9818a23d17cbdedc61f2224f7474e3498410aff6abb354eb04af73dbbb9e400c",
+  "groups": 344,
+  "obligations": 541,
   "selections": [
     {
       "target": "//crates/kernel:verus_kernel_clones",
@@ -1448,6 +1448,11 @@
     {
       "target": "//crates/kernel:verus_facts_conflict",
       "selector": "kernel::facts#conflict",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_transition_priority",
+      "selector": "kernel::facts_transition_lemmas#priority_result",
       "expected": 1
     },
     {
