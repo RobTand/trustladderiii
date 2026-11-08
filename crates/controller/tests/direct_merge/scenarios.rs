@@ -822,7 +822,7 @@ fn direct_intent_path(fixture: &DirectFixture) -> std::path::PathBuf {
 #[test]
 fn annotation_crash_preserves_consumed_merge_attempts() {
     let mut database = support::Database::start();
-    for _ in [()] {
+    {
         let settings = database.create("direct_r3_current");
         let mut fixture = DirectFixture::new();
         fixture.check(Some("success"));
