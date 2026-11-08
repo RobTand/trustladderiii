@@ -31,6 +31,7 @@ class FluxAdmissionTests(unittest.TestCase):
         self.addCleanup(lock_temporary.cleanup)
         self.lock_root = Path(lock_temporary.name) / 'deploy'
         self.addCleanup(patch.stopall)
+        patch.object(fx.pwd, 'getpwnam', return_value=SimpleNamespace(pw_uid=os.getuid())).start()
         patch.object(fx, 'LOCK_ROOT', self.lock_root, create=True).start()
         self.out = self.root / 'dispatch' / 'build'
         self.out.parent.mkdir()
