@@ -44,7 +44,7 @@ fn fresh_start_rejects_closed_history_and_old_rob_approval() {
         &mut store,
         &bootstrap,
         &[],
-        || instant(),
+        instant,
         |_, _| unreachable!(),
     )
     .unwrap();
