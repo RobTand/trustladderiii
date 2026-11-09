@@ -2487,7 +2487,7 @@ fn worker_daemon_config(
     }
     let marker = root.join("entered");
     let runs = root.join("runs");
-    let config = support::select_flux_text(include_str!("../../config/example.toml"), root)
+    let config = support::select_flux_text(include_str!("../../config/example.toml"))
         .replace("http://127.0.0.1:8890", "http://127.0.0.1:9")
         .replace("port = 5432", &format!("port = {}", settings.port))
         .replace(

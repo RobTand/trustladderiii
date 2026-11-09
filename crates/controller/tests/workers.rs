@@ -53,7 +53,7 @@ fn config(settings: &tl3_config::Store, root: &Path, mode: &str) -> tl3_config::
     config.store = settings.clone();
     config.workers.python = worker_package().join(".venv/bin/python");
     config.workers.runs = root.join("runs");
-    support::select_flux(&mut config, root);
+    support::select_flux(&mut config);
     config.workers.command = vec![
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/worker_model.py")
