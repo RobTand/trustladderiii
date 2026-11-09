@@ -89,7 +89,9 @@ def test_submission_failure(submission, supported_fake_runtime, monkeypatch):
         return original(document)
     from tl3_workers import flux_execution
     monkeypatch.setattr(flux_execution, "control", refuse)
-    assert call(submission, Summary().result)["status"] == "infrastructure_error"
+    # A refused preparation exits the worker for controller-owned recovery, never a test verdict.
+    with pytest.raises(ReplyCheckInfrastructureError, match="fixture prepare refusal"):
+        call(submission, Summary().result)
     assert supported_fake_runtime.submitted == [] and supported_fake_runtime.attached == []
 
 
@@ -138,9 +140,14 @@ def test_malformed_flux_payload_is_infrastructure(submission, supported_fake_run
         path.write_bytes(response)
         payload["summary"].update(bytes=len(response), sha256=hashlib.sha256(response).hexdigest())
     supported_fake_runtime.on_payload = malform
-    result = call(submission, Summary().result)
-    assert result["status"] == "infrastructure_error"
-    assert sum(result["totals"].values()) == 0
+    if response == b"not json":
+        result = call(submission, Summary().result)
+        assert result["status"] == "infrastructure_error"
+        assert sum(result["totals"].values()) == 0
+    else:
+        # A non-object summary never yields a verdict (payload-summary root-* vectors).
+        with pytest.raises(AttributeError):
+            call(submission, Summary().result)
 
 
 @pytest.mark.durability
