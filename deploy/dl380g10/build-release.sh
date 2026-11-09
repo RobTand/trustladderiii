@@ -14,15 +14,45 @@ source_status=$(timeout --kill-after=5s 30s git status --porcelain)
 [[ -z $source_status ]]
 export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-2}
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
-cargo build --release --locked -p tl3-controller --bins --example tl3-deploy
+artifacts=$(mktemp "${output}.artifacts.XXXXXXXX")
+trap 'rm -f -- "$artifacts"' EXIT
+cargo build --release --locked -p tl3-controller --bins --example tl3-deploy --message-format=json-render-diagnostics > "$artifacts"
+# Canary-qualification staging is example-only (FX-REQUAL-43 OQ-1). Cargo's own artifact
+# report must show the controller library and every shipped target built with it off.
+python3 -I - "$artifacts" <<'PY'
+import json
+import sys
+
+FORBIDDEN = 'activation-qualification'
+SHIPPED = {('lib', 'tl3_controller'), ('bin', 'tl3'), ('bin', 'tl3d'), ('bin', 'tl3-run-backend'),
+           ('bin', 'tl3-worker-supervisor'), ('example', 'tl3-deploy')}
+seen = set()
+with open(sys.argv[1], encoding='utf-8') as report:
+    for line in report:
+        if not line.startswith('{'):
+            continue
+        message = json.loads(line)
+        if message.get('reason') != 'compiler-artifact':
+            continue
+        target = message['target']
+        if FORBIDDEN in message.get('features', []):
+            raise SystemExit(f'refusing release: {target["name"]} was built with {FORBIDDEN}')
+        package = message['package_id']
+        if package.split('#', 1)[-1].startswith('tl3-controller@') or package.startswith('tl3-controller '):
+            seen.update((kind, target['name']) for kind in target['kind'])
+missing = sorted(SHIPPED - seen)
+if missing:
+    raise SystemExit(f'refusing release: no Cargo artifact report for {missing}')
+PY
+rm -f -- "$artifacts"
 # Publish only a complete bundle; a failed build/copy leaves no retry-wedging output.
 staging=$(mktemp -d "${output}.staging.XXXXXXXX")
 trap 'rm -rf -- "$staging"' EXIT
 chmod 0700 "$staging"
 target=${CARGO_TARGET_DIR:-$PWD/target}
-# Canary-qualification staging is example-only (FX-REQUAL-43 OQ-1). Refuse release
-# bytes that carry its constructor or packet marker; a scan error also refuses.
-for binary in "$target/release/tl3" "$target/release/tl3d" "$target/release/tl3-worker-supervisor" "$target/release/examples/tl3-deploy"; do
+# Second layer: refuse release bytes that carry the staging constructor or packet
+# marker; a scan error also refuses. tl3-run-backend is built here though not installed.
+for binary in "$target/release/tl3" "$target/release/tl3d" "$target/release/tl3-run-backend" "$target/release/tl3-worker-supervisor" "$target/release/examples/tl3-deploy"; do
   scan=0
   grep -aqF -e for_canary_qualification -e tl3.fx_canary_qualification_staging.v1 -- "$binary" || scan=$?
   if [[ $scan != 1 ]]; then

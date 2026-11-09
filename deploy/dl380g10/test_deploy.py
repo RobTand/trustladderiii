@@ -126,6 +126,28 @@ class PostgresPackageTests(unittest.TestCase):
             self.assertEqual(sleep.call_count, 2)
 
 
+RELEASE_TARGETS = [("lib", "tl3_controller"), ("bin", "tl3"), ("bin", "tl3d"), ("bin", "tl3-run-backend"),
+                   ("bin", "tl3-worker-supervisor"), ("example", "tl3-deploy")]
+
+
+def release_messages(features=(), targets=RELEASE_TARGETS):
+    """Cargo --message-format=json compiler-artifact lines for the tl3-controller release build."""
+    package = "path+file:///fixture/crates/controller#tl3-controller@0.1.0"
+    lines = [json.dumps({"reason": "compiler-artifact", "package_id": package,
+                         "target": {"kind": [kind], "name": name}, "features": list(features)})
+             for kind, name in targets]
+    lines.append(json.dumps({"reason": "build-finished", "success": True}))
+    return "\n".join(lines) + "\n"
+
+
+def fake_release_cargo(path, messages, extra=""):
+    """A fake cargo that writes release binaries and prints the given JSON messages on stdout."""
+    path.write_text("#!/bin/sh\nmkdir -p \"$CARGO_TARGET_DIR/release/examples\"\n"
+                    "for name in tl3 tl3d tl3-run-backend tl3-worker-supervisor; do printf binary > \"$CARGO_TARGET_DIR/release/$name\"; done\n"
+                    + extra + "cat <<'CARGO_MESSAGES'\n" + messages + "CARGO_MESSAGES\n")
+    path.chmod(0o700)
+
+
 class ReleasePublicationTests(unittest.TestCase):
     def test_failed_copy_does_not_publish_or_wedge_release_retry(self):
         script = Path(__file__).with_name("build-release.sh").resolve()
@@ -135,12 +157,9 @@ class ReleasePublicationTests(unittest.TestCase):
             tools.mkdir()
             git = tools / "git"
             git.write_text("#!/bin/sh\ncase \"$*\" in *status*) exit 0;; *rev-parse*) echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;; esac\n")
-            cargo = tools / "cargo"
-            cargo.write_text("#!/bin/sh\nmkdir -p \"$CARGO_TARGET_DIR/release/examples\"\n"
-                             "for name in tl3 tl3d tl3-worker-supervisor; do printf binary > \"$CARGO_TARGET_DIR/release/$name\"; done\n"
-                             "if [ \"$TL3_TEST_SKIP_HELPER\" = 0 ]; then printf helper > \"$CARGO_TARGET_DIR/release/examples/tl3-deploy\"; fi\n")
+            fake_release_cargo(tools / "cargo", release_messages(),
+                               "if [ \"$TL3_TEST_SKIP_HELPER\" = 0 ]; then printf helper > \"$CARGO_TARGET_DIR/release/examples/tl3-deploy\"; fi\n")
             git.chmod(0o700)
-            cargo.chmod(0o700)
             output = root / "release"
             environment = os.environ | {"PATH": str(tools) + os.pathsep + os.environ["PATH"],
                                          "CARGO_TARGET_DIR": str(root / "target"), "TL3_TEST_SKIP_HELPER": "1"}
@@ -158,6 +177,7 @@ class ReleasePublicationTests(unittest.TestCase):
         """FX-REQUAL-43 OQ-1: the example-only staging gate never reaches release artifacts."""
         script = Path(__file__).with_name("build-release.sh").resolve()
         for name, payload in [("tl3d", "tl3.fx_canary_qualification_staging.v1"),
+                              ("tl3-run-backend", "tl3.fx_canary_qualification_staging.v1"),
                               ("examples/tl3-deploy", "_ZN4core24for_canary_qualification17h0E")]:
             with self.subTest(binary=name), \
                  tempfile.TemporaryDirectory(prefix="tl3-build-qualification-") as temporary:
@@ -166,12 +186,10 @@ class ReleasePublicationTests(unittest.TestCase):
                 tools.mkdir()
                 git = tools / "git"
                 git.write_text("#!/bin/sh\ncase \"$*\" in *status*) exit 0;; *rev-parse*) echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;; esac\n")
-                cargo = tools / "cargo"
-                cargo.write_text("#!/bin/sh\nmkdir -p \"$CARGO_TARGET_DIR/release/examples\"\n"
-                                 "for name in tl3 tl3d tl3-worker-supervisor examples/tl3-deploy; do printf binary > \"$CARGO_TARGET_DIR/release/$name\"; done\n"
-                                 "printf '\\000%s\\000' \"$TL3_TEST_PAYLOAD\" > \"$CARGO_TARGET_DIR/release/$TL3_TEST_BINARY\"\n")
+                fake_release_cargo(tools / "cargo", release_messages(),
+                                   "printf helper > \"$CARGO_TARGET_DIR/release/examples/tl3-deploy\"\n"
+                                   "printf '\\000%s\\000' \"$TL3_TEST_PAYLOAD\" > \"$CARGO_TARGET_DIR/release/$TL3_TEST_BINARY\"\n")
                 git.chmod(0o700)
-                cargo.chmod(0o700)
                 output = root / "release"
                 environment = os.environ | {"PATH": str(tools) + os.pathsep + os.environ["PATH"],
                                              "CARGO_TARGET_DIR": str(root / "target"),
@@ -181,6 +199,51 @@ class ReleasePublicationTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(b"refusing release", result.stderr)
                 self.assertFalse(output.exists())
+
+    def test_release_build_with_canary_feature_or_unproven_features_refuses(self):
+        """FX-REQUAL-43 OQ-1 SHOULD-1: Cargo's own artifact report must show the feature off."""
+        script = Path(__file__).with_name("build-release.sh").resolve()
+        cases = {
+            "feature on the controller library": (
+                release_messages(), release_messages(features=["activation-qualification"],
+                                                     targets=RELEASE_TARGETS[:1]),
+                b"activation-qualification"),
+            "feature on a shipped binary": (
+                release_messages(), release_messages(features=["activation-qualification"],
+                                                     targets=[("bin", "tl3d")]),
+                b"activation-qualification"),
+            "controller library artifact missing": (
+                release_messages(targets=RELEASE_TARGETS[1:]), "", b"no Cargo artifact report"),
+            "no artifact report at all": ("", "", b"no Cargo artifact report"),
+        }
+        for case, (messages, extra_messages, reason) in cases.items():
+            with self.subTest(case=case), \
+                 tempfile.TemporaryDirectory(prefix="tl3-build-features-") as temporary:
+                root = Path(temporary)
+                tools = root / "tools"
+                tools.mkdir()
+                git = tools / "git"
+                git.write_text("#!/bin/sh\ncase \"$*\" in *status*) exit 0;; *rev-parse*) echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;; esac\n")
+                git.chmod(0o700)
+                fake_release_cargo(tools / "cargo", messages + extra_messages,
+                                   "printf helper > \"$CARGO_TARGET_DIR/release/examples/tl3-deploy\"\n")
+                output = root / "release"
+                environment = os.environ | {"PATH": str(tools) + os.pathsep + os.environ["PATH"],
+                                             "CARGO_TARGET_DIR": str(root / "target")}
+                result = subprocess.run(["bash", str(script), str(output), "a" * 40], env=environment,
+                                        capture_output=True, timeout=30)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(b"refusing release", result.stderr)
+                self.assertIn(reason, result.stderr)
+                self.assertFalse(output.exists())
+                self.assertEqual(sorted(path.name for path in root.iterdir()), ["target", "tools"])
+
+    def test_release_build_asks_cargo_for_its_artifact_report(self):
+        text = Path(__file__).with_name("build-release.sh").read_text()
+        builds = [line for line in text.splitlines() if line.startswith("cargo build")]
+        self.assertEqual(len(builds), 1)
+        self.assertIn("--message-format=json-render-diagnostics", builds[0])
+        self.assertNotIn("--features", builds[0])
 
 
 class FreshInitTests(unittest.TestCase):
