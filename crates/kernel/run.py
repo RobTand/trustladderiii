@@ -52,7 +52,7 @@ if mode == "manifest":
             memory = 10
         elif name in {"apply_rebase_clean", "apply_rebase_needs_changes"}:
             memory = 48
-        elif name in {"apply_new_request", "apply_new_adoption", "progress_from_queued", "apply_reviewer_out_of_room"}:
+        elif name in {"apply_new_request", "apply_new_adoption", "progress_from_awaiting_delivery", "apply_reviewer_out_of_room"}:
             memory = 44
         elif name.startswith("progress_from_"):
             memory = 24
