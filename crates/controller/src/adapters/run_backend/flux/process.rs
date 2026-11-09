@@ -244,6 +244,7 @@ impl Flux {
             "-t".into(),
             format!("{}s", request.walltime_seconds),
             "--env=-*".into(),
+            "--rlimit=-*".into(),
             "--input=/dev/null".into(),
             format!("--output={}/stdout", out.display()),
             format!("--error={}/stderr", out.display()),
