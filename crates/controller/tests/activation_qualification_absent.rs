@@ -128,14 +128,19 @@ fn no_workspace_crate_generated_build_or_deploy_build_enables_the_feature() {
         "deploy/dl380g10/verify.sh",
     ] {
         let text = read(&checkout.join(script));
-        assert!(!text.contains(FEATURE), "{script} names the feature");
         for line in text.lines().filter(|line| line.contains("cargo ")) {
             assert!(
                 !line.contains("--features") && !line.contains("--all-features"),
                 "{script} builds with extra features: {line}"
             );
+            assert!(!line.contains(FEATURE), "{script} builds with the feature: {line}");
         }
     }
+    // The release build refuses from Cargo's own artifact report, not only from bytes.
+    let release = read(&checkout.join("deploy/dl380g10/build-release.sh"));
+    assert!(release.contains("--message-format=json-render-diagnostics"));
+    assert!(release.contains(&format!("FORBIDDEN = '{FEATURE}'")));
+    assert!(!read(&checkout.join("deploy/dl380g10/verify.sh")).contains(FEATURE));
 }
 
 fn rust_sources(directory: &Path, found: &mut Vec<PathBuf>) {
