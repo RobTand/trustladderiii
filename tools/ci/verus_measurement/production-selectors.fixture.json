@@ -1,9 +1,9 @@
 {
-  "source_head": "552cfe2ebecfc5c68242ff5ff2eea56965568ee8",
+  "source_head": "65eaf2044a3d22ea7a7897a14d909e2bb5a57378",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "595507277299d24f39f12e1dc16fe2052faf4bd1a323c2c237c9ef05902951d3",
+  "source_sha256": "9f4aecd45129c6b3c983e3b7966ef58515aa37ba3a1f706300aea7cda741bd55",
   "groups": 422,
-  "obligations": 604,
+  "obligations": 605,
   "selections": [
     {
       "target": "//crates/kernel:verus_dependencies_node_update_preserves",
@@ -1578,7 +1578,7 @@
     {
       "target": "//crates/kernel:verus_footprint_disjoint_symmetric",
       "selector": "kernel::footprint#disjoint_symmetric",
-      "expected": 1
+      "expected": 2
     },
     {
       "target": "//crates/kernel:verus_ranks_node_distance_definition",
