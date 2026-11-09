@@ -35,8 +35,9 @@ fn malformed_wait_references_and_retired_action_keys_are_redacted() {
         );
         assert_ne!(stored["wait_reference"], json!(value), "{value}");
     }
+    // `action_key` is a sensitive key name, so sanitize drops it; nothing restores it.
     assert_eq!(
-        cited(json!({"action_key": "a".repeat(64)}))["action_key"],
-        json!("[redacted]")
+        cited(json!({"action_key": "a".repeat(64)})).get("action_key"),
+        None
     );
 }

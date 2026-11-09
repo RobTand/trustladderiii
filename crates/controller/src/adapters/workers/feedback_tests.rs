@@ -882,18 +882,27 @@ fn prismabuild_selection_refuses_the_maker() {
 }
 
 /// Ingest and audit carry worker tests only to run the configured generator. With one
-/// configured they are refused under PrismaBuild; without one they need no executor.
+/// configured they are refused under PrismaBuild; without one, or under Flux, the PB
+/// refusal never applies. (This fixture has no ingest issue materials; full Flux ingest
+/// and audit requests are built in input_contract_tests::t653.)
 #[test]
 fn prismabuild_selection_refuses_generator_enabled_ingest_and_audit() {
+    let refused = |result: &Result<Value>| {
+        matches!(
+            result,
+            Err(crate::Error::Invalid(message)) if message.contains("execution_backend = 'flux'")
+        )
+    };
     let mut f = Fixture::new();
     for role in ["ingest", "audit"] {
-        let flux = tests_request(&mut f, role, false, true).unwrap();
-        assert_eq!(
-            flux["inputs"]["tests"]["execution"]["backend"], "flux",
+        assert_refused(tests_request(&mut f, role, true, true), role);
+        assert!(
+            !refused(&tests_request(&mut f, role, false, true)),
             "{role}"
         );
-        assert_refused(tests_request(&mut f, role, true, true), role);
-        let plain = tests_request(&mut f, role, true, false).unwrap();
-        assert!(plain["inputs"].get("tests").is_none(), "{role}");
+        assert!(
+            !refused(&tests_request(&mut f, role, true, false)),
+            "{role}"
+        );
     }
 }
