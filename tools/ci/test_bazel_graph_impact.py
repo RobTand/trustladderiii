@@ -353,6 +353,20 @@ class BazelGraphTests(unittest.TestCase):
                 self.assertIn('existing source fanout grew', errors)
                 self.assertIn('existing test reach grew', errors)
 
+    def test_exact_edge_object_without_pairs_does_not_credit_growth(self):
+        for pairs in [[], [['//tests:first', '//pkg:source.rs']] * 2]:
+            with self.subTest(pairs=pairs):
+                errors = '; '.join(self.check_exact_edges(pairs=pairs)['errors'])
+                self.assertIn('explicit nonempty unique list', errors)
+                self.assertIn('existing source fanout grew', errors)
+                self.assertIn('existing test reach grew', errors)
+
+    def test_exact_edge_existing_pair_does_not_credit_unlisted_gain(self):
+        errors = '; '.join(self.check_exact_edges(
+            pairs=[['//tests:second', '//pkg:source.rs']])['errors'])
+        self.assertIn('existing source fanout grew: //pkg:source.rs +1', errors)
+        self.assertIn('existing test reach grew: //tests:first +1', errors)
+
     def relocation_graphs(self, *, unlisted=False, old_present=False, other_new=False,
                           new_missing=False):
         origin, destination = '//old:engine.rs', '//new:engine.rs'
