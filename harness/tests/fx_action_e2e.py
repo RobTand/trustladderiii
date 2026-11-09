@@ -286,6 +286,8 @@ sys.exit(0)
     faulthandler.dump_traceback_later(10, repeat=True)
     started = time.monotonic()
     try:
+        # Test-only contention model inside the measured window; the payload is unchanged.
+        time.sleep(settings.get('injected_latency_seconds', 0))
         code, result = runtime.collect_host_payload(
             [sys.executable, '-I', '-B', __file__, str(root), str(source), 'action'], timeout=80)
         print(json.dumps({'code': code, 'result': result}), flush=True)

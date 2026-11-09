@@ -748,6 +748,8 @@ fn generated_action_case(mode: &str) -> Fixture {
         serde_json::to_vec(&json!({
             "environment": environment, "output_dir": f.intent.output_dir,
             "scratch": scratch.path().join("fABC"), "mode": mode,
+            "injected_latency_seconds": std::env::var("FX_TEST_ACTION_LATENCY_SECONDS")
+                .map_or(0.0, |seconds| seconds.parse::<f64>().unwrap()),
             "source": Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap(),
         }))
         .unwrap(),
@@ -1398,6 +1400,8 @@ set -eu
 fixture=$1
 shift
 printf '%s\n' "$*" >> "$fixture/calls"
+# Test-only contention model: delay every native call, never change its result.
+if [ -e "$fixture/native-latency" ]; then /bin/sleep "$(cat "$fixture/native-latency")"; fi
 mode=$(cat "$fixture/mode")
 case "$1" in
 submit)
@@ -1444,6 +1448,9 @@ text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
 "#).unwrap();
         fs::set_permissions(&native, fs::Permissions::from_mode(0o555)).unwrap();
         fs::write(p.join("mode"), "normal").unwrap();
+        if let Ok(seconds) = std::env::var("FX_TEST_NATIVE_LATENCY_SECONDS") {
+            fs::write(p.join("native-latency"), seconds).unwrap();
+        }
         fs::write(p.join("submit-id"), "fABC\n").unwrap();
         let all = json!({"version":1,"execution":{"R_lite":[{"rank":"0","children":{"core":"0-3"}}],"nodelist":["fixture-host"]}});
         fs::write(p.join("all.json"), all.to_string()).unwrap();
