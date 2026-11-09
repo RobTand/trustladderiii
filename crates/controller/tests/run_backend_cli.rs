@@ -22,6 +22,11 @@ fn cli(request: &Value) -> Vec<Value> {
         .collect()
 }
 
+/// Every suite Python that may import from a source checkout runs with `-B`. The flag is
+/// on the interpreter argv, so it survives the `env_clear()` of product spawn paths that
+/// drops PYTHONDONTWRITEBYTECODE; the checkout stays byte-clean.
+const PYTHON_NO_BYTECODE: &str = "-B";
+
 /// Rob 11-03: a performance-budget overrun is a recorded warning, never a failure
 /// or a rerun. Only a contractual deadline (a product timeout) fails a test.
 /// The line follows the repo `{"budget_warning": ...}` convention (tools/bazel/rust_runner.py).
@@ -901,6 +906,7 @@ fn generated_action_case(mode: &str) -> Fixture {
         .map(PathBuf::from)
         .unwrap_or_else(|| source.to_owned());
     let output = Command::new("/home/rob/venvs/pb-cpu/bin/python")
+        .arg(PYTHON_NO_BYTECODE)
         .arg(source.join("harness/tests/fx_action_e2e.py"))
         .arg(f.root.path())
         .arg(action_source)
@@ -2718,7 +2724,7 @@ impl Fixture {
         .unwrap();
         fs::write(
             source.join("cleanup-helper"),
-            r#"#!/usr/bin/python3
+            r#"#!/usr/bin/python3 __PYTHON_FLAGS__
 import json,sys,pathlib,time
 __SCRATCH_FIXTURE__
 facts=json.load(sys.stdin)
@@ -2749,7 +2755,9 @@ control=json.loads(control.read_text()) if control.exists() else {}
 time.sleep(control.get('delay',0))
 print((root/('trusted-stop-'+owned['execution']+'.json')).read_text(),flush=True)
 sys.exit(control.get('exit_code',0))
-"#.replace("__SCRATCH_FIXTURE__", include_str!("python/fx_scratch_helper.py")),
+"#
+            .replace("__PYTHON_FLAGS__", PYTHON_NO_BYTECODE)
+            .replace("__SCRATCH_FIXTURE__", include_str!("python/fx_scratch_helper.py")),
         )
         .unwrap();
         let files = ["lib/tl3_harness/runner.py", "lib/tl3_harness/runtime.py"]
