@@ -477,6 +477,7 @@ def test_crash_at_each_flux_checkpoint_boundary_never_submits_twice(submission, 
     and a run whose checkpoint is durable is resumed, never prepared or submitted again."""
     from pb_fixtures import flux_settings
     from tl3_harness.test_tool import Summary
+    from tl3_workers.tools import Worktree, build_tools
     fake = supported_fake_runtime
     durable = {}
     armed = [True]
