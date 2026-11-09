@@ -685,6 +685,7 @@ tl3_py_test(
     deps = [
         ":conftest",
         ":message_invariants",
+        ":pb_fixtures",
         ":worker_process",
         "//workers/src",
         "@tl3_pip//jsonschema",
@@ -847,6 +848,7 @@ py_library(
     srcs = ["pb_fixtures.py"],
     visibility = ["//visibility:public"],
     deps = [
+        "//harness/src/tl3_harness",
         "//workers/src",
         "@tl3_pip//pytest",
     ],
@@ -1002,6 +1004,7 @@ tl3_py_test(
     srcs = ["test_pb_tests_group_limits.py"],
     deps = [
         ":conftest",
+        ":pb_fixtures",
         ":worker_process",
         "//harness/src/tl3_harness",
         "//workers/src",
