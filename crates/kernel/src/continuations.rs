@@ -48,6 +48,7 @@ pub(super) fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
+        transition_safety::no_effects(transition_safety::emitted(*old(out), *final(out))),
 ] {
     kernel_snapshot! { before_go_on = w.nodes@[i as int] }
     continue_node(&mut w.nodes[i], i, q, deposit, out);
@@ -87,7 +88,10 @@ pub(super) fn continue_node(m: &mut Node, i: usize, q: Question, deposit: u8,
         final(m).review_stop == old(m).review_stop, final(m).attempt == old(m).attempt,
         final(m).replanned == old(m).replanned,
         final(out).len <= old(out).len + 1,
+        transition_safety::no_effects(transition_safety::emitted(*old(out), *final(out))),
 ] proof [reveal(distance);] {
+    kernel_snapshot! { before_out = *out }
+    kernel_proof! { transition_safety::quiet(*out); }
     m.credit.fund_and_pay(deposit, q.cost);
     m.question = None;
     match q.cont {
@@ -99,6 +103,9 @@ pub(super) fn continue_node(m: &mut Node, i: usize, q: Question, deposit: u8,
             set_phase(m, Phase::Planning { must_split });
             if !must_split && m.replanned && q.kind == QKind::OutOfCredit {
                 notice(out, i, Notice::Note(NoteKind::Replanned));
+                kernel_proof! {
+                    transition_safety::noticed(before_out@, *out, NodeId(i as u64), Notice::Note(NoteKind::Replanned));
+                }
             }
         }
         Cont::Ready(r) => set_phase(m, Phase::Ready(r)),
