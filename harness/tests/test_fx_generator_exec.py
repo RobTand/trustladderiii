@@ -200,6 +200,7 @@ def flux(tmp_path, monkeypatch):
     monkeypatch.setenv('PATH', f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '/usr/bin:/bin')}")
     monkeypatch.setenv('HOME', str(tmp_path))
     monkeypatch.setenv('XDG_RUNTIME_DIR', str(xdg))
+    monkeypatch.setenv('TL3_EXECUTION_BACKEND', 'flux')
     output = tmp_path / 'output'
     output.mkdir()
     scratch_root = tmp_path / 'scratch'
