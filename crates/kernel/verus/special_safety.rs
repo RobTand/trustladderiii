@@ -47,21 +47,17 @@ pub(super) proof fn pool_line_order(w: World, i: int)
 /// accepted worlds: an Unplanned request holds no slot and no pool run, and
 /// its internal step (admission to Planning, or none) keeps both released.
 /// The harness's other assertions are scheduler::advance's Unplanned ensures
-/// (changed == waiters < W) and advance_post (rank decrease).
+/// (changed == waiters < W) and advance_post (rank decrease). Only the real
+/// step's advance_post is needed, not its enabling condition (mutant e3d4ff4e).
 pub(super) proof fn gate_planning_holds_nothing(w: World, i: int, after: Node,
-    ticket_before: u64, ticket_after: u64, changed: bool, context: AdvanceContext)
+    ticket_before: u64, ticket_after: u64, changed: bool)
     requires checking::accepted(w), 0 <= i < w.nodes@.len(),
         w.nodes@[i].phase == Phase::Unplanned,
         advance_post(w.nodes@[i], after, ticket_before, ticket_after, changed),
-        changed == advance_enabled(w.nodes@[i], context),
     ensures !w.nodes@[i].holds && !w.nodes@[i].pool,
         !after.holds && !after.pool,
 {
     checking::accepted_node(w, i);
     reveal(advance_post);
-    let b = w.nodes@[i];
-    if changed {
-        assert(!b.waiting_incident && b.effect.is_none());
-    }
 }
 }
