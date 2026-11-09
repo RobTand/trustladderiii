@@ -128,7 +128,7 @@ def main():
                         json.loads(persisted[destination])
                 renames = [call for call in calls if call[0] == 'rename']
                 assert all(call[2] in {'summary.json', 'completion.json'} for call in renames)
-    print('maker schedules verify crash cuts and complete JSON publication through the current Rust gate')
+    print('maker schedules verify crash cuts and complete JSON publication of persisted bytes through the current Rust gate')
 
 
 if __name__ == '__main__':

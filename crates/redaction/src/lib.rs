@@ -289,6 +289,24 @@ fn matches<'a>(regex: &Arc<Regex>, text: &'a str) -> Result<Vec<Captures<'a>>> {
         .map(|m| m.map_err(|e| e.to_string()))
         .collect()
 }
+fn scan_matches<'a>(regex: &Arc<Regex>, text: &'a str, optimized: bool) -> Result<Vec<Captures<'a>>> {
+    if optimized && text.is_ascii() {
+        // CACHE retains every original Arc, so its pointer is a stable identity.
+        static ASCII: LazyLock<Mutex<HashMap<usize, Arc<Regex>>>> = LazyLock::new(Mutex::default);
+        let key = Arc::as_ptr(regex) as usize;
+        let projected = {
+            let mut cache = ASCII.lock().map_err(|_| "ASCII redaction cache poisoned")?;
+            if let Some(regex) = cache.get(&key) { regex.clone() }
+            else {
+                let pattern = compatibility::project_ascii(regex.as_str())?;
+                let projected = Arc::new(Regex::new(&pattern).map_err(|e| e.to_string())?);
+                cache.insert(key, projected.clone());
+                projected
+            }
+        };
+        matches(&projected, text)
+    } else { matches(regex, text) }
+}
 fn get<'a>(cap: &Captures<'a>, name: &str) -> &'a str {
     cap.name(name).map_or("", |m| m.as_str())
 }
@@ -621,7 +639,7 @@ impl ScanMemo {
             return Ok(tokens.clone());
         }
         let mut tokens = Vec::new();
-        for token in matches(&rule("NEAR_TOKEN")?, text)? {
+        for token in scan_matches(&rule("NEAR_TOKEN")?, text, self.enabled)? {
             let whole = token.get(0).ok_or("missing nearby token")?;
             let quoted = token.name("qv").is_some();
             tokens.push(NearToken { whole_start: whole.start(),
@@ -665,7 +683,7 @@ fn checked(check: Check, cap: &Captures<'_>, text: &str, memo: &mut ScanMemo) ->
                 .rfind('\n')
                 .map_or(low, |i| low + i + 1);
             if full_rule("WORD", value)?
-                && matches(&rule("PROSE_WORDS")?, &text[line..whole.start()])?.len() >= 2
+                && scan_matches(&rule("PROSE_WORDS")?, &text[line..whole.start()], memo.enabled)?.len() >= 2
             {
                 return Ok(None);
             }
@@ -762,12 +780,12 @@ fn spans_memoized(text: &str, enabled: bool) -> Result<Vec<Span>> {
     let mut memo = ScanMemo::new(enabled);
     let chars = characters()?;
     let mut found = azure_sas::spans(text);
-    let ends = matches(&rule("PRIVATE_END")?, text)?
+    let ends = scan_matches(&rule("PRIVATE_END")?, text, enabled)?
         .iter()
         .filter_map(|c| c.get(0).map(|m| m.end()))
         .collect::<Vec<_>>();
     let mut reach = 0;
-    for begin in matches(&rule("PRIVATE_HEADER")?, text)? {
+    for begin in scan_matches(&rule("PRIVATE_HEADER")?, text, enabled)? {
         let begin = begin.get(0).ok_or("missing private header")?;
         if begin.start() < reach {
             continue;
@@ -788,7 +806,7 @@ fn spans_memoized(text: &str, enabled: bool) -> Result<Vec<Span>> {
         found.push((begin.start(), reach));
     }
     for pattern in policy().patterns {
-        for cap in matches(&rx(pattern)?, text)? {
+        for cap in scan_matches(&rx(pattern)?, text, enabled)? {
             let value = cap
                 .name("v")
                 .or_else(|| cap.get(0))
@@ -797,13 +815,13 @@ fn spans_memoized(text: &str, enabled: bool) -> Result<Vec<Span>> {
         }
     }
     for &(pattern, check) in policy().checked {
-        for cap in matches(&rx(pattern)?, text)? {
+        for cap in scan_matches(&rx(pattern)?, text, enabled)? {
             if let Some(span) = checked(check, &cap, text, &mut memo)? {
                 found.push(span);
             }
         }
     }
-    for word in matches(&rule("NEAR_WORD")?, text)? {
+    for word in scan_matches(&rule("NEAR_WORD")?, text, enabled)? {
         let word = word.get(0).ok_or("missing nearby word")?;
         let rest = &text[word.end()..];
         let high = prefix(rest, policy().near_chars + 256).len();
@@ -822,16 +840,16 @@ fn spans_memoized(text: &str, enabled: bool) -> Result<Vec<Span>> {
         }
     }
     if text.contains("Secret") {
-        for block in matches(&rule("SECRET_DATA")?, text)? {
+        for block in scan_matches(&rule("SECRET_DATA")?, text, enabled)? {
             let body = block.name("b").ok_or("missing secret body")?;
-            for value in matches(&rule("SECTION_VALUE")?, body.as_str())? {
+            for value in scan_matches(&rule("SECTION_VALUE")?, body.as_str(), enabled)? {
                 if let Some((start, end)) = span(&value, "v") {
                     found.push((body.start() + start, body.start() + end));
                 }
             }
         }
     }
-    let sections = matches(&rule("SECTION")?, text)?;
+    let sections = scan_matches(&rule("SECTION")?, text, enabled)?;
     for (index, section) in sections.iter().enumerate() {
         if label_kind(chars.trim(get(section, "l")))? == Some(Kind::Strong) {
             let start = section.get(0).ok_or("missing section")?.end();
@@ -839,7 +857,7 @@ fn spans_memoized(text: &str, enabled: bool) -> Result<Vec<Span>> {
                 .get(index + 1)
                 .and_then(|c| c.get(0))
                 .map_or(text.len(), |m| m.start());
-            for value in matches(&rule("SECTION_VALUE")?, &text[start..end])? {
+            for value in scan_matches(&rule("SECTION_VALUE")?, &text[start..end], enabled)? {
                 if let Some((a, b)) = span(&value, "v") {
                     found.push((start + a, start + b));
                 }
@@ -888,7 +906,7 @@ fn spans_memoized(text: &str, enabled: bool) -> Result<Vec<Span>> {
             position += line.len() + 1;
         }
     }
-    for cap in matches(&rule("CANDIDATE")?, text)? {
+    for cap in scan_matches(&rule("CANDIDATE")?, text, enabled)? {
         let matched = cap.get(0).ok_or("missing candidate")?;
         let token = matched.as_str();
         let mut position = matched.start();
@@ -1111,6 +1129,32 @@ print(json.dumps(out))
     fn same_spans(source: &str) {
         assert_eq!(super::spans_memoized(source, true), super::spans_memoized(source, false),
             "memoized scanner differs from the original uncached operations, bytes={}", source.len());
+    }
+
+    #[test]
+    fn memoization_ascii_projection_preserves_captures_and_boundaries() {
+        fn captures(regex: &std::sync::Arc<fancy_regex::Regex>, text: &str, optimized: bool)
+            -> Vec<Vec<Option<(usize,usize)>>> {
+            super::scan_matches(regex,text,optimized).unwrap().into_iter().map(|cap|
+                (0..cap.len()).map(|i|cap.get(i).map(|m|(m.start(),m.end()))).collect()).collect()
+        }
+        let patterns = [r"\w+",r"\W+",r"\d+",r"\D+",r"\s+",r"\S+",
+            r"\b(?P<v>\w+)\b",r"\B(?P<v>\w+)\B",r"(?i)[a-z]+",
+            r"(?i)[İıſK]+",r"(?P<v>[^\w\s]+)",r"(?P<v>[a-z]+)=(?P=v)"];
+        let mut cases = 0;
+        for pattern in patterns {
+            let regex = super::rx(pattern).unwrap();
+            for byte in 0u8..=127 {
+                let character = char::from(byte);
+                for text in [format!("{character}"),format!("a{character}K={character} a=a\n")] {
+                    assert_eq!(captures(&regex,&text,true),captures(&regex,&text,false),
+                        "ASCII projection capture property pattern={pattern} byte={byte}");
+                    cases += 1;
+                }
+            }
+        }
+        assert_eq!(cases,3072);
+        println!("ASCII projection exact capture properties={cases}");
     }
 
     #[test]
