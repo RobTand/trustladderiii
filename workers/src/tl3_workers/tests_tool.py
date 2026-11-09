@@ -214,6 +214,8 @@ def _git(root, *args):
 
 
 def _verified_test_summary(result, run_records):
+    if not isinstance(result, dict):
+        raise ValueError("Invalid summary structure")
     if result.get('declared_symptom') is not None:
         summaries = result.get('symptom_runs', [])
         if len(run_records) != len(summaries):
