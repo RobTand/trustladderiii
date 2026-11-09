@@ -760,3 +760,289 @@ fn the_pool_goes_to_the_better_priority_and_the_older_ticket_waits() {
     assert!(!g.node(older).pool && g.w.pool_capacity == 1);
     assert_eq!(g.node(older).ticket, older_ticket);
 }
+
+// ---- K5 G17 second cut, part A ----
+
+/// proofs.rs:233 cover!(after != before, "the event changes the world"). From a
+/// consistent settled world (settle is then the identity), a changed `step`
+/// result means the event's `apply` changed the world.
+fn changes(family: &str, w: &World, event: Event) {
+    assert!(w.valid(), "{family}: the pre-state is consistent and settled");
+    assert_eq!(settle_world(w.clone()).0, *w, "{family}: settle is the identity here");
+    let after = step(w.clone(), event).world;
+    assert!(after.valid(), "{family}: the result is consistent and settled");
+    assert_ne!(after, *w, "{family}: the event changes the world");
+}
+
+impl Run {
+    fn command(&self, command: Command) -> Event {
+        Event::Command {
+            node: NodeId(0),
+            id: self.node().last_cmd + 1,
+            command,
+        }
+    }
+
+    fn answer(&self, answer: Answer) -> Event {
+        let q = self.node().question.expect("an open question");
+        self.command(Command::Answer {
+            question: q.id,
+            answer,
+        })
+    }
+
+    fn ack_now(&self, ack: Ack) -> Event {
+        Event::Ack {
+            node: NodeId(0),
+            seq: self.node().effect.expect("an effect in flight").seq,
+            ack,
+        }
+    }
+
+    fn planning() -> Run {
+        let mut run = Run::new(false);
+        run.reply(Reply::IngestDone { size: 1 });
+        run.reply(Reply::AuditAgrees);
+        assert!(matches!(run.node().phase, Phase::Planning { .. }) && run.awaiting());
+        run
+    }
+
+    fn making() -> Run {
+        let mut run = Run::planning();
+        let footprint = run.w.intern_footprint([FileId(0)]);
+        run.reply(Reply::PlanLeaf {
+            footprint,
+            fits: true,
+        });
+        assert!(run.node().phase == Phase::Making && run.awaiting());
+        run
+    }
+}
+
+#[test]
+fn every_event_family_can_change_the_world() {
+    let fresh = World::new(&[1], 1);
+    changes("apply_new_request", &fresh, Event::NewRequest {
+        repo: RepoId(0),
+        priority: Priority::Unranked,
+    });
+    changes("apply_new_adoption", &fresh, Event::NewAdoption {
+        repo: RepoId(0),
+        head: HeadId(7),
+        priority: Priority::Unranked,
+    });
+
+    let ingesting = Run::new(false);
+    assert!(ingesting.awaiting());
+    changes("apply_ingest_done", &ingesting.w, ingesting.reply_now(Reply::IngestDone { size: 1 }));
+    changes(
+        "apply_ingest_early_end",
+        &ingesting.w,
+        ingesting.reply_now(Reply::IngestEarlyEnd(EarlyEnd::Duplicate)),
+    );
+    changes("apply_protected_paths", &ingesting.w, ingesting.reply_now(Reply::ProtectedPaths));
+
+    let mut auditing = Run::new(false);
+    auditing.reply(Reply::IngestDone { size: 1 });
+    changes("apply_audit_agrees", &auditing.w, auditing.reply_now(Reply::AuditAgrees));
+
+    let mut planning = Run::planning();
+    let footprint = planning.w.intern_footprint([FileId(0)]);
+    changes("apply_plan_leaf", &planning.w, planning.reply_now(Reply::PlanLeaf { footprint, fits: true }));
+    changes("apply_plan_split", &planning.w, planning.reply_now(Reply::PlanSplit));
+    changes("apply_plan_cant_meet", &planning.w, planning.reply_now(Reply::PlanCantMeet));
+
+    let mut making = Run::making();
+    changes("apply_maker_done", &making.w, making.reply_now(Reply::MakerDone { head: HeadId(5) }));
+    let files = making.w.intern_footprint([FileId(1)]);
+    changes("apply_maker_needs_files", &making.w, making.reply_now(Reply::MakerNeedsFiles { files, fits: true }));
+    changes("apply_maker_cant_meet", &making.w, making.reply_now(Reply::MakerCantMeet));
+    changes("apply_maker_out_of_room", &making.w, making.reply_now(Reply::MakerOutOfRoom));
+    changes("apply_run_failed", &making.w, making.reply_now(Reply::RunFailed));
+
+    let mut checking = Run::making();
+    checking.head += 1;
+    checking.reply(Reply::MakerDone {
+        head: HeadId(checking.head),
+    });
+    assert!(checking.node().phase == Phase::Checking && checking.awaiting());
+    changes("apply_checks_done", &checking.w, checking.reply_now(CHECKS_PASS));
+
+    let reviewing = Run::reviewing(false);
+    changes("apply_approved", &reviewing.w, reviewing.reply_now(Reply::Approved { head: HeadId(reviewing.head) }));
+    changes("apply_reviewer_out_of_room", &reviewing.w, reviewing.reply_now(Reply::ReviewerOutOfRoom));
+    changes("apply_changes_requested", &reviewing.w, reviewing.reply_now(Reply::ChangesRequested));
+    changes("apply_stop", &reviewing.w, reviewing.command(Command::Stop));
+    changes("apply_pause", &reviewing.w, reviewing.command(Command::Pause));
+    changes("apply_change_request", &reviewing.w, reviewing.command(Command::ChangeRequest));
+
+    let mut paused = Run::reviewing(false);
+    paused.send(paused.command(Command::Pause));
+    assert!(paused.node().paused);
+    changes("apply_resume", &paused.w, paused.command(Command::Resume));
+
+    let rebasing = Run::rebasing();
+    changes("apply_rebase_clean", &rebasing.w, rebasing.reply_now(Reply::RebaseClean { head: HeadId(9) }));
+    changes("apply_rebase_needs_changes", &rebasing.w, rebasing.reply_now(Reply::RebaseNeedsChanges));
+
+    let publishing = Run::publishing(false);
+    changes("apply_ack_confirmed", &publishing.w, publishing.ack_now(Ack::Confirmed));
+    changes("apply_ack_retryable", &publishing.w, publishing.ack_now(Ack::Retryable));
+    changes("apply_ack_permanent", &publishing.w, publishing.ack_now(Ack::Permanent));
+    changes("apply_ack_body_policy_refused", &publishing.w, publishing.ack_now(Ack::BodyPolicyRefused));
+
+    let enqueue = Run::at_enqueue(false);
+    changes("apply_ack_delivery_accepted", &enqueue.w, enqueue.ack_now(Ack::DeliveryAccepted));
+    changes("apply_ci_failed", &enqueue.w, ci_failed());
+
+    let delivered = Run::delivered(false);
+    assert!(delivered.node().had_pr);
+    changes("apply_outside_push", &delivered.w, Event::Fact {
+        node: NodeId(0),
+        fact: Fact::PushByOther { head: HeadId(delivered.head + 3) },
+    });
+
+    // Rob's answers, each to a question kind that admits it (command_helpers.rs `allowed`).
+    let mut out_of_credit = Run::reviewing(false);
+    out_of_credit.tune(|n| {
+        n.rechecks = FREE_RECHECKS;
+        broke(n);
+    });
+    out_of_credit.send(out_of_credit.reply_now(Reply::ReviewerOutOfRoom));
+    assert_eq!(out_of_credit.node().question.unwrap().kind, QKind::OutOfCredit);
+    changes("apply_answer_add_credit", &out_of_credit.w, out_of_credit.answer(Answer::AddCredit(1)));
+    changes("apply_answer_change_request", &out_of_credit.w, out_of_credit.answer(Answer::ChangeRequest));
+    changes("apply_answer_stop", &out_of_credit.w, out_of_credit.answer(Answer::Stop));
+    changes("apply_answer_unclear", &out_of_credit.w, out_of_credit.answer(Answer::Unclear));
+
+    let mut effect_failed = Run::publishing(false);
+    effect_failed.send(effect_failed.ack_now(Ack::Permanent));
+    assert_eq!(effect_failed.node().question.unwrap().kind, QKind::EffectFailed);
+    changes("apply_answer_continue", &effect_failed.w, effect_failed.answer(Answer::Continue));
+
+    let mut cant_meet = Run::planning();
+    let footprint = cant_meet.w.intern_footprint([FileId(0)]);
+    cant_meet.reply(Reply::PlanLeaf { footprint, fits: false });
+    cant_meet.reply(Reply::PlanLeaf { footprint, fits: false });
+    assert_eq!(cant_meet.node().question.unwrap().kind, QKind::CantMeet);
+    changes("apply_answer_try_again", &cant_meet.w, cant_meet.answer(Answer::TryAgain));
+
+    let mut cleanup = Run::reviewing(false);
+    cleanup.send(cleanup.command(Command::Stop));
+    assert!(matches!(cleanup.node().phase, Phase::Stopping(_)));
+    cleanup.send(cleanup.ack_now(Ack::Permanent));
+    assert_eq!(cleanup.node().question.unwrap().kind, QKind::CleanupFailed);
+    changes("apply_answer_retry", &cleanup.w, cleanup.answer(Answer::Retry));
+    changes("apply_answer_mark_handled", &cleanup.w, cleanup.answer(Answer::MarkHandled));
+}
+
+// check_gate_grant / check_gate_planning covers at both original widths.
+
+impl Gate {
+    /// `count` holders on disjoint files 10.., each holding a slot.
+    fn holders(&mut self, count: u8) -> Vec<usize> {
+        let mut held = Vec::new();
+        for k in 0..count {
+            let h = self.request();
+            self.plan(h, &[10 + u64::from(k)]);
+            assert!(self.holds(h));
+            held.push(h);
+        }
+        held
+    }
+
+    fn holder_count(&self) -> usize {
+        self.w.nodes.iter().filter(|n| n.holds).count()
+    }
+}
+
+#[test]
+fn gate_grants_the_last_available_slot() {
+    for width in [2u8, 3] {
+        // proofs.rs:1270 cover!(after.nodes[0].holds && holders == usize::from(width - 1), "last available slot granted")
+        let mut g = Gate::new(width);
+        g.holders(width - 1);
+        assert_eq!(g.holder_count(), usize::from(width - 1));
+        let leaf = g.request();
+        g.plan(leaf, &[30]);
+        assert!(g.holds(leaf) && g.node(leaf).ticket.is_none());
+    }
+}
+
+#[test]
+fn a_file_blocked_older_waiter_holds_back_a_younger_overlapping_leaf() {
+    for width in [2u8, 3] {
+        let mut g = Gate::new(width);
+        let held = g.holders(width - 1);
+        let blocked_older = g.request();
+        let younger = g.request();
+        g.plan(blocked_older, &[10, 20]);
+        // proofs.rs:1274 cover!(n.ticket.is_some() && !n.paused && !slot_free(&before, 0), "full gate or overlapping footprint blocks")
+        assert!(g.waiting(blocked_older) && !g.node(blocked_older).paused);
+        assert!(g.node(held[0]).holds, "the overlapping holder keeps file 10");
+        g.plan(younger, &[20]);
+        // proofs.rs:1308 cover!(n.ticket.is_some() && !n.paused && slot_free(&before, 0)
+        //     && before.nodes.iter().enumerate().any(|(j, older)| { j != 0
+        //         && matches!(older.phase, Phase::Ready(_))
+        //         && older.ticket.is_some_and(|theirs| theirs < n.ticket.unwrap())
+        //         && !slot_free(&before, j)
+        //         && !before.footprints_disjoint(older.footprint, n.footprint) })
+        //     && !after.nodes[0].holds,
+        //     "a file-blocked older waiter prevents a younger leaf taking another needed file")
+        assert!(g.holder_count() < usize::from(width), "a slot is free for the younger leaf");
+        assert!(g.waiting(younger) && !g.holds(younger));
+        assert!(g.node(blocked_older).ticket < g.node(younger).ticket);
+    }
+}
+
+#[test]
+fn an_older_runnable_ticket_keeps_its_place() {
+    for width in [2u8, 3] {
+        // proofs.rs:1278 cover!(n.ticket.is_some() && !n.paused && slot_free(&before, 0) && !first_in_line(&before, 0), "older ticket keeps its place")
+        let mut g = Gate::new(width);
+        let held = g.holders(width);
+        let younger = g.request();
+        let older = g.request();
+        g.plan(older, &[30]);
+        g.plan(younger, &[31]);
+        assert!(g.waiting(older) && g.waiting(younger));
+        assert!(g.node(older).ticket < g.node(younger).ticket);
+        let ticket = g.node(younger).ticket;
+        // Releasing one slot: settle visits the younger (lower index) first; its
+        // slot is free, but the older ticket is runnable, so it keeps its place.
+        g.stop(held[0]);
+        assert!(g.holds(older));
+        assert!(!g.holds(younger) && g.node(younger).ticket == ticket);
+    }
+}
+
+#[test]
+fn w_slot_waiters_block_planning_and_fewer_admit_it() {
+    for width in [2u8, 3] {
+        let mut g = Gate::new(width);
+        g.holders(width);
+        let mut waiters = Vec::new();
+        for k in 0..width {
+            let r = g.request();
+            g.plan(r, &[40 + u64::from(k)]);
+            assert!(g.waiting(r));
+            waiters.push(r);
+        }
+        // proofs.rs:1356 cover!(waiting == usize::from(width) && !changed, "W waiters block planning")
+        let blocked = g.request();
+        g.reply(blocked, Reply::AuditAgrees);
+        assert_eq!(g.node(blocked).phase, Phase::Unplanned);
+
+        let mut g = Gate::new(width);
+        g.holders(width);
+        for k in 0..width - 1 {
+            let r = g.request();
+            g.plan(r, &[40 + u64::from(k)]);
+            assert!(g.waiting(r));
+        }
+        // proofs.rs:1360 cover!(waiting == usize::from(width - 1) && changed, "fewer than W waiters admit planning")
+        let admitted = g.request();
+        g.reply(admitted, Reply::AuditAgrees);
+        assert!(matches!(g.node(admitted).phase, Phase::Planning { .. }));
+    }
+}
