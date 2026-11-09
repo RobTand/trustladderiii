@@ -1947,4 +1947,147 @@ mod native_receipt_tests {
         let obsolete = json!({"action_key": "a".repeat(64), "class": "test_infrastructure"});
         assert!(serde_json::from_value::<MakerReplyBlockedEvidenceValue1>(obsolete).is_err());
     }
+
+    fn generation() -> Value {
+        let mut value = receipt();
+        let object = value.as_object_mut().unwrap();
+        let budget = json!({"cpus": 1, "mem_gb": 1, "timeout_s": 30, "outer_timeout_s": 90});
+        for (key, field) in [
+            ("artifact_sha256", json!("d".repeat(64))),
+            ("output_manifest", json!("e".repeat(64))),
+            ("input_tree", json!("1".repeat(40))),
+            ("output_tree", json!("2".repeat(40))),
+            ("status", json!("completed")),
+            ("exit_code", json!(0)),
+            ("command", json!("python3 tools/gen.py")),
+            ("argv", json!(["python3", "tools/gen.py"])),
+            ("identity", json!({"implementation": "tl3-generator-v4",
+                "image": format!("sha256:{}", "b".repeat(64)), "budget": budget.clone()})),
+            ("output_count", json!(1)),
+            ("budget", budget),
+            ("timings", json!({
+                "preparation": {"seconds": 0.1, "outcome": "completed"},
+                "container": {"seconds": 1.0, "outcome": "completed", "scope": "startup_and_command"},
+                "validation": {"seconds": 0.1, "outcome": "completed"},
+                "cleanup": {"seconds": 0.1, "outcome": "completed"},
+                "total_seconds": 1.3})),
+            ("phase", json!("completed")),
+            ("inner", json!({"status": "completed", "exit_code": 0})),
+        ] {
+            object.insert(key.into(), field);
+        }
+        value
+    }
+
+    /// The authentic FX-GEN-PREP failed artifact (worker-artifact.json sha256 b37f9a34…,
+    /// source 80ddef3e) carried with its native failed terminal.
+    fn fx_failed_artifact() -> Value {
+        json!({
+            "status": "failed", "exit_code": null,
+            "message": "Generator action infrastructure failed.",
+            "command": "python3 tools/gen.py", "argv": ["python3", "tools/gen.py"],
+            "phase": "preparation",
+            "budget": {"cpus": 1, "mem_gb": 1, "timeout_s": 30, "outer_timeout_s": 90},
+            "identity": {"implementation": "tl3-generator-v4",
+                "image": format!("sha256:{}", "b".repeat(64)),
+                "budget": {"cpus": 1, "mem_gb": 1, "timeout_s": 30, "outer_timeout_s": 90}},
+            "timings": {
+                "preparation": {"seconds": 0.039531893911771476, "outcome": "failed"},
+                "container": {"seconds": 0.0, "outcome": "skipped", "scope": "startup_and_command"},
+                "validation": {"seconds": 0.0, "outcome": "skipped"},
+                "cleanup": {"seconds": 0.004997374024242163, "outcome": "completed"},
+                "total_seconds": 0.048817435977980494},
+            "cause": {"operation": "input_manifest", "type": "PermissionError",
+                "errno": 13, "detail": "Permission denied"}
+        })
+    }
+
+    fn done(evidence: Value) -> Value {
+        json!({"kind": "done", "head": "3".repeat(40),
+            "self_check": [{"goal_id": "build", "status": "met", "evidence": "Model work finished."}],
+            "generation_evidence": evidence})
+    }
+
+    #[test]
+    fn completed_generation_receipt_is_native_and_requires_a_passed_ending() {
+        let valid = generation();
+        let admitted: GenerationReceipt = serde_json::from_value(valid.clone()).unwrap();
+        assert_eq!(serde_json::to_value(admitted).unwrap(), valid);
+        assert!(serde_json::from_value::<MakerReply>(done(valid.clone())).is_ok());
+        for obsolete in ["action_key", "outer"] {
+            let mut stale = valid.clone();
+            stale[obsolete] = json!({"status": "executed", "exit_code": 0, "elapsed_s": null});
+            assert!(serde_json::from_value::<GenerationReceipt>(stale).is_err(), "{obsolete}");
+        }
+        // A completed artifact can never stand behind a non-passing native terminal.
+        for ending in ["failed", "refused", "infra-lost", "cancelled"] {
+            let mut mismatched = valid.clone();
+            mismatched["ending"] = json!(ending);
+            assert!(serde_json::from_value::<GenerationReceipt>(mismatched.clone()).is_err(), "{ending}");
+            assert!(serde_json::from_value::<MakerReply>(done(mismatched)).is_err(), "{ending}");
+        }
+        let mut foreign = valid.clone();
+        foreign["run_binding"]["intent"]["correlation"] = json!(format!("worker-{}", "f".repeat(64)));
+        assert!(serde_json::from_value::<GenerationReceipt>(foreign).is_err());
+    }
+
+    #[test]
+    fn typed_failed_generator_preparation_never_becomes_completed_generation_evidence() {
+        let failed = fx_failed_artifact();
+        // Every authentic failure fact alone keeps the completed-only receipt closed: no
+        // field is widened, nulled or zero-filled to admit the failure.
+        for (pointer, authentic) in [
+            ("/ending", json!("failed")),
+            ("/status", failed["status"].clone()),
+            ("/exit_code", failed["exit_code"].clone()),
+            ("/phase", failed["phase"].clone()),
+            ("/inner", json!({"status": "failed", "exit_code": null})),
+        ] {
+            let mut projected = generation();
+            *projected.pointer_mut(pointer).unwrap() = authentic;
+            assert!(serde_json::from_value::<GenerationReceipt>(projected).is_err(), "{pointer}");
+        }
+        for (key, extra) in [("cause", failed["cause"].clone()), ("message", failed["message"].clone())] {
+            let mut projected = generation();
+            projected[key] = extra;
+            assert!(serde_json::from_value::<GenerationReceipt>(projected).is_err(), "{key}");
+        }
+        // The whole authentic shape: no outputs, failed terminal, wholesale projection.
+        let mut projected = generation();
+        for key in ["output_manifest", "output_tree", "output_count"] {
+            projected.as_object_mut().unwrap().remove(key);
+        }
+        for (key, value) in failed.as_object().unwrap() {
+            projected[key.as_str()] = value.clone();
+        }
+        projected["ending"] = json!("failed");
+        projected["inner"] = json!({"status": "failed", "exit_code": null});
+        assert!(serde_json::from_value::<GenerationReceipt>(projected.clone()).is_err());
+        assert!(serde_json::from_value::<MakerReply>(done(projected)).is_err());
+    }
+
+    #[test]
+    fn typed_failed_generator_routes_through_cant_meet_without_head_or_generation_evidence() {
+        let report = format!(
+            "Generation failed before final head: Generator action infrastructure failed. \
+             {{\"ending\": \"failed\", \"phase\": \"preparation\", \"status\": \"failed\", \
+             \"wait_reference\": \"worker:{}\"}}",
+            "a".repeat(64)
+        );
+        let cant_meet = json!({"kind": "cant_meet", "report": report});
+        let admitted: MakerReply = serde_json::from_value(cant_meet.clone()).unwrap();
+        assert!(matches!(admitted, MakerReply::CantMeet(_)));
+        assert_eq!(serde_json::to_value(admitted).unwrap(), cant_meet);
+        // cant_meet never carries a final head or any generation evidence, completed or not.
+        for (key, value) in [
+            ("head", json!("3".repeat(40))),
+            ("generation_evidence", generation()),
+            ("generation_evidence", fx_failed_artifact()),
+            ("generation_failure", fx_failed_artifact()),
+        ] {
+            let mut widened = cant_meet.clone();
+            widened[key] = value;
+            assert!(serde_json::from_value::<MakerReply>(widened).is_err(), "{key}");
+        }
+    }
 }
