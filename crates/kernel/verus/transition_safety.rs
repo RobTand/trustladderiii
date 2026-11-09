@@ -105,11 +105,11 @@ pub(super) open spec fn permitted_stop(b: Node, n: Node, event: Event, i: int) -
             && n.review_stop == Some(ReviewStop::PublicationBody),
         Event::Reply { node, generation, reply: Reply::AuditDisagrees } => node.0 == i
             && b.phase == Phase::Auditing && b.audit_rounds >= 1
-            && current_item(b) == Some(Item::Await) && b.run == Some(generation)
+            && reply_owner(b, generation)
             && n.review_stop == Some(ReviewStop::AuditDisagreement),
         Event::Reply { node, generation, reply: Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit } =>
             node.0 == i && b.phase is Planning
-                && current_item(b) == Some(Item::Await) && b.run == Some(generation)
+                && reply_owner(b, generation)
                 && n.review_stop == Some(ReviewStop::PlanCantMeet),
         _ => false,
     }
