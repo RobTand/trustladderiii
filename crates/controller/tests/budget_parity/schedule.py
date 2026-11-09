@@ -191,7 +191,7 @@ def loop(modules, schedule, crash, *, chunk_crash=0):
                    "brief": "Preserve the recorded evidence.", "context_size": 100_000,
                    "goals": [{"id": "g", "description": "Preserve behavior."}],
                    "tests": {"image": "sha256:" + "a" * 64, "execution": {"backend": "flux", "profile": "/unused/execution.json"}},
-                   "plan": {"files": ["f"], "checks": [{"name": "check", "goal_ids": ["g"],
+                   "plan": {"files": ["f"], "checks": [{"name": "check", "goal_ids": [0],
                                                             "tests": ["test.py"]}]}}}
     evidence = SimpleNamespace(state=lambda: {"sample": io.read("evidence")},
                                restore=lambda value: io.calls.append(["restore_evidence", value]))

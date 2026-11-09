@@ -19,14 +19,30 @@ pub(crate) fn translate(pattern: &str, classes: &[String; 3]) -> Result<String> 
         classes,
         names,
         next_group: 1,
+        ascii_only: false,
     };
     writer.expression(&tree.expr)
+}
+
+// For an ASCII haystack, intersecting every consuming character class with
+// ASCII preserves each match and capture, including negated classes and lookarounds.
+// Project the already validated translation; keep all groups, anchors and backrefs.
+pub(crate) fn project_ascii(pattern: &str) -> Result<String> {
+    let tree = Expr::parse_tree(pattern).map_err(|e| e.to_string())?;
+    let names = tree.named_groups.iter().map(|(name, index)| (*index, name.as_str())).collect();
+    let classes = ["A-Za-z0-9_".into(), "0-9".into(), "\\x09-\\x0d\\x1c-\\x20".into()];
+    let mut writer = Writer { classes: &classes, names, next_group: 1, ascii_only: true };
+    writer.expression(&tree.expr)
+}
+fn ascii_set() -> ClassUnicode {
+    ClassUnicode::new([ClassUnicodeRange::new('\0', '\x7f')])
 }
 
 struct Writer<'a> {
     classes: &'a [String; 3],
     names: HashMap<usize, &'a str>,
     next_group: usize,
+    ascii_only: bool,
 }
 
 impl Writer<'_> {
@@ -40,11 +56,12 @@ impl Writer<'_> {
                     if *casei {
                         fold(&mut set)?;
                     }
+                    if self.ascii_only { set.intersect(&ascii_set()); }
                     out.push_str(&Hir::class(Class::Unicode(set)).to_string());
                 }
                 out
             }
-            Expr::Delegate { inner, casei } => parsed_class(inner, self.classes, *casei)?,
+            Expr::Delegate { inner, casei } => parsed_class(inner, self.classes, *casei, self.ascii_only)?,
             Expr::Any {
                 newline,
                 crlf: false,
@@ -117,7 +134,7 @@ impl Writer<'_> {
                 Assertion::StartLine { crlf: false } => r"(?m:^)".into(),
                 Assertion::EndLine { crlf: false } => r"(?=\n|\z)".into(),
                 Assertion::WordBoundary | Assertion::NotWordBoundary => {
-                    let word = parsed_class(r"\w", self.classes, false)?;
+                    let word = parsed_class(r"\w", self.classes, false, self.ascii_only)?;
                     if matches!(assertion, Assertion::WordBoundary) {
                         format!(r"(?:(?<!{word})(?={word})|(?<={word})(?!{word}))")
                     } else {
@@ -150,7 +167,7 @@ fn fold(set: &mut ClassUnicode) -> Result<()> {
     Ok(())
 }
 
-fn parsed_class(pattern: &str, classes: &[String; 3], ignore_case: bool) -> Result<String> {
+fn parsed_class(pattern: &str, classes: &[String; 3], ignore_case: bool, ascii_only: bool) -> Result<String> {
     fn item(node: &ClassSetItem, classes: &[String; 3], casei: bool) -> Result<ClassUnicode> {
         let mut set = match node {
             ClassSetItem::Literal(literal) => {
@@ -210,10 +227,11 @@ fn parsed_class(pattern: &str, classes: &[String; 3], ignore_case: bool) -> Resu
     let ast = ast::parse::Parser::new()
         .parse(pattern)
         .map_err(|e| e.to_string())?;
-    let set = match &ast {
+    let mut set = match &ast {
         Ast::ClassBracketed(class) => bracketed(class, classes, ignore_case)?,
         Ast::ClassPerl(perl) => item(&ClassSetItem::Perl((**perl).clone()), classes, ignore_case)?,
         _ => return Err("expected a parsed Python character class".into()),
     };
+    if ascii_only { set.intersect(&ascii_set()); }
     Ok(format!("(?-i:{})", Hir::class(Class::Unicode(set))))
 }

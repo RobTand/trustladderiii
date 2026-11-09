@@ -157,12 +157,12 @@ def test_role_repairs_and_absolute_declaration_pointers(tmp_path):
     assert caught.value.rule == 'proof.observer.exact_method'
     violation = caught.value.violations[0]
     assert isinstance(violation.repair, Edit)
-    assert violation.repair.pointer.value == '/checks/3/node_ids/0'
+    assert violation.repair.pointer.value == '/checks/3/tests/0'
     assert violation.allowed.value == ['tests/test_observer.py::TestOld::test_observer']
     assert len(violation.allowed.value) <= 10
     reply = apply_edit(violation.facts['reply'], violation.repair, violation.allowed.value[0])
     assert permits(violation, violation.facts['reply'], reply, role='planner')
-    repaired = model.Check('repair', model.Kind.DEMONSTRATING, tuple(reply['checks'][3]['node_ids']), proof=check.proof)
+    repaired = model.Check('repair', model.Kind.DEMONSTRATING, tuple(reply['checks'][3]['tests']), proof=check.proof)
     proof.assemble_proof(tmp_path / 'before', tmp_path / 'after', tmp_path / 'repaired', repaired, case['config'],
                          role='planner', check_index=3)
     case = partitions()['proof.support.call_allowlist']['bad']
@@ -299,7 +299,7 @@ def test_planner_node_candidates_are_collectable_and_never_empty(tmp_path):
                                                'class TestReal:\n    def helper(self): pass\n    def test_method(self): pass\n')
     repair = planner_refusal(case, tmp_path).violations[0].repair
     assert isinstance(repair, Edit)
-    assert repair.pointer.value == '/checks/3/node_ids/0'
+    assert repair.pointer.value == '/checks/3/tests/0'
     assert all(isinstance(value, str) and value for value in repair.allowed.value)
     assert all('helper' not in value and 'Helper' not in value for value in repair.allowed.value)
     assert 'tests/test_observer.py::TestReal::test_method' in repair.allowed.value

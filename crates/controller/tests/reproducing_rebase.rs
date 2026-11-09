@@ -62,6 +62,7 @@ fn fix_round_rebases_reviewed_tree_with_upstream_configuration() {
     assert_eq!(
         run.plan,
         vec![Check {
+            goal_ids: vec![],
             name: "reproduces".into(),
             kind: Kind::Reproducing,
             tests: vec!["test_value.py::test_value".into()],

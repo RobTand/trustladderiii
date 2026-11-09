@@ -94,6 +94,7 @@ fn check_plan(f: &Fixture, base: String) -> CheckRun {
         reproducing_unavailable: None,
         selected_failures: Vec::new(),
         plan: vec![Check {
+            goal_ids: vec![],
             name: "value".into(),
             kind: Kind::Demonstrating,
             tests: vec!["test_value.py::test_value".into()],

@@ -1,6 +1,41 @@
 use super::*;
 mod adapters {
-    pub use crate::adapters::prismabuild;
+    pub use super::super::adapters::results;
+    pub mod prismabuild {
+        use super::super::super::*;
+        pub use tl3_controller::adapters::prismabuild::Kind;
+        // Historical Check representation, scoped only to the frozen arm and
+        // its frozen size validator. No production decoder accepts this shape.
+        pub struct Check {
+            pub name: String,
+            pub kind: Kind,
+            pub tests: Vec<String>,
+            pub forcing: Option<tl3_contracts::checks::Forcing>,
+            pub proof: Option<tl3_contracts::checks::ProofDeclaration>,
+            pub declared_symptom: Option<tl3_contracts::checks::DeclaredSymptom>,
+        }
+        impl From<Check> for tl3_controller::adapters::prismabuild::Check {
+            fn from(check: Check) -> Self {
+                Self { goal_ids: vec![], name: check.name, kind: check.kind,
+                    tests: check.tests, forcing: check.forcing, proof: check.proof,
+                    declared_symptom: check.declared_symptom }
+            }
+        }
+        #[test]
+        fn historical_check_conversion_adds_only_empty_goal_metadata() {
+            let check = Check { name: "legacy-control".into(), kind: Kind::Regression,
+                tests: vec!["test_safe.py::test_safe".into()], forcing: None,
+                proof: None, declared_symptom: None };
+            validate_plan_size(std::slice::from_ref(&check)).unwrap();
+            let current: tl3_controller::adapters::prismabuild::Check = check.into();
+            assert_eq!(serde_json::to_value(current).unwrap(), json!({
+                "name":"legacy-control", "kind":"regression",
+                "tests":["test_safe.py::test_safe"], "goal_ids":[],
+            }));
+        }
+        const MAX_REPORT_LINE_BYTES: usize = 4 * 1024 * 1024;
+        include!("plan-size.rs");
+    }
     pub mod workers {
         pub use crate::adapters::workers::{protocol, review};
         pub mod reproducing {

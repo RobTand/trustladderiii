@@ -5,6 +5,11 @@ use vstd::prelude::*;
 
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    not(verus_keep_ghost),
+    derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)
+)]
+#[cfg_attr(not(verus_keep_ghost), serde(rename_all = "snake_case"))]
 pub enum Phase {
     Setup,
     Call,
@@ -14,6 +19,11 @@ pub enum Phase {
 
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    not(verus_keep_ghost),
+    derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)
+)]
+#[cfg_attr(not(verus_keep_ghost), serde(rename_all = "snake_case"))]
 pub enum Status {
     Passed,
     Failed,

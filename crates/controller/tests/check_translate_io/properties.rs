@@ -1,5 +1,5 @@
 use super::*;
-use io::{OTHER, Read, Run, SHA, Schedule, Step, check_run, compare};
+use io::{OTHER, Read, Run, SHA, Schedule, Step, check_run, compare, compare_rejection};
 use proptest::{
     prelude::*,
     test_runner::{Config, FileFailurePersistence, RngSeed, TestRunner},
@@ -122,7 +122,12 @@ fn pinned_real_arms_and_helper_closures() {
         for (key, pin) in pins["closures"].as_object().unwrap() {
             if key.starts_with(&format!("{module}::")) {
                 let f = pin["name"].as_str().unwrap();
-                assert_eq!(function(copy, f), function(source, f), "{key}");
+                let current = if module == "production" {
+                    include_str!("production_helpers_current.rs")
+                } else {
+                    copy
+                };
+                assert_eq!(function(current, f), function(source, f), "{key}");
                 assert_eq!(
                     format!("{:x}", Sha256::digest(function(copy, f))),
                     pin["sha256"]
@@ -167,6 +172,11 @@ fn fallback(brief: Option<Value>, plan: Option<Value>) -> Vec<Read> {
 }
 fn brief() -> Value {
     json!({"brief":"accepted","goals":[{"id":"goal-1"}]})
+}
+/// A goal the plan need not cover (publishing stage), so an empty canonical
+/// leaf is admitted by S1 and decodes identically on the frozen base arm.
+fn publishing_brief() -> Value {
+    json!({"brief":"accepted","goals":[{"id":"goal-1","stage":"publishing"}]})
 }
 fn leaf() -> Value {
     json!({"kind":"leaf","files":["src/a.rs"],"checks":[]})
@@ -242,7 +252,7 @@ fn mandatory_preparation_stored_run_overrides_only_repository_and_base() {
 #[test]
 fn mandatory_preparation_fallback_read_order_and_no_check_run() {
     for materials in [None, Some(json!({})), Some(json!({"other":1}))] {
-        let reads = vec![Ok(materials), Ok(Some(brief())), Ok(Some(leaf()))];
+        let reads = vec![Ok(materials), Ok(Some(publishing_brief())), Ok(Some(leaf()))];
         let r = compare(&schedule(Step::default(), reads));
         assert_eq!(
             row(&r, "check_plans", &format!("0:{SHA}"))["plan"],
@@ -282,13 +292,13 @@ fn mandatory_preparation_all_read_parse_and_commit_errors() {
             Some(json!({"kind":"leaf","checks":[{"goal_ids":[99]}]})),
         ),
     ] {
-        let r = compare(&schedule(Step::default(), reads));
+        let r = compare_rejection(&schedule(Step::default(), reads));
         assert!(!error(&r).is_empty());
         assert!(r.staged_rows.is_empty());
         assert_eq!(r.writes, 0);
     }
     for reads in [vec![stored_plan()], fallback(Some(brief()), Some(leaf()))] {
-        let r = compare(&schedule(
+        let r = compare_rejection(&schedule(
             Step {
                 base: "invalid".into(),
                 ..Step::default()
@@ -307,14 +317,14 @@ fn mandatory_preparation_all_read_parse_and_commit_errors() {
 }
 #[test]
 fn mandatory_preexisting_nonempty_adoption_plan_decode_failure() {
-    // Real maker_inputs adds goal_ids, but Check denies that field on this base.
-    // Keep the existing failure; this extraction does not change the schema.
-    let plan = json!({"kind":"leaf","files":["a.rs"],"checks":[{"kind":"regression","node_ids":["tests/a.py"],"goal_ids":[0]}]});
-    let r = compare(&schedule(
+    // Canonical Check rejects the obsolete node_ids wire field.
+    // Preserve adoption decode failure before any persisted rows or writes.
+    let plan = json!({"kind":"leaf","files":["a.rs"],"checks":[{"name":"adoption-check","kind":"regression","tests":["tests/a.py"],"node_ids":["tests/a.py"],"goal_ids":[0]}]});
+    let r = compare_rejection(&schedule(
         Step::default(),
         fallback(Some(brief()), Some(plan)),
     ));
-    assert!(error(&r).contains("goal_ids"));
+    assert!(error(&r).contains("node_ids"), "{}", error(&r));
     assert!(r.persisted_rows.is_empty());
     assert_eq!(r.writes, 0);
 }

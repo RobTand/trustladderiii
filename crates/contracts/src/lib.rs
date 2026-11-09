@@ -5,6 +5,7 @@
 //! This module depends only on std, serde, serde_json and schemars, never on the rest of
 //! the controller, so it can become its own crate unchanged.
 
+pub mod action;
 pub mod bounded;
 pub mod checks;
 pub mod execution;
@@ -12,8 +13,11 @@ pub mod footprint;
 pub mod prerequisites;
 pub mod report;
 pub mod run_binding;
+pub mod rules;
 
-pub use checks::{Check, CheckKind, CheckRequest, DeclaredSymptom, Forcing, ProofDeclaration};
+pub use checks::{
+    Check, CheckKind, CheckRequest, DeclaredSymptom, Forcing, GoalId, ProofDeclaration,
+};
 pub use report::{CheckReport, CheckResult, MESSAGE_CHARS, ProofReceipt, TestResult};
 
 use schemars::generate::SchemaSettings;
@@ -52,6 +56,7 @@ pub fn generated() -> Vec<Generated> {
             ("classifier", roles::classifier_reply::schema_text()),
             ("maker", roles::maker_reply::schema_text()),
             ("writer", roles::writer_reply::schema_text()),
+            ("planner", roles::planner_reply::schema_text()),
         ]
         .into_iter()
         .map(|(role, text)| Generated {
@@ -81,6 +86,8 @@ pub fn generated() -> Vec<Generated> {
                 .to_value(),
         ),
     });
+    files.extend(rules::generated());
+    files.extend(action::generated());
     files
 }
 

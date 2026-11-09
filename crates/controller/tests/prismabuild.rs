@@ -136,6 +136,7 @@ fn run(root: &Path, outside: bool) -> Delivery {
             reproducing_unavailable: None,
             selected_failures: Vec::new(),
             plan: vec![Check {
+                goal_ids: vec![],
                 name: "value".into(),
                 kind: Kind::Demonstrating,
                 tests: vec!["test_value.py::test_value".into()],
@@ -2771,7 +2772,7 @@ fn completion_failure_cause(settings: &tl3_config::Store, path: &str, mode: &str
         // proof receipts remain byte-for-byte equivalent JSON from the live job.
         delivery.checks.as_mut().unwrap().plan = results.iter().map(|result| {
             let mut check = serde_json::json!({
-                "name": result["name"], "kind": result["kind"],
+                "name": result["name"], "kind": result["kind"], "goal_ids": [],
                 "tests": result["tests"].as_array().unwrap().iter().map(|t| &t["test"]).collect::<Vec<_>>(),
             });
             if let Some(proof) = result.get("proof") {
@@ -4665,6 +4666,7 @@ fn result_budget_rejects_repeated_checks() {
     let mut delivery = run(root.path(), false);
     delivery.checks.as_mut().unwrap().plan = (0..40000)
         .map(|i| Check {
+            goal_ids: vec![],
             name: format!("check-{i}"),
             kind: Kind::Regression,
             tests: vec!["test_value.py::test_value".into()],
@@ -4785,6 +4787,17 @@ fn oversized_planner_reply_reaches_plan_feedback(settings: &tl3_config::Store) {
     registry.register(Upstream::Workers, support::workers::Workers::new(
         None, adapters::workers::Fake::new(&fakes), vec![], move |_, completion: &mut Completion| {
             for observation in &mut completion.observations {
+                // S1 planner admission reads the accepted brief's goals; the
+                // simulation Fake ingest emits only a kernel IngestDone and stores none.
+                if let Observation::Kernel(tl3_kernel::Event::Reply {node, generation, reply: tl3_kernel::Reply::IngestDone {..}}) = observation {
+                    let forecast = serde_json::json!({"tokenizer":"o200k_base", "brief_tokens":1, "file_tokens":{}, "overhead_tokens":0,
+                        "tokens":1, "fit_tokens":100, "context_tokens":150, "fits":true});
+                    let reply = serde_json::json!({"kind":"brief", "brief":"Keep the plan within budget.",
+                        "goals":[{"description":"Keep the plan within budget.","verification":"test"}],
+                        "memory_ids":[], "files":[], "forecast":forecast});
+                    *observation = Observation::WorkerReply {node: *node, generation: *generation, role: "ingest".into(), reply, plan_check: None, model: None};
+                    continue;
+                }
                 if let Observation::Plan {node, generation, ..} = observation {
                     let forecast = serde_json::json!({"tokenizer":"o200k_base", "brief_tokens":1, "file_tokens":{"value.py":0}, "overhead_tokens":0,
                         "tokens":1, "fit_tokens":100, "context_tokens":150, "fits":true});
@@ -4792,7 +4805,7 @@ fn oversized_planner_reply_reaches_plan_feedback(settings: &tl3_config::Store) {
                         replies.set(replies.get() + 1);
                         serde_json::json!({
                             "kind":"leaf", "files":["value.py"], "checks":[{
-                                "kind":"regression", "node_ids":[format!("test_value.py::test_{}", "x".repeat(4 * 1024 * 1024))], "goal_ids":[0]}],
+                                "name":"oversized-selector", "kind":"regression", "tests":[format!("test_value.py::test_{}", "x".repeat(4 * 1024 * 1024))], "goal_ids":[0]}],
                             "no_design_questions":true, "lands_on_its_own":true, "violations":[],
                             "forecast":forecast
                         })

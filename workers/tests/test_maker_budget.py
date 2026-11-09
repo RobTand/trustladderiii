@@ -65,9 +65,9 @@ def maker_request(tmp_path):
                 "files": declared,
                 "checks": [
                     {'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, "name": "hello", "kind": "demonstrating",
-                     "tests": ["test_greeting.py::test_hello"], "goal_ids": ["greeting"]},
+                     "tests": ["test_greeting.py::test_hello"], "goal_ids": [0]},
                     {"name": "signature", "kind": "behavior-preserving",
-                     "tests": ["test_greeting.py::test_signature"], "goal_ids": ["interface"]},
+                     "tests": ["test_greeting.py::test_signature"], "goal_ids": [1]},
                 ],
             },
             "footprint": declared,

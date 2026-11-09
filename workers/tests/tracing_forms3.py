@@ -4,7 +4,9 @@ import json
 import random
 import string
 
-rng = random.Random(1101_2349)
+SEED = 1101_2349
+rng = random.Random(SEED)
+public_rng = random.Random(SEED + 1)
 ALNUM = string.ascii_letters + string.digits
 HEX = '0123456789abcdef'
 B64 = string.ascii_letters + string.digits + '+/'
@@ -16,7 +18,26 @@ FORMS = []   # (name, text, [secrets], category)
 
 
 def r(n, alpha=ALNUM):
-    return ''.join(rng.choice(alpha) for _ in range(n))
+    # Fixed-seed synthetic values carry a fake marker where their alphabet permits.
+    marker = 'TL3FAKE'
+    if n < len(marker) or not set(marker) <= set(alpha):
+        return ''.join(rng.choice(alpha) for _ in range(n))
+    # Retain mixed random character classes after the fixed marker. A predictable
+    # marker must not turn high-entropy carrier cases into ordinary identifiers.
+    groups = [group for chars in (string.ascii_lowercase, string.ascii_uppercase, string.digits)
+              if (group := ''.join(char for char in chars if char in alpha))]
+    return marker + ''.join(rng.choice(groups[index % len(groups)])
+                            for index in range(n - len(marker)))
+
+
+def public_r(n, alpha=ALNUM):
+    """Ordinary public fixture values, without a confidential fake marker."""
+    return ''.join(public_rng.choice(alpha) for _ in range(n))
+
+
+def public_content(n):
+    """Readable ordinary ALNUM data with a fixed public input, not a credential."""
+    return ('PUBLIC' * ((n + 5) // 6))[:n]
 
 
 def b64(s, urlsafe=False):
@@ -79,12 +100,12 @@ F('k8s_secret_stringdata', 'cred', lambda S: (
     f"    db:\n      host: db\n      pass: {S(r(20, PWCH))}\n"))
 F('k8s_secret_tls', 'cred', lambda S: (
     "apiVersion: v1\nkind: Secret\ntype: kubernetes.io/tls\ndata:\n"
-    f"  tls.crt: {b64(r(300))}\n  tls.key: {S(b64('-----BEGIN PRIVATE KEY-----' + r(200, B64)))}\n"))
+    f"  tls.crt: {b64(public_content(300))}\n  tls.key: {S(b64('-----BEGIN PRIVATE KEY-----' + r(200, B64)))}\n"))
 F('k8s_secret_dockerconfigjson', 'cred', lambda S: (
     "kind: Secret\ntype: kubernetes.io/dockerconfigjson\ndata:\n  .dockerconfigjson: " +
     S(b64(json.dumps({"auths": {"registry.acme.io": {"username": "ci", "password": r(24), "auth": b64('ci:' + r(24))}}})))))
 F('kubectl_get_secret_json', 'cred', lambda S: json.dumps({"apiVersion": "v1", "data": {
-    "api-token": S(b64(r(36))), "ca.crt": b64(r(120))}, "kind": "Secret", "metadata": {"name": "t"}}, indent=2))
+    "api-token": S(b64(r(36))), "ca.crt": b64(public_content(120))}, "kind": "Secret", "metadata": {"name": "t"}}, indent=2))
 F('kubectl_get_secret_jsonpath_decoded', 'cred', lambda S: f"$ kubectl get secret orders-db -o jsonpath='{{.data.password}}' | base64 -d\n{S(r(24, PWCH))}")
 F('pgpass_wildcard', 'cred', lambda S: f"*:*:*:postgres:{S(r(20, PWCH))}")
 F('pgpass_host_db', 'cred', lambda S: f"db.internal.acme.io:5432:orders:orders_rw:{S(r(24, ALNUM))}")
@@ -248,5 +269,5 @@ F('new_prefix_airtable_pat', 'prefix', lambda S: S('pat' + r(14) + '.' + r(64, H
 F('new_prefix_ssh_openssh_oneline_json', 'prefix', lambda S: json.dumps({"deploy_key": "-----BEGIN OPENSSH PRIVATE KEY-----\n" + S(r(70, B64)) + "\n" + r(70, B64) + "\n-----END OPENSSH PRIVATE KEY-----\n"}))
 F('pem_body_only_no_header', 'prefix', lambda S: '\n'.join(S(r(64, B64)) for _ in range(5)) + '\n-----END RSA PRIVATE KEY-----')
 F('pem_head_c_cutoff', 'prefix', lambda S: '$ head -c 300 key.pem\n-----BEGIN RSA PRIVATE KEY-----\n' + '\n'.join(S(r(64, B64)) for _ in range(3)) + '\n' + S(r(20, B64)))
-F('sentry_dsn_old_secret', 'prefix', lambda S: f"https://{r(32, HEX)}:{S(r(32, HEX))}@o1.ingest.sentry.io/4506")
-F('twilio_client_call', 'prefix', lambda S: f'client = Client("AC{r(32, HEX)}", "{S(r(32, HEX))}")')
+F('sentry_dsn_old_secret', 'prefix', lambda S: f"https://{public_r(32, HEX)}:{S(r(32, HEX))}@o1.ingest.sentry.io/4506")
+F('twilio_client_call', 'prefix', lambda S: f'client = Client("AC{public_r(32, HEX)}", "{S(r(32, HEX))}")')

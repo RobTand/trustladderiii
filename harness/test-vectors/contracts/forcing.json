@@ -1,4 +1,5 @@
 {
+ "s1_input_migration": "S1 input metadata migration: required goal_ids added as []; these post-admission check requests contain no ingest-goal context. Original fixture attribution and recorded results are unchanged; no recapture.",
  "fixture": "harness/tests/test_contract_vectors.py::forcing",
  "request": {
   "base": "f6a7734fdddcfaea2d35ad2a848e4023d75905c5",
@@ -7,6 +8,7 @@
   "image": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
   "plan": [
    {
+    "goal_ids": [],
     "forcing": {
      "environment": {
       "REPRODUCE": "1"

@@ -1,0 +1,1513 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PolicyRequest",
+  "type": "object",
+  "properties": {
+    "operation": {
+      "$ref": "#/$defs/PolicyOperation"
+    },
+    "state": {
+      "$ref": "#/$defs/Redactor"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "state",
+    "operation"
+  ],
+  "$defs": {
+    "Allowed": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "finite"
+            },
+            "values": {
+              "type": "array",
+              "items": true
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "values"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "keyword": {
+              "$ref": "#/$defs/SchemaKeyword"
+            },
+            "kind": {
+              "type": "string",
+              "const": "schema"
+            },
+            "value": true
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "keyword",
+            "value"
+          ]
+        }
+      ]
+    },
+    "AttributionMethod": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "failing_targets": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 64
+            },
+            "failing_targets_truncated": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "outside_selection"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "failing_targets"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "failed_prefix_head": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            },
+            "kind": {
+              "type": "string",
+              "const": "prefix_bisection"
+            },
+            "passed_prefix_head": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "passed_prefix_head",
+            "failed_prefix_head"
+          ]
+        }
+      ]
+    },
+    "Check": {
+      "type": "object",
+      "properties": {
+        "declared_symptom": {
+          "$ref": "#/$defs/DeclaredSymptom"
+        },
+        "forcing": {
+          "$ref": "#/$defs/Forcing"
+        },
+        "goal_ids": {
+          "description": "Original ingest.goals indices. Required, unique, never renumbered across splits.\nThe planner gate checks nonempty/range/coverage; controller controls explicitly use [].",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GoalId"
+          },
+          "uniqueItems": true
+        },
+        "kind": {
+          "$ref": "#/$defs/CheckKind"
+        },
+        "name": {
+          "type": "string"
+        },
+        "proof": {
+          "$ref": "#/$defs/ProofDeclaration"
+        },
+        "tests": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "goal_ids",
+        "kind",
+        "tests"
+      ]
+    },
+    "CheckKind": {
+      "type": "string",
+      "enum": [
+        "demonstrating",
+        "regression",
+        "behavior-preserving",
+        "reproducing"
+      ]
+    },
+    "Clip": {
+      "type": "object",
+      "properties": {
+        "gap": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "lead": {
+          "type": "boolean"
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Window"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "parts",
+        "lead",
+        "gap"
+      ]
+    },
+    "DeclaredSymptom": {
+      "type": "object",
+      "properties": {
+        "exception": {
+          "type": "string",
+          "pattern": "^[A-Za-z_]\\w*(\\.[A-Za-z_]\\w*)+$"
+        },
+        "node": {
+          "type": "string",
+          "minLength": 1
+        },
+        "parallel": {
+          "enum": [
+            0,
+            2,
+            3,
+            4
+          ]
+        },
+        "phase": {
+          "$ref": "#/$defs/SymptomPhase"
+        },
+        "repeat": {
+          "type": "integer",
+          "maximum": 10,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "node",
+        "exception",
+        "phase",
+        "repeat",
+        "parallel"
+      ]
+    },
+    "EditOp": {
+      "type": "string",
+      "enum": [
+        "add",
+        "replace",
+        "remove"
+      ]
+    },
+    "Entry": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "proto_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "root": {
+          "type": "boolean"
+        },
+        "shrunk": {
+          "type": "boolean"
+        },
+        "sizes": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "kind",
+        "proto_bytes",
+        "sizes",
+        "shrunk"
+      ]
+    },
+    "Evidence": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "excerpt": {
+              "description": "At most 4096 UTF-8 bytes after Violation normalization, including newline+[truncated]. JSON Schema maxLength counts characters; Violation serialization/deserialization and rendering enforce the UTF-8 byte cap.",
+              "type": "string",
+              "maxLength": 4096
+            },
+            "kind": {
+              "type": "string",
+              "const": "test_failure"
+            },
+            "log_ref": {
+              "type": "string"
+            },
+            "receipt": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            },
+            "test": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "target",
+            "test",
+            "excerpt",
+            "log_ref",
+            "receipt"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "batch_head": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            },
+            "kind": {
+              "type": "string",
+              "const": "attribution"
+            },
+            "member": {
+              "type": "string"
+            },
+            "member_head": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            },
+            "method": {
+              "$ref": "#/$defs/AttributionMethod"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "batch_head",
+            "member",
+            "member_head",
+            "method"
+          ]
+        }
+      ]
+    },
+    "FieldPointer": {
+      "type": "string",
+      "pattern": "^(?:/(?:[^~]|~[01])*)?$"
+    },
+    "Forcing": {
+      "description": "A forced reproduction (#393): the declarative condition the harness applies, outside the test, to recreate a flake. Only on demonstrating checks.",
+      "type": "object",
+      "properties": {
+        "environment": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "maxProperties": 8,
+          "propertyNames": {
+            "pattern": "^[A-Z_][A-Z0-9_]{0,63}$"
+          }
+        },
+        "patches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "delay_seconds": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 5
+              },
+              "raises": {
+                "type": "string",
+                "minLength": 1
+              },
+              "returns": {},
+              "target": {
+                "type": "string",
+                "maxLength": 200,
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$"
+              },
+              "value": {}
+            },
+            "additionalProperties": false,
+            "maxProperties": 2,
+            "minProperties": 2,
+            "required": [
+              "target"
+            ]
+          },
+          "maxItems": 8
+        },
+        "symptom": {
+          "type": "string",
+          "maxLength": 1000,
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "symptom",
+        "environment",
+        "patches"
+      ]
+    },
+    "GoalId": {
+      "description": "Original zero-based index in request.inputs.ingest.goals, retained across splits.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "LabelKind": {
+      "type": "string",
+      "enum": [
+        "span",
+        "attribute",
+        "tag"
+      ]
+    },
+    "Name": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/NameKind"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "value"
+      ]
+    },
+    "NameKind": {
+      "type": "string",
+      "enum": [
+        "field",
+        "path",
+        "symbol"
+      ]
+    },
+    "PacketEntry": {
+      "type": "object",
+      "properties": {
+        "content_bytes": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "root": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "content_bytes"
+      ]
+    },
+    "PolicyOperation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "trace"
+            },
+            "request": {
+              "$ref": "#/$defs/Request"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "request"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "op": {
+              "type": "string",
+              "const": "repair_prompt"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "message"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "errors": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ValidationFact"
+              }
+            },
+            "op": {
+              "type": "string",
+              "const": "schema_rows"
+            },
+            "role": {
+              "$ref": "#/$defs/Role"
+            },
+            "root_schema": true
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "errors",
+            "role"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "allowed": {
+              "$ref": "#/$defs/Allowed"
+            },
+            "op": {
+              "type": "string",
+              "const": "membership"
+            },
+            "value": true
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "allowed",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "checks": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Check"
+              }
+            },
+            "goal_count": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "op": {
+              "type": "string",
+              "const": "admit_plan"
+            },
+            "required_goals": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/GoalId"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "checks",
+            "goal_count",
+            "required_goals"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "limit": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint",
+              "minimum": 0
+            },
+            "op": {
+              "type": "string",
+              "const": "text"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "end": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "op": {
+              "type": "string",
+              "const": "window"
+            },
+            "start": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "value",
+            "start",
+            "end"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "input_json": {
+              "type": "string"
+            },
+            "limit": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint",
+              "minimum": 0
+            },
+            "op": {
+              "type": "string",
+              "const": "shape"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "input_json"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "limit": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "op": {
+              "type": "string",
+              "const": "reshape"
+            },
+            "shaped": {
+              "$ref": "#/$defs/Shaped"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "shaped",
+            "limit"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "limit": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint",
+              "minimum": 0
+            },
+            "op": {
+              "type": "string",
+              "const": "clean"
+            },
+            "shaped": {
+              "$ref": "#/$defs/Shaped"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "shaped"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "input_json": {
+              "type": "string"
+            },
+            "limit": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint",
+              "minimum": 0
+            },
+            "op": {
+              "type": "string",
+              "const": "payload"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "input_json"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "size"
+            },
+            "shaped": {
+              "$ref": "#/$defs/Shaped"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "shaped"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "input_json": {
+              "type": "string"
+            },
+            "op": {
+              "type": "string",
+              "const": "measure_json"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "input_json"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "input_json": {
+              "type": "string"
+            },
+            "op": {
+              "type": "string",
+              "const": "sensitive_path"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "input_json"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "file_marker"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "path"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "context": {
+              "$ref": "#/$defs/RenderContext"
+            },
+            "op": {
+              "type": "string",
+              "const": "render"
+            },
+            "role": {
+              "$ref": "#/$defs/Role"
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Violation"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "rows",
+            "role",
+            "context"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "validate"
+            },
+            "role": {
+              "$ref": "#/$defs/Role"
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Violation"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "rows",
+            "role"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "after": true,
+            "before": true,
+            "op": {
+              "type": "string",
+              "const": "permits"
+            },
+            "role": {
+              "$ref": "#/$defs/Role"
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Violation"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "rows",
+            "before",
+            "after",
+            "role"
+          ]
+        }
+      ]
+    },
+    "ProofDeclaration": {
+      "type": "object",
+      "properties": {
+        "observer_support": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|::|$))[^\\\\\\u0000\\r\\n]+\\.py(?:::[A-Za-z_][A-Za-z_0-9]*)*$"
+          },
+          "maxItems": 16,
+          "uniqueItems": true
+        },
+        "red_message": {
+          "description": "Planner-declared EXPECTED assertion message, never captured run evidence.\nRust checks actual-run RED messages independently before accepting the proof.",
+          "type": "string",
+          "maxLength": 160,
+          "minLength": 1
+        },
+        "subjects": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|::|$))[^\\\\\\u0000\\r\\n]+\\.py(?:::[A-Za-z_][A-Za-z_0-9]*)*$"
+          },
+          "maxItems": 16,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "subjects",
+        "observer_support",
+        "red_message"
+      ]
+    },
+    "Redactor": {
+      "type": "object",
+      "properties": {
+        "calls": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "secrets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "secrets",
+        "calls",
+        "truncated"
+      ]
+    },
+    "RenderContext": {
+      "type": "string",
+      "enum": [
+        "reply",
+        "tool"
+      ]
+    },
+    "Repair": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "allowed": {
+              "$ref": "#/$defs/Allowed"
+            },
+            "kind": {
+              "type": "string",
+              "const": "edit"
+            },
+            "op": {
+              "$ref": "#/$defs/EditOp"
+            },
+            "pointer": {
+              "$ref": "#/$defs/FieldPointer"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "pointer",
+            "op",
+            "allowed"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "cant_meet"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "instruction": {
+              "description": "Nonblank instruction of at most 1024 UTF-8 bytes. JSON Schema maxLength counts characters; Rust deserialization and validation enforce the byte cap.",
+              "type": "string",
+              "maxLength": 1024,
+              "minLength": 1
+            },
+            "kind": {
+              "type": "string",
+              "const": "source_edit"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "path",
+            "instruction"
+          ]
+        }
+      ]
+    },
+    "Request": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "usage"
+            },
+            "value": true
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "$ref": "#/$defs/LabelKind"
+            },
+            "op": {
+              "type": "string",
+              "const": "label"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Entry"
+              }
+            },
+            "op": {
+              "type": "string",
+              "const": "retain"
+            },
+            "shrinking": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "entries",
+            "shrinking"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Entry"
+              }
+            },
+            "op": {
+              "type": "string",
+              "const": "allocate"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "entries"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "contents": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Shaped"
+              }
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "op": {
+              "type": "string",
+              "const": "live"
+            },
+            "root": {
+              "type": "boolean"
+            },
+            "spans": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "used": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "enabled",
+            "root",
+            "spans",
+            "used",
+            "contents"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "bytes": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "entries": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PacketEntry"
+              }
+            },
+            "op": {
+              "type": "string",
+              "const": "packet"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "bytes",
+            "entries"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "bytes": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "next": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint",
+              "minimum": 0
+            },
+            "op": {
+              "type": "string",
+              "const": "fits"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "bytes"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "contents": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Shaped"
+              }
+            },
+            "limits": {
+              "type": "array",
+              "items": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "uint",
+                "minimum": 0
+              }
+            },
+            "op": {
+              "type": "string",
+              "const": "clean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "contents",
+            "limits"
+          ]
+        }
+      ]
+    },
+    "Role": {
+      "type": "string",
+      "enum": [
+        "ingest",
+        "audit",
+        "planner",
+        "maker",
+        "reviewer",
+        "classifier",
+        "writer",
+        "postmortem"
+      ]
+    },
+    "SchemaKeyword": {
+      "type": "string",
+      "enum": [
+        "schema",
+        "const",
+        "enum",
+        "type",
+        "pattern",
+        "minimum",
+        "maximum",
+        "minLength",
+        "maxLength",
+        "minItems",
+        "maxItems",
+        "required",
+        "additionalProperties"
+      ]
+    },
+    "Shaped": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "null"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "bool"
+            },
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "number"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "text"
+            },
+            "value": {
+              "$ref": "#/$defs/Clip"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "array"
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Shaped"
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "object"
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/Shaped"
+                  }
+                ]
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "json"
+            },
+            "value": {
+              "type": "object",
+              "properties": {
+                "raw": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "value": {
+                  "$ref": "#/$defs/Shaped"
+                }
+              },
+              "required": [
+                "value"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        }
+      ]
+    },
+    "SymptomPhase": {
+      "type": "string",
+      "enum": [
+        "call",
+        "setup"
+      ]
+    },
+    "ValidationFact": {
+      "type": "object",
+      "properties": {
+        "context": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ValidationFact"
+          }
+        },
+        "instance": true,
+        "keyword": {
+          "type": "string"
+        },
+        "path": {
+          "type": "array",
+          "items": true
+        },
+        "schema": true,
+        "schema_path": {
+          "type": "array",
+          "items": true
+        },
+        "validator_value": true
+      },
+      "additionalProperties": false,
+      "required": [
+        "keyword",
+        "validator_value",
+        "instance",
+        "schema",
+        "path",
+        "schema_path",
+        "context"
+      ]
+    },
+    "Violation": {
+      "type": "object",
+      "properties": {
+        "allowed": {
+          "$ref": "#/$defs/Allowed"
+        },
+        "bad_value": true,
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "maxItems": 16
+        },
+        "evidence_truncated": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "gating": {
+          "type": "boolean"
+        },
+        "names": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Name"
+          }
+        },
+        "repair": {
+          "$ref": "#/$defs/Repair"
+        },
+        "role": {
+          "$ref": "#/$defs/Role"
+        },
+        "rule_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "rule_id",
+        "role",
+        "names",
+        "bad_value",
+        "allowed",
+        "repair",
+        "gating"
+      ]
+    },
+    "Window": {
+      "type": "object",
+      "properties": {
+        "end": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "source": {
+          "type": "string"
+        },
+        "start": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "start",
+        "end"
+      ]
+    }
+  }
+}

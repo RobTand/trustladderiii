@@ -21,7 +21,7 @@ fn fixture(base: &str, head: &str, passed: bool, pre_existing: bool) -> (Job, Va
             "repository": {"owner": "fixture", "name": "repo", "installation": 1},
             "issue": 822, "pull_request": null, "paths": [], "attempt": 1, "round": 0},
         "run": {"repository": "/served", "base_sha": "a".repeat(40),
-            "plan": [{"name": "regression", "kind": "regression", "tests": ["tests/test_x.py::test_x"]}]},
+            "plan": [{"name": "regression", "kind": "regression", "tests": ["tests/test_x.py::test_x"], "goal_ids": []}]},
         "changed_paths": [], "always_tests": [], "selected_tests": null,
     })).unwrap();
     let report = json!({"schema": "tl3.checks.v1", "effect_key": "checks:822",
@@ -671,7 +671,7 @@ fn tessera() -> (Job, Value) {
     job.delivery.head_sha = Some(report["head"].as_str().unwrap().into());
     job.run.base_sha = serde_json::from_value(report["base"].clone()).unwrap();
     job.run.plan = report["results"].as_array().unwrap().iter().map(|result| {
-        let mut check = json!({"name":result["name"], "kind":result["kind"],
+        let mut check = json!({"name":result["name"], "kind":result["kind"], "goal_ids":[],
             "tests":result["tests"].as_array().unwrap().iter().map(|test| test["test"].clone()).collect::<Vec<_>>()});
         if let Some(proof) = result.get("proof") {
             check["proof"] = proof["declaration"].clone();

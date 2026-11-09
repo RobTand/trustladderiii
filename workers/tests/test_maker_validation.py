@@ -30,7 +30,7 @@ def test_goal_references_are_checked_before_tool_calls(tmp_path, maker_request, 
     if invalid == "duplicate-goal":
         inputs["goals"].append(inputs["goals"][0])
     elif invalid == "unknown-check-goal":
-        inputs["plan"]["checks"][0]["goal_ids"] = ["unknown"]
+        inputs["plan"]["checks"][0]["goal_ids"] = [len(inputs["goals"])]
     elif invalid == "unknown-feedback-goal":
         inputs["feedback"] = [{"kind": "review_finding", "report": "x", "goal_ids": ["unknown"]}]
     else:

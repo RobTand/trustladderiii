@@ -358,7 +358,126 @@ fn execute(schedule: &Schedule, current: bool, cut: Option<Cut>) -> Run {
     };
     recording.run
 }
+// S1 canonical Check.tests deliberately changes only active admitted planner
+// leaves. This predicate uses the input and pre-dispatch guards, never outcomes.
+pub(super) fn planner_wire_domain(s: &Schedule) -> bool {
+    matches!(&s.observation, Observation::WorkerReply { role, reply, generation, plan_check: None, .. }
+        if role == "planner" && reply["kind"] == "leaf"
+            && !s.missing && s.run == Some(*generation) && s.generation == *generation
+            && matches!(s.phase, Phase::Planning { .. })
+            && s.protected.first().copied().unwrap_or(0) != 2)
+}
+
+pub(super) fn current_with_crash_safety(s: &Schedule) -> Run {
+    let full = execute(s, true, None);
+    for write in 0..full.writes {
+        for after in [false, true] {
+            let crash = execute(s, true, Some(Cut { write, after }));
+            assert_eq!(crash.result, json!({"crash":true}));
+            assert!(crash.committed.is_empty());
+            assert_eq!(crash.persisted, initial_pending(s));
+            assert_eq!(crash.writes, write + 1);
+            let insert = full.calls.iter().enumerate()
+                .filter(|(_, call)| call["op"] == "intern.insert")
+                .nth(write).unwrap().0;
+            let stop = insert + if after { 2 } else { 1 };
+            assert_eq!(crash.calls, full.calls[..stop]);
+            let expected_rows: Vec<_> = full.calls[..stop].iter()
+                .filter(|call| call["op"] == "row.push")
+                .map(|call| call["args"].clone()).collect();
+            assert_eq!(crash.rows, expected_rows);
+            let mut expected_pending = initial_pending(s);
+            for index in 0..write + usize::from(after) {
+                let insert = full.calls.iter().enumerate()
+                    .filter(|(_, call)| call["op"] == "intern.insert")
+                    .nth(index).unwrap().0;
+                let call = &full.calls[insert];
+                if let Some(id) = full.calls[insert + 1]["id"].as_i64() {
+                    expected_pending.insert(format!("{}:{}:{}", call["kind"].as_str().unwrap(),
+                        call["scope"].as_str().unwrap(), call["value"].as_str().unwrap()), id);
+                }
+            }
+            assert_eq!(crash.pending, expected_pending);
+            assert_eq!(crash.world, initial_world_value(s));
+        }
+    }
+    full
+}
+fn initial_pending(s: &Schedule) -> BTreeMap<String, i64> {
+    s.snapshot.interned.iter().map(|i| (format!("{:?}:{}:{}", i.kind, i.scope, i.value).to_lowercase(), i.id)).collect()
+}
+fn initial_world(s: &Schedule) -> World {
+    let mut world = World::new(&[4], 4);
+    let mut node = Node::new(RepoId(0));
+    node.phase = s.phase; node.run = s.run; node.generation = s.generation;
+    node.head = s.head.map(HeadId); node.round = s.round;
+    node.footprint = world.intern_footprint(vec![tl3_kernel::FileId(1)]);
+    if !s.missing { world.nodes.push(node); }
+    world
+}
+fn initial_world_value(s: &Schedule) -> Value { json!(initial_world(s)) }
+
+pub(super) fn old_canonical_planner_failure(s: &Schedule) {
+    assert!(planner_wire_domain(s));
+    let Observation::WorkerReply { reply, model, .. } = &s.observation else { unreachable!() };
+    // Same canonical input, exact OLD node_ids lookup failure. This is the
+    // explicit S1 wire migration contract, not an equivalence exception.
+    let quota = json!({"Delete":{"table":"model_quotas","id":"model"}});
+    let expected = Run { calls: vec![json!({"op":"row.push","args":quota}),
+        json!({"op":"protected_reply","args":{"node":0,"role":"planner","reply":reply,"result":s.protected.first().copied().unwrap_or(0)}})],
+        rows: vec![quota], result: json!({"error":"Invalid(\"worker reply field missing\")"}),
+        pending: initial_pending(s), persisted: initial_pending(s), committed: vec![],
+        world: initial_world_value(s), writes: 0 };
+    assert_eq!(model.as_deref(), Some("model"));
+    assert_eq!(execute(s, false, None), expected);
+}
+
+pub(super) fn both_reject_obsolete_planner_wire(s: &Schedule) -> Run {
+    let expected = Run { calls:vec![], rows:vec![],
+        result:json!({"event":Event::Reply {node:NodeId(0),generation:7,
+            reply:Reply::RunFailed},"detailed_review":false}),
+        pending:initial_pending(s),persisted:initial_pending(s),committed:vec![],
+        world:initial_world_value(s),writes:0 };
+    assert_eq!(execute(s,false,None),expected,"exact historical obsolete-wire rejection");
+    let current=execute(s,true,None);
+    assert_eq!(current,expected,"canonical schema rejects obsolete node_ids before I/O");
+    current
+}
+
+pub(super) fn canonical_planner_accepted(s: &Schedule) -> Run {
+    old_canonical_planner_failure(s);
+    let actual = current_with_crash_safety(s);
+    let Observation::WorkerReply { reply, .. } = &s.observation else { unreachable!() };
+    let quota = json!({"Delete":{"table":"model_quotas","id":"model"}});
+    let findings = json!({"Put":{"table":"findings","id":"0","value":[]}});
+    let plans = json!({"Put":{"table":"plans","id":"0","value":reply}});
+    let clear = json!({"Delete":{"table":"worker_failures","id":"0"}});
+    let rows = vec![quota.clone(),findings.clone(),plans.clone(),clear.clone()];
+    let mut calls = vec![json!({"op":"row.push","args":quota}),
+        json!({"op":"protected_reply","args":{"node":0,"role":"planner","reply":reply,"result":0}}),
+        json!({"op":"worker_document","args":{"args":["0","briefs"],"result":format!("{:?}",s.documents[0])}}),
+        json!({"op":"worker_document","args":{"args":["0","findings"],"result":"Value(None)"}}),
+        json!({"op":"row.push","args":findings})];
+    let mut pending = initial_pending(s);
+    for (kind,scope,value,id) in [("repo","safe","repo",101),("path","101","safe.rs",102)] {
+        calls.extend([json!({"op":"intern.select","args":{"kind":kind,"scope":scope,"value":value,"result":null}}),
+            json!({"op":"intern.insert","kind":kind,"scope":scope,"value":value}),
+            json!({"op":"intern.result","id":id})]);
+        pending.insert(format!("{kind}:{scope}:{value}"),id);
+    }
+    calls.extend([json!({"op":"row.push","args":plans}),json!({"op":"row.push","args":clear})]);
+    let mut world = initial_world(s);
+    let footprint = world.intern_footprint(vec![tl3_kernel::FileId(102)]);
+    let expected = Run { calls, rows:rows.clone(),
+        result: json!({"event":Event::Reply {node:NodeId(0),generation:7,
+            reply:Reply::PlanLeaf {footprint,fits:true}},"detailed_review":false}),
+        pending:pending.clone(),persisted:pending,committed:rows,world:json!(world),writes:2 };
+    assert_eq!(actual,expected,"full canonical planner acceptance contract");
+    actual
+}
+
 pub(super) fn compare(s: &Schedule) -> Run {
+    assert!(!planner_wire_domain(s), "wire migration requires explicit same-input old/current assertions");
     let old = execute(s, false, None);
     let new = execute(s, true, None);
     assert_eq!(old, new, "observation route mismatch");
