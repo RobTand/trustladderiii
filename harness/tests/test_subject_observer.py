@@ -9,6 +9,7 @@ from tl3_harness import execution, model
 from tl3_harness.execution import Container, Progress, run_checks
 from tl3_harness.model import Check, Forcing, Kind, Outcome, Verdict
 from tl3_harness.trees import git
+from conftest import flux_context
 
 
 RUNNER = Path(__file__).parents[1] / 'src/tl3_harness/runner.py'
@@ -70,7 +71,7 @@ def repository(tmp_path, monkeypatch):
         '[tool.tl3.harness]\ncommand=["python", "-m", "pytest"]\ntest-files=["tests/*.py"]\n')
     git(repo, 'init', '-q')
     monkeypatch.setattr(execution, 'require_admission', lambda: None)
-    monkeypatch.setenv('PRISMABUILD_CONTAINER_OWNER', str(repo))
+    flux_context(monkeypatch)
     monkeypatch.setattr(Progress, 'commit', lambda *_: None)
     monkeypatch.setattr(execution, 'container_command', lambda tree, container, tests: [
         sys.executable, '-I', '-B', str(RUNNER), '-', str(tree)])

@@ -4,6 +4,7 @@ import pytest
 from tl3_harness import execution
 from tl3_harness.model import Check, Kind, Outcome, Verdict
 from tl3_harness.trees import git
+from conftest import flux_context
 
 CONFIG = '[tool.tl3.harness]\ncommand=["python", "-m", "pytest"]\ntest-files=["tests/test_*.py"]\n'
 TEST = 'tests/test_value.py::test_value'
@@ -36,7 +37,7 @@ def repo(tmp_path, monkeypatch):
 
     monkeypatch.setattr(execution, 'require_admission', lambda: None)
     monkeypatch.setattr(execution, 'run_tree', run_tree)
-    monkeypatch.setenv('PRISMABUILD_CONTAINER_OWNER', str(tmp_path))
+    flux_context(monkeypatch)
     return repo, pinned, ran
 
 

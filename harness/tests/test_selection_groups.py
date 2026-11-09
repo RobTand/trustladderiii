@@ -8,6 +8,7 @@ import pytest
 from tl3_harness import execution
 from tl3_harness.model import Check, HarnessInputError, Kind, Outcome, Verdict
 from tl3_harness.trees import git
+from conftest import flux_context
 
 RUNNER = Path(__file__).parents[1] / 'src/tl3_harness/runner.py'
 CONTAINER = execution.Container('sha256:' + '1' * 64)
@@ -72,7 +73,7 @@ def frozen_repo(tmp_path, monkeypatch):
     monkeypatch.setattr(execution, 'require_admission', lambda: None)
     monkeypatch.setattr(execution, 'container_command', real_runner)
     monkeypatch.setattr(execution.Progress, 'commit', lambda *_: None)
-    monkeypatch.setenv('PRISMABUILD_CONTAINER_OWNER', str(repo))
+    flux_context(monkeypatch)
     yield repo, runs
     monkeypatch.setattr(execution, 'container_command', command)
 

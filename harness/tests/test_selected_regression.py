@@ -6,6 +6,7 @@ import pytest
 from tl3_harness import execution
 from tl3_harness.model import Check, HarnessInputError, Kind, Outcome, Verdict
 from tl3_harness.trees import git
+from conftest import flux_context
 
 CONFIG = '[tool.tl3.harness]\ncommand=["python", "-m", "pytest"]\ntest-files=["tests/*.py"]\n'
 OTHER = 'tests/test_other.py::test_other'
@@ -69,7 +70,7 @@ def repo(tmp_path, monkeypatch):
 
     monkeypatch.setattr(execution, 'require_admission', lambda: None)
     monkeypatch.setattr(execution, 'run_tree', run_tree)
-    monkeypatch.setenv('PRISMABUILD_CONTAINER_OWNER', str(tmp_path))
+    flux_context(monkeypatch)
     return repo, base, runs, outcomes
 
 

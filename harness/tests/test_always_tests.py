@@ -10,6 +10,7 @@ from tl3_harness import execution
 from tl3_harness.model import Check, HarnessInputError, Kind, Outcome, Verdict
 from tl3_harness.report import decode, parse
 from tl3_harness.trees import git
+from conftest import flux_context
 
 RULE = 'tests/test_rules.py'
 CONTAINER = execution.Container('sha256:' + '1' * 64)
@@ -39,7 +40,7 @@ def test_no_sleep():
 '''.replace('"time.sleep("', '"time." + "sleep("'))
     (repo / 'tests/test_other.py').write_text('def test_other():\n    assert True\n')
     monkeypatch.setattr(execution, 'require_admission', lambda: None)
-    monkeypatch.setenv('PRISMABUILD_CONTAINER_OWNER', str(repo))
+    flux_context(monkeypatch)
 
     def run(tree, container, tests, report, progress, additions=frozenset(), *, messages=None):
         child = subprocess.run([sys.executable, '-I', '-B', str(RUNNER), json.dumps(tests), str(tree)],
