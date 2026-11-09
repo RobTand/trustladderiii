@@ -9,6 +9,7 @@ from tl3_harness import execution
 from tl3_harness.model import Check, FailureNotes, Kind, Outcome, Proof, Verdict, judge
 from tl3_harness.report import InvalidReport, decode, parse
 from tl3_harness.trees import git
+from conftest import flux_context
 
 
 NODE = 'tests/test_holds.py::test_hold'
@@ -26,7 +27,7 @@ def checking(tmp_path, monkeypatch):
     git(repo, 'init', '-q')
     monkeypatch.setattr(execution, 'require_admission', lambda: None)
     monkeypatch.setattr(execution.Progress, 'commit', lambda *_: None)
-    monkeypatch.setenv('PRISMABUILD_CONTAINER_OWNER', str(repo))
+    flux_context(monkeypatch)
     monkeypatch.setattr(execution, 'container_command', lambda tree, container, tests: [
         sys.executable, '-I', '-B', str(RUNNER), '-', str(tree)])
     reports = []

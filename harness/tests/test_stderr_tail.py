@@ -10,6 +10,7 @@ import pytest
 
 from tl3_harness import execution, supervision, test_tool
 from tl3_harness.supervision import Supervised
+from conftest import flux_context
 
 
 IMAGE = execution.Container('sha256:' + '1' * 64)
@@ -127,7 +128,7 @@ def test_checking_logs_diagnostics_without_maker_feedback(tmp_path, monkeypatch,
 
 
 def test_stderr_activity_does_not_extend_progress_allowance(tmp_path, monkeypatch):
-    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_ALLOWANCES', '{"tests": 1}')
+    flux_context(monkeypatch, no_progress_seconds=1)
     result, diagnostic = observe(tmp_path, monkeypatch, "import os\nwhile True: os.write(2, b'no progress\\n' * 1024)")
     assert result['execution']['outcome'] == 'unknown_incomplete'
     assert result['execution']['termination_reason'] == 'no_progress'

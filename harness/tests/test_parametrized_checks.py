@@ -9,6 +9,7 @@ from tl3_harness import execution
 from tl3_harness.model import Check, Kind, Outcome, Verdict, Proof
 from tl3_harness.report import decode, parse
 from tl3_harness.trees import git
+from conftest import flux_context
 
 SOURCE = (Path(__file__).parent / 'fixtures/chunked_test.py').read_text()
 TEST = 'tests/test_sequences.py::test_chunked_rejects_non_positive_sizes'
@@ -43,7 +44,7 @@ def chunked_repo(tmp_path, monkeypatch):
     base = save(repo, 'base')
     monkeypatch.setattr(execution, 'require_admission', lambda: None)
     monkeypatch.setattr(execution, 'run_tree', run)
-    monkeypatch.setenv('PRISMABUILD_CONTAINER_OWNER', str(repo))
+    flux_context(monkeypatch)
     return repo, base
 
 

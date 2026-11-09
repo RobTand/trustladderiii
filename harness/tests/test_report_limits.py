@@ -6,9 +6,15 @@ import pytest
 
 from tl3_harness import execution
 from tl3_harness.model import Check, Kind, Outcome, Verdict, judge
+from conftest import flux_context
 
 RUNNER = Path(__file__).parents[1] / 'src/tl3_harness/runner.py'
 IMAGE = execution.Container('sha256:' + '1' * 64)
+@pytest.fixture(autouse=True)
+def flux(monkeypatch):
+    # PB-REMOVAL: the harness runs only inside a Rust-launched Flux job.
+    flux_context(monkeypatch)
+
 
 
 class Progress:

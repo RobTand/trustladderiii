@@ -1,5 +1,4 @@
 """The admitted action owns disk scratch and its cleanup, including launcher loss."""
-import json
 import os
 from pathlib import Path
 import stat
@@ -13,11 +12,6 @@ def environment():
     return {
         'TL3_SCRATCH_ROOT': '/home/rob/tmp',
         'TL3_SCRATCH_MAX_BYTES': str(SCRATCH_BYTES),
-        'PRISMABUILD_LOCAL_SCRATCH_PAIRS': 'TL3_SCRATCH_ROOT:TL3_SCRATCH_MAX_BYTES',
-        'PRISMABUILD_EPHEMERAL_SCRATCH_DECLARATIONS': json.dumps({
-            'schema': 'prismabuild.scratch_lifetime_selection.v1',
-            'entries': [{'root_env': 'TL3_SCRATCH_ROOT', 'name': 'pytest', 'lifetime': 'ephemeral'}],
-        }, sort_keys=True, separators=(',', ':')),
     }
 
 

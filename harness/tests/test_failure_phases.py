@@ -11,6 +11,7 @@ from tl3_harness import execution
 from tl3_harness.model import Check, Proof, FailureNotes, Kind, Outcome, Verdict, judge
 from tl3_harness.report import InvalidReport, decode, parse
 from tl3_harness.trees import git
+from conftest import flux_context
 
 RUNNER = Path(execution.__file__).with_name('runner.py')
 NODE = 'test_phases.py::test_probe'
@@ -140,9 +141,7 @@ def test_phase_evidence_survives_real_checking_staging(phase_repo, monkeypatch):
     monkeypatch.setattr(execution, 'require_admission', lambda: None)
     monkeypatch.setattr(execution, 'container_command', lambda tree, container, tests: [
         sys.executable, '-I', '-B', str(RUNNER), '-', str(tree)])
-    monkeypatch.setenv('PRISMABUILD_CONTAINER_OWNER', str(repo))
-    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_PATH', str(repo / 'progress.json'))
-    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_TOKEN', 'fixture')
+    flux_context(monkeypatch)
     result, = execution.run_checks(repo, base, head, (Check('phases', Kind.DEMONSTRATING, (NODE,)),),
                                    container=IMAGE)
     assert result.verdict == Verdict.FAIL
