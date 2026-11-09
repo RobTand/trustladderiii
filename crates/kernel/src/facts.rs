@@ -160,12 +160,17 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             if !w.nodes[i].phase.is_closed() {
                 w.nodes[i].priority = priority;
             }
-            kernel_proof! { reveal(retirement::fact_node); }
+            kernel_proof! {
+                facts_transition_lemmas::priority_result(before_transition@, *w, i, before_out@, *out, priority);
+            }
         }
         Fact::PrClosedByPerson => {
             let m = &mut w.nodes[i];
             if !m.pr_open {
-                kernel_proof! { reveal(retirement::fact_node); }
+                kernel_proof! {
+                    assert(w.nodes@[i as int] == retirement::fact_node(
+                        before_transition@.nodes@[i as int], Fact::PrClosedByPerson)) by { reveal(retirement::fact_node); }
+                }
                 return;
             }
             m.pr_open = false;
@@ -173,9 +178,13 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
                 notice(out, i, Notice::Note(NoteKind::PrClosed));
                 enter_stopping(m, Outcome::Stopped);
             }
-            kernel_proof! { reveal(retirement::fact_node); }
+            kernel_proof! {
+                assert(w.nodes@[i as int] == retirement::fact_node(
+                    before_transition@.nodes@[i as int], Fact::PrClosedByPerson)) by { reveal(retirement::fact_node); }
+                assert(retirement::fact_frame(before_transition@, *w, i, before_out@, *out))
+                    by { reveal(retirement::fact_frame); }
+            }
         }
-        Fact::PrDequeuedByPerson => pr_dequeued(w, i, out),
         Fact::PushByOther { head } => {
             let m = &w.nodes[i];
             if !m.had_pr {
@@ -184,7 +193,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             notice(out, i, Notice::Note(NoteKind::OutsidePush));
             let published = matches!(
                 m.phase,
-                Phase::Publishing | Phase::Queued | Phase::Ready(Resume::Publishing)
+                Phase::Publishing | Phase::AwaitingDelivery | Phase::Ready(Resume::Publishing)
             );
             if published {
                 update_recheck_head(&mut w.nodes[i], head);
@@ -193,26 +202,12 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             }
         }
         Fact::CiFailed { infra } => ci_failed(w, i, infra, out),
-        Fact::Conflict => {
-            let m = &mut w.nodes[i];
-            if matches!(m.phase, Phase::Publishing | Phase::Queued) {
-                set_phase(m, Phase::Rebasing);
-            }
-            kernel_proof! { reveal(retirement::fact_node); }
-        }
-        Fact::UpstreamStalled => {
-            let m = &mut w.nodes[i];
-            if m.phase != Phase::Queued || m.waiting_incident {
-                return;
-            }
-            m.run_incidents = (m.run_incidents + 1).min(2);
-            let needs_rob = m.run_incidents >= 2;
-            raise_incident(w, i, needs_rob, out);
-        }
+        Fact::Conflict => conflict(w, i, out),
         Fact::IncidentCleared { by_rob } => incident_cleared(w, i, by_rob, out),
     }
     kernel_proof! {
-        if fact is PrDequeuedByPerson || fact is CiFailed || fact is IncidentCleared {
+        if fact is CiFailed || fact is IncidentCleared || fact is Priority
+            || fact is PrClosedByPerson || fact is Conflict {
             facts_transition_lemmas::frame_consequences(before_transition@, *w, i, before_out@, *out);
         }
     }
@@ -231,7 +226,7 @@ pub(super) fn merge_open(m: &mut Node, head: HeadId) -> (result: ()) [
         final(m).generation as int <= old(m).generation as int + 1,
         final(m).next_seq == old(m).next_seq, final(m).credit == old(m).credit,
         final(m).last_cmd == old(m).last_cmd,
-        old(m).phase == Phase::Queued && !old(m).paused
+        old(m).phase == Phase::AwaitingDelivery && !old(m).paused
             && !old(m).waiting_incident && old(m).effect.is_none()
             ==> distance(*final(m)) < distance(*old(m)),
 ] {
@@ -251,7 +246,7 @@ pub(super) fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bo
     requires i < old(w).nodes@.len(), old(out).len + 4 <= OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
     ensures (node_checked(*old(w), old(w).nodes@[i as int])
-            && old(w).nodes@[i as int].phase == Phase::Queued && !old(w).nodes@[i as int].paused
+            && old(w).nodes@[i as int].phase == Phase::AwaitingDelivery && !old(w).nodes@[i as int].paused
             && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none()
             && old(w).nodes@[i as int].question.is_none()
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
@@ -327,30 +322,6 @@ pub(super) fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bo
 
 kernel_fn! {
 /// State-table fact rows / #806: the original match arm, isolated for bounded solver work.
-pub(super) fn pr_dequeued(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
-    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
-        node_headroom(old(w).nodes@[i as int]),
-        arithmetic_consistent(old(w).nodes@[i as int]),
-        old(w).next_question < u64::MAX,
-    ensures retirement::fact_frame(*old(w), *final(w), i, *old(out), *final(out)),
-        final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], Fact::PrDequeuedByPerson),
-        final(w).next_question == old(w).next_question,
-        retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
-] proof [reveal(retirement::fact_frame); reveal(retirement::fact_node); reveal(retry_bounds);] {
-    let m = &mut w.nodes[i];
-    if m.phase != Phase::Queued {
-        return;
-    }
-    // Treated as Rob pausing it: the PR waits until he resumes.
-    m.holds = false;
-    m.paused = true;
-    set_phase(m, Phase::Ready(Resume::Publishing));
-    notice(out, i, Notice::Note(NoteKind::PrDequeued));
-}
-}
-
-kernel_fn! {
-/// State-table fact rows / #806: the original match arm, isolated for bounded solver work.
 #[allow(clippy::collapsible_if)]
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) -> (result: ()) [
@@ -365,9 +336,13 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
 ] proof [reveal(retirement::fact_frame);] {
     kernel_snapshot! { before_ci = w.nodes@[i as int] }
     let m = &mut w.nodes[i];
+    if m.phase == Phase::AwaitingDelivery && infra {
+        kernel_proof! { reveal(retirement::fact_node); }
+        return;
+    }
     let before_enqueue =
         m.phase == Phase::Publishing && m.current() == Some(Item::Do(EffectKind::Enqueue));
-    if m.phase != Phase::Queued && !before_enqueue {
+    if m.phase != Phase::AwaitingDelivery && !before_enqueue {
         kernel_proof! { reveal(retirement::fact_node); }
         return;
     }
@@ -389,6 +364,27 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
         facts_ci_failed_lemmas::cancellation_input(before_ci@, w.nodes@[i as int]);
     }
     ci_infrastructure(w, i, out);
+}
+}
+
+kernel_fn! {
+/// State-table Conflict rows / #806: the original match arm, isolated for bounded solver work.
+pub(super) fn conflict(w: &mut World, i: usize, _out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(_out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures retirement::fact_frame(*old(w), *final(w), i, *old(_out), *final(_out)),
+        final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], Fact::Conflict),
+        final(w).next_question == old(w).next_question,
+        retirement::notices_only(*old(_out)) ==> retirement::notices_only(*final(_out)),
+] proof [reveal(retirement::fact_frame); reveal(retirement::fact_node);] {
+    let m = &mut w.nodes[i];
+    if m.phase == Phase::AwaitingDelivery {
+        set_phase(m, Phase::Ready(Resume::Rebasing));
+    } else if m.phase == Phase::Publishing {
+        set_phase(m, Phase::Rebasing);
+    }
 }
 }
 
@@ -425,9 +421,8 @@ pub(super) fn ci_infrastructure(w: &mut World, i: usize, out: &mut Outbox) -> (r
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-        old(w).nodes@[i as int].phase == Phase::Queued ||
-            (old(w).nodes@[i as int].phase == Phase::Publishing
-                && current_item(old(w).nodes@[i as int]) == Some(Item::Do(EffectKind::Enqueue))),
+        old(w).nodes@[i as int].phase == Phase::Publishing
+                && current_item(old(w).nodes@[i as int]) == Some(Item::Do(EffectKind::Enqueue)),
     ensures retirement::fact_frame(*old(w), *final(w), i, *old(out), *final(out)),
         final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], Fact::CiFailed { infra: true }),
         final(w).next_question == old(w).next_question,

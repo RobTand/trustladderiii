@@ -6,6 +6,7 @@ from pathlib import Path
 import runpy
 import shutil
 import signal
+import stat
 import threading
 import subprocess
 import sys
@@ -27,6 +28,11 @@ def main():
         try:
             if settings['mode'] == 'no-ownership' and command['op'] == 'validate_allocation':
                 raise RuntimeError('admitted fixture has no retained prelaunch allocation ownership')
+            if settings['mode'] == 'die-before-allocation' and command['op'] == 'observe_allocation':
+                # Model a runner killed after creating job scratch and before any grant.
+                (output / 'runner-killed-before-allocation.json').write_text(json.dumps(
+                    {'pid': os.getpid(), 'scratch_present': Path(settings['scratch']).is_dir()}))
+                os.kill(os.getpid(), signal.SIGKILL)
             if command['op'] == 'cleanup_runtime':
                 if settings['mode'] == 'cancel-term-unconfirmed':
                     raise RuntimeError('admitted fixture cleanup transport remains unconfirmed')
@@ -72,6 +78,13 @@ def main():
 
     if mode == 'action':
         (output / 'action-pid.json').write_text(json.dumps({'pid': os.getpid()}))
+        if settings['mode'] == 'die-after-scratch-mkdir':
+            # Model a runner killed after creating job scratch and before its workspace.
+            def dying_workspace(prefix):
+                (output / 'runner-killed-before-allocation.json').write_text(json.dumps(
+                    {'pid': os.getpid(), 'scratch_present': Path(settings['scratch']).is_dir()}))
+                os.kill(os.getpid(), signal.SIGKILL)
+            runtime.workspace = dying_workspace
         # The native CLI and journal are real. Only the host observation and
         # container executable are deterministic fixture boundaries.
         original = runtime.command
@@ -302,6 +315,23 @@ sys.exit(0)
         elapsed = time.monotonic() - started
         (output / 'reproduction-timing.json').write_text(json.dumps({'seconds': elapsed}))
         print(f'collector_seconds={elapsed:.3f}', flush=True)
+    if settings['mode'] in ('die-after-scratch-mkdir', 'die-before-allocation'):
+        killed = json.loads((output / 'runner-killed-before-allocation.json').read_text())
+        process = json.loads((output / 'action-process-status.json').read_text())
+        assert process['returncode'] == -signal.SIGKILL, process
+        leaf = Path(settings['scratch'])
+        info = leaf.lstat()
+        assert killed['scratch_present'] and stat.S_ISDIR(info.st_mode)
+        assert stat.S_IMODE(info.st_mode) == 0o700 and info.st_uid == os.getuid()
+        entries = sorted(path.name for path in leaf.iterdir())
+        # Only the pre-workspace kill leaves the leaf empty; the workspace exports first.
+        assert (not entries) == (settings['mode'] == 'die-after-scratch-mkdir'), entries
+        state = json.loads((root / 'journal' / os.environ['TL3_RUN_CORRELATION'] / 'state.json').read_text())
+        assert state['allocation_grant'] is None
+        assert not state['runtime_ownerships'] and not state['container_launches']
+        (output / 'runner-killed-assertions.json').write_text(json.dumps({
+            'mode': settings['mode'], 'leaf_entries': entries, 'no_grant_no_execution': True}))
+        return
     if watcher is not None:
         watcher.join(timeout=35 + latency)
         assert not watcher.is_alive() and not signal_errors, signal_errors

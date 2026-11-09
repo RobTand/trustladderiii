@@ -22,7 +22,7 @@ spec fn outside_available(w: World, i: int) -> bool {
         (n.paused && !(n.phase is Stopping)) || n.effect.is_some()
             || n.waiting_incident || n.question.is_some()
             || (n.phase == Phase::Unplanned && !dependencies::delivered(w.dependencies@, NodeId(i as u64)))
-            || matches!(current_item(n), Some(Item::Await | Item::Merge)))
+            || matches!(current_item(n), Some(Item::Await | Item::Delivery)))
 }
 
 /// Q39: a non-Ready ticket waits for the agent pool.
@@ -72,7 +72,7 @@ spec fn chosen_for_node(w: World, i: int, event: Event) -> bool {
     else if n.paused && !(n.phase is Stopping) {
         event == Event::Command { node, id, command: Command::Resume }
     } else if let Some(e) = n.effect {
-        event == Event::Ack { node, seq: e.seq, ack: Ack::Confirmed }
+        event == Event::Ack { node, seq: e.seq, ack: if e.kind == EffectKind::Enqueue { Ack::DeliveryAccepted } else { Ack::Confirmed } }
     } else if n.waiting_incident {
         event == Event::Fact { node, fact: Fact::IncidentCleared { by_rob: true } }
     } else if let Some(q) = n.question {
@@ -93,7 +93,7 @@ spec fn chosen_for_node(w: World, i: int, event: Event) -> bool {
             Some(reply) => event == Event::Reply { node, generation: n.generation, reply },
             None => false,
         },
-        Some(Item::Merge) => event == Event::Fact { node, fact: Fact::PrMerged {
+        Some(Item::Delivery) => event == Event::Fact { node, fact: Fact::PrMerged {
             head: match n.head { Some(h) => h, None => HeadId(0) }, checks_passed: true } },
         _ => false,
     } }

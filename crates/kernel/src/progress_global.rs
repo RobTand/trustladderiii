@@ -23,7 +23,7 @@ pub(super) proof fn no_outside_no_holders(w: World)
         if n.holds {
             match n.phase {
                 Phase::Making | Phase::Checking | Phase::Reviewing | Phase::Publishing
-                    | Phase::Queued | Phase::Rebasing | Phase::Stopping(_) => {},
+                    | Phase::AwaitingDelivery | Phase::Rebasing | Phase::Stopping(_) => {},
                 _ => {},
             }
             assert(movable(w, j));
@@ -104,7 +104,7 @@ pub(super) proof fn outside_branch_exists(w: World)
         match n.phase {
             Phase::Ingesting | Phase::Auditing | Phase::Unplanned | Phase::Planning { .. }
                 | Phase::Ready(_) | Phase::Making | Phase::Checking | Phase::Reviewing
-                | Phase::Publishing | Phase::Queued | Phase::Rebasing | Phase::AwaitingRob
+                | Phase::Publishing | Phase::AwaitingDelivery | Phase::Rebasing | Phase::AwaitingRob
                 | Phase::Stopping(_) | Phase::Closed(_) => {},
         }
         assert(movable(w, i));
@@ -122,7 +122,7 @@ pub(super) proof fn resume_decreases(w: World, n: Node)
     match n.phase {
         Phase::Ingesting | Phase::Auditing | Phase::Unplanned | Phase::Planning { .. }
             | Phase::Ready(_) | Phase::Making | Phase::Checking | Phase::Reviewing
-            | Phase::Publishing | Phase::Queued | Phase::Rebasing | Phase::AwaitingRob
+            | Phase::Publishing | Phase::AwaitingDelivery | Phase::Rebasing | Phase::AwaitingRob
             | Phase::Stopping(_) | Phase::Closed(_) => {},
     }
 }
@@ -133,7 +133,7 @@ pub(super) proof fn fact_witness_premises(w: World, i: int, fact: Fact)
     ensures node_checked(w, w.nodes@[i]),
         match fact {
             Fact::Dependency { target, status } => (status == DependencyStatus::Delivered && dependencies::delivery_input(w, i, target)),
-            Fact::PrMerged { .. } => w.nodes@[i].phase == Phase::Queued
+            Fact::PrMerged { .. } => w.nodes@[i].phase == Phase::AwaitingDelivery
                 && !w.nodes@[i].paused && !w.nodes@[i].waiting_incident
                 && w.nodes@[i].effect.is_none() && w.nodes@[i].question.is_none(),
             _ => fact == Fact::IncidentCleared { by_rob: true }

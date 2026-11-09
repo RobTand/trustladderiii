@@ -25,7 +25,7 @@ fn index_measure_matches_the_original_iterator_over_generated_worlds() {
         Phase::Checking,
         Phase::Reviewing,
         Phase::Publishing,
-        Phase::Queued,
+        Phase::AwaitingDelivery,
         Phase::Rebasing,
         Phase::AwaitingRob,
         Phase::Stopping(Outcome::Stopped),

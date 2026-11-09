@@ -4,8 +4,15 @@ use tl3_kernel::{Command, EarlyEnd, Event, Fact, NodeId, Reply};
 
 struct Held;
 impl Executor for Held {
-    fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
-        Ok(Completion::confirmed(vec![]))
+    fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
+        // Production Direct accepts the Enqueue handoff with typed acceptance.
+        Ok(match d.output {
+            Output::Effect {
+                kind: EffectKind::Enqueue,
+                ..
+            } => Completion::delivery_accepted(vec![]),
+            _ => Completion::confirmed(vec![]),
+        })
     }
     fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
         Ok(Reconciliation::Pending)
@@ -107,7 +114,7 @@ fn user_stop_and_pr_close_keep_distinct_reasons_and_summary_evidence() {
         let root = tempfile::tempdir().unwrap();
         let mut c = open(&settings, root.path(), false);
         start(&mut c);
-        assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Queued);
+        assert_eq!(c.world().unwrap().nodes[0].phase, Phase::AwaitingDelivery);
         send(&mut c, "terminal-input", event);
         assert_eq!(reason(&mut c).unwrap()["reason"], expected);
         assert_eq!(

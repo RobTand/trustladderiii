@@ -9,12 +9,9 @@ pub fn recorded_witness() {
     assert(translation.is_none());
 }
 
-/// S-once / #751/#760: a first receipt reaches the actual kernel dispatch.
-/// Q52's non-kernel cases remain covered by the existing dispatch witnesses.
+/// S-once / #751/#760: a first receipt reaches delivery outcome processing.
 pub fn first_kernel_witness() {
     let translation = begin(false);
     assert(translation.is_some());
-    let decision = dispatch(translation.unwrap(), Route::Kernel(KernelKind::Conflict), EvidenceKind::Other);
-    assert(decision == Decision::Kernel(KernelKind::Conflict));
 }
 }

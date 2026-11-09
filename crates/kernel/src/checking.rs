@@ -277,7 +277,7 @@ impl World {
             }
         } else if n.pos as usize > items.len()
             || (n.pos as usize == items.len()
-                && !matches!(n.phase, Phase::Publishing | Phase::Stopping(_)))
+                && !matches!(n.phase, Phase::Stopping(_)))
         {
             // Mid-settle, Publishing and Stopping can sit at the end of their agenda for a moment.
             return Err(Broken::Agenda);
@@ -504,8 +504,14 @@ impl World {
         if let Some(r) = n.phase.resume() {
             self.check_ready(n, r)?;
         }
-        if n.phase == Phase::Queued && !n.pr_open {
-            return Err(Broken::Pr);
+        if n.phase == Phase::AwaitingDelivery {
+            self.check_ready(n, Resume::Publishing)?;
+            if !n.pr_open {
+                return Err(Broken::Pr);
+            }
+            if n.effect.is_some() {
+                return Err(Broken::Effect);
+            }
         }
         // The PR counts as open from the moment TL3 asks GitHub to open it.
         let opening = n.phase == Phase::Publishing

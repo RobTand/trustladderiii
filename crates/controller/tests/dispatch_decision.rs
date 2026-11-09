@@ -85,7 +85,7 @@ fn every_other_wait_has_a_typed_evidence_requirement() {
     e.question = true;
     assert_eq!(classify(Wait::Answer, e), DispatchStatus::Answer);
     e.external = true;
-    assert_eq!(classify(Wait::MergeQueue, e), DispatchStatus::MergeQueue);
+    assert_eq!(classify(Wait::Delivery, e), DispatchStatus::Delivery);
     e.ticket = true;
     e.obstruction = true;
     assert_eq!(classify(Wait::SlotOrFiles, e), DispatchStatus::SlotOrFiles);

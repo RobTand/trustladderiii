@@ -17,8 +17,10 @@ impl Controller {
             });
             if let Some(row) = incident {
                 let incident: Incident = crate::decode_stored(row.value.clone())?;
-                if decisions::incident_action(true, incident_view(&incident, &state.delivery))
-                    == decisions::IncidentAction::Probe
+                if decisions::incident_action(
+                    true,
+                    incident_view(snapshot, &incident, &state.delivery),
+                ) == decisions::IncidentAction::Probe
                 {
                     match self
                         .adapters
@@ -40,7 +42,10 @@ impl Controller {
                 .find(|r| r.table == "incidents" && r.id == *id && r.value["open"] == true)
         {
             let incident: Incident = crate::decode_stored(row.value.clone())?;
-            match decisions::incident_action(false, incident_view(&incident, &state.delivery)) {
+            match decisions::incident_action(
+                false,
+                incident_view(snapshot, &incident, &state.delivery),
+            ) {
                 decisions::IncidentAction::Hold => {
                     // A healthy GET cannot prove command restrictions were fixed (#608).
                     self.save_allowance(state)?;
@@ -73,8 +78,15 @@ impl Controller {
                 announced,
                 now,
             )?;
+            state.quota_retry_ms = Some(resume);
+            let Some(retry) = self.quota_retry(state, resume, now)? else {
+                state.due_ms = None;
+                self.save_allowance(state)?;
+                return Ok(());
+            };
+            state.quota_retry_ms = Some(retry);
             match state_decisions::quota_wait(
-                resume,
+                retry,
                 now,
                 state.unserved_since_ms,
                 state.ladder_out_noticed,
@@ -84,7 +96,7 @@ impl Controller {
                 state_decisions::QuotaWait::Notify { due } => {
                     state.ladder_out_noticed = true;
                     state.due_ms = Some(due);
-                    return self.ladder_out_note(state, resume, now);
+                    return self.ladder_out_note(state, retry, now);
                 }
                 state_decisions::QuotaWait::Wait { due } => {
                     state.due_ms = Some(due);
@@ -110,6 +122,7 @@ impl Controller {
                 {
                     Ok(Some(completion)) => {
                         self.look_observations(&delivery, completion)?;
+                        state.found = None;
                         state.progress = None;
                         state.progress_ms = now;
                         self.rearm(state);
@@ -129,6 +142,8 @@ impl Controller {
                 }
             }
             state.quota_ms = None;
+            state.quota_retry_ms = None;
+
             self.remove_hold(&state.delivery);
             self.save_allowance(state)?;
             return Ok(());
@@ -169,79 +184,43 @@ impl Controller {
         }
         match result {
             Ok(Look::Found(completion)) => {
-                let mut completion = *completion;
+                let completion = *completion;
                 let effect = self
                     .store
                     .effect(&state.delivery.key)?
                     .expect("allowance effect");
-                let token_only =
-                    completion.progress.is_some() && completion.observations.is_empty();
-                let changed = if completion.progress.is_some() {
-                    let snapshot = self.store.load()?;
-                    let mut commit = Commit::new(
-                        format!(
-                            "look-progress:{}:{}",
-                            state.delivery.key,
-                            snapshot.revision.get()
-                        ),
-                        json!({"progress_read":state.delivery.key}),
-                        &snapshot,
-                    );
-                    let changed = self.record_progress(
-                        &snapshot,
-                        &mut commit,
-                        &state.delivery.key,
-                        completion.progress.as_ref(),
-                    )?;
-                    if !commit.rows.is_empty() {
-                        self.store.commit(&commit)?;
+                let found = serde_json::to_string(&completion)?;
+                let action = state_decisions::found_action(
+                    effect.state.is_pending(),
+                    false,
+                    state.found.as_ref() != Some(&found),
+                    !completion.observations.is_empty(),
+                );
+                state.found = Some(found);
+                if action != state_decisions::FoundAction::Skip {
+                    if completion.releases_holds() {
+                        self.retry_held_effects(upstream(state.delivery.output));
                     }
-                    changed == Some(true)
-                } else {
-                    false
-                };
-                if changed {
-                    state.progress_ms = now;
-                    state.due_ms = Some(now.saturating_add(
-                        u64::from(self.allowance(&state.delivery).no_progress_secs) * 1000,
-                    ));
-                }
-                // The typed watch row is the sole token store.
-                completion.progress = None;
-                if token_only {
-                    if effect.state.is_pending() {
+                    if action == state_decisions::FoundAction::Complete {
                         self.complete(&effect.key, completion)?;
-                    }
-                    if self.look_alive(state, changed)? {
-                        return Ok(());
-                    }
-                } else {
-                    let found = serde_json::to_string(&completion)?;
-                    let mut setup_gap = false;
-                    for observation in &completion.observations {
-                        if let Observation::Queue(fact) = observation
-                            && fact.setup()
-                            && !fact.recorded(snapshot)?
-                        {
-                            setup_gap = true;
-                            break;
+                    } else {
+                        // The final save must retain the class recorded with the observations.
+                        if let Some(class) = &completion.failure_class {
+                            state.failure = Some(class.clone());
                         }
-                    }
-                    let action = state_decisions::found_action(
-                        effect.state.is_pending(),
-                        setup_gap,
-                        state.found.as_ref() != Some(&found),
-                        !completion.observations.is_empty(),
-                    );
-                    state.found = Some(found);
-                    if action != state_decisions::FoundAction::Skip {
-                        if completion.releases_holds() {
-                            self.retry_held_effects(upstream(state.delivery.output));
-                        }
-                        if action == state_decisions::FoundAction::Complete {
-                            self.complete(&effect.key, completion)?;
-                        } else {
-                            self.look_observations(&state.delivery, completion)?;
+                        let refusal = completion.ack == Ack::DeliveryAccepted
+                            && completion.diagnostic.is_some();
+                        self.look_observations(&state.delivery, completion)?;
+                        if refusal {
+                            state.incident = self
+                                .store
+                                .load()?
+                                .rows
+                                .iter()
+                                .find(|row| {
+                                    row.table == "allowances" && row.id == state.delivery.key
+                                })
+                                .and_then(|row| row.value["incident"].as_str().map(str::to_owned));
                         }
                     }
                 }
@@ -272,7 +251,6 @@ impl Controller {
                         Completion {
                             diagnostic: None,
                             failure_class: None,
-                            progress: None,
                             ack: Ack::Retryable,
                             observations: vec![],
                         },
@@ -408,12 +386,7 @@ impl Controller {
             state.progress_ms,
             u64::from(allowance.no_progress_secs) * 1000,
         ) {
-            let action = decisions::stall_action(
-                stall_upstream(upstream(state.delivery.output)),
-                state.progress.as_deref().is_some_and(|progress| {
-                    progress.starts_with(crate::adapters::mergify::REQUEUE_PROGRESS_PREFIX)
-                }),
-            );
+            let action = decisions::stall_action(stall_upstream(upstream(state.delivery.output)));
             match action {
                 decisions::StallAction::StopWorker => {
                     state.stopping = true;
@@ -422,36 +395,14 @@ impl Controller {
                     self.finish_stall(state)?;
                     return Ok(true);
                 }
-                decisions::StallAction::Requeue | decisions::StallAction::Unfinished => {
-                    let class = match action {
-                        decisions::StallAction::Requeue => "queue_requeue",
-                        _ => "queue_unfinished",
-                    };
-                    state.failure = Some(class.into());
-                    self.save_allowance(state)?;
-                    self.observe(
-                        &format!("stall:{}:{}", state.delivery.key, state.progress_ms),
-                        Observation::Kernel(Event::Fact {
-                            node: state.delivery.node(),
-                            fact: Fact::UpstreamStalled,
-                        }),
+                decisions::StallAction::Unfinished => {
+                    self.look_failed(
+                        state,
+                        crate::Error::Permanent {
+                            class: "unfinished",
+                            source: "the upstream never acknowledged the request".into(),
+                        },
                     )?;
-                    // The kernel acts on a stall only in Queued. An effect still
-                    // unacknowledged past its allowance is a failed look, so it
-                    // raises the read incident at the allowances' pace (#356).
-                    if self
-                        .store
-                        .effect(&state.delivery.key)?
-                        .is_some_and(|effect| effect.state.is_pending())
-                    {
-                        self.look_failed(
-                            state,
-                            crate::Error::Permanent {
-                                class,
-                                source: "the upstream never acknowledged the request".into(),
-                            },
-                        )?;
-                    }
                 }
                 // PrismaBuild owns progress. Worktrees has no progress contract.
                 decisions::StallAction::Ignore => {}
@@ -569,15 +520,6 @@ impl Controller {
         let mut summary =
             incident_summary(&request.title, &signature, needs_rob, app_login.as_deref());
         crate::worker_inputs::append(&mut summary, crate::worker_inputs::of(&error));
-        if let Some(progress) = state.progress.as_deref().filter(|progress| {
-            progress.starts_with(crate::adapters::mergify::REQUEUE_PROGRESS_PREFIX)
-        }) {
-            summary.push(' ');
-            summary.push_str(progress);
-        } else if let Some(detail) = queue_command_detail(&state.delivery, &signature.class) {
-            summary.push(' ');
-            summary.push_str(&detail);
-        }
         let mut commit = Commit::new(
             format!("incident:{id}"),
             json!({"read_outage":state.delivery.key}),
@@ -639,7 +581,11 @@ impl Controller {
         self.store.commit(&commit)?;
         Ok(())
     }
-    fn look_observations(&mut self, delivery: &Delivery, completion: Completion) -> Result<()> {
+    pub(crate) fn look_observations(
+        &mut self,
+        delivery: &Delivery,
+        completion: Completion,
+    ) -> Result<()> {
         let snapshot = self.store.load()?;
         let mut commit = Commit::new(
             format!(
@@ -650,6 +596,12 @@ impl Controller {
             json!(&completion),
             &snapshot,
         );
+        self.release_terminal_model_probes(&snapshot, &mut commit, None)?;
+        self.retire_completed_model_attempts(&snapshot, &mut commit)?;
+        if let Some(class) = completion.failure_class.as_deref() {
+            self.failure_allowance(&snapshot, &delivery.key, class, &mut commit)?;
+        }
+        self.accepted_delivery_refusal(&snapshot, delivery, &completion, &mut commit)?;
         for (index, observation) in completion.observations.iter().enumerate() {
             self.queue_observation(&snapshot, &mut commit, &delivery.key, index, observation)?;
             if let Some(source) = crate::observation_upstream(&snapshot, observation)? {
@@ -748,55 +700,6 @@ impl Controller {
             delivery.key.clone(),
             json!(AllowanceState::new(delivery, self.now_ms(), delay)),
         )
-    }
-    pub(crate) fn record_progress(
-        &self,
-        snapshot: &Snapshot,
-        commit: &mut Commit,
-        key: &str,
-        token: Option<&crate::executor::ProgressToken>,
-    ) -> Result<Option<bool>> {
-        let Some(token) = token else { return Ok(None) };
-        let Some(row) = snapshot
-            .rows
-            .iter()
-            .find(|r| r.table == "watches" && r.id == key)
-        else {
-            return Ok(None);
-        };
-        let previous: Option<crate::executor::WatchProgress> = row
-            .value
-            .get("progress")
-            .map(|value| crate::decode_stored(value.clone()))
-            .transpose()?;
-        let progress = crate::executor::WatchProgress {
-            previous: previous.as_ref().map(|p| p.current.clone()),
-            current: token.clone(),
-        };
-        let changed = progress.changed();
-        if previous.as_ref() != Some(&progress) {
-            let mut value = row.value.clone();
-            value["progress"] = json!(progress);
-            commit.rows.push(put("watches", key.into(), value));
-        }
-        if changed
-            && let Some(row) = snapshot
-                .rows
-                .iter()
-                .find(|r| r.table == "allowances" && r.id == key)
-        {
-            let mut state: AllowanceState = crate::decode_stored(row.value.clone())?;
-            state.progress_ms = self.now_ms();
-            state.due_ms = Some(state.progress_ms.saturating_add(
-                u64::from(self.allowance(&state.delivery).no_progress_secs) * 1000,
-            ));
-            state.progress = None;
-            state.found = None;
-            commit
-                .rows
-                .push(put("allowances", key.into(), json!(state)));
-        }
-        Ok(Some(changed))
     }
     pub(crate) fn progress_allowance(
         &mut self,
@@ -941,17 +844,6 @@ pub(crate) fn failure_class(error: &crate::Error) -> &'static str {
             "permission"
         }
         crate::Error::Io(_) => "transport",
-        // Mergify's own read errors aren't GitHub errors or outages (#373).
-        crate::Error::Adapter(error) if error.is::<tl3_mergify::Error>() => {
-            match error.downcast_ref::<tl3_mergify::Error>() {
-                Some(tl3_mergify::Error::ChangedDuringRead) => "inconsistent_read",
-                Some(tl3_mergify::Error::MergeabilityPending) => "mergeability_pending",
-                Some(tl3_mergify::Error::HeadChanged) => "head_changed",
-                Some(tl3_mergify::Error::PullRequestClosed) => "pull_request_closed",
-                Some(tl3_mergify::Error::GitHub(error)) => error.failure_class().as_str(),
-                None => "transport",
-            }
-        }
         crate::Error::Adapter(error) => match error.downcast_ref::<tl3_worktrees::Error>() {
             // Git's own message showed a network or remote cause.
             Some(tl3_worktrees::Error::Network { .. }) => "git_remote",
@@ -967,7 +859,7 @@ pub(crate) fn incident_summary(
     title: &str,
     signature: &IncidentSignature,
     needs_rob: bool,
-    app_login: Option<&str>,
+    _app_login: Option<&str>,
 ) -> String {
     let source = match signature.upstream {
         _ if signature.class == crate::worker_inputs::CLASS => "TL3's worker input builder",
@@ -982,7 +874,7 @@ pub(crate) fn incident_summary(
         Upstream::Workers => "the agent worker",
         Upstream::Worktrees => "the Git worktree",
         Upstream::PrismaBuild => "PrismaBuild",
-        Upstream::Delivery => "Mergify",
+        Upstream::Delivery => "Delivery",
         Upstream::GitHub => "GitHub",
     };
     let reason = match signature.class.as_str() {
@@ -993,14 +885,7 @@ pub(crate) fn incident_summary(
         "pr_obligation" => "refused publication because a branch or body obligation is unmet",
         "pr_policy" => "refused publication because the body breaks repository policy",
         "no_progress" => "stopped making progress",
-        "queue_unfinished" => "has not finished its queue check",
-        "queue_requeue" => "has left this change awaiting Mergify re-queue",
         "permission" => "refused access",
-        "queue_command_permission" => {
-            "could not post the queue command. Check TL3's GitHub App repository permission Issues: Read and write and approve any updated installation permissions"
-        }
-        "queue_command_refused" => "refused the queue command",
-        "queue_command_rejected" => "could not post the queue command because GitHub refused it",
         "actions_write_required" => {
             "cannot rerun workflows. Grant TL3's GitHub App repository permission Actions: Read and write, then approve the installation's updated permissions"
         }
@@ -1053,36 +938,20 @@ pub(crate) fn incident_summary(
     } else {
         "Work is waiting for recovery."
     };
-    let setup = if signature.class == "queue_command_refused" {
-        format!(
-            " In the served repo's .mergify.yml, allow {} in commands_restrictions for queue and requeue, then clear this incident.",
-            app_login.unwrap_or("TL3's App bot login")
-        )
-    } else {
-        String::new()
-    };
-    format!("For \"{title}\", {source} {reason}.{setup} {next}")
+    format!("For \"{title}\", {source} {reason}. {next}")
 }
-pub(crate) fn queue_command_detail(delivery: &Delivery, class: &str) -> Option<String> {
-    let reason = match class {
-        "queue_command_refused" => "command refused by Mergify after posting",
-        "queue_command_permission" | "queue_command_rejected" => {
-            "command refused by GitHub; no command sent"
-        }
-        _ => return None,
-    };
-    Some(format!(
-        "PR https://github.com/{}/{}/pull/{}, head {}: awaiting Mergify re-queue; {reason}.",
-        delivery.repository.owner,
-        delivery.repository.name,
-        delivery.pull_request?,
-        delivery.head_sha.as_deref()?
-    ))
-}
-fn incident_view(incident: &Incident, delivery: &Delivery) -> decisions::IncidentView {
+fn incident_view(
+    snapshot: &Snapshot,
+    incident: &Incident,
+    delivery: &Delivery,
+) -> decisions::IncidentView {
     decisions::IncidentView {
         needs_rob: incident.needs_rob,
-        refused_command: incident.signature.class == "queue_command_refused",
+        refused_command: incident.signature.upstream == Upstream::Delivery
+            && snapshot
+                .rows
+                .iter()
+                .any(|row| row.table == "publication_failures" && row.id == delivery.key),
         own_effect: incident.effect.as_deref() == Some(&delivery.key),
     }
 }
@@ -1090,7 +959,7 @@ fn stall_upstream(source: Upstream) -> decisions::StallUpstream {
     match source {
         Upstream::Workers => decisions::StallUpstream::Workers,
         Upstream::GitHub => decisions::StallUpstream::GitHub,
-        Upstream::Delivery => decisions::StallUpstream::Mergify,
+        Upstream::Delivery => decisions::StallUpstream::Delivery,
         Upstream::PrismaBuild => decisions::StallUpstream::PrismaBuild,
         Upstream::Worktrees => decisions::StallUpstream::Worktrees,
     }

@@ -276,7 +276,7 @@ fn requests(config: &tl3_config::Config) -> Vec<Value> {
 }
 
 struct CiFailureOnce {
-    fake: adapters::mergify::Fake,
+    fake: adapters::direct_merge::Fake,
     failed: bool,
     details: bool,
 }
@@ -303,7 +303,8 @@ impl Executor for CiFailureOnce {
                     fact: tl3_kernel::Fact::CiFailed { infra: false },
                 })
             };
-            Ok(Completion::confirmed(vec![observation]))
+            // Direct accepts the handoff even when it reports a CI failure.
+            Ok(Completion::delivery_accepted(vec![observation]))
         } else {
             self.fake.execute(delivery)
         }
@@ -321,7 +322,7 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
         adapters.register(
             Upstream::Delivery,
             CiFailureOnce {
-                fake: adapters::mergify::Fake::new(&root.path().join("fakes")),
+                fake: adapters::direct_merge::Fake::new(&root.path().join("fakes")),
                 failed: false,
                 details: mode == "ci-failure",
             },

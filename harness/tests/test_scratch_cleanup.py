@@ -110,7 +110,7 @@ def test_wrong_executing_uid_rejects_before_scratch_authority(scratch, monkeypat
 
 
 @pytest.mark.parametrize('case', ['ordinary', 'symlink-root', 'symlink-child', 'wrong-owner',
-                                 'cross-filesystem', 'unreadable', 'failed-removal', 'over-bound',
+                                 'cross-filesystem', 'unreadable', 'failed-removal', 'over-bound', 'over-bytes',
                                  'generation-before', 'generation-pre-removal', 'foreign-host'])
 def test_guards_never_certify_failed_or_unsafe_removal(scratch, monkeypatch, case):
     request, root, output, guards = scratch
@@ -122,12 +122,16 @@ def test_guards_never_certify_failed_or_unsafe_removal(scratch, monkeypatch, cas
         root.symlink_to(root.with_name('retained'), target_is_directory=True)
     elif case == 'symlink-child':
         (root / 'link').symlink_to(root / 'payload/file')
-    elif case in ('wrong-owner', 'cross-filesystem'):
+    elif case in ('wrong-owner', 'cross-filesystem', 'over-bytes'):
         def changed(path, *args, **kwargs):
             info = original_stat(path, *args, **kwargs)
             if path == 'file' and kwargs.get('dir_fd') is not None:
                 fields = list(info)
-                fields[4 if case == 'wrong-owner' else 2] += 1
+                if case == 'over-bytes':
+                    # One entry over the 2 GiB apparent-size bound, without allocating it.
+                    fields[6] = 2 * 1024 ** 3 + 1
+                else:
+                    fields[4 if case == 'wrong-owner' else 2] += 1
                 return os.stat_result(fields)
             return info
         monkeypatch.setattr(runtime.os, 'stat', changed)

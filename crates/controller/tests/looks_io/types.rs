@@ -8,6 +8,8 @@ pub(crate) struct AllowanceState {
     progress_ms: u64,
     quota_ms: Option<u64>,
     #[serde(default)]
+    quota_retry_ms: Option<u64>,
+    #[serde(default)]
     last_quota_ms: Option<u64>,
     #[serde(default)]
     last_quota_model: Option<String>,
@@ -48,6 +50,7 @@ impl AllowanceState {
             progress: None,
             progress_ms: now,
             quota_ms: None,
+            quota_retry_ms: None,
             last_quota_ms: None,
             last_quota_model: None,
             unserved_since_ms: None,
@@ -129,7 +132,7 @@ impl Cause {
             Upstream::Worktrees => Cause::Tl3,
             // The trusted check harness is TL3's code, running inside a PrismaBuild action.
             Upstream::PrismaBuild if class == crate::adapters::prismabuild::HARNESS => Cause::Tl3,
-            Upstream::GitHub | Upstream::Mergify | Upstream::PrismaBuild => Cause::Upstream,
+            Upstream::GitHub | Upstream::Delivery | Upstream::PrismaBuild => Cause::Upstream,
         }
     }
 }
@@ -170,7 +173,7 @@ impl TryFrom<StoredSignature> for IncidentSignature {
                     .ok_or("invalid incident signature")?;
                 let upstream = [
                     Upstream::GitHub,
-                    Upstream::Mergify,
+                    Upstream::Delivery,
                     Upstream::PrismaBuild,
                     Upstream::Workers,
                     Upstream::Worktrees,

@@ -29,7 +29,7 @@ pub(super) proof fn resumed_result(before: Node, after: Node, needs_rob: bool, r
         Phase::Making => Some(Resume::Making),
         Phase::Checking => Some(Resume::Checking),
         Phase::Reviewing => Some(Resume::Reviewing),
-        Phase::Publishing | Phase::Queued => Some(Resume::Publishing),
+        Phase::Publishing => Some(Resume::Publishing),
         Phase::Rebasing => Some(Resume::Rebasing),
         _ => None,
     },

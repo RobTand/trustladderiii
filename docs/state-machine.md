@@ -1,5 +1,8 @@
 # TL3 state machine
 
+Current delivery ruling, TD / PRD #878: the normative target rows are [Publishing](state-table.md#publishing) and [AwaitingDelivery](state-table.md#awaitingdelivery). Durable keyed acceptance releases ownership before required checks finish, preserves exact approved identity, and retains authenticated outcome watches and write fences. Direct uses the neutral target phase; Queued, queue-only recovery and Mergify routing/configuration are removed. Historical Q47/Q52/Q58 queue procedures below describe their original decisions; current CI admission, infrastructure stutter, ladder/report/Q54 and publication safety follow those target rows. Mergify remains this repository's CI system.
+
+
 Rob and I have been designing this one piece at a time since 2026-10-29. Each section says whether Rob has agreed to it or whether it is still a proposal. On 2026-10-29 and 30, I grilled him on every open branch of the specs; his 41 decisions are listed under "Decisions from the grilling", and the text cites them as Q1 to Q41. Two later decisions that day, Q42 and Q43, and Q44, Q45, Q46 and the amendment to Q29 from 2026-10-31 are listed with them, along with Q48, Q50 and Q51 from 2026-11-01, and Q54 from 2026-11-02 and the Q27 declared-symptom RED approval (#592) from 2026-11-03. The stack it runs on is in `docs/stack.md`.
 
 **Precedence.** `docs/state-table.md` is the source of truth for the kernel: its phases, events, rules and numbers. This document keeps the reasoning and Rob's decisions. Where the two disagree, the state table wins, and the disagreement is a bug in this document.

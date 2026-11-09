@@ -17,7 +17,7 @@ pub(super) open spec fn obstructed(n: Node) -> bool {
 pub(super) open spec fn outside_event(n: Node) -> Event {
     if n.paused { Event::Command { node: NodeId(0), id: (n.last_cmd + 1) as u64,
         command: Command::Resume } }
-    else if let Some(e) = n.effect { Event::Ack { node: NodeId(0), seq: e.seq, ack: Ack::Confirmed } }
+    else if let Some(e) = n.effect { Event::Ack { node: NodeId(0), seq: e.seq, ack: if e.kind == EffectKind::Enqueue { Ack::DeliveryAccepted } else { Ack::Confirmed } } }
     else { Event::Fact { node: NodeId(0), fact: Fact::IncidentCleared { by_rob: true } } }
 }
 

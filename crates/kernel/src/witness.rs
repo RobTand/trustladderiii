@@ -47,7 +47,7 @@ impl World {
                 let event = Event::Ack {
                     node,
                     seq: e.seq,
-                    ack: Ack::Confirmed,
+                    ack: if e.kind == EffectKind::Enqueue { Ack::DeliveryAccepted } else { Ack::Confirmed },
                 };
                 kernel_proof! { selected_event(*self, i as int, event); }
                 return Some(event);
@@ -140,7 +140,7 @@ impl World {
                     kernel_proof! { selected_event(*self, i as int, event); }
                     return Some(event);
                 }
-                Some(Item::Merge) => {
+                Some(Item::Delivery) => {
                     let head = n.head.unwrap_or(HeadId(0));
                     let fact = Fact::PrMerged {
                         head,

@@ -23,7 +23,7 @@ fn phase(word: u64) -> Phase {
         Phase::Checking,
         Phase::Reviewing,
         Phase::Publishing,
-        Phase::Queued,
+        Phase::AwaitingDelivery,
         Phase::Rebasing,
         Phase::AwaitingRob,
         Phase::Stopping(Outcome::Stopped),

@@ -1,4 +1,4 @@
-use tl3_controller::adapters::{delivery_router::Router, direct_merge};
+use tl3_controller::adapters::direct_merge;
 
 #[derive(Default)]
 struct DirectState {
@@ -13,6 +13,17 @@ struct DirectState {
     reject_as_merged: bool,
     root: std::path::PathBuf,
     intent_roots: Vec<std::path::PathBuf>,
+    /// PR reads that fail with HTTP 502 once a durable acceptance exists.
+    fail_reads_after_acceptance: usize,
+    failed_reads: usize,
+    no_merge_method: bool,
+}
+fn accepted_records(root: &std::path::Path) -> Vec<Value> {
+    std::fs::read_dir(root).into_iter().flatten()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "accepted"))
+        .map(|path| serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap())
+        .collect()
 }
 #[derive(Clone)]
 struct DirectApi { base: Api, direct: Arc<Mutex<DirectState>> }
@@ -21,11 +32,17 @@ impl Respond for DirectApi {
         let path = request.url.path();
         let method = request.method.as_str();
         if method == "GET" && path == "/repos/owner/sandbox" {
-            return ResponseTemplate::new(200).set_body_json(json!({"allow_merge_commit":true,"allow_squash_merge":true,"allow_rebase_merge":true}));
+            let allowed = !self.direct.lock().unwrap().no_merge_method;
+            return ResponseTemplate::new(200).set_body_json(json!({"allow_merge_commit":allowed,"allow_squash_merge":allowed,"allow_rebase_merge":allowed}));
         }
         if method == "GET" && path == "/repos/owner/sandbox/pulls/100" {
             let mut direct = self.direct.lock().unwrap();
             direct.reads += 1;
+            if direct.fail_reads_after_acceptance > 0 && !accepted_records(&direct.root).is_empty() {
+                direct.fail_reads_after_acceptance -= 1;
+                direct.failed_reads += 1;
+                return ResponseTemplate::new(502);
+            }
             if direct.fail_read_after_put && !direct.puts.is_empty() { return ResponseTemplate::new(503); }
             let mut state = self.base.0.lock().unwrap();
             if direct.moved { state.pull["head"]["sha"] = json!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"); }
@@ -64,10 +81,7 @@ impl Respond for DirectApi {
         self.base.respond(request)
     }
 }
-struct DirectFixture { api: Server, root: tempfile::TempDir, direct: Arc<Mutex<DirectState>>, wakes: direct_merge::Wakes, clock: head_checks::Clock }
-fn direct_repo() -> tl3_config::Repository {
-    serde_json::from_value(json!({"owner":"owner", "name":"sandbox", "installation_id":3, "delivery":"direct"})).unwrap()
-}
+struct DirectFixture { api: Server, root: tempfile::TempDir, direct: Arc<Mutex<DirectState>>, wakes: direct_merge::Wakes, clock: Clock }
 impl DirectFixture {
     fn new() -> Self {
         let api = Server::new();
@@ -77,7 +91,7 @@ impl DirectFixture {
             Mock::given(|_: &Request| true).respond_with(DirectApi { base: Api(api.state.clone()), direct: direct.clone() }).with_priority(1).mount(&api.server).await;
         });
         api.state.lock().unwrap().pull["mergeable"] = json!(true);
-        Self { api, root, direct, wakes: direct_merge::Wakes::default(), clock: head_checks::Clock(std::rc::Rc::new(std::cell::Cell::new(std::time::SystemTime::now()))) }
+        Self { api, root, direct, wakes: direct_merge::Wakes::default(), clock: Clock(std::rc::Rc::new(std::cell::Cell::new(std::time::SystemTime::now()))) }
     }
     fn adapter(&self, settings: &tl3_config::Store) -> direct_merge::Adapter {
         direct_merge::Adapter::new(self.api.clients(), 0, &self.root.path().join("direct"), settings.clone()).unwrap().with_wakes(self.wakes.clone())
@@ -90,14 +104,13 @@ impl DirectFixture {
     }
     fn open_adapters(&self, settings: &tl3_config::Store, adapter: direct_merge::Adapter, worktrees: Option<SameHeadRebase>) -> Controller {
         let mut registry = adapters::simulation(self.root.path()).unwrap();
-        registry.register(Upstream::Delivery, Router::new(self.api.adapter(&self.root.path().join("mergify"), 0).with_store(settings.clone()), adapter, &[direct_repo()]));
+        registry.register(Upstream::Delivery, adapter);
         if let Some(worktrees) = worktrees { registry.register(Upstream::Worktrees, worktrees); }
         let mut controller = Controller::open_with_clock(Store::open(settings).unwrap(), registry, bootstrap(), self.clock.clone()).unwrap();
         let mut allowances = tl3_config::Allowances::default();
-        allowances.github_mergify.silence_secs = 1;
+        allowances.github_delivery.silence_secs = 1;
         controller.set_allowances(allowances);
-        controller.reconcile_repository_delivery(&[direct_repo()]).unwrap();
-        controller.register_github_translator("mergify", tl3_controller::adapters::delivery_events::Translator::new(self.api.clients()).unwrap().with_wakes(self.wakes.clone()));
+        controller.register_github_translator("delivery", direct_merge::Translator::new(self.api.clients()).unwrap().with_wakes(self.wakes.clone()));
         controller
     }
     fn start(&self, settings: &tl3_config::Store) -> (Controller, Delivery) {
@@ -198,6 +211,61 @@ fn failed_protection_check_uses_the_existing_ci_failure_path() {
 }
 
 #[test]
+fn pending_direct_handoff_releases_full_gate_and_keeps_authenticated_wake() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_neutral_delivery");
+    let fixture = DirectFixture::new();
+    fixture.check(None);
+    let (mut controller, delivery) = fixture.start(&settings);
+    drain(&mut controller);
+    let world = controller.world().unwrap();
+    world.check().unwrap();
+    let accepted = world.nodes[0];
+    assert!(!accepted.holds, "durable Direct responsibility must release the full change gate before checks pass");
+    assert_eq!(accepted.phase.name(), "AwaitingDelivery");
+    assert_eq!(accepted.generation, delivery.generation + 1);
+    assert_eq!(accepted.head, accepted.checked);
+    assert_eq!(accepted.head, accepted.approved);
+    assert!(accepted.approved.is_some());
+    assert!(!accepted.footprint.is_empty());
+    assert!(accepted.effect.is_none() && accepted.run.is_none() && accepted.job.is_none());
+    assert!(!accepted.pool && accepted.ticket.is_none());
+    assert!(controller.snapshot().unwrap().rows.iter().any(|row| row.table == "watches" && row.id == delivery.key));
+    assert!(fixture.direct.lock().unwrap().puts.is_empty());
+
+    controller.intake(LabelledIssue { delivery:"direct-overlap".into(), owner:"owner".into(), repo:"sandbox".into(), installation:3, number:13, title:"overlapping change".into(), actor:42, label:"tl3".into(), labels:vec![] }).unwrap();
+    let mut overlapping = false;
+    for _ in 0..100 {
+        let world = controller.world().unwrap();
+        world.check().unwrap();
+        if world.nodes.len() > 1 && world.nodes[1].holds {
+            assert_eq!(world.nodes[1].footprint, accepted.footprint, "fixture must exercise overlapping files");
+            assert!(!world.nodes[0].holds);
+            assert_eq!(world.nodes[0].approved, accepted.approved);
+            overlapping = true;
+            break;
+        }
+        assert!(controller.drive_once().unwrap(), "released slot must admit the next change");
+    }
+    assert!(overlapping, "overlapping Ready work must acquire the released slot");
+    fixture.check(Some("success"));
+    fixture.check_event(&settings);
+    ingress::drain(&mut controller).unwrap();
+    for _ in 0..100 {
+        let world = controller.world().unwrap();
+        world.check().unwrap();
+        if world.nodes[0].phase == Phase::Closed(Outcome::Merged) {
+            let direct = fixture.direct.lock().unwrap();
+            assert_eq!(direct.puts.len(), 1);
+            assert_eq!(direct.puts[0]["sha"], json!(delivery.head_sha));
+            return;
+        }
+        controller.drive_once().unwrap();
+    }
+    panic!("accepted watch lost authenticated wake: world={:?}, puts={:?}, rows={:?}", controller.world().unwrap(), fixture.direct.lock().unwrap().puts, controller.snapshot().unwrap().rows.iter().filter(|r|matches!(r.table.as_str(), "allowances" | "incidents" | "watches")).collect::<Vec<_>>());
+}
+
+#[test]
 fn pending_check_waits_for_webhook_without_polling() {
     let mut database = support::Database::start();
     let settings = database.create("direct_pending");
@@ -238,7 +306,7 @@ fn lost_reply_reconciles_and_never_merges_again() {
     let (mut controller, delivery) = fixture.start(&settings);
     drain(&mut controller);
     let mut restarted = fixture.adapter(&settings);
-    assert!(matches!(restarted.reconcile(&delivery).unwrap(), Reconciliation::Found(_)));
+    assert!(matches!(restarted.reconcile(&delivery).unwrap(), Reconciliation::Pending), "closed delivery cannot revive authority");
     assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
     assert_eq!(fixture.direct.lock().unwrap().successes, 1);
 }
@@ -253,31 +321,21 @@ fn merge_permission_refusal_becomes_an_incident() {
     drain(&mut controller);
     assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
     assert!(controller.snapshot().unwrap().rows.iter().any(|row| row.table == "incidents" && row.value["open"] == true));
+    let node = controller.world().unwrap().nodes[0];
+    assert_eq!(node.phase, Phase::AwaitingDelivery);
+    assert!(!node.holds && node.effect.is_none());
+    fixture.check(Some("success"));
+    fixture.check_event(&settings);
+    drain(&mut controller);
+    assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1, "incident must fence later authenticated wakes");
+    assert_eq!(fixture.direct.lock().unwrap().successes, 0);
 }
 
 #[test]
-fn queue_repository_keeps_mergify() {
-    let mut database = support::Database::start();
-    let settings = database.create("direct_queue_control");
-    let fixture = DirectFixture::new();
-    let mut repo = direct_repo();
-    repo.delivery = tl3_config::Delivery::Queue;
-    let mut registry = adapters::simulation(fixture.root.path()).unwrap();
-    registry.register(Upstream::Delivery, Router::new(fixture.api.adapter(&fixture.root.path().join("mergify"), 0).with_store(settings.clone()), fixture.adapter(&settings), &[repo]));
-    let mut controller = Controller::open(Store::open(&settings).unwrap(), registry, bootstrap()).unwrap();
-    controller.intake(LabelledIssue { delivery:"queue-control".into(), owner:"owner".into(), repo:"sandbox".into(), installation:3, number:12, title:"change".into(), actor:42, label:"tl3".into(), labels:vec![] }).unwrap();
-    for _ in 0..100 {
-        if !controller.drive_once_with(|boundary, key| {
-            if boundary == Boundary::BeforeDispatch {
-                let effect = Store::open(&settings).unwrap().effect(key).unwrap().unwrap();
-                let d: Delivery = serde_json::from_value(effect.payload).unwrap();
-                if matches!(d.output, Out::Effect {kind: EffectKind::Enqueue, ..}) { fixture.api.state.lock().unwrap().pull["head"]["sha"] = json!(d.head_sha); }
-            }
-        }).unwrap() { break; }
-    }
-    assert_eq!(fixture.api.state.lock().unwrap().posts, 1);
-    assert!(fixture.direct.lock().unwrap().puts.is_empty());
-    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+fn removed_queue_route_is_rejected() {
+    assert!(serde_json::from_value::<tl3_config::Repository>(json!({
+        "owner":"owner", "name":"sandbox", "installation_id":3, "delivery":"queue"
+    })).is_err());
 }
 
 
@@ -295,63 +353,47 @@ fn already_merged_405_reconciles_without_failure() {
 }
 
 #[test]
-fn restart_at_direct_write_cuts_0_to_7_converges() { restart_direct_write_cuts(0..8); }
+fn restart_at_acceptance_and_fence_boundaries_converges() {
+    restart_direct_write_cuts(&[direct_merge::Write::Fence, direct_merge::Write::Acceptance]);
+}
 #[test]
-fn restart_at_direct_write_cuts_8_to_15_converges() { restart_direct_write_cuts(8..16); }
+fn restart_at_intent_and_mutation_boundaries_converges() {
+    restart_direct_write_cuts(&[direct_merge::Write::Intent, direct_merge::Write::Annotation, direct_merge::Write::Merge]);
+}
 #[test]
-fn restart_at_direct_write_cuts_16_to_19_converges() { restart_direct_write_cuts(16..20); }
-fn restart_direct_write_cuts(cuts: std::ops::Range<usize>) {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    // Fence, intent, annotation, merge and receipt, before and after each. The
-    // real Records writer performs fsync/rename; the callback never replaces it.
+fn restart_at_history_and_receipt_boundaries_converges() {
+    restart_direct_write_cuts(&[direct_merge::Write::History, direct_merge::Write::Receipt]);
+}
+fn restart_direct_write_cuts(writes: &[direct_merge::Write]) {
     let mut database = support::Database::start();
-    for cut in cuts {
-        let settings = database.create(&format!("direct_crash_{cut}"));
-        let mut fixture = DirectFixture::new();
-        fixture.check(None);
-        let (controller, delivery) = fixture.start(&settings);
-        drop(controller);
-        fixture.check(Some("success"));
-        let seen = Arc::new(AtomicUsize::new(0));
-        let count = seen.clone();
-        let trace = Arc::new(Mutex::new(Vec::new()));
-        let recorded = trace.clone();
-        // Fresh process wake state, but the same durable records and world.
-        let mut issuer = direct_merge::Adapter::new(fixture.api.clients(), 0,
-            &fixture.root.path().join("direct"), settings.clone()).unwrap()
-            .with_write_boundary(move |boundary| {
+    for &write in writes {
+        for after in [false, true] {
+            let settings = database.create(&format!("direct_crash_{write:?}_{after}").to_lowercase());
+            let mut fixture = DirectFixture::new();
+            fixture.check(Some("success"));
+            let target = direct_merge::WriteBoundary {write, after};
+            let trace = Arc::new(Mutex::new(Vec::new()));
+            let recorded = trace.clone();
+            let adapter = fixture.adapter(&settings).with_write_boundary(move |boundary| {
                 recorded.lock().unwrap().push(boundary);
-                if count.fetch_add(1, Ordering::SeqCst) == cut { panic!("#830 injected write crash"); }
+                if boundary == target { panic!("injected durable write crash at {target:?}"); }
             });
-        let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| issuer.execute(&delivery)));
-        let count = seen.load(Ordering::SeqCst);
-        assert!(crashed.is_err(), "mandatory boundary {cut} did not crash");
-        assert_eq!(count, cut + 1);
-        assert_eq!(trace.lock().unwrap().len(), cut + 1);
-        if cut == 19 {
-            for write in [direct_merge::Write::Fence, direct_merge::Write::Intent,
-                direct_merge::Write::Annotation, direct_merge::Write::Merge,
-                direct_merge::Write::History, direct_merge::Write::Receipt] {
-                for after in [false, true] {
-                    assert!(trace.lock().unwrap().contains(&direct_merge::WriteBoundary { write, after }), "unreached {write:?}/{after}");
-                }
+            let controller = fixture.open_adapter(&settings, adapter);
+            let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fixture.start_controller(&settings, controller)));
+            assert!(crashed.is_err(), "mandatory boundary {target:?} did not crash");
+            assert!(trace.lock().unwrap().contains(&target));
+            fixture.wakes = direct_merge::Wakes::default();
+            let mut restarted = fixture.open(&settings);
+            drain(&mut restarted);
+            if fixture.direct.lock().unwrap().successes == 1 {
+                assert!(restarted.snapshot().unwrap().rows.iter().any(|r|r.table == "delivery_history" && r.value["mode"] == "direct"));
             }
+            fixture.check_event(&settings);
+            drain(&mut restarted);
+            assert_eq!(restarted.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged));
+            assert_eq!(fixture.direct.lock().unwrap().successes, 1);
+            assert!(restarted.snapshot().unwrap().rows.iter().any(|r|r.table == "delivery_history" && r.value["mode"] == "direct"));
         }
-        drop(issuer);
-        // Reopen exactly as production does, without preparing history/receipts
-        // through a separate adapter.reconcile call or a webhook.
-        fixture.wakes = direct_merge::Wakes::default();
-        let mut restarted = fixture.open(&settings);
-        drain(&mut restarted);
-        if fixture.direct.lock().unwrap().successes == 1 {
-            assert!(restarted.snapshot().unwrap().rows.iter().any(|r|r.table == "delivery_history" && r.value["mode"] == "direct"),
-                "unmasked Controller recovery must retain direct history at cut {cut}");
-        }
-        fixture.check_event(&settings);
-        drain(&mut restarted);
-        assert!(matches!(restarted.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged)));
-        assert_eq!(fixture.direct.lock().unwrap().successes, 1);
-        assert!(restarted.snapshot().unwrap().rows.iter().any(|r|r.table == "delivery_history" && r.value["mode"] == "direct"));
     }
 }
 
@@ -382,7 +424,7 @@ fn racing_pinned_puts_have_one_success_and_both_converge() {
         let delivery = delivery.clone();
         std::thread::spawn(move || adapter.execute(&delivery))
     }).collect();
-    for handle in handles { assert_eq!(handle.join().unwrap().unwrap().ack, tl3_kernel::Ack::Confirmed); }
+    for handle in handles { assert_eq!(handle.join().unwrap().unwrap().ack, tl3_kernel::Ack::DeliveryAccepted); }
     let state = fixture.direct.lock().unwrap();
     assert_eq!(state.puts.len(), 2);
     assert_eq!(state.successes, 1);
@@ -390,24 +432,15 @@ fn racing_pinned_puts_have_one_success_and_both_converge() {
 }
 
 #[test]
-fn repository_delivery_is_reconciled_in_stored_world() {
+fn direct_configuration_does_not_add_a_kernel_route() {
     let mut database = support::Database::start();
     let settings = database.create("direct_config");
     let fixture = DirectFixture::new();
     let mut controller = fixture.open(&settings);
-    let direct = controller.snapshot().unwrap().rows.into_iter().find(|r| r.table == "repos").unwrap();
-    assert_eq!(direct.value["delivery"], "direct");
-    let mut repo = direct_repo(); repo.delivery = tl3_config::Delivery::Queue;
-    controller.reconcile_repository_delivery(&[repo]).unwrap();
-    let queue = controller.snapshot().unwrap().rows.into_iter().find(|r| r.table == "repos").unwrap();
-    assert!(queue.value.get("delivery").is_none());
-    let revision = controller.snapshot().unwrap().revision;
-    let mut repo = direct_repo(); repo.delivery = tl3_config::Delivery::Queue;
-    controller.reconcile_repository_delivery(&[repo]).unwrap();
-    assert_eq!(controller.snapshot().unwrap().revision, revision);
-    drop(controller);
-    let mut controller = fixture.open(&settings);
-    assert_eq!(controller.snapshot().unwrap().rows.into_iter().find(|r| r.table == "repos").unwrap().value, direct.value);
+    let snapshot = controller.snapshot().unwrap();
+    let repo = snapshot.rows.iter().find(|r| r.table == "repos").unwrap();
+    assert!(repo.value.get("delivery").is_none());
+    assert!(!serde_json::to_value(controller.world().unwrap()).unwrap().to_string().contains("delivery_route"));
 }
 
 
@@ -422,9 +455,10 @@ fn missing_exact_head_approval_waits_without_put() {
     fixture.api.state.lock().unwrap().head_checks.retain(|check| check["name"] != "TL3 approval");
     let mut adapter = direct_merge::Adapter::new(fixture.api.clients(), 0,
         &fixture.root.path().join("direct"), settings.clone()).unwrap();
-    assert!(matches!(adapter.reconcile(&delivery).unwrap(), Reconciliation::Pending));
+    let Reconciliation::Found(completion) = adapter.reconcile(&delivery).unwrap() else { panic!("durable responsibility must be accepted before approval checks report"); };
+    assert_eq!(completion.ack, tl3_kernel::Ack::DeliveryAccepted);
     assert!(fixture.direct.lock().unwrap().puts.is_empty());
-    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Publishing);
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::AwaitingDelivery);
 }
 
 #[test]
@@ -478,7 +512,7 @@ fn r1_unlanded_put_silence_timer_cannot_retry_without_event() {
     let (mut controller, _) = fixture.start(&settings);
     assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
     let mut allowances = tl3_config::Allowances::default();
-    allowances.github_mergify.silence_secs = 1;
+    allowances.github_delivery.silence_secs = 1;
     controller.set_allowances(allowances);
     fixture.direct.lock().unwrap().status = None;
     fixture.clock.0.set(fixture.clock.0.get() + Duration::from_secs(10));
@@ -520,6 +554,50 @@ fn r1_actions_infrastructure_and_pending_are_classified_by_q47() {
     }
 }
 
+#[test]
+fn waiting_direct_infrastructure_preserves_credit_and_findings() {
+    let mut database = support::Database::start();
+    for conclusion in ["startup_failure", "timed_out", "cancelled"] {
+        let settings = database.create(&format!("direct_waiting_infra_{conclusion}"));
+        let fixture = DirectFixture::new();
+        fixture.check(None);
+        fixture.api.state.lock().unwrap().head_checks.iter_mut()
+            .find(|check| check["id"] == 1100).unwrap()["app"]["slug"] = json!("github-actions");
+        let (mut controller, delivery) = fixture.start(&settings);
+        drain(&mut controller);
+        let before = controller.world().unwrap();
+        assert_eq!(before.nodes[0].phase, Phase::AwaitingDelivery);
+        assert!(before.check().is_ok());
+        let findings = |snapshot: tl3_store::Snapshot| {
+            snapshot.rows.into_iter()
+                .filter(|row| matches!(row.table.as_str(), "maker_findings" | "findings"))
+                .map(|row| (row.table, row.id, row.value)).collect::<Vec<_>>()
+        };
+        let before_findings = findings(controller.snapshot().unwrap());
+        fixture.check(Some(conclusion));
+        fixture.api.state.lock().unwrap().head_checks.iter_mut()
+            .find(|check| check["id"] == 1100).unwrap()["app"]["slug"] = json!("github-actions");
+        fixture.check_event(&settings);
+        drain(&mut controller);
+        let snapshot = controller.snapshot().unwrap();
+        let row = snapshot.rows.iter().find(|row| row.table == "delivery_outcomes"
+            && row.id.ends_with("/head-ci:1100")).expect("authenticated current-head CI receipt");
+        let failure = &row.value["outcome"]["CiFailed"];
+        assert_eq!(failure["infra"], json!(true));
+        assert_eq!(failure["head"], json!(delivery.head_sha.unwrap()));
+        assert!(failure["evidence"]["cause"]["Change"].is_object());
+        let facts: Vec<_> = r1_kernel_facts(&settings).into_iter()
+            .filter_map(|fact| fact.get("CiFailed").cloned()).collect();
+        assert_eq!(facts, vec![json!({"infra": true})]);
+        let after = controller.world().unwrap();
+        assert!(after.check().is_ok());
+        assert_eq!(after.nodes[0].credit, before.nodes[0].credit);
+        assert_eq!(after, before, "waiting infrastructure failure must stutter the real kernel world");
+        assert_eq!(findings(snapshot), before_findings, "infrastructure must not produce failed-round findings");
+        assert!(fixture.direct.lock().unwrap().puts.is_empty());
+    }
+}
+
 fn direct_catch_up(fixture: &DirectFixture, controller: &mut Controller, changed: bool) {
     use tl3_controller::ingress::GitHubTranslator;
     let pull = fixture.api.state.lock().unwrap().pull.clone();
@@ -549,7 +627,7 @@ fn r1_retirement_reclaims_terminal_direct_records() {
     let files: Vec<_> = std::fs::read_dir(fixture.root.path().join("direct")).unwrap().map(|e|e.unwrap().path()).filter(|p|p.extension().is_some_and(|e|e=="intent"||e=="merged")).collect();
     assert!(files.is_empty(), "retired terminal evidence must be reclaimed: {files:?}");
     let mut adapter = fixture.adapter(&settings);
-    assert!(matches!(adapter.reconcile(&delivery).unwrap(), Reconciliation::Found(_)));
+    assert!(matches!(adapter.reconcile(&delivery).unwrap(), Reconciliation::Pending), "retired delivery cannot revive authority");
     assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
 }
 
@@ -594,18 +672,19 @@ fn retirement_crash(cut: usize) {
     }
 }
 #[test]
-fn r1_board_retains_actual_delivery_mode_after_configuration_change() {
+fn board_retains_recorded_direct_delivery_after_restart() {
     let mut database = support::Database::start();
     let settings = database.create("direct_board_history");
     let fixture = DirectFixture::new();
     let (mut controller, _) = fixture.start(&settings);
     drain(&mut controller);
-    let mut repo = direct_repo();repo.delivery = tl3_config::Delivery::Queue;
-    controller.reconcile_repository_delivery(&[repo]).unwrap();
+    drop(controller);
+    let mut controller = fixture.open(&settings);
+    drain(&mut controller);
     let mut reader = Store::open(&settings).unwrap().reader().unwrap();
     let mut tx = reader.transaction().unwrap();
     let rows = tl3_controller::board::Rows::read(&mut tx).unwrap();
-    assert!(rows.requests[0].direct_delivery, "switching config must not erase completed direct delivery history");
+    assert!(rows.requests[0].direct_delivery);
 }
 
 
@@ -661,7 +740,7 @@ fn r2_a_crash_before_cursor_advance_cannot_replay_authorization() {
     store_direct_check_event(&fixture, &settings, "replayed-authorizer");
     assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ingress::drain(&mut controller))).is_err());
     let mut store = Store::open(&settings).unwrap();
-    let cursor = store.translator_cursor("github-translator:mergify").unwrap();
+    let cursor = store.translator_cursor("github-translator:delivery").unwrap();
     assert!(store.ingress_after(cursor).unwrap().iter().any(|e|e.delivery_key == "replayed-authorizer"), "crash must leave the event replayable");
     drop(controller);
     fixture.wakes = direct_merge::Wakes::default();
@@ -802,10 +881,10 @@ fn direct_intent_path(fixture: &DirectFixture) -> std::path::PathBuf {
 }
 
 #[test]
-fn r3_a_annotation_crash_preserves_legacy_and_current_merge_attempts() {
+fn annotation_crash_preserves_consumed_merge_attempts() {
     let mut database = support::Database::start();
-    for legacy in [true, false] {
-        let settings = database.create(if legacy {"direct_r3_legacy"} else {"direct_r3_current"});
+    {
+        let settings = database.create("direct_r3_current");
         let mut fixture = DirectFixture::new();
         fixture.check(Some("success"));
         fixture.direct.lock().unwrap().status = Some(503);
@@ -813,9 +892,8 @@ fn r3_a_annotation_crash_preserves_legacy_and_current_merge_attempts() {
         assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1);
         drop(controller);
         let path = direct_intent_path(&fixture);
-        let mut intent: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let intent: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(intent["action"], "Merge");
-        if legacy { intent.as_object_mut().unwrap().remove("consumed_through"); }
         std::fs::write(&path, serde_json::to_vec(&intent).unwrap()).unwrap();
         {
             let mut state = fixture.api.state.lock().unwrap();
@@ -839,7 +917,7 @@ fn r3_a_annotation_crash_preserves_legacy_and_current_merge_attempts() {
         let mut recovered = fixture.open(&settings);
         drain(&mut recovered);
         assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1,
-            "annotation must not erase a prior Merge attempt, legacy={legacy}; recovery needs new ingress");
+            "annotation must not erase a prior Merge attempt, recovery needs new ingress");
         store_direct_check_event(&fixture, &settings, "post-annotation-recovery");
         drain(&mut recovered);
         assert_eq!(fixture.direct.lock().unwrap().puts.len(), 2);
@@ -893,102 +971,36 @@ fn fake_and_production_merge_outcomes_have_identical_receipts() {
     let mut database = support::Database::start();
     let mut results = Vec::new();
     for fake in [true, false] {
-        let settings = database.create(if fake { "outcome_fake" } else { "outcome_production" });
-        let api = Server::new();
-        let root = tempfile::tempdir().unwrap();
-        let mut controller = queued(&settings, &api, root.path(), true);
-        if fake {
-            let snapshot = controller.snapshot().unwrap();
-            let row = snapshot.rows.iter().find(|row| row.table == "watches").unwrap();
-            let mut delivery: Delivery = serde_json::from_value(row.value.clone()).unwrap();
-            delivery.pull_request = Some(100);
-            delivery.head_sha = Some(api.state.lock().unwrap().pull["head"]["sha"].as_str().unwrap().into());
-            let mut adapter = adapters::mergify::Fake::new(root.path());
-            for key in ["first", "repeat"] {
-                let completion = adapter.execute(&delivery).unwrap();
-                for observation in completion.observations {
-                    controller.observe(key, observation).unwrap();
-                }
-                drain(&mut controller);
-            }
-            controller.observe("late-ci", Observation::CiFailed {
-                node: NodeId(0), infra: false, checks: vec![],
-            }).unwrap();
-            drain(&mut controller);
+        let settings = database.create(if fake {"outcome_fake"} else {"outcome_production"});
+        let fixture = DirectFixture::new(); fixture.check(None);
+        let (mut controller, delivery) = fixture.start(&settings);
+        drain(&mut controller);
+        let observations = if fake {
+            direct_merge::Fake::new(fixture.root.path()).execute(&delivery).unwrap().observations
         } else {
-            api.state.lock().unwrap().merged(false);
-            api.state.lock().unwrap().checks = fixture("merged", "checks");
-            catch_up(&settings, &api, &mut controller);
-            drain(&mut controller);
-            catch_up(&settings, &api, &mut controller);
-            drain(&mut controller);
-            // A late check still comes through the production queue adapter vocabulary.
-            controller.observe("late-ci", Observation::Queue(adapters::mergify::QueueFact {
-                repository: bootstrap().repos[0].clone(), number: 100,
-                evidence: adapters::mergify::Evidence::CiFailed {
-                    check: 1001, completed_at: None,
-                    head: api.state.lock().unwrap().pull["head"]["sha"].as_str().unwrap().into(),
-                    infra: false, head_check: true, details: Default::default(),
-                },
-            })).unwrap();
+            fixture.api.state.lock().unwrap().merged(false);
+            r1_adapter(&fixture, &settings).observations(&delivery).unwrap()
+        };
+        for key in ["first", "repeat"] {
+            for observation in &observations { controller.observe(key, observation.clone()).unwrap(); }
             drain(&mut controller);
         }
-        let facts: Vec<_> = Store::open(&settings).unwrap()
-            .events_after(tl3_store::Revision::ZERO, 2000).unwrap().into_iter()
-            .filter_map(|event| event.receipt.result["kernel_event"]["Fact"]["fact"].as_object().cloned())
-            .map(Value::Object).collect();
+        controller.observe("late-ci", Observation::CiFailed { node:NodeId(0), infra:false, checks:vec![] }).unwrap();
+        drain(&mut controller);
+        let facts = r1_kernel_facts(&settings);
         let rows = r1_delivery_rows(&mut controller);
-        // Closed nodes retire delivery receipts; both paths must also drain their inbox.
         assert!(rows.is_empty(), "closed outcome paths retain no delivery or inbox rows: {rows:?}");
         results.push((facts, serde_json::to_value(controller.world().unwrap()).unwrap(), rows));
     }
-    assert_eq!(results[0], results[1], "fake and production must apply identical facts and world rows");
+    assert_eq!(results[0], results[1]);
 }
 
 /// Existing upstream names and ingress cursor keys remain usable after S2.
 #[test]
-fn legacy_delivery_upstream_snapshot_still_routes() {
-    let mut database = support::Database::start();
-    let settings = database.create("legacy_delivery_upstream");
-    let fixture = DirectFixture::new();
-    fixture.check(None);
-    let (mut controller, delivery) = fixture.start(&settings);
-    drain(&mut controller);
-    let snapshot = controller.snapshot().unwrap();
-    let mut commit = tl3_store::Commit::new("legacy-upstream-snapshot", json!({}), &snapshot);
-    // This is the deployed structured incident signature shape.
-    let signature = json!({"upstream": "Mergify", "class": "upstream_read"});
-    let upstream: Upstream = serde_json::from_value(signature["upstream"].clone()).unwrap();
-    assert_eq!(upstream, Upstream::Delivery);
-    assert_eq!(serde_json::to_value(upstream).unwrap(), "Mergify");
-    assert_eq!(upstream.kind(), "Mergify");
-    assert_eq!(tl3_controller::executor::upstream(delivery.output), upstream);
-    let allowance = snapshot.rows.iter().find(|r| r.table == "allowances" && r.id == delivery.key).unwrap();
-    let mut allowance_value = allowance.value.clone();
-    allowance_value["incident"] = json!("legacy-delivery-incident");
-    commit.rows.push(tl3_store::RowChange::Put {
-        table: "allowances".into(), id: delivery.key.clone(), value: allowance_value,
-    });
-    commit.rows.push(tl3_store::RowChange::Put {
-        table: "incidents".into(), id: "legacy-delivery-incident".into(), value: json!({
-            "id": "legacy-delivery-incident", "node": 0, "open": true, "needs_rob": false,
-            "blocking": false, "summary": "legacy delivery read", "signature": signature,
-            "effect": delivery.key, "cause": "upstream",
-        }),
-    });
-    Store::open(&settings).unwrap().commit(&commit).unwrap();
-    drop(controller);
-    let mut controller = fixture.open(&settings);
-    let restored = controller.snapshot().unwrap().rows.into_iter().find(|r| r.table == "incidents" && r.id == "legacy-delivery-incident").unwrap();
-    let restored: Upstream = serde_json::from_value(restored.value["signature"]["upstream"].clone()).unwrap();
-    assert_eq!(restored, Upstream::Delivery);
-    fixture.check(Some("success"));
-    controller.look_key(&delivery.key).unwrap();
-    fixture.check_event(&settings);
-    drain(&mut controller);
-    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged));
-    assert_eq!(fixture.direct.lock().unwrap().successes, 1);
-    assert!(controller.snapshot().unwrap().rows.iter().any(|r| r.table == "incidents" && r.id == "legacy-delivery-incident" && r.value["open"] == false));
+fn delivery_upstream_uses_current_serialization() {
+    assert_eq!(serde_json::to_value(Upstream::Delivery).unwrap(), "Delivery");
+    assert_eq!(Upstream::Delivery.kind(), "Delivery");
+    assert!(serde_json::from_value::<Upstream>(json!("Mergify")).is_err());
 }
 
 /// PRD #878 story 16: live CI failures retain the same failed round and feedback.
@@ -1000,41 +1012,24 @@ fn fake_and_production_ci_outcomes_have_identical_findings() {
         let mut results = Vec::new();
         for fake in [true, false] {
             let settings = database.create(&format!("ci_parity_{infra}_{fake}"));
-            let api = Server::new();
-            let root = tempfile::tempdir().unwrap();
-            let mut controller = queued(&settings, &api, root.path(), true);
-            let checks = vec![CiFailure { name: "unit tests".into(), summary: "assertion failed".into(), url: None }];
-            let observation = if fake {
-                Observation::CiFailed { node: NodeId(0), infra, checks }
-            } else {
-                Observation::Queue(adapters::mergify::QueueFact {
-                    repository: bootstrap().repos[0].clone(), number: 100,
-                    evidence: adapters::mergify::Evidence::CiFailed {
-                        check: 1001, completed_at: None,
-                        head: api.state.lock().unwrap().pull["head"]["sha"].as_str().unwrap().into(),
-                        infra, head_check: true,
-                        details: tl3_controller::findings::QueueCiEvidence { checks, ..Default::default() },
-                    },
-                })
-            };
-            let expected_receipts = if let Observation::Queue(fact) = &observation {
-                let mut value = json!(fact);
-                let head = value["evidence"]["CiFailed"]["head"].as_str().unwrap().to_owned();
-                value["evidence"]["CiFailed"]["details"]["cause"] = json!({"Change":{"fingerprint":format!("queue:{head}:unknown")}});
-                vec![("queue_facts".into(), "owner/sandbox/3/100/head-ci:1001".into(), value)]
-            } else { vec![] };
+            let fixture = DirectFixture::new(); fixture.check(None);
+            let (mut controller, delivery) = fixture.start(&settings);
+            drain(&mut controller);
+            let checks = vec![CiFailure {name:"unit tests".into(), summary:"assertion failed".into(), url:None}];
+            let observation = if fake { Observation::CiFailed {node:NodeId(0), infra, checks} }
+            else { Observation::Outcome { node:NodeId(0), receipt:Some("owner/sandbox/3/100/head-ci:1001".into()),
+                outcome:tl3_controller::outcome::Outcome::CiFailed {
+                    head:delivery.head_sha.clone().unwrap(), infra, failed_tests:vec![],
+                    evidence:tl3_controller::findings::CiEvidence {checks, ..Default::default()}
+                } } };
             controller.observe("same-ci-outcome", observation).unwrap();
             assert!(controller.drive_once().unwrap());
-            let facts: Vec<_> = Store::open(&settings).unwrap()
-                .events_after(tl3_store::Revision::ZERO, 2000).unwrap().into_iter()
-                .filter_map(|event| event.receipt.result["kernel_event"]["Fact"]["fact"].get("CiFailed").cloned()).collect();
+            let facts: Vec<_> = r1_kernel_facts(&settings).into_iter().filter_map(|f|f.get("CiFailed").cloned()).collect();
             let findings: Vec<_> = controller.snapshot().unwrap().rows.into_iter()
                 .filter(|row| row.table == "feedback")
                 .map(|row| (row.table, row.id, row.value)).collect();
-            // Production has an external check identity and retains precisely its queue receipt.
-            // The legacy fake has no such identity, so it has no receipt. Neither retains inbox rows.
-            assert_eq!(r1_delivery_rows(&mut controller), expected_receipts);
             assert_eq!(facts, vec![json!({"infra":infra})]);
+            assert!(!controller.snapshot().unwrap().rows.iter().any(|r| r.table == "inbox"));
             results.push((facts, serde_json::to_value(controller.world().unwrap()).unwrap(), findings));
         }
         assert_eq!(results[0], results[1], "CI classification {infra} must share facts, world rows and findings");
@@ -1043,7 +1038,7 @@ fn fake_and_production_ci_outcomes_have_identical_findings() {
 
 fn r1_delivery_rows(controller: &mut Controller) -> Vec<(String, String, Value)> {
     let mut rows: Vec<_> = controller.snapshot().unwrap().rows.into_iter()
-        .filter(|row|matches!(row.table.as_str(), "queue_facts" | "delivery_outcomes" | "inbox"))
+        .filter(|row|matches!(row.table.as_str(), "delivery_outcomes" | "inbox"))
         .map(|row|(row.table,row.id,row.value)).collect();
     rows.sort_by(|a,b|(&a.0,&a.1).cmp(&(&b.0,&b.1)));
     rows
@@ -1164,33 +1159,497 @@ fn r1_current_direct_ci_retains_change_cause() {
     controller.drive_once().unwrap();
     let snapshot=controller.snapshot().unwrap();
     let row=snapshot.rows.iter().find(|row|row.table=="delivery_outcomes" && row.id.ends_with("/head-ci:1100")).unwrap();
-    assert_eq!(row.value["outcome"]["CiFailed"]["evidence"]["cause"],json!({"Change":{"fingerprint":format!("queue:{}:unknown",delivery.head_sha.unwrap())}}));
+    assert_eq!(row.value["outcome"]["CiFailed"]["evidence"]["cause"],json!({"Change":{"fingerprint":format!("head:{}:unknown",delivery.head_sha.unwrap())}}));
 }
 
 /// #901 r1/S3: pre-S2 push and head-CI receipts survive an upgrade and restart.
 #[test]
-fn r1_legacy_direct_receipts_deduplicate_after_restart() {
-    for ci in [false,true] {
-        let mut database=support::Database::start();
-        let settings=database.create(if ci {"r1_upgrade_ci"} else {"r1_upgrade_push"});
-        let fixture=DirectFixture::new(); fixture.check(None);
-        let (mut controller,delivery)=fixture.start(&settings);
-        let head=if ci {delivery.head_sha.clone().unwrap()} else {"b".repeat(40)};
-        let suffix=if ci {"head-ci:1100".to_owned()} else {format!("push:{head}")};
-        let identity=format!("owner/sandbox/3/100/{suffix}");
-        let evidence=if ci {json!({"CiFailed":{"check":1100,"completed_at":null,"head":head,"infra":false,"head_check":true,"details":{}}})}
-            else {json!({"PushByOther":{"head":head}})};
-        let snapshot=controller.snapshot().unwrap();
-        let mut commit=tl3_store::Commit::new("pre-s2-direct-receipt",json!({}),&snapshot);
-        commit.rows.push(tl3_store::RowChange::Put {table:"queue_facts".into(),id:identity,value:json!({"repository":bootstrap().repos[0],"number":100,"evidence":evidence})});
-        Store::open(&settings).unwrap().commit(&commit).unwrap(); drop(controller);
-        let mut controller=fixture.open(&settings);
-        if ci {fixture.check(Some("failure"));} else {fixture.direct.lock().unwrap().moved=true;}
-        let before=r1_kernel_facts(&settings);
-        let mut adapter=r1_adapter(&fixture,&settings);
-        assert!(adapter.observations(&delivery).unwrap().is_empty());
+fn current_direct_receipts_deduplicate_after_restart() {
+    for ci in [false, true] {
+        let mut database = support::Database::start();
+        let settings = database.create(if ci {"direct_receipt_ci"} else {"direct_receipt_push"});
+        let fixture = DirectFixture::new(); fixture.check(None);
+        let (mut controller, delivery) = fixture.start(&settings);
+        if ci { fixture.check(Some("failure")); } else { fixture.direct.lock().unwrap().moved = true; }
+        let observations = r1_adapter(&fixture, &settings).observations(&delivery).unwrap();
+        assert_eq!(observations.len(), 1);
+        controller.observe("current-outcome", observations[0].clone()).unwrap();
+        controller.drive_once().unwrap();
+        let before = r1_kernel_facts(&settings);
+        drop(controller);
+        let mut controller = fixture.open(&settings);
+        assert!(r1_adapter(&fixture, &settings).observations(&delivery).unwrap().is_empty());
         controller.look_key(&delivery.key).unwrap();
-        assert_eq!(r1_kernel_facts(&settings),before);
-        assert!(!controller.snapshot().unwrap().rows.iter().any(|row|row.table=="delivery_outcomes" || row.table=="inbox"));
+        assert_eq!(r1_kernel_facts(&settings), before);
     }
+}
+
+#[test]
+fn changed_head_after_durable_intent_process_crash_never_replays_put() {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    const CHILD: &str = "TD_DIRECT_STALE_CRASH_CHILD";
+    if let Some(path) = std::env::var_os(CHILD) {
+        let input: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let settings: tl3_config::Store = serde_json::from_value(input["settings"].clone()).unwrap();
+        let root = std::path::PathBuf::from(input["root"].as_str().unwrap());
+        let clients = BTreeMap::from([(3, client(input["uri"].as_str().unwrap()))]);
+        let wakes = direct_merge::Wakes::default();
+        let adapter = direct_merge::Adapter::new(clients.clone(), 0, &root.join("direct"), settings.clone()).unwrap()
+            .with_wakes(wakes.clone())
+            .with_write_boundary(|boundary| {
+                if boundary == (direct_merge::WriteBoundary {write:direct_merge::Write::Intent, after:true}) {
+                    println!("TD_INTENT_DURABLE");
+                    std::io::stdout().flush().unwrap();
+                    let mut line = String::new();
+                    std::io::stdin().read_line(&mut line).unwrap();
+                    panic!("parent must terminate the process before any destructor or PUT");
+                }
+            });
+        let mut registry = adapters::simulation(&root).unwrap();
+        registry.register(Upstream::Delivery, adapter);
+        let mut controller = Controller::open(Store::open(&settings).unwrap(), registry, bootstrap()).unwrap();
+        controller.register_github_translator("delivery", direct_merge::Translator::new(clients).unwrap().with_wakes(wakes));
+        println!("TD_RECOVERY_READY");
+        std::io::stdout().flush().unwrap();
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line).unwrap();
+        drain(&mut controller);
+        panic!("authenticated wake must reach the durable intent boundary");
+    }
+    let mut database = support::Database::start();
+    let settings = database.create("direct_changed_head_process_crash");
+    let mut fixture = DirectFixture::new();
+    fixture.check(None);
+    let mut controller = fixture.open(&settings);
+    store_direct_check_event(&fixture, &settings, "pre-wait-pending");
+    let pending = Store::open(&settings).unwrap().ingress_after(0).unwrap()
+        .into_iter().find(|event| event.delivery_key == "pre-wait-pending").unwrap();
+    let expected_waiting_through = u64::try_from(pending.sequence).unwrap();
+    ingress::drain(&mut controller).unwrap();
+    assert_eq!(Store::open(&settings).unwrap().translator_cursor("github-translator:delivery").unwrap(), pending.sequence);
+    let (mut controller, delivery) = fixture.start_controller(&settings, controller);
+    drain(&mut controller);
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::AwaitingDelivery);
+    drop(controller);
+    let control = fixture.root.path().join("crash-input.json");
+    std::fs::write(&control, serde_json::to_vec(&json!({
+        "settings":{"host":settings.host,"port":settings.port,"database":settings.database,"user":settings.user,
+            "password_file":settings.password_file,"connect_timeout_secs":settings.connect_timeout_secs},
+        "root":fixture.root.path(), "uri":fixture.api.server.uri()
+    })).unwrap()).unwrap();
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "changed_head_after_durable_intent_process_crash_never_replays_put", "--nocapture"])
+        .env(CHILD, &control)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn().unwrap();
+    let mut output = BufReader::new(child.stdout.take().unwrap());
+    fn reached(output: &mut impl BufRead, marker: &str) {
+        loop {
+            let mut line = String::new();
+            assert_ne!(output.read_line(&mut line).unwrap(), 0, "child exited before {marker}");
+            if line.trim() == marker { break; }
+        }
+    }
+    reached(&mut output, "TD_RECOVERY_READY");
+    fixture.check(Some("success"));
+    store_direct_check_event(&fixture, &settings, "post-child-start-success");
+    let authorizer = Store::open(&settings).unwrap().ingress_after(pending.sequence).unwrap()
+        .into_iter().find(|event| event.delivery_key == "post-child-start-success").unwrap();
+    let expected_merge_consumed = u64::try_from(authorizer.sequence).unwrap();
+    assert!(expected_merge_consumed > expected_waiting_through);
+    child.stdin.as_mut().unwrap().write_all(b"go\n").unwrap();
+    reached(&mut output, "TD_INTENT_DURABLE");
+    fixture.direct.lock().unwrap().moved = true;
+    fixture.api.state.lock().unwrap().pull["head"]["sha"] = json!("b".repeat(40));
+    child.kill().unwrap();
+    let status = child.wait().unwrap();
+    use std::os::unix::process::ExitStatusExt;
+    assert_eq!(status.signal(), Some(9), "SIGKILL must prevent destructor unwinding at the reached intent boundary");
+    let intent_path = direct_intent_path(&fixture);
+    let intent_bytes = std::fs::read(&intent_path).unwrap();
+    let intent: Value = serde_json::from_slice(&intent_bytes).unwrap();
+    assert_eq!(intent["head"], json!(delivery.head_sha));
+    assert!(matches!(intent["action"].as_str(), Some("Merge" | "Annotate")));
+    // Even annotation must retain the consumed ingress fence from the accepted wait.
+    let accepted: Vec<Value> = std::fs::read_dir(fixture.root.path().join("direct")).unwrap()
+        .map(|entry|entry.unwrap().path()).filter(|path|path.extension().is_some_and(|ext|ext == "accepted"))
+        .map(|path|serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()).collect();
+    assert_eq!(accepted.len(), 1);
+    assert_eq!(accepted[0]["key"], delivery.key);
+    assert_eq!(accepted[0]["head"], json!(delivery.head_sha));
+    assert_eq!(accepted[0]["generation"], delivery.generation);
+    assert_eq!(accepted[0]["waiting_through"], json!(expected_waiting_through),
+        "retained waiting watermark must equal the real pre-wait ingress fence");
+    let expected_intent_consumed = match intent["action"].as_str().unwrap() {
+        "Annotate" => expected_waiting_through,
+        "Merge" => expected_merge_consumed,
+        _ => unreachable!("the reached Intent belongs to annotation or merge"),
+    };
+    assert_eq!(intent["consumed_through"], json!(expected_intent_consumed),
+        "retained intent must consume exactly its action's real ingress fence");
+    let epoch: i64 = serde_json::from_slice(&std::fs::read(fixture.root.path().join("direct/epoch.fence")).unwrap()).unwrap();
+    assert_eq!(epoch, delivery.epoch);
+    assert!(fixture.direct.lock().unwrap().puts.is_empty());
+    fixture.wakes = direct_merge::Wakes::default();
+    let mut recovered = fixture.open(&settings);
+    ingress::drain(&mut recovered).unwrap();
+    for _ in 0..12 {
+        if matches!(recovered.world().unwrap().nodes[0].phase, Phase::Checking | Phase::Ready(tl3_kernel::Resume::Checking)) { break; }
+        recovered.drive_once().unwrap();
+    }
+    let world = recovered.world().unwrap();
+    world.check().unwrap();
+    assert!(matches!(world.nodes[0].phase, Phase::Checking | Phase::Ready(tl3_kernel::Resume::Checking)));
+    assert!(world.nodes[0].rechecks > 0);
+    let retained: Value = serde_json::from_slice(&std::fs::read(
+        std::fs::read_dir(fixture.root.path().join("direct")).unwrap()
+            .map(|entry|entry.unwrap().path()).find(|path|path.extension().is_some_and(|ext|ext == "accepted")).unwrap()
+    ).unwrap()).unwrap();
+    assert_eq!(retained["waiting_through"], json!(expected_waiting_through),
+        "recovery must retain the exact precrash waiting watermark");
+    let retained_intent: Value = serde_json::from_slice(&std::fs::read(&intent_path).unwrap()).unwrap();
+    assert_eq!(retained_intent["consumed_through"], json!(expected_intent_consumed),
+        "changed-head recovery cannot rewrite the consumed authorization");
+    assert_eq!(fixture.direct.lock().unwrap().successes, 0);
+    assert!(fixture.direct.lock().unwrap().puts.is_empty(), "changed-head crash recovery cannot replay a stale PUT");
+    let before = r1_kernel_facts(&settings);
+    recovered.look_key(&delivery.key).unwrap();
+    assert_eq!(r1_kernel_facts(&settings), before, "retired delivery cannot revive the old attempt");
+    assert!(fixture.direct.lock().unwrap().puts.is_empty());
+}
+
+fn open_read_incidents(controller: &mut Controller) -> Vec<(String, Value)> {
+    controller.snapshot().unwrap().rows.into_iter()
+        .filter(|row| row.table == "incidents" && row.value["open"] == true && row.id.ends_with(".read"))
+        .map(|row| (row.id, row.value))
+        .collect()
+}
+/// Silence looks only: no webhook is delivered, so nothing new authorizes a PUT.
+fn look_until_read_incident(fixture: &DirectFixture, controller: &mut Controller) -> Vec<(String, Value)> {
+    for _ in 0..10 {
+        if !open_read_incidents(controller).is_empty() { break; }
+        fixture.clock.0.set(fixture.clock.0.get() + Duration::from_secs(2));
+        controller.look_due().unwrap();
+        drain(controller);
+    }
+    open_read_incidents(controller)
+}
+/// Stops the real Direct adapter just before it writes the durable acceptance,
+/// leaving the Publishing Enqueue handoff dispatched but never accepted.
+fn unaccepted_handoff(fixture: &DirectFixture, settings: &tl3_config::Store) -> Delivery {
+    let stop = direct_merge::WriteBoundary { write: direct_merge::Write::Acceptance, after: false };
+    let adapter = fixture.adapter(settings).with_write_boundary(move |boundary| {
+        if boundary == stop { panic!("fixture stops before durable acceptance"); }
+    });
+    let controller = fixture.open_adapter(settings, adapter);
+    let stopped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fixture.start_controller(settings, controller)));
+    assert!(stopped.is_err(), "the handoff must stop before durable acceptance");
+    let snapshot = Store::open(settings).unwrap().load().unwrap();
+    let effect = snapshot.pending_effects.iter()
+        .find(|effect| matches!(serde_json::from_value::<Delivery>(effect.payload.clone()).unwrap().output,
+            Out::Effect { kind: EffectKind::Enqueue, .. }))
+        .expect("pending Enqueue handoff");
+    let mut delivery: Delivery = serde_json::from_value(effect.payload.clone()).unwrap();
+    delivery.epoch = effect.epoch.get();
+    delivery.pull_request = Some(100);
+    assert!(accepted_records(&fixture.root.path().join("direct")).is_empty());
+    delivery
+}
+fn fresh_adapter(fixture: &DirectFixture, settings: &tl3_config::Store) -> direct_merge::Adapter {
+    direct_merge::Adapter::new(fixture.api.clients(), 0, &fixture.root.path().join("direct"), settings.clone()).unwrap()
+}
+
+/// Review MF1(a): a read that keeps failing after durable acceptance is a failed
+/// look. Q7 read accounting counts it and raises the `.read` incident; it is
+/// never turned into an uncounted acceptance.
+#[test]
+fn persistent_read_failure_after_acceptance_raises_read_incident() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_accepted_read_outage");
+    let fixture = DirectFixture::new();
+    fixture.direct.lock().unwrap().fail_reads_after_acceptance = usize::MAX;
+    let (mut controller, _) = fixture.start(&settings);
+    drain(&mut controller);
+    assert_eq!(accepted_records(&fixture.root.path().join("direct")).len(), 1, "the failure must follow durable acceptance");
+    let incidents = look_until_read_incident(&fixture, &mut controller);
+    assert_eq!(incidents.len(), 1, "a persistent read failure after acceptance must end in a read incident: world={:?}, rows={:?}",
+        controller.world().unwrap(),
+        controller.snapshot().unwrap().rows.iter().filter(|r| matches!(r.table.as_str(), "allowances" | "incidents")).collect::<Vec<_>>());
+    let (_, incident) = &incidents[0];
+    assert_eq!(incident["signature"]["upstream"], "Delivery");
+    assert!(fixture.direct.lock().unwrap().failed_reads >= 2);
+    let node = controller.world().unwrap().nodes[0];
+    assert_eq!(node.phase, Phase::Publishing, "a failed read is not an acknowledgement of the handoff");
+    assert_eq!(node.effect.map(|effect| effect.kind), Some(EffectKind::Enqueue));
+    assert!(fixture.direct.lock().unwrap().puts.is_empty());
+    assert!(controller.world().unwrap().valid());
+}
+
+/// Review MF1(b): one transient 5xx on the first attempt keeps the initial merge
+/// authorization. Once the read recovers the PR merges exactly once, with no
+/// new webhook.
+#[test]
+fn transient_read_failure_on_first_attempt_still_merges_once() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_accepted_transient_read");
+    let fixture = DirectFixture::new();
+    fixture.direct.lock().unwrap().fail_reads_after_acceptance = 1;
+    let (mut controller, delivery) = fixture.start(&settings);
+    drain(&mut controller);
+    for _ in 0..5 {
+        if controller.world().unwrap().nodes[0].phase == Phase::Closed(Outcome::Merged) { break; }
+        fixture.clock.0.set(fixture.clock.0.get() + Duration::from_secs(2));
+        controller.look_due().unwrap();
+        drain(&mut controller);
+    }
+    let direct = fixture.direct.lock().unwrap();
+    assert_eq!(direct.failed_reads, 1, "the first attempt must meet exactly one transient read failure");
+    assert_eq!(direct.puts.len(), 1, "the recovered read must merge exactly once without a new webhook: world={:?}", controller.world().unwrap());
+    assert_eq!(direct.puts[0]["sha"], json!(delivery.head_sha));
+    assert_eq!(direct.successes, 1);
+    drop(direct);
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged));
+    assert!(open_read_incidents(&mut controller).is_empty());
+}
+
+/// Review MF2(c): a fatal stored-state error raised after durable acceptance
+/// propagates. It is never converted into an acceptance and never consumes the
+/// merge authorization.
+#[test]
+fn fatal_stored_error_after_acceptance_propagates() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_accepted_fatal_store");
+    let fixture = DirectFixture::new();
+    let delivery = unaccepted_handoff(&fixture, &settings);
+    let corrupt = settings.clone();
+    let after_acceptance = direct_merge::WriteBoundary { write: direct_merge::Write::Acceptance, after: true };
+    let mut adapter = fresh_adapter(&fixture, &settings).with_write_boundary(move |boundary| {
+        if boundary != after_acceptance { return; }
+        let mut store = Store::open(&corrupt).unwrap();
+        let snapshot = store.load().unwrap();
+        let mut commit = tl3_store::Commit::new("fixture-corrupt-world", json!({"fixture": "corrupt"}), &snapshot);
+        commit.rows.push(tl3_store::RowChange::Put { table: "nodes".into(), id: "0".into(), value: json!("corrupt") });
+        store.commit(&commit).unwrap();
+    });
+    let result = adapter.execute(&delivery);
+    let accepted = accepted_records(&fixture.root.path().join("direct"));
+    assert_eq!(accepted.len(), 1, "the fatal error must follow durable acceptance");
+    match result {
+        Err(tl3_controller::Error::StoredJson(_)) => {}
+        Err(error) => panic!("a corrupt stored world must stay fatal, got {error}"),
+        Ok(completion) => panic!("a fatal stored error became an acceptance: {completion:?}"),
+    }
+    assert!(accepted[0]["waiting_through"].is_null(), "a fatal error must not consume the merge authorization");
+    assert!(fixture.direct.lock().unwrap().puts.is_empty());
+}
+
+/// Review MF1/MF2(d): a permanent refusal after durable acceptance keeps the
+/// existing conversion to DeliveryAccepted with its diagnostic, from both the
+/// attempt and the look.
+#[test]
+fn permanent_refusal_after_acceptance_is_an_accepted_diagnostic() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_accepted_permanent");
+    let fixture = DirectFixture::new();
+    let delivery = unaccepted_handoff(&fixture, &settings);
+    fixture.direct.lock().unwrap().no_merge_method = true;
+    let completion = fresh_adapter(&fixture, &settings).execute(&delivery).unwrap();
+    assert_eq!(completion.ack, tl3_kernel::Ack::DeliveryAccepted);
+    assert_eq!(completion.failure_class.as_deref(), Some("direct_merge_method"));
+    assert!(completion.diagnostic.is_some(), "a permanent refusal keeps its diagnostic");
+    assert_eq!(accepted_records(&fixture.root.path().join("direct")).len(), 1);
+    let tl3_controller::executor::Look::Found(found) = fresh_adapter(&fixture, &settings).look(&delivery).unwrap() else {
+        panic!("a permanent refusal in the look must stay an accepted diagnostic");
+    };
+    assert_eq!(found.ack, tl3_kernel::Ack::DeliveryAccepted);
+    assert_eq!(found.failure_class.as_deref(), Some("direct_merge_method"));
+    assert!(found.diagnostic.is_some());
+    assert!(fixture.direct.lock().unwrap().puts.is_empty());
+}
+
+/// Drives a fresh request to its Publishing Enqueue handoff and stops while that
+/// effect is still Intended, so Direct has not yet attempted or accepted it.
+fn issued_handoff(fixture: &DirectFixture, settings: &tl3_config::Store) -> (Controller, String) {
+    let mut controller = fixture.open(settings);
+    controller.intake(LabelledIssue { delivery:"direct-label".into(), owner:"owner".into(), repo:"sandbox".into(), installation:3, number:12, title:"change".into(), actor:42, label:"tl3".into(), labels:vec![] }).unwrap();
+    for _ in 0..100 {
+        let node = controller.world().unwrap().nodes[0];
+        if node.phase == Phase::Publishing && node.effect.is_some_and(|effect| effect.kind == EffectKind::Enqueue) {
+            let effect = controller.snapshot().unwrap().pending_effects.into_iter()
+                .find(|effect| matches!(serde_json::from_value::<Delivery>(effect.payload.clone()).unwrap().output,
+                    Out::Effect { kind: EffectKind::Enqueue, .. }))
+                .expect("pending Enqueue handoff");
+            assert_eq!(effect.state, tl3_store::EffectState::Intended, "the handoff must not be dispatched yet");
+            return (controller, effect.key);
+        }
+        assert!(controller.drive_once().unwrap(), "the fixture must reach the Publishing Enqueue handoff");
+    }
+    panic!("the fixture did not reach the Publishing Enqueue handoff");
+}
+/// Silence looks only, for a fixed number of Q7 counting periods.
+fn quiet_looks(fixture: &DirectFixture, controller: &mut Controller) {
+    for _ in 0..6 {
+        fixture.clock.0.set(fixture.clock.0.get() + Duration::from_secs(2));
+        controller.look_due().unwrap();
+        drain(controller);
+    }
+}
+fn never_accepted(fixture: &DirectFixture, controller: &mut Controller, key: &str) {
+    let node = controller.world().unwrap().nodes[0];
+    assert_eq!(node.phase, Phase::Publishing, "the handoff is never accepted");
+    assert_eq!(node.effect.map(|effect| effect.kind), Some(EffectKind::Enqueue));
+    assert!(controller.effect(key).unwrap().unwrap().state.is_pending(), "nothing acknowledges the handoff");
+    assert!(accepted_records(&fixture.root.path().join("direct")).is_empty(), "Direct must never accept the handoff");
+    assert!(fixture.direct.lock().unwrap().puts.is_empty());
+    assert!(controller.world().unwrap().valid());
+}
+fn allowance_healthy(controller: &mut Controller, key: &str) -> bool {
+    controller.snapshot().unwrap().rows.iter()
+        .find(|row| row.table == "allowances" && row.id == key)
+        .is_some_and(|row| row.value["healthy"] == true && row.value["read_failures"] == 0)
+}
+
+/// Nit-4 ruling (i), state-table "Looks and stalls" (docs/state-table.md:861):
+/// a never-acknowledged enqueue whose fence refusal no deliberate hold explains
+/// ends in the `.read` incident through Q7 read accounting.
+/// No valid kernel transition reaches this refusal in Publishing, so the fixture
+/// injects an adversarial stored state at the fence boundary: after the kernel
+/// issues the Enqueue, the stored handoff payload's head_sha is rewritten (trigger
+/// disabled, as in input_error_followups.rs) so it disagrees with the approved
+/// commit. The fixture PR reports that same head. The world stays valid and the
+/// node is not paused or held.
+#[test]
+fn unexplained_never_accepted_handoff_ends_in_read_incident() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_never_accepted_unready");
+    let fixture = DirectFixture::new();
+    let (mut controller, key) = issued_handoff(&fixture, &settings);
+    postgres::Config::new().host(&settings.host).port(settings.port).user(&settings.user).dbname(&settings.database)
+        .password("tl3-disposable-test-password").connect(postgres::NoTls).unwrap()
+        .batch_execute(&format!(
+            "ALTER TABLE tl3_effects DISABLE TRIGGER tl3_effect_guard; \
+             UPDATE tl3_effects SET payload = jsonb_set(payload, '{{head_sha}}', '\"{}\"') WHERE effect_key = '{key}'; \
+             ALTER TABLE tl3_effects ENABLE TRIGGER tl3_effect_guard;",
+            "f".repeat(40)))
+        .unwrap();
+    // GitHub reports the same head, so only the kernel's approved commit disagrees.
+    fixture.api.state.lock().unwrap().pull["head"]["sha"] = json!("f".repeat(40));
+    drain(&mut controller);
+    let node = controller.world().unwrap().nodes[0];
+    assert!(!node.paused && !node.waiting_incident, "no deliberate hold explains the refusal");
+    assert!(controller.snapshot().unwrap().rows.iter().all(|row| row.table != "incidents" || row.value["open"] != true));
+    never_accepted(&fixture, &mut controller, &key);
+    let incidents = look_until_read_incident(&fixture, &mut controller);
+    assert_eq!(incidents.len(), 1, "an unexplained never-acknowledged enqueue must end in a read incident: rows={:?}",
+        controller.snapshot().unwrap().rows.iter().filter(|r| matches!(r.table.as_str(), "allowances" | "incidents")).collect::<Vec<_>>());
+    let (id, incident) = incidents[0].clone();
+    assert_eq!(incident["signature"]["upstream"], "Delivery");
+    assert_eq!(incident["effect"], json!(key));
+    never_accepted(&fixture, &mut controller, &key);
+    // Re-review MF1: the handoff's own .read incident is not a deliberate hold. It
+    // stays open while nothing is repaired, with no close/reopen flap.
+    for _ in 0..6 {
+        fixture.clock.0.set(fixture.clock.0.get() + Duration::from_secs(2));
+        controller.look_due().unwrap();
+        drain(&mut controller);
+        let rows: Vec<_> = controller.snapshot().unwrap().rows.into_iter()
+            .filter(|row| row.table == "incidents").map(|row| (row.id, row.value)).collect();
+        assert_eq!(rows.len(), 1, "no second incident may be raised: {rows:?}");
+        assert_eq!(rows[0].0, id);
+        assert_eq!(rows[0].1["open"], json!(true), "the unrepaired handoff's incident must never close: {rows:?}");
+    }
+    never_accepted(&fixture, &mut controller, &key);
+}
+
+/// Nit-4 ruling (ii): a paused, never-accepted Publishing handoff is a deliberate
+/// hold. It raises no incident and its looks stay healthy.
+#[test]
+fn paused_never_accepted_handoff_stays_healthy() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_never_accepted_paused");
+    let fixture = DirectFixture::new();
+    let (mut controller, key) = issued_handoff(&fixture, &settings);
+    controller.observe("fixture-pause", tl3_controller::executor::Observation::Steering {
+        node: NodeId(0), command: tl3_kernel::Command::Pause }).unwrap();
+    drain(&mut controller);
+    assert!(controller.world().unwrap().nodes[0].paused);
+    never_accepted(&fixture, &mut controller, &key);
+    quiet_looks(&fixture, &mut controller);
+    let incidents: Vec<_> = controller.snapshot().unwrap().rows.into_iter()
+        .filter(|row| row.table == "incidents" && row.value["open"] == true).collect();
+    assert!(incidents.is_empty(), "a paused handoff must not page anyone: {incidents:?}");
+    assert!(allowance_healthy(&mut controller, &key), "a paused handoff stays a healthy look");
+    assert!(controller.world().unwrap().nodes[0].paused);
+    never_accepted(&fixture, &mut controller, &key);
+}
+
+/// Nit-4 ruling (iii): an open incident on the node is a deliberate hold. Here a
+/// real rejected input (a raw command id at u64::MAX, as in
+/// input_error_followups.rs) opens a non-blocking incident on node 0 after the
+/// Enqueue is issued. The never-accepted handoff raises no `.read` incident and
+/// its looks stay healthy.
+#[test]
+fn open_node_incident_never_accepted_handoff_stays_healthy() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_never_accepted_incident");
+    let fixture = DirectFixture::new();
+    let (mut controller, key) = issued_handoff(&fixture, &settings);
+    let input: tl3_controller::cli::Input = serde_json::from_value(json!({
+        "Observation": {"key": "command-id-jump", "observation": {"Kernel": {"Command": {
+            "node": 0, "id": u64::MAX, "command": "Pause"}}}}
+    })).unwrap();
+    ingress::apply(&mut controller, input).unwrap();
+    drain(&mut controller);
+    let open: Vec<_> = controller.snapshot().unwrap().rows.into_iter()
+        .filter(|row| row.table == "incidents" && row.value["open"] == true).collect();
+    assert_eq!(open.len(), 1, "the rejected input must open one incident: {open:?}");
+    assert_eq!(open[0].value["node"], json!(0), "the incident must be on the handoff's node");
+    let node = controller.world().unwrap().nodes[0];
+    assert!(!node.paused && !node.waiting_incident, "only the open incident holds the node");
+    never_accepted(&fixture, &mut controller, &key);
+    quiet_looks(&fixture, &mut controller);
+    assert!(open_read_incidents(&mut controller).is_empty(), "an open node incident must not add a read incident");
+    let still_open: Vec<_> = controller.snapshot().unwrap().rows.into_iter()
+        .filter(|row| row.table == "incidents" && row.value["open"] == true).map(|row| row.id).collect();
+    assert_eq!(still_open, vec![open[0].id.clone()]);
+    assert!(allowance_healthy(&mut controller, &key), "a held handoff stays a healthy look");
+    never_accepted(&fixture, &mut controller, &key);
+}
+
+/// Program-lead ruling on the post-acceptance Permanent nit: a permanent refusal
+/// first seen by a look on a settled handoff (AwaitingDelivery) must reach a
+/// person. Here a restart look (in-memory wakes lost, `look_now` before any
+/// drive) meets a repository that allows no merge method. Exactly one incident
+/// is raised through the existing accepted-delivery refusal path and carries the
+/// publication diagnostic.
+#[test]
+fn settled_permanent_refusal_seen_by_a_look_raises_one_incident() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_settled_permanent_look");
+    let mut fixture = DirectFixture::new();
+    fixture.check(None);
+    let (mut controller, delivery) = fixture.start(&settings);
+    drain(&mut controller);
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::AwaitingDelivery);
+    assert!(controller.snapshot().unwrap().rows.iter().all(|row| row.table != "incidents"));
+    drop(controller);
+    fixture.wakes = direct_merge::Wakes::default();
+    let mut controller = fixture.open(&settings);
+    fixture.direct.lock().unwrap().no_merge_method = true;
+    controller.look_now().unwrap();
+    drain(&mut controller);
+    quiet_looks(&fixture, &mut controller);
+    let open: Vec<_> = controller.snapshot().unwrap().rows.into_iter()
+        .filter(|row| row.table == "incidents" && row.value["open"] == true).collect();
+    assert_eq!(open.len(), 1, "a settled permanent refusal must raise exactly one incident: rows={:?}",
+        controller.snapshot().unwrap().rows.iter().filter(|r| matches!(r.table.as_str(), "allowances" | "incidents")).collect::<Vec<_>>());
+    let incident = &open[0].value;
+    assert_eq!(incident["effect"], json!(delivery.key));
+    assert_eq!(incident["signature"]["upstream"], "Delivery");
+    let summary = incident["summary"].as_str().unwrap();
+    assert!(summary.contains("Publication diagnostic:") && summary.contains(&delivery.key),
+        "the incident must carry the diagnostic: {summary}");
+    assert!(controller.snapshot().unwrap().rows.iter().any(|row| row.table == "publication_failures" && row.id == delivery.key));
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::AwaitingDelivery);
+    assert!(fixture.direct.lock().unwrap().puts.is_empty());
 }

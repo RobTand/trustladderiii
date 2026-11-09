@@ -1,58 +1,9 @@
 use tl3_controller_core::translate::*;
 
-/// Q52/#447, Q58; docs/state-table.md:542-545,574-575,667 and
-/// docs/state-machine.md:789-807 on cdacce8f.
 #[test]
-fn production_decision_witnesses() {
-    let matching = PriorFailure {
-        same_repository: true,
-        same_number: true,
-        same_head: true,
-        infra: true,
-        overlapping_test: true,
-    };
-    assert!(repeated(&[matching]));
-    assert!(!repeated(&[]));
-    for field in 0..5 {
-        let mut row = matching;
-        match field {
-            0 => row.same_repository = false,
-            1 => row.same_number = false,
-            2 => row.same_head = false,
-            3 => row.infra = false,
-            _ => row.overlapping_test = false,
-        }
-        assert!(!repeated(&[row]));
-        assert!(repeated(&[row, matching]));
-    }
-    for (kind, action) in [
-        (EvidenceKind::Setup, IncidentAction::Setup),
-        (EvidenceKind::Missing, IncidentAction::Missing),
-        (EvidenceKind::Blocked, IncidentAction::Blocked),
-        (EvidenceKind::Reported, IncidentAction::Clear),
-    ] {
-        assert_eq!(
-            dispatch(begin(false).unwrap(), Route::Incident, kind),
-            Decision::Incident(action)
-        );
-    }
-    assert_eq!(
-        clear_reported(&[
-            IncidentRow {
-                own_incident: false,
-                open: true
-            },
-            IncidentRow {
-                own_incident: true,
-                open: false
-            },
-            IncidentRow {
-                own_incident: true,
-                open: true
-            }
-        ]),
-        Some(2)
-    );
+fn delivery_receipt_and_pushed_head_witnesses() {
+    assert!(begin(true).is_none());
+    assert!(begin(false).is_some());
     assert_eq!(
         previous_commit(
             &[

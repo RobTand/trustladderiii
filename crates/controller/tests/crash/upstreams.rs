@@ -159,7 +159,6 @@ impl Executor for Fake {
             Completion {
                 diagnostic: None,
                 failure_class: None,
-                progress: None,
                 ack: if self.scenario == "retry" {
                     Ack::Retryable
                 } else {
@@ -222,7 +221,8 @@ impl Executor for Fake {
         ) {
             completion.observations.clear();
         }
-        let applied = completion.ack == Ack::Confirmed;
+        // Typed delivery acceptance is how the Enqueue handoff is applied.
+        let applied = matches!(completion.ack, Ack::Confirmed | Ack::DeliveryAccepted);
         let mut applications = usize::from(applied);
         if applied && let Some((key, value)) = desired(delivery) {
             if converges(delivery.output) && state.resources.get(&key) == Some(&value) {
@@ -319,7 +319,7 @@ fn fake(root: &Path, scenario: &str, seed: u64, upstream: Upstream) -> Fake {
     fs::create_dir_all(&receipts).unwrap();
     let inner: Box<dyn Executor> = match upstream {
         Upstream::GitHub => Box::new(adapters::github::Fake::new(&receipts)),
-        Upstream::Delivery => Box::new(adapters::mergify::Fake::new(&receipts)),
+        Upstream::Delivery => Box::new(adapters::direct_merge::Fake::new(&receipts)),
         Upstream::PrismaBuild => Box::new(adapters::prismabuild::Fake::new(&receipts)),
         Upstream::Workers => Box::new(adapters::workers::Fake::new(&receipts)),
         Upstream::Worktrees => Box::new(adapters::worktrees::Fake::new(&receipts)),

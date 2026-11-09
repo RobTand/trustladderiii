@@ -310,7 +310,7 @@ def collect_binaries(manifest):
             binaries.append({'name': f"{package}/{target['name']}",
                              'command': [artifact['executable']], 'custom': custom})
     # Start the longest binaries first to avoid a serial tail at the end of the gate.
-    longest = ['workers', 'github-flow', 'github-notices', 'publishing', 'mergify',
+    longest = ['workers', 'github-flow', 'github-notices', 'publishing', 'direct_merge',
                'prismabuild', 'crash_safety', 'simulation', 'looks', 'hindsight',
                'postgres', 'tl3_controller', 'worktrees', 'fixture_lifecycle']
     order = {name: index for index, name in enumerate(longest)}

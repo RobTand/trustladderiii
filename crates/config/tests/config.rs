@@ -719,7 +719,7 @@ fn every_upstream_requires_two_positive_allowances() {
     for upstream in [
         "agent_worker",
         "prismabuild",
-        "github_mergify",
+        "github_delivery",
         "model_calls",
         "hindsight",
     ] {

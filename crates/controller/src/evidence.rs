@@ -29,7 +29,7 @@ pub struct Evidence {
     pub checks: Vec<Value>,
     pub reviews: Vec<Value>,
     pub audit: Option<Value>,
-    pub queue: Vec<Value>,
+    pub outcomes: Vec<Value>,
     pub scratch: Vec<String>,
     #[serde(default)]
     pub scratch_history: Vec<Value>,
@@ -287,7 +287,7 @@ pub(crate) fn review_record(record: &Value) -> Value {
 }
 
 /// Include writes made by the event that emits the delivery. Check reports and
-/// queue facts retired at close remain reporting evidence for that close.
+/// delivery outcomes retired at close remain reporting evidence for that close.
 pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Result<Evidence> {
     let id = delivery.node().0.to_string();
     let prefix = format!("{id}:");
@@ -296,13 +296,6 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
         "nodes" | "briefs" | "audits" | "goals" | "close_reasons" | "maker_replies" => row == id,
         "saved_scratch" | "scratch_evidence" => value["node"].as_u64() == Some(delivery.node().0),
         "delivery_outcomes" => value["node"].as_u64() == Some(delivery.node().0),
-        "queue_facts" => {
-            value["number"].as_u64() == delivery.pull_request
-                && value["repository"]["owner"].as_str() == Some(delivery.repository.owner.as_str())
-                && value["repository"]["name"].as_str() == Some(delivery.repository.name.as_str())
-                && value["repository"]["installation"].as_u64()
-                    == Some(delivery.repository.installation)
-        }
         _ => false,
     };
     // Borrow only this request's rows. Never copy or sort the whole snapshot.
@@ -331,10 +324,7 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
                 rows.insert((table.as_str(), id.as_str()), (arrival, value));
             }
             RowChange::Delete { table, id }
-                if !matches!(
-                    table.as_str(),
-                    "check_reports" | "queue_facts" | "delivery_outcomes"
-                ) =>
+                if !matches!(table.as_str(), "check_reports" | "delivery_outcomes") =>
             {
                 rows.remove(&(table.as_str(), id.as_str()));
             }
@@ -379,21 +369,12 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
             "scratch_evidence" if value["node"] == json!(delivery.node()) => facts
                 .scratch_history
                 .push(fields(value, &["node", "reference", "status"])),
-            "queue_facts" | "delivery_outcomes" => {
-                let raw = if *table == "delivery_outcomes" {
-                    &value["outcome"]
-                } else {
-                    &value["evidence"]
-                };
+            "delivery_outcomes" => {
+                let raw = &value["outcome"];
                 let mut compact = serde_json::Map::new();
                 if let Some((kind, detail)) = raw.as_object().and_then(|v| v.iter().next()) {
-                    let mut selected =
-                        fields(detail, &["head", "infra", "head_check", "checks_passed"]);
-                    let details = if *table == "delivery_outcomes" {
-                        &detail["evidence"]
-                    } else {
-                        &detail["details"]
-                    };
+                    let mut selected = fields(detail, &["head", "infra", "checks_passed"]);
+                    let details = &detail["evidence"];
                     let checks = details["checks"]
                         .as_array()
                         .into_iter()
@@ -406,7 +387,7 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
                     }
                     compact.insert(kind.clone(), selected);
                 }
-                facts.queue.push(Value::Object(compact));
+                facts.outcomes.push(Value::Object(compact));
             }
             _ => {}
         }
@@ -472,16 +453,16 @@ pub fn capture(snapshot: &Snapshot, commit: &Commit, delivery: &Delivery) -> Res
                 .cloned(),
         );
     }
-    if let Some(queue) = facts.queue.last().filter(|q| {
-        q.get("CiFailed").is_some()
-            || q.get("Conflict").is_some()
-            || q.get("QueueBlocked").is_some()
-    }) {
-        facts.remaining_failures.push(queue.clone());
+    if let Some(outcome) = facts
+        .outcomes
+        .last()
+        .filter(|q| q.get("CiFailed").is_some() || q.get("Conflict").is_some())
+    {
+        facts.remaining_failures.push(outcome.clone());
     }
     let mut links = BTreeSet::new();
     collect_links(
-        &json!({"checks":facts.checks,"reviews":facts.reviews,"queue":facts.queue}),
+        &json!({"checks":facts.checks,"reviews":facts.reviews,"outcomes":facts.outcomes}),
         &mut links,
     );
     facts.artifacts = links.into_iter().collect();
@@ -593,8 +574,8 @@ pub fn summary(delivery: &Delivery) -> Result<String> {
     {
         lines.push("The request's independent audit agreed with its goals.".into());
     }
-    if facts.queue.iter().any(|q| q.get("CiFailed").is_some()) {
-        lines.push("The merge queue later reported a check failure.".into());
+    if facts.outcomes.iter().any(|q| q.get("CiFailed").is_some()) {
+        lines.push("The delivery outcomes include a later check failure.".into());
     }
     if !facts.remaining_failures.is_empty() {
         lines.push("Recorded failures remain unresolved.".into());
@@ -633,27 +614,25 @@ pub fn summary(delivery: &Delivery) -> Result<String> {
     for link in facts.artifacts.iter().take(MAX_ITEMS) {
         lines.push(format!("Recorded artifact: {}.", label(link)?));
     }
-    if let Some(last) = facts.queue.last() {
+    if let Some(last) = facts.outcomes.last() {
         lines.push(
             if last.get("Merged").is_some() {
-                "The last recorded queue state is merged."
+                "The last recorded delivery outcome is merged."
             } else if last.get("Conflict").is_some() {
-                "The last recorded queue state is a conflict."
-            } else if last.get("QueueBlocked").is_some() {
-                "The last recorded queue state is blocked."
+                "The last recorded delivery outcome is a conflict."
             } else if last.get("CiFailed").is_some() {
-                "The last recorded queue state is a check failure."
-            } else if last.get("DequeuedByPerson").is_some()
-                || last.get("DequeuedByCommand").is_some()
-            {
-                "The pull request was removed from the queue."
+                "The last recorded delivery outcome is a check failure."
+            } else if last.get("ClosedByPerson").is_some() {
+                "The pull request was closed by a person."
+            } else if last.get("PushByOther").is_some() {
+                "The pull request head changed."
             } else {
-                "Other queue activity was recorded."
+                "Other delivery activity was recorded."
             }
             .into(),
         );
     } else {
-        lines.push("The queue status was not captured.".into());
+        lines.push("The delivery outcome was not captured.".into());
     }
     if matches!(
         delivery.output,
@@ -682,9 +661,6 @@ pub fn summary(delivery: &Delivery) -> Result<String> {
             match facts.stop_reason.as_deref() {
                 Some("user_stop") => "Work stopped because you asked to stop.",
                 Some("pr_closed") => "Work stopped because someone closed the pull request.",
-                Some("pr_dequeued") => {
-                    "Work stopped because someone removed the pull request from the queue."
-                }
                 Some("replaced") => "Work stopped because the request was replaced.",
                 Some("protected_paths") => {
                     "Work stopped because the request requires changes to protected paths."
@@ -1150,11 +1126,11 @@ mod tests {
                 json!({"pr_open":false,"had_pr":true,"merged":null}),
             ),
             (
-                "queue_facts",
-                "queue-failure",
-                json!({"repository":d.repository,"number":2660,
-                "evidence":{"CiFailed":{"check":99,"head":"reviewed-head","infra":false,"head_check":false,
-                    "details":{"checks":[{"name":"Gate","summary":"Queue check failed","url":"https://github.com/RobTand/prismabuild/actions/runs/99"}]}}}}),
+                "delivery_outcomes",
+                "delivery-failure",
+                json!({"node":118,
+                "outcome":{"CiFailed":{"head":"reviewed-head","infra":false,"failed_tests":[],
+                    "evidence":{"checks":[{"name":"Gate","url":"https://github.com/RobTand/prismabuild/actions/runs/99"}]}}}}),
             ),
             (
                 "saved_scratch",
@@ -1176,7 +1152,7 @@ mod tests {
     }
 
     #[test]
-    fn req118_keeps_completed_forcing_review_and_later_queue_failure() {
+    fn req118_keeps_completed_forcing_review_and_later_delivery_failure() {
         let (s, mut d) = fixture();
         d.evidence = Some(capture(&s, &Commit::new("stop", json!({}), &s), &d).unwrap());
         let input = writer_input(
@@ -1193,14 +1169,17 @@ mod tests {
         assert_eq!(input.facts["evidence"]["reviews"][0]["verdict"], "approve");
         assert_eq!(input.facts["evidence"]["pull_request_status"], "closed");
         assert_eq!(
-            input.facts["evidence"]["queue"].as_array().unwrap().len(),
+            input.facts["evidence"]["outcomes"]
+                .as_array()
+                .unwrap()
+                .len(),
             1
         );
         assert!(input.facts["unmet_goals"].as_array().unwrap().is_empty());
         let text = checked_draft(&mut FakeWriter, "summary", input, &Default::default()).unwrap();
         assert!(text.contains("checks passed"), "{text}");
         assert!(text.contains("review approved"), "{text}");
-        assert!(text.contains("queue"), "{text}");
+        assert!(text.contains("delivery"), "{text}");
     }
 
     #[test]
@@ -1415,7 +1394,7 @@ mod tests {
             "checks passed",
             "forced reproduction",
             "review approved",
-            "queue",
+            "outcomes",
             "stopped",
             "closed",
             "unresolved",
@@ -1581,9 +1560,9 @@ mod tests {
         snapshot.rows.push(tl3_store::WorldRow {
             arrival: 9,
             version: Revision::ZERO,
-            table: "queue_facts".into(),
+            table: "delivery_outcomes".into(),
             id: "foreign".into(),
-            value: json!({"number":999,"evidence":"unrelated obsolete shape"}),
+            value: json!({"node":999,"outcome":{"Conflict":{"head":"foreign"}}}),
         });
         snapshot
             .rows
@@ -1601,7 +1580,7 @@ mod tests {
             serde_json::to_vec(&captured).unwrap().len() < 24_000,
             "capture cloned full report data"
         );
-        assert_eq!(captured.queue.len(), 1);
+        assert_eq!(captured.outcomes.len(), 1);
     }
 
     #[test]

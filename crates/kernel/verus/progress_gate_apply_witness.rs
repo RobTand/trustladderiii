@@ -24,8 +24,8 @@ fn original_world(width: u8, merge: bool) -> (result: World) [
     first.attempt = 1;
     first.footprint = Footprint::inline(1);
     if merge {
-        first.phase = Phase::Queued;
-        first.holds = true;
+        first.phase = Phase::AwaitingDelivery;
+        first.holds = false;
         first.head = Some(HeadId(1));
         first.checked = first.head;
         first.approved = first.head;

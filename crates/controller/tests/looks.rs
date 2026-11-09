@@ -81,7 +81,7 @@ fn allowances() -> tl3_config::Allowances {
     for value in [
         &mut a.agent_worker,
         &mut a.prismabuild,
-        &mut a.github_mergify,
+        &mut a.github_delivery,
     ] {
         value.silence_secs = 1;
         value.no_progress_secs = 3;
@@ -126,8 +126,15 @@ struct LiveState {
 }
 struct Live(Rc<RefCell<LiveState>>);
 impl Executor for Live {
-    fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
-        Ok(Completion::confirmed(vec![]))
+    fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
+        // Production Direct accepts the Enqueue handoff with typed acceptance.
+        Ok(match d.output {
+            Out::Effect {
+                kind: EffectKind::Enqueue,
+                ..
+            } => Completion::delivery_accepted(vec![]),
+            _ => Completion::confirmed(vec![]),
+        })
     }
     fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
         Ok(Reconciliation::Pending)
@@ -438,9 +445,88 @@ fn owner_progress_contract(settings: &tl3_config::Store, upstream: Upstream) {
         assert!(c.world().unwrap().nodes[0].job.is_some());
         assert!(!c.world().unwrap().nodes[0].waiting_incident);
         assert_eq!(state.borrow().stops, 0);
+    } else if upstream == Upstream::Delivery {
+        // State-table "Looks and stalls": an accepted delivery waits for
+        // authenticated evidence; a quiet look spends no retry or timer.
+        assert_eq!(c.world().unwrap().nodes[0].phase, Phase::AwaitingDelivery);
+        assert!(!c.world().unwrap().nodes[0].waiting_incident);
+        assert_eq!(state.borrow().stops, 0);
     } else {
         assert!(c.world().unwrap().nodes[0].waiting_incident);
     }
+    assert!(c.world().unwrap().valid());
+}
+/// Never acknowledges the Enqueue handoff: the write fails in transport and
+/// the upstream record never shows acceptance.
+struct NeverAccepted(Rc<Cell<usize>>);
+impl Executor for NeverAccepted {
+    fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
+        self.0.set(self.0.get() + 1);
+        Err(std::io::Error::from(std::io::ErrorKind::ConnectionRefused).into())
+    }
+    fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        Ok(Reconciliation::Pending)
+    }
+}
+/// State-table "Looks and stalls": a never-acknowledged enqueue still ends in
+/// a read incident, while the handoff stays unaccepted in Publishing.
+fn never_accepted_handoff_read_incident(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let clock = FakeClock::new();
+    let writes = Rc::new(Cell::new(0));
+    let mut c = open(
+        settings,
+        root.path(),
+        &clock,
+        Upstream::Delivery,
+        NeverAccepted(writes.clone()),
+    );
+    let handoff = |c: &mut Controller| {
+        let node = c.world().unwrap().nodes[0];
+        assert_eq!(
+            node.phase,
+            Phase::Publishing,
+            "the handoff is never accepted"
+        );
+        assert_eq!(node.effect.map(|e| e.kind), Some(EffectKind::Enqueue));
+    };
+    handoff(&mut c);
+    assert!(writes.get() >= 1, "the handoff was attempted");
+    // A read incident is a controller incident row with its notice; it does
+    // not acknowledge the write or change the kernel node (looks.rs look_failed).
+    let open_incidents = |c: &mut Controller| -> Vec<(String, serde_json::Value)> {
+        c.snapshot()
+            .unwrap()
+            .rows
+            .into_iter()
+            .filter(|r| r.table == "incidents" && r.value["open"] == true)
+            .map(|r| (r.id, r.value))
+            .collect()
+    };
+    assert!(open_incidents(&mut c).is_empty());
+    for _ in 0..10 {
+        if !open_incidents(&mut c).is_empty() {
+            break;
+        }
+        clock.advance(1);
+        c.look_due().unwrap();
+        drain(&mut c);
+    }
+    let incidents = open_incidents(&mut c);
+    assert_eq!(
+        incidents.len(),
+        1,
+        "a never-acknowledged enqueue must end in a read incident"
+    );
+    let (id, incident) = &incidents[0];
+    assert!(id.ends_with(".read"), "{id}");
+    assert_eq!(incident["signature"]["upstream"], "Delivery");
+    let key = incident["effect"].as_str().unwrap().to_owned();
+    assert!(
+        c.effect(&key).unwrap().unwrap().state.is_pending(),
+        "the read incident neither acknowledges nor replaces the handoff"
+    );
+    handoff(&mut c);
     assert!(c.world().unwrap().valid());
 }
 fn permanent_incident_clear(settings: &tl3_config::Store) {
@@ -453,7 +539,6 @@ fn permanent_incident_clear_at(settings: &tl3_config::Store, request_issue: bool
             Ok(Completion {
                 diagnostic: None,
                 failure_class: None,
-                progress: None,
                 ack: tl3_kernel::Ack::Permanent,
                 observations: vec![],
             })
@@ -938,202 +1023,6 @@ fn look_adapter_errors_survive(settings: &tl3_config::Store, resume: bool) {
         state.borrow().fail_stop
     });
     assert!(!incident(&mut c).is_empty());
-}
-struct TokenQueue {
-    token: Rc<RefCell<adapters::mergify::Progress>>,
-    terminal: Rc<Cell<bool>>,
-}
-impl TokenQueue {
-    fn completion(&self, delivery: &Delivery) -> Completion {
-        let mut completion = Completion::confirmed(if self.terminal.get() {
-            vec![Observation::Merged {
-                node: delivery.node(),
-                sha: delivery.head_sha.clone().unwrap(),
-                checks_passed: true,
-            }]
-        } else {
-            vec![]
-        });
-        completion.progress = Some(tl3_controller::executor::ProgressToken::Mergify(
-            self.token.borrow().clone(),
-        ));
-        completion
-    }
-}
-impl Executor for TokenQueue {
-    fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
-        Ok(self.completion(delivery))
-    }
-    fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
-        Ok(Reconciliation::Found(Box::new(self.completion(delivery))))
-    }
-}
-fn token_only_queue_progress(settings: &tl3_config::Store) {
-    let root = tempfile::tempdir().unwrap();
-    let clock = FakeClock::new();
-    let token = Rc::new(RefCell::new(adapters::mergify::Progress {
-        merged_at: None,
-        merge_commit_sha: None,
-        queue_check: Some(adapters::mergify::QueueCheckProgress {
-            id: 1,
-            status: "in_progress".into(),
-            conclusion: None,
-            title: Some("Waiting".into()),
-        }),
-    }));
-    let terminal = Rc::new(Cell::new(false));
-    let mut c = open(
-        settings,
-        root.path(),
-        &clock,
-        Upstream::Delivery,
-        TokenQueue {
-            token: token.clone(),
-            terminal: terminal.clone(),
-        },
-    );
-    assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Queued);
-    let row = c
-        .snapshot()
-        .unwrap()
-        .rows
-        .into_iter()
-        .find(|r| r.table == "watches")
-        .unwrap();
-    let key = row.id;
-    assert!(row.value["progress"]["current"].get("Mergify").is_some());
-    clock.advance(2);
-    token.borrow_mut().queue_check.as_mut().unwrap().title = Some("Next in queue".into());
-    token.borrow_mut().merged_at = Some("2026-10-30T01:00:00Z".into());
-    drain(&mut c);
-    let progressed_at = clock.0.get();
-    let allowance = c
-        .snapshot()
-        .unwrap()
-        .rows
-        .into_iter()
-        .find(|r| r.table == "allowances" && r.id == key)
-        .unwrap()
-        .value;
-    assert_eq!(allowance["progress_ms"], progressed_at);
-    assert_eq!(allowance["due_ms"], progressed_at + 3000);
-    assert!(allowance["progress"].is_null() && allowance["found"].is_null());
-    assert!(!c.drive_once().unwrap());
-    let stable = c.snapshot().unwrap();
-    assert!(!c.drive_once().unwrap());
-    assert_eq!(
-        c.snapshot().unwrap(),
-        stable,
-        "unchanged token writes nothing"
-    );
-    drop(c);
-    let mut registry = adapters::simulation(root.path()).unwrap();
-    registry.register(
-        Upstream::Delivery,
-        TokenQueue {
-            token: token.clone(),
-            terminal: terminal.clone(),
-        },
-    );
-    c = Controller::open_with_clock(
-        Store::open(settings).unwrap(),
-        registry,
-        bootstrap(),
-        clock.clone(),
-    )
-    .unwrap();
-    c.set_allowances(allowances());
-    drain(&mut c);
-    let allowance = c
-        .snapshot()
-        .unwrap()
-        .rows
-        .into_iter()
-        .find(|r| r.table == "allowances" && r.id == key)
-        .unwrap()
-        .value;
-    assert_eq!(
-        allowance["progress_ms"], progressed_at,
-        "restart is not fresh progress"
-    );
-    clock.advance(1);
-    c.look_due().unwrap();
-    drain(&mut c);
-    assert!(!c.world().unwrap().nodes[0].waiting_incident);
-    clock.advance(2);
-    c.look_due().unwrap();
-    drain(&mut c);
-    assert!(
-        c.world().unwrap().nodes[0].waiting_incident,
-        "token-only Found must reach the queue stall rule"
-    );
-    let snapshot = c.snapshot().unwrap();
-    let incident = snapshot
-        .rows
-        .iter()
-        .find(|r| r.table == "incidents" && r.value["open"] == true)
-        .unwrap();
-    assert_eq!(
-        incident.value["signature"],
-        serde_json::json!({"upstream":"Mergify", "class":"queue_unfinished"})
-    );
-    let summary = incident.value["summary"].as_str().unwrap();
-    assert!(
-        summary.contains("GitHub merged the change at 2026-10-30T01:00:00Z"),
-        "{summary}"
-    );
-    assert!(
-        summary.contains("Mergify's check \"Next in queue\" is still in progress"),
-        "{summary}"
-    );
-    let notice = Store::open(settings)
-        .unwrap()
-        .effects()
-        .unwrap()
-        .into_iter()
-        .find(|e| {
-            e.key.starts_with("incident:")
-                || e.payload["note"]
-                    .as_str()
-                    .is_some_and(|note| note.contains(summary))
-        })
-        .unwrap();
-    assert!(notice.payload["note"].as_str().unwrap().contains(summary));
-    // Q7 (#410 review): an unchanged look doesn't end the Queued stall's
-    // incident. A passing probe or Rob clears it; this fake's probe fails.
-    let open_incidents = |c: &mut Controller| {
-        c.snapshot()
-            .unwrap()
-            .rows
-            .iter()
-            .filter(|r| r.table == "incidents" && r.value["open"] == true)
-            .count()
-    };
-    assert_eq!(open_incidents(&mut c), 1);
-    clock.advance(1);
-    c.look_now().unwrap();
-    drain(&mut c);
-    assert_eq!(
-        open_incidents(&mut c),
-        1,
-        "an unchanged token-only look keeps the Queued stall incident open"
-    );
-    terminal.set(true);
-    drain(&mut c);
-    c.look_now().unwrap();
-    drain(&mut c);
-    assert!(matches!(
-        c.world().unwrap().nodes[0].phase,
-        Phase::Closed(_)
-    ));
-    assert!(c.next_look_in().unwrap().is_none());
-    assert!(
-        !c.snapshot()
-            .unwrap()
-            .rows
-            .iter()
-            .any(|r| r.table == "watches" && r.id == key)
-    );
 }
 fn settled_looks_are_quiet(settings: &tl3_config::Store) {
     let root = tempfile::tempdir().unwrap();
@@ -2158,8 +2047,10 @@ fn main() {
     }
     owner_progress_contract(&db.create("pb_owner"), Upstream::PrismaBuild);
     println!("test pb_owns_progress_failure ... ok");
-    owner_progress_contract(&db.create("queue_stall"), Upstream::Delivery);
-    println!("test queue_stall_incident ... ok");
+    owner_progress_contract(&db.create("delivery_stall"), Upstream::Delivery);
+    println!("test accepted_delivery_stall_waits_without_incident ... ok");
+    never_accepted_handoff_read_incident(&db.create("never_accepted"));
+    println!("test never_accepted_handoff_read_incident ... ok");
     stopped_worktree_saves_scratch(&db.create("dirty_worktree"), "saved");
     stopped_worktree_saves_scratch(&db.create("scratch_once"), "write-once");
     stopped_worktree_saves_scratch(&db.create("scratch_expiry"), "expiry");
@@ -2182,8 +2073,6 @@ fn main() {
     println!("test resume_adapter_errors_survive ... ok");
     settled_looks_are_quiet(&db.create("quiet_timer"));
     println!("test settled_looks_are_quiet ... ok");
-    token_only_queue_progress(&db.create("token_only_queue"));
-    println!("test token_only_queue_progress ... ok");
     db.stop();
     println!("48 allowance and incident scenarios passed; no skips");
 }
