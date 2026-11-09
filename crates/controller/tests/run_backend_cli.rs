@@ -5602,6 +5602,7 @@ fn generator_exec_case(mode: &str) -> (Fixture, Value) {
             "environment": environment, "output_dir": f.intent.output_dir,
             "scratch": scratch.path().join("fABC"), "mode": mode, "source": source,
             "image": f.request.runtime.expected_image,
+            "cleanup_budget_seconds": CLEANUP_HELPER_BUDGET_SECONDS,
         }))
         .unwrap(),
     )

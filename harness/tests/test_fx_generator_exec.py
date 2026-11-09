@@ -503,6 +503,11 @@ def test_generator_outside_flux_is_refused_before_any_work(tmp_path, monkeypatch
     assert not runtime_calls(tmp_path)
 
 
+CLEANUP_OBSERVATION_BUDGET = 1
+CANCEL_READINESS_BUDGET = 30
+COLLECT_TIMEOUT = 90
+
+
 def latency_knob(name):
     """Test-only latency knob (FX-TEST-BUDGETS convention): unset is 0, else finite seconds >= 0."""
     value = os.environ.get(name)
@@ -534,18 +539,33 @@ def driver():
         runtime.command = command
         request = runtime.backend_request
 
+        # The trusted helper's contractual bound (Rust CLEANUP_HELPER_BUDGET_SECONDS) fails;
+        # the 1 s performance budget only warns (Rob 11-03).
+        budget = settings['cleanup_budget_seconds']
+
+        def observed(*args, **kwargs):
+            started = time.monotonic()
+            facts = runtime.cleanup_observations(*args, podman=str(podman), systemctl='/unused-fixture',
+                                                 timeout=budget, **kwargs)
+            elapsed = time.monotonic() - started
+            if elapsed > CLEANUP_OBSERVATION_BUDGET:
+                with (root / 'budget-warnings.jsonl').open('a') as warnings:
+                    warnings.write(json.dumps({'budget_warning': {
+                        'test': 'test_fx_generator_exec:cleanup_observations', 'measured': elapsed,
+                        'limit': CLEANUP_OBSERVATION_BUDGET, 'metric': 'wall'}}) + '\n')
+            return facts
+
         def trusted_stop(command, **kwargs):
             # The Rust fixture cleanup helper replays these observations, as in fx_action_e2e.
             if command['op'] == 'cleanup_runtime':
                 state = json.loads((root / 'journal' / os.environ['TL3_RUN_CORRELATION'] / 'state.json').read_text())
                 owned = {item['execution'] for item in state['runtime_ownerships']}
                 for item in state['runtime_ownerships']:
-                    facts = runtime.cleanup_observations(item, podman=str(podman), systemctl='/unused-fixture', timeout=1)
+                    facts = observed(item)
                     (output / ('trusted-stop-' + item['execution'] + '.json')).write_text(json.dumps(facts))
                 for launch in state['container_launches'].values():
                     if launch['launcher']['execution'] not in owned:
-                        facts = runtime.cleanup_observations(launch['launcher'], launch=launch, podman=str(podman),
-                                                             systemctl='/unused-fixture', timeout=1)
+                        facts = observed(launch['launcher'], launch=launch)
                         (output / ('trusted-stop-' + launch['launcher']['execution'] + '.json')).write_text(
                             json.dumps(facts))
             return request(command, **kwargs)
@@ -574,10 +594,16 @@ def driver():
     signals = []
 
     def cancel():
-        # Injected latency delays launch and binding (several runtime-client calls).
-        deadline = time.monotonic() + 30 + 10 * latency
-        while time.monotonic() < deadline:
+        # Readiness fails only at the collector's contractual timeout; 30 s is a budget.
+        started = time.monotonic()
+        while time.monotonic() < started + COLLECT_TIMEOUT:
             if (root / 'payload-started').exists() and (output / 'action-pid.json').exists():
+                waited = time.monotonic() - started
+                if waited > CANCEL_READINESS_BUDGET:
+                    with (root / 'budget-warnings.jsonl').open('a') as warnings:
+                        warnings.write(json.dumps({'budget_warning': {
+                            'test': 'test_fx_generator_exec:cancel_readiness', 'measured': waited,
+                            'limit': CANCEL_READINESS_BUDGET, 'metric': 'wall'}}) + '\n')
                 pid = json.loads((output / 'action-pid.json').read_text())['pid']
                 os.kill(pid, signal.SIGTERM)
                 signals.append(pid)
@@ -590,17 +616,20 @@ def driver():
     try:
         code, result = runtime.collect_host_payload(
             [sys.executable, '-I', '-B', __file__, str(root), str(source), 'action-' + mode],
-            timeout=90, operation='collect_worker')
+            timeout=COLLECT_TIMEOUT, operation='collect_worker')
         outcome = {'code': code, 'result': result, 'error_type': None}
     except Exception as error:
         outcome = {'error_type': type(error).__name__, 'diagnostic': getattr(error, 'diagnostic', None)}
     if watcher is not None:
-        watcher.join(timeout=35 + 10 * latency)
+        watcher.join(timeout=COLLECT_TIMEOUT + 5)
     outcome.update(signals=signals, scratch_absent=not Path(settings['scratch']).exists(),
                    payload_started=(root / 'payload-started').exists(),
                    runtime_calls=[call[:1] for call in runtime_calls(root)])
     (output / 'generator-exec-driver.json').write_text(json.dumps(outcome))
     print(json.dumps(outcome), flush=True)
+    warnings = root / 'budget-warnings.jsonl'
+    if warnings.exists():
+        print(warnings.read_text(), end='', flush=True)
 
 
 if __name__ == '__main__':
