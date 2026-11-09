@@ -14,12 +14,8 @@ def test_pytest_submission_seals_registered_disk_scratch(submission):  # noqa: F
     contract = json.loads((prepared['root'] / 'worker-input.json').read_text())
     variables = contract['scratch']
     assert variables == environment(), 'account for disk scratch in the admitted run contract'
-    pairs = variables['PRISMABUILD_LOCAL_SCRATCH_PAIRS'].split(',')
-    selection = json.loads(variables['PRISMABUILD_EPHEMERAL_SCRATCH_DECLARATIONS'])
-    assert selection['schema'] == 'prismabuild.scratch_lifetime_selection.v1'
-    entry, = selection['entries']
-    assert entry['lifetime'] == 'ephemeral'
-    root, bound = pairs[0].split(':')
-    assert entry['root_env'] == root
-    assert Path(variables[root]).is_absolute()
-    assert int(variables[bound]) == 512 * 1024 * 1024
+    # Flux owns the job scratch leaf (launch context); the contract declares only the
+    # disk root and its bound, with no PrismaBuild lifetime declaration.
+    assert set(variables) == {'TL3_SCRATCH_ROOT', 'TL3_SCRATCH_MAX_BYTES'}
+    assert Path(variables['TL3_SCRATCH_ROOT']).is_absolute()
+    assert int(variables['TL3_SCRATCH_MAX_BYTES']) == 512 * 1024 * 1024
