@@ -1,10 +1,300 @@
 {
-  "source_head": "89dd47f13463d695e1813d6d180632b4deab3dd2",
+  "source_head": "ec896f47496d1e5c924b7c7daa5abef5c100be48",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "b2da00d9c605bc42d8767a059a61cc4426578e475e869d73afc722af6ac78d03",
-  "groups": 342,
-  "obligations": 539,
+  "source_sha256": "8580835dbc13cfae3fd604e629ce31f88aef0c4fb2deae185c4e1275b0551a14",
+  "groups": 402,
+  "obligations": 599,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_dependencies_field_frame",
+      "selector": "kernel::dependencies#field_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_checking_accepted_parts",
+      "selector": "kernel::checking#accepted_parts",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_checking_accepted_frame",
+      "selector": "kernel::checking#accepted_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_checking_accepted_definition",
+      "selector": "kernel::checking#accepted_definition",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_checking_accepted_checked",
+      "selector": "kernel::checking#accepted_checked",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_checking_accepted_node",
+      "selector": "kernel::checking#accepted_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_checking_tickets_issued",
+      "selector": "kernel::checking#tickets_issued",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_rules_definition",
+      "selector": "kernel::dependencies#rules_definition",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_rules_checked",
+      "selector": "kernel::dependencies#rules_checked",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_acyclic_definition",
+      "selector": "kernel::dependencies#acyclic_definition",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_kept",
+      "selector": "kernel::dependencies#kept",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_kept_step",
+      "selector": "kernel::dependencies#kept_step",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_fact_preserves",
+      "selector": "kernel::dependencies#fact_preserves",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_remove_preserves",
+      "selector": "kernel::dependencies#remove_preserves",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_frame_preserves",
+      "selector": "kernel::dependencies#frame_preserves",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_concat_prefix",
+      "selector": "kernel::dependencies::preservation#concat_prefix",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_concat",
+      "selector": "kernel::dependencies::preservation#concat",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_reach_split",
+      "selector": "kernel::dependencies::preservation#reach_split",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_acyclic_after",
+      "selector": "kernel::dependencies::preservation#acyclic_after",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_holders_frame",
+      "selector": "kernel::dependencies::preservation#holders_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_pool_frame",
+      "selector": "kernel::dependencies::preservation#pool_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_owner_rules",
+      "selector": "kernel::dependencies::preservation#owner_rules",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_checker_frame",
+      "selector": "kernel::dependencies::preservation#checker_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_unplanned_free",
+      "selector": "kernel::dependencies::preservation#unplanned_free",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_early_waits",
+      "selector": "kernel::dependencies::preservation#early_waits",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_table_frame",
+      "selector": "kernel::dependencies::preservation#table_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_written_rows",
+      "selector": "kernel::dependencies::preservation#written_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_written_edges",
+      "selector": "kernel::dependencies::preservation#written_edges",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_written_unique",
+      "selector": "kernel::dependencies::preservation#written_unique",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_written_credit",
+      "selector": "kernel::dependencies::preservation#written_credit",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_written_other",
+      "selector": "kernel::dependencies::preservation#written_other",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_written_blocked",
+      "selector": "kernel::dependencies::preservation#written_blocked",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_written_row_rules",
+      "selector": "kernel::dependencies::preservation#written_row_rules",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_fact_rules",
+      "selector": "kernel::dependencies::preservation#fact_rules",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_kept_rows",
+      "selector": "kernel::dependencies::preservation#kept_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_remove_rules",
+      "selector": "kernel::dependencies::preservation#remove_rules",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_fact_table",
+      "selector": "kernel::dependencies::preservation#fact_table",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_same_lookup",
+      "selector": "kernel::dependencies::preservation#same_lookup",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_fact_graph",
+      "selector": "kernel::dependencies::preservation#fact_graph",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_remove_table",
+      "selector": "kernel::dependencies::preservation#remove_table",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_reserve_frame",
+      "selector": "kernel::dependencies::preservation#reserve_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_scheduler_ready",
+      "selector": "kernel::dependencies::preservation#scheduler_ready",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_registration",
+      "selector": "kernel::dependencies::preservation#registration",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_no_cycle",
+      "selector": "kernel::dependencies::preservation#no_cycle",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_removal",
+      "selector": "kernel::dependencies::preservation#removal",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_waiting_holds_nothing",
+      "selector": "kernel::dependencies::preservation#waiting_holds_nothing",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_delivered_releases",
+      "selector": "kernel::dependencies::preservation#delivered_releases",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_delivered_admits",
+      "selector": "kernel::dependencies::preservation#delivered_admits",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_fixture_accepted",
+      "selector": "kernel::dependencies::preservation#fixture_accepted",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_fixture_reserves",
+      "selector": "kernel::dependencies::preservation#fixture_reserves",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_external",
+      "selector": "kernel::dependencies::preservation#external",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_registration_covers",
+      "selector": "kernel::dependencies::preservation#registration_covers",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_graph_world",
+      "selector": "kernel::dependencies::preservation#graph_world",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_no_cycle_covers",
+      "selector": "kernel::dependencies::preservation#no_cycle_covers",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_ingesting_world",
+      "selector": "kernel::dependencies::preservation#ingesting_world",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_removal_covers",
+      "selector": "kernel::dependencies::preservation#removal_covers",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_waiting_cover",
+      "selector": "kernel::dependencies::preservation#waiting_cover",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_delivered_cover",
+      "selector": "kernel::dependencies::preservation#delivered_cover",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_kernel_clones",
       "selector": "kernel#*::clone",
@@ -611,6 +901,11 @@
       "expected": 1
     },
     {
+      "target": "//crates/kernel:verus_acknowledgements_delivery_accepted",
+      "selector": "kernel::acknowledgements#delivery_accepted",
+      "expected": 1
+    },
+    {
       "target": "//crates/kernel:verus_acknowledgements_confirmed",
       "selector": "kernel::acknowledgements#confirmed",
       "expected": 1
@@ -653,11 +948,6 @@
     {
       "target": "//crates/kernel:verus_facts_incident_cleared",
       "selector": "kernel::facts#incident_cleared",
-      "expected": 1
-    },
-    {
-      "target": "//crates/kernel:verus_facts_pr_dequeued",
-      "selector": "kernel::facts#pr_dequeued",
       "expected": 1
     },
     {
@@ -1713,6 +2003,16 @@
     {
       "target": "//crates/kernel:verus_retries_raise_failed_run_incident",
       "selector": "kernel::retries#raise_failed_run_incident",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_record_note",
+      "selector": "kernel::dependencies#record_note",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_record_wait",
+      "selector": "kernel::dependencies#World::record_wait",
       "expected": 1
     }
   ]
