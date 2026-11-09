@@ -7,14 +7,43 @@ use super::*;
 verus! {
 /// The scheduler's slot count without node `skip`, plus that node's own slot,
 /// is the checker's holder count.
-pub(super) proof fn other_holders_bridge(nodes: Seq<Node>, end: nat, repo: RepoId, skip: int)
-    requires end <= nodes.len(),
-    ensures scheduler::other_holders(nodes, end, repo, skip)
-            + (if 0 <= skip < end && nodes[skip].holds && nodes[skip].repo == repo { 1nat } else { 0nat })
-        == potential_prefix(nodes, end, |n: Node| if n.holds && n.repo == repo { 1nat } else { 0nat }),
+pub(super) proof fn other_holders_bridge(w: World, end: nat, repo: RepoId, skip: int)
+    requires end <= w.nodes@.len(),
+    ensures scheduler::other_holders(w.nodes@, end, repo, skip)
+            + (if 0 <= skip < end && w.nodes@[skip].holds && w.nodes@[skip].repo == repo { 1nat } else { 0nat })
+        == progress_gate_apply::holders(w, repo, end),
     decreases end,
 {
-    if end > 0 { other_holders_bridge(nodes, (end - 1) as nat, repo, skip); }
+    if end > 0 { other_holders_bridge(w, (end - 1) as nat, repo, skip); }
+}
+
+/// The checker's holder count after node i alone changes.
+pub(super) proof fn holders_update(before: World, after: World, i: int, repo: RepoId, end: nat)
+    requires 0 <= i < before.nodes@.len(), end <= before.nodes@.len(),
+        after.nodes@ == before.nodes@.update(i, after.nodes@[i]),
+    ensures progress_gate_apply::holders(after, repo, end)
+            + (if i < end && before.nodes@[i].holds && before.nodes@[i].repo == repo { 1nat } else { 0nat })
+        == progress_gate_apply::holders(before, repo, end)
+            + (if i < end && after.nodes@[i].holds && after.nodes@[i].repo == repo { 1nat } else { 0nat }),
+    decreases end,
+{
+    if end > 0 {
+        holders_update(before, after, i, repo, (end - 1) as nat);
+        if end - 1 != i { assert(after.nodes@[end - 1] == before.nodes@[end - 1]); }
+    }
+}
+
+/// The pool occupancy after node i alone changes.
+pub(super) proof fn pool_update(before: Seq<Node>, after: Seq<Node>, i: int, end: nat)
+    requires 0 <= i < before.len(), end <= before.len(), after == before.update(i, after[i]),
+    ensures pool_users(after, end) + (if i < end && before[i].pool { 1nat } else { 0nat })
+        == pool_users(before, end) + (if i < end && after[i].pool { 1nat } else { 0nat }),
+    decreases end,
+{
+    if end > 0 {
+        pool_update(before, after, i, (end - 1) as nat);
+        if end - 1 != i { assert(after[end - 1] == before[end - 1]); }
+    }
 }
 
 /// Node rules read next_ticket only as an upper bound on issued tickets.
@@ -40,6 +69,7 @@ pub(super) open spec fn step_premises(before: World, after: World, i: int) -> bo
         && after.pool_capacity == before.pool_capacity
         && after.next_question == before.next_question
         && before.next_ticket <= after.next_ticket
+        && before.gates@.len() <= u64::MAX
         && after.nodes@[i].repo == before.nodes@[i].repo
         && after.nodes@[i].footprint == before.nodes@[i].footprint
         && retirement::node_rules(after, after.nodes@[i])
@@ -94,14 +124,14 @@ pub(super) proof fn step_preserves_gate_rules(before: World, after: World, i: in
         implies after.gates@[r].w > 0
             && progress_gate_apply::holders(after, RepoId(r as u64), len) <= after.gates@[r].w by {
         let repo = RepoId(r as u64);
-        potential_update(before.nodes@, i, an, len,
-            |n: Node| if n.holds && n.repo == repo { 1nat } else { 0nat });
         assert(progress_gate_apply::holders(before, repo, len) <= before.gates@[r].w);
+        holders_update(before, after, i, repo, len);
         if an.holds && !bn.holds && an.repo == repo {
-            other_holders_bridge(before.nodes@, len, repo, i);
+            other_holders_bridge(before, len, repo, i);
+            assert(bn.repo.0 as int == r);
         }
     }
-    potential_update(before.nodes@, i, an, len, |n: Node| if n.pool { 1nat } else { 0nat });
+    pool_update(before.nodes@, after.nodes@, i, len);
     assert forall|x: int, y: int| 0 <= x < len && 0 <= y < len && x != y
         implies (after.nodes@[x].ticket.is_some() ==> after.nodes@[x].ticket != after.nodes@[y].ticket) by {
         if x != i && y != i {
