@@ -67,7 +67,8 @@ class FluxFake:
         self.state, self.job = Path(state), job
         self.prepared, self.plans, self.roots, self.payloads, self.endings = [], {}, {}, {}, {}
         self.submitted, self.attached, self.resumed = [], [], []
-        self.ending = "passed"
+        # None derives the terminal ending from the job's verified output, as Rust classify does.
+        self.ending = None
         self.observation = None
         self.on_payload = None
 
@@ -108,6 +109,29 @@ class FluxFake:
         path.write_bytes(raw)
         return {"path": str(path), "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
 
+    def _run(self, key):
+        """Run the job once; return the ending Rust classifies its verified output as.
+
+        Rust releases a payload only for a verified completed report. A trusted
+        generator artifact reporting a typed failure ends Failed, never Passed;
+        every other payload ends Passed (FX-GEN-PREP 80ddef3e: worker_protocol.rs
+        generator_failed, evidence.rs classify).
+        """
+        if key not in self.payloads:
+            [prepared] = [item for item in self.prepared if item["key"] == key]
+            kind, document, symptoms = self.job(prepared["root"], prepared["document"])
+            self.endings[key] = ("failed" if kind == "generator" and document.get("status") != "completed"
+                                 else "passed")
+            if kind == "generator":
+                payload = {"kind": kind, "artifact": self._blob(document)}
+            else:
+                payload = {"kind": kind, "summary": self._blob(document),
+                           "symptom_runs": [self._blob(run) for run in symptoms]}
+            self.payloads[key] = payload
+            if self.on_payload is not None:
+                self.on_payload(payload)
+        return self.endings[key]
+
     def command(self, plan, command):
         key, op = plan["key"], command["op"]
         if op == "submit":
@@ -117,30 +141,14 @@ class FluxFake:
             self.attached.append(key)
             if self.observation is not None:
                 return {"observation": self.observation(key)}
+            ending = self.ending if self.ending is not None else self._run(key)
             return {"observation": {"kind": "terminal", "binding": run_binding(key),
-                                    "terminal": {"ending": self.ending, "reason": "exited",
+                                    "terminal": {"ending": ending, "reason": "exited",
                                                  "receipt": {"sha256": "b" * 64}}}}
         if op == "worker_payload":
             if command["terminal"]["ending"] not in ("passed", "failed"):
                 raise ValueError("Shared execution retained an unknown or refused outcome")
-            if key not in self.payloads:
-                [prepared] = [item for item in self.prepared if item["key"] == key]
-                kind, document, symptoms = self.job(prepared["root"], prepared["document"])
-                # Rust releases a payload only for a verified completed report. A trusted
-                # generator artifact reporting a typed failure ends Failed, never Passed;
-                # every other payload needs a passed ending (FX-GEN-PREP 80ddef3e:
-                # worker_protocol.rs generator_failed, evidence.rs classify).
-                self.endings[key] = ("failed" if kind == "generator" and document.get("status") != "completed"
-                                     else "passed")
-                if kind == "generator":
-                    payload = {"kind": kind, "artifact": self._blob(document)}
-                else:
-                    payload = {"kind": kind, "summary": self._blob(document),
-                               "symptom_runs": [self._blob(run) for run in symptoms]}
-                self.payloads[key] = payload
-                if self.on_payload is not None:
-                    self.on_payload(payload)
-            if command["terminal"]["ending"] != self.endings[key]:
+            if command["terminal"]["ending"] != self._run(key):
                 raise ValueError("Shared execution retained an unknown or refused outcome")
             return {"payload": self.payloads[key]}
         raise AssertionError(op)
