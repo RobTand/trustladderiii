@@ -1082,7 +1082,7 @@ def verus_proofs():
             "retries_facts_finish_failed_incident": ("kernel::retries_facts#finish_failed_incident", 1),
             "retries_raise_failed_run_incident": ("kernel::retries#raise_failed_run_incident", 1),
             "dependencies_record_note": ("kernel::dependencies#record_note", 1),
-            "dependencies_record_wait": ("kernel::dependencies#World::record_wait", 1),
+            "dependencies_record_hold": ("kernel::dependencies#World::record_hold", 1),
         }
         for name, (module, count) in groups.items():
             verus_test(
