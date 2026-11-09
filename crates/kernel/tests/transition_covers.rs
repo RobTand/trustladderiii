@@ -381,3 +381,382 @@ fn a_slot_waiter_has_no_pool_key() {
     n.ticket = Some(3);
     assert_eq!(pool_key(&n), None);
 }
+
+// ---- K5 G17 first cut: Kani covers as concrete executable witnesses ----
+// Each test reaches the covered state through the real `step` (worlds are
+// checked with `World::valid()`, as Kani's `any_settled_world` domain is any
+// consistent settled world), asserts the cover predicate exactly as
+// crates/kernel/src/proofs.rs states it at aa20aecc, and asserts the harness's
+// outcome assertion for that case.
+
+/// `Credit::can_spend(1)`: not withheld and one unit of balance left.
+fn can_spend1(n: &Node) -> bool {
+    !n.credit.withheld
+        && u128::from(n.credit.start) + u128::from(n.credit.earned) + u128::from(n.credit.added)
+            >= u128::from(n.credit.spent) + 1
+}
+
+/// proofs.rs:357 rebase fuel: credit balance plus the free recheck allowance left.
+fn rebase_fuel(n: &Node) -> i128 {
+    let balance = if n.credit.withheld {
+        0
+    } else {
+        i128::from(n.credit.start) + i128::from(n.credit.earned) + i128::from(n.credit.added)
+            - i128::from(n.credit.spent)
+    };
+    balance + i128::from(FREE_RECHECKS.saturating_sub(n.rechecks))
+}
+
+impl Run {
+    /// Reviewing, awaiting the reviewer's reply.
+    fn reviewing(fail_fast: bool) -> Run {
+        let mut run = Run::new(fail_fast);
+        run.reply(Reply::IngestDone { size: 1 });
+        run.reply(Reply::AuditAgrees);
+        let footprint = run.w.intern_footprint([FileId(0)]);
+        run.reply(Reply::PlanLeaf {
+            footprint,
+            fits: true,
+        });
+        run.made_to_reviewing();
+        run
+    }
+
+    fn made_to_reviewing(&mut self) {
+        self.head += 1;
+        self.reply(Reply::MakerDone {
+            head: HeadId(self.head),
+        });
+        self.reply(CHECKS_PASS);
+        assert_eq!(self.node().phase, Phase::Reviewing);
+        assert!(self.awaiting());
+    }
+
+    /// The node waits for the reply of its current run (Item::Await).
+    fn awaiting(&self) -> bool {
+        let n = self.node();
+        n.effect.is_none() && n.run == Some(n.generation)
+    }
+
+    /// Adjust the node inside the consistent settled domain.
+    fn tune(&mut self, f: impl FnOnce(&mut Node)) {
+        f(&mut self.w.nodes[0]);
+        assert!(self.w.valid(), "tuned world must stay consistent and settled");
+    }
+
+    fn reply_now(&self, reply: Reply) -> Event {
+        Event::Reply {
+            node: NodeId(0),
+            generation: self.node().generation,
+            reply,
+        }
+    }
+
+    /// Approved, delivered and waiting (AwaitingDelivery).
+    fn delivered(fail_fast: bool) -> Run {
+        let mut run = Run::reviewing(fail_fast);
+        run.reply(Reply::Approved {
+            head: HeadId(run.head),
+        });
+        assert_eq!(run.node().phase, Phase::AwaitingDelivery);
+        run
+    }
+
+    /// Rebasing, awaiting the rebase reply, reached through a real Conflict.
+    fn rebasing() -> Run {
+        let mut run = Run::delivered(false);
+        run.send(Event::Fact {
+            node: NodeId(0),
+            fact: Fact::Conflict,
+        });
+        run.confirm();
+        assert_eq!(run.node().phase, Phase::Rebasing);
+        assert!(run.awaiting());
+        run
+    }
+
+    /// Publishing with the delivery handoff (Do(Enqueue)) in flight, in round 0
+    /// or, after a round-0 CI failure in waiting, in round 1.
+    fn at_enqueue(round_one: bool) -> Run {
+        let mut run = if round_one {
+            let mut run = Run::delivered(false);
+            run.send(Event::Fact {
+                node: NodeId(0),
+                fact: Fact::CiFailed { infra: false },
+            });
+            run.confirm();
+            assert_eq!((run.node().phase, run.node().round), (Phase::Making, 1));
+            run.made_to_reviewing();
+            run
+        } else {
+            Run::reviewing(false)
+        };
+        run.reply_unconfirmed(Reply::Approved {
+            head: HeadId(run.head),
+        });
+        for _ in 0..8 {
+            let e = run.node().effect.expect("a publication effect");
+            if e.kind == EffectKind::Enqueue {
+                assert_eq!(run.node().phase, Phase::Publishing);
+                assert!(!run.node().waiting_incident);
+                return run;
+            }
+            run.confirm_one();
+        }
+        panic!("never reached the delivery handoff");
+    }
+}
+
+fn broke(n: &mut Node) {
+    n.credit.spent = n.credit.start + n.credit.earned + n.credit.added;
+}
+
+// apply_reviewer_out_of_room covers, proofs.rs:937-953. `accepted` is Reviewing
+// at Await for this run (proofs.rs:933-935); `paid` is rechecks+1 > FREE_RECHECKS.
+
+#[test]
+fn reviewer_out_of_room_first_exhaustion_free_review() {
+    // proofs.rs:937 cover!(accepted && !b.review_restarted && !paid, "first exhaustion: free review")
+    let mut run = Run::reviewing(false);
+    let b = run.node();
+    assert!(!b.review_restarted && b.rechecks.saturating_add(1) <= FREE_RECHECKS);
+    run.send(run.reply_now(Reply::ReviewerOutOfRoom));
+    let n = run.node();
+    assert!(n.review_restarted && n.rechecks == b.rechecks + 1);
+    assert_eq!(n.phase, Phase::Reviewing);
+    assert!(n.generation > b.generation);
+    assert_eq!(n.credit.spent, b.credit.spent);
+}
+
+#[test]
+fn reviewer_out_of_room_first_exhaustion_paid_review() {
+    // proofs.rs:941 cover!(accepted && !b.review_restarted && paid && b.credit.can_spend(1), "first exhaustion: paid review")
+    let mut run = Run::reviewing(false);
+    run.tune(|n| n.rechecks = FREE_RECHECKS);
+    let b = run.node();
+    assert!(!b.review_restarted && b.rechecks.saturating_add(1) > FREE_RECHECKS && can_spend1(&b));
+    run.send(run.reply_now(Reply::ReviewerOutOfRoom));
+    let n = run.node();
+    assert_eq!(n.phase, Phase::Reviewing);
+    assert_eq!(n.credit.spent, b.credit.spent + 1);
+}
+
+#[test]
+fn reviewer_out_of_room_first_exhaustion_needs_credit() {
+    // proofs.rs:945 cover!(accepted && !b.review_restarted && paid && !b.credit.can_spend(1), "first exhaustion: needs credit")
+    let mut run = Run::reviewing(false);
+    run.tune(|n| {
+        n.rechecks = FREE_RECHECKS;
+        broke(n);
+    });
+    let b = run.node();
+    assert!(!b.review_restarted && b.rechecks.saturating_add(1) > FREE_RECHECKS && !can_spend1(&b));
+    run.send(run.reply_now(Reply::ReviewerOutOfRoom));
+    let n = run.node();
+    assert_eq!(n.phase, Phase::AwaitingRob);
+    assert_eq!(n.question.unwrap().cont, Cont::Ready(Resume::Reviewing));
+}
+
+#[test]
+fn reviewer_out_of_room_second_exhaustion_paid_split() {
+    // proofs.rs:949 cover!(accepted && b.review_restarted && b.credit.can_spend(1), "second exhaustion: paid split")
+    let mut run = Run::reviewing(false);
+    run.reply(Reply::ReviewerOutOfRoom);
+    assert_eq!(run.node().phase, Phase::Reviewing);
+    assert!(run.awaiting());
+    let b = run.node();
+    assert!(b.review_restarted && can_spend1(&b));
+    run.send(run.reply_now(Reply::ReviewerOutOfRoom));
+    let n = run.node();
+    assert_eq!(n.phase, Phase::Planning { must_split: true });
+    assert_eq!(n.credit.spent, b.credit.spent + 1);
+    assert!(!n.holds);
+}
+
+#[test]
+fn reviewer_out_of_room_second_exhaustion_split_needs_credit() {
+    // proofs.rs:953 cover!(accepted && b.review_restarted && !b.credit.can_spend(1), "second exhaustion: split needs credit")
+    let mut run = Run::reviewing(false);
+    run.reply(Reply::ReviewerOutOfRoom);
+    assert!(run.awaiting());
+    run.tune(broke);
+    let b = run.node();
+    assert!(b.review_restarted && !can_spend1(&b));
+    run.send(run.reply_now(Reply::ReviewerOutOfRoom));
+    let n = run.node();
+    assert_eq!(n.phase, Phase::AwaitingRob);
+    assert_eq!(n.question.unwrap().cont, Cont::Planning { must_split: true });
+}
+
+// apply_rebase_clean / apply_rebase_needs_changes covers, proofs.rs:972-994.
+// `accepted` is rebase_progress_applies (Rebasing at Await for this run);
+// `free` is rechecks+1 <= FREE_RECHECKS; `funded` is can_spend(1). Every case
+// keeps proofs.rs:360: AwaitingRob or strictly less rebase fuel.
+
+fn rebase_case(reply: Reply, rechecks: u8, funded: bool) -> (Node, Node) {
+    let mut run = Run::rebasing();
+    run.tune(|n| {
+        n.rechecks = rechecks;
+        if !funded {
+            broke(n);
+        }
+    });
+    let b = run.node();
+    assert!(run.awaiting() && b.phase == Phase::Rebasing);
+    assert_eq!(can_spend1(&b), funded);
+    run.send(run.reply_now(reply));
+    let n = run.node();
+    assert!(n.phase == Phase::AwaitingRob || rebase_fuel(&n) < rebase_fuel(&b));
+    (b, n)
+}
+
+#[test]
+fn clean_rebase_uses_the_free_allowance() {
+    // proofs.rs:972 cover!(accepted && free, "clean rebase uses the free allowance")
+    let (b, _) = rebase_case(Reply::RebaseClean { head: HeadId(9) }, 0, true);
+    assert!(b.rechecks.saturating_add(1) <= FREE_RECHECKS);
+}
+
+#[test]
+fn clean_rebase_spends_credit() {
+    // proofs.rs:973 cover!(accepted && !free && funded, "clean rebase spends credit")
+    let (b, _) = rebase_case(Reply::RebaseClean { head: HeadId(9) }, FREE_RECHECKS, true);
+    assert!(b.rechecks.saturating_add(1) > FREE_RECHECKS && can_spend1(&b));
+}
+
+#[test]
+fn clean_rebase_needs_credit() {
+    // proofs.rs:974 cover!(accepted && !free && !funded, "clean rebase needs credit")
+    let (b, _) = rebase_case(Reply::RebaseClean { head: HeadId(9) }, FREE_RECHECKS, false);
+    assert!(b.rechecks.saturating_add(1) > FREE_RECHECKS && !can_spend1(&b));
+}
+
+#[test]
+fn conflict_fix_pays_despite_free_allowance() {
+    // proofs.rs:986 cover!(accepted && free && funded, "conflict fix pays despite free allowance")
+    let (b, _) = rebase_case(Reply::RebaseNeedsChanges, 0, true);
+    assert!(b.rechecks.saturating_add(1) <= FREE_RECHECKS && can_spend1(&b));
+}
+
+#[test]
+fn conflict_fix_spends_credit_after_allowance() {
+    // proofs.rs:990 cover!(accepted && !free && funded, "conflict fix spends credit after allowance")
+    let (b, _) = rebase_case(Reply::RebaseNeedsChanges, FREE_RECHECKS, true);
+    assert!(b.rechecks.saturating_add(1) > FREE_RECHECKS && can_spend1(&b));
+}
+
+#[test]
+fn conflict_fix_needs_credit() {
+    // proofs.rs:994 cover!(accepted && !funded, "conflict fix needs credit")
+    let (b, _) = rebase_case(Reply::RebaseNeedsChanges, 0, false);
+    assert!(!can_spend1(&b));
+}
+
+// check_publishing_ci_tests / check_publishing_ci_earlier_step covers,
+// proofs.rs:1459-1468 and :1545. The domain is Publishing at Do(Enqueue), not
+// waiting on an incident, with a non-infrastructure CI failure (proofs.rs:1391-1399).
+
+fn ci_failed() -> Event {
+    Event::Fact {
+        node: NodeId(0),
+        fact: Fact::CiFailed { infra: false },
+    }
+}
+
+#[test]
+fn ci_failure_takes_a_free_fix_round() {
+    // proofs.rs:1459 cover!(b.round == 0 && n.round == 1, "a free fix round")
+    let mut run = Run::at_enqueue(false);
+    let b = run.node();
+    run.send(ci_failed());
+    let n = run.node();
+    assert!(b.round == 0 && n.round == 1);
+    assert_eq!((n.attempt, n.credit), (b.attempt, b.credit));
+    assert_ne!(n.phase, Phase::Publishing);
+}
+
+#[test]
+fn ci_failure_in_round_one_pays_the_next_attempt() {
+    // proofs.rs:1460 cover!(b.round == 1 && n.credit.spent > b.credit.spent, "a paid next attempt")
+    let mut run = Run::at_enqueue(true);
+    let b = run.node();
+    assert!(can_spend1(&b));
+    run.send(ci_failed());
+    let n = run.node();
+    assert!(b.round == 1 && n.credit.spent > b.credit.spent);
+}
+
+#[test]
+fn ci_failure_with_exhausted_credit_asks_rob() {
+    // proofs.rs:1464 cover!(b.round == 1 && !b.credit.can_spend(1) && n.phase == Phase::AwaitingRob, "exhausted credit asks Rob")
+    let mut run = Run::at_enqueue(true);
+    run.tune(broke);
+    let b = run.node();
+    run.send(ci_failed());
+    let n = run.node();
+    assert!(b.round == 1 && !can_spend1(&b) && n.phase == Phase::AwaitingRob);
+}
+
+#[test]
+fn ci_failure_cancels_the_enqueue_in_flight() {
+    // proofs.rs:1468 cover!(b.effect.is_some(), "an enqueue is cancelled"), with
+    // proofs.rs:1408-1412: the in-flight effect keeps its key and is cancelling.
+    let mut run = Run::at_enqueue(false);
+    let b = run.node();
+    let e = b.effect.expect("the enqueue in flight");
+    run.send(ci_failed());
+    let n = run.node();
+    assert!(n.effect.is_some_and(|c| c.seq == e.seq && c.cancelling));
+}
+
+#[test]
+fn ci_failure_before_the_push_is_ignored() {
+    // proofs.rs:1545 cover!(before.nodes[0].pos == 0, "a failure before push is ignored"),
+    // with proofs.rs:1544: the whole world is unchanged.
+    let run = Run::publishing(false);
+    assert_eq!(run.node().pos, 0);
+    for infra in [false, true] {
+        let after = step(
+            run.w.clone(),
+            Event::Fact {
+                node: NodeId(0),
+                fact: Fact::CiFailed { infra },
+            },
+        );
+        assert_eq!(after.world, run.w);
+    }
+}
+
+// check_pool_grant_order covers, proofs.rs:1680-1687: pool capacity 1, waiters
+// at their first run in arbitrary priority and ticket order.
+
+fn pool_request(g: &mut Gate, priority: Priority) -> usize {
+    g.send(Event::NewRequest {
+        repo: RepoId(0),
+        priority,
+    });
+    let i = g.w.nodes.len() - 1;
+    g.confirm(i);
+    i
+}
+
+#[test]
+fn the_pool_goes_to_the_better_priority_and_the_older_ticket_waits() {
+    let mut g = Gate {
+        w: World::new(&[3], 1),
+    };
+    let running = pool_request(&mut g, Priority::Unranked);
+    assert!(g.node(running).pool, "the free pool starts the first ingest");
+    let older = pool_request(&mut g, Priority::Unranked);
+    let better = pool_request(&mut g, Priority::P0);
+    let (older_ticket, better_ticket) = (g.node(older).ticket, g.node(better).ticket);
+    assert!(older_ticket.is_some() && better_ticket.is_some() && older_ticket < better_ticket);
+    assert!(!g.node(older).pool && !g.node(better).pool);
+    g.reply(running, Reply::IngestDone { size: 1 });
+    // proofs.rs:1680 cover!(after.nodes[0].pool && before.nodes[1..].iter().any(|m| m.ticket.is_some_and(|t| t < mine.1)),
+    //     "a better priority passes an older ticket")
+    assert!(g.node(better).pool && g.node(better).ticket.is_none());
+    // proofs.rs:1687 cover!(!after.nodes[0].pool && before.pool_capacity == 1, "a better waiter keeps its place")
+    assert!(!g.node(older).pool && g.w.pool_capacity == 1);
+    assert_eq!(g.node(older).ticket, older_ticket);
+}
