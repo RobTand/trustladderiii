@@ -1384,6 +1384,7 @@ impl World {
         self.record_dependency(i, existing, dependency, out);
         kernel_proof! {
             writes::pack(before_delivery@.dependencies@, self.dependencies@, existing, dependency);
+            reveal(dependency_frame);
             reveal(fact_result);
             assert(found(before_delivery@, i as int, target, existing));
             assert(fact_result(before_delivery@, *self, i as int, target, status));
@@ -1543,7 +1544,7 @@ impl World {
                 == withheld_after(old(self).nodes@[i as int].credit.withheld,
                     final(self).nodes@[i as int].planning_started, final(self).nodes@[i as int].phase,
                     final(self).nodes@[i as int].credit.ready, final(self).dependencies@, NodeId(i as u64)),
-    ] proof [reveal(dependency_frame); reveal(prerequisites_delivered); reveal(delivered);] {
+    ] proof [reveal(prerequisites_delivered); reveal(delivered);] {
         kernel_snapshot! { before_record = *self }
         let node = NodeId(i as u64);
         write_dependency(&mut self.dependencies, existing, dependency);
@@ -1593,6 +1594,7 @@ impl World {
         self.withhold_dependency_credit(i);
         kernel_proof! {
             writes::finish(before_record@.dependencies@, self.dependencies@, existing, dependency);
+            assert(dependency_frame(before_record@, *self, i as int)) by { reveal(dependency_frame); }
         }
     }
     }
