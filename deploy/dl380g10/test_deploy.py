@@ -154,6 +154,34 @@ class ReleasePublicationTests(unittest.TestCase):
             self.assertEqual(second.returncode, 0, second.stderr.decode())
             self.assertEqual(json.loads((output / "SOURCE.json").read_text())["head"], "a" * 40)
 
+    def test_canary_qualification_staging_bytes_refuse_release(self):
+        """FX-REQUAL-43 OQ-1: the example-only staging gate never reaches release artifacts."""
+        script = Path(__file__).with_name("build-release.sh").resolve()
+        for name, payload in [("tl3d", "tl3.fx_canary_qualification_staging.v1"),
+                              ("examples/tl3-deploy", "_ZN4core24for_canary_qualification17h0E")]:
+            with self.subTest(binary=name), \
+                 tempfile.TemporaryDirectory(prefix="tl3-build-qualification-") as temporary:
+                root = Path(temporary)
+                tools = root / "tools"
+                tools.mkdir()
+                git = tools / "git"
+                git.write_text("#!/bin/sh\ncase \"$*\" in *status*) exit 0;; *rev-parse*) echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;; esac\n")
+                cargo = tools / "cargo"
+                cargo.write_text("#!/bin/sh\nmkdir -p \"$CARGO_TARGET_DIR/release/examples\"\n"
+                                 "for name in tl3 tl3d tl3-worker-supervisor examples/tl3-deploy; do printf binary > \"$CARGO_TARGET_DIR/release/$name\"; done\n"
+                                 "printf '\\000%s\\000' \"$TL3_TEST_PAYLOAD\" > \"$CARGO_TARGET_DIR/release/$TL3_TEST_BINARY\"\n")
+                git.chmod(0o700)
+                cargo.chmod(0o700)
+                output = root / "release"
+                environment = os.environ | {"PATH": str(tools) + os.pathsep + os.environ["PATH"],
+                                             "CARGO_TARGET_DIR": str(root / "target"),
+                                             "TL3_TEST_BINARY": name, "TL3_TEST_PAYLOAD": payload}
+                result = subprocess.run(["bash", str(script), str(output), "a" * 40], env=environment,
+                                        capture_output=True, timeout=30)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(b"refusing release", result.stderr)
+                self.assertFalse(output.exists())
+
 
 class FreshInitTests(unittest.TestCase):
     def setUp(self):
