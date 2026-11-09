@@ -138,6 +138,29 @@ proof fn owner_rules(w: World, n: Node, m: Node)
     reveal(retirement::node_rules);
 }
 
+/// The one place the dependency frame is revealed for the checker: node i keeps its rules,
+/// and the frame's field facts are exported without the Node struct-update equality.
+proof fn frame_owner(before: World, after: World, i: int)
+    requires dependency_frame(before, after, i), 0 <= i < before.nodes@.len(),
+        retirement::node_rules(before, before.nodes@[i]),
+        after.nodes@[i].credit.withheld ==> before.nodes@[i].credit.withheld
+            || (before.nodes@[i].credit.ready && early(before.nodes@[i].phase)),
+    ensures retirement::node_rules(after, after.nodes@[i]),
+        after.nodes@.len() == before.nodes@.len(), after.gates@ == before.gates@,
+        after.file_sets@ == before.file_sets@, after.pool_capacity == before.pool_capacity,
+        after.next_ticket == before.next_ticket, after.next_question == before.next_question,
+        forall|j: int| 0 <= j < before.nodes@.len() && j != i
+            ==> #[trigger] after.nodes@[j] == before.nodes@[j],
+        after.nodes@[i].holds == before.nodes@[i].holds, after.nodes@[i].repo == before.nodes@[i].repo,
+        after.nodes@[i].pool == before.nodes@[i].pool,
+        after.nodes@[i].footprint == before.nodes@[i].footprint,
+        after.nodes@[i].ticket == before.nodes@[i].ticket,
+{
+    reveal(dependency_frame);
+    retirement::node_frame(before, after, before.nodes@[i]);
+    owner_rules(after, before.nodes@[i], after.nodes@[i]);
+}
+
 /// Every node rule survives when only node i changes and node i already keeps its rules.
 proof fn frame_node_rules(before: World, after: World, i: int)
     requires 0 <= i < before.nodes@.len(), after.nodes@.len() == before.nodes@.len(),
@@ -205,15 +228,13 @@ pub(super) proof fn checker_frame(before: World, after: World, i: int)
             || (before.nodes@[i].credit.ready && early(before.nodes@[i].phase)),
     ensures progress_gate_apply::accepted(after),
 {
-    reveal(dependency_frame);
     reveal(progress_gate_apply::accepted);
     let len = before.nodes@.len();
+    frame_owner(before, after, i);
     assert forall|j: int| 0 <= j < len implies (#[trigger] after.nodes@[j]).holds == before.nodes@[j].holds
         && after.nodes@[j].repo == before.nodes@[j].repo && after.nodes@[j].pool == before.nodes@[j].pool
         && after.nodes@[j].footprint == before.nodes@[j].footprint
         && after.nodes@[j].ticket == before.nodes@[j].ticket by {}
-    retirement::node_frame(before, after, before.nodes@[i]);
-    owner_rules(after, before.nodes@[i], after.nodes@[i]);
     frame_node_rules(before, after, i);
     frame_holders(before, after);
     frame_pairs(before, after);
