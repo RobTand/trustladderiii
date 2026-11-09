@@ -181,7 +181,7 @@ def jobspec(intent, request_digest):
     out = Path(intent['out'])
     command = ['/usr/bin/python3', '-I', str(SOURCE / 'deploy/dl380g10/flux-deploy.py'),
                'payload', str(out / 'intent.json'), request_digest]
-    args = ['submit', '--dry-run', '--env=-*']
+    args = ['submit', '--dry-run', '--env=-*', '--rlimit=-*']
     args += [f'--env={key}={value}' for key, value in sorted(intent['environment'].items())]
     args += ['-n1', f"-c{intent['cpus']}", f'-t{WALLTIME_S}s', '--requires=host:dl380g10',
              f"--job-name={intent['name']}", f'--cwd={SOURCE}', '--input=/dev/null',
