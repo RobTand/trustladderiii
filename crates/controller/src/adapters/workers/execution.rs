@@ -197,7 +197,7 @@ impl WaitBinding {
             ));
         }
         if let Some(binding) = &self.binding {
-            binding.id.validate().map_err(backend_error)?;
+            binding.id.validate().map_err(|error| backend_error(error.into()))?;
             if binding.intent != self.intent
                 || binding.id.uri != self.intent.uri
                 || binding.id.instance != self.intent.instance
@@ -210,7 +210,7 @@ impl WaitBinding {
             .load(&self.owner)
             .map_err(backend_error)?;
         if let Some(binding) = &retained.binding {
-            binding.id.validate().map_err(backend_error)?;
+            binding.id.validate().map_err(|error| backend_error(error.into()))?;
             if binding.intent != self.intent
                 || binding.id.uri != self.intent.uri
                 || binding.id.instance != self.intent.instance
