@@ -221,7 +221,8 @@ impl Executor for Fake {
         ) {
             completion.observations.clear();
         }
-        let applied = completion.ack == Ack::Confirmed;
+        // Typed delivery acceptance is how the Enqueue handoff is applied.
+        let applied = matches!(completion.ack, Ack::Confirmed | Ack::DeliveryAccepted);
         let mut applications = usize::from(applied);
         if applied && let Some((key, value)) = desired(delivery) {
             if converges(delivery.output) && state.resources.get(&key) == Some(&value) {
