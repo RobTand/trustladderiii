@@ -20,6 +20,16 @@ staging=$(mktemp -d "${output}.staging.XXXXXXXX")
 trap 'rm -rf -- "$staging"' EXIT
 chmod 0700 "$staging"
 target=${CARGO_TARGET_DIR:-$PWD/target}
+# Canary-qualification staging is example-only (FX-REQUAL-43 OQ-1). Refuse release
+# bytes that carry its constructor or packet marker; a scan error also refuses.
+for binary in "$target/release/tl3" "$target/release/tl3d" "$target/release/tl3-worker-supervisor" "$target/release/examples/tl3-deploy"; do
+  scan=0
+  grep -aqF -e for_canary_qualification -e tl3.fx_canary_qualification_staging.v1 -- "$binary" || scan=$?
+  if [[ $scan != 1 ]]; then
+    printf 'refusing release: %s carries canary-qualification staging or cannot be scanned (%s)\n' "$binary" "$scan" >&2
+    exit 1
+  fi
+done
 install -m 0700 "$target/release/tl3" "$target/release/tl3d" "$target/release/tl3-worker-supervisor" "$target/release/examples/tl3-deploy" "$staging/"
 (cd "$staging" && sha256sum tl3 tl3d tl3-deploy tl3-worker-supervisor > SHA256SUMS)
 python3 -I - "$staging" "$selected_head" <<'PY'

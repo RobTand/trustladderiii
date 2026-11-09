@@ -48,6 +48,17 @@ tempfile = "3"
 hmac = "0.12"
 hex = "0.4"
 
+[features]
+# Example-only: fx-stage-packet stages canary packets before an activation pin exists
+# (FX-REQUAL-43 OQ-1). Never default; no deployed binary or workspace crate enables it.
+# tests/activation_qualification_absent.rs and deploy/dl380g10/build-release.sh enforce this.
+activation-qualification = []
+
+[[example]]
+name = "fx-stage-packet"
+path = "examples/fx-stage-packet.rs"
+required-features = ["activation-qualification"]
+
 [[example]]
 name = "generate-fx-qualification"
 path = "tools/generate_fx_qualification.rs"

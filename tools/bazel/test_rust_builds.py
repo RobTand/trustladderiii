@@ -52,6 +52,26 @@ class RustBuildsTests(unittest.TestCase):
         self.assertIn('"outside": "//deploy:helper.rs"', text)
         self.assertIn('build_script = True', text)
 
+    def test_example_required_features_are_rendered_and_refused_elsewhere(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            package = crate(root, 'tl3-demo', [
+                ('lib', 'tl3_demo', 'src/lib.rs'),
+                ('example', 'canary', 'examples/canary.rs'),
+                ('example', 'plain', 'examples/plain.rs'),
+                ('bin', 'tool', 'src/bin/tool.rs'),
+            ])
+            package['targets'][1]['required-features'] = ['only-canary']
+            text = self.render(root, [package])['crates/tl3-demo/BUILD.bazel']
+            self.assertIn('example_features = {"canary": ["only-canary"]}', text)
+            self.assertNotIn('    features =', text)
+            for index in (0, 3):
+                with self.subTest(target=package['targets'][index]['name']):
+                    targets = [dict(target) for target in package['targets']]
+                    targets[index]['required-features'] = ['only-canary']
+                    with self.assertRaises(SystemExit):
+                        self.render(root, [{**package, 'targets': targets}])
+
     def test_features_are_unified_across_workspace_dependents(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
@@ -100,11 +120,15 @@ class RustDependencyTests(unittest.TestCase):
         exec(re.sub(r"^load\(.*\)$", "", source, flags=re.MULTILINE), namespace)
         namespace["tl3_crate"](
             package="tl3-controller", crate="tl3_controller", build_script=True,
-            bins=["tl3", "tl3d"], declared_tests={
+            bins=["tl3", "tl3d", "tl3-run-backend", "tl3-worker-supervisor"],
+            examples={"fx-stage-packet": "examples/fx-stage-packet.rs",
+                      "tl3-deploy": "//deploy/dl380g10:helper.rs"},
+            example_features={"fx-stage-packet": ["activation-qualification"]},
+            declared_tests={
                 name: {"path": "tests/" + name + ".rs"}
                 for name in ["core_defects", "workers", "publishing", "prismabuild",
                              "github", "hindsight", "writer_references", "writer_blocker",
-                             "mergify", "simulation"]})
+                             "mergify", "simulation", "activation_qualification_absent"]})
 
     def dependencies(self, target):
         pending, found = [":" + target], set()
@@ -126,6 +150,43 @@ class RustDependencyTests(unittest.TestCase):
         self.assertNotIn(":tl3d", deps)
         # Schemas and prompts are compiled into the controller; keep them.
         self.assertIn("//workers:schemas", deps)
+
+    def test_canary_qualification_feature_reaches_only_its_example(self):
+        """FX-REQUAL-43 OQ-1: deployed binaries never link the feature variant."""
+        variant = ":tl3_controller_activation_qualification"
+        self.assertEqual(self.rules[variant]["crate_features"], ["activation-qualification"])
+        self.assertEqual(self.rules[variant]["visibility"], ["//visibility:private"])
+        self.assertEqual(self.rules[":tl3_controller"]["crate_features"], [])
+        for deployed in ["tl3", "tl3d", "tl3-run-backend", "tl3-worker-supervisor",
+                         "example_tl3-deploy"]:
+            with self.subTest(binary=deployed):
+                self.assertEqual(self.rules[":" + deployed].get("crate_features", []), [])
+                deps = self.dependencies(deployed)
+                self.assertIn(":tl3_controller", deps)
+                self.assertNotIn(variant, deps)
+        for example in ["example_fx-stage-packet", "example_test_fx-stage-packet_binary"]:
+            with self.subTest(example=example):
+                self.assertEqual(self.rules[":" + example]["crate_features"],
+                                 ["activation-qualification"])
+                deps = self.dependencies(example)
+                self.assertIn(variant, deps)
+                self.assertNotIn(":tl3_controller", self.rules[":" + example]["deps"])
+        for target, rule in self.rules.items():
+            if variant in rule.get("deps", []):
+                self.assertIn(target, [":example_fx-stage-packet",
+                                       ":example_test_fx-stage-packet_binary"])
+
+    def test_absence_gate_scans_every_deployed_binary_and_the_positive_control(self):
+        test = self.rules[":test_test_activation_qualification_absent_binary"]
+        for binary in [":tl3", ":tl3d", ":tl3-run-backend", ":tl3-worker-supervisor",
+                       ":example_tl3-deploy", ":example_fx-stage-packet"]:
+            with self.subTest(binary=binary):
+                self.assertIn(binary, test["data"])
+                self.assertIn("CARGO_BIN_EXE_" + binary[1:], test["rustc_env"])
+        runner = self.rules[":test_test_activation_qualification_absent"]
+        for path in ["//deploy/dl380g10:build-release.sh", "//deploy/dl380g10:verify.sh",
+                     ":BUILD.bazel", ":Cargo.toml", "//:Cargo.toml"]:
+            self.assertIn(path, runner["data"])
 
     def test_controller_tests_do_not_add_redactor_runtime(self):
         for target in self.rules:
