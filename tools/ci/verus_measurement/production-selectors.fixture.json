@@ -1,10 +1,20 @@
 {
-  "source_head": "68f5886b34190825f5b5e22867a6f93ad4e67074",
+  "source_head": "427668f133d633403e66fd8efbfcc065810bf071",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "58911c7a8448830bec789de63cc9a7384407e02ce2fa57a5a6191f5b9d8d7bf6",
-  "groups": 449,
-  "obligations": 655,
+  "source_sha256": "5598abe9eee156709317c1b5de129e49abe3dc76c55bcd4e98b8181f8e66e7d8",
+  "groups": 451,
+  "obligations": 657,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_continuations_set_phase_v",
+      "selector": "kernel::continuations#set_phase_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_continuations_enter_stopping_v",
+      "selector": "kernel::continuations#enter_stopping_v",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_handler_safety_keep_review_stop",
       "selector": "kernel::handler_safety#keep_review_stop",
