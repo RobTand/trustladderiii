@@ -452,12 +452,12 @@ impl Supervisor {
             inputs["context_size"] = json!(self.limits.context_tokens);
             inputs["tests"] = self.tests.inputs(
                 self.images
-                    .for_repository(&delivery.repository, self.tests.image()),
+                    .for_repository(&delivery.repository, self.tests.image()?),
                 self.images
                     .test_demand(&delivery.repository)
                     .unwrap_or_default(),
                 &self.root(&delivery.key).join("execution.json"),
-            );
+            )?;
             let demand = self
                 .images
                 .test_demand(&delivery.repository)
@@ -522,10 +522,10 @@ impl Supervisor {
                 .unwrap_or_default();
             inputs["tests"] = self.tests.inputs(
                 self.images
-                    .for_repository(&delivery.repository, self.tests.image()),
+                    .for_repository(&delivery.repository, self.tests.image()?),
                 demand,
                 &self.root(&delivery.key).join("execution.json"),
-            );
+            )?;
         } else if role == "audit" {
             inputs["ingest"] = store
                 .worker_document(&node, "briefs")?
@@ -557,12 +557,12 @@ impl Supervisor {
         if matches!(role, "ingest" | "audit") && generator_available {
             inputs["tests"] = self.tests.inputs(
                 self.images
-                    .for_repository(&delivery.repository, self.tests.image()),
+                    .for_repository(&delivery.repository, self.tests.image()?),
                 self.images
                     .test_demand(&delivery.repository)
                     .unwrap_or_default(),
                 &self.root(&delivery.key).join("execution.json"),
-            );
+            )?;
         }
         if matches!(role, "ingest" | "audit" | "planner" | "maker") {
             inputs["decision_context"] =
@@ -639,7 +639,7 @@ impl Supervisor {
                 json!(self.planning.effective_tool_capabilities(test_cpus));
             if generator_available {
                 inputs["tool_capabilities"].as_array_mut().unwrap().push(json!({
-                    "tool": "run_generator", "executor": format!("{}_generator", self.tests.name()),
+                    "tool": "run_generator", "executor": "flux_generator",
                     "runner_features": ["git_index", "scoped_outputs", "idempotent_import"],
                     "artifacts": ["run_binding", "receipt", "input_tree", "output_tree", "artifact_sha256", "logs", "terminal_verdict"],
                     "methods": ["configured_generation"], "protected_files": [],

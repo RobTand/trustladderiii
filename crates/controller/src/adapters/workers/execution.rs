@@ -7,32 +7,27 @@ mod waits;
 pub use inputs::command;
 pub use waits::Waits;
 
+/// The worker tests executor. Flux is the only one. Without a selected Flux executor every
+/// run that needs worker tests is refused; nothing is defaulted (PrismaBuild is retired).
 #[derive(Clone)]
-pub(super) enum Selected {
-    PrismaBuild(tl3_config::PrismaBuild),
-    Flux(Box<tl3_config::Flux>),
-}
+pub(super) struct Selected(Option<Box<tl3_config::Flux>>);
 
 impl Selected {
     pub(super) fn new(config: &tl3_config::Config) -> Result<Self> {
-        Ok(match config.selected_execution()? {
-            tl3_config::SelectedExecution::PrismaBuild(pb) => Self::PrismaBuild(pb.clone()),
-            tl3_config::SelectedExecution::Flux(flux) => Self::Flux(Box::new(flux.clone())),
-        })
+        Ok(Self(match config.selected_execution()? {
+            tl3_config::SelectedExecution::Flux(flux) => Some(Box::new(flux.clone())),
+            tl3_config::SelectedExecution::PrismaBuild(_) => None,
+        }))
     }
 
-    pub(super) fn name(&self) -> &'static str {
-        match self {
-            Self::PrismaBuild(_) => "prismabuild",
-            Self::Flux(_) => "flux",
-        }
+    fn flux(&self) -> Result<&tl3_config::Flux> {
+        self.0.as_deref().ok_or(Error::Invalid(
+            "worker tests need execution_backend = 'flux'; PrismaBuild is retired",
+        ))
     }
 
-    pub(super) fn image(&self) -> &str {
-        match self {
-            Self::PrismaBuild(pb) => &pb.container_image,
-            Self::Flux(flux) => &flux.container_image,
-        }
+    pub(super) fn image(&self) -> Result<&str> {
+        Ok(&self.flux()?.container_image)
     }
 
     pub(super) fn inputs(
@@ -40,13 +35,12 @@ impl Selected {
         image: &str,
         demand: tl3_config::TestDemand,
         profile: &Path,
-    ) -> Value {
-        let mut value = json!({"image": image, "cpus": demand.cpus, "mem_gb": demand.mem_gb});
-        match self {
-            Self::PrismaBuild(pb) => value["tools_path"] = json!(pb.tools_dir),
-            Self::Flux(_) => value["execution"] = json!({"backend": "flux", "profile": profile}),
-        }
-        value
+    ) -> Result<Value> {
+        self.flux()?;
+        Ok(
+            json!({"image": image, "cpus": demand.cpus, "mem_gb": demand.mem_gb,
+            "execution": {"backend": "flux", "profile": profile}}),
+        )
     }
 
     pub(super) fn bind_attempt(
@@ -56,12 +50,10 @@ impl Selected {
         delivery: &Delivery,
         records: &Path,
     ) -> Result<()> {
-        let Self::Flux(flux) = self else {
-            return Ok(());
-        };
         if request["inputs"].get("tests").is_none() {
             return Ok(());
         }
+        let flux = self.flux()?;
         let options = crate::production::flux_options(flux);
         let profile = Profile {
             activation: flux.activation.clone(),
@@ -197,7 +189,10 @@ impl WaitBinding {
             ));
         }
         if let Some(binding) = &self.binding {
-            binding.id.validate().map_err(|error| backend_error(error.into()))?;
+            binding
+                .id
+                .validate()
+                .map_err(|error| backend_error(error.into()))?;
             if binding.intent != self.intent
                 || binding.id.uri != self.intent.uri
                 || binding.id.instance != self.intent.instance
@@ -210,7 +205,10 @@ impl WaitBinding {
             .load(&self.owner)
             .map_err(backend_error)?;
         if let Some(binding) = &retained.binding {
-            binding.id.validate().map_err(|error| backend_error(error.into()))?;
+            binding
+                .id
+                .validate()
+                .map_err(|error| backend_error(error.into()))?;
             if binding.intent != self.intent
                 || binding.id.uri != self.intent.uri
                 || binding.id.instance != self.intent.instance
@@ -266,9 +264,9 @@ mod tests {
             output_root: root.join("output"),
             container_image: format!("sha256:{}", "a".repeat(64)),
         };
-        let selected = Selected::Flux(Box::new(flux.clone()));
+        let selected = Selected(Some(Box::new(flux.clone())));
         let mut worker = json!({"worktree": repo.path, "inputs": {"tests": selected.inputs(&flux.container_image,
-            tl3_config::TestDemand::default(), &attempt.join("execution.json"))}});
+            tl3_config::TestDemand::default(), &attempt.join("execution.json")).unwrap()}});
         selected
             .bind_attempt(
                 &mut worker,
