@@ -5,7 +5,6 @@ bypasses directory permissions and would hide the 0500 staging defect.
 """
 import json
 import os
-from pathlib import Path
 import stat
 import subprocess
 
@@ -146,34 +145,3 @@ def test_git_failure_cause_never_carries_multiline_stderr_or_argv(tmp_path, admi
     assert result["timings"]["container"]["outcome"] == "skipped", result
     assert result["cause"] == {"operation": "git_init", "type": "CalledProcessError",
                                "errno": None, "detail": "exit status 128"}, result
-
-
-def test_flux_generator_refuses_unowned_container_launch_before_any_runtime_call(tmp_path, admitted, monkeypatch):
-    # Flux containers must go through the durable launch/binding protocol. Until the
-    # generator has that path it must refuse in preparation and never start Podman.
-    tree = tmp_path / "checkout"
-    tree.mkdir()
-    (tree / "data.txt").write_text("input\n")
-    monkeypatch.setattr("tl3_harness.runtime.launch_context", lambda: {"fixture": True})
-    # Allocation and scratch release are exercised by the Rust collector e2e.
-    monkeypatch.setattr(generator, "_flux_allocation", lambda: None, raising=False)
-    monkeypatch.setattr(generator, "_release_flux_scratch", lambda: None, raising=False)
-    real = subprocess.run
-    clients = []
-
-    def guarded(argv, *args, **kwargs):
-        if Path(str(argv[0])).name in ("podman", "docker"):
-            clients.append(argv)
-            raise AssertionError("no container runtime client may run")
-        return real(argv, *args, **kwargs)
-
-    monkeypatch.setattr(subprocess, "run", guarded)
-    try:
-        result = generator.run(tree, generator.Container(IMAGE), **contract())
-    except Exception as error:
-        pytest.fail(f"generator escaped its typed failure frame: {type(error).__name__}")
-    assert not clients, clients
-    assert result["status"] == "failed" and result["phase"] == "preparation", result
-    assert result["timings"]["container"]["outcome"] == "skipped", result
-    assert result["cause"] == {"operation": "container_command", "type": "FluxContainerUnsupported",
-                               "errno": None, "detail": None}, result

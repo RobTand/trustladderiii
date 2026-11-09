@@ -97,13 +97,18 @@ class Supervised:
     external start/exit boundary exists, every no-progress timeout is unknown.
     """
 
-    def __init__(self, command, selection, tests):
+    def __init__(self, command, selection, tests, *, deadline_seconds=None):
         quiet = runtime.no_progress_seconds()
         if quiet is not None and (type(quiet) not in (int, float) or not 0 < quiet <= 86400):
             raise ValueError('invalid test progress allowance')
+        # Raw mode (generators) has one fixed deadline and yields stdout bytes, not report records.
+        self.raw = deadline_seconds is not None
+        if self.raw and (type(deadline_seconds) not in (int, float) or not 0 < deadline_seconds <= 86400):
+            raise ValueError('invalid execution deadline')
         # Leave the remaining allowance for termination, diagnostics and publication.
-        self.allowance = quiet * 0.7 if quiet is not None else None
+        self.allowance = deadline_seconds if self.raw else quiet * 0.7 if quiet is not None else None
         self.cleanup_seconds = min(2, quiet * 0.1) if quiet is not None else 2
+        self.gate_opened = False
         self.report_started = False
         self.exit_code = None
         self.exit_recorded = False
@@ -254,6 +259,7 @@ class Supervised:
                         raise self.failure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'runtime',
                                            'runtime_binding_unqualified') from error
                     self.pending_input = memoryview(b'\x01' + self.selection.read())
+                    self.gate_opened = True
                     self.capture_diagnostic(self.evidence_buffer)
                     self.evidence_buffer = b''
                     break
@@ -316,6 +322,12 @@ class Supervised:
                     ready.unregister(self.child.stdout)
                     if buffer:
                         raise ValueError('incomplete report line')
+                    continue
+                if self.raw:
+                    # Before the gate only the runtime client runs; served code cannot speak yet.
+                    if self.evidence is not None and not self.gate_opened:
+                        raise self.failure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'runtime', 'output_before_gate')
+                    yield chunk
                     continue
                 buffer += chunk
                 total += len(chunk)
