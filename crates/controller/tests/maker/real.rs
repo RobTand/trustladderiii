@@ -600,15 +600,15 @@ pub(super) fn reproducing_fix(settings: &tl3_config::Store, rebase: bool) {
     );
 }
 
+/// Accepts the Enqueue handoff (the only Delivery effect) and holds the merge,
+/// returning the same typed acceptance from execute and reconcile as Direct.
 struct HeldQueue;
 impl Executor for HeldQueue {
     fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
-        Ok(Completion::confirmed(vec![]))
+        Ok(Completion::delivery_accepted(vec![]))
     }
     fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
-        Ok(Reconciliation::Found(Box::new(Completion::confirmed(
-            vec![],
-        ))))
+        Ok(Reconciliation::Found(Box::new(Completion::delivery_accepted(vec![]))))
     }
 }
 

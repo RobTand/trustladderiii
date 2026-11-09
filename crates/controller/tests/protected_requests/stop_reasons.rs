@@ -4,8 +4,15 @@ use tl3_kernel::{Command, EarlyEnd, Event, Fact, NodeId, Reply};
 
 struct Held;
 impl Executor for Held {
-    fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
-        Ok(Completion::confirmed(vec![]))
+    fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
+        // Production Direct accepts the Enqueue handoff with typed acceptance.
+        Ok(match d.output {
+            Output::Effect {
+                kind: EffectKind::Enqueue,
+                ..
+            } => Completion::delivery_accepted(vec![]),
+            _ => Completion::confirmed(vec![]),
+        })
     }
     fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
         Ok(Reconciliation::Pending)

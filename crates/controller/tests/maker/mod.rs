@@ -303,7 +303,8 @@ impl Executor for CiFailureOnce {
                     fact: tl3_kernel::Fact::CiFailed { infra: false },
                 })
             };
-            Ok(Completion::confirmed(vec![observation]))
+            // Direct accepts the handoff even when it reports a CI failure.
+            Ok(Completion::delivery_accepted(vec![observation]))
         } else {
             self.fake.execute(delivery)
         }

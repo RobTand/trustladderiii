@@ -126,8 +126,15 @@ struct LiveState {
 }
 struct Live(Rc<RefCell<LiveState>>);
 impl Executor for Live {
-    fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
-        Ok(Completion::confirmed(vec![]))
+    fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
+        // Production Direct accepts the Enqueue handoff with typed acceptance.
+        Ok(match d.output {
+            Out::Effect {
+                kind: EffectKind::Enqueue,
+                ..
+            } => Completion::delivery_accepted(vec![]),
+            _ => Completion::confirmed(vec![]),
+        })
     }
     fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
         Ok(Reconciliation::Pending)
@@ -438,9 +445,71 @@ fn owner_progress_contract(settings: &tl3_config::Store, upstream: Upstream) {
         assert!(c.world().unwrap().nodes[0].job.is_some());
         assert!(!c.world().unwrap().nodes[0].waiting_incident);
         assert_eq!(state.borrow().stops, 0);
+    } else if upstream == Upstream::Delivery {
+        // State-table "Looks and stalls": an accepted delivery waits for
+        // authenticated evidence; a quiet look spends no retry or timer.
+        assert_eq!(c.world().unwrap().nodes[0].phase, Phase::AwaitingDelivery);
+        assert!(!c.world().unwrap().nodes[0].waiting_incident);
+        assert_eq!(state.borrow().stops, 0);
     } else {
         assert!(c.world().unwrap().nodes[0].waiting_incident);
     }
+    assert!(c.world().unwrap().valid());
+}
+/// Never acknowledges the Enqueue handoff: the write fails in transport and
+/// the upstream record never shows acceptance.
+struct NeverAccepted(Rc<Cell<usize>>);
+impl Executor for NeverAccepted {
+    fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
+        self.0.set(self.0.get() + 1);
+        Err(std::io::Error::from(std::io::ErrorKind::ConnectionRefused).into())
+    }
+    fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        Ok(Reconciliation::Pending)
+    }
+}
+/// State-table "Looks and stalls": a never-acknowledged enqueue still ends in
+/// a read incident, while the handoff stays unaccepted in Publishing.
+fn never_accepted_handoff_read_incident(settings: &tl3_config::Store) {
+    let root = tempfile::tempdir().unwrap();
+    let clock = FakeClock::new();
+    let writes = Rc::new(Cell::new(0));
+    let mut c = open(
+        settings,
+        root.path(),
+        &clock,
+        Upstream::Delivery,
+        NeverAccepted(writes.clone()),
+    );
+    let handoff = |c: &mut Controller| {
+        let node = c.world().unwrap().nodes[0];
+        assert_eq!(node.phase, Phase::Publishing, "the handoff is never accepted");
+        assert_eq!(node.effect.map(|e| e.kind), Some(EffectKind::Enqueue));
+    };
+    handoff(&mut c);
+    assert!(writes.get() >= 1, "the handoff was attempted");
+    assert!(!c.world().unwrap().nodes[0].waiting_incident);
+    for _ in 0..10 {
+        if c.world().unwrap().nodes[0].waiting_incident {
+            break;
+        }
+        clock.advance(1);
+        c.look_due().unwrap();
+        drain(&mut c);
+    }
+    assert!(
+        c.world().unwrap().nodes[0].waiting_incident,
+        "a never-acknowledged enqueue must end in a read incident"
+    );
+    handoff(&mut c);
+    let snapshot = c.snapshot().unwrap();
+    let incident = snapshot
+        .rows
+        .iter()
+        .find(|r| r.table == "incidents" && r.value["open"] == true)
+        .unwrap();
+    assert!(incident.id.ends_with(".read"), "{}", incident.id);
+    assert_eq!(incident.value["signature"]["upstream"], "Delivery");
     assert!(c.world().unwrap().valid());
 }
 fn permanent_incident_clear(settings: &tl3_config::Store) {
@@ -1961,8 +2030,10 @@ fn main() {
     }
     owner_progress_contract(&db.create("pb_owner"), Upstream::PrismaBuild);
     println!("test pb_owns_progress_failure ... ok");
-    owner_progress_contract(&db.create("queue_stall"), Upstream::Delivery);
-    println!("test queue_stall_incident ... ok");
+    owner_progress_contract(&db.create("delivery_stall"), Upstream::Delivery);
+    println!("test accepted_delivery_stall_waits_without_incident ... ok");
+    never_accepted_handoff_read_incident(&db.create("never_accepted"));
+    println!("test never_accepted_handoff_read_incident ... ok");
     stopped_worktree_saves_scratch(&db.create("dirty_worktree"), "saved");
     stopped_worktree_saves_scratch(&db.create("scratch_once"), "write-once");
     stopped_worktree_saves_scratch(&db.create("scratch_expiry"), "expiry");
@@ -1986,7 +2057,7 @@ fn main() {
     settled_looks_are_quiet(&db.create("quiet_timer"));
     println!("test settled_looks_are_quiet ... ok");
     db.stop();
-    println!("47 allowance and incident scenarios passed; no skips");
+    println!("48 allowance and incident scenarios passed; no skips");
 }
 
 struct WaitingMaker {
