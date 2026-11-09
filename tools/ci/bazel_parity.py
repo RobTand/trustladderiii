@@ -181,7 +181,7 @@ def has_nested_suite(source):
                 while lines:
                     fragment = '\n'.join(lines)
                     try:
-                        ast.parse(fragment)
+                        ast.parse(fragment.encode('utf-8', 'backslashreplace'))
                     except SyntaxError as error:
                         lines = lines[:error.lineno - 1]
                     else:

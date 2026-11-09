@@ -377,6 +377,13 @@ class LibtestShardTests(unittest.TestCase):
 
 
 class NestedSuiteSizingTests(unittest.TestCase):
+    def test_surrogate_fixture_literal_keeps_embedded_runner_detection(self):
+        literal = r"'cause \u754c\udcff'"
+        fixture = 'reply.write_text(json.dumps(dict(message=' + literal + ")) + '\\n')"
+        self.assertFalse(bazel_parity.has_nested_suite(fixture))
+        embedded = "message = " + literal + '\nsubprocess.run(["python", "-m", "pytest"])'
+        self.assertTrue(bazel_parity.has_nested_suite('script.write_text(' + repr(embedded) + ')'))
+
     def test_detects_runners_in_any_package_and_embedded_scripts(self):
         sources = [
             'subprocess.run([sys.executable, "-m", "pytest", "tests"])',
