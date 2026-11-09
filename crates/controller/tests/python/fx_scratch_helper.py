@@ -29,7 +29,7 @@ def fixture_scratch(facts):
                 marker.write('admitted fixture helper reached before tree operation\n')
                 marker.flush()
                 os.fsync(marker.fileno())
-            until=time.monotonic()+10
+            until=time.monotonic()+25
             while not (output/'scratch-release').exists():
                 if time.monotonic()>=until: raise RuntimeError('fixture pause timed out')
                 time.sleep(.01)

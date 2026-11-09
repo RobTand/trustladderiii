@@ -46,6 +46,24 @@ fn native_command_deadline() -> Duration {
     Duration::from_secs(cleanup_limits().native_timeout_seconds)
 }
 
+/// Failing bound for a stop_watch measured from `stopped`, which is taken after the
+/// native call (and its deadline) began. Deadline expiry lands near 30 s - δ after
+/// `stopped`; 10 s of margin keeps a dropped or ignored stop on the failing side.
+fn stop_watch_deadline() -> Duration {
+    native_command_deadline() - Duration::from_secs(10)
+}
+
+/// Test-only latency knob: unset is 0; anything else must be finite, non-negative seconds.
+fn latency_knob(name: &str) -> f64 {
+    std::env::var(name).map_or(0.0, |value| {
+        value
+            .parse::<f64>()
+            .ok()
+            .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
+            .unwrap_or_else(|| panic!("{name} must be non-negative seconds, got {value:?}"))
+    })
+}
+
 /// Wait for a fixture milestone: a warning past `budget`, a failure only at the idle timeout.
 fn wait_until(test: &str, budget: Duration, mut reached: impl FnMut() -> bool) {
     let start = Instant::now();
@@ -797,8 +815,7 @@ fn generated_action_case(mode: &str) -> Fixture {
         serde_json::to_vec(&json!({
             "environment": environment, "output_dir": f.intent.output_dir,
             "scratch": scratch.path().join("fABC"), "mode": mode,
-            "injected_latency_seconds": std::env::var("FX_TEST_ACTION_LATENCY_SECONDS")
-                .map_or(0.0, |seconds| seconds.parse::<f64>().unwrap()),
+            "injected_latency_seconds": latency_knob("FX_TEST_ACTION_LATENCY_SECONDS"),
             "source": Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap(),
         }))
         .unwrap(),
@@ -1449,9 +1466,13 @@ set -eu
 fixture=$1
 shift
 printf '%s\n' "$*" >> "$fixture/calls"
-# Test-only contention model: delay every native call, never change its result.
-if [ -e "$fixture/native-latency" ]; then /bin/sleep "$(cat "$fixture/native-latency")"; fi
 mode=$(cat "$fixture/mode")
+# Test-only contention model: delay every native call, never change its result. The
+# watched quiet call is exempt: its start anchors the stop_watch deadline in the tests.
+case "$mode:$1:${2:-}" in
+quiet-jobs:jobs:*|quiet-info:job:info|quiet:job:eventlog|quiet-collect:job:status) ;;
+*) if [ -e "$fixture/native-latency" ]; then /bin/sleep "$(cat "$fixture/native-latency")"; fi;;
+esac
 case "$1" in
 submit)
     printf '%s\n' "$@" > "$fixture/args"
@@ -1497,8 +1518,9 @@ text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
 "#).unwrap();
         fs::set_permissions(&native, fs::Permissions::from_mode(0o555)).unwrap();
         fs::write(p.join("mode"), "normal").unwrap();
-        if let Ok(seconds) = std::env::var("FX_TEST_NATIVE_LATENCY_SECONDS") {
-            fs::write(p.join("native-latency"), seconds).unwrap();
+        let native_latency = latency_knob("FX_TEST_NATIVE_LATENCY_SECONDS");
+        if native_latency > 0.0 {
+            fs::write(p.join("native-latency"), native_latency.to_string()).unwrap();
         }
         fs::write(p.join("submit-id"), "fABC\n").unwrap();
         let all = json!({"version":1,"execution":{"R_lite":[{"rank":"0","children":{"core":"0-3"}}],"nodelist":["fixture-host"]}});
@@ -2258,8 +2280,8 @@ fn quiet_native_cli_observer_stops_and_reaps_without_cancelling_job() {
     drop(stdin);
     let output = child.wait_with_output().unwrap();
     assert!(
-        stopped.elapsed() < native_command_deadline(),
-        "stop_watch did not beat the native command deadline"
+        stopped.elapsed() < stop_watch_deadline(),
+        "stop_watch did not stop the observer well before the native command deadline"
     );
     check_budget("quiet watcher stop_watch", stopped, Duration::from_secs(2));
     let frames: Vec<Value> = String::from_utf8(output.stdout)
@@ -2414,8 +2436,8 @@ fn all_attach_native_phases_stop_and_reap_without_native_cancel() {
         drop(stdin);
         let output = child.wait_with_output().unwrap();
         assert!(
-            start.elapsed() < native_command_deadline(),
-            "phase {mode} stop_watch did not beat the native command deadline"
+            start.elapsed() < stop_watch_deadline(),
+            "phase {mode} stop_watch did not stop the observer well before the native command deadline"
         );
         check_budget(
             &format!("phase {mode} stop_watch"),

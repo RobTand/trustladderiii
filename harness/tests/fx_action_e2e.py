@@ -234,9 +234,13 @@ sys.exit(0)
     subprocess.Popen = observed_popen
     signal_errors = []
     witness_handles = []
+    latency = settings.get('injected_latency_seconds', 0)
+    if not isinstance(latency, (int, float)) or isinstance(latency, bool) or not 0 <= latency < float('inf'):
+        raise ValueError(f'injected_latency_seconds must be non-negative seconds, got {latency!r}')
     def cancel_qualified():
         try:
-            deadline = time.monotonic() + 30
+            # The injected latency runs before the action starts, so it extends this readiness wait.
+            deadline = time.monotonic() + 30 + latency
             state_path = root / 'journal' / os.environ['TL3_RUN_CORRELATION'] / 'state.json'
             while time.monotonic() < deadline:
                 state = json.loads(state_path.read_text())
@@ -287,7 +291,7 @@ sys.exit(0)
     started = time.monotonic()
     try:
         # Test-only contention model inside the measured window; the payload is unchanged.
-        time.sleep(settings.get('injected_latency_seconds', 0))
+        time.sleep(latency)
         code, result = runtime.collect_host_payload(
             [sys.executable, '-I', '-B', __file__, str(root), str(source), 'action'], timeout=80)
         print(json.dumps({'code': code, 'result': result}), flush=True)
@@ -299,7 +303,7 @@ sys.exit(0)
         (output / 'reproduction-timing.json').write_text(json.dumps({'seconds': elapsed}))
         print(f'collector_seconds={elapsed:.3f}', flush=True)
     if watcher is not None:
-        watcher.join(timeout=35)
+        watcher.join(timeout=35 + latency)
         assert not watcher.is_alive() and not signal_errors, signal_errors
         assert (output / 'signal-trigger.json').exists()
         assert runtime.processes_stopped(witness_handles, 2), 'fixture captured processes did not cease'
