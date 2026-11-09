@@ -725,6 +725,8 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "continuations_set_phase_v": ("kernel::continuations#set_phase_v", 1),
+            "continuations_enter_stopping_v": ("kernel::continuations#enter_stopping_v", 1),
             "handler_safety_keep_review_stop": ("kernel::handler_safety#keep_review_stop", 1),
             "handler_safety_kept_ladder": ("kernel::handler_safety#kept_ladder", 1),
             "handler_safety_rung_ladder": ("kernel::handler_safety#rung_ladder", 1),
