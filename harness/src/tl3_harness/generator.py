@@ -13,11 +13,10 @@ import signal
 import stat
 import subprocess
 import sys
-import tempfile
 import time
 
 from . import runtime
-from .execution import Container, container_command as test_container_command, require_admission
+from .execution import Container, require_admission
 from .scratch import directory as scratch_directory
 from .supervision import ExecutionFailure, Supervised, safe_stderr
 from .trees import git
@@ -78,17 +77,7 @@ def _cause(error, operation):
 
 def _flux_allocation():
     """Bind the native allocation grant so Rust can later prove this job's scratch absence."""
-    evidence = runtime.evidence_sink("tl3-generator-" + os.urandom(16).hex())
-    if evidence is not None:
-        runtime.prepare_allocation(evidence)
-
-
-def _workspace(flux):
-    if flux:
-        # Rust-owned job scratch: released only when no container is uncertain.
-        return runtime.workspace(prefix="tl3-generator-")
-    # Memory-backed scratch stays charged to the admitted scope.
-    return tempfile.TemporaryDirectory(prefix="tl3-generator-", dir="/dev/shm")
+    runtime.prepare_allocation(runtime.evidence_sink("tl3-generator-" + os.urandom(16).hex()))
 
 
 def _generator_flags():
@@ -104,7 +93,7 @@ def _phase(result, name, allowance=None):
     previous = None
     if allowance is not None:
         # The trusted action runs in its own main process, outside the container.
-        # Bound filesystem/Git preparation and validation as well as docker run.
+        # Bound filesystem/Git preparation and validation; Supervised bounds the container.
         def expired(signum, frame):
             raise StageTimeout(name)
         handler = signal.signal(signal.SIGALRM, expired)
@@ -251,30 +240,21 @@ def validate_artifact(artifact, before, contract):
     return after
 
 
-def container_command(tree, container, argv, cidfile):
+def container_command(tree, argv):
     # Only trusted configuration supplies the image interpreter and arguments.
     # Never read an entrypoint or shebang from the maker's writable checkout.
     _check_interpreter(argv)
-    if runtime.launch_context() is not None:
-        # The test containment with only the generator deltas. The trusted gate
-        # execs argv after Rust binds and qualifies the owned container.
-        return runtime.command(tree, scratch_directory(), writable_checkout=True,
-                               extra=_generator_flags(), payload=("--exec", "--", *argv))
-    command = test_container_command(tree, container, ())
-    # Preserve every test containment flag and PB's Docker shim/affinity. Only
-    # the private copy is writable; Git's synthetic metadata stays read-only.
-    mount = f"type=bind,src={tree},dst=/checkout,readonly"
-    command[command.index(mount)] = f"type=bind,src={tree},dst=/checkout"
-    end = command.index("--entrypoint=python3")
-    return command[:end] + [
-        "--mount", f"type=bind,src={tree / '.git'},dst=/checkout/.git,readonly",
-        "--cidfile", str(cidfile), *_generator_flags(),
-        "--entrypoint=" + argv[0], container.image, *argv[1:],
-    ]
+    # The test containment with only the generator deltas. The trusted gate
+    # execs argv after Rust binds and qualifies the owned container.
+    return runtime.command(tree, scratch_directory(), writable_checkout=True,
+                           extra=_generator_flags(), payload=("--exec", "--", *argv))
 
 
 def run(tree, container, command, generated_files, protected_paths, files, timeout=TIMEOUT,
         cpus=1, mem_gb=2):
+    if runtime.launch_context() is None:
+        # Generators run only on the owned launch path of an admitted Flux job.
+        raise RuntimeError("generator requires an admitted Flux job")
     require_admission()
     argv = configured_argv(command)
     # Fractional deadlines remain useful to trusted qualification callers. Repo
@@ -291,17 +271,16 @@ def run(tree, container, command, generated_files, protected_paths, files, timeo
               "timings": {name: {"seconds": 0.0, "outcome": "skipped"} for name in
                           ("preparation", "container", "validation", "cleanup")}}
     result["timings"]["container"]["scope"] = "startup_and_command"
-    scratch, log, cidfile, process, tail = ExitStack(), None, None, None, None
-    flux = runtime.launch_context() is not None
+    scratch, process, tail = ExitStack(), None, None
     operation = "scratch"
     try:
         with _phase(result, "preparation", PREPARATION_SECONDS):
             # Entered first, so every later preparation failure releases the job scratch.
-            root = Path(scratch.enter_context(_workspace(flux)))
+            # Rust-owned job scratch: released only when no container is uncertain.
+            root = Path(scratch.enter_context(runtime.workspace(prefix="tl3-generator-")))
             root.chmod(0o755)
-            if flux:
-                operation = "allocation"
-                _flux_allocation()
+            operation = "allocation"
+            _flux_allocation()
             operation = "input_manifest"
             before = manifest(tree)
             result["input_manifest"] = digest(before)
@@ -323,27 +302,19 @@ def run(tree, container, command, generated_files, protected_paths, files, timeo
             git(copy, "add", "--force", "--all")
             operation = "git_config"
             git(copy, "config", "safe.directory", "/checkout")
-            cidfile = None if flux else root / "container.id"
             operation = "container_command"
-            launch = container_command(copy, container, argv, cidfile)
-            if not flux:
-                # No container log exists until a container may run.
-                log = tempfile.TemporaryFile(dir=root)
+            launch = container_command(copy, argv)
         operation = "container"
         result["phase"] = "container"
         with _phase(result, "container"):
-            if flux:
-                # The same owned path as test jobs: allocation, Rust launch intent,
-                # bind, qualification gate, then cleanup with proven stop on exit.
-                tail = b""
-                process = Supervised(launch, io.BytesIO(), (), deadline_seconds=timeout)
-                with process:
-                    for chunk in process.records():
-                        tail = (tail + chunk)[-LOG_BYTES:]
-                returncode = process.exit_code
-            else:
-                returncode = subprocess.run(launch, cwd=copy, stdout=log, stderr=subprocess.STDOUT,
-                                            timeout=timeout).returncode
+            # The same owned path as test jobs: allocation, Rust launch intent,
+            # bind, qualification gate, then cleanup with proven stop on exit.
+            tail = b""
+            process = Supervised(launch, io.BytesIO(), (), deadline_seconds=timeout)
+            with process:
+                for chunk in process.records():
+                    tail = (tail + chunk)[-LOG_BYTES:]
+            returncode = process.exit_code
             result["exit_code"] = returncode
             if returncode:
                 result["message"] = f"Generator exited with status {returncode}."
@@ -375,9 +346,6 @@ def run(tree, container, command, generated_files, protected_paths, files, timeo
         else:
             result["message"] = "Generator container execution failed."
         result["cause"] = _cause(failure, operation)
-    except subprocess.TimeoutExpired as error:
-        result.update(exit_code=124, message=f"Generator exceeded its {timeout}-second deadline.",
-                      cause=_cause(error, operation))
     except StageTimeout as error:
         result.update(exit_code=124, message=f"Generator {result['phase']} exceeded its stage deadline.",
                       cause=_cause(error, operation))
@@ -390,15 +358,6 @@ def run(tree, container, command, generated_files, protected_paths, files, timeo
     finally:
         try:
             with _phase(result, "cleanup", CLEANUP_SECONDS):
-                if cidfile is not None and cidfile.exists():
-                    cid = cidfile.read_text().strip()
-                    if re.fullmatch(r"[0-9a-f]{64}", cid):
-                        subprocess.run(["docker", "rm", "--force", cid], check=True,
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=CLEANUP_SECONDS)
-                if log is not None:
-                    log.seek(0)
-                    result["log"] = log.read(LOG_BYTES).decode(errors="replace")
-                    log.close()
                 if tail is not None:
                     parts = [safe_stderr(tail.decode("utf-8", errors="replace")),
                              process.stderr_diagnostic if process is not None else ""]
