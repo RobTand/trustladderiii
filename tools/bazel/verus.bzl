@@ -443,6 +443,7 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::dependencies::owner_waiting_ok": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::internal_safety::step_premises": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::no_effects": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::dependencies::preservation::seq_unique": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -708,6 +709,8 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "dependencies_node_update_preserves": ("kernel::dependencies#node_update_preserves", 1),
+            "dependency_preservation_node_update_preserves": ("kernel::dependencies::preservation#node_update_preserves", 1),
             "transition_safety_quiet": ("kernel::transition_safety#quiet", 1),
             "transition_safety_noticed": ("kernel::transition_safety#noticed", 1),
             "transition_safety_outputs_quiet": ("kernel::transition_safety#outputs_quiet", 1),

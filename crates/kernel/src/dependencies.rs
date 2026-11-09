@@ -298,6 +298,13 @@ pub(super) open spec fn same_endpoint(a: Node, b: Node) -> bool {
         && zero_credit(a.credit) == zero_credit(b.credit)
 }
 
+/// K4a: every rules_ok condition on an owner that still waits on a prerequisite.
+pub(super) open spec fn owner_waiting_ok(n: Node) -> bool {
+    !n.planning_started && waits(n.question) && blocked_phase(n.phase)
+        && (early(n.phase) ==> zero_credit(n.credit))
+        && (n.phase == Phase::Unplanned ==> !n.holds && !n.pool && n.ticket.is_none() && n.run.is_none())
+}
+
 /// K4a: the real lookup key of a declaration.
 pub(super) open spec fn same_key(d: Dependency, node: NodeId, kind: PrerequisiteKind,
     number: u64) -> bool {
@@ -1734,5 +1741,23 @@ pub(super) proof fn frame_preserves(before: World, after: World)
     ensures rules_ok(after),
 {
     preservation::table_frame(before, after);
+}
+
+/// K4a / K4c: one node changes and the table does not. Either the owner has no
+/// undelivered prerequisite (this includes Admit), or it still waits and its new
+/// node meets every rules_ok condition on a waiting owner. Withheld credit may be
+/// newly set only while the owner waits. Then rules_ok is preserved.
+pub(super) proof fn node_update_preserves(before: World, after: World, i: int)
+    requires rules_ok(before), 0 <= i < before.nodes@.len(), before.nodes@.len() <= u64::MAX,
+        after.nodes@ == before.nodes@.update(i, after.nodes@[i]),
+        after.dependencies@ == before.dependencies@,
+        after.nodes@[i].repo == before.nodes@[i].repo,
+        before.nodes@[i].phase is Closed ==> after.nodes@[i].phase is Closed,
+        after.nodes@[i].credit.withheld ==> before.nodes@[i].credit.withheld
+            || !prerequisites_delivered(before, NodeId(i as u64)),
+        prerequisites_delivered(before, NodeId(i as u64)) || owner_waiting_ok(after.nodes@[i]),
+    ensures rules_ok(after),
+{
+    preservation::node_update_preserves(before, after, i);
 }
 }
