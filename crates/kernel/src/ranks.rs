@@ -315,34 +315,41 @@ pub(super) proof fn finite_minimum(nodes: Seq<Node>, end: nat, eligible: spec_fn
         && forall|j: int| 0 <= j < end && eligible(nodes[j]) ==> key(nodes[i]) <= key(nodes[j]),
     decreases end,
 {
-    if exists|i: int| 0 <= i < end - 1 && eligible(nodes[i]) {
-        finite_minimum(nodes, (end - 1) as nat, eligible, key);
-        let best = choose|i: int| 0 <= i < (end - 1) && eligible(nodes[i])
-            && forall|j: int| 0 <= j < (end - 1) && eligible(nodes[j])
-                ==> key(nodes[i]) <= key(nodes[j]);
-        let last = end - 1;
-        if eligible(nodes[last]) && key(nodes[last]) < key(nodes[best]) {
+    let best = minimum_index(nodes, end, eligible, key);
+    assert(0 <= best < end && eligible(nodes[best])
+        && forall|j: int| 0 <= j < end && eligible(nodes[j]) ==> key(nodes[best]) <= key(nodes[j]));
+}
+
+/// Q30/Q39 / #771: the induction behind finite_minimum returns its minimizing
+/// index on the same carrier, so no level re-proves an existential minimum.
+pub(super) proof fn minimum_index(nodes: Seq<Node>, end: nat, eligible: spec_fn(Node) -> bool,
+    key: spec_fn(Node) -> nat) -> (best: int)
+    requires end <= nodes.len(), exists|i: int| 0 <= i < end && eligible(nodes[i]),
+    ensures 0 <= best < end, eligible(nodes[best]),
+        forall|j: int| 0 <= j < end && eligible(nodes[j]) ==> key(nodes[best]) <= key(nodes[j]),
+    decreases end,
+{
+    let last = end - 1;
+    if exists|i: int| 0 <= i < last && eligible(nodes[i]) {
+        let prior = minimum_index(nodes, (end - 1) as nat, eligible, key);
+        if eligible(nodes[last]) && key(nodes[last]) < key(nodes[prior]) {
             assert forall|j: int| 0 <= j < end && eligible(nodes[j])
                 implies key(nodes[last]) <= key(nodes[j]) by {
-                if j < last { assert(key(nodes[best]) <= key(nodes[j])); }
+                if j < last { assert(key(nodes[prior]) <= key(nodes[j])); }
             }
-            assert(0 <= last < end && eligible(nodes[last])
-                && forall|j: int| 0 <= j < end && eligible(nodes[j]) ==> key(nodes[last]) <= key(nodes[j]));
+            last
         } else {
             assert forall|j: int| 0 <= j < end && eligible(nodes[j])
-                implies key(nodes[best]) <= key(nodes[j]) by {
-                if j < last { assert(key(nodes[best]) <= key(nodes[j])); }
+                implies key(nodes[prior]) <= key(nodes[j]) by {
+                if j < last { assert(key(nodes[prior]) <= key(nodes[j])); }
             }
-            assert(0 <= best < end && eligible(nodes[best])
-                && forall|j: int| 0 <= j < end && eligible(nodes[j]) ==> key(nodes[best]) <= key(nodes[j]));
+            prior
         }
     } else {
-        let last = end - 1;
         assert(eligible(nodes[last]));
         assert forall|j: int| 0 <= j < end && eligible(nodes[j])
             implies key(nodes[last]) <= key(nodes[j]) by { assert(j == last); }
-        assert(0 <= last < end && eligible(nodes[last])
-            && forall|j: int| 0 <= j < end && eligible(nodes[j]) ==> key(nodes[last]) <= key(nodes[j]));
+        last
     }
 }
 
