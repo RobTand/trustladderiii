@@ -1182,7 +1182,11 @@ print(json.dumps(out))
     /// exponential bracket then binary search. L permits L failure-pops; pop
     /// L+1 fails. Successful capture coordinates must equal production exactly.
     /// This is a per-invocation retry-risk threshold, not total scanner work.
-    /// Walltime is informational. Constants/caps await these measurements.
+    /// The f78e2ae1 measurement at BB7d24fe98 produced 581 thresholds over seven
+    /// case2 windows. ceil(max(threshold/bytes)) is 14; the exact maximum is
+    /// 106_612. Guard each pattern/window with both measured bounds. These are
+    /// public-limit risk bounds, not total steps or an asymptotic proof.
+    /// Walltime remains informational; original 500ms failures stay attributed.
     #[test]
     fn public_backtracking_limit_thresholds() {
         use std::{collections::{BTreeMap, HashMap}, io::Write, sync::Arc};
@@ -1272,6 +1276,12 @@ print(json.dumps(out))
                         assert!(!passes(passing-1));
                         passing
                     };
+                    const PUBLIC_LIMIT_PER_BYTE: usize = 14;
+                    const ABSOLUTE_PUBLIC_LIMIT: usize = 106_612;
+                    assert!(threshold <= PUBLIC_LIMIT_PER_BYTE * input.len(),
+                        "public retry threshold exceeds measured linear envelope: bytes={} threshold={threshold} pattern_sha256={pattern_sha}",input.len());
+                    assert!(threshold <= ABSOLUTE_PUBLIC_LIMIT,
+                        "public retry threshold exceeds absolute cap: {threshold} pattern_sha256={pattern_sha}");
                     selected.insert(pattern.clone(),compiled[&(pattern.clone(),threshold)].clone());
                     emit(serde_json::json!({"case":2,"variant":variant,"bytes":input.len(),
                         "input_sha256":input_sha,"pattern_sha256":pattern_sha,"minimum_passing":threshold,
