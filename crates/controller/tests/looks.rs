@@ -488,28 +488,41 @@ fn never_accepted_handoff_read_incident(settings: &tl3_config::Store) {
     };
     handoff(&mut c);
     assert!(writes.get() >= 1, "the handoff was attempted");
-    assert!(!c.world().unwrap().nodes[0].waiting_incident);
+    // A read incident is a controller incident row with its notice; it does
+    // not acknowledge the write or change the kernel node (looks.rs look_failed).
+    let open_incidents = |c: &mut Controller| -> Vec<(String, serde_json::Value)> {
+        c.snapshot()
+            .unwrap()
+            .rows
+            .into_iter()
+            .filter(|r| r.table == "incidents" && r.value["open"] == true)
+            .map(|r| (r.id, r.value))
+            .collect()
+    };
+    assert!(open_incidents(&mut c).is_empty());
     for _ in 0..10 {
-        if c.world().unwrap().nodes[0].waiting_incident {
+        if !open_incidents(&mut c).is_empty() {
             break;
         }
         clock.advance(1);
         c.look_due().unwrap();
         drain(&mut c);
     }
-    assert!(
-        c.world().unwrap().nodes[0].waiting_incident,
+    let incidents = open_incidents(&mut c);
+    assert_eq!(
+        incidents.len(),
+        1,
         "a never-acknowledged enqueue must end in a read incident"
     );
+    let (id, incident) = &incidents[0];
+    assert!(id.ends_with(".read"), "{id}");
+    assert_eq!(incident["signature"]["upstream"], "Delivery");
+    let key = incident["effect"].as_str().unwrap().to_owned();
+    assert!(
+        c.effect(&key).unwrap().unwrap().state.is_pending(),
+        "the read incident neither acknowledges nor replaces the handoff"
+    );
     handoff(&mut c);
-    let snapshot = c.snapshot().unwrap();
-    let incident = snapshot
-        .rows
-        .iter()
-        .find(|r| r.table == "incidents" && r.value["open"] == true)
-        .unwrap();
-    assert!(incident.id.ends_with(".read"), "{}", incident.id);
-    assert_eq!(incident.value["signature"]["upstream"], "Delivery");
     assert!(c.world().unwrap().valid());
 }
 fn permanent_incident_clear(settings: &tl3_config::Store) {
