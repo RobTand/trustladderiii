@@ -483,7 +483,11 @@ fn never_accepted_handoff_read_incident(settings: &tl3_config::Store) {
     );
     let handoff = |c: &mut Controller| {
         let node = c.world().unwrap().nodes[0];
-        assert_eq!(node.phase, Phase::Publishing, "the handoff is never accepted");
+        assert_eq!(
+            node.phase,
+            Phase::Publishing,
+            "the handoff is never accepted"
+        );
         assert_eq!(node.effect.map(|e| e.kind), Some(EffectKind::Enqueue));
     };
     handoff(&mut c);
