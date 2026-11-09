@@ -184,7 +184,7 @@ fn obligations_of_fact(fact: &Fact) -> Obligations {
             &["facts", "facts_ci_failed", "facts_ci_infrastructure"],
             &[Row("apply_ci_failed"), Test(TransitionCovers, "ci_failure_in_round_one_under_fail_fast_stops_for_review")],
         ),
-        Fact::Conflict => ob(&["facts", "facts_conflict", "apply_safety_conflict_rule"], &[Row("advance_rebasing")]),
+        Fact::Conflict => ob(&["facts", "facts_conflict_renamed", "apply_safety_conflict_rule"], &[Row("advance_rebasing")]),
         Fact::IncidentCleared { .. } => ob(
             &["facts", "facts_incident_cleared"],
             &[Test(Scenarios, "a_crash_loop_reaches_rob_after_its_second_incident")],
