@@ -422,11 +422,13 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
     } else {
         out_of_room(w, i, ReviewStop::MakerNeedsFiles, out);
         kernel_proof! {
-            if fits && !footprint::footprint_empty(files) {
-                handler_safety::fund_off(before_files@.nodes@[i as int], w.nodes@[i as int]);
+            if !(before_files@.nodes@[i as int].phase is Closed || before_files@.nodes@[i as int].phase is Stopping) {
+                if fits && !footprint::footprint_empty(files) {
+                    handler_safety::fund_off(before_files@.nodes@[i as int], w.nodes@[i as int]);
+                }
+                handler_safety::files_rows(before_files@.fail_fast, files, fits, before_files@.nodes@[i as int],
+                    w.nodes@[i as int], before_files_out@, *out);
             }
-            handler_safety::files_rows(before_files@.fail_fast, files, fits, before_files@.nodes@[i as int],
-                w.nodes@[i as int], before_files_out@, *out);
         }
         kernel_proof! { footprint::valid_under_table_growth(before_files@, *w, w.nodes@[i as int].footprint); }
     }

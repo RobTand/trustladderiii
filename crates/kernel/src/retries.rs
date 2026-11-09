@@ -58,6 +58,10 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox, report: &mut
         kernel_proof! {
             retries_facts::finish_failed_incident(before_failed@, ready@, w.nodes@,
                 i as int, needs_rob, before_failed_out@, *out);
+            assert(w.nodes@[i as int].review_stop == before_failed@.review_stop) by {
+                reveal(port_t860_contracts::failed_post); reveal(port_t860_contracts::failed_node);
+                reveal(retirement::incident);
+            }
         }
     }
     kernel_proof! {
@@ -243,6 +247,9 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
         if m.credit.can_spend(1) {
             m.credit.spend(1);
             set_phase(m, if m.holds { Phase::Making } else { Phase::Ready(Resume::Making) });
+            kernel_proof! {
+                handler_safety::retry_ladder(before_rung@, w.nodes@[i as int], before_rung_out@, *out);
+            }
         } else {
             ask_rob(
                 w,
@@ -252,6 +259,9 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
                 1,
                 out,
             );
+            kernel_proof! {
+                handler_safety::retry_ladder(before_rung@, w.nodes@[i as int], before_rung_out@, *out);
+            }
         }
     } else if !m.replanned {
         m.replanned = true;
@@ -261,6 +271,9 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
             m.plan_retries = 0;
             set_phase(m, Phase::Planning { must_split: false });
             notice(out, i, Notice::Note(NoteKind::Replanned));
+            kernel_proof! {
+                handler_safety::retry_ladder(before_rung@, w.nodes@[i as int], before_rung_out@, *out);
+            }
         } else {
             ask_rob(
                 w,
@@ -270,12 +283,13 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
                 1,
                 out,
             );
+            kernel_proof! {
+                handler_safety::retry_ladder(before_rung@, w.nodes@[i as int], before_rung_out@, *out);
+            }
         }
     } else {
         ask_rob(w, i, QKind::CantMeet, Cont::Ready(Resume::Making), 1, out);
-    }
-    kernel_proof! {
-        if !fail_fast {
+        kernel_proof! {
             handler_safety::retry_ladder(before_rung@, w.nodes@[i as int], before_rung_out@, *out);
         }
     }
