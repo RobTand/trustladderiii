@@ -87,7 +87,7 @@ pub(super) proof fn pool_waiter_start(w: World, n: Node)
     match n.phase {
         Phase::Ingesting | Phase::Auditing | Phase::Unplanned | Phase::Planning { .. }
             | Phase::Ready(_) | Phase::Making | Phase::Checking | Phase::Reviewing
-            | Phase::Publishing | Phase::Queued | Phase::Rebasing | Phase::AwaitingRob
+            | Phase::Publishing | Phase::AwaitingDelivery | Phase::Rebasing | Phase::AwaitingRob
             | Phase::Stopping(_) | Phase::Closed(_) => {},
     }
 }

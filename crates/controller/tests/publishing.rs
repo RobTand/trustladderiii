@@ -210,8 +210,8 @@ struct State {
     checks: Vec<Value>,
     comments: Vec<Value>,
     operations_comments: Vec<Value>,
-    labels: bool,
-    conflicting_enqueue: bool,
+    delivery_read: bool,
+    conflicting_handoff: bool,
     mergeable_override: Option<bool>,
     closed: bool,
     fail_reads: bool,
@@ -223,7 +223,7 @@ struct State {
     reopens: usize,
     closes: usize,
     operations: Vec<String>,
-    queue_fixture: &'static str,
+    delivery_fixture: &'static str,
 }
 impl Default for State {
     fn default() -> Self {
@@ -234,8 +234,8 @@ impl Default for State {
             checks: vec![],
             comments: vec![],
             operations_comments: vec![],
-            labels: false,
-            conflicting_enqueue: false,
+            delivery_read: false,
+            conflicting_handoff: false,
             mergeable_override: None,
             closed: false,
             fail_reads: false,
@@ -247,25 +247,17 @@ impl Default for State {
             reopens: 0,
             closes: 0,
             operations: vec![],
-            queue_fixture: "running",
+            delivery_fixture: "running",
         }
     }
 }
-fn recorded_check(name: &str, head: &Value) -> Value {
-    let checks: Vec<Value> = serde_json::from_slice(
-        &fs::read(format!(
-            "{}/../mergify/tests/fixtures/{name}/checks.json",
-            env!("CARGO_MANIFEST_DIR")
-        ))
-        .unwrap(),
-    )
-    .unwrap();
-    let mut check = checks
-        .into_iter()
-        .find(|c| c["name"] == tl3_mergify::QUEUE_CHECK)
-        .unwrap();
-    check["head_sha"] = head.clone();
-    check
+fn recorded_check(state: &str, head: &Value) -> Value {
+    // A required check keeps responsibility in Direct while the scenario
+    // exercises publication, rebase and late exact-head merge evidence.
+    json!({"id":9000,"name":"Sandbox tests","head_sha":head,
+        "status":if state == "merged" {"completed"} else {"in_progress"},
+        "conclusion":if state == "merged" {json!("success")} else {Value::Null},
+        "app":{"id":15368,"slug":"github-actions"}})
 }
 #[derive(Clone)]
 struct Api {
@@ -311,8 +303,8 @@ impl support::github::Routes for State {
             .filter(|c| c["head_sha"] == sha)
             .cloned()
             .collect();
-        if self.labels && self.pull.as_ref().is_some_and(|p| p["head"]["sha"] == sha) {
-            checks.push(recorded_check(self.queue_fixture, &json!(sha)));
+        if self.pull.as_ref().is_some_and(|p| p["head"]["sha"] == sha) {
+            checks.push(recorded_check(self.delivery_fixture, &json!(sha)));
         }
         json!(checks)
     }
@@ -408,7 +400,29 @@ impl Respond for Api {
             response
         } else {
             let value = match (method, path) {
-                ("GET", "/rules/branches/main" | "/rules/branches/master") => json!([]),
+                ("GET", "/rules/branches/main" | "/rules/branches/master") => {
+                    json!([{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Sandbox tests","integration_id":15368}]}}])
+                }
+                ("GET", "") => {
+                    let head = &s.pull.as_ref().unwrap()["head"]["sha"];
+                    assert!(s.checks.iter().any(|c| c["name"] == APPROVAL_CHECK
+                        && c["head_sha"] == *head
+                        && c["app"]["id"] == 123));
+                    s.delivery_read = true;
+                    s.operations.push("accept-delivery".into());
+                    json!({"allow_merge_commit":true,"allow_squash_merge":true,"allow_rebase_merge":true})
+                }
+                ("PUT", "/pulls/100/merge") => {
+                    let head = &s.pull.as_ref().unwrap()["head"]["sha"];
+                    assert_eq!(body["sha"], *head, "Direct must pin the merge head");
+                    let merge = Command::new("git")
+                        .current_dir(&self.fixture.remote)
+                        .args(["merge-tree", "--write-tree", "main", head.as_str().unwrap()])
+                        .output()
+                        .unwrap();
+                    s.conflicting_handoff |= !merge.status.success();
+                    panic!("pending required checks must never authorize a merge PUT");
+                }
                 ("POST", "/pulls") => {
                     s.opens += 1;
                     s.operations.push("open".into());
@@ -466,7 +480,7 @@ impl Respond for Api {
                     s.pull.clone().unwrap()
                 }
                 ("GET", "/issues/42" | "/issues/100") => {
-                    json!({"number":42,"title":"Fix the value", "body":"Return two.","state":if s.closed {"closed"} else {"open"},"updated_at":"2026-10-30T00:00:00Z","labels":if s.labels {json!([{"name":"tl3-queue"}])} else {json!([])},"pull_request":null})
+                    json!({"number":42,"title":"Fix the value", "body":"Return two.","state":if s.closed {"closed"} else {"open"},"updated_at":"2026-10-30T00:00:00Z","labels":[],"pull_request":null})
                 }
                 ("PATCH", "/issues/42") => {
                     s.closed = true;
@@ -491,25 +505,6 @@ impl Respond for Api {
                     c
                 }
                 ("GET", "/issues/100/events") => json!([]),
-                ("POST", "/issues/100/labels") => {
-                    let head = &s.pull.as_ref().unwrap()["head"]["sha"];
-                    assert!(s.checks.iter().any(|c| c["name"] == APPROVAL_CHECK
-                        && c["head_sha"] == *head
-                        && c["app"]["id"] == 123));
-                    let merge = Command::new("git")
-                        .current_dir(&self.fixture.remote)
-                        .args(["merge-tree", "--write-tree", "main", head.as_str().unwrap()])
-                        .output()
-                        .unwrap();
-                    s.conflicting_enqueue = !merge.status.success();
-                    s.operations.push("enqueue".into());
-                    s.labels = true;
-                    json!([{"name":"tl3-queue"}])
-                }
-                ("DELETE", "/issues/100/labels/tl3-queue") => {
-                    s.labels = false;
-                    json!([])
-                }
                 _ => panic!("unexpected mock request: {method} {path}"),
             };
             ResponseTemplate::new(200).set_body_json(value)
@@ -525,6 +520,9 @@ struct Server {
     runtime: tokio::runtime::Runtime,
     server: MockServer,
     api: Api,
+    wakes: adapters::direct_merge::Wakes,
+    settings: Mutex<Option<tl3_config::Store>>,
+    events: std::sync::atomic::AtomicU64,
 }
 impl Server {
     fn new(fixture: Arc<Fixture>) -> Self {
@@ -549,7 +547,30 @@ impl Server {
             runtime,
             server,
             api,
+            wakes: adapters::direct_merge::Wakes::default(),
+            settings: Mutex::new(None),
+            events: std::sync::atomic::AtomicU64::new(0),
         }
+    }
+    fn delivery_adapter(
+        &self,
+        settings: &tl3_config::Store,
+        root: &Path,
+    ) -> adapters::direct_merge::Adapter {
+        *self.settings.lock().unwrap() = Some(settings.clone());
+        adapters::direct_merge::Adapter::new(self.clients(), 0, root, settings.clone())
+            .unwrap()
+            .with_wakes(self.wakes.clone())
+    }
+    fn register_delivery(&self, c: &mut Controller) {
+        c.register_github_translator(
+            "delivery",
+            adapters::direct_merge::Translator::new(self.clients())
+                .unwrap()
+                .with_wakes(self.wakes.clone()),
+        );
+        // Register the durable consumer before the first incoming event.
+        tl3_controller::ingress::drain(c).unwrap();
     }
     fn clients(&self) -> BTreeMap<u64, GitHub> {
         BTreeMap::from([(
@@ -558,7 +579,7 @@ impl Server {
                 AppConfig {
                     id: 123,
                     slug: "factory".into(),
-                    pem: include_str!("../../mergify/tests/fixtures/throwaway-key.pem").into(),
+                    pem: include_str!("../../github/tests/fixtures/throwaway-key.pem").into(),
                     webhook_secret: "fixture".into(),
                 },
                 1,
@@ -689,6 +710,36 @@ fn drain_with_budget(
         if ((idle && !observed) || reached_planner) && c.world().unwrap().nodes[0].phase == expected
         {
             deadline.check(Instant::now());
+            if expected == Phase::AwaitingDelivery {
+                let snapshot = c.snapshot().unwrap();
+                let watches: Vec<_> = snapshot
+                    .rows
+                    .iter()
+                    .filter(|row| {
+                        row.table == "watches" && row.value["output"]["Effect"]["kind"] == "Enqueue"
+                    })
+                    .collect();
+                assert!(
+                    !watches.is_empty(),
+                    "accepted delivery must retain its outcome watch"
+                );
+                for watch in watches {
+                    let node = watch.value["output"]["Effect"]["node"]
+                        .as_u64()
+                        .unwrap()
+                        .to_string();
+                    let binding = snapshot
+                        .rows
+                        .iter()
+                        .find(|row| row.table == "pull_requests" && row.id == node)
+                        .unwrap();
+                    assert!(binding.value["number"].is_u64());
+                    assert_eq!(
+                        watch.value["pull_request"], binding.value["number"],
+                        "accepted watch must retain the exact staged PR binding for later wakes"
+                    );
+                }
+            }
             return;
         }
         if !changed {
@@ -716,21 +767,20 @@ fn webhook(c: &mut Controller, server: &Server, action: &str) {
         server.api.state.lock().unwrap().pull = Some(body["pull_request"].clone());
     }
     body["pull_request"]["merged"] = json!(action == "closed");
-    let event = tl3_github::webhook::parse(
-        "publishing",
-        "pull_request",
-        &serde_json::to_vec(&body).unwrap(),
-    )
-    .unwrap()
-    .event
-    .unwrap();
-    let inputs = adapters::mergify::Translator::new(server.clients())
-        .unwrap()
-        .webhook(&event, &c.snapshot().unwrap(), &bootstrap().repos)
+    let sequence = server
+        .events
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let settings = server.settings.lock().unwrap().clone().unwrap();
+    let mut store = Store::open(&settings).unwrap();
+    store
+        .receive_ingress(
+            "github-webhook",
+            &format!("publishing-{action}-{sequence}"),
+            "pull_request",
+            &serde_json::to_vec(&body).unwrap(),
+        )
         .unwrap();
-    for input in inputs {
-        tl3_controller::ingress::apply(c, input).unwrap();
-    }
+    tl3_controller::ingress::drain(c).unwrap();
 }
 fn patch_lines(diff: &Value) -> Vec<&str> {
     diff.as_str()
@@ -844,10 +894,11 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     registry.register(Upstream::PrismaBuild, pb(root.path()));
     registry.register(
         Upstream::Delivery,
-        adapters::mergify::Adapter::new(server.clients(), 0, &root.path().join("mergify")).unwrap(),
+        server.delivery_adapter(settings, &root.path().join("delivery")),
     );
     progress("open controller and store");
     let mut c = Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+    server.register_delivery(&mut c);
     let mut store = Store::open(settings).unwrap();
     store.put_worker_materials("0",&json!({"issue":{"number":42,"title":"Fix the value","body":"Return two.","author":"rob","comments":[]},"repo":{"readme":"Value","file_list":["value.py"]},"standing_rules":[{"id":"test-report-integrity","description":"This attempted override must be replaced."},{"id":"style","description":"Keep the public interface."}]})).unwrap();
     document(
@@ -913,8 +964,8 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             for _ in 0..100 {
                 assert!(drive_once(&mut c));
                 assert!(
-                    !server.api.state.lock().unwrap().conflicting_enqueue,
-                    "a conflicting checked head must rebase before enqueue"
+                    !server.api.state.lock().unwrap().conflicting_handoff,
+                    "a conflicting checked head must rebase without a merge write"
                 );
                 if c.world().unwrap().nodes[0].phase == Phase::Rebasing {
                     break;
@@ -946,7 +997,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             },
             Instant::now,
         );
-        assert!(!server.api.state.lock().unwrap().labels);
+        assert!(!server.api.state.lock().unwrap().delivery_read);
         let d = f.delivery(EffectKind::Push, 100);
         let checkout = f.adapter().checkout(&d);
         git(
@@ -967,8 +1018,8 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             c.world().unwrap().nodes.first()
         );
         assert!(
-            !server.api.state.lock().unwrap().labels,
-            "the stale approval must not enqueue the outside head"
+            !server.api.state.lock().unwrap().delivery_read,
+            "the stale approval must not deliver the outside head"
         );
         assert_eq!(
             c.world().unwrap().nodes[0].rechecks,
@@ -1020,7 +1071,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         );
         return;
     }
-    drain(&mut c, &mut source, &mut store, Phase::Queued);
+    drain(&mut c, &mut source, &mut store, Phase::AwaitingDelivery);
     if mode == "repo-conventions" {
         c.observe(
             "settlement-last-progress",
@@ -1029,8 +1080,8 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             },
         )
         .unwrap();
-        // Consuming the final input must still reach an idle Queued node within budget.
-        drain(&mut c, &mut source, &mut store, Phase::Queued);
+        // Consuming the final input must still reach an idle AwaitingDelivery node within budget.
+        drain(&mut c, &mut source, &mut store, Phase::AwaitingDelivery);
         assert!(
             c.snapshot()
                 .unwrap()
@@ -1113,24 +1164,29 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
                 "outside push starts a new review"
             );
         }
-        drain(&mut c, &mut source, &mut store, Phase::Queued);
+        drain(&mut c, &mut source, &mut store, Phase::AwaitingDelivery);
     } else if mode.starts_with("d5-") {
         let checkout = f.adapter().checkout(&d);
         if mode == "d5-conflict" {
             commit(&f.source, "value.py", "def value(): return 3\n");
         }
-        let target = commit(&f.source, "main-moved.txt", "main moved while queued\n");
+        let target = commit(
+            &f.source,
+            "main-moved.txt",
+            "main moved while awaiting delivery\n",
+        );
         git(&f.source, &["push", f.remote.to_str().unwrap(), "main"]);
         {
             let mut state = server.api.state.lock().unwrap();
-            state.queue_fixture = "dequeued";
+            state.delivery_fixture = "running";
             state.mergeable_override = Some(false);
             let pull = state.pull.as_mut().unwrap();
             pull["mergeable"] = json!(false);
             pull["mergeable_state"] = json!("dirty");
         }
+        webhook(&mut c, &server, "edited");
         for _ in 0..10 {
-            if c.world().unwrap().nodes[0].phase != Phase::Queued {
+            if c.world().unwrap().nodes[0].phase != Phase::AwaitingDelivery {
                 break;
             }
             assert!(drive_once(&mut c));
@@ -1160,13 +1216,13 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         );
         {
             let mut state = server.api.state.lock().unwrap();
-            state.queue_fixture = "running";
+            state.delivery_fixture = "running";
             state.mergeable_override = None;
             let pull = state.pull.as_mut().unwrap();
             pull["mergeable"] = json!(true);
             pull["mergeable_state"] = json!("clean");
         }
-        drain(&mut c, &mut source, &mut store, Phase::Queued);
+        drain(&mut c, &mut source, &mut store, Phase::AwaitingDelivery);
         let published = git(&f.remote, &["rev-parse", f.branch(&d).as_str()]);
         assert_eq!(published, head);
         assert_eq!(
@@ -1200,16 +1256,20 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         git(&f.source, &["push", f.remote.to_str().unwrap(), "main"]);
         {
             let mut state = server.api.state.lock().unwrap();
-            state.queue_fixture = "dequeued";
+            state.delivery_fixture = "running";
             let pull = state.pull.as_mut().unwrap();
             pull["mergeable"] = json!(false);
             pull["mergeable_state"] = json!("dirty");
         }
+        webhook(&mut c, &server, "edited");
         for _ in 0..10 {
-            if c.world().unwrap().nodes[0].phase != Phase::Queued {
+            if c.world().unwrap().nodes[0].phase != Phase::AwaitingDelivery {
                 break;
             }
-            assert!(drive_once(&mut c), "PR_DEQUEUED must yield a Conflict fact");
+            assert!(
+                drive_once(&mut c),
+                "the authenticated changed-PR wake must yield a Conflict fact"
+            );
         }
         assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Rebasing);
         let mut saw_maker_fallback = false;
@@ -1236,12 +1296,12 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         assert!(git(&checkout, &["status", "--porcelain"]).is_empty());
         {
             let mut state = server.api.state.lock().unwrap();
-            state.queue_fixture = "running";
+            state.delivery_fixture = "running";
             let pull = state.pull.as_mut().unwrap();
             pull["mergeable"] = json!(true);
             pull["mergeable_state"] = json!("clean");
         }
-        drain(&mut c, &mut source, &mut store, Phase::Queued);
+        drain(&mut c, &mut source, &mut store, Phase::AwaitingDelivery);
         let reviews: Vec<Value> = fs::read_to_string(root.path().join("reviews.jsonl"))
             .unwrap()
             .lines()
@@ -1272,7 +1332,12 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         "rebase" | "round-one-rebase" | "review-reset-rebase" | "repo-conventions"
     ) {
         f.advance_main(false);
-        server.api.state.lock().unwrap().queue_fixture = "conflict";
+        {
+            let mut state = server.api.state.lock().unwrap();
+            state.delivery_fixture = "conflict";
+            state.mergeable_override = Some(false);
+        }
+        webhook(&mut c, &server, "edited");
         let new_target = git(
             &f.remote,
             &["rev-parse", &config.github.repos[0].base_branch],
@@ -1301,8 +1366,12 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
                 break;
             }
         }
-        server.api.state.lock().unwrap().queue_fixture = "running";
-        drain(&mut c, &mut source, &mut store, Phase::Queued);
+        {
+            let mut state = server.api.state.lock().unwrap();
+            state.delivery_fixture = "running";
+            state.mergeable_override = None;
+        }
+        drain(&mut c, &mut source, &mut store, Phase::AwaitingDelivery);
     }
     let reviews: Vec<Value> = fs::read_to_string(root.path().join("reviews.jsonl"))
         .unwrap()
@@ -1479,7 +1548,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     state.pull.as_mut().unwrap()["state"] = json!("closed");
     state.pull.as_mut().unwrap()["merged_at"] = json!("2026-10-30T01:00:00Z");
     state.pull.as_mut().unwrap()["merge_commit_sha"] = json!("e".repeat(40));
-    state.queue_fixture = "merged";
+    state.delivery_fixture = "merged";
     drop(state);
     webhook(&mut c, &server, "closed");
     drain(
@@ -1532,7 +1601,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         }
     );
     let at = |name: &str| state.operations.iter().position(|op| op == name).unwrap();
-    assert!(at("approve") < at("open") && at("open") < at("enqueue"));
+    assert!(at("approve") < at("open") && at("open") < at("accept-delivery"));
     assert!(state.comments.iter().any(|c| {
         c["body"]
             .as_str()
@@ -1655,7 +1724,7 @@ fn publication_open_conflict() {
         matches!(adapter.reconcile(&open).unwrap(), Reconciliation::Found(c)
         if c.observations.iter().any(|o| matches!(o, Observation::Kernel(tl3_kernel::Event::Fact { fact: tl3_kernel::Fact::Conflict, .. }))))
     );
-    assert!(!server.api.state.lock().unwrap().labels);
+    assert!(!server.api.state.lock().unwrap().delivery_read);
     let posted = server
         .runtime
         .block_on(server.server.received_requests())
@@ -2284,6 +2353,7 @@ fn main() {
         });
         scenario("publishing_database_stop", || database.stop());
         println!("test publishing_{mode} ... ok");
+        println!("1 publishing scenarios passed; no skips");
         return;
     }
     run_default();

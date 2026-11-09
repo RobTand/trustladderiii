@@ -91,7 +91,7 @@ fn mandatory_d2_each_look_and_not_found() {
             5 | 10 | 11 => assert!(has(&r, "complete")),
             7 => assert!(has(&r, "wait_record")),
             8 => assert!(has(&r, "watch_wait")),
-            9 => assert!(has(&r, "record_progress") || has(&r, "store.loaded")),
+            9 => assert_eq!(r.result["state"]["progress"], "checkpoint"),
             _ => {}
         }
     }
@@ -196,10 +196,10 @@ fn mandatory_d2_progress_and_quota_allowances() {
     assert_eq!(persisted(&r)["last_quota_model"], Value::Null);
     assert!(r.files.contains_key("model_quotas/model-a"));
 }
-/// Preserved existing behaviour (no rule): setup gaps bypass completion deduplication, and changed settled facts are observed once.
+/// Settled target facts are observed once; a repeated read never repeats their transaction.
 #[test]
 fn mandatory_d2_settled_completion_shapes() {
-    for look in [5, 9, 10, 11, 12, 13] {
+    for look in [5, 10, 11, 12, 13] {
         for recorded in [0, 1] {
             let r = io::compare(&Schedule {
                 entries: vec![Entry::State, Entry::State],
@@ -209,8 +209,7 @@ fn mandatory_d2_settled_completion_shapes() {
                     ("look".into(), 1, look),
                     ("store.effect".into(), 0, 1),
                     ("store.effect".into(), 1, 1),
-                    ("queue.recorded".into(), 0, recorded),
-                    ("queue.recorded".into(), 1, recorded),
+                    ("publication.retained".into(), 0, recorded),
                 ],
                 ..schedule()
             });
@@ -223,12 +222,17 @@ fn mandatory_d2_settled_completion_shapes() {
             assert_eq!(
                 observations,
                 match look {
-                    5 | 9 => 0,
-                    12 if recorded == 0 => 2,
+                    5 => 0,
                     _ => 1,
                 }
             );
-            assert_eq!(has(&r, "queue.recorded"), look == 12);
+            assert_eq!(
+                r.trace
+                    .iter()
+                    .filter(|(op, _)| op == "store.effect")
+                    .count(),
+                2
+            );
         }
     }
 }

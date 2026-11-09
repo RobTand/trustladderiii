@@ -1,9 +1,9 @@
 {
-  "source_head": "89dd47f13463d695e1813d6d180632b4deab3dd2",
+  "source_head": "7bf84b3c17f10bfb81398e6a5f80fe3dbce2a6de",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "b2da00d9c605bc42d8767a059a61cc4426578e475e869d73afc722af6ac78d03",
-  "groups": 342,
-  "obligations": 539,
+  "source_sha256": "9818a23d17cbdedc61f2224f7474e3498410aff6abb354eb04af73dbbb9e400c",
+  "groups": 344,
+  "obligations": 541,
   "selections": [
     {
       "target": "//crates/kernel:verus_kernel_clones",
@@ -611,6 +611,11 @@
       "expected": 1
     },
     {
+      "target": "//crates/kernel:verus_acknowledgements_delivery_accepted",
+      "selector": "kernel::acknowledgements#delivery_accepted",
+      "expected": 1
+    },
+    {
       "target": "//crates/kernel:verus_acknowledgements_confirmed",
       "selector": "kernel::acknowledgements#confirmed",
       "expected": 1
@@ -653,11 +658,6 @@
     {
       "target": "//crates/kernel:verus_facts_incident_cleared",
       "selector": "kernel::facts#incident_cleared",
-      "expected": 1
-    },
-    {
-      "target": "//crates/kernel:verus_facts_pr_dequeued",
-      "selector": "kernel::facts#pr_dequeued",
       "expected": 1
     },
     {
@@ -1443,6 +1443,16 @@
     {
       "target": "//crates/kernel:verus_facts_transition_frame",
       "selector": "kernel::facts_transition_lemmas#frame_consequences",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_conflict",
+      "selector": "kernel::facts#conflict",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_transition_priority",
+      "selector": "kernel::facts_transition_lemmas#priority_result",
       "expected": 1
     },
     {

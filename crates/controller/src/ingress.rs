@@ -75,7 +75,6 @@ impl Sources {
         while controller.drive_once()? {}
         if deferred {
             // The startup look must not postpone recovery of a deferred queue observation.
-            controller.retry_queue_observation_looks()?;
         }
         loop {
             let input = match controller.next_look_in()? {
@@ -313,9 +312,6 @@ fn drain_on_wake(controller: &mut Controller) -> Result<bool> {
         if !pending {
             break;
         }
-    }
-    if deferred {
-        controller.retry_queue_observation_looks()?;
     }
     Ok(deferred)
 }

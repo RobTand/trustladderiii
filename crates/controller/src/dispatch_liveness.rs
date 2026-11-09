@@ -527,7 +527,7 @@ impl Controller {
             | Wait::CheckResults
             | Wait::AgentPool
             | Wait::None => {}
-            Wait::MergeQueue => {
+            Wait::Delivery => {
                 e.external = snapshot.rows.iter().any(|r| {
                     r.table == "pull_requests"
                         && r.id == id.0.to_string()

@@ -447,7 +447,6 @@ pub struct Repository {
 #[serde(rename_all = "snake_case")]
 pub enum Delivery {
     #[default]
-    Queue,
     Direct,
 }
 
@@ -905,7 +904,7 @@ impl Console {
 pub struct Allowances {
     pub agent_worker: Allowance,
     pub prismabuild: Allowance,
-    pub github_mergify: Allowance,
+    pub github_delivery: Allowance,
     pub model_calls: Allowance,
     pub hindsight: Allowance,
     pub worktrees: Allowance,
@@ -929,7 +928,7 @@ impl Default for Allowances {
                 silence_secs: 300,
                 no_progress_secs: 900,
             },
-            github_mergify: Allowance {
+            github_delivery: Allowance {
                 silence_secs: 300,
                 no_progress_secs: 1800,
             },
@@ -1452,7 +1451,7 @@ impl Config {
         for (name, allowance) in [
             ("agent_worker", &self.allowances.agent_worker),
             ("prismabuild", &self.allowances.prismabuild),
-            ("github_mergify", &self.allowances.github_mergify),
+            ("github_delivery", &self.allowances.github_delivery),
             ("model_calls", &self.allowances.model_calls),
             ("hindsight", &self.allowances.hindsight),
             ("worktrees", &self.allowances.worktrees),
@@ -1633,16 +1632,17 @@ pub fn immutable_image(image: &str) -> bool {
 mod delivery_tests {
     use super::*;
     #[test]
-    fn repository_delivery_defaults_to_queue_and_is_strict() {
+    fn repository_delivery_defaults_to_direct_and_is_strict() {
         let original = r#"{"owner":"owner","name":"repo","installation_id":3}"#;
         let queue: Repository = serde_json::from_str(original).unwrap();
-        assert_eq!(queue.delivery, Delivery::Queue);
-        for mode in ["queue", "direct"] {
-            let value = serde_json::json!({"owner":"owner","name":"repo","installation_id":3,"delivery":mode});
-            let repo: Repository = serde_json::from_value(value).unwrap();
-            assert_eq!(serde_json::to_value(repo.delivery).unwrap(), mode);
-        }
+        assert_eq!(queue.delivery, Delivery::Direct);
+        let mode = "direct";
+        let value =
+            serde_json::json!({"owner":"owner","name":"repo","installation_id":3,"delivery":mode});
+        let repo: Repository = serde_json::from_value(value).unwrap();
+        assert_eq!(serde_json::to_value(repo.delivery).unwrap(), mode);
         for mode in [
+            serde_json::json!("queue"),
             serde_json::json!("Direct"),
             serde_json::json!("mergify"),
             serde_json::json!(""),

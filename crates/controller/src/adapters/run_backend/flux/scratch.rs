@@ -1,6 +1,9 @@
 use super::*;
 use serde::{Deserialize, Serialize};
 
+/// The existing helper attribution for externally attributed scratch reclamation.
+const NO_GRANT_RECLAMATION: &str = "external scratch reclamation";
+
 #[derive(Serialize)]
 #[serde(deny_unknown_fields)]
 struct ScratchInput<'a> {
@@ -165,23 +168,44 @@ impl Flux {
         if canonical_job_id(&binding.id.job)? != binding.id.job {
             return Ok(None);
         }
-        let Some(grant) = &record.allocation_grant else {
-            return Ok(None);
+        let (host, reclamation) = match &record.allocation_grant {
+            Some(grant) => {
+                if grant.run != binding.id
+                    || grant.request_digest != record.intent.request_digest
+                    || grant.host.is_empty()
+                    || grant.rank != 0
+                    || record.container_launches.values().any(|launch| {
+                        launch.launcher.host != grant.host || launch.launcher.run != grant.run
+                    })
+                    || record
+                        .runtime_ownerships
+                        .iter()
+                        .any(|owned| owned.host != grant.host || owned.run != grant.run)
+                {
+                    return Ok(None);
+                }
+                (grant.host.as_str(), reclamation)
+            }
+            // A runner that never validated its allocation recorded no grant and no
+            // execution. The digest-bound first-cut placement is the only host the
+            // job could reach; the pinned helper confirms it by its own nodename and
+            // reclaims only the exact retained leaf through its guarded flow.
+            None => {
+                if !record.runtime_ownerships.is_empty()
+                    || !record.container_launches.is_empty()
+                    || !record.cleanup_evidence.is_empty()
+                    || record
+                        .request
+                        .runtime
+                        .host_dependency
+                        .as_ref()
+                        .is_none_or(|dependency| dependency.host != validate::FIRST_CUT_HOST)
+                {
+                    return Ok(None);
+                }
+                (validate::FIRST_CUT_HOST, Some(NO_GRANT_RECLAMATION))
+            }
         };
-        if grant.run != binding.id
-            || grant.request_digest != record.intent.request_digest
-            || grant.host.is_empty()
-            || grant.rank != 0
-            || record.container_launches.values().any(|launch| {
-                launch.launcher.host != grant.host || launch.launcher.run != grant.run
-            })
-            || record
-                .runtime_ownerships
-                .iter()
-                .any(|owned| owned.host != grant.host || owned.run != grant.run)
-        {
-            return Ok(None);
-        }
         let nonce = digest(
             format!(
                 "{:?}:{}:{}",
@@ -199,7 +223,7 @@ impl Flux {
                 correlation: record.intent.correlation.clone(),
             },
             request_digest: &record.intent.request_digest,
-            host: &grant.host,
+            host,
             nonce: &nonce,
             budget_seconds: 5,
             reclamation,
@@ -244,7 +268,7 @@ impl Flux {
             || observed.owner.owner != record.intent.owner
             || observed.owner.correlation != record.intent.correlation
             || observed.request_digest != record.intent.request_digest
-            || observed.host != grant.host
+            || observed.host != host
             || record
                 .runtime_ownerships
                 .iter()

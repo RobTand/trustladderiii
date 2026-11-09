@@ -78,7 +78,10 @@ pub(super) fn open_request(settings: &tl3_config::Store) {
         steering::race_controller(settings, root.path(), &api, json!({"kind": "restart"}));
     controller.intake(labelled()).unwrap();
     drain(&mut controller);
-    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+    assert_eq!(
+        controller.world().unwrap().nodes[0].phase,
+        Phase::AwaitingDelivery
+    );
     let context: Value =
         serde_json::from_str(include_str!("../fixtures/decisions/pq2662.json")).unwrap();
     let mut store = Store::open(settings).unwrap();

@@ -30,9 +30,15 @@ impl Translator {
     ) -> Result<Vec<Input>> {
         let world = crate::snapshot::decode(snapshot)?;
         let mut inputs = Vec::new();
-        for row in snapshot.rows.iter().filter(|row| {
-            row.table == "pull_requests" && row.value["number"].as_u64() == Some(pull.number)
-        }) {
+        for row in snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "pull_requests")
+        {
+            // A stored PR row whose number does not decode is corruption: fatal.
+            if crate::decode_stored::<u64>(row.value["number"].clone())? != pull.number {
+                continue;
+            }
             let node = tl3_kernel::NodeId(
                 row.id
                     .parse()
@@ -141,8 +147,23 @@ impl Translator {
             return Ok(vec![]);
         };
         let mut inputs = Vec::new();
+        let mut deliveries = BTreeMap::new();
         for effect in &snapshot.pending_effects {
-            let delivery = crate::hydrate(effect, snapshot)?;
+            deliveries.insert(effect.key.clone(), crate::hydrate(effect, snapshot)?);
+        }
+        for row in snapshot.rows.iter().filter(|row| row.table == "watches") {
+            let delivery: Delivery = crate::decode_stored(row.value.clone())?;
+            deliveries.entry(delivery.key.clone()).or_insert(delivery);
+        }
+        let world = crate::snapshot::decode(snapshot)?;
+        for (key, delivery) in deliveries {
+            let n = world
+                .nodes
+                .get(delivery.node().0 as usize)
+                .ok_or(Error::Invalid("missing watched direct node"))?;
+            if !delivery_authority(n, &delivery) {
+                continue;
+            }
             if delivery.repository == *repo
                 && number.is_none_or(|number| delivery.pull_request == Some(number))
                 && sha.is_none_or(|sha| delivery.head_sha.as_deref() == Some(sha))
@@ -154,10 +175,8 @@ impl Translator {
                     }
                 )
             {
-                self.wakes.wake(&effect.key, sequence);
-                inputs.push(Input::Look {
-                    key: effect.key.clone(),
-                });
+                self.wakes.wake(&key, sequence);
+                inputs.push(Input::Look { key });
             }
         }
         Ok(inputs)
@@ -165,6 +184,19 @@ impl Translator {
 }
 impl GitHubTranslator for Translator {
     fn translate(&mut self, delivery: &GitHubDelivery, snapshot: &Snapshot) -> Result<Vec<Input>> {
+        // Corrupt served-repository rows are controller corruption: fail with
+        // the fatal stored-JSON error before any delivery is read.
+        let repos = snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "repos")
+            .map(|row| crate::decode_stored(row.value.clone()))
+            .collect::<Result<Vec<Repository>>>()?;
+        if let GitHubDelivery::CatchUp { repository, .. } = delivery
+            && !repos.contains(repository)
+        {
+            return Ok(vec![]);
+        }
         // Legacy protection statuses have no typed Event variant. The authenticated
         // payload is still durably replayed by ingress, so decode just its wake key.
         if let GitHubDelivery::Webhook(webhook) = delivery
@@ -186,9 +218,7 @@ impl GitHubTranslator for Translator {
                     name: status.repository.name,
                     installation: status.installation.id,
                 };
-                if repository_config::direct(snapshot, &repo)? {
-                    return self.wakes(snapshot, &repo, None, Some(&status.sha), delivery);
-                }
+                return self.wakes(snapshot, &repo, None, Some(&status.sha), delivery);
             }
         }
         let repo: Option<Repository> = match delivery {
@@ -216,9 +246,6 @@ impl GitHubTranslator for Translator {
         let Some(repo) = repo else {
             return Ok(vec![]);
         };
-        if !repository_config::direct(snapshot, &repo)? {
-            return Ok(vec![]);
-        }
         match delivery {
             GitHubDelivery::Webhook(webhook) => match webhook.event.as_ref() {
                 Some(Event::PullRequestMerged { pull_request, .. }) => {
@@ -268,9 +295,7 @@ impl GitHubTranslator for Translator {
                     if crate::request(snapshot, node)?.repo != repo {
                         continue;
                     }
-                    let number = row.value["number"]
-                        .as_u64()
-                        .ok_or(Error::Invalid("invalid direct PR number"))?;
+                    let number: u64 = crate::decode_stored(row.value["number"].clone())?;
                     let n = world
                         .nodes
                         .get(node.0 as usize)

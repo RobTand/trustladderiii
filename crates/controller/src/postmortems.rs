@@ -1179,34 +1179,11 @@ impl crate::Controller {
                         .filter_map(|kind| value[kind].as_u64())
                         .sum::<u64>() as u32;
                 }
-                "delivery_outcomes" if value["node"] == json!(node) => {
-                    if value["outcome"]["Merged"]["checks_passed"] == false {
-                        history.escaped_ci = true;
-                    }
-                }
-                "queue_facts" => {
-                    let Ok(fact) = serde_json::from_value::<crate::adapters::mergify::QueueFact>(
-                        value.clone(),
-                    ) else {
-                        continue;
-                    };
-                    if fact.node(snapshot)? != Some(node) {
-                        continue;
-                    }
-                    use crate::adapters::mergify::Evidence;
-                    match fact.evidence {
-                        Evidence::CiFailed {
-                            head_check: false, ..
-                        }
-                        | Evidence::Conflict { .. }
-                        | Evidence::DequeuedByCommand { .. }
-                        | Evidence::DequeuedByPerson { .. } => history.dequeues += 1,
-                        Evidence::Merged {
-                            checks_passed: false,
-                            ..
-                        } => history.escaped_ci = true,
-                        _ => {}
-                    }
+                "delivery_outcomes"
+                    if value["node"] == json!(node)
+                        && value["outcome"]["Merged"]["checks_passed"] == false =>
+                {
+                    history.escaped_ci = true;
                 }
                 _ => {}
             }

@@ -185,9 +185,10 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
     }
     registry.register(
         Upstream::Delivery,
-        adapters::mergify::Adapter::new(server.clients(), 0, &root.path().join("mergify")).unwrap(),
+        server.delivery_adapter(settings, &root.path().join("delivery")),
     );
     let mut c = Controller::open(Store::open(settings).unwrap(), registry, bootstrap()).unwrap();
+    server.register_delivery(&mut c);
     c.register_github_translator(
         "adoption",
         tl3_controller::adoption::Translator::new(server.clients(), bootstrap()).unwrap(),
@@ -296,7 +297,7 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
         )
         .unwrap();
     }
-    drain(&mut c, &mut source, &mut store, Phase::Queued);
+    drain(&mut c, &mut source, &mut store, Phase::AwaitingDelivery);
     let d = f.delivery(EffectKind::Push, 100);
     let landed = f.head(&d);
     assert_eq!(
@@ -338,7 +339,7 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
     state.pull.as_mut().unwrap()["state"] = json!("closed");
     state.pull.as_mut().unwrap()["merged_at"] = json!("2026-10-31T01:00:00Z");
     state.pull.as_mut().unwrap()["merge_commit_sha"] = json!("e".repeat(40));
-    state.queue_fixture = "merged";
+    state.delivery_fixture = "merged";
     drop(state);
     webhook(&mut c, &server, "closed");
     drain(

@@ -254,17 +254,17 @@ fn fact_witness(case: u8) -> (result: World)
     requires case < 4,
     ensures domain(result), accepted(result), result.nodes@[0].phase == match case {
         0 => Phase::Closed(Outcome::Stopped), 1 => Phase::Ingesting,
-        2 => Phase::Making, _ => Phase::Queued,
+        2 => Phase::Making, _ => Phase::AwaitingDelivery,
     },
 {
     let mut node = Node::new(RepoId(0));
     node.phase = match case { 0 => Phase::Closed(Outcome::Stopped), 1 => Phase::Ingesting,
-        2 => Phase::Making, _ => Phase::Queued };
+        2 => Phase::Making, _ => Phase::AwaitingDelivery };
     if case >= 2 {
         node.credit.ready = true; node.credit.start = 4;
         node.holds = true; node.attempt = 1; node.footprint = Footprint::inline(1);
         node.head = Some(HeadId(1)); node.checked = node.head; node.approved = node.head;
-        if case == 3 { node.had_pr = true; node.pr_open = true; }
+        if case == 3 { node.holds = false; node.had_pr = true; node.pr_open = true; }
     }
     let mut nodes = Vec::new(); nodes.push(node);
     let mut gates = Vec::new(); gates.push(Gate { w: 3 });

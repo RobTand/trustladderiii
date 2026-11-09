@@ -18,6 +18,7 @@
         if let Some(class) = completion.failure_class.as_deref() {
             self.failure_allowance(&snapshot, &delivery.key, class, &mut commit)?;
         }
+        self.accepted_delivery_refusal(&snapshot, delivery, &completion, &mut commit)?;
         for (index, observation) in completion.observations.iter().enumerate() {
             self.queue_observation(&snapshot, &mut commit, &delivery.key, index, observation)?;
             if let Some(source) = crate::observation_upstream(&snapshot, observation)? {
@@ -29,4 +30,3 @@
         }
         Ok(())
     }
-

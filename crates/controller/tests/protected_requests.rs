@@ -325,7 +325,7 @@ fn post_protected_refusal(operations: bool, oversized: bool) {
         AppConfig {
             id: 123,
             slug: "factory".into(),
-            pem: include_str!("../../mergify/tests/fixtures/throwaway-key.pem").into(),
+            pem: include_str!("../../github/tests/fixtures/throwaway-key.pem").into(),
             webhook_secret: "fixture-secret".into(),
         },
         note.repository.installation,

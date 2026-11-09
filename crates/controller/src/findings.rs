@@ -31,17 +31,11 @@ pub struct CiFailure {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct QueueCiEvidence {
+pub struct CiEvidence {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cause: Option<Box<crate::queue_cause::CauseEvidence>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context: Option<Box<crate::queue_cause::QueueContext>>,
+    pub cause: Option<Box<CauseEvidence>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fingerprint: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub reporters: Vec<crate::queue_cause::CheckIdentity>,
-    #[serde(default)]
-    pub reporters_complete: bool,
     #[serde(default)]
     pub checks: Vec<CiFailure>,
     #[serde(default)]
@@ -192,4 +186,102 @@ mod selection_defects {
         assert_eq!(current.head, Some("a"));
         assert_eq!(current.findings, vec![&feedback[0]]);
     }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum CauseEvidence {
+    Change {
+        fingerprint: String,
+    },
+    Environment {
+        fingerprint: String,
+        base: String,
+        witness: String,
+    },
+    Unattributed,
+}
+
+fn terminal_text(text: &str) -> String {
+    enum State {
+        Text,
+        Escape,
+        Csi,
+        String,
+        StringEscape,
+    }
+    let mut state = State::Text;
+    let mut clean = String::with_capacity(text.len());
+    for ch in text.chars() {
+        state = match state {
+            State::Text => match ch {
+                '\x1b' => State::Escape,
+                '\u{009b}' => State::Csi,
+                '\u{0090}' | '\u{0098}' | '\u{009d}' | '\u{009e}' | '\u{009f}' => State::String,
+                _ => {
+                    if ch == '\r' {
+                        clean.push('\n');
+                    } else if !ch.is_control() || matches!(ch, '\n' | '\t') {
+                        clean.push(ch);
+                    }
+                    State::Text
+                }
+            },
+            State::Escape => match ch {
+                '[' => State::Csi,
+                ']' | 'P' | 'X' | '^' | '_' => State::String,
+                '\x1b' | ' '..='/' => State::Escape,
+                _ => State::Text,
+            },
+            State::Csi => {
+                if ('@'..='~').contains(&ch) {
+                    State::Text
+                } else {
+                    State::Csi
+                }
+            }
+            State::String => match ch {
+                '\x07' | '\u{009c}' => State::Text,
+                '\x1b' => State::StringEscape,
+                _ => State::String,
+            },
+            State::StringEscape => match ch {
+                '\\' | '\u{009c}' => State::Text,
+                '\x1b' => State::StringEscape,
+                _ => State::String,
+            },
+        };
+    }
+    clean
+}
+
+fn safe(text: &str, cap: usize) -> String {
+    clipped(&crate::memory::redact_text(&terminal_text(text)), cap)
+}
+
+pub(crate) fn bounded_ci_evidence(mut details: CiEvidence) -> CiEvidence {
+    details.complete &=
+        details.checks.len() <= 20 && details.failed_tests.len() <= MAX_FAILED_TESTS;
+    details.checks.truncate(20);
+    details.failed_tests.truncate(MAX_FAILED_TESTS);
+    let mut remaining = MAX_REPORT_CHARS;
+    for check in &mut details.checks {
+        check.name = safe(&check.name, 256.min(remaining));
+        remaining = remaining.saturating_sub(check.name.chars().count());
+        check.url = check.url.as_ref().map(|url| safe(url, 4096.min(remaining)));
+        remaining =
+            remaining.saturating_sub(check.url.as_deref().unwrap_or_default().chars().count());
+        check.summary = safe(&check.summary, MAX_MESSAGE_CHARS.min(remaining));
+        remaining = remaining.saturating_sub(check.summary.chars().count());
+    }
+    for test in &mut details.failed_tests {
+        let id = safe(&test.test, 4096.min(remaining));
+        details.complete &= id == test.test;
+        test.test = id;
+        remaining = remaining.saturating_sub(test.test.chars().count());
+        test.message = safe(&test.message, MAX_MESSAGE_CHARS.min(remaining));
+        remaining = remaining.saturating_sub(test.message.chars().count());
+    }
+    if !details.complete {
+        details.fingerprint = None;
+    }
+    details
 }

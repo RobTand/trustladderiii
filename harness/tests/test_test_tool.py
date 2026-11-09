@@ -151,16 +151,7 @@ def test_container_that_cannot_start_is_harness_infrastructure(fixture, monkeypa
 
 
 CONTAINER = execution.Container("sha256:" + "1" * 64)
-# Each pytest process appends its PID once, and each test its xdist worker.
-PROCESS_PROBE = '''
-import os
-from pathlib import Path
-
-def pytest_configure(config):
-    if not os.environ.get("PYTEST_XDIST_WORKER"):
-        with Path(__file__).with_name("processes.log").open("a") as log:
-            log.write(f"{os.getpid()}\\n")
-'''
+# Each test records its xdist worker.
 WORKER_PROBE = '''
 import os
 from pathlib import Path
@@ -175,11 +166,20 @@ def test_worker_two():
 '''
 
 
-def test_repeat_runs_fresh_pytest_processes_and_reports_each(fixture):
+def test_repeat_runs_fresh_pytest_processes_and_reports_each(fixture, tmp_path):
     # #408: five fresh consecutive runs, each its own pytest process.
-    (fixture / "conftest.py").write_text(PROCESS_PROBE)
+    process_log = tmp_path / "processes.log"
+    # These children run serially even when the parent inherits an xdist worker.
+    (fixture / "conftest.py").write_text(f'''
+import os
+from pathlib import Path
+
+def pytest_configure(config):
+    with Path({str(process_log)!r}).open("a") as log:
+        log.write(f"{{os.getpid()}}\\n")
+''')
     result = test_tool.run(fixture, CONTAINER, ("test_value.py::test_pass",), repeat=5)
-    processes = (fixture / "processes.log").read_text().split()
+    processes = process_log.read_text().split()
     assert len(processes) == 5 and len(set(processes)) == 5
     assert result["status"] == "completed"
     assert result["repeat"] == 5

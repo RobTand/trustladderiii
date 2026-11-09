@@ -17,7 +17,6 @@ WORKSPACE = Path('/tmp/tl3-workspace')
 SHARD_AWARE_BINARIES = {
     'tl3-controller/github-flow',
     'tl3-controller/github-notices',
-    'tl3-controller/mergify',
     'tl3-controller/publishing',
     'tl3-controller/prismabuild',
     'tl3-controller/simulation',

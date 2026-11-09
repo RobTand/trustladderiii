@@ -54,7 +54,7 @@ pub(super) open spec fn leaf(n: Node) -> bool {
             Phase::Making => n.pos == 2 && n.holds && n.pool && n.worktree
                 && n.run == Some(n.generation) && n.head.is_none() && n.checked.is_none()
                 && n.approved.is_none() && !n.had_pr && !n.pr_open && n.ticket.is_none(),
-            Phase::Queued => n.pos == 0 && n.holds && !n.pool && n.worktree && n.run.is_none()
+            Phase::Rebasing => n.pos == 1 && n.holds && !n.pool && n.worktree && n.run == Some(n.generation)
                 && n.head == Some(HeadId(1)) && n.checked == n.head && n.approved == n.head
                 && n.had_pr && n.pr_open && n.ticket.is_none(),
             _ => false,

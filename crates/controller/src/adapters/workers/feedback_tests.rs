@@ -109,11 +109,11 @@ impl Fixture {
         });
         n.next_seq = 2;
         n.pool = n.run.is_some() && phase != Phase::Rebasing;
-        n.holds = !matches!(phase, Phase::Planning { .. });
+        n.holds = !matches!(phase, Phase::Planning { .. } | Phase::AwaitingDelivery);
         n.footprint = footprint;
         n.checked = n.head;
         n.approved = n.head;
-        n.pr_open = matches!(phase, Phase::Publishing | Phase::Queued);
+        n.pr_open = matches!(phase, Phase::Publishing | Phase::AwaitingDelivery);
         n.had_pr = n.pr_open;
         n.paused = true;
         n.ticket = None;
@@ -642,7 +642,7 @@ fn missing_canonical_feedback_starts_an_empty_document() {
 #[test]
 fn infrastructure_ci_failure_creates_no_maker_feedback() {
     let mut f = Fixture::new();
-    f.seed(Phase::Queued, 0);
+    f.seed(Phase::AwaitingDelivery, 0);
     f.observe(Observation::CiFailed {
         node: NodeId(0),
         infra: true,

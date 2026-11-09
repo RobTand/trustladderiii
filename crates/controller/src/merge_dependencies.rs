@@ -1271,7 +1271,11 @@ mod tests {
                 Event::Ack {
                     node,
                     seq: effect.seq,
-                    ack: Ack::Confirmed,
+                    ack: if effect.kind == tl3_kernel::EffectKind::Enqueue {
+                        Ack::DeliveryAccepted
+                    } else {
+                        Ack::Confirmed
+                    },
                 },
             );
         }

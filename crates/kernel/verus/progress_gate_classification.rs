@@ -17,9 +17,9 @@ pub(super) open spec fn classified(w: World, event: Event) -> bool {
             node.0 < 4 && w.nodes@[node.0 as int].phase == Phase::Making
                 && !w.nodes@[node.0 as int].paused && w.nodes@[node.0 as int].run == Some(generation)
                 && head == match w.nodes@[node.0 as int].head { Some(h) => h, None => HeadId(0) },
-        Event::Fact { node, fact: Fact::PrMerged { head, checks_passed } } =>
-            node.0 < 4 && w.nodes@[node.0 as int].phase == Phase::Queued
-                && !w.nodes@[node.0 as int].paused && checks_passed
+        Event::Reply { node, generation, reply: Reply::RebaseClean { head } } =>
+            node.0 < 4 && w.nodes@[node.0 as int].phase == Phase::Rebasing
+                && !w.nodes@[node.0 as int].paused && w.nodes@[node.0 as int].run == Some(generation)
                 && head == match w.nodes@[node.0 as int].head { Some(h) => h, None => HeadId(0) },
         Event::Command { node, id, command: Command::Resume } =>
             node.0 < 4 && w.nodes@[node.0 as int].paused

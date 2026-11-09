@@ -33,11 +33,12 @@ fn state(state: EffectState) -> CoreState {
     }
 }
 fn ack(ack: u8) -> (Ack, CoreAck) {
-    match ack % 4 {
+    match ack % 5 {
         0 => (Ack::Confirmed, CoreAck::Confirmed),
         1 => (Ack::Retryable, CoreAck::Retryable),
         2 => (Ack::Permanent, CoreAck::Permanent),
-        _ => (Ack::BodyPolicyRefused, CoreAck::BodyPolicyRefused),
+        3 => (Ack::BodyPolicyRefused, CoreAck::BodyPolicyRefused),
+        _ => (Ack::DeliveryAccepted, CoreAck::Confirmed),
     }
 }
 fn effect(key: &str, state: EffectState) -> Effect {
@@ -96,10 +97,76 @@ fn transition_table_conforms_to_store() {
             );
         }
     }
-    for value in 0..4 {
+    for value in 0..5 {
         let (stored, core) = ack(value);
         assert_eq!(executor::delivery_ack(stored), core);
     }
+}
+
+/// Account for the TD changes to the retained pre-extraction source. All
+/// other statements still compare exactly, including both reads, transaction
+/// staging, cancellation, scratch evidence and approval retry boundaries.
+fn target_shell(historical: &str) -> String {
+    historical
+        .replace("Upstream::Mergify", "Upstream::Delivery")
+        .replace("completion.ack != Ack::Confirmed", "!matches!(completion.ack, Ack::Confirmed | Ack::DeliveryAccepted)")
+        .replace("Ack::Confirmed => EffectState::Confirmed", "Ack::Confirmed | Ack::DeliveryAccepted => EffectState::Confirmed")
+        .replace("        if completion.ack == Ack::Confirmed {", "        if matches!(completion.ack, Ack::Confirmed | Ack::DeliveryAccepted) {")
+        .replace("            self.record_progress(snapshot, &mut commit, key, completion.progress.as_ref())?;\n", "")
+        .replace("            self.failure_allowance(snapshot, key, class, &mut commit)?;\n        }\n", "            self.failure_allowance(snapshot, key, class, &mut commit)?;\n        }\n        self.accepted_delivery_refusal(snapshot, &delivery, &completion, &mut commit)?;\n")
+}
+
+// Keep the historical comparison for the surrounding I/O frame. The three
+// new acceptance blocks execute in the real controller boundary regression;
+// they are not frozen copies of production logic in this source fixture.
+fn historical_completion_frame(source: &str) -> String {
+    let mut frame = source.to_owned();
+    for (anchor, expected) in [
+        ("        if completion.ack == Ack::DeliveryAccepted\n", 2),
+        (
+            "        if completion.ack == Ack::Confirmed\n            && effect.state != EffectState::Cancelling",
+            1,
+        ),
+    ] {
+        let mut removed = 0;
+        while let Some(start) = frame.find(anchor) {
+            let mut parentheses = 0;
+            let mut braces = 0;
+            let mut body = false;
+            let end = frame[start..]
+                .char_indices()
+                .find_map(|(offset, ch)| {
+                    match ch {
+                        '(' => parentheses += 1,
+                        ')' => parentheses -= 1,
+                        '{' if body || parentheses == 0 => {
+                            body = true;
+                            braces += 1;
+                        }
+                        '}' if body => braces -= 1,
+                        _ => {}
+                    }
+                    (body && braces == 0).then_some(start + offset + ch.len_utf8())
+                })
+                .expect("complete acceptance block in production");
+            assert_eq!(&frame[end..end + 1], "\n");
+            frame.replace_range(start..end + 1, "");
+            removed += 1;
+        }
+        assert_eq!(
+            removed, expected,
+            "each target block has a real-interface counterpart"
+        );
+    }
+    frame
+        .replace(
+            "        // Acceptance retains the dispatch-hydrated PR binding for future wakes.\n",
+            "",
+        )
+        .replace(
+            "        // A cancelling receipt is terminal bookkeeping, never a new acceptance.\n",
+            "",
+        )
 }
 
 // The retained mock kernel boundary predates feedback evidence. Both delivery
@@ -118,18 +185,22 @@ fn completion_shell_keeps_every_other_statement_verbatim() {
     let source = delivery_source();
     let start = source.find("    fn prepare_completion(").unwrap();
     let end = source[start..].find("\n    fn apply(").unwrap() + start;
-    let restored = source[start..end]
-        .replace("Upstream::Delivery", "Upstream::Mergify")
+    let restored = historical_completion_frame(&source[start..end])
         .replace(
             include_str!("current-plan.rs.txt"),
-            include_str!("base-plan.rs.txt"),
+            &target_shell(include_str!("base-plan.rs.txt")),
         )
         .replace(
             ".find(|e| tl3_delivery::key_matches(e.key.as_bytes(), key.as_bytes()))",
             ".find(|e| e.key == key)",
         );
-    assert_eq!(restored, include_str!("base-integration-completion.rs.txt"));
-    assert!(include_str!("reference-plan.rs").contains(include_str!("base-plan.rs.txt")));
+    assert_eq!(
+        restored,
+        target_shell(include_str!("base-integration-completion.rs.txt"))
+    );
+    assert!(
+        include_str!("reference-plan.rs").contains(&target_shell(include_str!("base-plan.rs.txt")))
+    );
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -255,11 +326,10 @@ fn owned_controller_io_shell_remains_verbatim() {
     let source = delivery_source();
     let start = source.find("    fn retire_effect(").unwrap();
     let end = source[start..].find("    fn apply(").unwrap() + start;
-    let restored = source[start..end]
-        .replace("Upstream::Delivery", "Upstream::Mergify")
+    let restored = historical_completion_frame(&source[start..end])
         .replace(
             include_str!("current-plan.rs.txt"),
-            include_str!("base-plan.rs.txt"),
+            &target_shell(include_str!("base-plan.rs.txt")),
         )
         .replace(
             ".find(|e| tl3_delivery::key_matches(e.key.as_bytes(), key.as_bytes()))",
@@ -267,7 +337,7 @@ fn owned_controller_io_shell_remains_verbatim() {
         );
     let base = include_str!("base-integration-shell.rs.txt");
     let end = base.find("    fn apply(").unwrap();
-    assert_eq!(restored, &base[..end]);
+    assert_eq!(restored, target_shell(&base[..end]));
 }
 
 /// Approval I/O stays at its original source positions around pure decisions.

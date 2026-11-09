@@ -1,6 +1,9 @@
 use super::*;
 use std::collections::BTreeSet;
 
+/// The single host the first-cut TL3 CPU runtime may be placed on.
+pub(super) const FIRST_CUT_HOST: &str = "dl380g10";
+
 pub(super) fn options(options: &Options) -> Result<()> {
     if !absolute(&options.executable)
         || !absolute(&options.journal_root)
@@ -297,7 +300,7 @@ pub(super) fn request(
 pub(super) fn placement(placement: &Placement) -> Result<()> {
     if placement.architecture != "x86_64"
         || !placement.host_dependency.as_ref().is_some_and(|host| {
-            host.host == "dl380g10" && !host.reason.is_empty() && host.reason.len() <= 4096
+            host.host == FIRST_CUT_HOST && !host.reason.is_empty() && host.reason.len() <= 4096
         })
     {
         return Err(BackendError::invalid(

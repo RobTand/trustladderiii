@@ -83,7 +83,7 @@ fn materials(
             id: 123,
             slug: "fixture".into(),
             webhook_secret: "unused".into(),
-            pem: include_str!("../../../../mergify/tests/fixtures/throwaway-key.pem").into(),
+            pem: include_str!("../../../../github/tests/fixtures/throwaway-key.pem").into(),
         },
         1,
         tl3_github::ClientOptions {
@@ -233,7 +233,7 @@ fn worlds() -> Vec<(World, Vec<tl3_kernel::Out>)> {
                     };
                     paused_audit_reply = true;
                     changed = true;
-                } else if scenario == 6 && n.phase == Phase::Queued {
+                } else if scenario == 6 && n.phase == Phase::AwaitingDelivery {
                     event = Event::Fact {
                         node: NodeId(0),
                         fact: Fact::Conflict,
@@ -590,7 +590,7 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
         "Checking",
         "Reviewing",
         "Publishing",
-        "Queued",
+        "AwaitingDelivery",
         "Rebasing",
         "AwaitingRob",
         "Stopping",

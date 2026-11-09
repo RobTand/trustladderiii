@@ -538,75 +538,6 @@ impl Controller {
         Ok(true)
     }
 
-    /// State-table "Counter headroom" / Ack rows: the current queue fact first reconciles its
-    /// own missing acknowledgment. This is work required by that FIFO head,
-    /// not admission for an independent newer producer. Both the completion
-    /// and a refused completion still use the atomic queued-input transaction.
-    pub(crate) fn complete_queue_prerequisite(
-        &mut self,
-        head: &tl3_store::WorldRow,
-        key: &str,
-        completion: crate::executor::Completion,
-    ) -> Result<()> {
-        let snapshot = self.store.load()?;
-        let first = snapshot
-            .rows
-            .iter()
-            .filter(|r| r.table == "inbox" || r.table == PENDING_KERNEL)
-            .min_by_key(|r| r.arrival)
-            .ok_or(Error::Invalid("queue prerequisite has no head input"))?;
-        if first.table != "inbox" || first.table != head.table || first.id != head.id {
-            return Err(Error::Invalid(
-                "queue prerequisite is not for the head input",
-            ));
-        }
-        let Observation::Queue(fact) = crate::decode_stored(first.value.clone())? else {
-            return Err(Error::Invalid("queue prerequisite has no queue fact"));
-        };
-        let effect = snapshot
-            .pending_effects
-            .iter()
-            .find(|e| e.key == key)
-            .ok_or(Error::Invalid("queue prerequisite has no pending effect"))?;
-        let delivery = crate::hydrate(effect, &snapshot)?;
-        if !fact.needs_queue_ack()
-            || fact.node(&snapshot)? != Some(delivery.node())
-            || !matches!(
-                delivery.output,
-                crate::executor::Output::Effect {
-                    kind: tl3_kernel::EffectKind::Enqueue,
-                    ..
-                }
-            )
-            || !matches!(
-                effect.state,
-                tl3_store::EffectState::Sent | tl3_store::EffectState::Uncertain
-            )
-        {
-            return Err(Error::Invalid(
-                "completion is not the head queue fact's enqueue prerequisite",
-            ));
-        }
-        let id = format!("completion:{key}:{}", effect.updated_revision.get());
-        self.submit_kernel_input(
-            id.clone(),
-            PendingKernelInput::Completion {
-                key: key.into(),
-                completion,
-            },
-        )?;
-        let current = self.store.load()?;
-        if !current.rows.iter().any(counter_incident)
-            && let Some(row) = current
-                .rows
-                .iter()
-                .find(|r| r.table == PENDING_KERNEL && r.id == id)
-        {
-            self.replay_kernel_input(&current, row)?;
-        }
-        Ok(())
-    }
-
     /// Refusals have one incident projection. The kernel returns the unchanged
     /// input world; dependency callers must keep it rather than commit a prefix.
     /// On success callers use the returned result world, not the input reference.
@@ -980,7 +911,6 @@ pub(crate) fn observation_context(
             | Event::Command { node, .. },
         ) => Some(*node),
         Observation::LinkedRequest { original, .. } => Some(*original),
-        Observation::Queue(fact) => fact.node(snapshot)?,
         Observation::Progress { key, .. }
         | Observation::Quota { key, .. }
         | Observation::Classified { key, .. }

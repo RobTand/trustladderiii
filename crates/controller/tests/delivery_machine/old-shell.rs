@@ -1,7 +1,7 @@
 impl Controller {
     fn retire_effect(&mut self, snapshot: &Snapshot, row: &tl3_store::WorldRow) -> Result<()> {
         let delivery: Delivery = decode_stored(row.value.clone())?;
-        if executor::upstream(delivery.output) == executor::Upstream::Mergify
+        if executor::upstream(delivery.output) == executor::Upstream::Delivery
             || approval_delivery::is_approval(&delivery)
         {
             self.adapters
@@ -144,6 +144,33 @@ impl Controller {
             .find(|e| e.key == key)
             .ok_or(Error::Invalid("completion has no pending effect"))?;
         let delivery: Delivery = decode_stored(effect.payload.clone())?;
+        if completion.ack == Ack::DeliveryAccepted
+            && !matches!(
+                delivery.output,
+                DeliveryOutput::Effect {
+                    kind: tl3_kernel::EffectKind::Enqueue,
+                    ..
+                }
+            )
+        {
+            return Err(Error::Invalid(
+                "delivery acceptance requires the handoff effect",
+            ));
+        }
+        if completion.ack == Ack::Confirmed
+            && effect.state != EffectState::Cancelling
+            && matches!(
+                delivery.output,
+                DeliveryOutput::Effect {
+                    kind: tl3_kernel::EffectKind::Enqueue,
+                    ..
+                }
+            )
+        {
+            return Err(Error::Invalid(
+                "live handoff requires typed delivery acceptance",
+            ));
+        }
         if completion.ack == Ack::Permanent
             && publication_failure::handles(&delivery)
             && completion.diagnostic.is_none()
@@ -180,7 +207,8 @@ impl Controller {
         if let Some(class) = completion.failure_class.as_deref() {
             self.failure_allowance(snapshot, key, class, &mut commit)?;
         }
-        if effect.state == EffectState::Uncertain && completion.ack != Ack::Confirmed {
+        self.accepted_delivery_refusal(snapshot, &delivery, &completion, &mut commit)?;
+        if effect.state == EffectState::Uncertain && !matches!(completion.ack, Ack::Confirmed | Ack::DeliveryAccepted) {
             // A terminal failed attempt was found. Return to the sending state
             // through the effect machine before recording its failure.
             commit.transitions.push(EffectTransition {
@@ -194,7 +222,7 @@ impl Controller {
                 to: EffectState::Sent,
             });
         }
-        let from = if effect.state == EffectState::Uncertain && completion.ack != Ack::Confirmed {
+        let from = if effect.state == EffectState::Uncertain && !matches!(completion.ack, Ack::Confirmed | Ack::DeliveryAccepted) {
             EffectState::Sent
         } else {
             effect.state
@@ -203,7 +231,7 @@ impl Controller {
             EffectState::Confirmed
         } else {
             match completion.ack {
-                Ack::Confirmed => EffectState::Confirmed,
+                Ack::Confirmed | Ack::DeliveryAccepted => EffectState::Confirmed,
                 Ack::Retryable => EffectState::Intended,
                 Ack::Permanent | Ack::BodyPolicyRefused => EffectState::Failed,
             }
@@ -213,6 +241,22 @@ impl Controller {
             from,
             to: state,
         });
+        // Acceptance retains the dispatch-hydrated PR binding for future wakes.
+        // A cancelling receipt is terminal bookkeeping, never a new acceptance.
+        if completion.ack == Ack::DeliveryAccepted
+            && effect.state != EffectState::Cancelling
+            && state == EffectState::Confirmed
+            && snapshot
+                .rows
+                .iter()
+                .any(|row| row.table == "watches" && row.id == key)
+        {
+            commit.rows.push(put(
+                "watches",
+                key.into(),
+                json!(hydrate(effect, snapshot)?),
+            ));
+        }
         // Preserve teardown evidence in the same transaction that can emit the summary.
         for observation in &completion.observations {
             match observation {
@@ -320,7 +364,7 @@ impl Controller {
                 to: EffectState::Cancelled,
             });
         }
-        if completion.ack == Ack::Confirmed {
+        if matches!(completion.ack, Ack::Confirmed | Ack::DeliveryAccepted) {
             if matches!(
                 delivery.output,
                 DeliveryOutput::Effect {
@@ -340,7 +384,6 @@ impl Controller {
                     id: marker.clone(),
                 });
             }
-            self.record_progress(snapshot, &mut commit, key, completion.progress.as_ref())?;
         }
         // Upstream facts remain evidence even when the attempted write was refused.
         for (index, observation) in completion.observations.iter().enumerate() {

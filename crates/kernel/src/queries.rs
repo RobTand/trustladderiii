@@ -11,7 +11,7 @@ pub enum Wait {
     Effect(EffectKind),
     WorkerReply,
     CheckResults,
-    MergeQueue,
+    Delivery,
     SlotOrFiles,
     AgentPool,
     UpstreamEvent,
@@ -34,7 +34,7 @@ impl Node {
             Wait::CheckResults
         } else {
             match self.phase {
-                Phase::Queued => Wait::MergeQueue,
+                Phase::AwaitingDelivery => Wait::Delivery,
                 Phase::Ready(_) => Wait::SlotOrFiles,
                 // Q39: every agent role waits in one pool line.
                 _ if self.ticket.is_some() => Wait::AgentPool,
@@ -51,7 +51,8 @@ impl Node {
             EffectKind::StartRun(_) | EffectKind::StartRebase => self.run == Some(generation),
             EffectKind::SubmitChecks => self.job == Some(generation),
             EffectKind::Enqueue => {
-                self.phase == Phase::Queued && generation.checked_add(1) == Some(self.generation)
+                self.phase == Phase::AwaitingDelivery
+                    && generation.checked_add(1) == Some(self.generation)
             }
             _ => false,
         }

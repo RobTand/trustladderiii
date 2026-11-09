@@ -7,7 +7,7 @@ kernel_fn! {
 pub(super) fn make_leaf(kind: u8, files: u64, paused: bool, ticket: Option<u64>) -> (n: Node) [
     requires kind < 4, 0 < files < 16,
     ensures leaf(n), n.footprint == footprint::inline_footprint(files), n.paused == paused,
-        n.phase == match kind { 0 => Phase::Ready(Resume::Making), 1 => Phase::Queued,
+        n.phase == match kind { 0 => Phase::Ready(Resume::Making), 1 => Phase::Rebasing,
             2 => Phase::Making, _ => Phase::Unplanned },
         n.ticket == if kind == 0 { ticket } else { None },
 ] proof [reveal(initial_node);] {
@@ -17,9 +17,11 @@ pub(super) fn make_leaf(kind: u8, files: u64, paused: bool, ticket: Option<u64>)
     n.attempt = 1;
     n.footprint = Footprint::inline(files);
     n.paused = paused;
-    n.phase = match kind { 0 => Phase::Ready(Resume::Making), 1 => Phase::Queued,
+    n.phase = match kind { 0 => Phase::Ready(Resume::Making), 1 => Phase::Rebasing,
         2 => Phase::Making, _ => Phase::Unplanned };
     if kind == 1 {
+        n.pos = 1;
+        n.run = Some(n.generation);
         n.holds = true;
         n.head = Some(HeadId(1));
         n.checked = n.head;

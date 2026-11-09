@@ -808,7 +808,7 @@ fn stop_with(source: Source, operations: bool) -> Stopped {
         Upstream::Delivery,
         support::workers::Workers::new(
             None,
-            adapters::mergify::Fake::new(&fakes),
+            adapters::direct_merge::Fake::new(&fakes),
             vec![],
             move |d: &Delivery, completion: &mut Completion| {
                 if source == Source::Ci {

@@ -71,7 +71,11 @@ impl Run {
             self.send(Event::Ack {
                 node: NodeId(0),
                 seq: e.seq,
-                ack: Ack::Confirmed,
+                ack: if e.kind == EffectKind::Enqueue {
+                    Ack::DeliveryAccepted
+                } else {
+                    Ack::Confirmed
+                },
             });
         }
         panic!("effects never stopped");
@@ -153,7 +157,7 @@ impl Run {
         self.reply(Reply::MakerDone { head: *head });
         self.reply(CHECKS_PASS);
         self.reply(Reply::Approved { head: *head });
-        assert_eq!(self.phase(), Phase::Queued);
+        assert_eq!(self.phase(), Phase::AwaitingDelivery);
     }
 }
 
@@ -255,7 +259,7 @@ fn every_slice_one_phase_is_reachable() {
         "Checking",
         "Reviewing",
         "Publishing",
-        "Queued",
+        "AwaitingDelivery",
         "Rebasing",
         "AwaitingRob",
         "Stopping",
@@ -286,7 +290,7 @@ fn a_queued_pr_can_still_merge_while_paused() {
     let mut head = HeadId(0);
     run.pass(&mut head);
     run.command(Command::Pause);
-    assert_eq!(run.phase(), Phase::Queued);
+    assert_eq!(run.phase(), Phase::AwaitingDelivery);
     run.fact(Fact::PrMerged {
         head,
         checks_passed: true,
@@ -618,6 +622,73 @@ fn approval_is_one_exact_wide_head() {
 }
 
 #[test]
+fn unapproved_delivery_merges_report_incidents_and_finish_truthful_teardown() {
+    for wrong_head in [false, true] {
+        let mut run = Run::new();
+        run.start_making();
+        let mut approved = HeadId(1 << 40);
+        run.pass(&mut approved);
+        let observed = if wrong_head {
+            HeadId(u64::MAX)
+        } else {
+            approved
+        };
+        let checks_passed = wrong_head;
+        let credit = run.node().credit;
+        let footprint = run.node().footprint;
+        assert!(run.node().worktree && run.node().pr_open);
+        assert_eq!(run.w.check(), Ok(()));
+        run.notices.clear();
+
+        run.send(Event::Fact {
+            node: NodeId(0),
+            fact: Fact::PrMerged {
+                head: observed,
+                checks_passed,
+            },
+        });
+        assert_eq!(run.phase(), Phase::Stopping(Outcome::Merged));
+        assert_eq!(run.node().merged, Some(observed));
+        assert_eq!(run.node().approved, Some(approved));
+        assert!(!run.node().pr_open);
+        assert!(
+            run.node().worktree,
+            "teardown must await its actual acknowledgement"
+        );
+        assert_eq!(run.node().effect.unwrap().kind, EffectKind::RemoveWorktree);
+        assert!(
+            run.notices
+                .contains(&Notice::Note(NoteKind::UnapprovedMerge))
+        );
+        assert!(run.notices.contains(&Notice::Incident { needs_rob: false }));
+        assert_eq!(run.w.check(), Ok(()));
+
+        run.confirm();
+        let closed = run.node();
+        assert_eq!(closed.phase, Phase::Closed(Outcome::Merged));
+        assert_eq!(closed.merged, Some(observed));
+        assert_eq!(closed.footprint, footprint);
+        assert!(!closed.holds && !closed.pool && !closed.worktree && !closed.pr_open);
+        assert!(closed.run.is_none() && closed.job.is_none() && closed.ticket.is_none());
+        assert!(closed.effect.is_none() && closed.question.is_none());
+        assert_eq!(closed.credit.spent, credit.spent);
+        assert_eq!(closed.credit.earned, credit.earned + 1);
+        assert_eq!(run.w.check(), Ok(()));
+
+        run.fact(Fact::PrMerged {
+            head: observed,
+            checks_passed,
+        });
+        assert_eq!(
+            run.node(),
+            closed,
+            "a duplicate merge cannot change truth or earn twice"
+        );
+        assert_eq!(run.w.check(), Ok(()));
+    }
+}
+
+#[test]
 fn repo_and_node_ids_do_not_truncate() {
     let mut w = World::new(&vec![1; 300], 1);
     w = step(
@@ -661,7 +732,11 @@ fn file_locks_cover_large_footprints_and_stay_within_the_repo() {
                 Event::Ack {
                     node,
                     seq: e.seq,
-                    ack: Ack::Confirmed,
+                    ack: if e.kind == EffectKind::Enqueue {
+                        Ack::DeliveryAccepted
+                    } else {
+                        Ack::Confirmed
+                    },
                 },
             )
             .world;
@@ -719,7 +794,11 @@ fn file_locks_cover_large_footprints_and_stay_within_the_repo() {
             Event::Ack {
                 node: NodeId(0),
                 seq: e.seq,
-                ack: Ack::Confirmed,
+                ack: if e.kind == EffectKind::Enqueue {
+                    Ack::DeliveryAccepted
+                } else {
+                    Ack::Confirmed
+                },
             },
         )
         .world;
@@ -786,38 +865,6 @@ fn an_unknown_footprint_handle_is_a_failed_reply() {
     assert_eq!(run.node().run_failures, 1);
 }
 
-#[test]
-fn queue_stalls_raise_incidents_and_later_incidents_need_rob() {
-    let mut run = Run::new();
-    let before = run.node();
-    run.fact(Fact::UpstreamStalled);
-    assert_eq!(run.node(), before, "stalls outside Queued are ignored");
-    run.start_making();
-    let before = run.node();
-    run.fact(Fact::UpstreamStalled);
-    assert_eq!(run.node(), before);
-    run.pass(&mut HeadId(0));
-    run.fact(Fact::UpstreamStalled);
-    assert!(run.node().waiting_incident && !run.node().incident_needs_rob);
-    let before = run.node();
-    let notices = run.notices.len();
-    run.fact(Fact::UpstreamStalled);
-    assert_eq!(
-        run.node(),
-        before,
-        "an open incident absorbs repeated stalls"
-    );
-    assert_eq!(run.notices.len(), notices);
-    run.fact(Fact::IncidentCleared { by_rob: false });
-    assert!(!run.node().waiting_incident);
-    run.fact(Fact::UpstreamStalled);
-    assert!(run.node().waiting_incident && run.node().incident_needs_rob);
-    run.fact(Fact::IncidentCleared { by_rob: false });
-    assert!(run.node().waiting_incident);
-    run.fact(Fact::IncidentCleared { by_rob: true });
-    assert!(!run.node().waiting_incident);
-}
-
 fn q44_review() -> Run {
     let mut run = Run::new();
     run.start_making();
@@ -840,7 +887,7 @@ fn q44_first_exhaustion_starts_a_free_fresh_review() {
     assert_eq!(run.node().checked, before.checked);
     assert!(run.node().holds);
     run.reply(Reply::Approved { head: HeadId(1) });
-    assert_eq!(run.phase(), Phase::Queued);
+    assert_eq!(run.phase(), Phase::AwaitingDelivery);
 }
 
 #[test]
@@ -862,7 +909,7 @@ fn q44_fresh_review_shares_the_rebase_recheck_allowance() {
         assert_eq!(run.phase(), Phase::Reviewing);
         assert_eq!(run.credit(), 0);
         run.reply(Reply::Approved { head: HeadId(1) });
-        assert_eq!(run.phase(), Phase::Queued);
+        assert_eq!(run.phase(), Phase::AwaitingDelivery);
     }
 }
 
@@ -919,7 +966,7 @@ fn q44_new_head_review(rebase: bool) {
     let mut run = q44_review();
     run.reply(Reply::ReviewerOutOfRoom);
     run.reply(Reply::Approved { head: HeadId(1) });
-    assert_eq!(run.phase(), Phase::Queued);
+    assert_eq!(run.phase(), Phase::AwaitingDelivery);
     if rebase {
         run.fact(Fact::Conflict);
         run.reply(Reply::RebaseClean { head: HeadId(2) });
@@ -1052,7 +1099,11 @@ fn publishing_conflict_rebases_at_every_publication_step() {
             r.send(Event::Ack {
                 node: NodeId(0),
                 seq: effect.seq,
-                ack: Ack::Confirmed,
+                ack: if effect.kind == EffectKind::Enqueue {
+                    Ack::DeliveryAccepted
+                } else {
+                    Ack::Confirmed
+                },
             });
         }
         let generation = r.node().generation;
@@ -1080,6 +1131,76 @@ fn publishing_conflict_rebases_at_every_publication_step() {
         assert_eq!(r.phase(), Phase::Closed(Outcome::Merged));
         assert!(!r.asked_rob());
     }
+}
+
+/// State-table Conflict rows at the executable level (docs/state-table.md:596 and :622),
+/// observed on the world right after the real apply, before settle. Covers the #806
+/// isolation of the Conflict arm: exact destination, one generation, everything else kept.
+#[test]
+fn conflict_rows_keep_their_exact_destinations_and_frames() {
+    fn phased(n: Node, phase: Phase) -> Node {
+        Node {
+            generation: n.generation + 1,
+            phase,
+            pos: 0,
+            ticket: None,
+            effect: n.effect.map(|e| InFlight {
+                cancelling: true,
+                ..e
+            }),
+            ..n
+        }
+    }
+    fn conflict_row(w: &World, from: Phase, to: Phase) {
+        let before = w.nodes[0];
+        assert_eq!(before.phase, from);
+        let event = Event::Fact {
+            node: NodeId(0),
+            fact: Fact::Conflict,
+        };
+        let (_, out, trace) = step_traced(w.clone(), event);
+        let applied = &trace[0];
+        assert_eq!(
+            applied.nodes[0],
+            phased(before, to),
+            "exact Conflict row from {from:?}"
+        );
+        assert_eq!(applied.nodes.len(), w.nodes.len());
+        assert!(
+            applied.nodes[1..] == w.nodes[1..],
+            "other nodes are untouched"
+        );
+        assert_eq!(
+            (applied.next_ticket, applied.next_question),
+            (w.next_ticket, w.next_question)
+        );
+        assert!(
+            !out.iter().any(|o| matches!(o, Out::Notice { .. })),
+            "a conflict emits no notice"
+        );
+    }
+    // :596 Publishing -> Rebasing: one new generation, credit and slot kept.
+    let mut r = Run::new();
+    r.start_making();
+    r.reply(Reply::MakerDone { head: HeadId(1) });
+    r.reply(CHECKS_PASS);
+    r.send(Event::Reply {
+        node: NodeId(0),
+        generation: r.node().generation,
+        reply: Reply::Approved { head: HeadId(1) },
+    });
+    assert!(r.node().holds);
+    conflict_row(&r.w, Phase::Publishing, Phase::Rebasing);
+    // :622 AwaitingDelivery -> Ready(Rebasing): one generation, no ownership, no credit charge.
+    let mut run = q44_review();
+    run.reply(Reply::ReviewerOutOfRoom);
+    run.reply(Reply::Approved { head: HeadId(1) });
+    assert!(!run.node().holds);
+    conflict_row(
+        &run.w,
+        Phase::AwaitingDelivery,
+        Phase::Ready(Resume::Rebasing),
+    );
 }
 
 #[test]
@@ -1139,7 +1260,11 @@ fn settle_world_grants_reconciled_capacity_and_is_idempotent() {
                 Event::Ack {
                     node: NodeId(i as u64),
                     seq: effect.seq,
-                    ack: Ack::Confirmed,
+                    ack: if effect.kind == EffectKind::Enqueue {
+                        Ack::DeliveryAccepted
+                    } else {
+                        Ack::Confirmed
+                    },
                 },
             )
             .world;
@@ -1223,6 +1348,7 @@ fn publishing_enqueue() -> Run {
     run.pass(&mut HeadId(0));
     let node = &mut run.w.nodes[0];
     node.phase = Phase::Publishing;
+    node.holds = true;
     node.pos = 3;
     node.effect = Some(InFlight {
         seq: node.next_seq,
@@ -1284,7 +1410,11 @@ fn publishing_ci_infrastructure_retries_once_then_raises_incident() {
         run.send(Event::Ack {
             node: NodeId(0),
             seq: enqueue.seq,
-            ack: Ack::Confirmed,
+            ack: if enqueue.kind == EffectKind::Enqueue {
+                Ack::DeliveryAccepted
+            } else {
+                Ack::Confirmed
+            },
         });
         assert_eq!(
             run.phase(),
@@ -1343,7 +1473,11 @@ fn confirm_all(mut w: World) -> World {
             Event::Ack {
                 node: NodeId(i as u64),
                 seq: e.seq,
-                ack: Ack::Confirmed,
+                ack: if e.kind == EffectKind::Enqueue {
+                    Ack::DeliveryAccepted
+                } else {
+                    Ack::Confirmed
+                },
             },
         );
         assert!(next.valid() && next.is_settled());
@@ -1506,4 +1640,149 @@ fn protected_paths_close_from_ingest_audit_or_planning_without_credit_or_questio
                 .contains(&Notice::Summary(Outcome::NotActionable))
         );
     }
+}
+
+fn publishing_before_handoff() -> Run {
+    let mut run = Run::new();
+    run.start_making();
+    run.reply(Reply::MakerDone { head: HeadId(9) });
+    run.reply(CHECKS_PASS);
+    let generation = run.node().generation;
+    run.send(Event::Reply {
+        node: NodeId(0),
+        generation,
+        reply: Reply::Approved { head: HeadId(9) },
+    });
+    assert_eq!(run.phase(), Phase::Publishing);
+    run
+}
+
+fn live_handoff() -> Run {
+    let mut run = publishing_before_handoff();
+    for _ in 0..32 {
+        let effect = run
+            .node()
+            .effect
+            .expect("publication emits its next effect");
+        if effect.kind == EffectKind::Enqueue {
+            return run;
+        }
+        run.send(Event::Ack {
+            node: NodeId(0),
+            seq: effect.seq,
+            ack: Ack::Confirmed,
+        });
+    }
+    panic!("publication did not reach its handoff");
+}
+
+#[test]
+fn typed_delivery_acceptance_releases_resources_and_preserves_evidence() {
+    let mut run = live_handoff();
+    let before = run.node();
+    assert!(before.holds);
+    let effect = before.effect.unwrap();
+    run.send(Event::Ack {
+        node: NodeId(0),
+        seq: effect.seq,
+        ack: Ack::DeliveryAccepted,
+    });
+    let after = run.node();
+    run.w.check().unwrap();
+    assert_eq!(after.phase, Phase::AwaitingDelivery);
+    assert_eq!(after.generation, before.generation + 1);
+    assert!(!after.holds && !after.pool);
+    assert!(
+        after.ticket.is_none()
+            && after.run.is_none()
+            && after.job.is_none()
+            && after.effect.is_none()
+    );
+    assert_eq!(
+        (after.head, after.checked, after.approved),
+        (before.head, before.checked, before.approved)
+    );
+    assert_eq!(
+        (after.footprint, after.worktree, after.pr_open, after.had_pr),
+        (
+            before.footprint,
+            before.worktree,
+            before.pr_open,
+            before.had_pr
+        )
+    );
+    assert_eq!(
+        (after.credit, after.attempt, after.round, after.replanned),
+        (
+            before.credit,
+            before.attempt,
+            before.round,
+            before.replanned
+        )
+    );
+    let accepted = run.w.clone();
+    run.send(Event::Ack {
+        node: NodeId(0),
+        seq: effect.seq,
+        ack: Ack::DeliveryAccepted,
+    });
+    assert_eq!(run.w, accepted, "duplicate acceptance is inert");
+}
+
+#[test]
+fn stale_and_ordinary_handoff_acknowledgements_are_inert() {
+    let mut run = live_handoff();
+    let before = run.w.clone();
+    let effect = run.node().effect.unwrap();
+    run.send(Event::Ack {
+        node: NodeId(0),
+        seq: effect.seq + 1,
+        ack: Ack::DeliveryAccepted,
+    });
+    assert_eq!(run.w, before);
+    run.send(Event::Ack {
+        node: NodeId(0),
+        seq: effect.seq,
+        ack: Ack::Confirmed,
+    });
+    assert_eq!(
+        run.w, before,
+        "ordinary confirmation cannot accept durable responsibility"
+    );
+}
+
+#[test]
+fn typed_acceptance_cannot_confirm_another_effect() {
+    let mut run = publishing_before_handoff();
+    let effect = run.node().effect.unwrap();
+    assert_ne!(effect.kind, EffectKind::Enqueue);
+    let before = run.w.clone();
+    run.send(Event::Ack {
+        node: NodeId(0),
+        seq: effect.seq,
+        ack: Ack::DeliveryAccepted,
+    });
+    assert_eq!(run.w, before);
+}
+
+#[test]
+fn cancelling_delivery_acceptance_cannot_revive_the_request() {
+    let mut run = live_handoff();
+    let effect = run.node().effect.unwrap();
+    run.send(Event::Command {
+        node: NodeId(0),
+        id: 1,
+        command: Command::Stop,
+    });
+    assert!(run.node().effect.unwrap().cancelling);
+    let stopped = run.node();
+    run.send(Event::Ack {
+        node: NodeId(0),
+        seq: effect.seq,
+        ack: Ack::DeliveryAccepted,
+    });
+    assert!(matches!(run.phase(), Phase::Stopping(_) | Phase::Closed(_)));
+    assert_ne!(run.phase(), Phase::AwaitingDelivery);
+    assert!(run.node().generation >= stopped.generation);
+    run.w.check().unwrap();
 }

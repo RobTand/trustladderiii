@@ -169,7 +169,7 @@ pub(super) fn failed_round(w: &mut World, i: usize, step: ReviewStop,
     if m.round == 0 {
         // The fix round resumes the maker's session. It's free.
         m.round = 1;
-        set_phase(m, Phase::Making);
+        set_phase(m, if m.holds { Phase::Making } else { Phase::Ready(Resume::Making) });
     } else {
         kernel_snapshot! { before_rung_report = report.entries@ }
         next_rung(w, i, step, out, report);
@@ -227,7 +227,7 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
         m.round = 0;
         if m.credit.can_spend(1) {
             m.credit.spend(1);
-            set_phase(m, Phase::Making);
+            set_phase(m, if m.holds { Phase::Making } else { Phase::Ready(Resume::Making) });
         } else {
             ask_rob(
                 w,

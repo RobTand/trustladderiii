@@ -21,7 +21,7 @@ def fixture_scratch(facts):
         settings=json.loads(fixture.read_text())
         sys.path.insert(0,str(pathlib.Path(settings['source'])/'harness/src'))
         from tl3_harness import runtime
-        runtime.os.uname=lambda: SimpleNamespace(nodename='dl380g10')
+        runtime.os.uname=lambda: SimpleNamespace(nodename=mutation.get('nodename','dl380g10'))
         generation=facts['run']['instance'].split('/')[-1]
         runtime._external_generation=lambda *args: {'exit_code':0,'stdout':generation,'stderr':''}
         if (output/'scratch-pause').exists():
@@ -57,3 +57,4 @@ def fixture_scratch(facts):
             if mutation.get('completion')=='unequal': completion.write_text('{}')
         result.update(mutation.get('replace',{}))
     print(json.dumps(result),flush=True)
+    if mutation.get('exit'): sys.exit(mutation['exit'])

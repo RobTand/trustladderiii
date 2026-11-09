@@ -1,5 +1,5 @@
 //! PR outcomes shared by delivery adapters and simulation.
-use crate::findings::{FailedTest, QueueCiEvidence};
+use crate::findings::{CiEvidence, FailedTest};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -12,7 +12,7 @@ pub enum Outcome {
         head: String,
         infra: bool,
         failed_tests: Vec<FailedTest>,
-        evidence: QueueCiEvidence,
+        evidence: CiEvidence,
     },
     Conflict {
         head: String,
@@ -35,7 +35,8 @@ pub(crate) fn identity(repository: &crate::Repository, number: u64, suffix: &str
 }
 
 pub(crate) fn recorded(snapshot: &tl3_store::Snapshot, identity: &str) -> bool {
-    snapshot.rows.iter().any(|row| {
-        matches!(row.table.as_str(), "queue_facts" | "delivery_outcomes") && row.id == identity
-    })
+    snapshot
+        .rows
+        .iter()
+        .any(|row| row.table == "delivery_outcomes" && row.id == identity)
 }

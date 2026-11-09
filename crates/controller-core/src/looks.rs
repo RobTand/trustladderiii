@@ -163,7 +163,7 @@ pub fn stalled(now: u64, progress: u64, allowance: u64) -> bool {
 pub enum StallUpstream {
     Workers,
     GitHub,
-    Mergify,
+    Delivery,
     PrismaBuild,
     Worktrees,
 }
@@ -173,30 +173,24 @@ pub enum StallUpstream {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StallAction {
     StopWorker,
-    Requeue,
     Unfinished,
     Ignore,
 }
 
-/// State-table.md:808-810 at cdacce8f: stop a stalled worker; GitHub/Mergify report a stall; PrismaBuild owns its deadline.
-/// Queue class selection and Worktrees routing are preserved existing behaviour (no rule).
+/// State-table waiting: workers stop; GitHub reports an unfinished request.
+/// Accepted delivery waits for authenticated evidence; PB owns its deadline.
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(out => ensures
     (out == StallAction::StopWorker) == (source == StallUpstream::Workers),
-    (out == StallAction::Requeue) == ((source == StallUpstream::GitHub || source == StallUpstream::Mergify) && requeue),
-    (out == StallAction::Unfinished) == ((source == StallUpstream::GitHub || source == StallUpstream::Mergify) && !requeue),
-    (out == StallAction::Ignore) == (source == StallUpstream::PrismaBuild || source == StallUpstream::Worktrees),
+    (out == StallAction::Unfinished) == (source == StallUpstream::GitHub),
+    (out == StallAction::Ignore) == (source == StallUpstream::Delivery || source == StallUpstream::PrismaBuild || source == StallUpstream::Worktrees),
 ))]
-pub fn stall_action(source: StallUpstream, requeue: bool) -> StallAction {
+pub fn stall_action(source: StallUpstream) -> StallAction {
     match source {
         StallUpstream::Workers => StallAction::StopWorker,
-        StallUpstream::GitHub | StallUpstream::Mergify => {
-            if requeue {
-                StallAction::Requeue
-            } else {
-                StallAction::Unfinished
-            }
+        StallUpstream::GitHub => StallAction::Unfinished,
+        StallUpstream::Delivery | StallUpstream::PrismaBuild | StallUpstream::Worktrees => {
+            StallAction::Ignore
         }
-        StallUpstream::PrismaBuild | StallUpstream::Worktrees => StallAction::Ignore,
     }
 }
 

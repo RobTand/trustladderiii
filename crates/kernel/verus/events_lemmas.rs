@@ -12,8 +12,10 @@ pub(super) proof fn selected_input(w: World, event: Event)
         Event::Ack { node, seq, ack } => node.0 < w.nodes@.len()
             && node_checked(w, w.nodes@[node.0 as int])
             && (!w.nodes@[node.0 as int].paused || w.nodes@[node.0 as int].phase is Stopping)
-            && ack == Ack::Confirmed
-            && (match w.nodes@[node.0 as int].effect { Some(e) => e.seq == seq, None => false }),
+            && (match w.nodes@[node.0 as int].effect {
+                Some(e) => e.seq == seq && ack == if e.kind == EffectKind::Enqueue { Ack::DeliveryAccepted } else { Ack::Confirmed },
+                None => false,
+            }),
         Event::Command { node, id, command } => node.0 < w.nodes@.len()
             && node_checked(w, w.nodes@[node.0 as int])
             && id > w.nodes@[node.0 as int].last_cmd
