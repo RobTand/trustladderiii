@@ -316,7 +316,7 @@ fn diagnostic(input: &V) -> V {
         "execution",
         input.field("execution").cloned().unwrap_or(failure),
     );
-    for key in ["action_key", "receipts"] {
+    for key in ["wait_reference", "receipts"] {
         if let Some(v) = input.field(key) {
             set(&mut result, key, v.clone());
         }
