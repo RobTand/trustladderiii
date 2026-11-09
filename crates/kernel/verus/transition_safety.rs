@@ -615,6 +615,28 @@ pub(super) proof fn outputs_quiet(before: World, after: World, out: Seq<Option<O
     } by {}
 }
 
+/// Gap 2a: a command-family handler appends nothing, or one notice for its node.
+pub(super) open spec fn notice_only(o0: Outbox, o1: Outbox, node: NodeId) -> bool {
+    o1.len == o0.len || (o1.len == o0.len + 1 && match o1.items@[o0.len as int] {
+        Some(Out::Notice { node: n, .. }) => n == node,
+        _ => false,
+    })
+}
+
+/// A command-family suffix holds no effect, so check_outputs applies vacuously.
+pub(super) proof fn notice_only_effects(o0: Outbox, o1: Outbox, node: NodeId)
+    requires o0.len < OUTBOX, notice_only(o0, o1, node),
+    ensures no_effects(emitted(o0, o1)),
+{
+    reveal(no_effects);
+    assert(o1.items@.len() == OUTBOX);
+    if o1.len == o0.len {
+        assert(emitted(o0, o1).len() == 0);
+    } else {
+        assert(emitted(o0, o1) =~= seq![o1.items@[o0.len as int]]);
+    }
+}
+
 /// K4b: Q54 check_fail_fast and the check_apply event rows for one apply.
 pub(super) proof fn apply_rules(before: World, after: World, event: Event, out: Seq<Option<Out>>)
     requires transition_safety(before, after, Transition::Apply(event), out),
