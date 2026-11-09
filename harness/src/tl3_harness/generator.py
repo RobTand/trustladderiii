@@ -256,9 +256,7 @@ def container_command(tree, argv):
 
 def run(tree, container, command, generated_files, protected_paths, files, timeout=TIMEOUT,
         cpus=1, mem_gb=2):
-    if runtime.launch_context() is None:
-        # Generators run only on the owned launch path of an admitted Flux job.
-        raise RuntimeError("generator requires an admitted Flux job")
+    # Admission reads the Flux launch context first; any other backend is refused.
     require_admission()
     argv = configured_argv(command)
     # Fractional deadlines remain useful to trusted qualification callers. Repo

@@ -497,11 +497,11 @@ def test_flux_generator_stages_readonly_checkout_as_private_writable_copy(flux, 
 
 
 def test_generator_outside_flux_is_refused_before_any_work(tmp_path, monkeypatch):
-    # The PB docker branch is gone: no admission other than a Flux job may stage or launch.
-    from tl3_harness import generator, runtime
+    # Flux is the only executor: admission reads the launch context first, so no
+    # other backend may stage or launch.
+    from tl3_harness import generator
 
-    monkeypatch.setattr(runtime, 'launch_context', lambda: None)
-    monkeypatch.setattr(generator, 'require_admission', lambda: None)
+    monkeypatch.delenv('TL3_EXECUTION_BACKEND', raising=False)
     work = []
     monkeypatch.setattr(generator, 'manifest', lambda root: work.append(('manifest', root)) or {})
     monkeypatch.setattr(generator, 'git', lambda *args: work.append(('git', args)))
