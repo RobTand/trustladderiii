@@ -176,7 +176,6 @@ fn release_confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
     match kind {
         EffectKind::StopRun => {
             m.run = None;
-            m.pool = false;
         }
         EffectKind::WithdrawJob => m.job = None,
         EffectKind::ClosePr => m.pr_open = false,
