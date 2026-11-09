@@ -69,6 +69,7 @@ class FluxFake:
 
     def __init__(self, state, job):
         self.state, self.job = Path(state), job
+        self.state.mkdir(parents=True, exist_ok=True)
         self.prepared, self.plans, self.roots, self.payloads, self.endings = [], {}, {}, {}, {}
         self.submitted, self.attached, self.resumed = [], [], []
         # None derives the terminal ending from the job's verified output, as Rust classify does.
@@ -192,26 +193,34 @@ def generator_job(root, document):
                                       **contract), []
 
 
+def fake_for(tmp_path, monkeypatch):
+    """This test's Flux fake: the one already installed for it, or a new one."""
+    state = tmp_path / "tools"
+    if str(state) not in FAKES:
+        FluxFake(state, canned_tests_job(state)).install(monkeypatch)
+    return FAKES[str(state)]
+
+
 @pytest.fixture(autouse=True)
 def supported_fake_runtime(tmp_path, monkeypatch):
     """The admitted Flux backend, replaced only at its control and CLI wire."""
-    return FluxFake(tmp_path / "tools", canned_tests_job(tmp_path / "tools")).install(monkeypatch)
+    return fake_for(tmp_path, monkeypatch)
 
 
 @pytest.fixture
-def submission(tmp_path, supported_fake_runtime):
+def submission(tmp_path, monkeypatch):
     root = tmp_path / "worktree"
     root.mkdir()
     (root / "uncommitted.py").write_bytes(b"current dirty bytes\x00\xff")
     (root / ".gitignore").write_text("uncommitted.py\n")
-    state = tmp_path / "tools"
-    state.mkdir(exist_ok=True)
+    fake = fake_for(tmp_path, monkeypatch)
+    state = fake.state
     job = canned_tests_job(state)
 
     def checked(staged, document):
         assert (Path(staged) / "checkout/uncommitted.py").read_bytes() == b"current dirty bytes\x00\xff"
         return job(staged, document)
-    supported_fake_runtime.job = checked
+    fake.job = checked
     return root, state
 
 
