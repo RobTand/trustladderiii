@@ -12,6 +12,7 @@ import subprocess
 import pytest
 
 from tl3_harness import generator
+from conftest import flux_context
 
 
 IMAGE = "sha256:" + "a" * 64
@@ -55,8 +56,13 @@ def unprivileged():
 
 @pytest.fixture
 def admitted(monkeypatch):
-    # The admission gate checks the PB/Flux environment, not generator staging.
+    # The admission gate checks the Flux environment, not generator staging.
     monkeypatch.setattr(generator, "require_admission", lambda: None)
+    # PB-REMOVAL: Flux is the only executor. Allocation and scratch release are
+    # exercised by the Rust collector e2e, not by preparation tests.
+    flux_context(monkeypatch)
+    monkeypatch.setattr(generator, "_flux_allocation", lambda: None, raising=False)
+    monkeypatch.setattr(generator, "_release_flux_scratch", lambda: None, raising=False)
 
 
 def test_readonly_checkout_stages_writable_copy_before_git_and_reaches_container(tmp_path, admitted, monkeypatch):

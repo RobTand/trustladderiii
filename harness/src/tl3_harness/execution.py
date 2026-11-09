@@ -4,9 +4,7 @@ import hashlib
 import os
 from pathlib import Path
 import re
-import shutil
 import tempfile
-import time
 from typing import Protocol
 
 from .limits import MAX_PROOF_MESSAGE_CHARS, MAX_DETAILED_FAILURES, MAX_MESSAGE_CHARS, MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES, MAX_RESULT_BYTES, RESULT_ENVELOPE_BYTES, validate_check_plan
@@ -80,82 +78,30 @@ class Container:
 
 
 def container_command(tree: Path, container: Container, tests: tuple[str, ...]) -> list[str]:
-    context = runtime.launch_context()
-    scratch = scratch_directory()
-    if context is not None:
-        return runtime.command(tree, scratch)
-    harness = Path(__file__).resolve().parent
-    owner = scratch.parent.stat()
-    return [
-        "docker", "run", "--init", "--interactive", "--rm", "--pull=never", "--network=none", "--read-only",
-        "--cap-drop=ALL", "--security-opt=no-new-privileges", f"--user={owner.st_uid}:{owner.st_gid}",
-        "--pids-limit=128", "--ipc=private", "--workdir=/checkout",
-        "--mount", f"type=bind,src={tree},dst=/checkout,readonly",
-        "--mount", f"type=bind,src={harness},dst=/harness,readonly",
-        "--mount", f"type=bind,src={scratch},dst=/tmp",
-        "--env", "HOME=/tmp", "--env", "TMPDIR=/tmp", "--env", "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1",
-        *[arg for name in NATIVE_THREAD_ENVIRONMENT
-          for arg in ("--env", f"{name}={os.environ.get(name, '1')}")],
-        "--entrypoint=python3",
-        container.image, "-I", "-B", "/harness/runner.py", "-",
-    ]
+    # Flux is the only executor (PB-REMOVAL); Rust's launch context owns the container.
+    return runtime.command(tree, scratch_directory())
 
 
 def require_admission():
-    if runtime.launch_context() is not None:
-        runtime.prepare_scratch()
-        return
-    required = ("PRISMABUILD_CONTAINER_OWNER", "PRISMABUILD_CONTAINER_MARKER",
-                "PRISMABUILD_ACTION_PROGRESS_PATH", "PRISMABUILD_ACTION_PROGRESS_TOKEN")
-    if not all(os.environ.get(name) for name in required):
-        raise RuntimeError("checks require an admitted PrismaBuild action with a progress contract")
-    phases = json.loads(os.environ.get("PRISMABUILD_ACTION_PROGRESS_ALLOWANCES", "{}"))
-    if "tests" not in phases:
-        raise RuntimeError("declare the PrismaBuild progress phase 'tests'")
-    docker = shutil.which("docker")
-    if not docker or "Docker CLI shim" not in Path(docker).read_text(errors="replace")[:200]:
-        raise RuntimeError("PrismaBuild's managed Docker shim must be first on PATH")
+    runtime.launch_context()
+    runtime.prepare_scratch()
 
 
 class Progress:
     def __init__(self):
         self.units = 0
-        context = runtime.launch_context()
-        self.flux_journal = Path(context['progress']['journal']) if context is not None else None
-        if self.flux_journal is not None:
-            if self.flux_journal.exists():
-                with self.flux_journal.open() as journal:
-                    self.units = sum(1 for _ in journal)
-            return
-        path = os.environ.get("PRISMABUILD_ACTION_PROGRESS_PATH")
-        if path and Path(path).exists():
-            record = json.loads(Path(path).read_text())
-            if (record.get("token") != os.environ.get("PRISMABUILD_ACTION_PROGRESS_TOKEN")
-                    or type(record.get("units_completed")) is not int or record["units_completed"] < 0):
-                raise RuntimeError("invalid existing PrismaBuild progress record")
-            self.units = record["units_completed"]
+        self.flux_journal = Path(runtime.launch_context()['progress']['journal'])
+        if self.flux_journal.exists():
+            with self.flux_journal.open() as journal:
+                self.units = sum(1 for _ in journal)
 
     def commit(self, test: str):
         self.units += 1
-        if self.flux_journal is not None:
-            # Raw completion observations, with no PB token or backend ending claim.
-            with self.flux_journal.open('a') as journal:
-                journal.write(json.dumps(test) + '\n')
-                journal.flush()
-                os.fsync(journal.fileno())
-            return
-        path = Path(os.environ["PRISMABUILD_ACTION_PROGRESS_PATH"])
-        record = {"schema": "prismabuild.action_progress.v1",
-                  "token": os.environ["PRISMABUILD_ACTION_PROGRESS_TOKEN"],
-                  "phase": "tests", "units_completed": self.units,
-                  "unit": test, "reported_unix": time.time()}
-        temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-        with temporary.open("w") as target:
-            json.dump(record, target, sort_keys=True)
-            target.write("\n")
-            target.flush()
-            os.fsync(target.fileno())
-        temporary.replace(path)
+        # Raw completion observations, with no backend ending claim.
+        with self.flux_journal.open('a') as journal:
+            journal.write(json.dumps(test) + '\n')
+            journal.flush()
+            os.fsync(journal.fileno())
 
 
 def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: Path,
