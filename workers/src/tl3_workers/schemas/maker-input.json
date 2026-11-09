@@ -333,11 +333,6 @@
           "type": "string",
           "pattern": "^(?:[\\w./:-]+@)?sha256:[0-9a-f]{64}$"
         },
-        "tools_path": {
-          "type": "string",
-          "pattern": "^/",
-          "minLength": 1
-        },
         "execution": {
           "oneOf": [
             {
@@ -374,31 +369,10 @@
         }
       },
       "required": [
-        "image"
+        "image",
+        "execution"
       ],
-      "additionalProperties": false,
-      "oneOf": [
-        {
-          "required": [
-            "tools_path"
-          ],
-          "not": {
-            "required": [
-              "execution"
-            ]
-          }
-        },
-        {
-          "required": [
-            "execution"
-          ],
-          "not": {
-            "required": [
-              "tools_path"
-            ]
-          }
-        }
-      ]
+      "additionalProperties": false
     },
     "hindsight": {
       "type": "object",
