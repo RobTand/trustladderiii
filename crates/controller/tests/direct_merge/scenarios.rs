@@ -1542,9 +1542,22 @@ fn unexplained_never_accepted_handoff_ends_in_read_incident() {
     let incidents = look_until_read_incident(&fixture, &mut controller);
     assert_eq!(incidents.len(), 1, "an unexplained never-acknowledged enqueue must end in a read incident: rows={:?}",
         controller.snapshot().unwrap().rows.iter().filter(|r| matches!(r.table.as_str(), "allowances" | "incidents")).collect::<Vec<_>>());
-    let (_, incident) = &incidents[0];
+    let (id, incident) = incidents[0].clone();
     assert_eq!(incident["signature"]["upstream"], "Delivery");
     assert_eq!(incident["effect"], json!(key));
+    never_accepted(&fixture, &mut controller, &key);
+    // Re-review MF1: the handoff's own .read incident is not a deliberate hold. It
+    // stays open while nothing is repaired, with no close/reopen flap.
+    for _ in 0..6 {
+        fixture.clock.0.set(fixture.clock.0.get() + Duration::from_secs(2));
+        controller.look_due().unwrap();
+        drain(&mut controller);
+        let rows: Vec<_> = controller.snapshot().unwrap().rows.into_iter()
+            .filter(|row| row.table == "incidents").map(|row| (row.id, row.value)).collect();
+        assert_eq!(rows.len(), 1, "no second incident may be raised: {rows:?}");
+        assert_eq!(rows[0].0, id);
+        assert_eq!(rows[0].1["open"], json!(true), "the unrepaired handoff's incident must never close: {rows:?}");
+    }
     never_accepted(&fixture, &mut controller, &key);
 }
 
@@ -1601,4 +1614,42 @@ fn open_node_incident_never_accepted_handoff_stays_healthy() {
     assert_eq!(still_open, vec![open[0].id.clone()]);
     assert!(allowance_healthy(&mut controller, &key), "a held handoff stays a healthy look");
     never_accepted(&fixture, &mut controller, &key);
+}
+
+/// Program-lead ruling on the post-acceptance Permanent nit: a permanent refusal
+/// first seen by a look on a settled handoff (AwaitingDelivery) must reach a
+/// person. Here a restart look (in-memory wakes lost, `look_now` before any
+/// drive) meets a repository that allows no merge method. Exactly one incident
+/// is raised through the existing accepted-delivery refusal path and carries the
+/// publication diagnostic.
+#[test]
+fn settled_permanent_refusal_seen_by_a_look_raises_one_incident() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_settled_permanent_look");
+    let mut fixture = DirectFixture::new();
+    fixture.check(None);
+    let (mut controller, delivery) = fixture.start(&settings);
+    drain(&mut controller);
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::AwaitingDelivery);
+    assert!(controller.snapshot().unwrap().rows.iter().all(|row| row.table != "incidents"));
+    drop(controller);
+    fixture.wakes = direct_merge::Wakes::default();
+    let mut controller = fixture.open(&settings);
+    fixture.direct.lock().unwrap().no_merge_method = true;
+    controller.look_now().unwrap();
+    drain(&mut controller);
+    quiet_looks(&fixture, &mut controller);
+    let open: Vec<_> = controller.snapshot().unwrap().rows.into_iter()
+        .filter(|row| row.table == "incidents" && row.value["open"] == true).collect();
+    assert_eq!(open.len(), 1, "a settled permanent refusal must raise exactly one incident: rows={:?}",
+        controller.snapshot().unwrap().rows.iter().filter(|r| matches!(r.table.as_str(), "allowances" | "incidents")).collect::<Vec<_>>());
+    let incident = &open[0].value;
+    assert_eq!(incident["effect"], json!(delivery.key));
+    assert_eq!(incident["signature"]["upstream"], "Delivery");
+    let summary = incident["summary"].as_str().unwrap();
+    assert!(summary.contains("Publication diagnostic:") && summary.contains(&delivery.key),
+        "the incident must carry the diagnostic: {summary}");
+    assert!(controller.snapshot().unwrap().rows.iter().any(|row| row.table == "publication_failures" && row.id == delivery.key));
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::AwaitingDelivery);
+    assert!(fixture.direct.lock().unwrap().puts.is_empty());
 }
