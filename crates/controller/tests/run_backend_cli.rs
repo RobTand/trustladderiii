@@ -5304,7 +5304,8 @@ fn unrelated_debt(f: &Fixture) -> PathBuf {
 #[test]
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn generator_preparation_failure_closes_typed_failed_through_real_collector() {
-    for (mode, operation) in [("prep-failure", "input_manifest")] {
+    let (mode, operation) = ("prep-failure", "input_manifest");
+    {
         let (f, driver) = generator_prep_case(mode);
         assert!(driver["error_type"].is_null(), "{mode}: {driver}");
         assert_eq!(driver["code"], 0, "{mode}: {driver}");
