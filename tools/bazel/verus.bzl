@@ -1004,7 +1004,7 @@ def verus_proofs():
             "footprint_inline_disjoint": ("kernel::footprint#inline_disjoint", 1),
             "footprint_inline_view_contains": ("kernel::footprint#inline_view_contains", 1),
             "footprint_view_contains": ("kernel::footprint#view_contains", 1),
-            "footprint_disjoint_symmetric": ("kernel::footprint#disjoint_symmetric", 1),
+            "footprint_disjoint_symmetric": ("kernel::footprint#disjoint_symmetric", 2),
             "ranks_node_distance_definition": ("kernel::ranks#node_distance_definition", 1),
             "ids": ("kernel::ids", 6),
             "controller_boundary": ("controller_boundary", 2),
