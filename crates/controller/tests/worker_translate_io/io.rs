@@ -432,6 +432,18 @@ pub(super) fn old_canonical_planner_failure(s: &Schedule) {
     assert_eq!(execute(s, false, None), expected);
 }
 
+pub(super) fn both_reject_obsolete_planner_wire(s: &Schedule) -> Run {
+    let expected = Run { calls:vec![], rows:vec![],
+        result:json!({"event":Event::Reply {node:NodeId(0),generation:7,
+            reply:Reply::RunFailed},"detailed_review":false}),
+        pending:initial_pending(s),persisted:initial_pending(s),committed:vec![],
+        world:initial_world_value(s),writes:0 };
+    assert_eq!(execute(s,false,None),expected,"exact historical obsolete-wire rejection");
+    let current=execute(s,true,None);
+    assert_eq!(current,expected,"canonical schema rejects obsolete node_ids before I/O");
+    current
+}
+
 pub(super) fn canonical_planner_accepted(s: &Schedule) -> Run {
     old_canonical_planner_failure(s);
     let actual = current_with_crash_safety(s);

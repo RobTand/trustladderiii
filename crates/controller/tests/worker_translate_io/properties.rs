@@ -35,6 +35,13 @@ fn production_and_reference_sources_are_pinned() {
     // adapters::workers::feedback_tests. Retain the unchanged historical checks.
     let source = include_str!("../../src/lib.rs");
     let historical_current = include_str!("current.rs");
+    let planner_leaf = |source: &str| {
+        let start = source.find("                if role == \"planner\" && reply[\"kind\"] == \"leaf\" && plan_check.is_none() {").unwrap();
+        let end = source[start..].find("                if role == \"reviewer\" {").unwrap() + start;
+        source[start..end].to_owned()
+    };
+    assert_eq!(planner_leaf(historical_current), planner_leaf(source),
+        "current S1 planner admission must match actual production");
     for (copy, expected) in [
         (include_str!("reference.rs"), base),
         (include_str!("current.rs"), arm(historical_current).split("        };\n        *detail").next().unwrap()),
@@ -173,7 +180,7 @@ fn canonical_planner_wire_has_explicit_old_and_current_outcomes() {
         let tests = check.remove("tests").unwrap();
         check.insert("node_ids".into(), tests);
     }
-    let r = io::current_with_crash_safety(&obsolete);
+    let r = io::both_reject_obsolete_planner_wire(&obsolete);
     assert_eq!(r.result, json!({"event":Event::Reply {node:NodeId(0),generation:7,
         reply:Reply::RunFailed},"detailed_review":false}));
     assert!(r.calls.is_empty() && r.rows.is_empty() && r.committed.is_empty());
