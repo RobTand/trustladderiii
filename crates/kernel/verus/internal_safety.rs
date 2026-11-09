@@ -156,4 +156,23 @@ pub(super) proof fn step_preserves_accepted(before: World, after: World, i: int)
     step_preserves_gate_rules(before, after, i);
     checking::accepted_parts(after);
 }
+
+/// Complete acceptance across one internal step of node i. The dependency
+/// rules come from the checker's node-update export: the stepped owner either
+/// has every prerequisite delivered (Admit included) or still meets every
+/// rule on a waiting owner.
+pub(super) proof fn step_preserves_accepted_full(before: World, after: World, i: int)
+    requires checking::accepted(before), step_premises(before, after, i),
+        before.nodes@.len() <= u64::MAX,
+        before.nodes@[i].phase is Closed ==> after.nodes@[i].phase is Closed,
+        after.nodes@[i].credit.withheld ==> before.nodes@[i].credit.withheld
+            || !dependencies::prerequisites_delivered(before, NodeId(i as u64)),
+        dependencies::prerequisites_delivered(before, NodeId(i as u64))
+            || dependencies::owner_waiting_ok(after.nodes@[i]),
+    ensures checking::accepted(after),
+{
+    checking::accepted_parts(before);
+    dependencies::node_update_preserves(before, after, i);
+    step_preserves_accepted(before, after, i);
+}
 }
