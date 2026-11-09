@@ -218,7 +218,7 @@ def flux(tmp_path, monkeypatch):
         'progress': {'journal': str(output / 'progress.json'), 'no_progress_seconds': 5},
         'scratch': {'approved_root': str(scratch_root), 'leaf': str(scratch_root / 'fJob')},
         'native_threads': 1,
-        'runtime': {'mode': 'in_job', 'image': IMAGE, 'executable': str(write_podman(tmp_path, IMAGE)),
+        'runtime': {'mode': 'in_job', 'image': IMAGE, 'executable': str(write_podman(tmp_path, IMAGE, latency=latency_knob('FX_TEST_ACTION_LATENCY_SECONDS'))),
                     'trusted_root': str(harness), 'interpreter': '/usr/bin/python3.12'},
         'runtime_identity': {'cleanup': {'fixture': 'pinned cleanup helper'}},
         'placement': {'kind': 'observed', 'allocation': {'fixture': 1}, 'topology': {'fixture': 1},

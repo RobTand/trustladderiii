@@ -298,7 +298,8 @@ def generator_backend(tmp_path, monkeypatch):
     Supervised, cleanup and artifact validation are real.
     """
     podman_source = """#!{python}
-import hashlib, json, os, pathlib, sys
+import hashlib, json, os, pathlib, sys, time
+time.sleep({latency!r})
 args = sys.argv[1:]
 if args[:1] == ['run']:
     if '--name' not in args or '--label' not in args:
@@ -337,7 +338,10 @@ sys.exit(1 if args[:2] == ['container', 'exists'] else 0)
         (root / "bin" / name).write_text("#!/bin/sh\nexit 0\n")
         (root / "bin" / name).chmod(0o700)
     podman = root / "podman"
-    podman.write_text(podman_source.format(python=sys.executable, root=str(root), image=IMAGE))
+    # Test-only contention model (FX-TEST-BUDGETS convention): every runtime-client call waits first.
+    latency = float(os.environ.get("FX_TEST_ACTION_LATENCY_SECONDS", "0"))
+    assert 0 <= latency < float("inf"), "FX_TEST_ACTION_LATENCY_SECONDS must be non-negative seconds"
+    podman.write_text(podman_source.format(python=sys.executable, root=str(root), image=IMAGE, latency=latency))
     podman.chmod(0o700)
     (root / "xdg").mkdir(mode=0o700)
     (root / "output").mkdir()
