@@ -1,8 +1,6 @@
 use super::*;
 use serde::{Deserialize, Serialize};
 
-/// First-cut placement host; see `validate::placement` and `evidence::allocation_grant`.
-const NO_GRANT_HOST: &str = "dl380g10";
 /// The existing helper attribution for externally attributed scratch reclamation.
 const NO_GRANT_RECLAMATION: &str = "external scratch reclamation";
 
@@ -201,11 +199,11 @@ impl Flux {
                         .runtime
                         .host_dependency
                         .as_ref()
-                        .is_none_or(|dependency| dependency.host != NO_GRANT_HOST)
+                        .is_none_or(|dependency| dependency.host != validate::FIRST_CUT_HOST)
                 {
                     return Ok(None);
                 }
-                (NO_GRANT_HOST, Some(NO_GRANT_RECLAMATION))
+                (validate::FIRST_CUT_HOST, Some(NO_GRANT_RECLAMATION))
             }
         };
         let nonce = digest(
