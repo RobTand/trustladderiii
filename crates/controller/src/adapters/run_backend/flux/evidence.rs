@@ -593,7 +593,20 @@ impl Flux {
             // debt before native clean arrived. Retire only that exact intent.
             self.run_cleanup(owner)?;
         }
-        let Some((ending, reason)) = classify(&record, report.as_ref(), cleanup_complete) else {
+        let generator_failed = match report.as_ref() {
+            Some(report) => super::worker_protocol::generator_failed(&record, report),
+            None => Ok(false),
+        };
+        let Ok(generator_failed) = generator_failed else {
+            self.mark_cleanup_debt(&record)?;
+            return Ok(Observation::Unknown {
+                binding: Some(binding),
+                reason: "trusted generator artifact unavailable or invalid".into(),
+            });
+        };
+        let Some((ending, reason)) =
+            classify(&record, report.as_ref(), cleanup_complete, generator_failed)
+        else {
             self.mark_cleanup_debt(&record)?;
             return Ok(Observation::Unknown {
                 binding: Some(binding),
@@ -698,9 +711,20 @@ impl Flux {
         let reference = receipt.report.as_ref().ok_or_else(invalid)?;
         let report: RunnerReport =
             serde_json::from_slice(&checked_blob(reference, &record.intent.output_dir)?)?;
+        // A no-container generator failure is collected while its native job still
+        // runs. Its cleanup proof is the committed terminal's native clean, empty
+        // execution set and scratch absence, all rechecked against this record.
+        let cleanup_complete = report.cleanup_complete
+            || (super::worker_protocol::generator_failed_before_container(&record, &report)?
+                && super::cleanup::all_stopped(&record)
+                && receipt.evidence.iter().any(|r| {
+                    r.path
+                        .file_name()
+                        .is_some_and(|n| n.to_string_lossy().starts_with("scratch-absence-"))
+                }));
         if !self.report_identity(&record, binding, &report)?
             || !report.complete
-            || !report.cleanup_complete
+            || !cleanup_complete
         {
             return Err(invalid());
         }
@@ -778,7 +802,8 @@ impl Flux {
         if matches!(
             record.request.runtime.runtime,
             ExecutionRuntime::RootlessPodman { .. }
-        ) {
+        ) && !super::worker_protocol::generator_failed_before_container(record, report)?
+        {
             let facts: Vec<_> = report
                 .runtime_binding
                 .iter()
@@ -887,6 +912,7 @@ fn classify(
     record: &Record,
     report: Option<&RunnerReport>,
     cleanup_complete: bool,
+    generator_failed: bool,
 ) -> Option<(Ending, &'static str)> {
     if !record
         .events
@@ -992,6 +1018,14 @@ fn classify(
         return None;
     }
     match (status, report.outcome) {
+        (WaitStatus::Exited { code: 0, .. }, ReportOutcome::WorkerPayloadCompleted)
+            if generator_failed =>
+        {
+            Some((
+                Ending::Failed,
+                "identity-checked trusted generator artifact reports a typed failure; never a pass",
+            ))
+        }
         (
             WaitStatus::Exited { code: 0, .. },
             ReportOutcome::Passed

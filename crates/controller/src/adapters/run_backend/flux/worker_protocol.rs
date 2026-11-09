@@ -107,7 +107,7 @@ fn summary(bytes: &[u8], symptoms: &[&[u8]]) -> Result<()> {
     Ok(())
 }
 
-fn artifact(bytes: &[u8], suite: &Suite) -> Result<()> {
+fn artifact_bytes(bytes: &[u8], suite: &Suite) -> Result<()> {
     let mut metadata = value(bytes)?;
     if !matches!(
         metadata["status"].as_str(),
@@ -219,11 +219,74 @@ fn parse<'a>(raw: &'a [u8], suite: &Suite) -> Result<Parsed<'a>> {
             if artifacts[0].len() > bounds.payload_bytes {
                 return Err(invalid());
             }
-            artifact(artifacts[0], suite)?;
+            artifact_bytes(artifacts[0], suite)?;
             Ok(Parsed::Generator(artifacts[0]))
         }
         _ => Err(invalid()),
     }
+}
+
+fn generator_artifact(record: &Record, report: &RunnerReport) -> Result<Option<Value>> {
+    if !matches!(record.request.suite, Suite::Generator { .. })
+        || report.outcome != ReportOutcome::WorkerPayloadCompleted
+    {
+        return Ok(None);
+    }
+    let Some(WorkerPayload::Generator { artifact }) = &report.worker_payload else {
+        return Ok(None);
+    };
+    let bounds = output_bounds(&record.request.suite);
+    let bytes = checked_blob_limit(artifact, &record.intent.output_dir, bounds.payload_bytes)?;
+    artifact_bytes(&bytes, &record.request.suite)?;
+    Ok(Some(value(&bytes)?))
+}
+
+/// The trusted generator artifact reports a typed failure or refusal, never a pass.
+pub(super) fn generator_failed(record: &Record, report: &RunnerReport) -> Result<bool> {
+    Ok(generator_artifact(record, report)?
+        .is_some_and(|artifact| artifact["status"] != "completed"))
+}
+
+/// A generator failure that provably never began a container. Rust holds no launch
+/// intent or runtime ownership (InJob Podman cannot run without a durable launch
+/// intent), the collector observed no runtime binding, and the producer reports a
+/// preparation failure with the container phase skipped and no outputs.
+pub(super) fn generator_failed_before_container(
+    record: &Record,
+    report: &RunnerReport,
+) -> Result<bool> {
+    if !matches!(
+        record.request.runtime.runtime,
+        ExecutionRuntime::RootlessPodman {
+            mode: ContainerMode::InJob,
+            ..
+        }
+    ) || !record.container_launches.is_empty()
+        || !record.runtime_ownerships.is_empty()
+        || report.runtime_binding.is_some()
+        || !report.runtime_bindings.is_empty()
+        || !report.launch_failures.is_empty()
+        || report.tests_started != 0
+        || !report.cases.is_empty()
+        || report.payload.is_some()
+    {
+        return Ok(false);
+    }
+    let Some(artifact) = generator_artifact(record, report)? else {
+        return Ok(false);
+    };
+    let timings = &artifact["timings"];
+    Ok(
+        matches!(artifact["status"].as_str(), Some("failed" | "refused"))
+            && artifact["exit_code"].is_null()
+            && artifact["phase"] == "preparation"
+            && timings["preparation"]["outcome"] == "failed"
+            && timings["container"]["outcome"] == "skipped"
+            && timings["validation"]["outcome"] == "skipped"
+            && artifact.get("outputs").is_none()
+            && artifact.get("output_manifest").is_none()
+            && artifact.get("log").is_none(),
+    )
 }
 
 pub(super) fn report_identity(record: &Record, report: &RunnerReport) -> Result<bool> {
