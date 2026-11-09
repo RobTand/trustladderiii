@@ -408,7 +408,7 @@ fn scratch_reclamation_serializes_begin_until_terminal_and_rejects_late_begin() 
 
 #[test]
 #[ignore = "requires admitted PB actual-action fixture"]
-fn scratch_preflight_requires_helper_and_retained_host_authority() {
+fn scratch_preflight_requires_helper_and_proves_no_grant_absence() {
     for case in ["no-helper", "no-ownership", "host-absent"] {
         let f = generated_action_case(case);
         let report: Value =
@@ -468,29 +468,32 @@ fn scratch_preflight_requires_helper_and_retained_host_authority() {
         assert!(state["runtime_ownerships"].as_array().unwrap().is_empty());
         f.events(&completed(0));
         let frames = f.attach();
-        assert_eq!(
-            frames.last().unwrap()["result"]["observation"]["kind"],
-            "unknown",
-            "{case}: {frames:?}"
-        );
-        assert!(!f.intent.output_dir.join("receipt.json").exists());
-        assert!(
-            !f.intent
-                .output_dir
-                .join("scratch-reclamation.manifest.json")
-                .exists()
-        );
-        let debt = f
-            .options
-            .journal_root
-            .join("cleanup-debt")
-            .join(&f.request.runtime.manifest_digest);
-        assert!(fs::read_dir(debt).unwrap().next().is_some());
+        if case == "no-helper" {
+            // Without the pinned helper there is no independent host authority.
+            assert_eq!(
+                frames.last().unwrap()["result"]["observation"]["kind"],
+                "unknown",
+                "{case}: {frames:?}"
+            );
+            assert!(!f.intent.output_dir.join("receipt.json").exists());
+            assert!(
+                !f.intent
+                    .output_dir
+                    .join("scratch-reclamation.manifest.json")
+                    .exists()
+            );
+            assert!(!f.debt_entries().is_empty());
+        } else {
+            // The runner never validated an allocation: the helper proves absence alone.
+            let ending = frames.last().unwrap()["result"]["observation"]["terminal"]["ending"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{case}: {frames:?}"))
+                .to_owned();
+            f.assert_no_grant_terminal(&frames, &ending, false);
+        }
         if let Ok(destination) = std::env::var("FX_E2E_EVIDENCE") {
             fs::write(
-                Path::new(&destination)
-                    .join(case)
-                    .join("attach-unknown.json"),
+                Path::new(&destination).join(case).join("attach.json"),
                 serde_json::to_vec(&frames).unwrap(),
             )
             .unwrap();
@@ -1522,12 +1525,7 @@ text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
             container: None,
         }
     }
-    fn retain_fixture_allocation(&self) {
-        // The runner validates its allocation once, before any launch; a later
-        // report must not observe again after cancellation.
-        if self.state().allocation_grant.is_some() {
-            return;
-        }
+    fn write_fixture_allocation(&self) -> String {
         let count = self.request.reservation.cpus.get();
         let cpus = (0..count)
             .map(|n| n.to_string())
@@ -1536,9 +1534,21 @@ text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
         let nodes = std::iter::once(json!({"metadata":{"type":"node","rank":0,"id":0,"name":"dl380g10"}}))
             .chain((0..count).map(|n| json!({"metadata":{"type":"core","rank":0,"id":n,"properties":{"os-pus":n.to_string()}}}))).collect::<Vec<_>>();
         fs::write(self.root.path().join("all.json"), json!({"version":1,"execution":{"R_lite":[{"rank":"0","children":{"core":cpus}}],"nodelist":["dl380g10"]},"scheduling":{"graph":{"nodes":nodes}}}).to_string()).unwrap();
-        let observed = self.call(json!({"op":"observe_allocation","owner":self.intent.owner,"correlation":self.intent.correlation,
+        cpus
+    }
+    fn observe_fixture_allocation(&self, cpus: &str) -> Vec<Value> {
+        self.call(json!({"op":"observe_allocation","owner":self.intent.owner,"correlation":self.intent.correlation,
             "observed":{"run":self.ownership().run,"request_digest":self.intent.request_digest,"hostname":"dl380g10","allowed_cpus":cpus,
-            "cgroup":"0::/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/shell-fABC:sys.service"}}));
+            "cgroup":"0::/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/shell-fABC:sys.service"}}))
+    }
+    fn retain_fixture_allocation(&self) {
+        // The runner validates its allocation once, before any launch; a later
+        // report must not observe again after cancellation.
+        if self.state().allocation_grant.is_some() {
+            return;
+        }
+        let cpus = self.write_fixture_allocation();
+        let observed = self.observe_fixture_allocation(&cpus);
         assert_eq!(observed.last().unwrap()["kind"], "result", "{observed:?}");
         let frames = self.call(json!({"op":"validate_allocation","owner":self.intent.owner,"correlation":self.intent.correlation,"facts":observed.last().unwrap()["result"]["facts"]}));
         assert_eq!(frames.last().unwrap()["kind"], "result", "{frames:?}");
@@ -4387,6 +4397,599 @@ fn injob_no_launch_needs_native_clean_and_does_not_leave_unregistered_debt() {
             .join(&f.request.runtime.manifest_digest);
         assert!(!debt.exists() || fs::read_dir(debt).unwrap().next().is_none());
     }
+}
+
+// FX-NO-GRANT-SCRATCH: a dispatched InJob job whose runner never validated an
+// allocation has no grant and no execution. After native clean, the pinned
+// helper proves the exact retained leaf absent, reclaiming an owned tree through
+// the existing guarded flow, or the job stays held with its debt.
+const SCRATCH_RECLAMATION: &str = "external scratch reclamation";
+
+fn cancel_clean() -> Vec<Value> {
+    vec![
+        json!({"name":"exception","context":{"type":"cancel","severity":0}}),
+        json!({"name":"clean"}),
+    ]
+}
+
+fn tree_snapshot(path: &Path) -> Value {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(meta) = fs::symlink_metadata(path) else {
+        return Value::Null;
+    };
+    let mut node =
+        json!({"mode": meta.mode(), "ino": meta.ino(), "uid": meta.uid(), "len": meta.len()});
+    if meta.file_type().is_symlink() {
+        node["link"] = json!(fs::read_link(path).unwrap());
+    } else if meta.is_dir() {
+        let mut children: Vec<PathBuf> = fs::read_dir(path)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .collect();
+        children.sort();
+        node["children"] = children
+            .iter()
+            .map(|child| {
+                json!([
+                    child.file_name().unwrap().to_string_lossy(),
+                    tree_snapshot(child)
+                ])
+            })
+            .collect();
+    } else if meta.len() <= 4096 {
+        node["bytes"] = json!(fs::read(path).unwrap());
+    }
+    node
+}
+
+impl Fixture {
+    /// InJob fixture whose cleanup helper runs the production exact-root
+    /// observation and guarded reclamation over a private, test-owned root.
+    fn no_grant_scratch() -> Self {
+        let mut f = Fixture::new();
+        f.podman(ContainerMode::InJob, true);
+        let scratch = tempfile::tempdir().unwrap();
+        fs::set_permissions(scratch.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        f.use_scratch_root(scratch.path().to_owned());
+        f.scratch = Some(scratch);
+        f
+    }
+
+    fn use_scratch_root(&mut self, root: PathBuf) {
+        self.request.scratch_root = root;
+        self.intent.request_digest = digest(&serde_json::to_vec(&self.request).unwrap());
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        fs::write(
+            self.root.path().join("action-fixture.json"),
+            json!({ "source": source }).to_string(),
+        )
+        .unwrap();
+    }
+
+    fn leaf(&self) -> PathBuf {
+        self.request.scratch_root.join("fABC")
+    }
+
+    fn make_leaf(&self) -> PathBuf {
+        let leaf = self.leaf();
+        fs::create_dir(&leaf).unwrap();
+        fs::set_permissions(&leaf, fs::Permissions::from_mode(0o700)).unwrap();
+        leaf
+    }
+
+    fn scratch_control(&self, control: &Value) {
+        fs::write(
+            self.intent.output_dir.join("scratch-control.json"),
+            control.to_string(),
+        )
+        .unwrap();
+    }
+
+    fn cancel(&self) {
+        let frames = self.call(
+            json!({"op":"cancel","owner":self.intent.owner,"correlation":self.intent.correlation}),
+        );
+        assert_eq!(frames.last().unwrap()["kind"], "result", "{frames:?}");
+    }
+
+    fn debt_entries(&self) -> Vec<String> {
+        let dir = self
+            .options
+            .journal_root
+            .join("cleanup-debt")
+            .join(&self.request.runtime.manifest_digest);
+        fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn scratch_inputs(&self) -> Vec<Value> {
+        fs::read_dir(&self.intent.output_dir)
+            .unwrap()
+            .flatten()
+            .filter(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                name.starts_with("scratch-absence-") && name.ends_with(".input.json")
+            })
+            .map(|entry| serde_json::from_slice(&fs::read(entry.path()).unwrap()).unwrap())
+            .collect()
+    }
+
+    /// Submit a fresh owner of the same runtime through the same journal. The
+    /// fixture native transport shares one jobspec file, so restore it after.
+    fn submit_distinct_owner(&self) -> Value {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let mut intent = self.intent.clone();
+        intent.correlation = format!(
+            "{}-next{}",
+            self.intent.correlation,
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        );
+        intent.output_dir = self.intent.output_dir.with_file_name(&intent.correlation);
+        let spec = self.root.path().join("jobspec.json");
+        let retained = fs::read(&spec).ok();
+        let frames = self.call(json!({"op":"submit","request":self.request,"intent":intent}));
+        if let Some(bytes) = retained {
+            fs::write(&spec, bytes).unwrap();
+        }
+        let _ = fs::remove_dir_all(&intent.output_dir);
+        frames.last().unwrap().clone()
+    }
+
+    fn assert_next_owner_held(&self) {
+        let frame = self.submit_distinct_owner();
+        assert_eq!(frame["kind"], "error", "{frame}");
+        assert!(
+            frame["message"]
+                .as_str()
+                .unwrap()
+                .contains("unresolved runtime cleanup debt"),
+            "{frame}"
+        );
+    }
+
+    fn assert_next_owner_accepted(&self) {
+        let frame = self.submit_distinct_owner();
+        assert_eq!(frame["result"]["submission"]["kind"], "accepted", "{frame}");
+    }
+
+    /// Terminal committed without a grant: the receipt carries the exact helper
+    /// proof, every debt is retired, and the next owner dispatches.
+    fn assert_no_grant_terminal(&self, frames: &[Value], ending: &str, reclaimed: bool) {
+        assert_eq!(
+            frames.last().unwrap()["result"]["observation"]["terminal"]["ending"],
+            ending,
+            "{frames:?}"
+        );
+        let state = self.state();
+        assert!(state.allocation_grant.is_none());
+        assert!(state.runtime_ownerships.is_empty() && state.container_launches.is_empty());
+        let out = &self.intent.output_dir;
+        let receipt: Value =
+            serde_json::from_slice(&fs::read(out.join("receipt.json")).unwrap()).unwrap();
+        let names: Vec<String> = receipt["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|reference| {
+                Path::new(reference["path"].as_str().unwrap())
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        let input = names
+            .iter()
+            .find(|name| name.starts_with("scratch-absence-") && name.ends_with(".input.json"))
+            .unwrap_or_else(|| panic!("{names:?}"));
+        let nonce = input
+            .strip_prefix("scratch-absence-")
+            .and_then(|rest| rest.strip_suffix(".input.json"))
+            .unwrap();
+        for suffix in ["input.json", "stdout", "stderr", "status.json"] {
+            let name = format!("scratch-absence-{nonce}.{suffix}");
+            assert!(names.contains(&name), "{name} not in {names:?}");
+        }
+        let input: Value = serde_json::from_slice(&fs::read(out.join(input)).unwrap()).unwrap();
+        assert_eq!(input["host"], "dl380g10", "{input}");
+        assert_eq!(input["reclamation"], SCRATCH_RECLAMATION, "{input}");
+        let observed: Value = serde_json::from_slice(
+            &fs::read(out.join(format!("scratch-absence-{nonce}.stdout"))).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(observed["observation"], json!({"kind":"absent","errno":2}));
+        assert_eq!(observed["uid"], 1000);
+        assert_eq!(observed["path"], json!(self.leaf()));
+        let manifest = "scratch-reclamation.manifest.json".to_owned();
+        let completion = "scratch-reclamation.complete.json".to_owned();
+        if reclaimed {
+            // The existing guarded flow inventoried, removed and re-proved absence.
+            assert_eq!(observed["attribution"], SCRATCH_RECLAMATION, "{observed}");
+            assert!(observed["generation_pre_removal"].is_object(), "{observed}");
+            assert!(names.contains(&manifest) && names.contains(&completion));
+            let retained: Value =
+                serde_json::from_slice(&fs::read(out.join(&manifest)).unwrap()).unwrap();
+            assert_eq!(retained["attribution"], SCRATCH_RECLAMATION);
+            assert_eq!(retained["path"], json!(self.leaf()));
+        } else {
+            // Never present: observation only, nothing reclaimed.
+            assert!(observed["attribution"].is_null() && observed["manifest"].is_null());
+            assert!(!names.contains(&manifest) && !out.join(&manifest).exists());
+        }
+        assert!(fs::symlink_metadata(self.leaf()).is_err());
+        assert!(self.debt_entries().is_empty(), "{:?}", self.debt_entries());
+        self.assert_next_owner_accepted();
+    }
+
+    /// Held exactly as before: no receipt, no reclamation, debt retained and the
+    /// next owner refused.
+    fn assert_scratch_held(&self, frames: &[Value], scratch_debt: bool) {
+        assert_eq!(
+            frames.last().unwrap()["result"]["observation"]["kind"],
+            "unknown",
+            "{frames:?}"
+        );
+        let out = &self.intent.output_dir;
+        assert!(!out.join("receipt.json").exists());
+        assert!(!out.join("scratch-reclamation.manifest.json").exists());
+        assert!(!out.join("scratch-reclamation.complete.json").exists());
+        let debts = self.debt_entries();
+        assert!(!debts.is_empty());
+        assert_eq!(
+            debts.contains(&format!("{}.scratch", self.intent.correlation)),
+            scratch_debt,
+            "{debts:?}"
+        );
+        self.assert_next_owner_held();
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn no_grant_injob_proven_absent_commits_terminal_and_releases_next_owner() {
+    for cancelled in [false, true] {
+        let f = Fixture::no_grant_scratch();
+        assert_eq!(f.submit()["kind"], "accepted");
+        if cancelled {
+            f.cancel();
+        }
+        f.events(&if cancelled {
+            cancel_clean()
+        } else {
+            completed(256)
+        });
+        let frames = f.attach();
+        f.assert_no_grant_terminal(
+            &frames,
+            if cancelled { "cancelled" } else { "infra-lost" },
+            false,
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn no_grant_cancel_while_pending_reaches_terminal_and_releases_dispatch() {
+    let f = Fixture::no_grant_scratch();
+    assert_eq!(f.submit()["kind"], "accepted");
+    let cpus = f.write_fixture_allocation();
+    let observed = f.observe_fixture_allocation(&cpus);
+    assert_eq!(observed.last().unwrap()["kind"], "result", "{observed:?}");
+    f.cancel();
+    assert!(
+        f.debt_entries()
+            .contains(&format!("{}.unregistered", f.intent.correlation))
+    );
+    // After cancel intent no allocation can ever be observed or granted.
+    let refused = f.observe_fixture_allocation(&cpus);
+    assert_eq!(refused.last().unwrap()["kind"], "error", "{refused:?}");
+    let frames = f.call(
+        json!({"op":"validate_allocation","owner":f.intent.owner,"correlation":f.intent.correlation,
+        "facts":observed.last().unwrap()["result"]["facts"]}),
+    );
+    assert_eq!(frames.last().unwrap()["kind"], "error", "{frames:?}");
+    assert!(f.state().allocation_grant.is_none() && f.state().cancel_requested);
+    f.events(&cancel_clean());
+    let frames = f.attach();
+    f.assert_no_grant_terminal(&frames, "cancelled", false);
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn no_grant_owned_leaf_is_reclaimed_reproven_and_released() {
+    for (contents, cancelled) in [
+        ("empty", false),
+        ("file", false),
+        ("nested", false),
+        ("nested", true),
+    ] {
+        let f = Fixture::no_grant_scratch();
+        assert_eq!(f.submit()["kind"], "accepted");
+        let leaf = f.make_leaf();
+        if contents != "empty" {
+            fs::write(leaf.join("owned"), b"runner scratch bytes").unwrap();
+        }
+        if contents == "nested" {
+            fs::create_dir_all(leaf.join("tl3-checks-fixture/head")).unwrap();
+            fs::write(
+                leaf.join("tl3-checks-fixture/head/subject.txt"),
+                b"exported head",
+            )
+            .unwrap();
+        }
+        if cancelled {
+            f.cancel();
+        }
+        f.events(&if cancelled {
+            cancel_clean()
+        } else {
+            completed(256)
+        });
+        let frames = f.attach();
+        f.assert_no_grant_terminal(
+            &frames,
+            if cancelled { "cancelled" } else { "infra-lost" },
+            true,
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn no_grant_unsafe_leaf_holds_without_mutation() {
+    for case in [
+        "symlink-leaf",
+        "symlinked-parent",
+        "symlink-child",
+        "group-writable",
+        "regular-file",
+        "over-entries",
+        "over-bytes",
+        "wrong-host",
+    ] {
+        let mut f = Fixture::new();
+        f.podman(ContainerMode::InJob, true);
+        let scratch = tempfile::tempdir().unwrap();
+        fs::set_permissions(scratch.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let root = if case == "symlinked-parent" {
+            let real = scratch.path().join("real");
+            fs::create_dir(&real).unwrap();
+            fs::set_permissions(&real, fs::Permissions::from_mode(0o700)).unwrap();
+            let link = scratch.path().join("link");
+            std::os::unix::fs::symlink(&real, &link).unwrap();
+            link
+        } else {
+            scratch.path().to_owned()
+        };
+        f.use_scratch_root(root);
+        f.scratch = Some(scratch);
+        assert_eq!(f.submit()["kind"], "accepted", "{case}");
+        let leaf = f.leaf();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("target"), b"outside bytes").unwrap();
+        match case {
+            "symlink-leaf" => std::os::unix::fs::symlink(outside.path(), &leaf).unwrap(),
+            "regular-file" => fs::write(&leaf, b"not a directory").unwrap(),
+            _ => {
+                f.make_leaf();
+            }
+        }
+        match case {
+            "symlink-child" => {
+                fs::write(leaf.join("owned"), b"runner scratch bytes").unwrap();
+                std::os::unix::fs::symlink(outside.path().join("target"), leaf.join("link"))
+                    .unwrap();
+            }
+            "group-writable" => {
+                fs::write(leaf.join("owned"), b"runner scratch bytes").unwrap();
+                fs::set_permissions(&leaf, fs::Permissions::from_mode(0o770)).unwrap();
+            }
+            "over-entries" => {
+                for index in 0..4097 {
+                    fs::write(leaf.join(format!("entry-{index}")), b"").unwrap();
+                }
+            }
+            "over-bytes" => {
+                // Apparent size counts toward the 2 GiB bound; the file stays sparse.
+                fs::File::create(leaf.join("sparse"))
+                    .unwrap()
+                    .set_len(2 * 1024 * 1024 * 1024 + 1)
+                    .unwrap();
+            }
+            "wrong-host" => {
+                fs::write(leaf.join("owned"), b"runner scratch bytes").unwrap();
+                f.scratch_control(&json!({"nodename":"sparky"}));
+            }
+            _ => {}
+        }
+        let before = (tree_snapshot(&leaf), tree_snapshot(outside.path()));
+        f.events(&completed(256));
+        let frames = f.attach();
+        f.assert_scratch_held(&frames, true);
+        assert_eq!(
+            (tree_snapshot(&leaf), tree_snapshot(outside.path())),
+            before,
+            "{case}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn no_grant_helper_refusals_hold_debt_and_dispatch() {
+    let f = Fixture::no_grant_scratch();
+    assert_eq!(f.submit()["kind"], "accepted");
+    f.events(&completed(256));
+    for control in [
+        json!({"replace":{"uid":0}}),
+        json!({"replace":{"observation":{"kind":"absent","errno":13}}}),
+        json!({"replace":{"observation":{"kind":"unknown","reason":"fixture refusal"}}}),
+        json!({"replace":{"host":"sparky"}}),
+        json!({"nodename":"sparky"}),
+        json!({"replace":{"path":"/tmp/foreign"}}),
+        json!({"exit":3}),
+    ] {
+        f.scratch_control(&control);
+        let frames = f.attach();
+        f.assert_scratch_held(&frames, true);
+    }
+    fs::remove_file(f.intent.output_dir.join("scratch-control.json")).unwrap();
+    let frames = f.attach();
+    f.assert_no_grant_terminal(&frames, "infra-lost", false);
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn no_grant_without_clean_or_with_executions_holds() {
+    // Without native clean the watcher reports unknown; no scratch proof is attempted.
+    let f = Fixture::no_grant_scratch();
+    assert_eq!(f.submit()["kind"], "accepted");
+    f.events(&completed(256)[..2]);
+    let frames = f.attach();
+    assert_eq!(
+        frames.last().unwrap()["result"]["observation"]["kind"],
+        "unknown",
+        "{frames:?}"
+    );
+    assert!(f.scratch_inputs().is_empty());
+    assert!(!f.intent.output_dir.join("receipt.json").exists());
+    // Any recorded execution, with or without bound ownership, keeps grantless scratch held.
+    for bound in [false, true] {
+        let f = Fixture::no_grant_scratch();
+        assert_eq!(f.submit()["kind"], "accepted");
+        let leaf = f.make_leaf();
+        fs::write(leaf.join("owned"), b"runner scratch bytes").unwrap();
+        let owned = f.container_ownership();
+        if bound {
+            let frames = f.call(json!({"op":"retain_runtime","owner":f.intent.owner,
+                "correlation":f.intent.correlation,"ownership":owned}));
+            assert_eq!(frames.last().unwrap()["kind"], "result", "{frames:?}");
+        }
+        assert!(f.state().allocation_grant.is_none());
+        let before = tree_snapshot(&leaf);
+        f.events(&completed(256));
+        let frames = f.attach();
+        f.assert_scratch_held(&frames, false);
+        assert!(f.scratch_inputs().is_empty());
+        assert_eq!(tree_snapshot(&leaf), before);
+    }
+    // A retained grant keeps the grant path: an ordinary ending never reclaims.
+    let f = Fixture::no_grant_scratch();
+    assert_eq!(f.submit()["kind"], "accepted");
+    f.retain_fixture_allocation();
+    let leaf = f.make_leaf();
+    fs::write(leaf.join("owned"), b"runner scratch bytes").unwrap();
+    let before = tree_snapshot(&leaf);
+    f.events(&completed(256));
+    let frames = f.attach();
+    f.assert_scratch_held(&frames, true);
+    assert!(
+        f.scratch_inputs()
+            .iter()
+            .all(|input| input["reclamation"].is_null())
+    );
+    assert_eq!(tree_snapshot(&leaf), before);
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn no_grant_terminal_replay_is_refused() {
+    let f = Fixture::no_grant_scratch();
+    assert_eq!(f.submit()["kind"], "accepted");
+    f.events(&completed(256));
+    f.scratch_control(&json!({"exit":3}));
+    let frames = f.attach();
+    f.assert_scratch_held(&frames, true);
+    let first = f.scratch_inputs();
+    assert_eq!(first.len(), 1);
+    // A replayed earlier helper result never satisfies a fresh nonce.
+    f.scratch_control(&json!({"replace":{"nonce":first[0]["nonce"]}}));
+    let frames = f.attach();
+    f.assert_scratch_held(&frames, true);
+    fs::remove_file(f.intent.output_dir.join("scratch-control.json")).unwrap();
+    let frames = f.attach();
+    f.assert_no_grant_terminal(&frames, "infra-lost", false);
+    let receipt = fs::read(f.intent.output_dir.join("receipt.json")).unwrap();
+    let attempts = f.scratch_inputs().len();
+    let submits = f
+        .calls()
+        .lines()
+        .filter(|line| line.starts_with("job submit"))
+        .count();
+    let again = f.attach();
+    assert_eq!(
+        again.last().unwrap()["result"]["observation"]["terminal"],
+        frames.last().unwrap()["result"]["observation"]["terminal"]
+    );
+    assert_eq!(
+        fs::read(f.intent.output_dir.join("receipt.json")).unwrap(),
+        receipt
+    );
+    assert_eq!(f.scratch_inputs().len(), attempts);
+    assert_eq!(f.submit()["kind"], "accepted");
+    assert_eq!(
+        f.calls()
+            .lines()
+            .filter(|line| line.starts_with("job submit"))
+            .count(),
+        submits
+    );
+    assert!(f.debt_entries().is_empty());
+}
+
+#[test]
+#[ignore = "requires admitted PB actual-action fixture"]
+fn no_grant_runner_killed_after_scratch_mkdir_reaches_terminal_and_releases_dispatch() {
+    let f = generated_action_case("die-after-scratch-mkdir");
+    let leaf = f.leaf();
+    assert!(leaf.is_dir() && fs::read_dir(&leaf).unwrap().next().is_none());
+    f.events(&completed(256));
+    let frames = f.attach();
+    f.assert_no_grant_terminal(&frames, "infra-lost", true);
+}
+
+#[test]
+#[ignore = "requires admitted PB actual-action fixture"]
+fn no_grant_runner_killed_at_allocation_reclaims_workspace_and_releases_dispatch() {
+    let f = generated_action_case("die-before-allocation");
+    let leaf = f.leaf();
+    // The real runner exported its checks workspace before allocation.
+    assert!(fs::read_dir(&leaf).unwrap().flatten().any(|entry| {
+        entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with("tl3-checks-")
+    }));
+    f.events(&completed(256));
+    let frames = f.attach();
+    f.assert_no_grant_terminal(&frames, "infra-lost", true);
+}
+
+#[test]
+#[ignore = "requires admitted PB actual-action fixture"]
+fn no_grant_cancel_before_allocation_unwinds_and_reaches_terminal() {
+    let f = generated_action_case("cancel-before-allocation");
+    assert!(f.state().cancel_requested && f.state().allocation_grant.is_none());
+    f.events(&[
+        json!({"timestamp":1.0,"name":"start","context":{}}),
+        json!({"timestamp":2.0,"name":"exception","context":{"type":"cancel","severity":0}}),
+        json!({"timestamp":3.0,"name":"finish","context":{"status":15}}),
+        json!({"timestamp":4.0,"name":"clean","context":{}}),
+    ]);
+    let frames = f.attach();
+    f.assert_no_grant_terminal(&frames, "cancelled", false);
 }
 
 #[test]
