@@ -690,6 +690,9 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "dependency_preservation_frame_node_rules": ("kernel::dependencies::preservation#frame_node_rules", 1),
+            "dependency_preservation_frame_holders": ("kernel::dependencies::preservation#frame_holders", 1),
+            "dependency_preservation_frame_pairs": ("kernel::dependencies::preservation#frame_pairs", 1),
             "dependencies_node_update_preserves": ("kernel::dependencies#node_update_preserves", 1),
             "dependency_preservation_node_update_preserves": ("kernel::dependencies::preservation#node_update_preserves", 1),
             "dependencies_field_frame": ("kernel::dependencies#field_frame", 1),
