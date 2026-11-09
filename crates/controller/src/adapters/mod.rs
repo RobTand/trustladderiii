@@ -2,7 +2,7 @@ pub mod delivery_events;
 pub mod delivery_router;
 pub mod direct_merge;
 pub mod github;
-mod images;
+pub(crate) mod images;
 pub mod mergify;
 pub mod prismabuild;
 mod record;

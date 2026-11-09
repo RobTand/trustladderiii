@@ -3,7 +3,7 @@ use std::{
     cell::RefCell,
     panic::{AssertUnwindSafe, catch_unwind},
 };
-use tl3_controller::adapters::prismabuild::CheckRun;
+use tl3_controller::checks::CheckRun;
 use tl3_kernel::{Node, Phase, RepoId};
 use tl3_store::{Epoch, Interned, Revision, WorldRow};
 

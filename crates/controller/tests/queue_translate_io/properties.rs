@@ -580,12 +580,7 @@ fn shared_helper_bodies_are_verbatim() {
             function(include_str!("incident-helpers.rs"), name, "")
         );
     }
-    for name in [
-        "terminal_text",
-        "safe",
-        "test_path",
-        "outside_change",
-    ] {
+    for name in ["terminal_text", "safe", "test_path"] {
         assert_eq!(
             function(include_str!("base-ci.rs.txt"), name, ""),
             function(include_str!("ci-evidence.rs"), name, "")
@@ -661,9 +656,9 @@ fn shaped_schedule(tag: u8, bits: u16) -> Schedule {
     }
     let mut run = plan("all-fields");
     if bits & 256 != 0 {
-        run.plan.push(adapters::prismabuild::Check {
+        run.plan.push(checks::Check {
             name: "planned regression".into(),
-            kind: adapters::prismabuild::Kind::Regression,
+            kind: checks::Kind::Regression,
             tests: vec![
                 "tests/planned.py::case".into(),
                 "//crates/example:test".into(),
@@ -965,5 +960,9 @@ fn attribution_helpers_are_real_current_source() {
         assert_eq!(function(include_str!("../../src/queue_cause.rs"), name, "    "), function(include_str!("cause-methods-current.rs"), name, "    "));
     }
     assert_eq!(function(include_str!("../../src/adapters/mergify/ci_evidence.rs"), "bounded", ""), function(include_str!("ci-evidence-current.rs"), "bounded", ""));
+    // PB-REMOVAL moved CheckRun to crate::checks: outside_change is a changed body with a
+    // frozen reference copy and a current copy, like bounded.
+    assert_eq!(function(include_str!("../../src/adapters/mergify/ci_evidence.rs"), "outside_change", ""), function(include_str!("ci-evidence-current.rs"), "outside_change", ""));
+    assert_eq!(function(include_str!("base-ci.rs.txt"), "outside_change", ""), function(include_str!("ci-evidence.rs"), "outside_change", ""));
     assert_eq!(function(include_str!("base-ci.rs.txt"), "bounded", ""), function(include_str!("ci-evidence.rs"), "bounded", ""));
 }

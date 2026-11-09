@@ -10,7 +10,7 @@ struct Settings {
 }
 
 #[derive(Clone, Default)]
-pub(super) struct AdditionalTests {
+pub(crate) struct AdditionalTests {
     pub selected: Option<u32>,
     pub always: Vec<String>,
     pub generated: Vec<String>,

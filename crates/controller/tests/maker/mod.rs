@@ -234,16 +234,16 @@ fn observe(
                 Observation::CheckPlan {
                     node: *node,
                     sha: sha.into(),
-                    run: adapters::prismabuild::CheckRun {
+                    run: tl3_controller::checks::CheckRun {
                         repository: repository.into(),
                         base_sha: tl3_worktrees::CommitId::new(base).unwrap(),
 
                         reviewed_sha: None,
                         reproducing_unavailable: None,
                         selected_failures: Vec::new(),
-                        plan: vec![adapters::prismabuild::Check {
+                        plan: vec![tl3_controller::checks::Check {
                             name: "hello".into(),
-                            kind: adapters::prismabuild::Kind::Demonstrating,
+                            kind: tl3_controller::checks::Kind::Demonstrating,
                             tests: vec!["test_greeting.py::test_hello".into()],
                             forcing: None,
                             proof: Some(serde_json::from_value(json!({"subjects": [], "observer_support": [], "red_message": "assert 'goodbye' == 'hello'"})).unwrap()),

@@ -1,6 +1,6 @@
 //! Immutable controller input construction, shared with the existing trusted check payload.
 use super::*;
-use crate::adapters::prismabuild::checks;
+use crate::checks;
 use std::os::unix::fs::PermissionsExt;
 use tl3_worktrees::Worktrees;
 

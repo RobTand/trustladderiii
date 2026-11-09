@@ -841,7 +841,7 @@ fn progress_releases_nothing(settings: &tl3_config::Store) {
         Observation::CheckPlan {
             node: NodeId(0),
             sha: "a".repeat(40),
-            run: adapters::prismabuild::CheckRun {
+            run: tl3_controller::checks::CheckRun {
                 repository: root.path().to_path_buf(),
                 base_sha: tl3_worktrees::CommitId::new("b".repeat(40)).unwrap(),
                 reviewed_sha: None,

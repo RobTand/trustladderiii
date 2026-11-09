@@ -1,6 +1,6 @@
 use crate::{
     Error, Result,
-    adapters::prismabuild::{Check, Kind},
+    checks::{Check, Kind},
 };
 use serde_json::{Value, json};
 use std::collections::BTreeSet;

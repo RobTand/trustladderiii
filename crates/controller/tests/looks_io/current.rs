@@ -978,7 +978,7 @@ pub(crate) fn incident_summary(
         {
             "TL3's publication validation"
         }
-        _ if signature.class == crate::adapters::prismabuild::HARNESS => "TL3's check harness",
+        _ if signature.class == crate::checks::HARNESS => "TL3's check harness",
         Upstream::Workers => "the agent worker",
         Upstream::Worktrees => "the Git worktree",
         Upstream::PrismaBuild => "PrismaBuild",

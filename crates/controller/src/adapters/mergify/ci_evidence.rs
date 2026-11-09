@@ -477,7 +477,7 @@ fn test_path(repo: &Repository, id: &str) -> Option<String> {
 pub(crate) fn outside_change(
     repo: &Repository,
     details: &QueueCiEvidence,
-    plan: Option<&crate::adapters::prismabuild::CheckRun>,
+    plan: Option<&crate::checks::CheckRun>,
 ) -> bool {
     let (Some(paths), Some(run)) = (&details.changed_paths, plan) else {
         return false;

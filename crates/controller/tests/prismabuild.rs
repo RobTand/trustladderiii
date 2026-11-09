@@ -23,8 +23,9 @@ use tl3_controller::{
     Bootstrap, Controller, LabelledIssue, Repository,
     adapters::{
         self,
-        prismabuild::{Adapter, Check, CheckRun, Kind, Settings},
+        prismabuild::{Adapter, Settings},
     },
+    checks::{Check, CheckRun, Kind},
     executor::Output as Out,
     executor::{Completion, Delivery, Executor, Observation, Reconciliation, Upstream},
 };

@@ -21,6 +21,7 @@ mod branches;
 pub mod budget;
 mod check_execution;
 pub mod check_harness;
+pub mod checks;
 pub mod classifier;
 pub mod cli;
 pub mod clock;
@@ -2236,7 +2237,7 @@ impl Controller {
                 && let Some(materials) = self.store.worker_materials(&node.0.to_string())?
                 && let Some(run) = materials.get("check_run")
             {
-                let run: adapters::prismabuild::CheckRun = decode_stored(run.clone())?;
+                let run: checks::CheckRun = decode_stored(run.clone())?;
                 commit
                     .rows
                     .push(put("check_plans", format!("{}:{sha}", node.0), json!(&run)));
@@ -3479,7 +3480,7 @@ impl Controller {
                 let mut run = if let Some(materials) = self.store.worker_materials(&id)?
                     && let Some(run) = materials.get("check_run")
                 {
-                    decode_stored::<adapters::prismabuild::CheckRun>(run.clone())?
+                    decode_stored::<checks::CheckRun>(run.clone())?
                 } else {
                     let brief = self
                         .store
@@ -3490,7 +3491,7 @@ impl Controller {
                         .worker_document(&id, "plans")?
                         .ok_or(Error::Invalid("adoption needs its accepted plan"))?;
                     let inputs = production::maker_inputs(&brief, &plan)?;
-                    adapters::prismabuild::CheckRun {
+                    checks::CheckRun {
                         repository: repository.clone(),
                         base_sha: tl3_worktrees::CommitId::new(&base_sha)?,
                         reviewed_sha: None,
@@ -3605,10 +3606,8 @@ impl Controller {
                         });
                     }
                     // Review must see an edit to a test that failed a selected check (#359).
-                    let selected = adapters::prismabuild::selected_failures(
-                        earlier.iter().map(|row| &row.value),
-                        &results,
-                    );
+                    let selected =
+                        checks::selected_failures(earlier.iter().map(|row| &row.value), &results);
                     commit.rows.push(put(
                         "check_evidence",
                         format!("{}:{generation:020}", node.0),
@@ -3755,7 +3754,7 @@ impl Controller {
                         .enumerate()
                         .map(|(index, check)| {
                             let declared = |field: &str| check.get(field).cloned();
-                            Ok(adapters::prismabuild::Check {
+                            Ok(checks::Check {
                                 name: format!("check-{}", index + 1),
                                 kind: serde_json::from_value(check["kind"].clone())?,
                                 tests: adapters::workers::protocol::reply_field(check, "node_ids")?,
@@ -3769,7 +3768,7 @@ impl Controller {
                             })
                         })
                         .collect::<Result<Vec<_>>>()?;
-                    if let Err(error) = adapters::prismabuild::validate_plan_size(&checks) {
+                    if let Err(error) = checks::validate_plan_size(&checks) {
                         match error {
                             Error::Invalid(message) => {
                                 reply["violations"]
@@ -3951,16 +3950,13 @@ impl Controller {
                                     .ok_or(Error::Invalid(
                                         "review fix needs its original check plan",
                                     ))?;
-                                run.plan.retain(|check| {
-                                    check.kind != adapters::prismabuild::Kind::Reproducing
-                                });
+                                run.plan
+                                    .retain(|check| check.kind != checks::Kind::Reproducing);
                                 run.plan.extend(fixes.checks);
                                 run.reviewed_sha = run
                                     .plan
                                     .iter()
-                                    .any(|check| {
-                                        check.kind == adapters::prismabuild::Kind::Reproducing
-                                    })
+                                    .any(|check| check.kind == checks::Kind::Reproducing)
                                     .then_some(reviewed)
                                     .flatten()
                                     .map(tl3_worktrees::CommitId::new)
@@ -4415,11 +4411,11 @@ fn check_run(
     snapshot: &Snapshot,
     node: NodeId,
     sha: Option<&str>,
-) -> Result<Option<adapters::prismabuild::CheckRun>> {
+) -> Result<Option<checks::CheckRun>> {
     let Some(sha) = sha else {
         return Ok(None);
     };
-    let mut run: Option<adapters::prismabuild::CheckRun> = snapshot
+    let mut run: Option<checks::CheckRun> = snapshot
         .rows
         .iter()
         .find(|r| r.table == "check_plans" && r.id == format!("{}:{sha}", node.0))
@@ -4427,7 +4423,7 @@ fn check_run(
         .transpose()?;
     if let Some(run) = &mut run {
         let prefix = format!("{}:", node.0);
-        run.selected_failures = adapters::prismabuild::selected_failures(
+        run.selected_failures = checks::selected_failures(
             snapshot
                 .rows
                 .iter()

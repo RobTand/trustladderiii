@@ -169,7 +169,7 @@ impl Cause {
             }
             Upstream::Worktrees => Cause::Tl3,
             // The trusted check harness is TL3's code, running inside a PrismaBuild action.
-            Upstream::PrismaBuild if class == crate::adapters::prismabuild::HARNESS => Cause::Tl3,
+            Upstream::PrismaBuild if class == crate::checks::HARNESS => Cause::Tl3,
             Upstream::GitHub | Upstream::Delivery | Upstream::PrismaBuild => Cause::Upstream,
         }
     }
@@ -2533,7 +2533,7 @@ pub(crate) fn incident_summary(
         {
             "TL3's publication validation"
         }
-        _ if signature.class == crate::adapters::prismabuild::HARNESS => "TL3's check harness",
+        _ if signature.class == crate::checks::HARNESS => "TL3's check harness",
         Upstream::Workers => "the agent worker",
         Upstream::Worktrees => "the Git worktree",
         Upstream::PrismaBuild => "PrismaBuild",

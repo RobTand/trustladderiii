@@ -34,7 +34,7 @@ class ActionGitTests(unittest.TestCase):
             staged = root / "input"
             staged.mkdir()
             git(root / "intended", "bundle", "create", str(staged / "served.bundle"), "HEAD")
-            shutil.copyfile(ROOT / "crates/controller/src/adapters/prismabuild/action.py", staged / "action.py")
+            shutil.copyfile(ROOT / "crates/controller/src/checks/action.py", staged / "action.py")
             trusted = staged / "trusted/tl3_harness"
             trusted.mkdir(parents=True)
             shutil.copyfile(ROOT / "harness/src/tl3_harness/trees.py", trusted / "trees.py")

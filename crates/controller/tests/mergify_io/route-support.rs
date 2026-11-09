@@ -83,7 +83,7 @@ mod snapshot {
 }
 // Unchanged hydrate's relevant wire boundary. The full production hydrate body
 // below still samples this check projection, even though pending routing ignores it.
-fn check_run(_: &Snapshot, _: NodeId, _: Option<&str>) -> Result<Option<tl3_controller::adapters::prismabuild::CheckRun>> { Ok(None) }
+fn check_run(_: &Snapshot, _: NodeId, _: Option<&str>) -> Result<Option<tl3_controller::checks::CheckRun>> { Ok(None) }
 mod goals { use super::*; pub(super) fn load(_: &Snapshot, _: NodeId) -> Result<Option<Vec<Value>>> { Ok(None) } }
 use Out as DeliveryOutput;
 fn hydrate(effect: &Effect, snapshot: &Snapshot) -> Result<Delivery> {

@@ -28,8 +28,9 @@ pub mod memory {
     }
 }
 pub mod adapters {
+    // Frozen references name the check model's pre-move path.
     pub mod prismabuild {
-        pub use tl3_controller::adapters::prismabuild::*;
+        pub use tl3_controller::checks::*;
     }
     pub mod mergify {
         use super::super::*;
@@ -46,6 +47,9 @@ pub mod adapters {
         }
         pub use tl3_controller::adapters::mergify::RequiredCheck;
     }
+}
+pub mod checks {
+    pub use tl3_controller::checks::*;
 }
 #[derive(Clone, Debug)]
 enum Observation {

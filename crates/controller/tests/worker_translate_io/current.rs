@@ -162,7 +162,7 @@ impl Shell<'_> {
                         .enumerate()
                         .map(|(index, check)| {
                             let declared = |field: &str| check.get(field).cloned();
-                            Ok(adapters::prismabuild::Check {
+                            Ok(checks::Check {
                                 name: format!("check-{}", index + 1),
                                 kind: serde_json::from_value(check["kind"].clone())?,
                                 tests: adapters::workers::protocol::reply_field(check, "node_ids")?,
@@ -176,7 +176,7 @@ impl Shell<'_> {
                             })
                         })
                         .collect::<Result<Vec<_>>>()?;
-                    if let Err(error) = adapters::prismabuild::validate_plan_size(&checks) {
+                    if let Err(error) = checks::validate_plan_size(&checks) {
                         match error {
                             Error::Invalid(message) => {
                                 reply["violations"]
@@ -444,14 +444,14 @@ impl Shell<'_> {
                                         "review fix needs its original check plan",
                                     ))?;
                                 run.plan.retain(|check| {
-                                    check.kind != adapters::prismabuild::Kind::Reproducing
+                                    check.kind != checks::Kind::Reproducing
                                 });
                                 run.plan.extend(fixes.checks);
                                 run.reviewed_sha = run
                                     .plan
                                     .iter()
                                     .any(|check| {
-                                        check.kind == adapters::prismabuild::Kind::Reproducing
+                                        check.kind == checks::Kind::Reproducing
                                     })
                                     .then_some(reviewed)
                                     .flatten()
@@ -544,14 +544,15 @@ pub(super) fn translate(c: &mut Controller, s: &Snapshot, w: &mut World, o: Obse
 // production body (#824 moved node-id parsing to tl3-harness-core). The
 // reference arm keeps the frozen pre-#824 copy in reproducing.rs, so no shared
 // shim spans the changed leaf. The plan-size leaf likewise has a separate current copy (#835).
+mod checks {
+    use super::super::*;
+    use super::adapters::results;
+    pub use tl3_controller::checks::*;
+    const MAX_REPORT_LINE_BYTES: usize = 4 * 1024 * 1024;
+    include!("plan-size-current.rs");
+}
 mod adapters {
     pub use super::super::adapters::results;
-    pub mod prismabuild {
-        use super::super::super::*;
-        pub use tl3_controller::adapters::prismabuild::*;
-        const MAX_REPORT_LINE_BYTES: usize = 4 * 1024 * 1024;
-        include!("plan-size-current.rs");
-    }
     pub mod workers {
         pub use super::super::super::adapters::workers::review;
         pub mod protocol {
