@@ -583,6 +583,9 @@ pub(super) fn on_rejected_reply(w: &mut World, i: usize, _generation: u64, _repl
     }
         run_failed(w, i, out, report);
         kernel_proof! {
+            handler_safety::failed_review_stop(before_reply@.nodes@[i as int], w.nodes@[i as int], before_outputs@, *out);
+        }
+        kernel_proof! {
             report::lemmas::read_failed_round(before_report@, report.entries@, NodeId(i as u64), FailedRoundCause::RunFailed);
             report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), Some(FailedRoundCause::RunFailed));
         }

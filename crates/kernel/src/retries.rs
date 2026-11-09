@@ -33,7 +33,6 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox, report: &mut
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-        final(w).nodes@[i as int].review_stop == old(w).nodes@[i as int].review_stop,
 ] {
     report.record_failed_round(NodeId(i as u64), FailedRoundCause::RunFailed);
     kernel_snapshot! { before_failed = w.nodes@[i as int] }
@@ -58,7 +57,6 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox, report: &mut
         kernel_proof! {
             retries_facts::finish_failed_incident(before_failed@, ready@, w.nodes@,
                 i as int, needs_rob, before_failed_out@, *out);
-            handler_safety::failed_review_stop(before_failed@, w.nodes@[i as int], before_failed_out@, *out);
         }
     }
     kernel_proof! {
