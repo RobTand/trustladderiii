@@ -332,7 +332,7 @@ pub(super) proof fn minimum_index(nodes: Seq<Node>, end: nat, eligible: spec_fn(
     let last = end - 1;
     if exists|i: int| 0 <= i < last && eligible(nodes[i]) {
         let prior = minimum_index(nodes, (end - 1) as nat, eligible, key);
-        if eligible(nodes[last]) && key(nodes[last]) > key(nodes[prior]) {
+        if eligible(nodes[last]) && key(nodes[last]) < key(nodes[prior]) {
             assert forall|j: int| 0 <= j < end && eligible(nodes[j])
                 implies key(nodes[last]) <= key(nodes[j]) by {
                 if j < last { assert(key(nodes[prior]) <= key(nodes[j])); }
