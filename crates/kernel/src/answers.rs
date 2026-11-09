@@ -137,7 +137,7 @@ fn clarify_node(n: Node, nq: u64, q: Question) -> (result: (Node, u64, Notice)) 
             question: Some(Question { id: nq, clarified: true, ..q }), ..n
         }),
         result.1 == nq + 1,
-        result.2 == Notice::Ask { question: nq },
+        result.2 == (Notice::Ask { question: nq }),
         n.phase == Phase::AwaitingRob && n.question == Some(q) && !q.clarified
             ==> handler_safety::command_step(n, result.0),
 ] {
