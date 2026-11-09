@@ -180,7 +180,7 @@ fn registry(
     config: &tl3_config::Config,
     root: &Path,
     fail: bool,
-) -> (Registry, WorkerOutputSource, adapters::prismabuild::Source) {
+) -> (Registry, WorkerOutputSource, Checks) {
     let mut registry = adapters::simulation(root).unwrap();
     let real = Supervisor::new(config, root, &mut crate::startup_ownership::ownership()).unwrap();
     let source = real.source();
@@ -196,20 +196,100 @@ fn registry(
                 .is_some_and(|mode| mode == "review-fix" || mode == "review-feedback"),
         ),
     );
-    let (client, settings) = super::prismabuild_fixture::settings(
-        &root.join("checks"),
-        if fail { "check_fail" } else { "done" },
-        "http://127.0.0.1:9/",
-    );
-    let checks = adapters::prismabuild::Adapter::new(
-        client,
-        settings,
-        &mut crate::startup_ownership::ownership(),
-    )
-    .unwrap();
-    let checks_source = checks.source();
-    registry.register(Upstream::PrismaBuild, checks);
-    (registry, source, checks_source)
+    let checks = Checks::new(&root.join("checks"), fail);
+    registry.register(Upstream::PrismaBuild, checks.clone());
+    (registry, source, checks)
+}
+
+/// Maker-scenario checks. Each submitted run's terminal completion arrives later as an
+/// `Input::Completion` for the effect, as the Flux checks adapter delivers it. The
+/// `mode` file selects a passing run or a failing `test_greeting.py::test_hello`;
+/// `recorded_results.json` replaces the reported results with a recorded trial's.
+#[derive(Clone)]
+pub(super) struct Checks {
+    root: PathBuf,
+    outbox: std::sync::Arc<std::sync::Mutex<Outbox>>,
+}
+
+#[derive(Default)]
+struct Outbox {
+    sender: Option<mpsc::Sender<Input>>,
+    pending: Vec<Input>,
+    submitted: u64,
+    /// Submitted runs: each completes once, only through the input channel.
+    running: std::collections::BTreeSet<String>,
+}
+
+impl Checks {
+    fn new(root: &Path, fail: bool) -> Self {
+        fs::create_dir_all(root).unwrap();
+        fs::write(root.join("mode"), if fail { "check_fail" } else { "done" }).unwrap();
+        Self {
+            root: root.to_owned(),
+            outbox: Default::default(),
+        }
+    }
+
+    /// Deliver reports, including any submitted before the channel existed.
+    fn spawn(&self, sender: mpsc::Sender<Input>) -> Self {
+        let mut outbox = self.outbox.lock().unwrap();
+        for input in outbox.pending.drain(..) {
+            sender.send(input).unwrap();
+        }
+        outbox.sender = Some(sender);
+        self.clone()
+    }
+
+    fn report(&self, delivery: &Delivery) -> Observation {
+        let fail = fs::read_to_string(self.root.join("mode")).unwrap() == "check_fail";
+        let recorded = fs::read(self.root.join("recorded_results.json"))
+            .ok()
+            .map(|raw| serde_json::from_slice(&raw).unwrap());
+        let mut outbox = self.outbox.lock().unwrap();
+        outbox.submitted += 1;
+        support::checks::report(
+            delivery,
+            format!("{:064x}", outbox.submitted),
+            fail,
+            recorded,
+        )
+    }
+}
+
+impl Executor for Checks {
+    fn execute(&mut self, delivery: &Delivery) -> tl3_controller::Result<Completion> {
+        if matches!(
+            delivery.output,
+            Out::Effect {
+                kind: EffectKind::SubmitChecks,
+                ..
+            }
+        ) && !self.outbox.lock().unwrap().running.contains(&delivery.key)
+        {
+            let input = Input::Completion {
+                key: delivery.key.clone(),
+                completion: Box::new(Completion::confirmed(vec![self.report(delivery)])),
+            };
+            let mut outbox = self.outbox.lock().unwrap();
+            outbox.running.insert(delivery.key.clone());
+            match &outbox.sender {
+                Some(sender) => sender.send(input).unwrap(),
+                None => outbox.pending.push(input),
+            }
+        }
+        Ok(Completion::confirmed(vec![]))
+    }
+    fn reconcile(&mut self, delivery: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        // A submitted run stays pending: its completion arrives through the channel, as a
+        // backend's terminal does. A reopened controller resubmits and gets a fresh one.
+        Ok(
+            if self.outbox.lock().unwrap().running.contains(&delivery.key) {
+                Reconciliation::Pending
+            } else {
+                Reconciliation::Absent
+            },
+        )
+    }
 }
 
 fn observe(
@@ -422,35 +502,106 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
                     source_thread.take().unwrap().join().unwrap()
                 )
             });
+            if let Input::Completion { key, completion } = input {
+                let failing = completion
+                    .observations
+                    .iter()
+                    .any(|o| matches!(o, Observation::Checks { pass: false, .. }));
+                if fail
+                    && failing
+                    && controller.world().unwrap().nodes[0].attempt == 1
+                    && controller.world().unwrap().nodes[0].round == 0
+                {
+                    let mut store = Store::open(settings).unwrap();
+                    let materials = store.worker_materials("0").unwrap().unwrap();
+                    let mut invalid = materials.clone();
+                    invalid["maker"]["goals"][0]["id"] = json!(17);
+                    store.put_worker_materials("0", &invalid).unwrap();
+                    // Flux delivers the terminal completion as an input. Feedback for the
+                    // failed round refuses the malformed goal: the controller records a
+                    // recoverable input incident for the observation and stores no feedback.
+                    tl3_controller::ingress::apply(
+                        &mut controller,
+                        Input::Completion {
+                            key: key.clone(),
+                            completion: completion.clone(),
+                        },
+                    )
+                    .unwrap();
+                    while controller.drive_once().unwrap() {}
+                    let incidents: Vec<Value> = controller
+                        .snapshot()
+                        .unwrap()
+                        .rows
+                        .into_iter()
+                        .filter(|row| row.table == "incidents")
+                        .map(|row| row.value)
+                        .collect();
+                    assert!(
+                        incidents.iter().any(|incident| incident["open"] == true
+                            && incident["node"] == 0
+                            && incident["signature"]["class"] == "setup"
+                            && incident["input_failure"]["scope"]
+                                .as_str()
+                                .is_some_and(|scope| scope.starts_with("observation:"))),
+                        "the malformed goal must refuse the failed round's feedback: {incidents:?}"
+                    );
+                    assert_eq!(
+                        controller.world().unwrap().nodes[0].phase,
+                        Phase::Checking,
+                        "the refused report must not advance the request"
+                    );
+                    assert!(
+                        store
+                            .worker_document("0", "feedback")
+                            .map(|document| document.map(|value| value["maker"].clone()))
+                            .unwrap()
+                            .is_none()
+                    );
+                    // The refusal is final for that report: redelivering identical bytes is
+                    // deduplicated against its consumed input (no silent retry). With valid
+                    // materials restored, a fresh report of the same run is accepted.
+                    store.put_worker_materials("0", &materials).unwrap();
+                    let mut fresh = completion.clone();
+                    for observation in &mut fresh.observations {
+                        if let Observation::Checks { action_key, .. } = observation {
+                            action_key.push_str(":rereported");
+                        }
+                    }
+                    tl3_controller::ingress::apply(
+                        &mut controller,
+                        Input::Completion {
+                            key: key.clone(),
+                            completion: completion.clone(),
+                        },
+                    )
+                    .unwrap();
+                    while controller.drive_once().unwrap() {}
+                    assert_eq!(
+                        controller.world().unwrap().nodes[0].phase,
+                        Phase::Checking,
+                        "an identical refused report must not be reprocessed"
+                    );
+                    tl3_controller::ingress::apply(
+                        &mut controller,
+                        Input::Completion {
+                            key,
+                            completion: fresh,
+                        },
+                    )
+                    .unwrap();
+                    continue;
+                }
+                tl3_controller::ingress::apply(
+                    &mut controller,
+                    Input::Completion { key, completion },
+                )
+                .unwrap();
+                continue;
+            }
             let Input::Observation { key, observation } = input else {
                 panic!("worker observation required")
             };
-            if fail
-                && matches!(&observation, Observation::Checks { pass: false, .. })
-                && controller.world().unwrap().nodes[0].attempt == 1
-                && controller.world().unwrap().nodes[0].round == 0
-            {
-                let mut store = Store::open(settings).unwrap();
-                let materials = store.worker_materials("0").unwrap().unwrap();
-                let mut invalid = materials.clone();
-                invalid["maker"]["goals"][0]["id"] = json!(17);
-                store.put_worker_materials("0", &invalid).unwrap();
-                controller.observe(&key, observation.clone()).unwrap();
-                assert!(matches!(
-                    controller.drive_once(),
-                    Err(tl3_controller::Error::Invalid(
-                        "maker goal needs a string id"
-                    ))
-                ));
-                assert!(
-                    store
-                        .worker_document("0", "feedback")
-                        .map(|document| document.map(|value| value["maker"].clone()))
-                        .unwrap()
-                        .is_none()
-                );
-                store.put_worker_materials("0", &materials).unwrap();
-            }
             observe(&mut controller, &key, observation, &worktree, &base);
         }
     }
@@ -1083,10 +1234,6 @@ pub(super) fn run(fixture: &mut super::Fixture, shard: &mut super::scenario_shar
             "test review_fix_maps_findings_to_checks_and_carries_reasons_to_review_rebase ... ok"
         );
     });
-    shard.run(WorkerGroup::MakerDeclaredWait, || {
-        declared_wait(&fixture.database().create("maker_declared_wait"));
-        println!("test maker_declared_wait_survives_recovery_and_runfailed_retry ... ok");
-    });
     shard.run(WorkerGroup::MakerReviewFeedback, || {
         real::review_feedback(&fixture.database().create("maker_review_feedback"));
         println!("test reviewer_blockers_reach_real_maker ... ok");
@@ -1174,109 +1321,6 @@ pub(super) fn run(fixture: &mut super::Fixture, shard: &mut super::scenario_shar
             assert!(child.status().unwrap().success(), "maker scenario {name}");
         });
     }
-}
-
-pub(super) fn declared_wait(settings: &tl3_config::Store) {
-    #[derive(Clone)]
-    struct Clock(std::rc::Rc<std::cell::Cell<u64>>);
-    impl tl3_controller::clock::Clock for Clock {
-        fn now(&self) -> std::time::SystemTime {
-            std::time::UNIX_EPOCH + Duration::from_millis(self.0.get())
-        }
-    }
-    let root = tempfile::tempdir().unwrap();
-    let (config, worktree, _) = fixture(settings, root.path(), "external-wait");
-    let clock = Clock(std::rc::Rc::new(std::cell::Cell::new(1000)));
-    let open = || {
-        let (mut registry, source, _) = registry(&config, &root.path().join("fakes"), false);
-        registry.register(
-            Upstream::PrismaBuild,
-            waits::adapter(root.path(), &mut crate::startup_ownership::ownership()),
-        );
-        let mut controller = Controller::open_with_clock(
-            Store::open(settings).unwrap(),
-            registry,
-            Bootstrap::from_config(&config).unwrap(),
-            clock.clone(),
-        )
-        .unwrap();
-        let mut allowances = config.allowances.clone();
-        allowances.agent_worker.silence_secs = 1;
-        allowances.agent_worker.no_progress_secs = 3;
-        controller.set_allowances(allowances);
-        (controller, source)
-    };
-    let mut store = Store::open(settings).unwrap();
-    let (mut controller, mut source) = open();
-    waits::bind(root.path(), &worktree);
-    waits::record(root.path(), "claimed");
-    controller.intake(labelled()).unwrap();
-    let mut previous_key = None;
-    let mut checkpoint = None;
-    for failure_count in 0..2 {
-        wait(|| {
-            drive(&mut controller, &mut source, &mut store);
-            store
-                .worker_progress(None)
-                .unwrap()
-                .iter()
-                .any(|row| row.external_wait.is_some() && Some(&row.key) != previous_key.as_ref())
-        });
-        let run = store
-            .worker_progress(None)
-            .unwrap()
-            .into_iter()
-            .find(|row| row.external_wait.is_some() && Some(&row.key) != previous_key.as_ref())
-            .unwrap();
-        let attempt = root_for(&config, &run.key).join(format!("attempt-{:08}", run.attempt));
-        let request: Value =
-            serde_json::from_slice(&fs::read(attempt.join("request.json")).unwrap()).unwrap();
-        let head_path =
-            PathBuf::from(request["session_file"].as_str().unwrap()).with_extension("head");
-        let saved = fs::read(&head_path).unwrap();
-        if let Some(checkpoint) = &checkpoint {
-            assert_eq!(
-                &saved, checkpoint,
-                "RunFailed must retain the visit checkpoint"
-            );
-        }
-        checkpoint = Some(saved);
-        controller.look_now().unwrap();
-        drop(controller);
-        drop(source);
-        (controller, source) = open();
-        drive(&mut controller, &mut source, &mut store);
-        clock.0.set(clock.0.get() + 1_000_000);
-        controller.look_due().unwrap();
-        while controller.drive_once().unwrap() {}
-        assert_eq!(
-            controller.world().unwrap().nodes[0].run_failures,
-            failure_count,
-            "a maker waiting on a claimed action must survive recovery and retry"
-        );
-        assert!(
-            !attempt.join("exit.json").exists(),
-            "a live wait must not stop its maker"
-        );
-        if failure_count == 0 {
-            kill_record_and_wait(&attempt.join("process.json"));
-            wait(|| {
-                drive(&mut controller, &mut source, &mut store);
-                controller.world().unwrap().nodes[0].run_failures == 1
-            });
-            previous_key = Some(run.key);
-        }
-    }
-    controller
-        .observe(
-            "stop-wait-fixture",
-            Observation::Steering {
-                node: NodeId(0),
-                command: tl3_kernel::Command::Stop,
-            },
-        )
-        .unwrap();
-    while controller.drive_once().unwrap() {}
 }
 
 pub(super) fn router_regression(look: bool) {

@@ -35,24 +35,6 @@ MUTANTS = {
         "                    && run.offset > 0",
         "loom_worker_", "restart doubled progress",
     ),
-    "registration": (
-        "crates/controller/src/adapters/prismabuild/source.rs",
-        "                    self.waits.insert(wait.delivery.key.clone(), wait);",
-        "                    let _ = wait;",
-        "loom_bell_", "declared wait registration lost",
-    ),
-    "awaited": (
-        "crates/controller/src/adapters/prismabuild/source.rs",
-        '.parse::<ActionKey>()\n                    .expect("validated wait key")',
-        '.replace(\'a\', "b").parse::<ActionKey>()\n                    .expect("validated wait key")',
-        "loom_bell_", "reset/outage lost ending",
-    ),
-    "reset-outage": (
-        "crates/prismabuild/src/bell.rs",
-        ".reconcile(if reset { awaited } else { &hinted })",
-        ".reconcile(&hinted)",
-        "loom_bell_", "reset/outage lost ending",
-    ),
 }
 
 MUTANTS.update({

@@ -50,7 +50,7 @@ impl Executor for HeldMaker {
 
 /// PrismaBuild loses every check job: an upstream infrastructure failure. With
 /// a failure class, the check action instead ended on TL3's own harness error.
-struct LostChecks(adapters::prismabuild::Fake, Option<&'static str>);
+struct LostChecks(adapters::flux_checks::Fake, Option<&'static str>);
 impl Executor for LostChecks {
     fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
         if starts(d, EffectKind::SubmitChecks) {
@@ -89,7 +89,7 @@ fn open_with(
         ),
         Upstream::PrismaBuild => registry.register(
             upstream,
-            LostChecks(adapters::prismabuild::Fake::new(root), None),
+            LostChecks(adapters::flux_checks::Fake::new(root), None),
         ),
         _ => unreachable!(),
     }
@@ -448,7 +448,7 @@ fn harness_rejecting_tl3_check_input_is_a_tl3_side_incident() {
     registry.register(
         Upstream::PrismaBuild,
         LostChecks(
-            adapters::prismabuild::Fake::new(root.path()),
+            adapters::flux_checks::Fake::new(root.path()),
             Some("harness"),
         ),
     );
@@ -517,7 +517,7 @@ fn check_incident_carries_stderr_without_test_feedback() {
     registry.register(
         Upstream::PrismaBuild,
         StderrChecks(LostChecks(
-            adapters::prismabuild::Fake::new(root.path()),
+            adapters::flux_checks::Fake::new(root.path()),
             None,
         )),
     );

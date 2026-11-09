@@ -16,7 +16,6 @@ tl3_crate(
         "//crates/harness-core:tl3_harness_core",
         "//crates/kernel:tl3_kernel",
         "//crates/mergify:tl3_mergify",
-        "//crates/prismabuild:tl3_prismabuild",
         "//crates/store:tl3_store",
         "//crates/worktrees:tl3_worktrees",
     ],
@@ -31,7 +30,6 @@ tl3_crate(
         "fx-stage-packet": "examples/fx-stage-packet.rs",
         "generate-fx-qualification": "tools/generate_fx_qualification.rs",
         "p5-vectors": "examples/p5-vectors.rs",
-        "pb_trial": "examples/pb_trial.rs",
         "tl3-deploy": "//deploy/dl380g10:helper.rs",
     },
     declared_tests = {

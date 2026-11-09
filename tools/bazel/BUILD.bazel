@@ -141,7 +141,6 @@ filegroup(
         "github",
         "kernel",
         "mergify",
-        "prismabuild",
         "store",
         "worktrees",
     ]],

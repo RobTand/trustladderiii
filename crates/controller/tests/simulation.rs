@@ -1727,7 +1727,7 @@ fn watches_and_pending(settings: &tl3_config::Store) {
         (
             Upstream::PrismaBuild,
             EffectKind::SubmitChecks,
-            Box::new(adapters::prismabuild::Fake::new(root.path())) as Box<dyn Executor>,
+            Box::new(adapters::flux_checks::Fake::new(root.path())) as Box<dyn Executor>,
         ),
         (
             Upstream::Worktrees,

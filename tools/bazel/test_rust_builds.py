@@ -102,7 +102,7 @@ class RustDependencyTests(unittest.TestCase):
             package="tl3-controller", crate="tl3_controller", build_script=True,
             bins=["tl3", "tl3d"], declared_tests={
                 name: {"path": "tests/" + name + ".rs"}
-                for name in ["core_defects", "workers", "publishing", "prismabuild",
+                for name in ["core_defects", "workers", "publishing",
                              "github", "hindsight", "writer_references", "writer_blocker",
                              "mergify", "simulation"]})
 
@@ -145,7 +145,7 @@ class RustDependencyTests(unittest.TestCase):
                          self.dependencies("test_test_writer_blocker"))
 
     def test_staged_harness_and_role_directory_inputs_are_kept(self):
-        for name in ["workers", "publishing", "prismabuild"]:
+        for name in ["workers", "publishing"]:
             with self.subTest(name=name):
                 self.assertIn("//harness/src/tl3_harness",
                               self.dependencies("test_test_" + name))
@@ -169,9 +169,6 @@ class RustDependencyTests(unittest.TestCase):
         self.assertEqual(worker["exec_properties"], {
             "EstimatedComputeUnits": "1", "EstimatedCPU": "3", "EstimatedMemory": "1GB",
         })
-
-    def test_prismabuild_scenarios_are_sharded(self):
-        self.assertGreaterEqual(self.rules[":test_test_prismabuild"]["shard_count"], 4)
 
     def test_loom_library_has_its_own_gated_selection(self):
         runner = self.rules.get(":lib_test_tl3_controller_loom")

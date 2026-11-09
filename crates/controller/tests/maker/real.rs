@@ -10,7 +10,7 @@ pub(super) struct Flow {
     remote: PathBuf,
     worktree: PathBuf,
     base: String,
-    _checks: adapters::prismabuild::RunningSource,
+    _checks: Checks,
 }
 
 impl Flow {
@@ -144,9 +144,12 @@ impl Flow {
                         .all(|effect| effect.state != tl3_store::EffectState::Intended),
                     "real worktree delivery did not complete"
                 );
-                let Input::Observation { key, observation } =
-                    self.receiver.recv().expect("worker source ended")
-                else {
+                let input = self.receiver.recv().expect("worker source ended");
+                if let Input::Completion { .. } = input {
+                    tl3_controller::ingress::apply(&mut self.controller, input).unwrap();
+                    continue;
+                }
+                let Input::Observation { key, observation } = input else {
                     panic!("worker observation required")
                 };
                 observe(
@@ -316,7 +319,12 @@ pub(super) fn rebase_revisit(settings: &tl3_config::Store, new_edits: bool) {
     assert_ne!(revisit.generation, first.generation);
     while flow.controller.drive_once().unwrap() {}
     let (key, observation) = loop {
-        let Input::Observation { key, observation } = flow.receiver.recv().unwrap() else {
+        let input = flow.receiver.recv().unwrap();
+        if let Input::Completion { .. } = input {
+            tl3_controller::ingress::apply(&mut flow.controller, input).unwrap();
+            continue;
+        }
+        let Input::Observation { key, observation } = input else {
             panic!("worker observation")
         };
         if matches!(
@@ -689,7 +697,7 @@ pub(super) fn recorded_failure_feedback(settings: &tl3_config::Store) {
     let mut flow = Flow::start(settings, root.path());
     let current = flow.record();
     assert_eq!(current["blobs"], record["maker_trial"]["blobs"]);
-    let queue = root.path().join("fakes/checks/queue");
+    let queue = root.path().join("fakes/checks");
     fs::write(queue.join("mode"), "check_fail").unwrap();
     fs::write(
         queue.join("recorded_results.json"),

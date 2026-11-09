@@ -13,7 +13,6 @@ pub(super) enum Call {
 #[derive(Clone, Debug)]
 pub(super) enum Step {
     Bytes(Vec<u8>),
-    Fail,
 }
 struct Recording {
     opens: VecDeque<bool>,
@@ -83,7 +82,6 @@ impl Read for File {
             let state = state.as_mut().unwrap();
             state.calls.push(Call::Read(bytes.len()));
             match state.reads.pop_front() {
-                Some(Step::Fail) => Err(io::Error::other("recorded read failure")),
                 Some(Step::Bytes(chunk)) => {
                     let count = bytes.len().min(chunk.len());
                     bytes[..count].copy_from_slice(&chunk[..count]);

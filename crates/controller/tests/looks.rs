@@ -1,16 +1,8 @@
 #[path = "support/ownership.rs"]
 mod startup_ownership;
-// Single-event fixture receives expose no intermediate progress.
-// #673 measured the full looks binary at 61.957 s; 125 s > 2x.
-const SIGNAL_WAIT: std::time::Duration = std::time::Duration::from_secs(125);
-
 use tl3_controller::executor::Output as Out;
-#[path = "fixtures/bell/mod.rs"]
-mod bell;
 #[path = "../../store/tests/support/mod.rs"]
 mod support;
-#[path = "fixtures/waits/mod.rs"]
-mod waits;
 #[allow(dead_code)]
 mod worktree_fixture;
 use std::{
@@ -1172,7 +1164,7 @@ fn stopped_worktree_saves_scratch(settings: &tl3_config::Store, check: &str) {
         WaitingMaker {
             fake: adapters::workers::Fake::new(root.path()),
             stops: Rc::new(Cell::new(0)),
-            owner: "prismabuild".into(),
+            owner: "flux".into(),
             checkout: fixture
                 .adapter()
                 .checkout(&fixture.delivery(EffectKind::PrepareWorktree, 1)),
@@ -1959,12 +1951,6 @@ fn main() {
         println!("3 allowance scenarios passed; no skips");
         return;
     }
-    if std::env::args().any(|arg| arg == "--subscription-errors") {
-        let mut db = support::Database::start();
-        subscription_error_is_isolated(&db.create("subscription_errors"));
-        db.stop();
-        return;
-    }
     for (flag, test) in [
         (
             "--pending-cancel-look",
@@ -1997,31 +1983,17 @@ fn main() {
     }
     if std::env::args().any(|s| s == "--r5") {
         let mut db = support::Database::start();
-        let mut failures = 0;
-        for (name, test) in [
-            (
-                "moving_maker_wait_keeps_registration",
-                moving_maker_wait_keeps_registration as fn(&tl3_config::Store),
-            ),
-            (
-                "successful_look_breaks_failure_streak",
-                successful_look_breaks_failure_streak,
-            ),
-            (
-                "successful_wait_read_breaks_failure_streak",
-                successful_wait_read_breaks_failure_streak,
-            ),
-        ] {
-            let settings = db.create(name);
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| test(&settings)));
-            println!(
-                "R5 {name}: {}",
-                if result.is_ok() { "PASS" } else { "FAIL" }
-            );
-            failures += usize::from(result.is_err());
-        }
+        let name = "successful_look_breaks_failure_streak";
+        let settings = db.create(name);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            successful_look_breaks_failure_streak(&settings)
+        }));
+        println!(
+            "R5 {name}: {}",
+            if result.is_ok() { "PASS" } else { "FAIL" }
+        );
         db.stop();
-        assert_eq!(failures, 0, "R5 look regressions");
+        assert!(result.is_ok(), "R5 look regressions");
         return;
     }
 
@@ -2069,74 +2041,16 @@ fn main() {
         db.stop();
         return;
     }
-    if let Some(case) = std::env::args()
-        .nth(1)
-        .and_then(|s| s.strip_prefix("--r4-").map(str::to_owned))
-    {
-        let mut db = support::Database::start();
-        wait_subscription_retirement(&db.create("wait_retirement"), &case);
-        db.stop();
-        return;
-    }
-    // These run in the normal suite as well as the focused red action.
-    if std::env::args().any(|s| s == "--r3") {
-        let mut db = support::Database::start();
-        let mut failed = 0;
-        for name in [
-            "missing_wait",
-            "unknown_owner",
-            "foreign_wait",
-            "unreadable_wait",
-            "quiet_wait",
-            "github_due",
-        ] {
-            let settings = db.create(name);
-            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| r3(&settings, name)))
-                .is_err()
-            {
-                eprintln!("R3 {name}: FAIL");
-                failed += 1;
-            } else {
-                println!("R3 {name}: PASS");
-            }
-        }
-        db.stop();
-        assert_eq!(failed, 0, "R3 regression failures");
-        return;
-    }
     let mut db = support::Database::start();
-    subscription_error_is_isolated(&db.create("subscription_errors"));
     assert_eq!(closed_looks_regressions(&mut db), 0);
     cancelling_github_respects_quota(&db.create("cancel_github_quota"));
     for case in ["brief", "persistent", "forbidden", "webhooks"] {
         effect_http_failure(&db.create(&format!("effect_http_{case}")), case);
     }
-    for name in [
-        "missing_wait",
-        "unknown_owner",
-        "foreign_wait",
-        "unreadable_wait",
-        "quiet_wait",
-        "github_due",
-    ] {
-        r3(&db.create(name), name);
-        println!("test r3_{name} ... ok");
-    }
-    for case in ["progress", "look", "prune"] {
-        wait_subscription_retirement(&db.create(&format!("wait_retirement_{case}")), case);
-        println!("test wait_subscription_removed_after_{case} ... ok");
-    }
-    moving_maker_wait_keeps_registration(&db.create("moving_wait"));
-    println!("test moving_maker_wait_keeps_registration ... ok");
     successful_look_breaks_failure_streak(&db.create("failure_streak"));
     println!("test successful_look_breaks_failure_streak ... ok");
-    successful_wait_read_breaks_failure_streak(&db.create("wait_failure_streak"));
-    println!("test successful_wait_read_breaks_failure_streak ... ok");
     worker_look_does_not_read_github_deliveries(&db.create("worker_only_look"));
     println!("test worker_look_does_not_read_github_deliveries ... ok");
-    declared_maker_wait(&db.create("maker_wait_ended"), "done");
-    declared_maker_wait(&db.create("maker_wait_lost"), "failed");
-    println!("test declared_maker_wait_reads_live_ended_and_lost_owner_records ... ok");
     stalled_runs_and_incident_controls(&db.create("stalls"));
     println!("test stalled_runs_and_incident_controls ... ok");
     for (mode, name) in [
@@ -2181,7 +2095,7 @@ fn main() {
     token_only_queue_progress(&db.create("token_only_queue"));
     println!("test token_only_queue_progress ... ok");
     db.stop();
-    println!("48 allowance and incident scenarios passed; no skips");
+    println!("36 allowance and incident scenarios passed; no skips");
 }
 
 struct WaitingMaker {
@@ -2221,7 +2135,7 @@ impl Executor for WaitingMaker {
             Ok(Look::Waiting {
                 wait: tl3_store::ExternalWait {
                     upstream: self.owner.clone(),
-                    key: waits::key(),
+                    key: format!("worker:{}", "a".repeat(64)),
                 },
                 checkout: self.checkout.clone(),
             })
@@ -2243,76 +2157,6 @@ impl Executor for WaitingMaker {
             },
         )]))
     }
-}
-fn declared_maker_wait(settings: &tl3_config::Store, ending: &str) {
-    let root = tempfile::tempdir().unwrap();
-    let clock = FakeClock::new();
-    let stops = Rc::new(Cell::new(0));
-    let open = || {
-        let mut registry = adapters::simulation(root.path()).unwrap();
-        registry.register(
-            Upstream::Workers,
-            WaitingMaker {
-                fake: adapters::workers::Fake::new(root.path()),
-                stops: stops.clone(),
-                owner: "prismabuild".into(),
-                checkout: root.path().join("worktree"),
-            },
-        );
-        registry.register(
-            Upstream::PrismaBuild,
-            waits::adapter(root.path(), &mut crate::startup_ownership::ownership()),
-        );
-        let mut c = Controller::open_with_clock(
-            Store::open(settings).unwrap(),
-            registry,
-            bootstrap(),
-            clock.clone(),
-        )
-        .unwrap();
-        c.set_allowances(allowances());
-        c
-    };
-    let mut c = open();
-    waits::record(root.path(), "ready");
-    c.intake(labelled()).unwrap();
-    drain(&mut c);
-    assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Making);
-    c.look_now().unwrap();
-    for state in ["ready", "claimed"] {
-        waits::record(root.path(), state);
-        clock.advance(1000);
-        c.look_now().unwrap();
-        assert_eq!(stops.get(), 0, "{state} is alive past no_progress_secs");
-    }
-    drop(c);
-    let mut c = open();
-    clock.advance(1000);
-    c.look_due().unwrap();
-    assert_eq!(stops.get(), 0, "restart retains the owner's wait");
-    waits::record(root.path(), "missing");
-    clock.advance(1000);
-    c.look_now().unwrap();
-    assert_eq!(stops.get(), 0, "missing starts the agent allowance once");
-    waits::record(root.path(), ending);
-    c.look_now().unwrap();
-    assert_eq!(
-        stops.get(),
-        0,
-        "the agent gets its allowance after owner termination"
-    );
-    drop(c);
-    let mut c = open();
-    clock.advance(2);
-    c.look_due().unwrap();
-    assert_eq!(stops.get(), 0);
-    clock.advance(1);
-    c.look_due().unwrap();
-    assert_eq!(
-        stops.get(),
-        1,
-        "silent maker is stopped after the ended action"
-    );
 }
 
 struct DeliveryCounter {
@@ -2374,403 +2218,6 @@ fn worker_look_does_not_read_github_deliveries(settings: &tl3_config::Store) {
     );
 }
 
-fn r3(settings: &tl3_config::Store, case: &str) {
-    let root = tempfile::tempdir().unwrap();
-    let clock = FakeClock::new();
-    let stops = Rc::new(Cell::new(0));
-    let reads = Rc::new(Cell::new(0));
-    let mut registry = adapters::simulation(root.path()).unwrap();
-    registry.register(
-        Upstream::Workers,
-        WaitingMaker {
-            fake: adapters::workers::Fake::new(root.path()),
-            stops: stops.clone(),
-            checkout: root.path().join("worktree"),
-            owner: if case == "unknown_owner" {
-                "token_grant"
-            } else {
-                "prismabuild"
-            }
-            .into(),
-        },
-    );
-    let bell = bell::Bell::new();
-    let pb = waits::adapter_with_bell(
-        root.path(),
-        &bell.url,
-        &mut crate::startup_ownership::ownership(),
-    );
-    let source = pb.source();
-    registry.register(Upstream::PrismaBuild, pb);
-    registry.register(
-        Upstream::GitHub,
-        DeliveryCounter {
-            fake: adapters::github::Fake::new(root.path()),
-            reads: reads.clone(),
-        },
-    );
-    let mut c = Controller::open_with_clock(
-        Store::open(settings).unwrap(),
-        registry,
-        bootstrap(),
-        clock.clone(),
-    )
-    .unwrap();
-    c.set_allowances(allowances());
-    waits::record(root.path(), "claimed");
-    if case == "missing_wait" {
-        waits::record(root.path(), "missing");
-    }
-    if case == "foreign_wait" {
-        let file = root
-            .path()
-            .join(format!("queue/claimed/{}.json", waits::key()));
-        let mut value: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
-        value["checkout_snapshot"]["parent"] =
-            serde_json::json!(waits::bind(root.path(), &root.path().join("foreign")));
-        std::fs::write(file, value.to_string()).unwrap();
-    }
-    if case == "unreadable_wait" {
-        std::fs::write(
-            root.path()
-                .join(format!("queue/claimed/{}.json", waits::key())),
-            "broken JSON",
-        )
-        .unwrap();
-    }
-    c.intake(labelled()).unwrap();
-    drain(&mut c);
-    if case == "github_due" {
-        // A held GitHub write leaves a due GitHub allowance; no forced look.
-        let mut snapshot = c.snapshot().unwrap();
-        let mut store = Store::open(settings).unwrap();
-        let mut change = tl3_store::Commit::new("github-due", serde_json::json!(null), &snapshot);
-        let delivery: Delivery = serde_json::from_value(
-            store
-                .effects()
-                .unwrap()
-                .into_iter()
-                .find(|e| {
-                    serde_json::from_value::<Delivery>(e.payload.clone()).is_ok_and(|d| {
-                        tl3_controller::executor::upstream(d.output) == Upstream::GitHub
-                    })
-                })
-                .unwrap()
-                .payload,
-        )
-        .unwrap();
-        let mut value = snapshot
-            .rows
-            .iter()
-            .find(|r| r.table == "allowances")
-            .unwrap()
-            .value
-            .clone();
-        value["delivery"] = serde_json::to_value(&delivery).unwrap();
-        value["due_ms"] = serde_json::json!(clock.0.get());
-        change.rows.push(tl3_store::RowChange::Put {
-            table: "allowances".into(),
-            id: delivery.key,
-            value,
-        });
-        store.commit(&change).unwrap();
-        snapshot = c.snapshot().unwrap();
-        assert!(!snapshot.rows.iter().any(|r| r.table == "delivery_looks"));
-        c.look_due().unwrap();
-        assert_eq!(
-            reads.get(),
-            1,
-            "a due GitHub allowance reads its delivery log"
-        );
-        return;
-    }
-    c.look_now().unwrap();
-    if case == "quiet_wait" {
-        assert!(
-            c.next_look_in().unwrap().is_none(),
-            "a claimed wait disarms the allowance instead of becoming an outage"
-        );
-        let (tx, rx) = std::sync::mpsc::channel();
-        let running = source.spawn(tx);
-        bell.request().reply(0, serde_json::json!([]));
-        let mut waiting = bell.request();
-        assert!(
-            waiting.line.contains(&waits::key()),
-            "declared action joins the awaited set"
-        );
-        // Startup captures the cursor and rereads outstanding waits without a live look.
-        for input in rx.try_iter() {
-            tl3_controller::ingress::apply(&mut c, input).unwrap();
-        }
-        // Count real opens of the action record rather than mocking wait_record.
-        use rustix::fs::inotify;
-        let fd = inotify::init(inotify::CreateFlags::NONBLOCK).unwrap();
-        inotify::add_watch(
-            &fd,
-            root.path()
-                .join(format!("queue/claimed/{}.json", waits::key())),
-            inotify::WatchFlags::OPEN,
-        )
-        .unwrap();
-        let before = c.snapshot().unwrap();
-        for _ in 0..4 {
-            clock.advance(120);
-            c.look_due().unwrap();
-            drain(&mut c);
-        }
-        let mut buffer = [std::mem::MaybeUninit::<u8>::uninit(); 4096];
-        let mut reader = inotify::Reader::new(&fd, &mut buffer);
-        let mut opens = 0;
-        while reader.next().is_ok() {
-            opens += 1;
-        }
-        assert_eq!(opens, 0, "a claimed wait has no timed PrismaBuild reads");
-        assert_eq!(
-            c.snapshot().unwrap(),
-            before,
-            "a claimed wait has no timed store commits"
-        );
-        // A reset already reads the live record, so it needs no controller look.
-        waiting.response.send(serde_json::json!({"epoch":"0123456789abcdef0123456789abcdef", "seq":0, "reset":true, "events":[]})).unwrap();
-        waiting = bell.request();
-        assert!(rx.try_recv().is_err(), "a live reset causes no look");
-        assert_eq!(
-            c.snapshot().unwrap(),
-            before,
-            "a live reset commits nothing"
-        );
-        // One terminal event goes through ingress and the actual PB reader.
-        waits::record(root.path(), "done");
-        waiting.reply(
-            1,
-            serde_json::json!([{"seq":1,"dir":"done","key":waits::key()}]),
-        );
-        let input = rx.recv_timeout(SIGNAL_WAIT).unwrap();
-        assert!(matches!(&input, tl3_controller::cli::Input::Look { .. }));
-        let before_end = c.snapshot().unwrap().revision;
-        tl3_controller::ingress::apply(&mut c, input).unwrap();
-        assert_eq!(
-            c.snapshot().unwrap().revision.get(),
-            before_end.get() + 1,
-            "one ending causes exactly one look commit"
-        );
-        assert!(rx.try_recv().is_err(), "one ending produces one look");
-        assert_eq!(c.next_look_in().unwrap(), Some(Duration::from_secs(3)));
-        drop(running);
-        return;
-    }
-    clock.advance(3);
-    c.look_due().unwrap();
-    drain(&mut c);
-    clock.advance(3);
-    c.look_due().unwrap();
-    drain(&mut c);
-    if case == "unreadable_wait" {
-        assert_eq!(stops.get(), 0, "read errors do not authorize a stop");
-        assert!(
-            c.snapshot()
-                .unwrap()
-                .rows
-                .iter()
-                .any(|r| r.table == "incidents" && r.value["open"] == true)
-        );
-    } else {
-        assert_eq!(stops.get(), 1, "an invalid wait must not protect the maker");
-        assert_eq!(
-            c.world().unwrap().nodes[0].run_failures,
-            1,
-            "failure is checked after driving"
-        );
-    }
-}
-
-fn wait_subscription_retirement(settings: &tl3_config::Store, case: &str) {
-    struct Maker {
-        waiting: WaitingMaker,
-        resumed: Rc<Cell<bool>>,
-    }
-    impl Executor for Maker {
-        fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
-            self.waiting.execute(d)
-        }
-        fn reconcile(&mut self, d: &Delivery) -> tl3_controller::Result<Reconciliation> {
-            self.waiting.reconcile(d)
-        }
-        fn look(&mut self, d: &Delivery) -> tl3_controller::Result<Look> {
-            if self.resumed.get() && WaitingMaker::maker(d) {
-                Ok(Look::Alive {
-                    progress: "resumed".into(),
-                })
-            } else {
-                self.waiting.look(d)
-            }
-        }
-    }
-    let root = tempfile::tempdir().unwrap();
-    let resumed = Rc::new(Cell::new(false));
-    let mut registry = adapters::simulation(root.path()).unwrap();
-    registry.register(
-        Upstream::Workers,
-        Maker {
-            waiting: WaitingMaker {
-                fake: adapters::workers::Fake::new(root.path()),
-                stops: Rc::new(Cell::new(0)),
-                owner: "prismabuild".into(),
-                checkout: root.path().join("worktree"),
-            },
-            resumed: resumed.clone(),
-        },
-    );
-    registry.register(
-        Upstream::PrismaBuild,
-        waits::adapter(root.path(), &mut crate::startup_ownership::ownership()),
-    );
-    waits::record(root.path(), "claimed");
-    let mut c = Controller::open_with_clock(
-        Store::open(settings).unwrap(),
-        registry,
-        bootstrap(),
-        FakeClock::new(),
-    )
-    .unwrap();
-    c.set_allowances(allowances());
-    c.intake(labelled()).unwrap();
-    drain(&mut c);
-    c.look_now().unwrap();
-    let snapshot = c.snapshot().unwrap();
-    let row = snapshot
-        .rows
-        .iter()
-        .find(|r| r.table == "allowances" && r.value["external_wait"].is_object())
-        .unwrap();
-    let delivery: Delivery = serde_json::from_value(row.value["delivery"].clone()).unwrap();
-    let encoded: String = delivery.key.bytes().map(|b| format!("{b:02x}")).collect();
-    let path = root
-        .path()
-        .join(format!("records/{}/{encoded}.wait", delivery.node().0));
-    assert!(
-        path.is_file(),
-        "the waiting maker has a durable subscription"
-    );
-    match case {
-        "progress" => {
-            c.observe(
-                "own-progress",
-                Observation::Progress {
-                    key: delivery.key.clone(),
-                    checkpoint: "own-work".into(),
-                },
-            )
-            .unwrap();
-            drain(&mut c);
-        }
-        "look" => {
-            resumed.set(true);
-            c.look_now().unwrap();
-        }
-        "prune" => {
-            c.observe(
-                "maker-ended",
-                Observation::Kernel(Event::Reply {
-                    node: delivery.node(),
-                    generation: delivery.generation,
-                    reply: tl3_kernel::Reply::RunFailed,
-                }),
-            )
-            .unwrap();
-            drain(&mut c);
-            assert!(
-                !c.snapshot()
-                    .unwrap()
-                    .rows
-                    .iter()
-                    .any(|r| r.table == "allowances" && r.id == delivery.key),
-                "the old allowance was pruned"
-            );
-        }
-        _ => panic!("unknown retirement case"),
-    }
-    assert!(
-        !path.exists(),
-        "{case} deletes the durable wait subscription"
-    );
-}
-
-fn moving_maker_wait_keeps_registration(settings: &tl3_config::Store) {
-    let root = tempfile::tempdir().unwrap();
-    let clock = FakeClock::new();
-    let stops = Rc::new(Cell::new(0));
-    let mut registry = adapters::simulation(root.path()).unwrap();
-    registry.register(
-        Upstream::Workers,
-        WaitingMaker {
-            fake: adapters::workers::Fake::new(root.path()),
-            stops: stops.clone(),
-            owner: "prismabuild".into(),
-            checkout: root.path().join("worktree"),
-        },
-    );
-    registry.register(
-        Upstream::PrismaBuild,
-        waits::adapter(root.path(), &mut crate::startup_ownership::ownership()),
-    );
-    waits::record(root.path(), "claimed");
-    let mut c = Controller::open_with_clock(
-        Store::open(settings).unwrap(),
-        registry,
-        bootstrap(),
-        clock.clone(),
-    )
-    .unwrap();
-    c.set_allowances(allowances());
-    c.intake(labelled()).unwrap();
-    drain(&mut c);
-    c.look_now().unwrap();
-    let marker = root.path().join(format!(
-        "queue/claimed/{}.100.host.1.abc.tombstone",
-        waits::key()
-    ));
-    std::fs::rename(
-        root.path()
-            .join(format!("queue/claimed/{}.json", waits::key())),
-        &marker,
-    )
-    .unwrap();
-    for _ in 0..3 {
-        clock.advance(1000);
-        c.look_now().unwrap();
-        let snapshot = c.snapshot().unwrap();
-        let allowance = snapshot
-            .rows
-            .iter()
-            .find(|row| {
-                row.table == "allowances" && row.value["external_wait"]["key"] == waits::key()
-            })
-            .unwrap();
-        assert_eq!(
-            allowance.value["read_failures"], 0,
-            "finish window must not count as a failed look"
-        );
-        assert_eq!(
-            allowance.value["wait_ended"], false,
-            "move must keep wait registered"
-        );
-        assert!(
-            !snapshot
-                .rows
-                .iter()
-                .any(|row| row.table == "incidents" && row.value["open"] == true),
-            "finish window must not open an incident"
-        );
-        assert_eq!(stops.get(), 0);
-    }
-    waits::record(root.path(), "done");
-    std::fs::remove_file(marker).unwrap();
-    c.look_now().unwrap();
-    assert_eq!(stops.get(), 0, "terminal starts the allowance");
-}
-
 struct RecoveringLook {
     healthy: Rc<Cell<bool>>,
 }
@@ -2829,69 +2276,6 @@ fn successful_look_breaks_failure_streak(settings: &tl3_config::Store) {
             .count(),
         1,
         "two consecutive read failures must open one incident"
-    );
-}
-
-fn successful_wait_read_breaks_failure_streak(settings: &tl3_config::Store) {
-    let root = tempfile::tempdir().unwrap();
-    let clock = FakeClock::new();
-    let mut registry = adapters::simulation(root.path()).unwrap();
-    registry.register(
-        Upstream::Workers,
-        WaitingMaker {
-            fake: adapters::workers::Fake::new(root.path()),
-            stops: Rc::new(Cell::new(0)),
-            owner: "prismabuild".into(),
-            checkout: root.path().join("worktree"),
-        },
-    );
-    registry.register(
-        Upstream::PrismaBuild,
-        waits::adapter(root.path(), &mut crate::startup_ownership::ownership()),
-    );
-    waits::record(root.path(), "claimed");
-    let mut c = Controller::open_with_clock(
-        Store::open(settings).unwrap(),
-        registry,
-        bootstrap(),
-        clock.clone(),
-    )
-    .unwrap();
-    c.intake(labelled()).unwrap();
-    drain(&mut c);
-    let path = root
-        .path()
-        .join(format!("queue/claimed/{}.json", waits::key()));
-    // #356: failed looks count once per silence allowance, so space them by one.
-    let silence = u64::from(tl3_config::Allowances::default().agent_worker.silence_secs);
-    for success in [false, true, false] {
-        if success {
-            waits::record(root.path(), "claimed");
-        } else {
-            std::fs::write(&path, "broken JSON").unwrap();
-        }
-        clock.advance(silence);
-        c.look_now().unwrap();
-        assert!(
-            !c.snapshot()
-                .unwrap()
-                .rows
-                .iter()
-                .any(|r| r.table == "incidents" && r.value["open"] == true),
-            "nonconsecutive wait read failures must not open an incident"
-        );
-    }
-    clock.advance(silence);
-    c.look_now().unwrap();
-    assert_eq!(
-        c.snapshot()
-            .unwrap()
-            .rows
-            .iter()
-            .filter(|r| r.table == "incidents" && r.value["open"] == true)
-            .count(),
-        1,
-        "two consecutive wait read failures must open one incident"
     );
 }
 
@@ -3024,82 +2408,4 @@ fn effect_http_failure(settings: &tl3_config::Store, case: &str) {
     }
     assert_eq!(calls.get(), before);
     println!("test effect_http_{case} ... ok");
-}
-
-fn subscription_error_is_isolated(settings: &tl3_config::Store) {
-    struct SubscriptionFailure(adapters::prismabuild::Adapter);
-    impl Executor for SubscriptionFailure {
-        fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
-            self.0.execute(d)
-        }
-        fn reconcile(&mut self, d: &Delivery) -> tl3_controller::Result<Reconciliation> {
-            self.0.reconcile(d)
-        }
-        fn wait_record(
-            &mut self,
-            key: &str,
-            checkout: &Path,
-        ) -> tl3_controller::Result<tl3_controller::executor::WaitRecord> {
-            self.0.wait_record(key, checkout)
-        }
-        fn watch_wait(
-            &mut self,
-            _: &Delivery,
-            _: Option<&tl3_store::ExternalWait>,
-        ) -> tl3_controller::Result<()> {
-            Err(tl3_controller::Error::Invalid(
-                "one wait subscription is unavailable",
-            ))
-        }
-    }
-    let root = tempfile::tempdir().unwrap();
-    let mut registry = adapters::simulation(root.path()).unwrap();
-    registry.register(
-        Upstream::Workers,
-        WaitingMaker {
-            fake: adapters::workers::Fake::new(root.path()),
-            stops: Rc::new(Cell::new(0)),
-            owner: "prismabuild".into(),
-            checkout: root.path().join("worktree"),
-        },
-    );
-    registry.register(
-        Upstream::PrismaBuild,
-        SubscriptionFailure(waits::adapter(
-            root.path(),
-            &mut crate::startup_ownership::ownership(),
-        )),
-    );
-    waits::record(root.path(), "claimed");
-    let clock = FakeClock::new();
-    let mut c = Controller::open_with_clock(
-        Store::open(settings).unwrap(),
-        registry,
-        bootstrap(),
-        clock.clone(),
-    )
-    .unwrap();
-    c.intake(labelled()).unwrap();
-    drain(&mut c);
-    for _ in 0..3 {
-        // #356: failed looks count once per silence allowance.
-        clock.advance(u64::from(
-            tl3_config::Allowances::default().agent_worker.silence_secs,
-        ));
-        assert!(
-            c.look_now().is_ok(),
-            "one subscription failure must not stop other looks"
-        );
-    }
-    assert_eq!(
-        c.snapshot()
-            .unwrap()
-            .rows
-            .iter()
-            .filter(|row| row.table == "incidents" && row.value["open"] == true)
-            .count(),
-        1,
-        "repeated failed subscriptions reuse their incident"
-    );
-    assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Making);
 }

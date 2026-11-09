@@ -1,6 +1,5 @@
 #[path = "publishing/drain_deadline.rs"]
 mod drain_deadline;
-mod prismabuild_fixture;
 #[path = "publishing/adoption.rs"]
 mod publishing_adoption;
 #[path = "support/ownership.rs"]
@@ -587,15 +586,65 @@ impl Server {
         .unwrap()
     }
 }
-fn pb(root: &Path) -> adapters::prismabuild::Adapter {
-    let (client, mut settings) = prismabuild_fixture::settings(root, "done", "http://127.0.0.1:9/");
-    settings.records = root.join("pb-records");
-    adapters::prismabuild::Adapter::new(
-        client,
-        settings,
-        &mut crate::startup_ownership::ownership(),
-    )
-    .unwrap()
+/// The checks backend these scenarios stand on: a submitted run stays pending until a
+/// look reads its ending, which reports the run's judged results. `queue/mode` set to
+/// `check_fail` fails the greeting test; anything else passes. Submissions are durable
+/// markers, so a reopened controller finds runs it submitted before.
+struct Checks {
+    root: PathBuf,
+}
+fn checks(root: &Path) -> Checks {
+    let root = root.join("queue");
+    fs::create_dir_all(root.join("submitted")).unwrap();
+    Checks { root }
+}
+impl Checks {
+    fn marker(&self, d: &Delivery) -> PathBuf {
+        let key: String = d.key.bytes().map(|b| format!("{b:02x}")).collect();
+        self.root.join("submitted").join(key)
+    }
+    fn ending(&self, d: &Delivery) -> Reconciliation {
+        if !matches!(
+            d.output,
+            Out::Effect {
+                kind: EffectKind::SubmitChecks,
+                ..
+            }
+        ) || !self.marker(d).exists()
+        {
+            return Reconciliation::Absent;
+        }
+        let fail =
+            fs::read_to_string(self.root.join("mode")).is_ok_and(|mode| mode == "check_fail");
+        Reconciliation::Found(Box::new(Completion::confirmed(vec![
+            support::checks::report(d, "a".repeat(64), fail, None),
+        ])))
+    }
+}
+impl Executor for Checks {
+    fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
+        if matches!(
+            d.output,
+            Out::Effect {
+                kind: EffectKind::SubmitChecks,
+                ..
+            }
+        ) {
+            fs::write(self.marker(d), b"submitted")?;
+        }
+        Ok(Completion::confirmed(vec![]))
+    }
+    fn reconcile(&mut self, d: &Delivery) -> tl3_controller::Result<Reconciliation> {
+        Ok(self.ending(d))
+    }
+    fn look(&mut self, d: &Delivery) -> tl3_controller::Result<tl3_controller::executor::Look> {
+        use tl3_controller::executor::Look;
+        Ok(match self.ending(d) {
+            Reconciliation::Found(completion) => Look::Found(completion),
+            Reconciliation::Absent => Look::Absent,
+            Reconciliation::Pending => Look::Pending,
+        })
+    }
 }
 
 fn document(store: &mut Store, table: &str, value: Value) {
@@ -840,7 +889,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             .with_repositories(&config.github.repos)
             .unwrap(),
     );
-    registry.register(Upstream::PrismaBuild, pb(root.path()));
+    registry.register(Upstream::PrismaBuild, checks(root.path()));
     registry.register(
         Upstream::Delivery,
         adapters::mergify::Adapter::new(server.clients(), 0, &root.path().join("mergify")).unwrap(),
@@ -1512,7 +1561,6 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             .is_empty()
         );
     }
-    assert!(!root.path().join("pb-records/0").exists());
     assert!(store.worker_progress(None).unwrap().is_empty());
     let state = server.api.state.lock().unwrap();
     assert!(state.closed);
@@ -1575,11 +1623,10 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
                 })
         }));
     }
-    let calls = fs::read_to_string(root.path().join("queue/calls.jsonl")).unwrap();
+    // One check run is submitted per checked head.
     assert_eq!(
-        calls
-            .lines()
-            .filter(|line| line.contains("--seal-only"))
+        fs::read_dir(root.path().join("queue/submitted"))
+            .unwrap()
             .count(),
         if mode == "review-retry" {
             2

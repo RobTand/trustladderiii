@@ -19,7 +19,7 @@ COMPILE_ERROR = '\ncompile_error!("seeded break");\n'
 FAILING_TEST = ('\n#[cfg(test)]\nmod seeded_break {\n    #[test]\n    fn seeded_break() {\n'
                 '        assert_eq!(1, 2, "seeded break");\n    }\n}\n')
 PYTHON_RAISE = '\nraise RuntimeError("seeded break")\n'
-FIXTURE = 'crates/prismabuild/tests/fixtures/queue/done/473655276a87335e1b1f82fcfec15c5b2beef4f5852b1d133e52b676bb3ec364.json'
+FIXTURE = 'crates/controller/tests/fixtures/dispatch-restart-regressions.json'
 
 # (place, path, mutation, a label prefix the failing selection must include)
 SEEDS = [
@@ -40,7 +40,7 @@ SEEDS = [
 WORKTREES_REACH = {
     'required': ['//crates/worktrees:', '//crates/config:', '//crates/store:',
                  '//crates/controller:test_test_workers'],
-    'forbidden': ['//crates/kernel:', '//crates/github:', '//crates/mergify:', '//crates/prismabuild:'],
+    'forbidden': ['//crates/kernel:', '//crates/github:', '//crates/mergify:'],
 }
 
 

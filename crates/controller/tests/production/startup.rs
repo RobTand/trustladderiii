@@ -122,30 +122,6 @@ pub(super) fn terminate_claim(settings: &tl3_config::Store) {
     );
 }
 
-/// #785 review: a disconnected capability must not admit filesystem cleanup.
-#[test]
-fn lost_claim_prevents_prismabuild_cleanup() {
-    let root = tempfile::tempdir().unwrap();
-    let mut database = support::Database::start();
-    let settings = database.create("lost_pb_claim");
-    let mut ownership = Ownership::claim(Store::open(&settings).unwrap()).unwrap();
-    let (client, pb) = prismabuild_fixture::settings(root.path(), "done", "http://127.0.0.1:9/");
-    let staged = pb.records.join("active.input/harness/check.py");
-    fs::create_dir_all(staged.parent().unwrap()).unwrap();
-    fs::write(&staged, b"owner bytes").unwrap();
-    terminate_claim(&settings);
-    let successor = Ownership::claim(Store::open(&settings).unwrap()).unwrap();
-    let result = adapters::prismabuild::Adapter::new(client, pb, &mut ownership);
-    assert_eq!(
-        fs::read(&staged).ok().as_deref(),
-        Some(b"owner bytes".as_slice()),
-        "cleanup ran after claim loss"
-    );
-    assert!(result.is_err(), "lost ownership must abort startup");
-    drop((result, successor, ownership));
-    database.stop();
-}
-
 /// #785 review: a disconnected capability must not seed or activate prompts.
 #[test]
 fn lost_claim_prevents_worker_initialization() {

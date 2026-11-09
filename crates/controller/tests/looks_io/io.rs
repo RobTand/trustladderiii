@@ -64,6 +64,27 @@ pub(super) struct Recording {
     revision: i64,
     world: World,
     cut: Option<(usize, bool)>,
+    new: bool,
+}
+/// The one intended difference between the sides: the reference's backend wait
+/// owner is PrismaBuild, the current one is Flux. Runs compare under one name.
+fn backend_wait_owner(new: bool) -> &'static str {
+    if new { "flux" } else { "prismabuild" }
+}
+/// Values carry the owner as JSON, and recorded commits carry it inside their Debug text
+/// (`"upstream": String("flux")` for a stored value, `upstream: "flux"` for the struct).
+fn one_wait_owner(value: &Value) -> Value {
+    serde_json::from_str(
+        &serde_json::to_string(value)
+            .unwrap()
+            .replace(r#""upstream":"flux""#, r#""upstream":"prismabuild""#)
+            .replace(
+                r#"\"upstream\": String(\"flux\")"#,
+                r#"\"upstream\": String(\"prismabuild\")"#,
+            )
+            .replace(r#"upstream: \"flux\""#, r#"upstream: \"prismabuild\""#),
+    )
+    .unwrap()
 }
 thread_local! { static ACTIVE: RefCell<Option<Recording>> = const { RefCell::new(None) }; }
 fn with<T>(f: impl FnOnce(&mut Recording) -> T) -> T {
@@ -280,11 +301,13 @@ impl Adapter {
             },
             7 | 8 => Look::Waiting {
                 wait: tl3_store::ExternalWait {
-                    upstream: if with(|r| r.schedule.worker) {
-                        "prismabuild"
-                    } else {
-                        "other"
-                    }
+                    upstream: with(|r| {
+                        if r.schedule.worker {
+                            backend_wait_owner(r.new)
+                        } else {
+                            "other"
+                        }
+                    })
                     .into(),
                     key: "outside-job".into(),
                 },
@@ -404,7 +427,7 @@ pub(super) fn observe(key: &str, observation: Observation) -> Result<()> {
         }
     })
 }
-fn initial(s: &Schedule) -> AllowanceState {
+fn initial(s: &Schedule, new: bool) -> AllowanceState {
     let mut d = delivery("effect-1");
     if s.worker {
         d.output = Out::Effect {
@@ -441,7 +464,7 @@ fn initial(s: &Schedule) -> AllowanceState {
     a.wait_ended = s.wait_ended;
     if s.waiting {
         a.external_wait = Some(tl3_store::ExternalWait {
-            upstream: "prismabuild".into(),
+            upstream: backend_wait_owner(new).into(),
             key: "outside-job".into(),
         });
     }
@@ -467,8 +490,8 @@ pub(super) fn run(s: &Schedule, new: bool, cut: Option<(usize, bool)>) -> Run {
             }
         }));
     });
-    let mut state = initial(s);
-    let mut other_state = initial(s);
+    let mut state = initial(s, new);
+    let mut other_state = initial(s, new);
     other_state.delivery = delivery("effect-2");
     other_state.read_failures = 0;
     other_state.read_incidents = 0;
@@ -510,6 +533,7 @@ pub(super) fn run(s: &Schedule, new: bool, cut: Option<(usize, bool)>) -> Run {
             revision: 1,
             world,
             cut,
+            new,
         })
     });
     let result = catch_unwind(AssertUnwindSafe(|| {
@@ -538,9 +562,23 @@ pub(super) fn run(s: &Schedule, new: bool, cut: Option<(usize, bool)>) -> Run {
     ACTIVE.with(|r| {
         let r = r.borrow_mut().take().unwrap();
         Run {
-            trace: r.trace,
-            files: r.files,
-            result,
+            trace: r
+                .trace
+                .into_iter()
+                .map(|(op, value)| (op, one_wait_owner(&value)))
+                .collect(),
+            files: r
+                .files
+                .into_iter()
+                .map(|(name, bytes)| {
+                    let bytes = match serde_json::from_slice::<Value>(&bytes) {
+                        Ok(value) => serde_json::to_vec(&one_wait_owner(&value)).unwrap(),
+                        Err(_) => bytes,
+                    };
+                    (name, bytes)
+                })
+                .collect(),
+            result: one_wait_owner(&result),
             writes: r.writes,
         }
     })

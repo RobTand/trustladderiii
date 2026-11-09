@@ -4,7 +4,6 @@ pub mod direct_merge;
 pub mod github;
 pub(crate) mod images;
 pub mod mergify;
-pub mod prismabuild;
 mod record;
 pub mod run_backend;
 pub mod workers;
@@ -24,7 +23,7 @@ pub fn simulation(root: &Path) -> Result<Registry> {
     let mut adapters = Registry::default();
     adapters.register(Upstream::GitHub, github::Fake::new(root));
     adapters.register(Upstream::Delivery, mergify::Fake::new(root));
-    adapters.register(Upstream::PrismaBuild, prismabuild::Fake::new(root));
+    adapters.register(Upstream::PrismaBuild, flux_checks::Fake::new(root));
     adapters.register(Upstream::Workers, workers::Fake::new(root));
     adapters.register(Upstream::Worktrees, worktrees::Fake::new(root));
     Ok(adapters)

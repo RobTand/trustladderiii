@@ -255,10 +255,10 @@ fn source_pins_and_production_copies() {
         ] {
             let frozen = match name {
                 "look_state" => {
-                    // FX adds only Flux routing to this otherwise frozen extraction.
+                    // FX routes waits to Flux only in this otherwise frozen extraction.
                     if source != base {
                         let old = function(copy, name, true).replace(
-                            r#"matches!(wait.upstream.as_str(), "prismabuild" | "flux")"#,
+                            r#"wait.upstream == "flux""#,
                             r#"wait.upstream == "prismabuild""#,
                         );
                         assert_eq!(
@@ -266,7 +266,7 @@ fn source_pins_and_production_copies() {
                             "a9c9ec39cc5c88298ca802e01a5a4aee810d0f260dbedccfee4a24703b8016d1"
                         );
                     }
-                    Some("083f35cccd402e981d106410768f2f062dd1aa49c327836f1bbf8d63f1b7ef29")
+                    Some("1c0884ae89a454dc57e9bb77fad97db060c4f19184b5a3051a667606b2d9f838")
                 }
                 "look_observations" => {
                     Some("1a991da694bcffaf150cb7de7e62345efda6f2ca2bce8252f1fd462433a83c2f")

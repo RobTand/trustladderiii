@@ -2,6 +2,8 @@
 // Function bodies are verbatim; File is the recorded I/O implementation.
 use super::super::*;
 use super::recorded_io::File;
+use super::{Ending, Job};
+use std::io::Read;
 
 // #826 keeps the reference's original result shape as diagnostics extend production.
 pub(super) type CheckEvidence = (

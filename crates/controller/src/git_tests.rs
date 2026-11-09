@@ -126,32 +126,3 @@ pub fn documents(
     store.commit(&commit).unwrap();
     store.load().unwrap()
 }
-
-pub fn wait_client(root: &Path, parent: &str) -> tl3_prismabuild::PrismaBuild {
-    let queue = root.join("queue");
-    fs::create_dir_all(queue.join("ready")).unwrap();
-    for state in ["claimed", "done", "failed", "withdrawn"] {
-        fs::create_dir(queue.join(state)).unwrap();
-    }
-    let key = "a".repeat(64);
-    fs::write(
-        queue.join("ready").join(format!("{key}.json")),
-        serde_json::to_vec(&json!({
-            "schema":"prismaquant.prismabuild.pool_item.v1", "action_key":key,
-            "published_unix":100,"attempt_history":[],"checkout_snapshot":{"parent":parent}
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    // These wait fixtures stand in for the production queue, whose leases renew.
-    tl3_prismabuild::PrismaBuild::new(tl3_prismabuild::Options {
-        queue_root: queue.clone(),
-        bell_url: "http://127.0.0.1:1/".into(),
-        tool: tl3_prismabuild::Tool {
-            program: "false".into(),
-            args: vec![],
-        },
-    })
-    .unwrap()
-    .with_production_queue(queue)
-}
