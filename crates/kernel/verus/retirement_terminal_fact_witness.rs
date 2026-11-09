@@ -115,7 +115,7 @@ fn terminal_fact_changed_world(case: u8) -> (result: ()) [
             assert(!after.nodes@[0].pr_open);
             assert(after.nodes@[0].phase == Phase::Stopping(Outcome::Stopped));
         } else {
-            assert(after.nodes@[0].phase == Phase::Rebasing);
+            assert(after.nodes@[0].phase == if case == 4 { Phase::Rebasing } else { Phase::Ready(Resume::Rebasing) });
             assert(after.nodes@[0].generation == original@.nodes@[0].generation + 1);
             assert(after.nodes@[0].credit == original@.nodes@[0].credit);
             assert(after.nodes@[0].holds == original@.nodes@[0].holds);
