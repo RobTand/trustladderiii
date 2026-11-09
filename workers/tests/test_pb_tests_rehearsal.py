@@ -47,7 +47,8 @@ def test_reached_assertion_has_bound_verified_receipts(rehearsal):
     assert len(result['forced']['receipts'][0]['receipt_sha256']) == 64
     assert ledger.violations(inputs['base_sha'], plan(forcing)['checks']) == []
     assert len(calls) == 2
-    assert all('--anywhere' in cmd and '--demand' in cmd and '--cpus' in cmd for cmd in calls)
+    assert all(document['op'] == 'prepare' and document['cpus'] >= 1 and document['mem_gb'] >= 1
+               for document in calls), 'each run declares its admitted demand'
 
 
 @pytest.mark.durability
@@ -188,18 +189,19 @@ def test_every_named_old_path_must_hit_the_delayed_target(rehearsal):
 
 
 @pytest.mark.parametrize('changed', ['forcing', 'selectors'])
-def test_pb_verified_log_for_another_forcing_or_selection_is_not_evidence(rehearsal, monkeypatch, changed):
-    from tl3_workers import tests_tool
+def test_verified_payload_for_another_forcing_or_selection_is_not_evidence(rehearsal, tmp_path, monkeypatch, changed):
+    from pb_fixtures import fake_for
     ledger, _, _, _ = rehearsal
-    original = tests_tool._summary
+    fake = fake_for(tmp_path, monkeypatch)
+    job = fake.job
 
-    def stale(ending, key):
-        result = original(ending, key)
-        if 'forcing' in result:
-            result[changed] = {} if changed == 'forcing' else ['tests/test_other.py::test_other']
-        return result
+    def stale(staged, document):
+        kind, summary, symptoms = job(staged, document)
+        if 'forcing' in summary:
+            summary[changed] = {} if changed == 'forcing' else ['tests/test_other.py::test_other']
+        return kind, summary, symptoms
 
-    monkeypatch.setattr(tests_tool, '_summary', stale)
+    fake.job = stale
     result = ledger.run([NODE], reachable())
     assert result['status'] == 'infrastructure_error'
     assert result['forced']['status'] == 'infrastructure_error'

@@ -131,8 +131,9 @@ def test_review662_mixed_checks_keep_their_own_source_partitions(rehearsal, monk
                   Proof.parse(item['proof']) if 'proof' in item else None), configuration(base))
         expected.append(((destination / path).read_bytes(), receipt))
     assert staged == expected, 'maker and Checking must assemble the same per-check trees and receipts'
-    assert len(calls) == 2 and '--forcing' not in calls[0] and '--forcing' in calls[1]
-    assert json.loads(calls[1][calls[1].index('--forcing') + 1]) == Forcing.parse(checks[1]['forcing']).as_json()
+    assert len(calls) == 2 and '--forcing' not in calls[0]['arguments'] and '--forcing' in calls[1]['arguments']
+    arguments = calls[1]['arguments']
+    assert json.loads(arguments[arguments.index('--forcing') + 1]) == Forcing.parse(checks[1]['forcing']).as_json()
 
 
 def test_review662_request229_replays_saved_contract_and_untouched_setup_error(rehearsal):
