@@ -7,6 +7,12 @@ from tl3_harness import execution, test_tool
 from tl3_harness.model import Outcome
 from conftest import flux_context
 
+
+@pytest.fixture(autouse=True)
+def flux(monkeypatch):
+    # PB-REMOVAL: the harness runs only inside a Rust-launched Flux job.
+    flux_context(monkeypatch)
+
 SOURCE = Path(__file__).parent / 'fixtures/scratch/test_scratch.py'
 RUNNER = Path(execution.__file__).with_name('runner.py')
 IMAGE = execution.Container('sha256:' + '1' * 64)
@@ -23,7 +29,6 @@ def test_temporary_files_are_removed_after_passes_and_failures(tmp_path, monkeyp
     monkeypatch.setenv('PYTEST_DISABLE_PLUGIN_AUTOLOAD', '1')
     command = lambda tree, container, tests: [sys.executable, '-I', '-B', str(RUNNER), '-', str(tree)]
     tests = tuple(f'test_scratch.py::test_scratch[{i}]' for i in range(4))
-    flux_context(monkeypatch)
     if summary:
         monkeypatch.setattr(test_tool, 'container_command', command)
         monkeypatch.setattr(test_tool, 'require_admission', lambda: None)
@@ -74,7 +79,6 @@ def fixture_outcomes(tmp_path, monkeypatch, summary, names):
     if summary:
         monkeypatch.setattr(test_tool, 'container_command', command)
         monkeypatch.setattr(test_tool, 'require_admission', lambda: None)
-        flux_context(monkeypatch)
         result = test_tool.run_current(tmp_path, IMAGE, tests)
         assert result['status'] == 'completed', result
         return {test['test']: Outcome.ASSERTION if test['outcome'] == 'failed' else Outcome(test['outcome'])
