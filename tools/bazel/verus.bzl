@@ -443,6 +443,7 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::dependencies::owner_waiting_ok": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::checking::accepted": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::dependencies::early": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::dependencies::blocked_phase": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -681,6 +682,8 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "dependencies_node_update_preserves": ("kernel::dependencies#node_update_preserves", 1),
+            "dependency_preservation_node_update_preserves": ("kernel::dependencies::preservation#node_update_preserves", 1),
             "dependencies_field_frame": ("kernel::dependencies#field_frame", 1),
             "checking_accepted_parts": ("kernel::checking#accepted_parts", 1),
             "checking_accepted_frame": ("kernel::checking#accepted_frame", 1),
