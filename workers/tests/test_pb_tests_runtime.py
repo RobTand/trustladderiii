@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import pytest
 from pb_fixtures import supported_fake_runtime as supported_fake_runtime
+from pb_fixtures import submission as submission  # noqa: F401
 from tl3_workers.forcing_rehearsal import ForcingRehearsals
 from tl3_workers.roles import planner
 
@@ -231,6 +232,29 @@ def test_flux_observation_uses_generated_wire_and_explicit_payload(tmp_path, mon
     assert payload.exists()
 
 
+@pytest.mark.parametrize('mutation', [
+    'owner', 'correlation', 'id-backend', 'intent-backend', 'id-instance', 'id-uri',
+    'intent-instance', 'intent-uri', 'id-not-object', 'intent-not-object'])
+def test_another_runs_binding_is_refused_on_every_identity_field(mutation):
+    from copy import deepcopy
+    from pb_fixtures import run_binding
+    from tl3_workers import flux_execution
+    key = 'worker:' + 'a' * 64
+    flux_execution._same_run(key, run_binding(key))
+    binding = deepcopy(run_binding(key))
+    part, _, field = mutation.partition('-')
+    if mutation in ('owner', 'correlation'):
+        binding['intent'][mutation] = 'worker-' + 'b' * 64 if mutation == 'correlation' else 'planner-tools'
+    elif field == 'not-object':
+        binding[part] = []
+    elif field == 'backend':
+        binding[part]['backend'] = 'prismabuild'
+    else:
+        binding[part][field] += '-other'
+    with pytest.raises(ValueError, match='another run binding'):
+        flux_execution._same_run(key, binding)
+
+
 @pytest.mark.parametrize('reached', [False, True])
 def test_real_planner_tool_loop_refuses_or_binds_handoff(rehearsal, monkeypatch, reached):
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
@@ -440,3 +464,72 @@ def test_module_local_external_alias_reaches_runtime_import_validation(rehearsal
     assert result['refusal']['reason'] == 'import_failure'
     assert result['refusal']['target'] == target
     assert ledger.run([NODE], deepcopy(forcing)) == result and len(calls) == 2
+
+
+class _Crash(BaseException):
+    """A process death at a recorded boundary; run_tests never catches it."""
+
+
+@pytest.mark.durability
+@pytest.mark.parametrize('boundary', ['prepare', 'checkpoint', 'submit', 'attach', 'payload'])
+def test_crash_at_each_flux_checkpoint_boundary_never_submits_twice(submission, supported_fake_runtime, boundary):
+    """#823 crash cuts, reduced to the Flux path: the checkpoint precedes every submission,
+    and a run whose checkpoint is durable is resumed, never prepared or submitted again."""
+    from pb_fixtures import flux_settings
+    from tl3_harness.test_tool import Summary
+    fake = supported_fake_runtime
+    durable = {}
+    armed = [True]
+
+    def trip(point):
+        if armed[0] and point == boundary:
+            armed[0] = False
+            raise _Crash(point)
+
+    control, command = fake.control, fake.command
+
+    def guarded_control(document):
+        if document['op'] == 'prepare':
+            trip('prepare')
+        return control(document)
+
+    def guarded_command(plan, document):
+        if document['op'] == 'submit':
+            assert plan['key'] in {item['key'] for item in durable.values()}, 'submitted before its checkpoint'
+            trip('submit')
+        if document['op'] == 'attach':
+            trip('attach')
+        if document['op'] == 'worker_payload':
+            trip('payload')
+        return command(plan, document)
+    fake.control, fake.command = guarded_control, guarded_command
+    from tl3_workers import flux_execution
+    flux_execution.control, flux_execution._command = guarded_control, guarded_command
+
+    root, state = submission
+    (state / 'response.json').write_text(json.dumps(Summary().result))
+
+    def run_once():
+        with Worktree(root) as tree:
+            tree.test_settings = flux_settings()
+            tree.pb_reattach = {base: dict(item) for base, item in durable.items()}
+
+            def submitted(key, base, tree_id):
+                trip('checkpoint')
+                durable[base] = {'backend': 'flux', 'key': key, 'tree': tree_id, 'identity': tree.pb_identity}
+            tree.pb_submitted = submitted
+            tool = build_tools(tree, {'run_tests': 'Run worktree tests on the admitted test runner.'})[0]
+            return tool.invoke({})
+
+    with pytest.raises(_Crash):
+        run_once()
+    checkpointed = dict(durable)
+    result = run_once()
+    assert result['status'] == 'completed', result
+    assert len(fake.submitted) <= 1 and len(set(fake.submitted)) == len(fake.submitted)
+    if checkpointed:
+        [item] = checkpointed.values()
+        assert len(fake.prepared) == 1 and fake.resumed == [item['key']]
+        assert result['wait_reference'] == item['key']
+    else:
+        assert fake.resumed == [] and fake.submitted == [fake.prepared[-1]['key']]
