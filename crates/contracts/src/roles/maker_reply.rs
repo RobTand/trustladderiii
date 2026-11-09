@@ -17,10 +17,15 @@ impl WorkerWaitReference {
 impl<'de> Deserialize<'de> for WorkerWaitReference {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = String::deserialize(deserializer)?;
-        if value.strip_prefix("worker:").is_some_and(|key| run_binding::hex(key, 64)) {
+        if value
+            .strip_prefix("worker:")
+            .is_some_and(|key| run_binding::hex(key, 64))
+        {
             Ok(Self(value))
         } else {
-            Err(serde::de::Error::custom("expected worker:<lowercase SHA-256>"))
+            Err(serde::de::Error::custom(
+                "expected worker:<lowercase SHA-256>",
+            ))
         }
     }
 }
@@ -36,7 +41,10 @@ impl JsonSchema for WorkerWaitReference {
     }
 }
 
-fn validate_worker_receipt(reference: &WorkerWaitReference, binding: &RunBinding) -> Result<(), String> {
+fn validate_worker_receipt(
+    reference: &WorkerWaitReference,
+    binding: &RunBinding,
+) -> Result<(), String> {
     binding.validate().map_err(|error| error.to_string())?;
     if binding.intent.owner != "worker-tools"
         || binding.intent.correlation != reference.as_str().replace("worker:", "worker-")
@@ -1767,7 +1775,6 @@ pub const GENERATION_RECEIPT_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     ("/properties/inner/properties", &["status", "exit_code"]),
     ("/properties/inner/properties/status", &["const"]),
     ("/properties/inner/properties/exit_code", &["const"]),
-
 ];
 pub const SELECTOR_IDENTITY_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     (
@@ -1864,12 +1871,27 @@ pub const TEST_RUN_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     ),
     (
         "/properties/receipts/items/properties",
-        &["backend", "wait_reference", "run_binding", "receipt_sha256", "ending"],
+        &[
+            "backend",
+            "wait_reference",
+            "run_binding",
+            "receipt_sha256",
+            "ending",
+        ],
     ),
     ("/properties/receipts/items/properties/backend", &["$ref"]),
-    ("/properties/receipts/items/properties/wait_reference", &["type", "pattern"]),
-    ("/properties/receipts/items/properties/run_binding", &["$ref"]),
-    ("/properties/receipts/items/properties/receipt_sha256", &["type", "pattern"]),
+    (
+        "/properties/receipts/items/properties/wait_reference",
+        &["type", "pattern"],
+    ),
+    (
+        "/properties/receipts/items/properties/run_binding",
+        &["$ref"],
+    ),
+    (
+        "/properties/receipts/items/properties/receipt_sha256",
+        &["type", "pattern"],
+    ),
     ("/properties/receipts/items/properties/ending", &["$ref"]),
     ("/properties/runs", &["type", "maxItems", "items"]),
     (
@@ -1900,18 +1922,35 @@ pub const TOTALS_ORDER: &[crate::render::ObjectOrder<'static>] = &[
 ];
 /// Key order for the shared native binding types, emitted once as named `$defs`.
 pub const RUN_BINDING_ORDER: &[crate::render::ObjectOrder<'static>] = &[
-    ("", &["type", "properties", "required", "additionalProperties"]),
+    (
+        "",
+        &["type", "properties", "required", "additionalProperties"],
+    ),
     ("/properties", &["id", "intent"]),
 ];
 pub const BACKEND_ID_ORDER: &[crate::render::ObjectOrder<'static>] = &[
-    ("", &["type", "properties", "required", "additionalProperties"]),
+    (
+        "",
+        &["type", "properties", "required", "additionalProperties"],
+    ),
     ("/properties", &["backend", "instance", "uri", "job"]),
 ];
 pub const SUBMISSION_INTENT_ORDER: &[crate::render::ObjectOrder<'static>] = &[
-    ("", &["type", "properties", "required", "additionalProperties"]),
+    (
+        "",
+        &["type", "properties", "required", "additionalProperties"],
+    ),
     (
         "/properties",
-        &["backend", "instance", "uri", "owner", "correlation", "request_digest", "output_dir"],
+        &[
+            "backend",
+            "instance",
+            "uri",
+            "owner",
+            "correlation",
+            "request_digest",
+            "output_dir",
+        ],
     ),
 ];
 pub const NATIVE_ENUM_ORDER: &[crate::render::ObjectOrder<'static>] = &[("", &["type", "enum"])];
@@ -1965,20 +2004,42 @@ mod native_receipt_tests {
         let valid = receipt();
         let admitted: TestRunReceiptsItem = serde_json::from_value(valid.clone()).unwrap();
         assert_eq!(serde_json::to_value(admitted).unwrap(), valid);
-        for key in ["backend", "wait_reference", "run_binding", "receipt_sha256", "ending"] {
+        for key in [
+            "backend",
+            "wait_reference",
+            "run_binding",
+            "receipt_sha256",
+            "ending",
+        ] {
             let mut missing = valid.clone();
             missing.as_object_mut().unwrap().remove(key);
-            assert!(serde_json::from_value::<TestRunReceiptsItem>(missing).is_err(), "{key}");
+            assert!(
+                serde_json::from_value::<TestRunReceiptsItem>(missing).is_err(),
+                "{key}"
+            );
         }
-        for key in ["action_key", "status", "exit_code", "log_sha256", "attempt", "generation"] {
+        for key in [
+            "action_key",
+            "status",
+            "exit_code",
+            "log_sha256",
+            "attempt",
+            "generation",
+        ] {
             let mut obsolete = valid.clone();
             obsolete[key] = json!(0);
-            assert!(serde_json::from_value::<TestRunReceiptsItem>(obsolete).is_err(), "{key}");
+            assert!(
+                serde_json::from_value::<TestRunReceiptsItem>(obsolete).is_err(),
+                "{key}"
+            );
         }
         for (pointer, invalid) in [
             ("/backend", json!("prismabuild")),
             ("/wait_reference", json!("a".repeat(64))),
-            ("/wait_reference", json!(format!("worker:{}", "A".repeat(64)))),
+            (
+                "/wait_reference",
+                json!(format!("worker:{}", "A".repeat(64))),
+            ),
             ("/receipt_sha256", json!("C".repeat(64))),
             ("/ending", json!("executed")),
             ("/run_binding/id/backend", json!("prismabuild")),
@@ -1992,7 +2053,10 @@ mod native_receipt_tests {
         ] {
             let mut malformed = valid.clone();
             *malformed.pointer_mut(pointer).unwrap() = invalid;
-            assert!(serde_json::from_value::<TestRunReceiptsItem>(malformed).is_err(), "{pointer}");
+            assert!(
+                serde_json::from_value::<TestRunReceiptsItem>(malformed).is_err(),
+                "{pointer}"
+            );
         }
     }
 
@@ -2001,7 +2065,11 @@ mod native_receipt_tests {
         let valid = json!({"wait_reference": format!("worker:{}", "a".repeat(64)),
             "class": "test_infrastructure"});
         assert!(serde_json::from_value::<MakerReplyBlockedEvidenceValue1>(valid.clone()).is_ok());
-        for reference in ["a".repeat(64), format!("worker:{}", "A".repeat(64)), "worker:short".into()] {
+        for reference in [
+            "a".repeat(64),
+            format!("worker:{}", "A".repeat(64)),
+            "worker:short".into(),
+        ] {
             let mut invalid = valid.clone();
             invalid["wait_reference"] = json!(reference);
             assert!(serde_json::from_value::<MakerReplyBlockedEvidenceValue1>(invalid).is_err());
@@ -2023,16 +2091,22 @@ mod native_receipt_tests {
             ("exit_code", json!(0)),
             ("command", json!("python3 tools/gen.py")),
             ("argv", json!(["python3", "tools/gen.py"])),
-            ("identity", json!({"implementation": "tl3-generator-v4",
-                "image": format!("sha256:{}", "b".repeat(64)), "budget": budget.clone()})),
+            (
+                "identity",
+                json!({"implementation": "tl3-generator-v4",
+                "image": format!("sha256:{}", "b".repeat(64)), "budget": budget.clone()}),
+            ),
             ("output_count", json!(1)),
             ("budget", budget),
-            ("timings", json!({
+            (
+                "timings",
+                json!({
                 "preparation": {"seconds": 0.1, "outcome": "completed"},
                 "container": {"seconds": 1.0, "outcome": "completed", "scope": "startup_and_command"},
                 "validation": {"seconds": 0.1, "outcome": "completed"},
                 "cleanup": {"seconds": 0.1, "outcome": "completed"},
-                "total_seconds": 1.3})),
+                "total_seconds": 1.3}),
+            ),
             ("phase", json!("completed")),
             ("inner", json!({"status": "completed", "exit_code": 0})),
         ] {
@@ -2079,17 +2153,27 @@ mod native_receipt_tests {
         for obsolete in ["action_key", "outer"] {
             let mut stale = valid.clone();
             stale[obsolete] = json!({"status": "executed", "exit_code": 0, "elapsed_s": null});
-            assert!(serde_json::from_value::<GenerationReceipt>(stale).is_err(), "{obsolete}");
+            assert!(
+                serde_json::from_value::<GenerationReceipt>(stale).is_err(),
+                "{obsolete}"
+            );
         }
         // A completed artifact can never stand behind a non-passing native terminal.
         for ending in ["failed", "refused", "infra-lost", "cancelled"] {
             let mut mismatched = valid.clone();
             mismatched["ending"] = json!(ending);
-            assert!(serde_json::from_value::<GenerationReceipt>(mismatched.clone()).is_err(), "{ending}");
-            assert!(serde_json::from_value::<MakerReply>(done(mismatched)).is_err(), "{ending}");
+            assert!(
+                serde_json::from_value::<GenerationReceipt>(mismatched.clone()).is_err(),
+                "{ending}"
+            );
+            assert!(
+                serde_json::from_value::<MakerReply>(done(mismatched)).is_err(),
+                "{ending}"
+            );
         }
         let mut foreign = valid.clone();
-        foreign["run_binding"]["intent"]["correlation"] = json!(format!("worker-{}", "f".repeat(64)));
+        foreign["run_binding"]["intent"]["correlation"] =
+            json!(format!("worker-{}", "f".repeat(64)));
         assert!(serde_json::from_value::<GenerationReceipt>(foreign).is_err());
     }
 
@@ -2107,12 +2191,21 @@ mod native_receipt_tests {
         ] {
             let mut projected = generation();
             *projected.pointer_mut(pointer).unwrap() = authentic;
-            assert!(serde_json::from_value::<GenerationReceipt>(projected).is_err(), "{pointer}");
+            assert!(
+                serde_json::from_value::<GenerationReceipt>(projected).is_err(),
+                "{pointer}"
+            );
         }
-        for (key, extra) in [("cause", failed["cause"].clone()), ("message", failed["message"].clone())] {
+        for (key, extra) in [
+            ("cause", failed["cause"].clone()),
+            ("message", failed["message"].clone()),
+        ] {
             let mut projected = generation();
             projected[key] = extra;
-            assert!(serde_json::from_value::<GenerationReceipt>(projected).is_err(), "{key}");
+            assert!(
+                serde_json::from_value::<GenerationReceipt>(projected).is_err(),
+                "{key}"
+            );
         }
         // The whole authentic shape: no outputs, failed terminal, wholesale projection.
         let mut projected = generation();
@@ -2149,7 +2242,10 @@ mod native_receipt_tests {
         ] {
             let mut widened = cant_meet.clone();
             widened[key] = value;
-            assert!(serde_json::from_value::<MakerReply>(widened).is_err(), "{key}");
+            assert!(
+                serde_json::from_value::<MakerReply>(widened).is_err(),
+                "{key}"
+            );
         }
     }
 }
