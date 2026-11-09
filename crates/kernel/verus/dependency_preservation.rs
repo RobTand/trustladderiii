@@ -1304,4 +1304,73 @@ fn delivered_cover() -> (result: (World, bool, i128))
     let balance = admitted.nodes[0].credit.balance();
     (admitted, moved, balance)
 }
+
+// ------------------------------------------------- single-node updates (K4c)
+
+/// One node changes and the table does not: rules_ok is preserved when the
+/// owner has no undelivered prerequisite, or still waits with every waiting-owner
+/// condition, and withheld credit is newly set only while it waits.
+pub(super) proof fn node_update_preserves(before: World, after: World, i: int)
+    requires rules_ok(before), 0 <= i < before.nodes@.len(), before.nodes@.len() <= u64::MAX,
+        after.nodes@ == before.nodes@.update(i, after.nodes@[i]),
+        after.dependencies@ == before.dependencies@,
+        after.nodes@[i].repo == before.nodes@[i].repo,
+        before.nodes@[i].phase is Closed ==> after.nodes@[i].phase is Closed,
+        after.nodes@[i].credit.withheld ==> before.nodes@[i].credit.withheld
+            || !prerequisites_delivered(before, NodeId(i as u64)),
+        prerequisites_delivered(before, NodeId(i as u64)) || owner_waiting_ok(after.nodes@[i]),
+    ensures rules_ok(after),
+{
+    rules_definition(before);
+    rules_definition(after);
+    let len = before.nodes@.len();
+    let owner = NodeId(i as u64);
+    assert(after.nodes@.len() == len);
+    assert forall|j: int| 0 <= j < len && j != i implies #[trigger] after.nodes@[j] == before.nodes@[j] by {
+        assert(after.nodes@[j] == before.nodes@.update(i, after.nodes@[i])[j]);
+    }
+    assert forall|o: NodeId| prerequisites_delivered(after, o) == prerequisites_delivered(before, o) by {
+        prerequisite_definition(after, o);
+        prerequisite_definition(before, o);
+    }
+    prerequisite_definition(before, owner);
+    delivered_definition(before.dependencies@, owner);
+    assert forall|k: int| 0 <= k < after.dependencies@.len()
+        implies row_ok(after, #[trigger] after.dependencies@[k]) by {
+        let d = after.dependencies@[k];
+        assert(row_ok(before, before.dependencies@[k]));
+        if d.node.0 < len {
+            if d.node.0 as int == i {
+                assert(d.node == owner);
+            } else {
+                assert(after.nodes@[d.node.0 as int] == before.nodes@[d.node.0 as int]);
+            }
+        }
+        if let Some(t) = d.target.request {
+            if t.0 < len && t.0 as int != i {
+                assert(after.nodes@[t.0 as int] == before.nodes@[t.0 as int]);
+            }
+        }
+    }
+    assert forall|j: int| 0 <= j < after.nodes@.len() && #[trigger] after.nodes@[j].credit.withheld
+        implies exists|k: int| 0 <= k < after.dependencies@.len()
+            && after.dependencies@[k].node == NodeId(j as u64) by {
+        if j == i && !before.nodes@[i].credit.withheld {
+            let k = choose|k: int| 0 <= k < before.dependencies@.len()
+                && before.dependencies@[k].node == owner
+                && !(!before.dependencies@[k].rejected
+                    && before.dependencies@[k].status == DependencyStatus::Delivered);
+        } else {
+            assert(before.nodes@[j].credit.withheld);
+        }
+    }
+    assert forall|a: NodeId, b: NodeId| #[trigger] active_edge(after, a, b)
+        implies active_edge(before, a, b) by {
+        reveal(active_edge);
+        if a.0 as int != i {
+            assert(after.nodes@[a.0 as int] == before.nodes@[a.0 as int]);
+        }
+    }
+    acyclic_after(before, after, NodeId(0), NodeId(0), false);
+}
 }
