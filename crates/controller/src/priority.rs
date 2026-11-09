@@ -201,6 +201,7 @@ impl crate::Controller {
                         fact: tl3_kernel::Fact::Priority(*priority),
                     },
                     &mut commit,
+                    None,
                 )?;
             }
         }

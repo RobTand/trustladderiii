@@ -48,7 +48,7 @@
       "verification": "review"
     },
     {
-      "description": "Independent checking: the new test fails on the base subject and passes on the changed subject, under the subject/observer proof run on prismabuild_pytest with the native_threads_1 runner feature. The run must give the action key, CAS receipt, logs and terminal verdict. The issue's BuildBuddy flags (bazelrc path, --jobs at 16 or fewer, GATE_WINDOW, declared CPU and memory demand) are not visible in the run_tests receipt. Report them as an unverified gap and do not call them observed.",
+      "description": "Independent checking: the new test fails on the base subject and passes on the changed subject, under the subject/observer proof run on flux_pytest with the native_threads_1 runner feature. The run must give the run binding, receipt, logs and terminal verdict. The issue's BuildBuddy flags (bazelrc path, --jobs at 16 or fewer, GATE_WINDOW, declared CPU and memory demand) are not visible in the run_tests receipt. Report them as an unverified gap and do not call them observed.",
       "stage": "checking",
       "verification": "test"
     }

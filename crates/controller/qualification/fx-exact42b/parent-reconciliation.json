@@ -1,0 +1,85 @@
+{
+  "status": "RECONCILED_EXPECTED_NEGATIVE_FIXTURE_AND_PROVENANCE_DIFFERENCES",
+  "builder_stop_preserved": {
+    "path": "/home/rob/tmp/tl3-build/fx-activation-builder-t3-230055ec/reconciliation.json",
+    "sha256": "b47f33f16e1f3ae804b20f8e6bf4b34409720cc85cca7043afa2528eac7407ef"
+  },
+  "reference": {
+    "path": "/mnt/shared/flux-out/tl3/.runtime/4fbf54b83553eaaafc0ea6376bd4e1c1382d3fd58e84a5c44e85c1d73dea61c3/manifest.json",
+    "sha256": "4fbf54b83553eaaafc0ea6376bd4e1c1382d3fd58e84a5c44e85c1d73dea61c3",
+    "bytes": 5497
+  },
+  "runs": [
+    {
+      "run": "canary2",
+      "inventory_entries_verified": 37,
+      "manifest": {
+        "path": "/mnt/shared/flux-out/tl3/.runtime/640fe3b8b535b1db142ad099e0bf115f6255f90923b3dd73fc681eaca7e93391/manifest.json",
+        "sha256": "640fe3b8b535b1db142ad099e0bf115f6255f90923b3dd73fc681eaca7e93391",
+        "bytes": 5512
+      },
+      "accepted_producer_provenance": "10a06385ce91404961e6b0d2894d0e75a7b24f21",
+      "accepted_interpreter": "/opt/tl3/bin/python-canary2-absent",
+      "citations": [
+        "/mnt/shared/flux-out/tl3/fxr-canary2-42b-final-retained-audit-20261107T234000Z/acceptance.json:145",
+        "/mnt/shared/flux-out/tl3/fxr-canary2-42b-final-retained-audit-20261107T234000Z/acceptance.json:146",
+        "/mnt/shared/flux-out/tl3/.runtime/640fe3b8b535b1db142ad099e0bf115f6255f90923b3dd73fc681eaca7e93391/manifest.json:1",
+        "/mnt/shared/flux-out/tl3/fxr-canary2-42b-final-retained-audit-20261107T234000Z/journal/fxr-canary2-42b-20261107t230607z/state.json:1"
+      ]
+    },
+    {
+      "run": "canary3",
+      "inventory_entries_verified": 37,
+      "manifest": {
+        "path": "/mnt/shared/flux-out/tl3/.runtime/4fbf54b83553eaaafc0ea6376bd4e1c1382d3fd58e84a5c44e85c1d73dea61c3/manifest.json",
+        "sha256": "4fbf54b83553eaaafc0ea6376bd4e1c1382d3fd58e84a5c44e85c1d73dea61c3",
+        "bytes": 5497
+      },
+      "accepted_producer_provenance": "2a332ed2f7a6afbc6619e82802d378b6c9fb867a",
+      "accepted_interpreter": "/opt/tl3/bin/python",
+      "citations": [
+        "/mnt/shared/flux-out/tl3/fxr-canary3-42b-native-execution-20261107T233714Z-final-retained-audit/acceptance.json:101",
+        "/mnt/shared/flux-out/tl3/fxr-canary3-42b-native-execution-20261107T233714Z-final-retained-audit/acceptance.json:102",
+        "/mnt/shared/flux-out/tl3/.runtime/4fbf54b83553eaaafc0ea6376bd4e1c1382d3fd58e84a5c44e85c1d73dea61c3/manifest.json:1",
+        "/mnt/shared/flux-out/tl3/fxr-canary3-42b-native-execution-20261107T233714Z-final-retained-audit/journal/fxr-canary3-42b-20261107t230846z/state.json:1"
+      ]
+    },
+    {
+      "run": "success",
+      "inventory_entries_verified": 37,
+      "manifest": {
+        "path": "/mnt/shared/flux-out/tl3/.runtime/294d58f0b5feb517d7b70426e0b292b74b91aad03b55483bb9a84e57feb9930a/manifest.json",
+        "sha256": "294d58f0b5feb517d7b70426e0b292b74b91aad03b55483bb9a84e57feb9930a",
+        "bytes": 5497
+      },
+      "accepted_producer_provenance": "63da5ca7776ced528d6817e3dde46d52ce4634d5",
+      "accepted_interpreter": "/opt/tl3/bin/python",
+      "citations": [
+        "/mnt/shared/flux-out/tl3/fxr-success-42b-native-execution-20261107T234940Z-final-retained-audit/acceptance.json:197",
+        "/mnt/shared/flux-out/tl3/fxr-success-42b-native-execution-20261107T234940Z-final-retained-audit/acceptance.json:198",
+        "/mnt/shared/flux-out/tl3/.runtime/294d58f0b5feb517d7b70426e0b292b74b91aad03b55483bb9a84e57feb9930a/manifest.json:1",
+        "/mnt/shared/flux-out/tl3/fxr-success-42b-native-execution-20261107T234940Z-final-retained-audit/journal/fxr-success-42b-20261107t230950z/state.json:1"
+      ]
+    }
+  ],
+  "fault_provenance": {
+    "path": "/mnt/shared/flux-out/tl3/fxr-canary2-42b-corrected-20261107T230607Z/interpreter-provenance.json",
+    "sha256": "0640df231230053922fc64d3bab8f154bc40c66d4f08dafd7d4423a8253faeed",
+    "citations": [
+      "/mnt/shared/flux-out/tl3/fxr-canary2-42b-corrected-20261107T230607Z/interpreter-provenance.json:2",
+      "/mnt/shared/flux-out/tl3/fxr-canary2-42b-corrected-20261107T230607Z/interpreter-provenance.json:5",
+      "/mnt/shared/flux-out/tl3/fxr-canary2-42b-corrected-20261107T230607Z/interpreter-provenance.json:11"
+    ]
+  },
+  "ruling": [
+    "All 37 inventory entries and actual file bytes match across three accepted runs.",
+    "Canary2 absent interpreter is the explicit deliberate fault, not a production interpreter qualification.",
+    "Pin production interpreter from positive canary3 and success: /opt/tl3/bin/python; never allow the canary2 fault path for activation.",
+    "Preserve all three exact historical producer_commit values as provenance; accepted producer source is exact42b in each acceptance record.",
+    "New profile publisher provenance is frozen candidate SHA, separately deployment-bound; it is not a substitution for code closure equality.",
+    "Generator may account for only these exact source-record differences, not ignore arbitrary metadata mismatches.",
+    "Proceed with original builder and unchanged qualified code closure, existing activation contract and all lead conditions."
+  ],
+  "no_runtime_acceptance_or_gate_change": true,
+  "native_calls": 0
+}

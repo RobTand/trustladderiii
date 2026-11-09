@@ -7,55 +7,17 @@ Use GitHub REST through `gh api` only. Mergify owns CI and the merge queue.
 
 ## Build and install
 
-Use a clean detached checkout of the reviewed commit. All development tests and
-builds run through PrismaBuild. Replace `COMMIT` with that full SHA. The artifact
-path is unique to this build. The install target requires `dl380g10`.
+Use the dedicated exact-source caller and authenticated qualification described in
+[FRESH-INIT.md](FRESH-INIT.md). The caller owns native Flux build and fresh-init
+admission, complete private cold backup, constant-TL3 reset, and selected-binary
+readiness. Direct build, install, database and model-defaults commands are not an
+alternative release path. Existing models and credentials remain unchanged.
 
-```bash
-git fetch origin
-git worktree add --detach /home/rob/tmp/t20-go-live COMMIT
-cd /home/rob/tmp/t20-go-live
-export TL3_RELEASE=/home/rob/tmp/tl3-release-COMMIT
-export TL3_COMMIT=$(git rev-parse HEAD)
-python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
-  --cwd "$PWD" --tag dl380g10 --cpus 2 --demand mem_gb=6 --priority -10 \
-  --env PATH=/home/rob/.cargo/bin:/home/rob/.local/bin:/usr/local/bin:/usr/bin:/bin \
-  --env RUSTUP_HOME=/home/rob/.rustup --env CARGO_HOME=/home/rob/.cargo \
-  --env CARGO_BUILD_JOBS=2 --env OMP_NUM_THREADS=1 \
-  --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 \
-  --detach -- bash deploy/dl380g10/build-release.sh "$TL3_RELEASE" "$TL3_COMMIT"
-```
-
-Save the returned action key as `BUILD_KEY`. Check the terminal record, logs,
-cleanup and CAS receipt. A submission is not a pass. Verify the three hashes.
-
-```bash
-python3 /mnt/shared/prismabuild-fleet/repo/tools/pbwait.py BUILD_KEY --endings
-(cd "$TL3_RELEASE" && sha256sum -c SHA256SUMS)
-```
-
-Choose the operator model settings explicitly before initial installation.
-The model-defaults command saves a private config backup and changes the ladders;
-it is never part of fresh-init deployment.
-Installation preserves the existing model ladders and the webhook port.
-
-```bash
-python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
-  --cwd "$PWD" --tag dl380g10 --cpus 1 --demand mem_gb=2 --priority -10 \
-  --env PATH=/home/rob/.local/bin:/usr/local/bin:/usr/bin:/bin \
-  --env XDG_RUNTIME_DIR=/run/user/1000 \
-  --env OMP_NUM_THREADS=1 --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 \
-  --detach -- bash -c 'python3 deploy/dl380g10/deploy.py model-defaults && python3 deploy/dl380g10/deploy.py install --binaries "$1" && "$HOME/.local/share/tl3/bin/tl3-deploy" database "$HOME/.config/tl3/tl3.toml" && systemctl --user try-restart tl3-status.service' bash "$TL3_RELEASE"
-```
-
-Save this action key and verify it with `pbwait.py --endings`. `deploy.py install`
-does not enable or start any unit. It copies the release binaries, Python packages,
-unit files and the wrapper. Existing configuration must already contain the current operations identity
-and Hindsight inputs; installation never fills or upgrades them.
-No credential values enter the checkout or build snapshot.
-The database service creates database `tl3` if needed. Fresh-state deployment
-initializes the selected revision's complete schema after the verified cold copy
-and exact TL3 reset, before starting the controller and its dependents.
+The installed first-release caller remains PB-admitted `a089` until the parent
+completes the authorized handoff. This candidate does not install itself or
+release any outage. Keep the first release frozen to its earlier qualified SHA.
+The next continuous release uses Flux only after captain fast-forward and guarded
+installation. Native acceptance must precede PB shutdown and Rob's routing change.
 
 ## Preflight
 

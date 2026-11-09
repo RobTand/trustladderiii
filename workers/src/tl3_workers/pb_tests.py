@@ -1,4 +1,5 @@
 """The run_tests factory. The role supplies the base and execution settings."""
+from contextlib import nullcontext
 from dataclasses import dataclass
 from functools import cache
 import hashlib
@@ -21,7 +22,7 @@ from tl3_harness.node_ids import selects
 from tl3_harness.supervision import ExecutionFailure, ExecutionOutcome, model_result
 from tl3_harness.test_tool import PREFIX, SUMMARY_BYTES, OUTCOMES, infrastructure, options
 from tl3_harness.trees import export, configuration
-from tl3_workers import reply_check
+from tl3_workers import reply_check, flux_execution
 from tl3_workers.reply_check import ReplyCheckInfrastructureError
 import jsonschema
 
@@ -88,16 +89,25 @@ def selection_matches(value, selectors):
 @dataclass(frozen=True)
 class TestSettings:
     image: str
-    tools_path: Path
+    tools_path: Path | None = None
     cpus: int = 1
     mem_gb: int = 2
     quiet_seconds: int = 120
+    execution: dict | None = None
+
+    @property
+    def backend(self):
+        return 'prismabuild' if self.execution is None else self.execution['backend']
 
     def __post_init__(self):
         if not re.fullmatch(r"(?:[\w./:-]+@)?sha256:[0-9a-f]{64}", self.image):
             raise ValueError("Use an immutable container image digest")
-        if not Path(self.tools_path).is_absolute():
-            raise ValueError("PrismaBuild tools_path must be absolute")
+        if self.execution is None:
+            if self.tools_path is None or not Path(self.tools_path).is_absolute():
+                raise ValueError("PrismaBuild tools_path must be absolute")
+        elif (self.tools_path is not None or set(self.execution) != {'backend', 'profile'}
+              or self.backend != 'flux' or not Path(self.execution['profile']).is_absolute()):
+            raise ValueError("Use the controller's selected execution profile")
         if any(type(v) is not int or v < 1 for v in (self.cpus, self.mem_gb, self.quiet_seconds)):
             raise ValueError("Test resource and quiet allowances must be positive integers")
 
@@ -298,6 +308,31 @@ def _stdout_json_command(command):
     raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "prismabuild_stdout", cause)
 
 
+def _verified_test_summary(result, run_records):
+    if result.get('declared_symptom') is not None:
+        summaries = result.get('symptom_runs', [])
+        if len(run_records) != len(summaries):
+            raise ValueError('missing symptom run receipt')
+        for index, (record, summary) in enumerate(zip(run_records, summaries), 1):
+            encoded = json.dumps(record['records'], sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()
+            if (record['run'] != index or record['sha256'] != hashlib.sha256(encoded).hexdigest()
+                    or summary != {key: value for key, value in record.items() if key != 'records'}):
+                raise ValueError('symptom run receipt changed')
+    if (not isinstance(result, dict) or result.get("status") not in ("completed", "infrastructure_error", "not_available")
+            or not isinstance(result.get("tests"), list) or not isinstance(result.get("note"), str)
+            or not isinstance(result.get("totals"), dict) or set(result["totals"]) != set(OUTCOMES)
+            or any(type(count) is not int or count < 0 for count in result["totals"].values())
+            or any(not isinstance(item, dict) or not isinstance(item.get("test"), str)
+                   or item.get("outcome") not in OUTCOMES for item in result["tests"])):
+        raise ValueError("Invalid summary structure")
+    # #823: raw non-symptom facts still cross the former action envelope
+    # before receipt decoration. An oversized proof must retain its refusal.
+    # Declared symptoms already crossed the unchanged legacy action bound.
+    if result.get('declared_symptom') is None:
+        result = bounded(result, limit=SUMMARY_BYTES - 2048)
+    return result
+
+
 def _summary(ending, key):
     cause = "invalid_ending"
     try:
@@ -323,29 +358,9 @@ def _summary(ending, key):
             raise ValueError("PrismaBuild returned no unique test summary")
         cause = "invalid_summary"
         result = json.loads(records[0])
-        if result.get('declared_symptom') is not None:
-            run_records = [json.loads(line.removeprefix('TL3_SYMPTOM_RUN ')) for line in raw.decode().splitlines()
-                           if line.startswith('TL3_SYMPTOM_RUN ')]
-            summaries = result.get('symptom_runs', [])
-            if len(run_records) != len(summaries):
-                raise ValueError('missing symptom run receipt')
-            for index, (record, summary) in enumerate(zip(run_records, summaries), 1):
-                encoded = json.dumps(record['records'], sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()
-                if (record['run'] != index or record['sha256'] != hashlib.sha256(encoded).hexdigest()
-                        or summary != {key: value for key, value in record.items() if key != 'records'}):
-                    raise ValueError('symptom run receipt changed')
-        if (not isinstance(result, dict) or result.get("status") not in ("completed", "infrastructure_error", "not_available")
-                or not isinstance(result.get("tests"), list) or not isinstance(result.get("note"), str)
-                or not isinstance(result.get("totals"), dict) or set(result["totals"]) != set(OUTCOMES)
-                or any(type(count) is not int or count < 0 for count in result["totals"].values())
-                or any(not isinstance(item, dict) or not isinstance(item.get("test"), str)
-                       or item.get("outcome") not in OUTCOMES for item in result["tests"])):
-            raise ValueError("Invalid summary structure")
-        # #823: raw non-symptom facts still cross the former action envelope
-        # before receipt decoration. An oversized proof must retain its refusal.
-        # Declared symptoms already crossed the unchanged legacy action bound.
-        if result.get('declared_symptom') is None:
-            result = bounded(result, limit=SUMMARY_BYTES - 2048)
+        run_records = [json.loads(line.removeprefix('TL3_SYMPTOM_RUN ')) for line in raw.decode().splitlines()
+                       if line.startswith('TL3_SYMPTOM_RUN ')]
+        result = _verified_test_summary(result, run_records)
         result["action_key"] = key
         # What a maker cites and a reviewer can check against PrismaBuild's own record.
         result["receipts"] = [{"action_key": key, "status": ending["status"], "exit_code": ending["exit_code"],
@@ -406,6 +421,23 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
     regressions = tuple(test for check in getattr(worktree, "test_checks", ())
                         if check["kind"] == "regression" for test in check["tests"])
 
+    def finish(result, base, base_sha, tree, selected, proof):
+        if base:
+            result["base_sha"] = base_sha
+            result["base_semantics"] = "base_subject_head_observer" if proof and proof["mode"] == "head-observer" else "untouched_base"
+            result["demonstrating_proof"] = "pending_checking"
+            if result["status"] == "completed" and result.get("proof") != proof:
+                raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "summary", "proof_mismatch")
+        if tree is not None:
+            result["tree"] = tree
+        if forcing is not None and result["status"] == "completed" and (
+                result.get("forcing") != forcing.as_json()
+                or not selection_matches(result.get("selectors"), selected)):
+            raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "summary", "forcing_or_selection_mismatch")
+        if declared_symptom is not None and result.get("declared_symptom") != declared_symptom:
+            raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "summary", "symptom_mismatch")
+        return bounded(result, limit=SUMMARY_BYTES)
+
     def wait(key, base, base_sha, tree, selected, proof):
         # pbwait's observation allowance is not an execution deadline.
         # Reattach to the same action whenever that allowance expires.
@@ -435,21 +467,7 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                                   selectors=list(selected))
                 else:
                     result = _summary(endings[0], key)
-                if base:
-                    result["base_sha"] = base_sha
-                    result["base_semantics"] = "base_subject_head_observer" if proof and proof["mode"] == "head-observer" else "untouched_base"
-                    result["demonstrating_proof"] = "pending_checking"
-                    if result["status"] == "completed" and result.get("proof") != proof:
-                        raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "summary", "proof_mismatch")
-                if tree is not None:
-                    result["tree"] = tree
-                if forcing is not None and result["status"] == "completed" and (
-                        result.get("forcing") != forcing.as_json()
-                        or not selection_matches(result.get("selectors"), selected)):
-                    raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "summary", "forcing_or_selection_mismatch")
-                if declared_symptom is not None and result.get("declared_symptom") != declared_symptom:
-                    raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "summary", "symptom_mismatch")
-                return bounded(result, limit=SUMMARY_BYTES)
+                return finish(result, base, base_sha, tree, selected, proof)
             if endings[0]["status"] not in ("waiting", "executed", "cache_hit"):
                 raise ValueError("PrismaBuild could not verify completion")
 
@@ -461,13 +479,19 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
         phase = "admission"
         try:
             if not isinstance(settings, TestSettings):
-                return infrastructure("PrismaBuild test settings were not supplied by the role.")
+                return infrastructure("Test settings were not supplied by the role.")
+            if settings.backend == 'flux':
+                flux_execution.activation(settings)
             base_sha = getattr(worktree, "check_base_sha", None) if base else None
             if base and (not isinstance(base_sha, str)
                          or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", base_sha)
                          or getattr(worktree, "test_checkout", None) is None):
                 return infrastructure("The role did not supply a check base and checkout.")
-            with tempfile.TemporaryDirectory(prefix="tl3-test-input-") as temporary:
+            call = None
+            if settings.backend == 'flux':
+                call, retained_root = flux_execution.allocate(settings)
+            with (nullcontext(retained_root) if call is not None else
+                  tempfile.TemporaryDirectory(prefix="tl3-test-input-")) as temporary:
                 root = Path(temporary)
                 checks = [check for check in (getattr(worktree, 'test_checks', ()) if _checks is None else _checks)
                           if any(selects(selector, test) or selects(test, selector)
@@ -486,11 +510,49 @@ def make_test_tool(worktree, settings: TestSettings | None = None, *, emit=None,
                 worktree.pb_identity = identity
                 # Stage first. An old checkpoint is usable only for this immutable
                 # input, selection, resources and trusted executor implementation.
-                reattach = getattr(worktree, "pb_reattach", {}).pop(base, None)
-                if (isinstance(reattach, dict) and getattr(worktree, "pb_strict_reattach", False)
+                reattachments = getattr(worktree, "pb_reattach", {})
+                reattach = reattachments.get(base)
+                if isinstance(reattach, dict) and reattach.get('backend', 'prismabuild') != settings.backend:
+                    raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "reattachment", "checkpoint_backend_changed")
+                if settings.backend != 'flux':
+                    reattach = reattachments.pop(base, None)
+                if (isinstance(reattach, dict) and (settings.backend == 'flux' or getattr(worktree, "pb_strict_reattach", False))
                         and (reattach.get("identity") != identity or reattach.get("tree") != tree)):
                     key = reattach.get("key")
                     raise ExecutionFailure(ExecutionOutcome.TRANSPORT_FAILURE, "reattachment", "checkpoint_identity_changed")
+                if settings.backend == 'flux':
+                    resumed = isinstance(reattach, dict)
+                    if resumed:
+                        key = reattach['key']
+                        plan = flux_execution.resume(settings, key, tree, contract)
+                    else:
+                        arguments = [json.dumps(selected)]
+                        if forcing is not None:
+                            arguments.extend(['--forcing', json.dumps(forcing.as_json(), sort_keys=True)])
+                        if declared_symptom is not None:
+                            arguments.extend(['--declared-symptom', json.dumps(declared_symptom, sort_keys=True)])
+                        if repeat != 1:
+                            arguments.extend(['--repeat', str(repeat)])
+                        if parallel:
+                            arguments.extend(['--parallel', str(parallel)])
+                        plan = flux_execution.prepare(settings, call, root, tree, contract,
+                            parallel=parallel, walltime=timeout_seconds or 86400, arguments=arguments)
+                        key = plan['key']
+                        reattachments[base] = {'backend': 'flux', 'key': key, 'tree': tree, 'identity': identity}
+                        worktree.pb_reattach = reattachments
+                        getattr(worktree, 'pb_submitted', lambda key, base, tree: None)(key, base, tree)
+                    phase = 'retrieval'
+                    payload = flux_execution.execute(plan, resumed=resumed, emit=emit)
+                    if payload['kind'] != 'tests':
+                        raise ValueError('Flux returned a different worker protocol')
+                    result = _verified_test_summary(payload['summary'], payload['symptom_runs'])
+                    result.update(action_key=key, receipts=payload['receipts'])
+                    if payload['symptom_runs']:
+                        result['symptom_receipts'] = payload['symptom_receipts']
+                    result = finish(bounded(model_result(result), limit=SUMMARY_BYTES - 512),
+                                    base, base_sha, tree, selected, proof)
+                    reattachments.pop(base, None)
+                    return result
                 if isinstance(reattach, dict) and reattach.get("identity") == identity and reattach.get("tree") == tree:
                     key = reattach["key"]
                     if not isinstance(key, str) or not re.fullmatch("[0-9a-f]{64}", key):

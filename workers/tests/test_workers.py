@@ -529,8 +529,8 @@ def test_request_evidence_contract_survives_intake_and_audit(tmp_path, request_d
     request_doc['role'] = request_doc['operation']['kind'] = role
     request_doc['inputs']['issue']['body'] = requirement['requirement'] + ' Supply invocation URLs, SHAs, logs and terminal verdicts.'
     request_doc['inputs']['tool_capabilities'] = [{
-        'tool': 'run_tests', 'executor': 'prismabuild_pytest', 'runner_features': ['base_head', 'repeat', 'parallel'],
-        'artifacts': ['sha', 'logs', 'terminal_verdict', 'cas_receipt'], 'methods': ['red_green'], 'protected_files': [],
+        'tool': 'run_tests', 'executor': 'flux_pytest', 'runner_features': ['base_head', 'repeat', 'parallel'],
+        'artifacts': ['sha', 'logs', 'terminal_verdict', 'receipt'], 'methods': ['red_green'], 'protected_files': [],
     }]
     if role == 'audit':
         request_doc['inputs']['ingest'] = dict(copy.deepcopy(BRIEF), evidence_contract=[])
@@ -773,7 +773,7 @@ def test_audit_objects_to_inherited_source_obligations(audit_evidence_case, lega
     if legacy:
         requirement.pop("provenance")
     if missing == "runner_feature":
-        requirement.update(tool="run_tests", executor="prismabuild_pytest",
+        requirement.update(tool="run_tests", executor="flux_pytest",
                            runner_features=["bazel_source_closure"], methods=[])
     elif missing == "all_tools":
         inputs["tool_capabilities"] = []
@@ -851,8 +851,8 @@ EXEC_PROSE = json.loads((Path(__file__).parent / 'fixtures' / 'exec-prose.json')
 
 
 def route_requirement(text, *, verification=False):
-    return {'requirement': text, 'tool': 'run_tests', 'executor': 'prismabuild_pytest',
-            'runner_features': [], 'artifacts': ['cas_receipt', 'terminal_verdict'],
+    return {'requirement': text, 'tool': 'run_tests', 'executor': 'flux_pytest',
+            'runner_features': [], 'artifacts': ['receipt', 'terminal_verdict'],
             'methods': ['red_green'] if verification else [], 'protected_files': []}
 
 
@@ -1093,7 +1093,7 @@ def test_ep2_composed_verification_stays_mandatory(policy, guard):
                          ids=lambda case: case['id'])
 @pytest.mark.parametrize('dimension,value', [
     ('runner_features', ['priority', 'resource_admission', 'worker_bound', 'native_threads_2']),
-    ('artifacts', ['exit_status', 'logs', 'terminal_records', 'cas_receipt', 'skips', 'missing_tools']),
+    ('artifacts', ['exit_status', 'logs', 'terminal_records', 'receipt', 'skips', 'missing_tools']),
 ])
 def test_ep2_classifies_before_unsupported_projection(case, dimension, value):
     from tl3_workers.rules import apply_edit, permits
@@ -1193,9 +1193,9 @@ def test_ep2_exact_retained_audit_preflight(presented):
     audit = EP2_RETAINED['final_audit']
     entries = (EP2_RETAINED['evidence_contract_presented_to_final_audit'] if presented
                else audit['evidence_contract'])
-    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+    capability = {'tool': 'run_tests', 'executor': 'flux_pytest',
                   'runner_features': ['native_threads_2', 'base_head'],
-                  'artifacts': ['logs', 'terminal_verdict', 'cas_receipt', 'action_key'],
+                  'artifacts': ['logs', 'terminal_verdict', 'receipt', 'run_binding'],
                   'methods': ['red_green', 'subject_observer', 'head'], 'protected_files': []}
     inputs = {'tool_capabilities': [capability], 'ingest': dict(copy.deepcopy(BRIEF),
               goals=copy.deepcopy(EP2_RETAINED['goals_presented_to_final_audit']),
@@ -1234,14 +1234,14 @@ def test_ep2_exact_audit_mixed_goals_and_wrappers_stay_intact():
     assert not contract_violations({'tool_capabilities': []}, reply)
 
 
-@pytest.mark.parametrize('dimension,value', [('artifacts', 'cas_receipt'), ('runner_features', 'base_head'),
+@pytest.mark.parametrize('dimension,value', [('artifacts', 'receipt'), ('runner_features', 'base_head'),
                                            ('methods', 'red_green'), ('protected_files', 'reader.py')])
 def test_ep2_mixed_projection_keeps_real_capability_gaps(dimension, value):
     from tl3_workers.evidence import preflight
 
     entry = route_requirement('Record missing tools. The parser count must be one.')
     entry[dimension] = [value]
-    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+    capability = {'tool': 'run_tests', 'executor': 'flux_pytest',
                   'runner_features': [], 'artifacts': [], 'methods': [], 'protected_files': []}
     reply = dict(copy.deepcopy(BRIEF), evidence_contract=[entry])
     preflight({'tool_capabilities': [capability]}, reply)
@@ -1267,7 +1267,9 @@ def test_ep2_categories_compose_as_a_full_paragraph():
 
 def test_ep2_retained_source_identity():
     retained = Path(__file__).parent / 'fixtures' / 'ep2-retained-audit.json'
-    assert hashlib.sha256(retained.read_bytes()).hexdigest() == '34376f87eea12b9c31e767c51b082216ea0686535b2f181c3eb381a9caed5432'
+    # Flux-adapted retained audit: only executor/artifact vocabulary changed from the
+    # recorded PB capture (34376f87..., history in Git); prose and structure are unchanged.
+    assert hashlib.sha256(retained.read_bytes()).hexdigest() == 'd6e94495dd3f65daa7b74a3f87954230873f54cabf38847e3c1a1e4894581bab'
     assert len(EP2_RETAINED['final_audit']['objections']) == 3
     assert len(EP2_RETAINED['evidence_contract_presented_to_final_audit']) == 4
     assert len(EP2_RETAINED['final_audit']['evidence_contract']) == 5
@@ -1285,8 +1287,8 @@ def test_ep2_unknown_substantive_dimension_is_not_reporting(dimension, value):
 
     entry = route_requirement('The verifier must emit and validate the ' + value + ' field.')
     entry[dimension] = [value]
-    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
-                  'runner_features': [], 'artifacts': ['cas_receipt', 'terminal_verdict'],
+    capability = {'tool': 'run_tests', 'executor': 'flux_pytest',
+                  'runner_features': [], 'artifacts': ['receipt', 'terminal_verdict'],
                   'methods': [], 'protected_files': []}
     reply = dict(copy.deepcopy(BRIEF), evidence_contract=[entry])
     preflight({'tool_capabilities': [capability]}, reply)
@@ -1308,9 +1310,9 @@ def test_ep2_reporting_clause_does_not_hide_verification_dimension(guard, dimens
 
     entry = route_requirement(guard + ' Record exit status, skips and missing tools.')
     entry[dimension] = [value]
-    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+    capability = {'tool': 'run_tests', 'executor': 'flux_pytest',
                   'runner_features': ['base_head'],
-                  'artifacts': ['cas_receipt', 'terminal_verdict', 'skips', 'missing_tools', 'numerical_measurement'],
+                  'artifacts': ['receipt', 'terminal_verdict', 'skips', 'missing_tools', 'numerical_measurement'],
                   'methods': [], 'protected_files': []}
     capability[dimension].remove(value)
     if role == 'audit':
@@ -1341,10 +1343,96 @@ def test_ep2_reporting_clause_does_not_hide_unknown_field_duty(dimension, value)
                    'Reserve CPU and RAM before dispatch. Limit worker count and native thread count.')
     entry = route_requirement(requirement)
     entry[dimension] = [value]
-    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
-                  'runner_features': [], 'artifacts': ['cas_receipt', 'terminal_verdict'],
+    capability = {'tool': 'run_tests', 'executor': 'flux_pytest',
+                  'runner_features': [], 'artifacts': ['receipt', 'terminal_verdict'],
                   'methods': [], 'protected_files': []}
     reply = dict(copy.deepcopy(BRIEF), evidence_contract=[entry])
     preflight({'tool_capabilities': [capability]}, reply)
     assert reply['evidence_contract'] == [entry]
     assert any(dimension + '=' + value in error for error in reply['evidence_errors'])
+
+
+FLUX_EVIDENCE_REPLAY = json.loads(
+    (Path(__file__).parent / 'fixtures' / 'planner-flux-evidence-1574-1455.json').read_text())
+OBSERVER_DUTY = 'Run the head observer against the base subject and the head subject.'
+SYMPTOM_DUTY = 'Observe the declared exception at the original node and phase in a fixed campaign.'
+PROOF_CHECK = {'name': 'proof', 'kind': 'demonstrating', 'tests': ['tests/test_new.py::test_observer'],
+               'proof': {'subjects': ['src/pkg/mod.py::subject'], 'observer_support': [],
+                         'red_message': 'expected assertion'}}
+SYMPTOM_CHECK = {'name': 'symptom', 'kind': 'demonstrating', 'tests': ['tests/test_new.py::test_observer'],
+                 'declared_symptom': {'node': 'tests/test_new.py::test_observer',
+                                      'exception': 'builtins.TimeoutError', 'phase': 'call',
+                                      'repeat': 2, 'parallel': 0}}
+
+
+def _flux_planning(case, capabilities, checks):
+    from tl3_workers.evidence import preflight
+
+    inputs = {'tool_capabilities': capabilities,
+              'ingest': {'goals': [], 'evidence_contract': copy.deepcopy(case['ingest_evidence_contract'])},
+              'audit_evidence_contract': copy.deepcopy(case['audit_evidence_contract'])}
+    reply = {'kind': 'leaf', 'evidence_contract': [], 'checks': copy.deepcopy(checks)}
+    objections = []
+    preflight(inputs, reply, planning=True, objections=objections)
+    return reply, objections
+
+
+@pytest.mark.parametrize('case', FLUX_EVIDENCE_REPLAY['cases'], ids=lambda case: case['request'])
+def test_flux_planning_replay_injects_observer_duty_on_admitted_capability(case):
+    # #1574/#1455 at 1077: preflight injected the removed PrismaBuild executor and receipt, so the
+    # admitted Flux capability refused it and repair ended in cant_meet.
+    capability = FLUX_EVIDENCE_REPLAY['admitted_capability']
+    reply, objections = _flux_planning(case, [copy.deepcopy(capability)], [PROOF_CHECK])
+    assert all(OBSERVER_DUTY in diagnostic for diagnostic in case['live_evidence_objections'][:1])
+    assert objections == [], objections
+    assert reply['evidence_errors'] == []
+    observer = [entry for entry in reply['evidence_contract'] if entry['requirement'] == OBSERVER_DUTY]
+    assert observer == [{'requirement': OBSERVER_DUTY, 'provenance': {'kind': 'method'}, 'tool': 'run_tests',
+                         'executor': capability['executor'], 'runner_features': ['base_head'],
+                         'artifacts': capability['artifacts'], 'methods': ['subject_observer'],
+                         'protected_files': []}]
+    # Every source obligation survives unchanged.
+    for entry in case['ingest_evidence_contract'] + case['audit_evidence_contract']:
+        assert entry in reply['evidence_contract']
+
+
+def test_flux_planning_method_duty_without_support_fails_closed():
+    case = FLUX_EVIDENCE_REPLAY['cases'][1]
+    capability = copy.deepcopy(FLUX_EVIDENCE_REPLAY['admitted_capability'])
+    capability['artifacts'].remove('terminal_verdict')
+    reply, objections = _flux_planning(case, [capability], [PROOF_CHECK])
+    assert all(entry['requirement'] != OBSERVER_DUTY for entry in reply['evidence_contract'])
+    assert any(OBSERVER_DUTY in error and 'artifacts=terminal_verdict' in error
+               for error in reply['evidence_errors'])
+    assert objections
+    # declared_symptom keeps its sha need: the 1077 admitted list has no sha.
+    reply, _ = _flux_planning(case, [copy.deepcopy(FLUX_EVIDENCE_REPLAY['admitted_capability'])],
+                              [SYMPTOM_CHECK])
+    assert any(SYMPTOM_DUTY in error and 'artifacts=sha' in error for error in reply['evidence_errors'])
+
+
+def test_flux_planning_method_duty_with_ambiguous_capabilities_fails_closed():
+    case = FLUX_EVIDENCE_REPLAY['cases'][1]
+    first = copy.deepcopy(FLUX_EVIDENCE_REPLAY['admitted_capability'])
+    second = dict(copy.deepcopy(first), executor='other_pytest')
+    reply, objections = _flux_planning(case, [first, second], [PROOF_CHECK])
+    assert all(entry['requirement'] != OBSERVER_DUTY for entry in reply['evidence_contract'])
+    assert any(OBSERVER_DUTY in error and 'ambiguous admitted run_tests capabilities: flux_pytest, other_pytest'
+               in error for error in reply['evidence_errors'])
+    assert objections
+
+
+def test_flux_declared_symptom_duty_takes_the_admitted_artifact_list():
+    from tl3_workers.evidence import preflight
+
+    capability = {'tool': 'run_tests', 'executor': 'flux_pytest',
+                  'runner_features': ['base_head', 'repeat', 'parallel', 'native_threads_1'],
+                  'artifacts': ['run_binding', 'receipt', 'input_tree', 'sha', 'logs', 'terminal_verdict'],
+                  'methods': ['declared_symptom'], 'protected_files': []}
+    reply = {'kind': 'leaf', 'evidence_contract': [], 'checks': [copy.deepcopy(SYMPTOM_CHECK)]}
+    preflight({'tool_capabilities': [capability]}, reply, planning=True, objections=[])
+    assert reply['evidence_errors'] == []
+    assert reply['evidence_contract'] == [{
+        'requirement': SYMPTOM_DUTY, 'provenance': {'kind': 'method'}, 'tool': 'run_tests',
+        'executor': 'flux_pytest', 'runner_features': ['base_head', 'repeat', 'parallel'],
+        'artifacts': capability['artifacts'], 'methods': ['declared_symptom'], 'protected_files': []}]

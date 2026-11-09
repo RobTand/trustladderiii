@@ -478,6 +478,17 @@ def scan_artifacts(scanner_data, scanner_hash, result_path):
     cleanup = {'status': 'unknown', 'targets_present': None, 'reason': 'cleanup_not_observed'}
     original, final = None, 75
     scan = None
+    diagnostic_records = []
+    scan_number = 0
+
+    forms = set(secrets.values())
+    redactions = sorted(forms, key=len, reverse=True)
+
+    def redact(message):
+        while any(value in message for value in redactions):
+            for value in redactions:
+                message = message.replace(value, '')
+        return message
 
     def dispose():
         nonlocal cleanup
@@ -526,6 +537,16 @@ def scan_artifacts(scanner_data, scanner_hash, result_path):
                 'wrapper': {'original_exit_code': original, 'exit_code': final}}
 
     try:
+        # Match the pinned scanner's path redaction, including encoded keys.
+        forms = set()
+        for value in secrets.values():
+            forms.add(value)
+            for encoded in (base64.b64encode(value.encode()), base64.urlsafe_b64encode(value.encode())):
+                forms.update((encoded.decode(), encoded.rstrip(b'=').decode()))
+            for encoded in (quote(value), quote(value, safe=''), quote_plus(value)):
+                forms.update((encoded, re.sub(r'%[0-9A-F]{2}', lambda m: m[0].lower(), encoded)))
+        redactions = sorted(forms, key=len, reverse=True)
+
         try:
             state = support.read()
             command_code, handoff, cleanup = state['exit_code'], state['handoff'], state['cleanup']
@@ -571,11 +592,73 @@ def scan_artifacts(scanner_data, scanner_hash, result_path):
             if name in secrets:
                 sys.argv.extend(['--env', name])
         sys.argv.append(upload_path)
+        def rejection_evidence(status, diagnostics, target, phase):
+            # Recognize whole reports against the actual file inventory. Never
+            # extract a path or a rule from arbitrary scanner output.
+            record = {'schema': 'tl3.bbrun.scan-diagnostics', 'version': 1,
+                      'phase': phase, 'scanner_exit_code': status,
+                      'diagnostics_status': 'partial', 'detections': [],
+                      'incomplete_report_count': 0}
+            try:
+                paths = [target] if target is not None else [
+                    Path(directory, filename) for directory, _, filenames in os.walk(upload)
+                    for filename in filenames]
+                expected = {}
+                ambiguous = set()
+                multiline = False
+                incomplete = ('zstd: not scanned (compression.zstd unavailable)',
+                              'compressed nesting limit, not scanned',
+                              'gzip member unreadable, not scanned',
+                              'zstd member unreadable, not scanned',
+                              'unreadable path, not scanned')
+                for path in paths:
+                    # Newlines can forge other complete reports. Withhold the
+                    # entire scan's interpretation when that framing is unsafe.
+                    if any(char in str(path) for char in '\r\n\v\f\x1c\x1d\x1e\x85\u2028\u2029'):
+                        multiline = True
+                    relative = str(path.relative_to(upload)) if target is None else None
+                    safe = redact(relative) if relative is not None else None
+                    if safe is not None and (len(safe) > 512 or not re.fullmatch(r'[A-Za-z0-9_./ -]+', safe)):
+                        safe = None
+                    for rule in secrets:
+                        report = redact(f'{path}: {rule}: secret detected')
+                        item = {'path': safe, 'rule_id': rule, 'match_count': 1}
+                        if report in expected:
+                            ambiguous.add(report)
+                        expected[report] = item
+                    for reason in incomplete:
+                        report = redact(f'{path}: {reason}')
+                        if report in expected:
+                            ambiguous.add(report)
+                        expected[report] = None
+                complete = bool(diagnostics) and not multiline
+                seen = set()
+                if not multiline:
+                    for report in diagnostics.splitlines():
+                        if report not in expected or report in ambiguous or report in seen:
+                            complete = False
+                            continue
+                        seen.add(report)
+                        item = expected[report]
+                        if item is None:
+                            record['incomplete_report_count'] += 1
+                        elif len(record['detections']) < 32:
+                            record['detections'].append(item)
+                        else:
+                            complete = False
+                record['diagnostics_status'] = 'complete' if complete else 'partial'
+            except BaseException:
+                # Diagnostics are observational; failures cannot alter verdicts
+                # or expose exception messages, filenames or scanner bytes.
+                record['detections'] = []
+            diagnostic_records.append(record)
+
         def scan(target=None):
             # Raw diagnostics stay private: paths may themselves contain secrets.
             # Execute the pinned scanner in-process without credential-bearing children.
             sys.argv[-1] = str(target or upload)
-            nonlocal scanner_status, scanner_reason
+            nonlocal scanner_status, scanner_reason, scan_number
+            scan_number += 1
             diagnostics = io.StringIO()
             status = 75
             with contextlib.redirect_stdout(diagnostics), contextlib.redirect_stderr(diagnostics):
@@ -585,7 +668,11 @@ def scan_artifacts(scanner_data, scanner_hash, result_path):
                     status = outcome.code if type(outcome.code) is int else 75
                 except BaseException:
                     scanner_status, scanner_reason = 'error', 'scanner_exception'
+                    rejection_evidence(None, '', target, 'receipt' if target else 'initial' if scan_number == 1 else 'remaining')
                     raise
+            if status != 0 or diagnostics.getvalue():
+                rejection_evidence(status, diagnostics.getvalue(), target,
+                                   'receipt' if target else 'initial' if scan_number == 1 else 'remaining')
             return status, diagnostics.getvalue()
 
         code, diagnostics = scan()
@@ -593,22 +680,6 @@ def scan_artifacts(scanner_data, scanner_hash, result_path):
         scanner_status = 'pass' if code == 0 and not diagnostics else 'fail'
         scanner_reason = 'scan_clean' if scanner_status == 'pass' else 'scan_rejected'
         if code in (0, 75) and diagnostics:
-            # Match the pinned scanner's path redaction, including encoded keys.
-            forms = set()
-            for value in secrets.values():
-                forms.add(value)
-                for encoded in (base64.b64encode(value.encode()), base64.urlsafe_b64encode(value.encode())):
-                    forms.update((encoded.decode(), encoded.rstrip(b'=').decode()))
-                for encoded in (quote(value), quote(value, safe=''), quote_plus(value)):
-                    forms.update((encoded, re.sub(r'%[0-9A-F]{2}', lambda m: m[0].lower(), encoded)))
-            redactions = sorted(forms, key=len, reverse=True)
-
-            def redact(message):
-                while any(value in message for value in redactions):
-                    for value in redactions:
-                        message = message.replace(value, '')
-                return message
-
             reasons = ('zstd: not scanned (compression.zstd unavailable)',
                        'compressed nesting limit, not scanned',
                        'gzip member unreadable, not scanned',
@@ -702,6 +773,27 @@ def scan_artifacts(scanner_data, scanner_hash, result_path):
                 # SIGKILL/unavailable storage cannot promise a durable receipt.
                 final = original or 75
                 dispose()
+            if scanner_status != 'pass':
+                if not diagnostic_records:
+                    diagnostic_records.append({'schema': 'tl3.bbrun.scan-diagnostics', 'version': 1,
+                                               'phase': 'unobserved', 'scanner_exit_code': code,
+                                               'diagnostics_status': 'unavailable', 'detections': [],
+                                               'incomplete_report_count': 0})
+                # Private JSON accompanies retained runner stdout. Never put
+                # evidence back into the rejected automatic-upload directory.
+                try:
+                    safe_records = []
+                    for record in diagnostic_records:
+                        rendered = json.dumps(record, sort_keys=True, separators=(',', ':'))
+                        if any(form in rendered for form in forms):
+                            record = {'diagnostics_status': 'withheld'}
+                            rendered = json.dumps(record, separators=(',', ':'))
+                        if not any(form in 'BBRUN_SCAN_DIAGNOSTICS_V1 ' + rendered for form in forms):
+                            safe_records.append(record)
+                            print('BBRUN_SCAN_DIAGNOSTICS_V1 ' + rendered, flush=True)
+                    support.write('scan-diagnostics.v1.json', safe_records)
+                except BaseException:
+                    pass
             for name in secrets:
                 os.environ.pop(name, None)
             print('artifact scan: PASS (upload directory; required key available)' if scanner_status == 'pass'
@@ -1770,7 +1862,7 @@ def full_history_selftest():
     with patch.object(uuid, 'uuid4', return_value=SimpleNamespace(hex='0' * 32)):
         default = run_request(parse_args(['test', *common, '--', *command]))
         step_hashes = [hashlib.sha256(step['run'].encode()).hexdigest() for step in default['steps']]
-        assert step_hashes == ['02a646a66876faa70df38dd26ebc608563de1661ee9dab025bf5ec90ffc1800f', '2252dd09b6d7097a16434c463421af6b2eef8e1fdb6cb1f728b3fa1c06c93811'], step_hashes
+        assert step_hashes == ['02a646a66876faa70df38dd26ebc608563de1661ee9dab025bf5ec90ffc1800f', 'e051d0b08172fc7be0466487ca6f89474ad4295034c037657e4feb903bfb58f6'], step_hashes
         args = parse_args(['test', '--full-history', *common, '--', *command])
         assert args.full_history is True
         body = run_request(args)

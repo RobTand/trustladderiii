@@ -9,9 +9,12 @@ mod contract_vector_tests;
 #[cfg(test)]
 mod dispatch_conformance_tests;
 mod evidence;
+pub mod execution;
 pub use evidence::check_ingest_reply;
 mod facts;
 mod fake;
+#[cfg(test)]
+mod feedback_tests;
 #[cfg(test)]
 mod input_contract_tests;
 pub(crate) mod json;
@@ -157,7 +160,7 @@ pub struct Supervisor {
     materials_provider: Option<crate::production::Materials>,
     active: ActiveRuns,
     worktrees: PathBuf,
-    tests: tl3_config::PrismaBuild,
+    tests: execution::Selected,
     images: super::images::Images,
     hindsight: tl3_config::Hindsight,
     memory: crate::memory::Feed,
@@ -221,7 +224,7 @@ impl Supervisor {
             records_root: records_root.to_owned(),
             materials_provider: None,
             worktrees: config.worktrees_root.clone(),
-            tests: config.prismabuild.clone(),
+            tests: execution::Selected::new(config)?,
             images: super::images::Images::new(&config.github.repos),
             hindsight: config.hindsight.clone(),
             memory: crate::memory::Feed::start(
@@ -413,37 +416,14 @@ impl Supervisor {
             } else if let Some(base) = materials["check_run"].get("base_sha") {
                 inputs["check_base_sha"] = base.clone();
             }
-            if let Some(findings) = store.worker_document(&node, "maker_findings")? {
-                let mut feedback = inputs.get("feedback").cloned().unwrap_or(json!([]));
-                feedback
-                    .as_array_mut()
-                    .ok_or(Error::Invalid("invalid maker feedback"))?
-                    .extend(
-                        findings
-                            .as_array()
-                            .ok_or(Error::Invalid("invalid maker findings"))?
-                            .iter()
-                            .cloned(),
-                    );
-                if !feedback.as_array().unwrap().is_empty() {
-                    let head = delivery.head_sha.as_deref().filter(|_| delivery.round == 1);
-                    let items = feedback.as_array_mut().map(std::mem::take).unwrap();
-                    inputs["feedback"] = json!(crate::findings::bounded_feedback(items, head));
-                }
-            }
-            if let Some(conflict) = snapshot
-                .rows
-                .iter()
-                .find(|row| row.table == "rebase_conflicts" && row.id == node)
-                .map(|row| &row.value)
-                && conflict["head"].as_str() == delivery.head_sha.as_deref()
-            {
-                let mut feedback = inputs.get("feedback").cloned().unwrap_or(json!([]));
-                feedback.as_array_mut().ok_or(Error::Invalid("invalid maker feedback"))?.push(json!({
-                    "kind":"failed_check", "goal_ids":[],
-                    "report":crate::findings::clipped(&format!("Resolve the merge onto main {} in these files: {}. The checkout contains the pending merge, both sides in the index, and conflict markers. Preserve the request and upstream changes. Complete the resolution; worker code commits the merge. Do not abort the merge or return to the old base.", conflict["target"], conflict["files"]), crate::findings::MAX_REPORT_CHARS)
-                }));
-                inputs["feedback"] = feedback;
+            let feedback = crate::feedback::read(snapshot, delivery.node())?;
+            let items = feedback.maker_input(
+                inputs.get("feedback"),
+                delivery.round,
+                delivery.head_sha.as_deref(),
+            )?;
+            if !items.is_empty() {
+                inputs["feedback"] = json!(items);
             }
             inputs["attempt"] = json!(delivery.attempt);
             inputs["round"] = json!(delivery.round);
@@ -470,7 +450,14 @@ impl Supervisor {
             inputs["plan"]["files"] = json!(delivery.paths);
             inputs["footprint"] = json!(delivery.paths);
             inputs["context_size"] = json!(self.limits.context_tokens);
-            inputs["tests"] = json!({"image": self.images.for_repository(&delivery.repository, &self.tests.container_image), "tools_path": self.tests.tools_dir});
+            inputs["tests"] = self.tests.inputs(
+                self.images
+                    .for_repository(&delivery.repository, self.tests.image()),
+                self.images
+                    .test_demand(&delivery.repository)
+                    .unwrap_or_default(),
+                &self.root(&delivery.key).join("execution.json"),
+            );
             let demand = self
                 .images
                 .test_demand(&delivery.repository)
@@ -519,9 +506,7 @@ impl Supervisor {
             let ingest = store
                 .worker_document(&node, "briefs")?
                 .ok_or(Error::Invalid("planner needs a brief"))?;
-            let findings = store
-                .worker_document(&node, "findings")?
-                .unwrap_or(json!([]));
+            let findings = crate::feedback::read(snapshot, delivery.node())?.planner;
             inputs = json!({"always_tests": self.images.additional_tests(&delivery.repository).always, "ingest": ingest, "must_split": matches!(n.phase, tl3_kernel::Phase::Planning { must_split: true }), "findings": findings, "protected_paths": self.protected_paths.for_repository(&delivery.repository, &self.planning.protected_paths)?, "forecast": forecast});
             let closures = crate::merge_dependencies::closures(snapshot, delivery.node())?;
             if !closures.is_empty() {
@@ -535,12 +520,12 @@ impl Supervisor {
                 .images
                 .test_demand(&delivery.repository)
                 .unwrap_or_default();
-            inputs["tests"] = json!({
-                "image": self.images.for_repository(&delivery.repository, &self.tests.container_image),
-                "tools_path": self.tests.tools_dir,
-                "cpus": demand.cpus,
-                "mem_gb": demand.mem_gb,
-            });
+            inputs["tests"] = self.tests.inputs(
+                self.images
+                    .for_repository(&delivery.repository, self.tests.image()),
+                demand,
+                &self.root(&delivery.key).join("execution.json"),
+            );
         } else if role == "audit" {
             inputs["ingest"] = store
                 .worker_document(&node, "briefs")?
@@ -568,6 +553,16 @@ impl Supervisor {
                     .push(json!(failure.to_string()));
             }
             inputs["forecast"] = forecast;
+        }
+        if matches!(role, "ingest" | "audit") && generator_available {
+            inputs["tests"] = self.tests.inputs(
+                self.images
+                    .for_repository(&delivery.repository, self.tests.image()),
+                self.images
+                    .test_demand(&delivery.repository)
+                    .unwrap_or_default(),
+                &self.root(&delivery.key).join("execution.json"),
+            );
         }
         if matches!(role, "ingest" | "audit" | "planner" | "maker") {
             inputs["decision_context"] =
@@ -644,9 +639,9 @@ impl Supervisor {
                 json!(self.planning.effective_tool_capabilities(test_cpus));
             if generator_available {
                 inputs["tool_capabilities"].as_array_mut().unwrap().push(json!({
-                    "tool": "run_generator", "executor": "prismabuild_generator",
+                    "tool": "run_generator", "executor": format!("{}_generator", self.tests.name()),
                     "runner_features": ["git_index", "scoped_outputs", "idempotent_import"],
-                    "artifacts": ["action_key", "cas_receipt", "input_tree", "output_tree", "artifact_sha256", "logs", "terminal_verdict"],
+                    "artifacts": ["run_binding", "receipt", "input_tree", "output_tree", "artifact_sha256", "logs", "terminal_verdict"],
                     "methods": ["configured_generation"], "protected_files": [],
                 }));
             }
@@ -1198,6 +1193,8 @@ impl Supervisor {
         }
         let attempt = root.join(format!("attempt-{attempt_number:08}"));
         fs::create_dir(&attempt)?;
+        self.tests
+            .bind_attempt(&mut request, &attempt, delivery, &self.records_root)?;
         // Every run needs the diagnostic sidecar, including postmortems whose
         // failed exit is reconciled from its safe cause in memory.json (#687).
         request["memory"] = json!({

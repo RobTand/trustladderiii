@@ -328,7 +328,7 @@ for the accepted containment changes and cleanup ownership.
 ## Request evidence preflight
 
 `planning.tool_capabilities` declares the evidence the installed `run_tests`
-protocol can produce. Omit it for the PrismaBuild pytest defaults in
+protocol can produce. Omit it for the Flux pytest defaults in
 `example.toml`, or set it to `[]` to disable execution evidence. Configuration
 can narrow the installed capabilities. It cannot grant a new executor, artifact,
 forcing mechanism or permission to edit protected files.

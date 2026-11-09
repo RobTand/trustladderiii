@@ -32,11 +32,11 @@
               "attempt": 2
             }
           },
-          "prompt_cache_identity": "tl3-cache-2e75c86931d43437146c57217f466f358e8ded402fdd2a64",
+          "prompt_cache_identity": "tl3-cache-d6316c58c884f3cc577a213f2931095b9111e6b2c20b4c5e",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "4f325fba3a29fd3910cfc65e0e9cdb9c1b68dc812eb296d45b5bcbcb303eb6cb",
-            "utf8_bytes": 10221
+            "sha256": "a3dcb203b1f8c8e9569b1cfbef751f08e67c34599c532b69dcbe5fcc0d05148c",
+            "utf8_bytes": 10214
           }
         },
         {
@@ -68,11 +68,11 @@
               "text": "Fixture prompt: preserve café."
             }
           },
-          "prompt_cache_identity": "tl3-cache-98bcf03b24af800e8b72594cfb1e8105317b1ce78cc26786",
+          "prompt_cache_identity": "tl3-cache-51a98d1c00082cc6e10d7fb16f9366c83e38c114ea8fb4b0",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "d60ba622e952ee48b431e8b0b2d84618f6312b3f2a5b36f29d9a40e99556415b",
-            "utf8_bytes": 1658
+            "sha256": "e32ee56ff4c3bb9b14236fe92b25fbbc8837ddd5a17a740b12ac52a7cc5225c0",
+            "utf8_bytes": 1651
           }
         },
         {
@@ -100,11 +100,11 @@
               "attempt": 2
             }
           },
-          "prompt_cache_identity": "tl3-cache-66953206bce2fc1f78e2064d0cbb6d525c239af88be6a244",
+          "prompt_cache_identity": "tl3-cache-56a33867ecdf1d905592f8994d5da10458ab854a00f6e4d6",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "d8ed8e26f373b50f24a804fb95a460eaa627feda8b1eae394935b770b573c625",
-            "utf8_bytes": 10221
+            "sha256": "d4370e103329b8095363f754c897c09dba4a736ad5fd470baabdcdd47c3192aa",
+            "utf8_bytes": 10214
           }
         },
         {
@@ -136,11 +136,11 @@
               "text": "Fixture prompt: preserve café."
             }
           },
-          "prompt_cache_identity": "tl3-cache-90309757526e907d9106f5fbe04d5fe838e6c127efc00bc4",
+          "prompt_cache_identity": "tl3-cache-c0d542cd04dc562027813e2b941e616b089a8976d99b1468",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "d6f80188a73c6b46c2e7aa1210ac0d59e83bfb6aac0b5e94b013b8a44b4de308",
-            "utf8_bytes": 1658
+            "sha256": "79215462e39bd1371067d158113ffbfb609ba191a6f64ab51c7932316b8065bb",
+            "utf8_bytes": 1651
           }
         }
       ],
@@ -401,11 +401,11 @@
               "attempt": 2
             }
           },
-          "prompt_cache_identity": "tl3-cache-5ecfff4f7b339073bea5acbbab86835ea363d5cb12e50569",
+          "prompt_cache_identity": "tl3-cache-6a1ab88891db7a62ace755c29aefe282dea00d2993ab1bff",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "b9e418b4bb762708a55575e60429687e637d4b02d643c68c73b579c03ee2673e",
-            "utf8_bytes": 12319
+            "sha256": "d35985d7b9c9d5a030b1a34647ed7103e40082d6d2e7fc965e6e8bcb6045a21d",
+            "utf8_bytes": 12312
           }
         },
         {
@@ -437,11 +437,11 @@
               "text": "Fixture prompt: preserve café."
             }
           },
-          "prompt_cache_identity": "tl3-cache-4675510517ef67aeab91c9bb7b30e1dfc840e5db80363acd",
+          "prompt_cache_identity": "tl3-cache-b0b0eb99a475e2343bb1783040a46440ba29ed2db129d3f7",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "1bdb17d15c01d00d65d9aa1fc735bc028d80e14d2ddf2dfdb8351a5d8de3360d",
-            "utf8_bytes": 1372
+            "sha256": "2e1e43969320fad9a6f7d6f690eebc5d1eda8dd21ab6f3c392154921f8ffe9a0",
+            "utf8_bytes": 1365
           }
         },
         {
@@ -469,11 +469,11 @@
               "attempt": 2
             }
           },
-          "prompt_cache_identity": "tl3-cache-23f7b5b8a7d586a047f6d925fc6dfe8616f1ac5404b69221",
+          "prompt_cache_identity": "tl3-cache-065ebbf0a103002556ceb6ec6e9413b9c0dd4dc2f796d092",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "8739f94003e96865bc96300a0d44f3cf9902cabe4db02ce41c7b1a2dd7434389",
-            "utf8_bytes": 12319
+            "sha256": "ec7490cbf2e03c0c234fd2123a536ba73e3bdaef317275619d7f00afcdd1df15",
+            "utf8_bytes": 12312
           }
         },
         {
@@ -505,11 +505,11 @@
               "text": "Fixture prompt: preserve café."
             }
           },
-          "prompt_cache_identity": "tl3-cache-ecf404b31187a82aa9facabbf8f99f6a33ffd013c9a792b8",
+          "prompt_cache_identity": "tl3-cache-bb84d5acdd186c1bdedc94daf6fb163b35bc26f1e32eb477",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "9e19bbe391178146517c162d9dca3a4013fc7f837b596b5924a4d84c211389a8",
-            "utf8_bytes": 1372
+            "sha256": "37d0e49576b43b3e99fa5f7174f9ff8ee70f3624ba8575944cbd3ff951c763e8",
+            "utf8_bytes": 1365
           }
         }
       ],
@@ -770,11 +770,11 @@
               "attempt": 2
             }
           },
-          "prompt_cache_identity": "tl3-cache-88335044f8085f9df909b97df9999c0d04f1e51841818888",
+          "prompt_cache_identity": "tl3-cache-8b83d551ce2465429802bf75badd69bbd22f4a24fe538c19",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "a1d5ab398ad515a3d8c4a1e2733349a32255f964411af863e64c5b65ce92af87",
-            "utf8_bytes": 21030
+            "sha256": "b9d7e022aa32bfb88d86c2347f6de64e3334c9cb6ed22d0507baff85e0b5b283",
+            "utf8_bytes": 21023
           }
         },
         {
@@ -806,11 +806,11 @@
               "text": "Fixture prompt: preserve café."
             }
           },
-          "prompt_cache_identity": "tl3-cache-66c22dda9371435829b9e5df5960e6ba717e0c9807e24bfc",
+          "prompt_cache_identity": "tl3-cache-6a37897a0293b7f69afe32ebc7c658a602836486a92e86c8",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "a660c0495fb290e63f723c239c77c778f2ec4505bc56cf79e6ad854d32bbc65d",
-            "utf8_bytes": 2848
+            "sha256": "d73cf835a1ace61baf2ea8f036518ed6a187803327de2be1e0f46e14ae5de526",
+            "utf8_bytes": 2841
           }
         },
         {
@@ -838,11 +838,11 @@
               "attempt": 2
             }
           },
-          "prompt_cache_identity": "tl3-cache-0ecf891cb66b1d801113c129f93370723489826dbc999b31",
+          "prompt_cache_identity": "tl3-cache-a51ba5ac2c976f35573606993ddc0d2ad7aaef0fd52099dd",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "8a04aa95842f57c864b4562e32c382bb8d95ff29b5b73605cadb6a3413fc03b4",
-            "utf8_bytes": 21030
+            "sha256": "a1490faaa24c120f10d6406d23c802962878d14c539c98586d180fc10c359d2a",
+            "utf8_bytes": 21023
           }
         },
         {
@@ -874,11 +874,11 @@
               "text": "Fixture prompt: preserve café."
             }
           },
-          "prompt_cache_identity": "tl3-cache-9519843ce022f6777c36b4eaf4e5e9f6c6e74ed35041c8af",
+          "prompt_cache_identity": "tl3-cache-07786f1b35529c6a56098cf427b8a9f3c327df0ae6fc4e81",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "a9f7dc58cf09c289614b43148d778423a05a2519191a836b5c44488ecd06eaba",
-            "utf8_bytes": 2848
+            "sha256": "08c732d083b7ccd5ce842416b67f23bbdd3f33d6d54dab9f1f3eb9adaf34021f",
+            "utf8_bytes": 2841
           }
         }
       ],

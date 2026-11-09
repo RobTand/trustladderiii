@@ -3,8 +3,12 @@ pub mod github;
 mod images;
 pub mod prismabuild;
 mod record;
+pub mod run_backend;
 pub mod workers;
 pub mod worktrees;
+
+pub mod backend_watch;
+pub mod flux_checks;
 
 use crate::{
     Result,

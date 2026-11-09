@@ -140,7 +140,7 @@ def test_existing_test_in_a_large_file_is_defined_at_the_base(planner_request, m
 def test_evidence_contract_blocks_unsupported_requirements(planner_request, monkeypatch, dimension, value):
     from tl3_workers.roles.planner import check_reply
     monkeypatch.chdir(planner_request['worktree'])
-    tool = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+    tool = {'tool': 'run_tests', 'executor': 'flux_pytest',
             'runner_features': ['base_head'], 'artifacts': ['logs', 'terminal_verdict', 'sha'],
             'methods': ['red_green'], 'protected_files': []}
     requirement = {**copy.deepcopy(tool), 'requirement': 'PB2640-2650 and PB2654 require exact remote evidence.'}
@@ -161,7 +161,7 @@ def test_evidence_contract_requires_one_tool_to_supply_all_artifacts(planner_req
     from tl3_workers.roles.planner import check_reply
     monkeypatch.chdir(planner_request['worktree'])
     inputs = copy.deepcopy(planner_request['inputs'])
-    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+    capability = {'tool': 'run_tests', 'executor': 'flux_pytest',
                   'runner_features': ['base_head'], 'artifacts': ['logs', 'terminal_verdict'],
                   'methods': ['red_green'], 'protected_files': []}
     inputs['tool_capabilities'] = [dict(capability, artifacts=['logs']),
@@ -181,7 +181,7 @@ def test_evidence_contract_rechecks_current_capabilities(planner_request, monkey
     from tl3_workers.roles.planner import check_reply
     monkeypatch.chdir(planner_request['worktree'])
     inputs = copy.deepcopy(planner_request['inputs'])
-    capability = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+    capability = {'tool': 'run_tests', 'executor': 'flux_pytest',
                   'runner_features': ['base_head'], 'artifacts': ['logs'],
                   'methods': ['forced_reproduction.patches'], 'protected_files': []}
     inputs['tool_capabilities'] = [capability]
@@ -258,9 +258,9 @@ FakeMessagesListChatModel._generate = inspect_contract
     if stored_prompt:
         planner_request['prompt'] = {'version': 1, 'text': 'Plan this deflake.'}
     request_149_plan['checks'][0]['forcing']['environment'] = {}
-    tool = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+    tool = {'tool': 'run_tests', 'executor': 'flux_pytest',
             'runner_features': ['base_head', f'native_threads_{cpus}'],
-            'artifacts': ['logs', 'terminal_verdict', 'cas_receipt'],
+            'artifacts': ['logs', 'terminal_verdict', 'receipt'],
             'methods': ['forced_reproduction.patches'], 'protected_files': []}
     requirement = {**copy.deepcopy(tool), 'runner_features': [f'native_threads_{cpus}'],
                    'methods': [], 'requirement': f'Keep native thread bounds at {cpus}.'}

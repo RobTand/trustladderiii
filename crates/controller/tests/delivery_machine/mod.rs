@@ -169,11 +169,20 @@ fn historical_completion_frame(source: &str) -> String {
         )
 }
 
+// The retained mock kernel boundary predates feedback evidence. Both delivery
+// acknowledgements carry no evidence; the real feedback path has interface tests.
+fn delivery_source() -> String {
+    let source = include_str!("../../src/lib.rs");
+    let argument = "                &mut commit,\n                None,\n            )?;";
+    assert_eq!(source.matches(argument).count(), 2);
+    source.replace(argument, "                &mut commit,\n            )?;")
+}
+
 /// CC-E extraction: the complete original method is retained verbatim. The only
 /// changes are pure plan substitution and the separately verified key comparison.
 #[test]
 fn completion_shell_keeps_every_other_statement_verbatim() {
-    let source = include_str!("../../src/lib.rs");
+    let source = delivery_source();
     let start = source.find("    fn prepare_completion(").unwrap();
     let end = source[start..].find("\n    fn apply(").unwrap() + start;
     let restored = historical_completion_frame(&source[start..end])
@@ -314,7 +323,7 @@ fn changing_key_reads_and_completion_writes_agree() {
 /// The kernel-step glue in apply is covered through controller interfaces.
 #[test]
 fn owned_controller_io_shell_remains_verbatim() {
-    let source = include_str!("../../src/lib.rs");
+    let source = delivery_source();
     let start = source.find("    fn retire_effect(").unwrap();
     let end = source[start..].find("    fn apply(").unwrap() + start;
     let restored = historical_completion_frame(&source[start..end])

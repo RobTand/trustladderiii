@@ -338,6 +338,28 @@
           "pattern": "^/",
           "minLength": 1
         },
+        "execution": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "backend": {
+                  "type": "string",
+                  "const": "flux"
+                },
+                "profile": {
+                  "type": "string",
+                  "pattern": "^/"
+                }
+              },
+              "required": [
+                "backend",
+                "profile"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
         "cpus": {
           "type": "integer",
           "minimum": 1
@@ -352,10 +374,31 @@
         }
       },
       "required": [
-        "image",
-        "tools_path"
+        "image"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "tools_path"
+          ],
+          "not": {
+            "required": [
+              "execution"
+            ]
+          }
+        },
+        {
+          "required": [
+            "execution"
+          ],
+          "not": {
+            "required": [
+              "tools_path"
+            ]
+          }
+        }
+      ]
     },
     "hindsight": {
       "type": "object",

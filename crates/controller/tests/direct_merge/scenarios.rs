@@ -1009,8 +1009,8 @@ fn fake_and_production_ci_outcomes_have_identical_findings() {
             assert!(controller.drive_once().unwrap());
             let facts: Vec<_> = r1_kernel_facts(&settings).into_iter().filter_map(|f|f.get("CiFailed").cloned()).collect();
             let findings: Vec<_> = controller.snapshot().unwrap().rows.into_iter()
-                .filter(|row|matches!(row.table.as_str(),"maker_findings"|"findings"))
-                .map(|row|(row.table,row.id,row.value)).collect();
+                .filter(|row| row.table == "feedback")
+                .map(|row| (row.table, row.id, row.value)).collect();
             assert_eq!(facts, vec![json!({"infra":infra})]);
             assert!(!controller.snapshot().unwrap().rows.iter().any(|r| r.table == "inbox"));
             results.push((facts, serde_json::to_value(controller.world().unwrap()).unwrap(), findings));

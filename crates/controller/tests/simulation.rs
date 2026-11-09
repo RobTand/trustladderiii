@@ -2375,9 +2375,9 @@ fn closure_discards_rebase_context(settings: &tl3_config::Store, stopped: bool) 
         &store.load().unwrap(),
     );
     saved.rows.push(RowChange::Put {
-        table: "rebase_conflicts".into(),
+        table: "feedback".into(),
         id: "0".into(),
-        value: json!({"head":"old", "target":"old", "files":["greeting.py"]}),
+        value: json!({"generation":world.nodes[0].generation,"maker":[],"planner":[],"conflict":{"head":"old", "target":"old", "files":["greeting.py"]}}),
     });
     store.commit(&saved).unwrap();
     let event = if stopped {
@@ -2410,12 +2410,15 @@ fn closure_discards_rebase_context(settings: &tl3_config::Store, stopped: bool) 
             Phase::Stopping(Outcome::Merged)
         ));
         assert!(
-            !controller
+            controller
                 .snapshot()
                 .unwrap()
                 .rows
                 .iter()
-                .any(|r| r.table == "rebase_conflicts"),
+                .find(|r| r.table == "feedback")
+                .unwrap()
+                .value["conflict"]
+                .is_null(),
             "a merge must discard rebase context before teardown finishes"
         );
     }
@@ -2429,12 +2432,15 @@ fn closure_discards_rebase_context(settings: &tl3_config::Store, stopped: bool) 
         })
     );
     assert!(
-        !controller
+        controller
             .snapshot()
             .unwrap()
             .rows
             .iter()
-            .any(|r| r.table == "rebase_conflicts"),
+            .find(|r| r.table == "feedback")
+            .unwrap()
+            .value["conflict"]
+            .is_null(),
         "a closed node must not retain rebase context"
     );
 }
@@ -2541,9 +2547,9 @@ fn mixed_registry_case(settings: &tl3_config::Store, conflict: bool) {
                 let mut saved =
                     Commit::new("old-rebase-context", json!({}), &store.load().unwrap());
                 saved.rows.push(RowChange::Put {
-                    table: "rebase_conflicts".into(),
+                    table: "feedback".into(),
                     id: "0".into(),
-                    value: json!({"head":"old", "target":"old", "files":["shared.txt"]}),
+                    value: json!({"generation":world.nodes[0].generation,"maker":[],"planner":[],"conflict":{"head":"old", "target":"old", "files":["shared.txt"]}}),
                 });
                 store.commit(&saved).unwrap();
             }
@@ -2609,11 +2615,14 @@ fn mixed_registry_case(settings: &tl3_config::Store, conflict: bool) {
             assert_ne!(Some(head.clone()), original);
             let snapshot = controller.snapshot().unwrap();
             assert!(
-                !snapshot
+                snapshot
                     .rows
                     .iter()
-                    .any(|row| row.table == "rebase_conflicts" && row.id == "0"),
-                "a clean rebase must delete obsolete conflict context"
+                    .find(|row| row.table == "feedback" && row.id == "0")
+                    .unwrap()
+                    .value["conflict"]
+                    .is_null(),
+                "a clean rebase must clear canonical conflict context"
             );
             assert!(
                 snapshot

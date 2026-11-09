@@ -125,8 +125,8 @@ def test_adopt(limit):
     git(root, 'add', '.')
     git(root, 'commit', '-qm', 'parametrized old expectation')
     inputs['base_sha'] = git(root, 'rev-parse', 'HEAD')
-    inputs['tool_capabilities'] = [{'tool': 'run_tests', 'executor': 'prismabuild_pytest',
-        'runner_features': ['base_head'], 'artifacts': ['cas_receipt', 'terminal_verdict'],
+    inputs['tool_capabilities'] = [{'tool': 'run_tests', 'executor': 'flux_pytest',
+        'runner_features': ['base_head'], 'artifacts': ['receipt', 'terminal_verdict'],
         'methods': ['red_green', 'forced_reproduction.' + mode], 'protected_files': []}]
     chosen = {**inputs['tool_capabilities'][0], 'methods': ['helper_target_observer'],
               'requirement': 'Prove the bounded evidence expectation.', 'provenance': {'kind': 'method'}}

@@ -34,9 +34,9 @@ def file_plan(planner_request, monkeypatch):
     monkeypatch.chdir(root)
     (root / FILE).write_text(SOURCE)
     planner_request['inputs']['repair_plan_consistency'] = True
-    tool = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
+    tool = {'tool': 'run_tests', 'executor': 'flux_pytest',
             'runner_features': ['base_head', 'native_threads_1'],
-            'artifacts': ['logs', 'terminal_verdict', 'cas_receipt'],
+            'artifacts': ['logs', 'terminal_verdict', 'receipt'],
             'methods': ['red_green'], 'protected_files': []}
     planner_request['inputs']['tool_capabilities'] = [tool]
     planner_request['inputs']['ingest']['evidence_contract'] = [

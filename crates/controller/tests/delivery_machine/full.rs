@@ -444,7 +444,7 @@ fn full_shell_differential_varying_reads_and_every_write_cut() {
 }
 #[test]
 fn compiled_shells_and_boundary_conversions_are_verbatim() {
-    let current = include_str!("../../src/lib.rs");
+    let current = super::delivery_source();
     let start = current.find("    fn retire_effect(").unwrap();
     let end = current[start..].find("    fn apply(").unwrap() + start;
     assert!(include_str!("current-shell.rs").contains(&current[start..end]));

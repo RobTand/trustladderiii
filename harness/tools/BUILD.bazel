@@ -71,3 +71,10 @@ py_binary(
         "@rules_python//python/runfiles",
     ],
 )
+
+py_binary(
+    name = "prepare_runtime",
+    srcs = ["prepare_runtime.py"],
+    visibility = ["//visibility:public"],
+    deps = ["//harness/src/tl3_harness"],
+)

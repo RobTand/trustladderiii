@@ -355,3 +355,53 @@ tl3_py_test(
         "//harness/src/tl3_harness",
     ],
 )
+
+tl3_py_test(
+    name = "test_runtime_launcher",
+    srcs = ["test_runtime_launcher.py"],
+    deps = [
+        ":conftest",
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_runtime_cache",
+    srcs = ["test_runtime_cache.py"],
+    deps = [
+        ":conftest",
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_runtime_image",
+    srcs = ["test_runtime_image.py"],
+    deps = [
+        ":conftest",
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_scratch_cleanup",
+    srcs = ["test_scratch_cleanup.py"],
+    deps = [
+        ":conftest",
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
+    name = "test_launch_failure",
+    srcs = ["test_launch_failure.py"],
+    deps = [
+        ":conftest",
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)

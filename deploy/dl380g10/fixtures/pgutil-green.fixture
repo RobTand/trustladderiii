@@ -1,0 +1,298 @@
+"""Admitted synthetic fresh-init retry with the pinned PG and selected Rust helper."""
+import contextlib
+import hashlib
+import importlib.util
+import io
+import json
+import os
+from pathlib import Path
+import shutil
+import signal
+import socket
+import subprocess
+import tempfile
+import threading
+import time
+from types import SimpleNamespace
+from unittest.mock import patch
+
+OUT = Path('/mnt/shared/agent-artifacts/fresh-init-pgutil')
+SOURCE = Path.cwd()
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+deploy = load('fixed_deploy', SOURCE / 'deploy/dl380g10/deploy.py')
+helper = Path(os.environ['TL3_DEPLOY_HELPER'])
+pg = OUT / 'pinned-pg'
+assert hashlib.sha256((OUT / 'postgres.jar').read_bytes()).hexdigest() == deploy.PG_SHA256
+assert sorted(path.name for path in (pg / 'bin').iterdir()) == sorted(deploy.PG_EXECUTABLES)
+layout = json.loads((OUT / 'pg17-layout.json').read_text())
+head = subprocess.check_output(['/usr/bin/git', 'rev-parse', 'HEAD'], text=True, timeout=15).strip()
+source_head = subprocess.check_output(['/usr/bin/git', 'rev-parse', 'HEAD^'], text=True, timeout=15).strip()
+report = {'source_head':source_head, 'execution_snapshot':head,
+          'helper_sha256':hashlib.sha256(helper.read_bytes()).hexdigest(), 'archive_sha256':deploy.PG_SHA256, 'layout':layout}
+with tempfile.TemporaryDirectory(prefix='pgutil-green-') as temporary:
+    scratch = Path(temporary)
+    install_home = scratch / 'installation'
+    install_home.mkdir(mode=0o700)
+    def pinned_download(url, digest, destination):
+        assert (url, digest) == (deploy.PG_URL, deploy.PG_SHA256)
+        shutil.copyfile(OUT / 'postgres.jar', destination)
+    with patch.object(deploy, 'checked_download', side_effect=pinned_download):
+        deploy.postgres(install_home)
+    with patch.object(deploy, 'checked_download', side_effect=AssertionError('retained install downloaded')):
+        deploy.postgres(install_home)
+    installed = deploy.paths(install_home)[2]
+    assert sorted(path.name for path in (installed / 'bin').iterdir()) == sorted(deploy.PG_EXECUTABLES)
+    for name in deploy.PG_EXECUTABLES:
+        assert deploy.pg_executable(installed, name).read_bytes() == (pg / 'bin' / name).read_bytes()
+    report['pinned_archive_install_and_reuse'] = True
+    home = scratch / 'home'
+    home.mkdir(mode=0o700)
+    root, config, binaries = deploy.paths(home)
+    binaries.parent.mkdir(parents=True, mode=0o700)
+    binaries.symlink_to(pg, target_is_directory=True)
+    cluster = root / 'postgres/data'
+    shutil.copytree(OUT / 'initdb-data', cluster)
+    socket_dir = root / 'postgres/socket'
+    socket_dir.mkdir(mode=0o700)
+    controller = root / 'worker-runs/.controller'
+    names = ['direct-merge', 'workers', 'writer', 'github', 'mergify', 'prismabuild']
+    for name in names:
+        (controller / name).mkdir(parents=True, mode=0o700)
+    controller.parent.chmod(0o700)
+    original_backup = home / 'backups/cold-backup-1'
+    original_backup.parent.mkdir(mode=0o700)
+    original_backup.mkdir(mode=0o700)
+    sentinel = original_backup / 'must-never-be-opened'
+    sentinel.write_bytes(b'protected synthetic original backup')
+    before = (sentinel.stat().st_ino, sentinel.stat().st_mtime_ns, sentinel.stat().st_atime_ns)
+    text = deploy.render_config(home, '192.168.1.107:8033', 987, 123, 'sha256:' + 'a' * 64)
+    flux = {'instance_generation':'synthetic-pgutil', 'uri':'local:///synthetic-pgutil/socket',
+            'executable':str(scratch / 'unused-flux'), 'backend_cli':str(scratch / 'unused-backend'),
+            'container_mode':'own_scope', 'container_image':'synthetic@sha256:' + 'a' * 64,
+            'environment':{'PATH':'/usr/bin:/bin', 'HOME':'/home/rob', 'XDG_RUNTIME_DIR':'/run/user/1000'},
+            'runtime_bundles':['/mnt/shared/flux-out/tl3/.runtime/' + 'b' * 64 + '/manifest.json'],
+            'staging_root':'/mnt/shared/tl3-inputs', 'output_root':'/mnt/shared/flux-out/tl3'}
+    text = text.replace('# execution_backend = "flux"', 'execution_backend = "flux"')
+    text += '\n[flux]\n' + ''.join(key + '=' + deploy.toml_value(value) + '\n' for key,value in flux.items())
+    deploy.write_file(config / 'tl3.toml', text.encode())
+    deploy.write_file(config / 'production-ready', b'')
+    for path in (config / 'secrets/postgres-password', config / 'secrets/console-postgres-password',
+                 config / 'secrets/model-key', config / 'github-app.json'):
+        deploy.write_file(path, b'synthetic-credential\n')
+    selected = home / 'selected'
+    selected.mkdir(mode=0o700)
+    for name in deploy.RELEASE_BINARIES:
+        deploy.write_file(selected / name, helper.read_bytes() if name == 'tl3-deploy' else b'synthetic selected binary', 0o700)
+    hashes = {name: hashlib.sha256((selected / name).read_bytes()).hexdigest() for name in deploy.RELEASE_BINARIES}
+    deploy.write_file(selected / 'SOURCE.json', json.dumps({'head':head, 'binaries':hashes}).encode())
+    deploy.write_file(selected / 'SHA256SUMS', ''.join(f'{digest}  {name}\n' for name,digest in hashes.items()).encode())
+    args = SimpleNamespace(home=home, head=head, lane='release', binaries=selected, backup=home / 'backups/new', state_manifest=home / 'scope.json')
+    sources = {'data':cluster, 'config':config, 'controller':controller}
+    for path in sources.values():
+        path.chmod(0o700)
+    reset = ['controller/' + name for name in names]
+    plan = {'schema':'tl3.fresh-init.v1', 'head':head, 'config_sha256':hashlib.sha256(text.encode()).hexdigest(),
+            'flux':flux, 'attempts':[], 'archive':{'controller':str(controller)}, 'reset':reset, 'tablespaces':{}}
+    deploy.write_file(args.state_manifest, json.dumps(plan).encode())
+    states = {unit:'inactive' for unit in [*deploy.CLIENT_UNITS, 'tl3-postgres.service']}
+    shims = scratch / 'shims'
+    shims.mkdir(mode=0o700)
+    # Only external service observations and qualification/scope inputs are synthetic.
+    # The selected Rust process, authorization, cold bytes, capability and SQL are real.
+    deploy.write_file(shims / 'timeout', b'''#!/usr/bin/python3
+import importlib.util
+import json
+import os
+from pathlib import Path
+import sys
+from unittest.mock import patch
+state = json.loads(Path(os.environ['TL3_PGUTIL_STATE']).read_text())
+def protect_old_backup(event, values):
+    if event in ('open','os.scandir','os.listdir','os.remove','os.rename','os.rmdir','os.chmod','shutil.copytree'):
+        for value in values:
+            if isinstance(value, (str,bytes)):
+                path = os.fsdecode(value)
+                if path == state['protected_backup'] or path.startswith(state['protected_backup'] + os.sep):
+                    raise AssertionError('old backup accessed by authorization')
+sys.addaudithook(protect_old_backup)
+args = sys.argv[1:]
+if args[:4] == ['15s', 'systemctl', '--user', 'show']:
+    assert args[5:] == ['--property=ActiveState', '--value']
+    print(state['states'][args[4]])
+elif args[:6] == ['3300s', 'python3', '-I', 'deploy/dl380g10/deploy.py', 'authorize-fresh-database', '--context']:
+    assert args[7] == '--database-config' and len(args) == 9
+    spec = importlib.util.spec_from_file_location('authorization', state['source'])
+    deploy = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(deploy)
+    real_run = deploy.run
+    def run(command, **kwargs):
+        argv = list(map(str, command))
+        if argv[:3] == ['systemctl', '--user', 'show']:
+            return (state['states'][argv[3]] + '\\n').encode()
+        return real_run(command, **kwargs)
+    with patch.object(deploy, 'run', side_effect=run), patch.object(deploy, 'verify_runtime_inputs'):
+        deploy.authorize_fresh_database(Path(args[6]), Path(args[8]), sys.stdin.buffer.read(65))
+else:
+    raise AssertionError('unexpected synthetic service command')
+''', 0o700)
+    calls = []
+    capability_consumed = []
+    real_run = deploy.run
+    def pg_command(*argv):
+        subprocess.run([str(pg / 'bin/pg_ctl'), '-D', str(cluster), *argv], check=True, capture_output=True, timeout=30)
+    def run(command, **kwargs):
+        argv = list(map(str, command))
+        calls.append(argv)
+        if argv[:2] == ['systemctl', '--user']:
+            if argv[2] == 'show':
+                return b'0\n' if '--property=NRestarts' in argv else (states[argv[3]] + '\n').encode()
+            if argv[2] in ('stop', 'start'):
+                if argv[2:4] == ['start','tl3-postgres.service']:
+                    pg_command('-l', str(scratch / 'server.log'), '-o', f"-k {socket_dir} -h '' -p 5543 -c shared_buffers=16MB -c max_connections=12 -c max_worker_processes=0 -c max_parallel_workers=0", '-w', 'start')
+                states[argv[3]] = 'inactive' if argv[2] == 'stop' else 'active'
+            return b''
+        if 'qualify-fresh' in argv:
+            return b''
+        if argv[0] == 'git':
+            return real_run(command, **kwargs)
+        if 'fresh-database' in argv:
+            assert all(states[unit] == 'inactive' for unit in deploy.CLIENT_UNITS)
+            assert all(not list((controller / name).iterdir()) for name in names)
+            assert all(not list((args.backup / 'controller' / name).iterdir()) for name in names)
+            assert (args.backup / 'data/global/pg_control').read_bytes() == (OUT / 'pg_control.initdb').read_bytes()
+            state_file = scratch / 'authorization-state.json'
+            deploy.write_file(state_file, json.dumps({'source':str(SOURCE / 'deploy/dl380g10/deploy.py'),
+                'protected_backup':str(original_backup), 'states':states}).encode())
+            environment = os.environ | {'PATH':str(shims) + os.pathsep + os.environ['PATH'],
+                                        'TL3_PGUTIL_STATE':str(state_file)}
+            with subprocess.Popen(argv, cwd=kwargs['cwd'], env=environment, stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True) as child:
+                try:
+                    result, errors = child.communicate(input=kwargs['input'], timeout=45)
+                except subprocess.TimeoutExpired:
+                    os.killpg(child.pid, signal.SIGKILL)
+                    child.communicate(timeout=5)
+                    raise AssertionError('synthetic SQL helper timed out') from None
+                deploy.write_file(OUT / 'synthetic-sql.stderr', errors)
+                assert child.returncode == 0, 'synthetic SQL helper failed; private stderr artifact retained'
+                assert b'synthetic-credential' not in result + errors
+            assert b'current schema initialized and verified' in result
+            capability_consumed.append(True)
+            return result
+        # Cold identity, validate and readiness must execute the real selected binary.
+        assert argv[0] in (str(selected / 'tl3-deploy'), str(root / 'bin/tl3-deploy')), argv
+        return real_run(command, **kwargs)
+    guard_old_backup = [True]
+    def deny_old_backup(event, values):
+        if guard_old_backup[0] and event in ('open','os.scandir','os.listdir','os.remove','os.rename','os.rmdir','os.chmod','shutil.copytree'):
+            for value in values:
+                if isinstance(value, (str,bytes)):
+                    path = os.fsdecode(value)
+                    if path == str(original_backup) or path.startswith(str(original_backup) + os.sep):
+                        raise AssertionError('old backup accessed: ' + event)
+    import sys
+    sys.addaudithook(deny_old_backup)
+    try:
+        with patch.object(deploy, 'verify_runtime_inputs'), \
+             patch.object(deploy, 'run', side_effect=run), patch.object(deploy, 'listener_ready', return_value=True), \
+             patch.object(deploy.time, 'sleep'):
+            deploy.fresh_init(args)
+        assert capability_consumed == [True]
+        assert (args.backup / 'reset-context.consumed').is_file()
+        context = json.loads((args.backup / 'reset-context.json').read_text())
+        assert context['system_identifier'] == layout['system_identifier']
+        assert any('cold-cluster-identity' in call and call[0] == str(selected / 'tl3-deploy') for call in calls)
+        assert any('database-ready' in call and call[0] == str(selected / 'tl3-deploy') for call in calls)
+        assert (sentinel.stat().st_ino, sentinel.stat().st_mtime_ns, sentinel.stat().st_atime_ns) == before
+        report.update(empty_roots_retry=True, new_backup=True, no_old_backup_access=True, selected_binary_invoked=True,
+                      single_use_capability=True, readiness_authenticated=True)
+    finally:
+        guard_old_backup[0] = False
+        if (cluster / 'postmaster.pid').exists():
+            pg_command('-m','immediate','-w','stop')
+    # Refusal through the actual helper and Python's bounded retry loop.
+    start = time.monotonic()
+    try:
+        deploy.wait_for_postgres(selected / 'tl3-deploy', config / 'tl3.toml')
+    except RuntimeError as error:
+        assert 'did not become ready' in str(error)
+    else:
+        raise AssertionError('stopped server accepted')
+    assert time.monotonic() - start < 16
+    # A Unix socket that accepts and never answers proves auth I/O is process bounded.
+    with socket.socket(socket.AF_UNIX) as listener:
+        endpoint = socket_dir / '.s.PGSQL.5543'
+        assert not endpoint.exists()
+        listener.bind(str(endpoint))
+        listener.listen(4)
+        listener.settimeout(0.2)
+        done = threading.Event()
+        accepted = []
+        def stall():
+            while not done.is_set():
+                try:
+                    connection, _ = listener.accept()
+                    accepted.append(connection)
+                except TimeoutError:
+                    pass
+        thread = threading.Thread(target=stall)
+        thread.start()
+        start = time.monotonic()
+        try:
+            try:
+                deploy.wait_for_postgres(selected / 'tl3-deploy', config / 'tl3.toml')
+            except RuntimeError as error:
+                assert 'did not become ready' in str(error)
+            else:
+                raise AssertionError('stalled handshake accepted')
+            elapsed = time.monotonic() - start
+            assert len(accepted) == 3, len(accepted)
+            assert 12 <= elapsed < 16, elapsed
+            report.update(readiness_stall_attempts=len(accepted), readiness_stall_seconds=elapsed)
+        finally:
+            done.set()
+            thread.join(timeout=2)
+            assert not thread.is_alive()
+            for connection in accepted:
+                connection.close()
+            endpoint.unlink()
+    # Actual command rejects corruption, truncation and wrong PG_VERSION.
+    broken = scratch / 'broken'
+    (broken / 'global').mkdir(parents=True)
+    (broken / 'PG_VERSION').write_text('17\n')
+    control = (OUT / 'pg_control.initdb').read_bytes()
+    assert real_run([selected / 'tl3-deploy','cold-cluster-identity', args.backup / 'data'], timeout=5).strip().decode() == layout['system_identifier']
+    # An otherwise valid configuration must not redirect readiness to TCP or another port.
+    for replacement in [('port = 5543', 'port = 5544'),
+                        ('host = ' + json.dumps(str(socket_dir)), 'host = "127.0.0.1"')]:
+        wrong = scratch / 'wrong.toml'
+        changed = text.replace(*replacement)
+        assert changed != text
+        wrong.write_text(changed)
+        try:
+            real_run([selected / 'tl3-deploy','database-ready',wrong], timeout=5)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError('non-local readiness scope accepted')
+    for data, version in [(bytes([control[0] ^ 1]) + control[1:], '17'), (control[:295], '17'), (control, '16')]:
+        (broken / 'global/pg_control').write_bytes(data)
+        (broken / 'PG_VERSION').write_text(version + '\n')
+        try:
+            real_run([selected / 'tl3-deploy','cold-cluster-identity',broken], timeout=5)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError('invalid cold control accepted')
+    report.update(control_corruption_refused=True, control_truncation_refused=True, wrong_version_refused=True,
+                  sql_reset_scope='actual selected Rust helper, authorization and schema reset; service and qualification inputs synthetic')
+report['scratch_cleanup'] = not scratch.exists()
+assert report['scratch_cleanup']
+(OUT / 'green.json').write_text(json.dumps(report, indent=2) + '\n')
+print(json.dumps(report), flush=True)

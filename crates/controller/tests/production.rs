@@ -1,3 +1,7 @@
+#[path = "production/backend_watch.rs"]
+mod backend_watch;
+#[path = "production/flux_options.rs"]
+mod flux_options;
 mod prismabuild_fixture;
 #[path = "production/startup.rs"]
 mod startup;
@@ -61,6 +65,57 @@ fn fixture_credentials_are_fast_and_repeatable() {
 }
 
 #[test]
+fn flux_activation_refusal_preserves_legacy_pb_evidence() {
+    for suffix in ["job", "wait", "done"] {
+        for node in ["", "0"] {
+            let root = tempfile::tempdir().unwrap();
+            let mut config = config(root.path());
+            config.execution_backend = tl3_config::ExecutionBackend::Flux;
+            config.flux = Some(tl3_config::Flux {
+                activation: None,
+                instance_generation: "disposable-generation".into(),
+                executable: "/opt/flux/bin/flux".into(),
+                backend_cli: "/opt/tl3/bin/tl3-run-backend".into(),
+                container_mode: tl3_config::ContainerMode::OwnScope,
+                runtime_bundles: vec![
+                    format!(
+                        "/mnt/shared/flux-out/tl3/.runtime/{}/manifest.json",
+                        "0".repeat(64)
+                    )
+                    .into(),
+                ],
+                uri: "local:///run/flux/local-0".into(),
+                environment: BTreeMap::from([
+                    ("PATH".into(), "/usr/bin:/bin".into()),
+                    ("HOME".into(), "/home/rob".into()),
+                    ("XDG_RUNTIME_DIR".into(), "/run/user/1000".into()),
+                ]),
+                staging_root: "/mnt/shared/tl3-inputs".into(),
+                output_root: "/mnt/shared/flux-out/tl3".into(),
+                container_image: config.prismabuild.container_image.clone(),
+            });
+            let directory = config
+                .workers
+                .runs
+                .join(".controller/prismabuild")
+                .join(node);
+            fs::create_dir_all(&directory).unwrap();
+            let binding = directory.join(format!("legacy.{suffix}"));
+            fs::write(&binding, "legacy PB evidence, deliberately not a Flux ID").unwrap();
+            let error = match production::register(&config) {
+                Ok(_) => panic!("Flux accepted an absent activation record"),
+                Err(error) => error,
+            };
+            assert!(error.to_string().contains("flux.activation"), "{error}");
+            assert_eq!(
+                fs::read_to_string(binding).unwrap(),
+                "legacy PB evidence, deliberately not a Flux ID"
+            );
+        }
+    }
+}
+
+#[test]
 fn production_registers_every_real_adapter_and_source() {
     let root = tempfile::tempdir().unwrap();
     let mut config = config(root.path());
@@ -91,7 +146,10 @@ fn production_registers_every_real_adapter_and_source() {
     ]);
     assert_eq!(registered.adapters.registered_types(), expected);
     assert!(std::any::type_name_of_val(&registered.workers).ends_with("WorkerOutputSource"));
-    assert!(std::any::type_name_of_val(&registered.bell).contains("prismabuild::source::Source"));
+    assert!(matches!(
+        registered.bell,
+        production::CheckSource::PrismaBuild(_)
+    ));
     assert!(
         std::any::type_name_of_val(&registered.delivery)
             .ends_with("direct_merge::events::Translator")
@@ -224,5 +282,53 @@ fn second_daemon_cannot_destroy_the_owners_staged_inputs() {
         matches!(loser, Err(ref error) if error.to_string().contains("controller ownership is still held"))
     );
     drop(owner);
+    database.stop();
+}
+
+#[path = "production/flux_checks.rs"]
+mod flux_checks;
+
+/// FX: explicit Flux never enters the unselected PB construction path.
+#[test]
+fn selected_flux_refuses_unprovisioned_runtime_without_pb_fallback() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = config(root.path());
+    config.execution_backend = tl3_config::ExecutionBackend::Flux;
+    let mut flux = flux_options::flux(root.path());
+    flux.staging_root = "/mnt/shared/tl3-inputs".into();
+    flux.output_root = "/mnt/shared/flux-out/tl3".into();
+    config.flux = Some(flux);
+    config.prismabuild.tools_dir = Default::default();
+    config.prismabuild.container_image.clear();
+    let error = match production::register(&config) {
+        Ok(_) => panic!("unprovisioned Flux selection entered a backend"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("flux.activation"), "{error}");
+}
+
+/// FX: actual production composition selects Flux without dereferencing absent PB settings.
+#[test]
+fn selected_flux_registration_refuses_absent_activation_without_pb_or_native_launch() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = config(root.path());
+    config.execution_backend = tl3_config::ExecutionBackend::Flux;
+    config.flux = Some(flux_options::flux(root.path()));
+    config.prismabuild.tools_dir = Default::default();
+    config.prismabuild.container_image.clear();
+    let mut database = support::Database::start();
+    let settings = database.create("flux_construction");
+    let mut ownership =
+        tl3_controller::Ownership::claim(tl3_store::Store::open(&settings).unwrap()).unwrap();
+    let mut registry = tl3_controller::executor::Registry::default();
+    let result = production::register_execution(
+        &config,
+        &root.path().join("records"),
+        &mut registry,
+        &mut ownership,
+    );
+    assert!(matches!(result,Err(ref error) if error.to_string() == "flux.activation"));
+    assert!(!root.path().join("records/prismabuild").exists());
+    drop((registry, ownership));
     database.stop();
 }

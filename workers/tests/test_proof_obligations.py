@@ -11,8 +11,8 @@ from tl3_workers.evidence import forcing_capabilities, forcing_guidance, preflig
 from tl3_workers.roles import planner
 
 
-CAPABILITY = {'tool': 'run_tests', 'executor': 'prismabuild_pytest',
-              'runner_features': ['base_head'], 'artifacts': ['cas_receipt', 'terminal_verdict'],
+CAPABILITY = {'tool': 'run_tests', 'executor': 'flux_pytest',
+              'runner_features': ['base_head'], 'artifacts': ['receipt', 'terminal_verdict'],
               'methods': ['red_green', 'forced_reproduction.environment', 'forced_reproduction.patches'],
               'protected_files': []}
 
@@ -61,7 +61,7 @@ def test_t613_ac2_three_stage_reconciliation_replaces_methods_but_keeps_source()
 @pytest.mark.parametrize('required_method', ['red_green', 'declared_symptom'])
 def test_declared_symptom_choice_is_replaceable_and_source_proof_persists(required_method):
     capability = {**deepcopy(CAPABILITY), 'runner_features': ['base_head', 'repeat', 'parallel'],
-                  'artifacts': ['cas_receipt', 'logs', 'sha', 'terminal_verdict'],
+                  'artifacts': ['receipt', 'logs', 'sha', 'terminal_verdict'],
                   'methods': [*CAPABILITY['methods'], 'declared_symptom']}
     source = obligation(required_method, source=True)
     source['provenance']['quote'] = 'Prove the timeout.'

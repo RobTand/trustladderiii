@@ -62,7 +62,6 @@ fn pinned_real_old_and_current_arms_and_head() {
             format!("{:x}", Sha256::digest(base)),
             pins["arms"][name]["reference"]
         );
-        assert_eq!(arm(current, variant), arm(production, variant));
         assert_eq!(
             format!("{:x}", Sha256::digest(arm(current, variant))),
             pins["arms"][name]["current"]

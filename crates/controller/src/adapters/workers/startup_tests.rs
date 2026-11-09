@@ -127,7 +127,7 @@ fn planner_protected_paths_follow_the_request_repository() {
         let mut reply = json!({"kind":"leaf", "evidence_contract":[{
             "requirement":"Regenerate indexed Bazel outputs", "tool":"run_generator",
             "executor":"prismabuild_generator", "runner_features":["git_index", "scoped_outputs"],
-            "artifacts":["cas_receipt", "output_tree"], "methods":["configured_generation"], "protected_files":[],
+            "artifacts":["receipt", "output_tree"], "methods":["configured_generation"], "protected_files":[],
         }]});
         super::evidence::preflight("planner", &request["inputs"], &mut reply).unwrap();
         assert_eq!(reply["evidence_errors"] == json!([]), name == "TL3-SANDBOX");
@@ -204,7 +204,13 @@ fn maker_input_stays_bounded_after_five_review_rounds() {
             "outside_paths_total": 0,
         }));
     }
-    let snapshot = documents(&mut store, &[("maker_findings", json!(stored))]);
+    let snapshot = documents(
+        &mut store,
+        &[(
+            "feedback",
+            json!({"generation":0,"maker":stored,"planner":[],"conflict":null}),
+        )],
+    );
     let mut delivery = f.delivery();
     delivery.round = 1;
     delivery.attempt = 1;
@@ -289,7 +295,7 @@ fn maker_input_stays_bounded_after_five_review_rounds() {
             .as_str()
             .unwrap()
             .chars()
-            .take(crate::findings::TITLE_CHARS)
+            .take(crate::feedback::TITLE_CHARS)
             .collect();
         assert_eq!(sent["report"], title, "a collapsed item keeps its title");
         assert!(sent.get("failed_tests").is_none());
@@ -322,10 +328,11 @@ fn maker_input_stays_bounded_after_five_review_rounds() {
     assert_eq!(fixes.evidence["findings"].as_array().unwrap().len(), 20);
     // The store, and so the reviewer, keeps the whole history.
     assert_eq!(
-        store
-            .worker_document("0", "maker_findings")
-            .unwrap()
-            .unwrap(),
+        json!(
+            crate::feedback::read(&store.load().unwrap(), tl3_kernel::NodeId(0))
+                .unwrap()
+                .maker
+        ),
         json!(stored)
     );
     drop(supervisor);
@@ -433,8 +440,8 @@ fn hostile_maker_head() {
                         json!({"kind":"leaf","files":["README.md"],"checks":[{"kind":"demonstrating","node_ids":["test_value.py::test_value"],"goal_ids":[0],"forcing":{"symptom":"The value is late.","environment":{"VALUE_LATE":"1"},"patches":[]}}]}),
                     ),
                     (
-                        "maker_findings",
-                        json!([{"kind":"failed_check", "report":"Earlier round failed", "goal_ids":[]}]),
+                        "feedback",
+                        json!({"generation":0,"maker":[{"kind":"failed_check", "report":"Earlier round failed", "goal_ids":[]}],"planner":[],"conflict":null}),
                     ),
                 ],
             );

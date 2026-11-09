@@ -16,6 +16,66 @@ from worker_process import generator_backend  # noqa: F401
 from worker_process import generator_repo  # noqa: F401
 
 
+@pytest.mark.parametrize('phase', ['submitted', 'importing', 'applied', 'failed'])
+def test_selected_flux_generator_holds_without_pb_tools_or_checkpoint_loss(generator_repo, tmp_path, phase):
+    tree, generate = configured_generator(generator_repo, tmp_path)
+    tree.test_settings = TestSettings(image=IMAGE,
+        execution={'backend': 'flux', 'profile': '/fixture/attempt/execution.json'})
+    original = {'phase': phase, 'backend': 'prismabuild', 'key': KEY, 'contract': {}}
+    tree.generator_state.write_text(json.dumps(original))
+    with tree:
+        result = generate()
+    assert result['status'] == 'failed'
+    assert 'another execution backend' in result['message']
+    assert json.loads(tree.generator_state.read_text()) == original
+
+
+@pytest.mark.parametrize('unknown_first', [False, True])
+def test_selected_flux_generator_retains_unknown_and_imports_once(generator_repo, tmp_path, monkeypatch, unknown_first):
+    from tl3_harness import generator
+    from tl3_workers import pb_generators, flux_execution
+    tree, generate = configured_generator(generator_repo, tmp_path)
+    tree.test_settings = TestSettings(image=IMAGE,
+        execution={'backend': 'flux', 'profile': '/fixture/attempt/execution.json'})
+    root = tmp_path / 'retained-input'
+    root.mkdir()
+    key = 'worker:' + 'a' * 64
+    prepared, attached = [], []
+    monkeypatch.setattr(generator, 'require_admission', lambda: None)
+    monkeypatch.setattr(generator, 'container_command', lambda tree, container, argv, cidfile: argv)
+    monkeypatch.setattr(flux_execution, 'activation', lambda settings: None)
+    monkeypatch.setattr(flux_execution, 'allocate', lambda settings: ('a' * 64, root))
+    def prepare(settings, call, root, served, contract, **kwargs):
+        assert kwargs['generator'] is True
+        prepared.append(contract)
+        return {'key': key, 'contract': contract}
+    monkeypatch.setattr(flux_execution, 'prepare', prepare)
+    monkeypatch.setattr(flux_execution, 'resume', lambda settings, reference, served, contract:
+                        {'key': reference, 'contract': contract})
+    def execute(plan, *, resumed, **kwargs):
+        checkpoint = json.loads(tree.generator_state.read_text())
+        assert checkpoint['key'] == key and checkpoint['backend'] == 'flux'
+        attached.append(resumed)
+        if unknown_first and len(attached) == 1:
+            raise ValueError('unknown acceptance; original binding retained')
+        artifact = generator.run(root / 'checkout', generator.Container(IMAGE), **plan['contract'])
+        return {'kind': 'generator', 'artifact': artifact, 'receipt': {
+            'backend': 'flux', 'receipt_sha256': 'b' * 64, 'outer': {'status': 'passed'}}}
+    monkeypatch.setattr(flux_execution, 'execute', execute)
+    monkeypatch.setattr(pb_generators, '_json_command', lambda args: pytest.fail('Flux invoked PB'))
+    with tree:
+        result = generate()
+        if unknown_first:
+            assert result['status'] == 'failed'
+            assert json.loads(tree.generator_state.read_text())['phase'] == 'submitted'
+            result = generate()
+        assert result['status'] == 'completed', result
+        assert generate() == result
+    assert len(prepared) == 1
+    assert attached == ([False, True] if unknown_first else [False])
+    assert root.exists()
+
+
 @pytest.mark.durability
 def test_request_132_git_index_generation_lands_before_independent_check(generator_repo, generator_backend, tmp_path):
     tree, generate = configured_generator(generator_repo, tmp_path)

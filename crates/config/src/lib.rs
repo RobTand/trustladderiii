@@ -35,6 +35,8 @@ fn invalid(field: impl Into<String>, message: impl Into<String>) -> Error {
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
+    pub initial_intake: Vec<InitialIntake>,
+    #[serde(default)]
     pub operations: Option<Operations>,
     #[serde(default)]
     pub store: Store,
@@ -46,12 +48,25 @@ pub struct Config {
     pub workers: Workers,
     #[serde(default)]
     pub planning: Planning,
+    #[serde(default)]
+    pub execution_backend: ExecutionBackend,
+    #[serde(default)]
     pub prismabuild: PrismaBuild,
+    #[serde(default)]
+    pub flux: Option<Flux>,
     pub hindsight: Hindsight,
     pub status: Status,
     #[serde(default)]
     pub console: Option<Console>,
     pub allowances: Allowances,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InitialIntake {
+    pub owner: String,
+    pub repo: String,
+    pub number: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -111,7 +126,7 @@ impl Planning {
     pub fn effective_tool_capabilities(&self, cpus: u32) -> Vec<ToolCapability> {
         let mut tools = self.tool_capabilities.clone();
         for tool in &mut tools {
-            if tool.tool == "run_tests" && tool.executor == "prismabuild_pytest" {
+            if tool.tool == "run_tests" && tool.executor == "flux_pytest" {
                 for feature in &mut tool.runner_features {
                     if feature.starts_with("native_threads_") {
                         *feature = format!("native_threads_{cpus}");
@@ -148,7 +163,7 @@ pub struct ToolCapability {
 fn evidence_tools() -> Vec<ToolCapability> {
     vec![ToolCapability {
         tool: "run_tests".into(),
-        executor: "prismabuild_pytest".into(),
+        executor: "flux_pytest".into(),
         runner_features: [
             "base_head",
             "repeat",
@@ -158,9 +173,12 @@ fn evidence_tools() -> Vec<ToolCapability> {
         ]
         .map(String::from)
         .to_vec(),
+        // Flux run facts: Receipt.binding, the tl3.run_receipt.v1 blob, Receipt.tree
+        // (input digest and head sha), runner stdout/stderr and Terminal.ending.
         artifacts: [
-            "action_key",
-            "cas_receipt",
+            "run_binding",
+            "receipt",
+            "input_tree",
             "sha",
             "logs",
             "terminal_verdict",
@@ -549,7 +567,265 @@ impl Models {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionBackend {
+    #[default]
+    #[serde(rename = "prismabuild")]
+    PrismaBuild,
+    Flux,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum SelectedExecution<'a> {
+    PrismaBuild(&'a PrismaBuild),
+    Flux(&'a Flux),
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContainerMode {
+    InJob,
+    OwnScope,
+}
+
+/// Deployment-owned immutable planned acceptance scope, hash-pinned by configuration.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FluxActivation {
+    pub record: PathBuf,
+    pub sha256: String,
+}
+
+/// Provisioned access to one Flux instance. A URI is not an instance generation.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Flux {
+    #[serde(default)]
+    pub activation: Option<FluxActivation>,
+    pub instance_generation: String,
+    pub executable: PathBuf,
+    pub backend_cli: PathBuf,
+    pub container_mode: ContainerMode,
+    #[serde(default)]
+    pub runtime_bundles: Vec<PathBuf>,
+    pub uri: String,
+    #[serde(default)]
+    pub environment: BTreeMap<String, String>,
+    pub staging_root: PathBuf,
+    pub output_root: PathBuf,
+    pub container_image: String,
+}
+
+impl std::fmt::Debug for Flux {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Flux")
+            .field("instance_generation", &self.instance_generation)
+            .field("executable", &self.executable)
+            .field("backend_cli", &self.backend_cli)
+            .field("container_mode", &self.container_mode)
+            .field("runtime_bundles", &self.runtime_bundles)
+            .field("environment", &"[redacted]")
+            .field("staging_root", &self.staging_root)
+            .field("output_root", &self.output_root)
+            .field("container_image", &self.container_image)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Flux {
+    fn validate(&self) -> Result<(), Error> {
+        if let Some(activation) = &self.activation {
+            absolute("flux.activation.record", &activation.record)?;
+            if activation
+                .record
+                .components()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
+                || activation.sha256.len() != 64
+                || !activation
+                    .sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            {
+                return Err(invalid("flux.activation", "record and sha256"));
+            }
+        }
+        let generation = self.instance_generation.as_str();
+        let (run, invocation) = generation
+            .split_once('/')
+            .map_or((generation, None), |(run, id)| (run, Some(id)));
+        if run.is_empty()
+            || matches!(run, "." | "..")
+            || generation.len() > 128
+            || !run
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+            || invocation.is_some_and(|id| {
+                id.len() != 32
+                    || !id
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
+        {
+            return Err(invalid(
+                "flux.instance_generation",
+                "use an operator-assigned generation or run-name/32-lowercase-hex-InvocationID; it is an identity, never a filesystem path",
+            ));
+        }
+        if self.runtime_bundles.is_empty() {
+            return Err(invalid(
+                "flux.runtime_bundles",
+                "select at least one provisioned immutable runtime bundle",
+            ));
+        }
+        let mut locators = std::collections::BTreeSet::new();
+        for path in &self.runtime_bundles {
+            let digest = path
+                .to_str()
+                .and_then(|text| text.strip_prefix("/mnt/shared/flux-out/tl3/.runtime/"))
+                .and_then(|text| text.strip_suffix("/manifest.json"));
+            if !digest.is_some_and(|digest| {
+                digest.len() == 64
+                    && digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            }) || !locators.insert(path)
+            {
+                return Err(invalid(
+                    "flux.runtime_bundles",
+                    "use unique /mnt/shared/flux-out/tl3/.runtime/<64-lowercase-hex>/manifest.json locators; content verification belongs to runtime preparation",
+                ));
+            }
+        }
+        absolute("flux.executable", &self.executable)?;
+        absolute("flux.backend_cli", &self.backend_cli)?;
+        if self
+            .backend_cli
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+        {
+            return Err(invalid(
+                "flux.backend_cli",
+                "use an absolute provisioned executable without parent traversal",
+            ));
+        }
+        nonempty("flux.uri", &self.uri)?;
+        let uri = Url::parse(&self.uri).map_err(|_| {
+            invalid(
+                "flux.uri",
+                "use an explicit local:/// absolute Flux socket path",
+            )
+        })?;
+        if !self.uri.starts_with("local:///")
+            || uri.scheme() != "local"
+            || uri.host_str().is_some()
+            || !uri.path().starts_with('/')
+            || uri.path() == "/"
+            || uri.query().is_some()
+            || uri.fragment().is_some()
+        {
+            return Err(invalid(
+                "flux.uri",
+                "use an explicit local:/// absolute Flux socket path",
+            ));
+        }
+        shared_directory(
+            "flux.staging_root",
+            &self.staging_root,
+            Path::new("/mnt/shared"),
+        )?;
+        shared_directory(
+            "flux.output_root",
+            &self.output_root,
+            Path::new("/mnt/shared/flux-out/tl3"),
+        )?;
+        if self.output_root != Path::new("/mnt/shared/flux-out/tl3") {
+            return Err(invalid(
+                "flux.output_root",
+                "the first Flux cut requires /mnt/shared/flux-out/tl3 exactly",
+            ));
+        }
+        if self.staging_root.starts_with(&self.output_root)
+            || self.output_root.starts_with(&self.staging_root)
+        {
+            return Err(invalid(
+                "flux.staging_root",
+                "staging and output directories must be disjoint",
+            ));
+        }
+        if !self.environment.contains_key("PATH") {
+            return Err(invalid(
+                "flux.environment",
+                "set PATH explicitly; the controller does not merge ambient environment variables",
+            ));
+        }
+        if !self.environment.contains_key("HOME")
+            || !self.environment.contains_key("XDG_RUNTIME_DIR")
+        {
+            return Err(invalid(
+                "flux.environment",
+                "set both provisioned HOME and XDG_RUNTIME_DIR explicitly for the authoritative user-systemd generation guard",
+            ));
+        }
+        for (name, value) in &self.environment {
+            let fixed = match name.as_str() {
+                "HOME" => Some("/home/rob"),
+                "XDG_RUNTIME_DIR" => Some("/run/user/1000"),
+                _ => None,
+            };
+            if let Some(expected) = fixed {
+                if value != expected {
+                    return Err(invalid(
+                        "flux.environment",
+                        "access HOME and XDG_RUNTIME_DIR must match the explicitly provisioned profile; values withheld",
+                    ));
+                }
+                continue;
+            }
+            if !matches!(name.as_str(), "PATH" | "LD_LIBRARY_PATH") {
+                return Err(invalid(
+                    "flux.environment",
+                    "only explicit PATH, LD_LIBRARY_PATH and provisioned HOME/XDG_RUNTIME_DIR are accepted; backend, job and output variables are controller-owned",
+                ));
+            }
+            if value.is_empty()
+                || value.len() > 8192
+                || value.chars().any(char::is_control)
+                || value.split(':').any(|entry| {
+                    !Path::new(entry).is_absolute()
+                        || Path::new(entry)
+                            .components()
+                            .any(|part| matches!(part, std::path::Component::ParentDir))
+                })
+            {
+                return Err(invalid(
+                    "flux.environment",
+                    "use a bounded list of absolute search directories without empty entries or parent traversal",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn shared_directory(field: &str, path: &Path, parent: &Path) -> Result<(), Error> {
+    absolute(field, path)?;
+    if !path.starts_with(parent)
+        || path == parent && parent == Path::new("/mnt/shared")
+        || path
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return Err(invalid(
+            field,
+            "use the approved shared directory without parent traversal",
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrismaBuild {
     pub tools_dir: PathBuf,
@@ -673,6 +949,38 @@ impl Default for Allowances {
 }
 
 impl Config {
+    /// Select once at the controller/worker boundary. Missing Flux settings never select PB.
+    pub fn selected_execution(&self) -> Result<SelectedExecution<'_>, Error> {
+        match self.execution_backend {
+            ExecutionBackend::PrismaBuild => Ok(SelectedExecution::PrismaBuild(&self.prismabuild)),
+            ExecutionBackend::Flux => self
+                .flux
+                .as_ref()
+                .map(SelectedExecution::Flux)
+                .ok_or_else(|| invalid("flux", "execution_backend = 'flux' requires [flux]")),
+        }
+    }
+
+    fn validate_execution_backend(&self) -> Result<(), Error> {
+        let image = match self.selected_execution()? {
+            SelectedExecution::PrismaBuild(pb) => {
+                absolute("prismabuild.tools_dir", &pb.tools_dir)?;
+                ("prismabuild.container_image", &pb.container_image)
+            }
+            SelectedExecution::Flux(flux) => {
+                flux.validate()?;
+                ("flux.container_image", &flux.container_image)
+            }
+        };
+        if !immutable_image(image.1) {
+            return Err(invalid(
+                image.0,
+                "use sha256:<64 lowercase hex digits> or repository@sha256:<64 lowercase hex digits>, as harness.Container requires",
+            ));
+        }
+        Ok(())
+    }
+
     /// Parse and validate without accessing secrets, executables, or endpoints.
     pub fn parse(source: &str) -> Result<Self, Error> {
         let mut config: Self = toml::from_str(source).map_err(|error: toml::de::Error| {
@@ -845,7 +1153,7 @@ impl Config {
             &self.github.app_credentials_file,
         )?;
         absolute("models.key_file", &self.models.key_file)?;
-        absolute("prismabuild.tools_dir", &self.prismabuild.tools_dir)?;
+        self.validate_execution_backend()?;
         if let Some(address) = self.github.webhook_listen
             && (!address.ip().is_loopback() || address.port() == 0)
         {
@@ -1085,12 +1393,6 @@ impl Config {
                 ));
             }
         }
-        if !immutable_image(&self.prismabuild.container_image) {
-            return Err(invalid(
-                "prismabuild.container_image",
-                "use sha256:<64 lowercase hex digits> or repository@sha256:<64 lowercase hex digits>, as harness.Container requires",
-            ));
-        }
         if self.status.listen.port() == 0
             || self.status.listen.ip().is_multicast()
             || self.status.listen.ip().is_unspecified()
@@ -1305,7 +1607,7 @@ fn endpoint(field: &str, url: &Url) -> Result<(), Error> {
     Ok(())
 }
 
-fn immutable_image(image: &str) -> bool {
+pub fn immutable_image(image: &str) -> bool {
     let reference = if let Some((repository, digest)) = image.split_once('@') {
         if repository.is_empty()
             || !repository

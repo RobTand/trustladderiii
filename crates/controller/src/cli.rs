@@ -281,7 +281,10 @@ pub fn daemon() -> Result<()> {
             Store::open(&config.store)?,
             bootstrap.clone(),
             secret,
-            Some(crate::ingress::CatchUp::new(catch_up_clients)?),
+            Some(crate::ingress::CatchUp::new(
+                catch_up_clients,
+                config.initial_intake.clone(),
+            )?),
         )?;
         eprintln!("GitHub webhooks listening on {}", webhooks.address());
         sources.register(webhooks);
@@ -351,7 +354,7 @@ fn production(config: tl3_config::Config) -> Result<()> {
     let mut sources = crate::ingress::Sources::default();
     sources.register(registration.webhooks);
     sources.register(registration.workers);
-    sources.register(registration.bell);
+    registration.bell.register(&mut sources);
     sources.register(crate::console::Wakes::new(config.store.clone()));
     sources.run(&mut controller)
 }

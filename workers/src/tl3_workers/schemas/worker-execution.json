@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Command",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "call": {
+          "type": "string"
+        },
+        "op": {
+          "type": "string",
+          "const": "allocate"
+        },
+        "profile": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "profile",
+        "call"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "arguments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "call": {
+          "type": "string"
+        },
+        "contract": {
+          "type": "string"
+        },
+        "cpus": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "generator": {
+          "type": "boolean"
+        },
+        "image": {
+          "type": "string"
+        },
+        "mem_gb": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "op": {
+          "type": "string",
+          "const": "prepare"
+        },
+        "parallel": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "profile": {
+          "type": "string"
+        },
+        "quiet_seconds": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "served_tree": {
+          "type": "string"
+        },
+        "walltime_seconds": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "profile",
+        "call",
+        "served_tree",
+        "contract",
+        "generator",
+        "image",
+        "cpus",
+        "mem_gb",
+        "parallel",
+        "quiet_seconds",
+        "walltime_seconds",
+        "arguments"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "op": {
+          "type": "string",
+          "const": "resume"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "served_tree": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "profile",
+        "key",
+        "served_tree",
+        "contract"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "activation"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "profile",
+        "image"
+      ]
+    }
+  ]
+}

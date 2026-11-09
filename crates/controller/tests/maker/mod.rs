@@ -444,7 +444,8 @@ pub(super) fn scenario(settings: &tl3_config::Store, mode: &str, fail: bool) {
                 ));
                 assert!(
                     store
-                        .worker_document("0", "maker_findings")
+                        .worker_document("0", "feedback")
+                        .map(|document| document.map(|value| value["maker"].clone()))
                         .unwrap()
                         .is_none()
                 );

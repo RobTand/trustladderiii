@@ -103,6 +103,7 @@ _CONTROLLER_WORKERS = [
     "test_test_p5_checker",
 ]
 _CONTROLLER_BINARIES = {
+    "test_test_run_backend_cli": [":tl3-run-backend"],
     "test_test_worker_supervisor": [":tl3-worker-supervisor"],
     "test_test_workers": [":tl3"],
     "test_test_console_commands": [":tl3d"],
@@ -150,6 +151,7 @@ _CONTROLLER_RUNTIME = {
 # Shared modules and runtime fixtures outside tests/NAME/. The per-test glob
 # includes its own module tree; these are the cross-tree reads Cargo cannot see.
 _CONTROLLER_TEST_SOURCES = {
+    "tests/run_backend_cli.rs": ["tests/python/fx_native_scratch_helper.py", "tests/python/fx_scratch_helper.py"],
     "tests/direct_merge.rs": ["tests/support/**"],
     "tests/input_resources.rs": ["tests/support/**"],
     "src/lib.rs": ["tests/worker_events_io/**", "tests/support/input_resource_world.rs", "tests/fail_fast/pb-2781.json", "tests/fixtures/dispatch_recovery_original.rs", "tests/fixtures/dispatch-recovery.proptest-regressions", "tests/fixtures/dispatch-conformance.proptest-regressions", "tests/fixtures/dispatch-conformance-regressions.json", "tests/fixtures/dispatch-restart-regressions.json"],
@@ -409,6 +411,8 @@ def _crate_test(kind, package, name, source, harness, options):
         compile_data = compile_data + _CONTROLLER_TEST_DATA + _CONTROLLER_TEST_COMPILE_DATA.get(source, [])
         if kind == "lib":
             compile_data = compile_data + _CONTROLLER_RUNTIME.get("lib_test_tl3_controller" if name == "tl3_controller_loom" else "lib_test_" + name, [])
+        if name in ["tl3_controller", "tl3_controller_loom", "generate-fx-qualification"]:
+            compile_data = compile_data + native.glob(["qualification/fx-exact42b/*.json", "tools/generate_fx_qualification.rs"])
     for group in _GATE_GROUPS.get(binary, [""]):
         suffix = "-" + group if group else ""
         tl3_rust_test(
@@ -428,6 +432,23 @@ def _crate_test(kind, package, name, source, harness, options):
             use_libtest_harness = harness,
             aliases = aliases(normal = True, normal_dev = True),
             deps = options["deps"],
-            gate_args = (["--libtest-select=loom_"] if name == "tl3_controller_loom" else
-                         (["--gate-group=" + group] if group else [])),
+            # Shared-mount Flux fixtures run in the admitted PB check script. RBE
+            # cannot create the fixed /mnt/shared output root; select its wire tests.
+            # The two retained launch-failure lib fixtures likewise execute in PB.
+            gate_args = (["--libtest-select=cli_schema", "--libtest-select=malformed_requests", "--libtest-select=optional_reviewed", "--libtest-select=protocol_bounds"] if name == "run_backend_cli" else
+                         (["--libtest-select=loom_"] if name == "tl3_controller_loom" else
+                          (["--libtest-select=staging_namespace_survives_consumer_argument_validation"] if kind == "example" and name == "fx-stage-packet" else
+                           (["--skip=adapters::run_backend::flux::launch_failure::tests::retained_fbelmqkrh5_success_keeps_its_checks_verdict_and_evidence",
+                            "--skip=adapters::run_backend::flux::launch_failure::tests::retained_fbpzb5i8yp_without_launcher_exit_cannot_be_upgraded",
+                            "--skip=adapters::flux_checks::activation::tests::qualified_identity_and_exact_planned_deployment_pass_staging_boundary",
+                            "--skip=adapters::flux_checks::activation::tests::absent_wrong_hash_unknown_qualification_and_generation_refuse_with_fields_only",
+                            "--skip=adapters::flux_checks::activation::tests::planned_scope_requires_explicit_success_and_cleanup_and_never_completed_claims",
+                            "--skip=adapters::flux_checks::activation::tests::bundle_set_hash_profile_preflight_options_and_cli_substitution_refuse",
+                            "--skip=adapters::flux_checks::activation::tests::sealed_but_unqualified_full_closure_and_fault_interpreter_refuse",
+                            "--skip=adapters::flux_checks::activation::tests::missing_changed_cleanup_and_extra_unlisted_module_refuse",
+                            "--skip=adapters::flux_checks::activation::tests::tags_runtime_substitution_and_environment_override_cannot_grant_activation",
+                            "--skip=adapters::flux_checks::activation::tests::environment_override_child",
+                            "--skip=adapters::flux_checks::activation::tests::qualified_binding_passes_real_controller_capacity_and_startup_activation",
+                            "--skip=adapters::workers::execution::inputs::tests::direct_prepare_requires_deployment_activation_and_checks_actual_options"] if kind == "lib" and name == "tl3_controller" else
+                            (["--gate-group=" + group] if group else []))))),
         )
