@@ -252,6 +252,26 @@ fn cuts_never_publish_multiline_or_explicit_producer_secret_fragments() {
             "swept cut",
         );
     }
+    for source in multiline_cut_sources() {
+        assert!(!redactor.text(&source, 8192).unwrap().contains("zE9pR4cV7x"));
+    }
+}
+/// Same multiline cut sweep as the text carrier (and as Python's straddling tests),
+/// through the JSON payload carrier, which Python never covered. Split from the
+/// cuts test so each test matches one carrier.
+#[test]
+fn payload_cuts_never_publish_multiline_producer_secret_fragments() {
+    let mut redactor = Redactor::default();
+    redactor.secrets.insert("producer-secret-Q7r9T3x6".into());
+    for source in multiline_cut_sources() {
+        let safe = redactor
+            .payload(&json!(source).to_string(), PAYLOAD_BYTES)
+            .unwrap();
+        assert!(!safe.contains("zE9pR4cV7x"));
+    }
+}
+fn multiline_cut_sources() -> Vec<String> {
+    let mut sources = Vec::new();
     for (begin, end) in [
         (
             "-----BEGIN RSA PRIVATE KEY-----",
@@ -281,21 +301,14 @@ fn cuts_never_publish_multiline_or_explicit_producer_secret_fragments() {
             .collect::<Vec<_>>()
             .join("\n");
         for fill in 60..135 {
-            let source = format!(
+            sources.push(format!(
                 "{}\n{begin}\n{body}\n{end}\n{}",
                 "ordinary filler\n".repeat(150),
                 "filler\n".repeat(fill)
-            );
-            for safe in [
-                redactor.text(&source, 8192).unwrap(),
-                redactor
-                    .payload(&json!(source).to_string(), PAYLOAD_BYTES)
-                    .unwrap(),
-            ] {
-                assert!(!safe.contains("zE9pR4cV7x"));
-            }
+            ));
         }
     }
+    sources
 }
 #[test]
 fn adversarial_producer_inputs_stay_bounded() {
