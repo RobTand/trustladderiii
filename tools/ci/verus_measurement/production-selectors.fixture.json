@@ -1,10 +1,25 @@
 {
-  "source_head": "f0b7ffd0fe558662e77031b2b3636351af9e6474",
+  "source_head": "0a2e19853f156a7e8b6313c820a5d268d46f205b",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "421dc4b02bf7c0c57c47af3c2d4191c397348bc8e6f3b383ca4ae99e7550227e",
-  "groups": 430,
-  "obligations": 636,
+  "source_sha256": "cbc610d36b9645ed2677bc36c30da8f3462c7c518e30df5c8b1a85a0449facd5",
+  "groups": 433,
+  "obligations": 639,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_transition_safety_quiet",
+      "selector": "kernel::transition_safety#quiet",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_transition_safety_noticed",
+      "selector": "kernel::transition_safety#noticed",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_transition_safety_outputs_quiet",
+      "selector": "kernel::transition_safety#outputs_quiet",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_dependencies_record_hold",
       "selector": "kernel::dependencies#World::record_hold",
