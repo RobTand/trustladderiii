@@ -1,3 +1,5 @@
+# ruff: noqa: F811
+
 """A dropped model turn retries once; an invalid reply gets one tool-free repair turn."""
 import copy
 from dataclasses import replace
