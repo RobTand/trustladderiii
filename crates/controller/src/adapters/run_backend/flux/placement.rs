@@ -86,6 +86,16 @@ impl Flux {
                 "process observations differ from retained request",
             ));
         }
+        // Acceptance-unknown submit: the job may start before attach recovers its binding.
+        // Recover the exact original-jobspec match as attach does, durably, before the guard.
+        if record.binding.is_none()
+            && record.dispatched
+            && !record.cancel_requested
+            && record.terminal.is_none()
+        {
+            self.recover(owner)?;
+        }
+        let record = self.journal.load(owner)?;
         let raw = self.live_allocation(&record, &observed.run)?;
         observed_allocation(&record, observed, &raw)
     }
