@@ -39,6 +39,17 @@ crate.from_cargo(
 # crate_universe unifies sqlx-core's host and target features. Its Executor
 # trait enables describe with offline, so its Postgres implementation must agree.
 crate.spec(package = "sqlx-postgres", version = "=0.9.0", default_features = False, features = ["offline"])
+# Regex engines run in every redaction test; fastbuild leaves them at opt-level 0,
+# which made the Rust producer-corpus cut sweep ~30x slower than Python's C regex.
+# Optimize only these third-party engines; first-party crates keep fastbuild.
+crate.annotation(crate = "regex", rustc_flags = ["-Copt-level=3", "-Cdebug-assertions=off"])
+crate.annotation(crate = "regex-automata", rustc_flags = ["-Copt-level=3", "-Cdebug-assertions=off"])
+crate.annotation(crate = "regex-syntax", rustc_flags = ["-Copt-level=3", "-Cdebug-assertions=off"])
+crate.annotation(crate = "fancy-regex", rustc_flags = ["-Copt-level=3", "-Cdebug-assertions=off"])
+crate.annotation(crate = "aho-corasick", rustc_flags = ["-Copt-level=3", "-Cdebug-assertions=off"])
+crate.annotation(crate = "memchr", rustc_flags = ["-Copt-level=3", "-Cdebug-assertions=off"])
+crate.annotation(crate = "bit-set", rustc_flags = ["-Copt-level=3", "-Cdebug-assertions=off"])
+crate.annotation(crate = "bit-vec", rustc_flags = ["-Copt-level=3", "-Cdebug-assertions=off"])
 use_repo(crate, "crates")
 
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")
