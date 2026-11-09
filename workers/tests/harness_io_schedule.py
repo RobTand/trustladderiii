@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
-from tl3_harness import execution, selector_identity as identity, test_tool
+from tl3_harness import execution, runtime, selector_identity as identity, test_tool
 from tl3_harness.selector_identity import selector_identity
 from tl3_harness.supervision import ExecutionFailure, ExecutionOutcome
 from tl3_workers import tests_tool
@@ -95,8 +95,14 @@ class Recording:
 def action(module, directory, schedule):
     for path in directory.glob('progress*'):
         path.unlink()
-    progress = directory / 'progress.json'
-    progress.write_text(json.dumps({'token': 'fixture', 'units_completed': schedule['initial']}))
+    # The Flux job's progress journal: one line per completed unit (execution.Progress).
+    progress = directory / 'progress.jsonl'
+    progress.write_text(''.join(json.dumps(f'prior-{index}') + '\n' for index in range(schedule['initial'])))
+    (directory / 'scratch').mkdir(mode=0o700, exist_ok=True)
+    context = {'run': {'backend': 'flux', 'uri': 'local:///fixture/flux', 'instance': 'fixture', 'job': 'f823'},
+               'scratch': {'leaf': str(directory / 'scratch')},
+               'progress': {'journal': str(progress), 'no_progress_seconds': 120},
+               'output_dir': str(directory)}
     recording = Recording(schedule['crash'], lambda: snapshot())
     trace, change = recording.trace, recording.change
 
@@ -118,6 +124,10 @@ def action(module, directory, schedule):
 
         def read(self, *args, **kwargs):
             return self.stream.read(*args, **kwargs)
+
+        def __iter__(self):
+            # execution.Progress counts the journal's completed units line by line.
+            return iter(self.stream)
 
         def write(self, value):
             return change(('write', value), lambda: self.stream.write(value))
@@ -227,13 +237,6 @@ def action(module, directory, schedule):
             trace.append(('proof-is-file', observed))
             return observed
         return original_is_file(path)
-    times = iter([code / 1000 for code in schedule['times']])
-
-    def clock():
-        value = next(times, 123.5)
-        trace.append(('clock', value))
-        return value
-
     def opened(path, mode='r', *args, **kwargs):
         if path.parent == directory and path.name.startswith('progress'):
             call = ('open', path.name, mode)
@@ -258,13 +261,13 @@ def action(module, directory, schedule):
         return change(('rename', path.name, Path(target).name), lambda: original_replace(path, target))
 
     with pytest.MonkeyPatch.context() as patch:
-        patch.setenv('PRISMABUILD_ACTION_PROGRESS_PATH', str(progress))
-        patch.setenv('PRISMABUILD_ACTION_PROGRESS_TOKEN', 'fixture')
+        patch.setenv('TL3_EXECUTION_BACKEND', 'flux')
+        patch.setattr(runtime, 'launch_context', lambda: context)
+        patch.setattr(runtime, 'journal_path', lambda path: path)
         patch.setattr(module, 'require_admission', lambda: trace.append(('admission',)))
         patch.setattr(module, 'container_command', lambda *args: ['fake-container'])
         patch.setattr(module, 'Supervised', Process)
         patch.setattr(module.tempfile, 'TemporaryFile', lambda: change(('selection-open',), Selection))
-        patch.setattr(execution.time, 'time', clock)
         patch.setattr(execution.os, 'getpid', lambda: 823)
         patch.setattr(execution.os, 'fsync', lambda fd: change(('fsync',), lambda: None))
         patch.setattr(Path, 'open', opened)
@@ -566,7 +569,7 @@ def compare_crashes(function, before_module, after_module, schedule):
 
 def verify_crash_cut(schedule):
     """#823 review-r2: capture unflushed bytes before context-manager cleanup."""
-    example = {**schedule, 'reads':[0], 'selector_reads':[True, True],
+    example = {**schedule, 'initial':0, 'reads':[0], 'selector_reads':[True, True],
                'selectors':['t.py'], 'mode':'run_current', 'crash':-1, 'base':False, 'reattach':False}
     for function, module, write in [(action, test_tool, 'write'), (lifecycle, tests_tool, 'stage-write')]:
         with tempfile.TemporaryDirectory(prefix='harness-cut-') as name:
@@ -580,7 +583,7 @@ def verify_crash_cut(schedule):
         with tempfile.TemporaryDirectory(prefix='harness-cut-') as name:
             crashed = function(module, Path(name), {**example, 'crash':cut})
         assert crashed[0][-1] == ('after', complete[0][index]), 'cleanup entered the captured crash trace'
-        path = 'progress.json.823.tmp' if write == 'write' else complete[0][index][1]
+        path = 'progress.jsonl' if write == 'write' else complete[0][index][1]
         persisted = crashed[2][path]
         if write == 'stage-write': persisted = persisted[0]
         assert persisted == '', ('crash cleanup published unflushed bytes', function.__name__, path, persisted)

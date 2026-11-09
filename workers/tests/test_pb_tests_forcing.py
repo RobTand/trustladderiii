@@ -155,7 +155,6 @@ def test_adopt(limit):
     git(root, 'commit', '-qm', 'correct bounded expectation')
     head = git(root, 'rev-parse', 'HEAD')
     monkeypatch.setattr(execution, 'require_admission', lambda: None)
-    monkeypatch.setenv('PRISMABUILD_CONTAINER_OWNER', str(root))
     monkeypatch.setattr(Progress, 'commit', lambda *_: None)
     runner = Path(execution.__file__).with_name('runner.py')
     monkeypatch.setattr(execution, 'container_command',

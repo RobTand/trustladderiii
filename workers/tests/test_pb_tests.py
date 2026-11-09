@@ -418,8 +418,6 @@ def test_oversized_incomplete_report_cannot_become_q50_evidence(submission, monk
     from tl3_harness import execution, test_tool
     from tl3_workers.tools import Evidence
 
-    monkeypatch.setattr(execution.time, 'time', lambda: 1000.0)
-
     root, _ = submission
     names = ['test_' + str(index) + '_' + 'x' * 1780 for index in range(10)]
     selected = ['test_exit.py::' + name for name in names]
@@ -431,8 +429,6 @@ def test_oversized_incomplete_report_cannot_become_q50_evidence(submission, monk
         f'if count == {repeat}: os._exit(0)\n'
         + ''.join(f'def {name}():\n    assert False\n' for name in names))
     monkeypatch.setattr(test_tool, 'require_admission', lambda: None)
-    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_PATH', str(root / 'progress.json'))
-    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_TOKEN', 'fixture')
     monkeypatch.setattr(test_tool, 'container_command', lambda tree, container, tests: [
         sys.executable, '-I', '-B', str(Path(execution.__file__).with_name('runner.py')),
         '-', str(tree),

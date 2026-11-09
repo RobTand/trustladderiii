@@ -59,6 +59,71 @@ FAKES = {}
 REAL_WIRE = {"control": _flux_execution.control, "_command": _flux_execution._command}
 
 
+def _real_launch_context():
+    from tl3_harness import runtime
+    return runtime.launch_context
+
+
+# The harness's real launch-context reader, for tests of the missing-context refusal.
+REAL_LAUNCH_CONTEXT = _real_launch_context()
+
+
+def flux_job_context(root):
+    """The launch context a Rust-launched Flux job carries (harness tests: conftest.flux_context).
+
+    Run identity, a private job scratch leaf, the progress journal and its no-progress
+    allowance. ``root`` lies outside every fixture repository, so nothing here becomes a
+    changed file.
+    """
+    root = Path(root)
+    (root / "output").mkdir(parents=True, exist_ok=True)
+    return {"run": {"backend": "flux", "uri": "local:///fixture/flux", "instance": "fixture",
+                    "job": "f" + hashlib.sha256(str(root).encode()).hexdigest()[:10]},
+            "scratch": {"leaf": str(root / "scratch")},
+            "progress": {"journal": str(root / "output/progress.jsonl"), "no_progress_seconds": 120},
+            "output_dir": str(root / "output")}
+
+
+# Child processes that import the staged harness install the same context; format with
+# CONTEXT=json.dumps(context) before the harness modules run any work.
+FLUX_JOB_CHILD = """
+import json as _json, os as _os
+from pathlib import Path as _Path
+from tl3_harness import runtime as _runtime
+_os.environ['TL3_EXECUTION_BACKEND'] = 'flux'
+_CONTEXT = _json.loads({context!r})
+def _launch_context():
+    _leaf = _Path(_CONTEXT['scratch']['leaf'])
+    _leaf.mkdir(mode=0o700, exist_ok=True)
+    _leaf.chmod(0o700)
+    return _CONTEXT
+_runtime.launch_context = _launch_context
+_runtime.journal_path = lambda path: path
+"""
+
+
+def install_flux_job(monkeypatch, context):
+    """Install ``context`` as this process's Flux launch context (harness conftest.flux_context)."""
+    from tl3_harness import runtime
+    leaf = Path(context["scratch"]["leaf"])
+
+    def launch_context():
+        # require_admission (often stubbed) recreates the leaf a workspace removed.
+        if not leaf.exists():
+            (Path(context["output_dir"]) / "action-scratch-absence.json").unlink(missing_ok=True)
+            leaf.mkdir(mode=0o700)
+        leaf.chmod(0o700)
+        return context
+    monkeypatch.setenv("TL3_EXECUTION_BACKEND", "flux")
+    monkeypatch.setattr(runtime, "launch_context", launch_context)
+    monkeypatch.setattr(runtime, "journal_path", lambda path: path)
+    # The native allocation grant is Rust's evidence (harness tests cover it, as their
+    # generator preparation tests stub it too); worker tests exercise import and validation.
+    from tl3_harness import generator
+    monkeypatch.setattr(generator, "_flux_allocation", lambda: None)
+    return context
+
+
 def _blob_directory(fallback):
     """A per-test directory whose path does not depend on pytest's run-numbered scratch.
 
@@ -225,8 +290,13 @@ def fake_for(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def supported_fake_runtime(tmp_path, monkeypatch):
-    """The admitted Flux backend, replaced only at its control and CLI wire."""
+def supported_fake_runtime(tmp_path_factory, tmp_path, monkeypatch):
+    """The admitted Flux backend, replaced only at its control and CLI wire.
+
+    The harness runs only inside a Rust-launched Flux job, so every test also carries
+    that job's launch context (``flux_job_context``), outside its fixture repositories.
+    """
+    install_flux_job(monkeypatch, flux_job_context(tmp_path_factory.mktemp("flux-job")))
     return fake_for(tmp_path, monkeypatch)
 
 
