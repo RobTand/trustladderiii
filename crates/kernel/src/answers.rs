@@ -185,16 +185,22 @@ fn retry_answer_node(m: &mut Node, i: usize, q: Question, out: &mut Outbox) -> (
     m.review_restarted = false;
     m.round = 0;
     m.replanned = false;
-    continue_node(
-        m,
-        i,
+    *m = continue_node(
+        *m,
         Question {
             cost: q.cost.max(1),
             ..q
         },
         0,
-        out,
     );
+    match q.cont {
+        Cont::Planning { must_split } => {
+            if !must_split && m.replanned && q.kind == QKind::OutOfCredit {
+                notice(out, i, Notice::Note(NoteKind::Replanned));
+            }
+        }
+        _ => {}
+    }
     kernel_proof! {
         if before_retry@.phase == Phase::AwaitingRob {
             handler_safety::continue_step(before_retry@, *m);
