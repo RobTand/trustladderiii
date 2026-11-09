@@ -431,6 +431,168 @@ mod tests {
         );
     }
 
+    /// Shared-mount paths a fixture created; made writable and removed on drop.
+    struct Shared(Vec<PathBuf>);
+
+    impl Drop for Shared {
+        fn drop(&mut self) {
+            fn writable(path: &Path) {
+                if path.is_dir() && !path.is_symlink() {
+                    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
+                    for child in fs::read_dir(path).into_iter().flatten().flatten() {
+                        writable(&child.path());
+                    }
+                }
+            }
+            for path in &self.0 {
+                writable(path);
+                let _ = fs::remove_dir_all(path);
+            }
+        }
+    }
+
+    /// A sealed sandbox bundle built from the current harness, not from any activation pin.
+    fn sandbox_bundle(root: &Path, shared: &mut Shared) -> PathBuf {
+        let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let pin: serde_json::Value = serde_json::from_slice(
+            &fs::read(
+                checkout.join("crates/controller/src/adapters/flux_checks/activation/qualification.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let fixtures = checkout.join("crates/controller/qualification/fx-exact42b/fixtures");
+        let source = root.join("source");
+        let (inventory, collector, cleanup) = (
+            "collector-manifest.json",
+            "host-collector",
+            "host-cleanup",
+        );
+        let mut code = Vec::new();
+        for file in pin["files"].as_array().unwrap() {
+            let path = PathBuf::from(file["path"].as_str().unwrap());
+            if path == Path::new(inventory) {
+                continue;
+            }
+            let name = path.file_name().unwrap();
+            let original = if fixtures.join(name).is_file() {
+                fixtures.join(name)
+            } else {
+                checkout.join("harness/src/tl3_harness").join(name)
+            };
+            let raw = fs::read(&original).unwrap();
+            fs::create_dir_all(source.join(&path).parent().unwrap()).unwrap();
+            fs::write(source.join(&path), &raw).unwrap();
+            if path != Path::new(collector) && path != Path::new(cleanup) {
+                code.push(json!({"path": path, "bytes": raw.len(),
+                    "sha256": api::durable::digest(&raw)}));
+            }
+        }
+        fs::write(
+            source.join(inventory),
+            serde_json::to_vec(&json!({"interpreter": "/usr/bin/python3.14", "files": code}))
+                .unwrap(),
+        )
+        .unwrap();
+        let image = format!("fixture.invalid/sandbox@sha256:{}", "a".repeat(64));
+        let config_digest = format!("sha256:{}", "b".repeat(64));
+        fs::write(
+            root.join("image-map.json"),
+            serde_json::to_vec(&json!({"profiles":[{"profile":"sandbox", "registry_ref":image,
+                "manifest_digest":format!("sha256:{}", "a".repeat(64)),
+                "config_digest":config_digest, "platform":"linux/amd64"}]}))
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            root.join("image-inspect.json"),
+            serde_json::to_vec(&json!({"Id":config_digest, "Os":"linux", "Architecture":"amd64"}))
+                .unwrap(),
+        )
+        .unwrap();
+        let bundle = api::prepared::prepare_bundle(&api::PrepareBundleInput {
+            source_root: source,
+            code_inventory: inventory.into(),
+            collector: collector.into(),
+            cleanup: cleanup.into(),
+            trusted_root: "lib/tl3_harness".into(),
+            producer_commit: "f".repeat(40),
+            container_interpreter: "/opt/tl3/bin/python".into(),
+            cleanup_arguments: vec![],
+            image_inventory: root.join("image-map.json"),
+            image_inspect: root.join("image-inspect.json"),
+            profile: "sandbox".into(),
+            mode: tl3_config::ContainerMode::InJob,
+            prerequisites: api::ModePrerequisites {
+                no_cgroups_supported: true,
+                init_available: true,
+                user_scope_supported: false,
+            },
+        })
+        .unwrap();
+        shared.0.push(bundle.path.parent().unwrap().to_owned());
+        bundle.path
+    }
+
+    #[test]
+    #[ignore = "PB fixture: canonical shared bundle and packet paths under /mnt/shared"]
+    fn canary_packet_stages_without_activation_record() {
+        let temporary = tempfile::Builder::new()
+            .prefix("fx-qual-staging-test-")
+            .tempdir_in("/mnt/shared")
+            .unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let mut shared = Shared(vec![]);
+        let bundle = sandbox_bundle(&root, &mut shared);
+        let generation = format!("fixture/{}", "0".repeat(32));
+        let flux = tl3_config::Flux {
+            activation: None,
+            instance_generation: generation.clone(),
+            uri: "local:///fixture-endpoint".into(),
+            executable: "/no-native-execution/flux".into(),
+            backend_cli: "/no-native-execution/tl3-run-backend".into(),
+            environment: production::flux_job_environment(),
+            container_mode: tl3_config::ContainerMode::InJob,
+            runtime_bundles: vec![bundle.clone()],
+            staging_root: root.join("unused-staging"),
+            output_root: "/mnt/shared/flux-out/tl3".into(),
+            container_image: format!("fixture.invalid/sandbox@sha256:{}", "a".repeat(64)),
+        };
+        let context = root.join("context.json");
+        fs::write(
+            &context,
+            serde_json::to_vec(&production::flux_options(&flux)).unwrap(),
+        )
+        .unwrap();
+        let destination = Path::new("/mnt/shared/flux-out/tl3").join(format!(
+            "fx-qual-staging-test-{}",
+            api::durable::digest(root.to_str().unwrap().as_bytes())
+        ));
+        shared.0.push(destination.clone());
+        shared.0.push(staging_destination(&destination).unwrap());
+        let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        prepare(
+            &destination,
+            &bundle,
+            &context,
+            &checkout,
+            &generation,
+            FixtureKind::Success,
+        )
+        .expect("a canary packet stages without an activation record");
+        let packet: serde_json::Value =
+            serde_json::from_slice(&fs::read(destination.join("packet.json")).unwrap()).unwrap();
+        assert_eq!(packet["status"], "HELD_NOT_RELEASED_NOT_EXECUTED");
+        assert_eq!(packet["activation"], "tl3.fx_canary_qualification_staging.v1");
+        assert_eq!(packet["runtime_qualified"], false);
+        assert_eq!(packet["native_backend_calls"], 0);
+        assert_eq!(packet["container_calls"], 0);
+        let request: api::Request =
+            serde_json::from_slice(&fs::read(destination.join("request.json")).unwrap()).unwrap();
+        assert_eq!(request.walltime_seconds.get(), 60);
+        assert!(request.tree.root.starts_with(staging_destination(&destination).unwrap()));
+    }
+
     #[test]
     fn staging_namespace_survives_consumer_argument_validation() {
         let root =
