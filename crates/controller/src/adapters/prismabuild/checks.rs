@@ -518,6 +518,11 @@ mod tests {
             .find(|candidate| candidate.is_file())
             .unwrap();
         std::os::unix::fs::symlink(git, tools.join("git")).unwrap();
+        std::os::unix::fs::symlink(
+            repository.join("workers/.venv/bin/python"),
+            tools.join("python3"),
+        )
+        .unwrap();
         let probe = || {
             std::process::Command::new(repository.join("workers/.venv/bin/python"))
                 .args(["-I", "-B"])

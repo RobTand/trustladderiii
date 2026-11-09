@@ -1,6 +1,29 @@
 use super::*;
 mod adapters {
-    pub use crate::adapters::prismabuild;
+    pub use super::super::adapters::results;
+    pub mod prismabuild {
+        use super::super::super::*;
+        pub use tl3_controller::adapters::prismabuild::Kind;
+        // Historical Check representation, scoped only to the frozen arm and
+        // its frozen size validator. No production decoder accepts this shape.
+        pub struct Check {
+            pub name: String,
+            pub kind: Kind,
+            pub tests: Vec<String>,
+            pub forcing: Option<tl3_contracts::checks::Forcing>,
+            pub proof: Option<tl3_contracts::checks::ProofDeclaration>,
+            pub declared_symptom: Option<tl3_contracts::checks::DeclaredSymptom>,
+        }
+        impl From<Check> for tl3_controller::adapters::prismabuild::Check {
+            fn from(check: Check) -> Self {
+                Self { goal_ids: vec![], name: check.name, kind: check.kind,
+                    tests: check.tests, forcing: check.forcing, proof: check.proof,
+                    declared_symptom: check.declared_symptom }
+            }
+        }
+        const MAX_REPORT_LINE_BYTES: usize = 4 * 1024 * 1024;
+        include!("plan-size.rs");
+    }
     pub mod workers {
         pub use crate::adapters::workers::{protocol, review};
         pub mod reproducing {
@@ -96,7 +119,6 @@ impl Shell<'_> {
                         .map(|(index, check)| {
                             let declared = |field: &str| check.get(field).cloned();
                             Ok(adapters::prismabuild::Check {
-                                goal_ids: vec![],
                                 name: format!("check-{}", index + 1),
                                 kind: serde_json::from_value(check["kind"].clone())?,
                                 tests: adapters::workers::protocol::reply_field(check, "node_ids")?,

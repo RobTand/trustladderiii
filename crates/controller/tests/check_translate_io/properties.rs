@@ -122,7 +122,12 @@ fn pinned_real_arms_and_helper_closures() {
         for (key, pin) in pins["closures"].as_object().unwrap() {
             if key.starts_with(&format!("{module}::")) {
                 let f = pin["name"].as_str().unwrap();
-                assert_eq!(function(copy, f), function(source, f), "{key}");
+                let current = if module == "production" {
+                    include_str!("production_helpers_current.rs")
+                } else {
+                    copy
+                };
+                assert_eq!(function(current, f), function(source, f), "{key}");
                 assert_eq!(
                     format!("{:x}", Sha256::digest(function(copy, f))),
                     pin["sha256"]
@@ -314,7 +319,7 @@ fn mandatory_preexisting_nonempty_adoption_plan_decode_failure() {
         Step::default(),
         fallback(Some(brief()), Some(plan)),
     ));
-    assert!(error(&r).contains("node_ids"));
+    assert!(error(&r).contains("node_ids"), "{}", error(&r));
     assert!(r.persisted_rows.is_empty());
     assert_eq!(r.writes, 0);
 }

@@ -71,6 +71,7 @@ impl Shell<'_> {
                 {
                     return Ok(None);
                 }
+                feedback.failure_message = Some(failure_message.clone());
                 commit.rows.push(put(
                     "worker_failures",
                     node.0.to_string(),
@@ -159,24 +160,32 @@ impl Shell<'_> {
                         .as_array()
                         .ok_or(Error::Invalid("planner checks must be an array"))?
                         .iter()
-                        .enumerate()
-                        .map(|(index, check)| {
-                            let declared = |field: &str| check.get(field).cloned();
-                            Ok(adapters::prismabuild::Check {
-                                goal_ids: vec![],
-                                name: format!("check-{}", index + 1),
-                                kind: serde_json::from_value(check["kind"].clone())?,
-                                tests: adapters::workers::protocol::reply_field(check, "node_ids")?,
-                                forcing: declared("forcing")
-                                    .map(serde_json::from_value)
-                                    .transpose()?,
-                                proof: declared("proof").map(serde_json::from_value).transpose()?,
-                                declared_symptom: declared("declared_symptom")
-                                    .map(serde_json::from_value)
-                                    .transpose()?,
-                            })
+                        .map(|check| {
+                            serde_json::from_value::<adapters::prismabuild::Check>(check.clone())
+                                .map_err(Error::from)
                         })
                         .collect::<Result<Vec<_>>>()?;
+                    let brief = self
+                        .store
+                        .worker_document(&node.0.to_string(), "briefs")?
+                        .ok_or(Error::Invalid("planner admission needs the accepted brief"))?;
+                    let goals = crate::goals::identified(&brief["goals"])?;
+                    let required = goals
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, goal)| goal["stage"] != "publishing")
+                        .map(|(index, _)| tl3_contracts::GoalId(index as u64))
+                        .collect::<Vec<_>>();
+                    let admission =
+                        tl3_contracts::checks::admit_plan(&checks, goals.len(), &required);
+                    if let Err(message) = admission {
+                        reply["violations"]
+                            .as_array_mut()
+                            .ok_or(Error::Invalid("planner violations must be an array"))?
+                            .push(json!(message));
+                        mapped =
+                            adapters::workers::protocol::MappedReply::Kernel(Reply::PlanCantMeet);
+                    }
                     if let Err(error) = adapters::prismabuild::validate_plan_size(&checks) {
                         match error {
                             Error::Invalid(message) => {
@@ -242,72 +251,11 @@ impl Shell<'_> {
                         _ => {}
                     }
                     if route == worker::ReviewRoute::Changes {
-                        let mut feedback = self
-                            .store
-                            .worker_document(&node.0.to_string(), "maker_findings")?
-                            .unwrap_or(json!([]));
-                        let reports = feedback
-                            .as_array_mut()
-                            .ok_or(Error::Invalid("invalid maker findings"))?;
-                        let formatted: Vec<_> = blockers
-                            .iter()
-                            .take(findings::MAX_REVIEW_FINDINGS)
-                            .map(|finding| {
-                                format!(
-                                    "{}: {}",
-                                    findings::clipped(
-                                        &finding.problem,
-                                        findings::MAX_MESSAGE_CHARS
-                                    ),
-                                    findings::clipped(
-                                        &finding.evidence,
-                                        findings::MAX_MESSAGE_CHARS
-                                    ),
-                                )
-                            })
-                            .collect();
-                        let lengths: Vec<_> = formatted
-                            .iter()
-                            .map(|report| report.chars().count())
-                            .collect();
-                        let count = worker::findings_prefix(
-                            &lengths,
-                            findings::MAX_REVIEW_FINDINGS,
-                            findings::MAX_REPORT_CHARS,
-                        );
-                        for (index, (finding, report)) in
-                            blockers.iter().zip(formatted).take(count).enumerate()
-                        {
-                            let goal_ids = if finding.citation.kind
-                                == adapters::workers::review::CitationKind::Goal
-                            {
-                                vec![finding.citation.id.clone()]
-                            } else {
-                                Vec::new()
-                            };
-                            reports.push(serde_json::to_value(findings::Finding {
-                                id: Some(format!("review-{generation}-{index}")),
-                                reviewed_sha: Some(
-                                    criteria["head_sha"]
-                                        .as_str()
-                                        .ok_or(Error::Invalid(
-                                            "review finding needs its exact commit",
-                                        ))?
-                                        .to_owned(),
-                                ),
-                                kind: findings::Kind::ReviewFinding,
-                                report,
-                                goal_ids,
-                                failed_tests: Vec::new(),
-                                outside_paths: Vec::new(),
-                                outside_paths_total: 0,
-                                ci_checks: Vec::new(),
-                            })?);
-                        }
-                        commit
-                            .rows
-                            .push(put("maker_findings", node.0.to_string(), feedback));
-                        detailed_review = true;
+                        feedback.review = Some(feedback::review_findings(
+                            &blockers,
+                            &criteria["head_sha"],
+                            generation,
+                        )?);
                     }
                 }
                 let document = worker::document(worker_role).map(|document| match document {
@@ -317,28 +265,7 @@ impl Shell<'_> {
                     worker::Document::Plans => "plans",
                 });
                 if role == "planner" {
-                    let mut findings = self
-                        .store
-                        .worker_document(&node.0.to_string(), "findings")?
-                        .unwrap_or(json!([]));
-                    let reports = findings
-                        .as_array_mut()
-                        .ok_or(Error::Invalid("findings must be text reports"))?;
-                    for violation in adapters::workers::protocol::reply_field::<Vec<String>>(
-                        &reply,
-                        "violations",
-                    )? {
-                        let violation = json!(violation);
-                        if !reports.contains(&violation) {
-                            reports.push(violation);
-                        }
-                    }
-                    if let Some(report) = reply["report"].as_str() {
-                        reports.push(json!(report));
-                    }
-                    commit
-                        .rows
-                        .push(put("findings", node.0.to_string(), findings));
+                    feedback.planner = Some(reply.clone());
                     if let adapters::workers::protocol::MappedReply::Kernel(Reply::PlanLeaf {
                         fits,
                         ..
@@ -421,10 +348,7 @@ impl Shell<'_> {
                             goals.iter().map(|g| g["id"].as_str()).collect();
                         let checked: BTreeSet<_> =
                             checks.iter().map(|c| c["goal_id"].as_str()).collect();
-                        let feedback = self
-                            .store
-                            .worker_document(&node.0.to_string(), "maker_findings")?
-                            .unwrap_or(json!([]));
+                        let feedback = feedback::maker_history(snapshot, commit, node)?;
                         let previous = commit_sha(snapshot, n.head);
                         let current = findings::current_review(&feedback, n.round, previous);
                         let reviewed = current.head;
@@ -528,6 +452,9 @@ impl Shell<'_> {
                             "model": model,
                         }),
                     ));
+                }
+                if mapped == Reply::MakerCantMeet {
+                    feedback.cant_meet = Some(reply.to_string());
                 }
                 Event::Reply {
                     node,

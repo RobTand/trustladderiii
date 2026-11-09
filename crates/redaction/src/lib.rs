@@ -295,7 +295,7 @@ fn get<'a>(cap: &Captures<'a>, name: &str) -> &'a str {
 fn span(cap: &Captures<'_>, name: &str) -> Option<Span> {
     cap.name(name).map(|m| (m.start(), m.end()))
 }
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Kind {
     Strong,
     Weak,
@@ -549,13 +549,99 @@ fn secretish(value: &str, quoted: bool) -> Result<bool> {
         || (special >= 2 && (upper || digit))
         || (quoted && digit && (upper || lower) && special >= 1))
 }
-fn checked(check: Check, cap: &Captures<'_>, text: &str) -> Result<Option<Span>> {
+// Caches belong to one scan, retain exact arguments, and store only successful
+// results. Exhaustion disables insertion, never matching or candidate traversal.
+struct ScanMemo {
+    enabled: bool,
+    bytes: usize,
+    labels: HashMap<String, Option<Kind>>,
+    plausible: HashMap<(Option<Kind>, String, String, String, String, bool), bool>,
+    secretish: HashMap<(String, bool), bool>,
+    nearby: HashMap<String, Vec<NearToken>>,
+}
+#[derive(Clone)]
+struct NearToken {
+    whole_start: usize,
+    start: usize,
+    end: usize,
+    quoted: bool,
+}
+impl ScanMemo {
+    fn new(enabled: bool) -> Self {
+        Self { enabled, bytes: 0, labels: HashMap::new(), plausible: HashMap::new(),
+            secretish: HashMap::new(), nearby: HashMap::new() }
+    }
+    fn reserve(&mut self, bytes: usize) -> bool {
+        const CACHE_BYTES: usize = 256 * 1024;
+        if !self.enabled || bytes > CACHE_BYTES - self.bytes {
+            return false;
+        }
+        self.bytes += bytes;
+        true
+    }
+    fn label_kind(&mut self, label: &str) -> Result<Option<Kind>> {
+        if self.enabled && let Some(value) = self.labels.get(label) {
+            return Ok(*value);
+        }
+        let value = label_kind(label)?;
+        if self.reserve(label.len() + 128) {
+            self.labels.insert(label.into(), value);
+        }
+        Ok(value)
+    }
+    fn labelled_plausible(&mut self, label: &str, value: &str, tail: &str,
+        assign: &str, code: bool) -> Result<bool> {
+        let kind = self.label_kind(label)?;
+        self.plausible(kind, label, value, tail, assign, code)
+    }
+    fn plausible(&mut self, kind: Option<Kind>, label: &str, value: &str,
+        tail: &str, assign: &str, code: bool) -> Result<bool> {
+        let key = (kind, label.to_owned(), value.to_owned(), tail.to_owned(), assign.to_owned(), code);
+        if self.enabled && let Some(value) = self.plausible.get(&key) {
+            return Ok(*value);
+        }
+        let result = plausible(kind, label, value, tail, assign, code)?;
+        if self.reserve(label.len() + value.len() + tail.len() + assign.len() + 256) {
+            self.plausible.insert(key, result);
+        }
+        Ok(result)
+    }
+    fn secretish(&mut self, value: &str, quoted: bool) -> Result<bool> {
+        let key = (value.to_owned(), quoted);
+        if self.enabled && let Some(result) = self.secretish.get(&key) {
+            return Ok(*result);
+        }
+        let result = secretish(value, quoted)?;
+        if self.reserve(value.len() + 128) {
+            self.secretish.insert(key, result);
+        }
+        Ok(result)
+    }
+    fn near_tokens(&mut self, text: &str) -> Result<Vec<NearToken>> {
+        if self.enabled && let Some(tokens) = self.nearby.get(text) {
+            return Ok(tokens.clone());
+        }
+        let mut tokens = Vec::new();
+        for token in matches(&rule("NEAR_TOKEN")?, text)? {
+            let whole = token.get(0).ok_or("missing nearby token")?;
+            let quoted = token.name("qv").is_some();
+            if let Some((start, end)) = span(&token, if quoted { "qv" } else { "v" }) {
+                tokens.push(NearToken { whole_start: whole.start(), start, end, quoted });
+            }
+        }
+        if self.reserve(text.len() + tokens.len() * std::mem::size_of::<NearToken>() + 128) {
+            self.nearby.insert(text.into(), tokens.clone());
+        }
+        Ok(tokens)
+    }
+}
+fn checked(check: Check, cap: &Captures<'_>, text: &str, memo: &mut ScanMemo) -> Result<Option<Span>> {
     let chars = characters()?;
     let label = get(cap, "l");
     let value = get(cap, "v");
     let keep = match check {
         Check::Labelled => {
-            if label_kind(label)? == Some(Kind::Strong)
+            if memo.label_kind(label)? == Some(Kind::Strong)
                 && matches!(label.to_lowercase().as_str(), "signature" | "sig")
                 && readable(value)?
             {
@@ -592,8 +678,7 @@ fn checked(check: Check, cap: &Captures<'_>, text: &str) -> Result<Option<Span>>
                         .next_back()
                         .is_some_and(|c| member(&chars.space, c))
                         || gap.chars().next().is_some_and(|c| member(&chars.space, c))));
-            plausible(
-                label_kind(label)?,
+            memo.labelled_plausible(
                 label,
                 value,
                 after(text, v.end(), 8),
@@ -601,17 +686,17 @@ fn checked(check: Check, cap: &Captures<'_>, text: &str) -> Result<Option<Span>>
                 code,
             )?
         }
-        Check::Flag => plausible(label_kind(label)?, label, value, "", "=", false)?,
+        Check::Flag => memo.labelled_plausible(label, value, "", "=", false)?,
         Check::Table => {
             let value = value.trim_matches('`');
-            label_kind(label.trim_matches(['`', '*', ' ']))?.is_some()
+            memo.label_kind(label.trim_matches(['`', '*', ' ']))?.is_some()
                 && !start_rule("REFERENCE", value)?
                 && value.chars().count() >= 8
                 && token_shaped(value)?
                 && !value.chars().any(|c| member(&chars.space, c))
         }
-        Check::Block => label_kind(label)? == Some(Kind::Strong),
-        Check::NameValue => plausible(label_kind(label)?, label, value, "", "", false)?,
+        Check::Block => memo.label_kind(label)? == Some(Kind::Strong),
+        Check::NameValue => memo.labelled_plausible(label, value, "", "", false)?,
         Check::Header => {
             let group = if cap.name("v").is_some() { "v" } else { "c" };
             let value = get(cap, group);
@@ -657,22 +742,26 @@ fn checked(check: Check, cap: &Captures<'_>, text: &str) -> Result<Option<Span>>
                     .is_match(value)
                     .map_err(|e| e.to_string())?
         }
-        Check::Aws => label_kind(label)?.is_some(),
+        Check::Aws => memo.label_kind(label)?.is_some(),
         Check::SshKeygen => !unquote(value)?.0.is_empty(),
         Check::Xml => {
             chars.trim(value).chars().count() >= 4
-                && label_kind(label)? == Some(Kind::Strong)
-                && plausible(Some(Kind::Strong), label, value, "", "=", false)?
+                && memo.label_kind(label)? == Some(Kind::Strong)
+                && memo.plausible(Some(Kind::Strong), label, value, "", "=", false)?
         }
         Check::JsonPair => {
             unquote(value)?.0.chars().count() >= 4
-                && plausible(label_kind(label)?, label, value, "", ":", false)?
+                && memo.labelled_plausible(label, value, "", ":", false)?
         }
         Check::Pair => secretish(value, false)?,
     };
     Ok(if keep { span(cap, "v") } else { None })
 }
 fn spans(text: &str) -> Result<Vec<Span>> {
+    spans_memoized(text, true)
+}
+fn spans_memoized(text: &str, enabled: bool) -> Result<Vec<Span>> {
+    let mut memo = ScanMemo::new(enabled);
     let chars = characters()?;
     let mut found = azure_sas::spans(text);
     let ends = matches(&rule("PRIVATE_END")?, text)?
@@ -711,7 +800,7 @@ fn spans(text: &str) -> Result<Vec<Span>> {
     }
     for &(pattern, check) in policy().checked {
         for cap in matches(&rx(pattern)?, text)? {
-            if let Some(span) = checked(check, &cap, text)? {
+            if let Some(span) = checked(check, &cap, text, &mut memo)? {
                 found.push(span);
             }
         }
@@ -722,19 +811,12 @@ fn spans(text: &str) -> Result<Vec<Span>> {
         let high = prefix(rest, policy().near_chars + 256).len();
         let end = rest[..high].find('\n').unwrap_or(high);
         let limit = prefix(&rest[..end], policy().near_chars).len();
-        for token in matches(&rule("NEAR_TOKEN")?, &rest[..end])? {
-            if token.get(0).ok_or("missing nearby token")?.start() >= limit {
+        for token in memo.near_tokens(&rest[..end])? {
+            if token.whole_start >= limit {
                 break;
             }
-            let group = if token.name("qv").is_some() {
-                "qv"
-            } else {
-                "v"
-            };
-            if secretish(get(&token, group), group == "qv")?
-                && let Some((start, stop)) = span(&token, group)
-            {
-                found.push((word.end() + start, word.end() + stop));
+            if memo.secretish(&rest[token.start..token.end], token.quoted)? {
+                found.push((word.end() + token.start, word.end() + token.end));
             }
         }
     }
@@ -1023,6 +1105,66 @@ print(json.dumps(out))
         ] {
             assert_eq!(super::search(pattern, input).unwrap(), expected);
         }
+    }
+
+    fn same_spans(source: &str) {
+        assert_eq!(super::spans_memoized(source, true), super::spans_memoized(source, false),
+            "memoized scanner differs from the original uncached operations, bytes={}", source.len());
+    }
+
+    #[test]
+    fn memoization_matches_full_retained_corpus() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let corpus: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(root.join("crates/controller/src/redaction/corpus.json")).unwrap()).unwrap();
+        fn visit(value: &serde_json::Value, count: &mut usize) {
+            match value {
+                serde_json::Value::String(text) => { same_spans(text); *count += 1; }
+                serde_json::Value::Array(items) => for item in items { visit(item, count); },
+                serde_json::Value::Object(fields) => for (key, value) in fields {
+                    same_spans(key); *count += 1; visit(value, count);
+                },
+                _ => (),
+            }
+        }
+        let mut count = 0;
+        visit(&corpus, &mut count);
+        let output = super::python_command().arg("-I")
+            .arg(root.join("workers/tests/tracing_policy_cases.py"))
+            .arg(root.join("crates/action/tests/fixtures/generator-inputs.json"))
+            .output().unwrap();
+        assert!(output.status.success(), "producer corpus generator failed");
+        let producer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        visit(&producer, &mut count);
+        assert!(count > 400, "full corpus must exercise its planted forms");
+        println!("memoization full corpus compared {count} strings");
+    }
+
+    #[test]
+    fn memoization_preserves_generated_context_and_cache_exhaustion_properties() {
+        let labels = ["token", "password", "signature", "api_key", "ordinary", "İ", "ſ"];
+        let values = ["", "token=token=token=", "aB3!dE6@ghi", "plain text", "路径/é", "${TOKEN}", "12345678"];
+        let contexts = [("", ""), ("'", "'"), ("\"", "\""), ("x\n  ", "\nend"), ("| ", " |")];
+        let mut count = 0;
+        for label in labels {
+            for value in values {
+                for (prefix, suffix) in contexts {
+                    let source = format!("{prefix}{label}={value}{suffix} {label}: {value}");
+                    same_spans(&source);
+                    same_spans(&source.repeat(3));
+                    count += 2;
+                }
+            }
+        }
+        let mut memo = super::ScanMemo::new(true);
+        assert!(memo.reserve(256 * 1024));
+        assert!(!memo.reserve(1));
+        for value in values {
+            assert_eq!(memo.secretish(value, false), super::secretish(value, false));
+        }
+        assert!(memo.secretish.is_empty(), "exhaustion must compute without cache insertion");
+        println!("memoization generated context properties compared {count} strings");
+        assert_eq!(count, 490);
     }
 
     #[test]

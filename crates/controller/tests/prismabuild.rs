@@ -2772,7 +2772,7 @@ fn completion_failure_cause(settings: &tl3_config::Store, path: &str, mode: &str
         // proof receipts remain byte-for-byte equivalent JSON from the live job.
         delivery.checks.as_mut().unwrap().plan = results.iter().map(|result| {
             let mut check = serde_json::json!({
-                "name": result["name"], "kind": result["kind"],
+                "name": result["name"], "kind": result["kind"], "goal_ids": [],
                 "tests": result["tests"].as_array().unwrap().iter().map(|t| &t["test"]).collect::<Vec<_>>(),
             });
             if let Some(proof) = result.get("proof") {

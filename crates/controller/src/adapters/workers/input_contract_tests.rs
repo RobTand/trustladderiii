@@ -504,7 +504,7 @@ fn real_builders(flux: bool) {
                     if role == "maker" {
                         assert_eq!(
                             store.worker_materials("0").unwrap().unwrap()["check_run"]["plan"][0]["name"],
-                            "check-1"
+                            "evidence"
                         );
                     }
                     coverage.insert(role);

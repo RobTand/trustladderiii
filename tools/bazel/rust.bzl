@@ -42,7 +42,11 @@ _EXAMPLE_DATA = {
 }
 
 # Files other crates' tests read at run time.
-_RUNTIME = {"crates/action": ["//workers/tests:tracing_policy_inputs"], "crates/harness-core": [
+_RUNTIME = {"crates/action": ["//workers/tests:tracing_policy_inputs"], "crates/redaction": [
+    "//crates/controller:src/redaction/corpus.json",
+    "//crates/action:tests/fixtures/generator-inputs.json",
+    "//workers/tests:tracing_policy_inputs",
+], "crates/harness-core": [
     "//harness:core_vectors",
     "//harness:test-vectors/summary/python-envelope.json",
     "//harness:test-vectors/summary/python-numbers.json",

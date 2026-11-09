@@ -671,7 +671,7 @@ fn tessera() -> (Job, Value) {
     job.delivery.head_sha = Some(report["head"].as_str().unwrap().into());
     job.run.base_sha = serde_json::from_value(report["base"].clone()).unwrap();
     job.run.plan = report["results"].as_array().unwrap().iter().map(|result| {
-        let mut check = json!({"name":result["name"], "kind":result["kind"],
+        let mut check = json!({"name":result["name"], "kind":result["kind"], "goal_ids":[],
             "tests":result["tests"].as_array().unwrap().iter().map(|test| test["test"].clone()).collect::<Vec<_>>()});
         if let Some(proof) = result.get("proof") {
             check["proof"] = proof["declaration"].clone();

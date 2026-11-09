@@ -23,6 +23,7 @@ pub(super) const CASE: &str = r###"{
           "symptom": "The original call times out."
         },
         "kind": "demonstrating",
+        "goal_ids": [],
         "name": "original symptom",
         "tests": [
           "tests/test_original.py::test_original"

@@ -234,8 +234,8 @@ impl JsonSchema for Patch {
 pub struct ProofDeclaration {
     pub subjects: List<UnitPath, 0, 16, true>,
     pub observer_support: List<UnitPath, 0, 16, true>,
-    /// Planner-declared EXPECTED assertion message, never captured run evidence.
-    /// Rust checks actual-run RED messages independently before accepting the proof.
+    // Planner-declared EXPECTED assertion message, never captured run evidence.
+    // Rust checks actual-run RED messages independently before accepting the proof.
     pub red_message: Text<1, 160>,
 }
 
