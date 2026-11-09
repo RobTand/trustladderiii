@@ -4818,10 +4818,12 @@ fn generator_no_container_failure_refuses_forged_and_unproven_closure() {
             .unwrap()["kind"],
         "result"
     );
-    // ... but never once any runtime execution was registered.
-    let owned = f.ownership();
-    let retained = f.call(json!({"op":"retain_runtime","owner":f.intent.owner,"correlation":f.intent.correlation,"ownership":owned}));
-    assert_eq!(retained.last().unwrap()["kind"], "result", "{retained:?}");
+    // ... but never once a container launch began. Register the launch through the
+    // real durable prelaunch intent; the backend refuses ownership without one.
+    let launcher = f.ownership();
+    let begun = f.call(json!({"op":"begin_container_launch","owner":f.intent.owner,"correlation":f.intent.correlation,"launcher":launcher}));
+    assert_eq!(begun.last().unwrap()["kind"], "result", "{begun:?}");
+    assert_eq!(f.state().container_launches.len(), 1);
     let result = collect_worker(&f, frame(&produced).as_bytes());
     assert_eq!(result.last().unwrap()["kind"], "error", "{result:?}");
 
