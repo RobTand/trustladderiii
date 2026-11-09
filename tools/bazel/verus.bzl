@@ -727,6 +727,7 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "handler_safety_distance_last_cmd": ("kernel::handler_safety#distance_last_cmd", 1),
             "commands_stop_command": ("kernel::commands#stop_command", 1),
             "commands_change_request_command": ("kernel::commands#change_request_command", 1),
             "commands_pause_command": ("kernel::commands#pause_command", 1),
