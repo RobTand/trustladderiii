@@ -166,6 +166,9 @@ def make_generator_tool(worktree, *, restore_only=False):
                 record()
                 worktree.generation_receipt = result
                 return result
+            if receipt["ending"] != "passed":
+                # Only a passed run's outputs enter the worktree (maker-reply generation_receipt).
+                raise ValueError(f"Generator run ending {receipt['ending']!r} is not passed; nothing was imported.")
             after = generator.validate_artifact(artifact, current, contract)
             if generator.manifest(checkout) != current:
                 raise ValueError("Generator artifact input tree is stale; source work was preserved.")
