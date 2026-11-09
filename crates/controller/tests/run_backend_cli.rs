@@ -4,6 +4,7 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 use tl3_controller::run_backend::{self as api, durable::digest, *};
 
 fn cli(request: &Value) -> Vec<Value> {
@@ -19,6 +20,73 @@ fn cli(request: &Value) -> Vec<Value> {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect()
+}
+
+/// Rob 11-03: a performance-budget overrun is a recorded warning, never a failure
+/// or a rerun. Only a contractual deadline (a product timeout) fails a test.
+/// The line follows the repo `{"budget_warning": ...}` convention (tools/bazel/rust_runner.py).
+fn check_budget(test: &str, start: Instant, budget: Duration) {
+    let measured = start.elapsed();
+    if measured > budget {
+        println!(
+            "{}",
+            json!({"budget_warning": {"test": test, "measured": measured.as_secs_f64(),
+                "limit": budget.as_secs_f64(), "metric": "wall"}})
+        );
+    }
+}
+
+/// The run-backend transport idle timeout: a CLI child silent this long is hung by contract.
+fn transport_idle_deadline() -> Duration {
+    Duration::from_secs(cleanup_limits().idle_timeout_seconds)
+}
+
+/// The native command deadline; a stop_watch that is not faster cannot be told from expiry.
+fn native_command_deadline() -> Duration {
+    Duration::from_secs(cleanup_limits().native_timeout_seconds)
+}
+
+/// Failing bound for a stop_watch measured from `stopped`, which is taken after the
+/// native call (and its deadline) began. Deadline expiry lands near 30 s - δ after
+/// `stopped`; 10 s of margin keeps a dropped or ignored stop on the failing side.
+fn stop_watch_deadline() -> Duration {
+    native_command_deadline() - Duration::from_secs(10)
+}
+
+/// Test-only latency knob: unset is 0; anything else must be finite, non-negative seconds.
+fn latency_knob(name: &str) -> f64 {
+    std::env::var(name).map_or(0.0, |value| {
+        value
+            .parse::<f64>()
+            .ok()
+            .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
+            .unwrap_or_else(|| panic!("{name} must be non-negative seconds, got {value:?}"))
+    })
+}
+
+/// Wait for a fixture milestone: a warning past `budget`, a failure only at the idle timeout.
+fn wait_until(test: &str, budget: Duration, mut reached: impl FnMut() -> bool) {
+    let start = Instant::now();
+    while !reached() {
+        assert!(
+            start.elapsed() < transport_idle_deadline(),
+            "{test}: not reached within the transport idle timeout"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    check_budget(test, start, budget);
+}
+
+/// Receive one frame: a warning past `budget`, a failure only at the idle timeout.
+fn recv_within<T>(test: &str, receive: &std::sync::mpsc::Receiver<T>, budget: Duration) -> T {
+    let start = Instant::now();
+    let value = receive
+        .recv_timeout(transport_idle_deadline())
+        .unwrap_or_else(|error| {
+            panic!("{test}: no frame within the transport idle timeout: {error}")
+        });
+    check_budget(test, start, budget);
+    value
 }
 
 #[test]
@@ -333,14 +401,11 @@ fn scratch_reclamation_serializes_begin_until_terminal_and_rejects_late_begin() 
     .unwrap();
     std::thread::scope(|scope| {
         let attach = scope.spawn(|| f.attach());
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while !f.intent.output_dir.join("scratch-entered").exists() {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "helper did not reach pause"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        wait_until(
+            "helper reaches reclamation pause",
+            Duration::from_secs(10),
+            || f.intent.output_dir.join("scratch-entered").exists(),
+        );
         assert!(root.join("leftover").exists());
         assert!(!f.intent.output_dir.join("receipt.json").exists());
         let gate = fs::File::open(f.options.journal_root.join("runtime-lock")).unwrap();
@@ -369,9 +434,11 @@ fn scratch_reclamation_serializes_begin_until_terminal_and_rejects_late_begin() 
             "{terminal:?}"
         );
         assert!(!root.exists());
-        let waiting = receive
-            .recv_timeout(std::time::Duration::from_secs(10))
-            .unwrap();
+        let waiting = recv_within(
+            "waiting begin returns after reclamation",
+            &receive,
+            Duration::from_secs(10),
+        );
         assert_eq!(waiting.last().unwrap()["kind"], "error", "{waiting:?}");
         assert!(
             waiting.last().unwrap()["message"]
@@ -748,6 +815,7 @@ fn generated_action_case(mode: &str) -> Fixture {
         serde_json::to_vec(&json!({
             "environment": environment, "output_dir": f.intent.output_dir,
             "scratch": scratch.path().join("fABC"), "mode": mode,
+            "injected_latency_seconds": latency_knob("FX_TEST_ACTION_LATENCY_SECONDS"),
             "source": Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap(),
         }))
         .unwrap(),
@@ -1399,6 +1467,12 @@ fixture=$1
 shift
 printf '%s\n' "$*" >> "$fixture/calls"
 mode=$(cat "$fixture/mode")
+# Test-only contention model: delay every native call, never change its result. The
+# watched quiet call is exempt: its start anchors the stop_watch deadline in the tests.
+case "$mode:$1:${2:-}" in
+quiet-jobs:jobs:*|quiet-info:job:info|quiet:job:eventlog|quiet-collect:job:status) ;;
+*) if [ -e "$fixture/native-latency" ]; then /bin/sleep "$(cat "$fixture/native-latency")"; fi;;
+esac
 case "$1" in
 submit)
     printf '%s\n' "$@" > "$fixture/args"
@@ -1444,6 +1518,10 @@ text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
 "#).unwrap();
         fs::set_permissions(&native, fs::Permissions::from_mode(0o555)).unwrap();
         fs::write(p.join("mode"), "normal").unwrap();
+        let native_latency = latency_knob("FX_TEST_NATIVE_LATENCY_SECONDS");
+        if native_latency > 0.0 {
+            fs::write(p.join("native-latency"), native_latency.to_string()).unwrap();
+        }
         fs::write(p.join("submit-id"), "fABC\n").unwrap();
         let all = json!({"version":1,"execution":{"R_lite":[{"rank":"0","children":{"core":"0-3"}}],"nodelist":["fixture-host"]}});
         fs::write(p.join("all.json"), all.to_string()).unwrap();
@@ -2184,7 +2262,6 @@ fn probe_reports_busy_incompatible_unknown_and_never_ram_admission() {
 #[test]
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn quiet_native_cli_observer_stops_and_reaps_without_cancelling_job() {
-    use std::time::{Duration, Instant};
     let f = Fixture::new();
     f.submit();
     f.call(json!({"op":"retain_runtime","owner":f.intent.owner,"correlation":f.intent.correlation,"ownership":f.ownership()}));
@@ -2202,16 +2279,18 @@ fn quiet_native_cli_observer_stops_and_reaps_without_cancelling_job() {
         json!({"op":"attach","owner":f.intent.owner,"correlation":f.intent.correlation})
     )
     .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !f.root.path().join("watching").exists() {
-        assert!(Instant::now() < deadline, "quiet watcher never started");
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    wait_until("quiet watcher started", Duration::from_secs(5), || {
+        f.root.path().join("watching").exists()
+    });
     let stopped = Instant::now();
     writeln!(stdin, "{{\"op\":\"stop_watch\"}}").unwrap();
     drop(stdin);
     let output = child.wait_with_output().unwrap();
-    assert!(stopped.elapsed() < Duration::from_secs(2));
+    assert!(
+        stopped.elapsed() < stop_watch_deadline(),
+        "stop_watch did not stop the observer well before the native command deadline"
+    );
+    check_budget("quiet watcher stop_watch", stopped, Duration::from_secs(2));
     let frames: Vec<Value> = String::from_utf8(output.stdout)
         .unwrap()
         .lines()
@@ -2243,7 +2322,6 @@ fn generation_slash_is_not_a_path_and_binding_guard_rejects_handoff() {
 #[test]
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn separate_process_attach_cancel_and_late_terminal_preserve_journal_state() {
-    use std::time::{Duration, Instant};
     let f = Fixture::new();
     f.submit();
     f.retain_fixture_allocation();
@@ -2262,11 +2340,11 @@ fn separate_process_attach_cancel_and_late_terminal_preserve_journal_state() {
         json!({"op":"attach","owner":f.intent.owner,"correlation":f.intent.correlation})
     )
     .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !f.root.path().join("watching").exists() {
-        assert!(Instant::now() < deadline);
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    wait_until(
+        "separate attach watcher started",
+        Duration::from_secs(5),
+        || f.root.path().join("watching").exists(),
+    );
     let cancel =
         f.call(json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}));
     assert_eq!(
@@ -2334,7 +2412,6 @@ fn optional_reviewed_sha_remains_distinct_in_wire_and_request_digest() {
 #[test]
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn all_attach_native_phases_stop_and_reap_without_native_cancel() {
-    use std::time::{Duration, Instant};
     for mode in ["quiet-jobs", "quiet-info", "quiet-collect"] {
         let f = Fixture::new();
         if mode == "quiet-jobs" {
@@ -2356,18 +2433,23 @@ fn all_attach_native_phases_stop_and_reap_without_native_cancel() {
             json!({"op":"attach","owner":f.intent.owner,"correlation":f.intent.correlation})
         )
         .unwrap();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !f.root.path().join("watching").exists() {
-            assert!(Instant::now() < deadline, "phase {mode} was not reached");
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        wait_until(
+            &format!("phase {mode} reached"),
+            Duration::from_secs(5),
+            || f.root.path().join("watching").exists(),
+        );
         let start = Instant::now();
         writeln!(stdin, "{{\"op\":\"stop_watch\"}}").unwrap();
         drop(stdin);
         let output = child.wait_with_output().unwrap();
         assert!(
-            start.elapsed() < Duration::from_secs(2),
-            "phase {mode} did not stop promptly"
+            start.elapsed() < stop_watch_deadline(),
+            "phase {mode} stop_watch did not stop the observer well before the native command deadline"
+        );
+        check_budget(
+            &format!("phase {mode} stop_watch"),
+            start,
+            Duration::from_secs(2),
         );
         assert!(!output.stdout.is_empty());
         assert!(!f.calls().lines().any(|call| call.starts_with("cancel ")));
@@ -3235,11 +3317,11 @@ fn fresh_native_liveness_is_separate_from_historical_stream_and_terminal_wins() 
         json!({"op":"liveness","owner":f.intent.owner,"correlation":f.intent.correlation})
     )
     .unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while !f.root.path().join("query-started").exists() {
-        assert!(std::time::Instant::now() < deadline);
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+    wait_until(
+        "held liveness query started",
+        Duration::from_secs(5),
+        || f.root.path().join("query-started").exists(),
+    );
     f.report(ReportOutcome::Passed, true);
     f.attach();
     fs::write(f.root.path().join("query-release"), "release").unwrap();
@@ -3938,7 +4020,6 @@ impl Fixture {
 #[test]
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn cleanup_transport_progress_spans_old_total_deadline_for_cleanup_and_cancel() {
-    use std::time::{Duration, Instant};
     for op in ["cleanup_runtime", "cancel"] {
         let mut f = Fixture::new();
         f.podman(ContainerMode::OwnScope, true);
@@ -4023,7 +4104,6 @@ fn cleanup_transport_progress_spans_old_total_deadline_for_cleanup_and_cancel() 
 #[test]
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn cleanup_transport_silence_is_bounded_and_incomplete_evidence_preserves_debt() {
-    use std::time::{Duration, Instant};
     let mut f = Fixture::new();
     f.podman(ContainerMode::OwnScope, true);
     f.submit();
@@ -4111,7 +4191,11 @@ fn cleanup_transport_separate_cancel_late_writes_preserve_binding_debt_and_termi
     f.cleanup_facts(&second, false);
     f.cleanup_control(&first.execution, 2);
     let (mut child, receive, reader) = f.spawn_operation("cleanup_runtime");
-    let progress = receive.recv_timeout(Duration::from_secs(5)).unwrap();
+    let progress = recv_within(
+        "first cleanup progress frame",
+        &receive,
+        Duration::from_secs(5),
+    );
     assert_eq!(progress["progress"]["execution"], "first");
     // Separate cancel process fsyncs intent and invokes its own bounded cleanup while the first waits.
     let cancel =

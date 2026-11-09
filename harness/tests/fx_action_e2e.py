@@ -247,9 +247,13 @@ sys.exit(0)
     subprocess.Popen = observed_popen
     signal_errors = []
     witness_handles = []
+    latency = settings.get('injected_latency_seconds', 0)
+    if not isinstance(latency, (int, float)) or isinstance(latency, bool) or not 0 <= latency < float('inf'):
+        raise ValueError(f'injected_latency_seconds must be non-negative seconds, got {latency!r}')
     def cancel_qualified():
         try:
-            deadline = time.monotonic() + 30
+            # The injected latency runs before the action starts, so it extends this readiness wait.
+            deadline = time.monotonic() + 30 + latency
             state_path = root / 'journal' / os.environ['TL3_RUN_CORRELATION'] / 'state.json'
             while time.monotonic() < deadline:
                 state = json.loads(state_path.read_text())
@@ -299,6 +303,8 @@ sys.exit(0)
     faulthandler.dump_traceback_later(10, repeat=True)
     started = time.monotonic()
     try:
+        # Test-only contention model inside the measured window; the payload is unchanged.
+        time.sleep(latency)
         code, result = runtime.collect_host_payload(
             [sys.executable, '-I', '-B', __file__, str(root), str(source), 'action'], timeout=80)
         print(json.dumps({'code': code, 'result': result}), flush=True)
@@ -327,7 +333,7 @@ sys.exit(0)
             'mode': settings['mode'], 'leaf_entries': entries, 'no_grant_no_execution': True}))
         return
     if watcher is not None:
-        watcher.join(timeout=35)
+        watcher.join(timeout=35 + latency)
         assert not watcher.is_alive() and not signal_errors, signal_errors
         assert (output / 'signal-trigger.json').exists()
         assert runtime.processes_stopped(witness_handles, 2), 'fixture captured processes did not cease'
@@ -356,7 +362,11 @@ sys.exit(0)
         assert runtime._backend_session is None
         return
     raw = (output / 'host.stdout').read_text()
-    assert elapsed < 15, f'action took {elapsed:.3f}s'
+    # Rob 11-03: a performance-budget overrun is a warning, never a failure or a rerun.
+    # The contractual bound is collect_host_payload(timeout=80) above.
+    if elapsed > 15:
+        print(json.dumps({'budget_warning': {'test': f'fx_action_e2e:{mode}', 'measured': elapsed,
+                                             'limit': 15, 'metric': 'wall'}}), flush=True)
     if mode in ('success', 'success-retained'):
         assert '"verdict":"pass"' in raw, raw + (output / 'host.stderr').read_text()
         assert (root / 'payload-started').exists()
