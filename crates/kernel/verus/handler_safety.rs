@@ -16,6 +16,8 @@ pub(super) open spec fn command_step(b: Node, n: Node) -> bool {
         && (b.replanned || !n.replanned)
         && (n.phase is Planning ==> b.phase is Planning || b.phase == Phase::AwaitingRob)
         && !transition_safety::asks_cant_meet(b, n)
+        && n.credit.merge_credited == b.credit.merge_credited
+        && n.credit.withheld == b.credit.withheld
 }
 
 /// Stop, ChangeRequest and stopping continuations: the state-table stop update.
@@ -31,6 +33,7 @@ pub(super) proof fn field_step(b: Node, n: Node)
     requires n.proposed == b.proposed, n.adopted == b.adopted, n.phase == b.phase,
         n.review_stop == b.review_stop, n.attempt == b.attempt, n.replanned == b.replanned,
         n.question.is_none() || n.question == b.question,
+        n.credit.merge_credited == b.credit.merge_credited, n.credit.withheld == b.credit.withheld,
     ensures command_step(b, n),
 {
     reveal(command_step);
@@ -51,6 +54,7 @@ pub(super) proof fn continue_step(b: Node, n: Node)
         n.proposed == b.proposed, n.adopted == b.adopted, n.review_stop == b.review_stop,
         n.attempt <= (if b.attempt > 1 { b.attempt } else { 1u8 }),
         b.replanned || !n.replanned, n.question.is_none(),
+        n.credit.merge_credited == b.credit.merge_credited, n.credit.withheld == b.credit.withheld,
     ensures command_step(b, n),
 {
     reveal(command_step);
@@ -458,6 +462,53 @@ pub(super) proof fn distance_last_cmd(n: Node, id: u64)
     ensures distance(Node { last_cmd: id, ..n }) == distance(n),
 {
     reveal(distance);
+}
+
+
+/// G9 Command arm (frozen F_node_safety signature): on_command's existing
+/// ensures give the frozen node contract at the command's node. R2: the
+/// premise is exactly node_checked of the target node (the G8 Answer row needs
+/// q.id < next_question); it is discharged by the accepted-world route (G1/G19).
+pub(super) proof fn command_node_safety(before: World, after: World, event: Event, i: int,
+    ob: Outbox, oa: Outbox)
+    requires transition_safety::event_target(event) == Some(i), 0 <= i < before.nodes@.len(),
+        event is Command,
+        node_checked(before, before.nodes@[i]),
+        command_step(before.nodes@[i], after.nodes@[i]),
+        after.nodes@[i].next_seq == before.nodes@[i].next_seq,
+        after.nodes@[i].credit.earned == before.nodes@[i].credit.earned,
+        transition_safety::notice_only(ob, oa, NodeId(i as u64)),
+        match event {
+            Event::Command { command: Command::Answer { question, .. }, .. } =>
+                node_checked(before, before.nodes@[i])
+                    && after.nodes@[i] != (Node { last_cmd: after.nodes@[i].last_cmd, ..before.nodes@[i] })
+                    ==> (match before.nodes@[i].question {
+                        Some(q) => q.id == question,
+                        None => false,
+                    }) && (match after.nodes@[i].question {
+                        Some(q) => q.id != question,
+                        None => true,
+                    }),
+            Event::Command { command: Command::Stop | Command::Pause | Command::Resume
+                | Command::ChangeRequest, .. }
+                | Event::NewRequest { .. } | Event::NewAdoption { .. } | Event::Reply { .. }
+                | Event::Ack { .. } | Event::Fact { .. } => true,
+        },
+    ensures transition_safety::node_safety(before.nodes@[i], after.nodes@[i], before.fail_fast,
+        event, i, ob, oa),
+{
+    reveal(transition_safety::node_safety);
+    reveal(command_step);
+    let b = before.nodes@[i];
+    let n = after.nodes@[i];
+    assert forall|k: int| ob.len <= k < oa.len implies match #[trigger] oa.items@[k] {
+        Some(Out::Effect { node, seq, kind, head }) => node.0 == i
+            && transition_safety::effect_node_ok(b, n, seq, kind, head,
+                transition_safety::apply_exempt(event) == Some(i)),
+        Some(Out::Notice { .. }) | None => true,
+    } by {
+        assert(k == ob.len);
+    }
 }
 
 }

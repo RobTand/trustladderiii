@@ -111,6 +111,16 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
                     generation, Reply::AuditDisagrees, *old(out), *final(out)),
             _ => true,
         }),
+        (match event {
+            Event::NewRequest { .. } | Event::NewAdoption { .. } =>
+                transition_safety::transition_safety(*old(w), *final(w),
+                    transition_safety::Transition::Apply(event), transition_safety::emitted(*old(out), *final(out))),
+            Event::Command { node, .. } => node.0 < old(w).nodes@.len()
+                && node_checked(*old(w), old(w).nodes@[node.0 as int])
+                ==> transition_safety::transition_safety(*old(w), *final(w),
+                    transition_safety::Transition::Apply(event), transition_safety::emitted(*old(out), *final(out))),
+            Event::Reply { .. } | Event::Ack { .. } | Event::Fact { .. } => true,
+        }),
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
     kernel_snapshot! { report_before = report.entries@ }
     kernel_proof! { report_projection(*w, event); report::lemmas::entries_for_event(event, report_input(*w, event)); }
@@ -141,12 +151,18 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
                 node.priority = priority;
                 w.nodes.push(node);
             }
+            kernel_proof! {
+                transition_safety::lift_apply_none(before_apply@, *w, event, before_apply_out@, *out);
+            }
         }
         Event::NewRequest { repo, priority } => {
             if match repo.index() { Some(r) => r < w.gates.len(), None => false } {
                 let mut node = Node::new(repo);
                 node.priority = priority;
                 w.nodes.push(node);
+            }
+            kernel_proof! {
+                transition_safety::lift_apply_none(before_apply@, *w, event, before_apply_out@, *out);
             }
         }
         Event::Reply {
@@ -186,6 +202,12 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
             if let Some(i) = w.index(node) {
                 on_command(w, i, id, command, out);
                 kernel_proof! {
+                    if node_checked(before_apply@, before_apply@.nodes@[i as int]) {
+                        handler_safety::command_node_safety(before_apply@, *w, event, i as int,
+                            before_apply_out@, *out);
+                        transition_safety::lift_apply(before_apply@, *w, event, i as int,
+                            before_apply_out@, *out);
+                    }
                     if command == Command::Resume {
                         progress_gate_apply_resume_frame::compose(before_apply@, *w, node, id);
                     }

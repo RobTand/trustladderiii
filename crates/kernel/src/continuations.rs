@@ -81,6 +81,8 @@ pub(super) fn continue_node(n: Node, q: Question, deposit: u8) -> (result: Node)
         result.proposed == n.proposed, result.adopted == n.adopted,
         result.review_stop == n.review_stop, result.attempt == n.attempt,
         result.replanned == n.replanned,
+        result.credit.merge_credited == n.credit.merge_credited,
+        result.credit.withheld == n.credit.withheld,
 ] proof [reveal(distance);] {
     let mut m = n;
     m.credit.fund_and_pay(deposit, q.cost);
