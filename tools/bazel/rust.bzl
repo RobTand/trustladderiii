@@ -113,6 +113,15 @@ _CONTROLLER_BINARIES = {
     "test_test_github-notices": [":tl3d"],
     "test_test_simulation": [":tl3", ":tl3d"],
     "test_test_replay_store": [":tl3"],
+    # FX-REQUAL-43 OQ-1: every deployed binary, plus the canary example as positive control.
+    "test_test_activation_qualification_absent": [
+        ":tl3",
+        ":tl3d",
+        ":tl3-run-backend",
+        ":tl3-worker-supervisor",
+        ":example_tl3-deploy",
+        ":example_fx-stage-packet",
+    ],
 }
 # These tests stage the trusted harness into a sealed check action, even when
 # the queue fixture supplies the result instead of executing that action.
@@ -140,6 +149,17 @@ _CONTROLLER_RUNTIME = {
     "test_test_prismabuild": ["//harness/src/tl3_harness", "//crates/prismabuild:sources"],
     "test_test_publishing": ["//harness/src/tl3_harness", "//crates/prismabuild:sources"],
     "test_test_sandbox_gate": ["//deploy/sandbox:evidence"],
+    "test_test_activation_qualification_absent": [
+        ":BUILD.bazel",
+        ":Cargo.toml",
+        ":library_sources",
+        "//:Cargo.toml",
+        "//deploy/dl380g10:build-release.sh",
+        "//deploy/dl380g10:verify.sh",
+    ] + ["//crates/%s:Cargo.toml" % crate for crate in [
+        "config", "contracts", "controller-core", "delivery", "github", "harness-core",
+        "kernel", "mergify", "plan-check", "prismabuild", "store", "verus-runner", "worktrees",
+    ]],
     "test_test_workers": [
         "//harness/src/tl3_harness",
         "//crates/prismabuild:sources",
