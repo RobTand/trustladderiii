@@ -1,9 +1,9 @@
 {
-  "source_head": "23aedaf6d94b6ed04278cb90fd4885171d6441ce",
+  "source_head": "c43035e09b818dfb319016978c2b2ca498db0baa",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "e325ae6f51a3cb54a7ac9024192d576e333af685b66add8b12a4c6c64347eea5",
-  "groups": 436,
-  "obligations": 648,
+  "source_sha256": "d9158c1c17679bfc4561a234aa5870ace7986b6f83f81f34fe594494eba48d21",
+  "groups": 458,
+  "obligations": 656,
   "selections": [
     {
       "target": "//crates/kernel:verus_dependencies_node_update_preserves",
@@ -1656,9 +1656,119 @@
       "expected": 1
     },
     {
-      "target": "//crates/kernel:verus_footprint",
-      "selector": "kernel::footprint",
-      "expected": 23
+      "target": "//crates/kernel:verus_dependency_preservation_frame_owner",
+      "selector": "kernel::dependencies::preservation#frame_owner",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_frame_node_rules",
+      "selector": "kernel::dependencies::preservation#frame_node_rules",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_frame_holders",
+      "selector": "kernel::dependencies::preservation#frame_holders",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_frame_pairs",
+      "selector": "kernel::dependencies::preservation#frame_pairs",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_repr_clone",
+      "selector": "kernel::footprint#Repr::clone",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_clone",
+      "selector": "kernel::footprint#Footprint::clone",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_inline_is_valid",
+      "selector": "kernel::footprint#inline_is_valid",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_valid_under_table_growth",
+      "selector": "kernel::footprint#valid_under_table_growth",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_storage_frame",
+      "selector": "kernel::footprint#storage_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_inline_view",
+      "selector": "kernel::footprint#inline_view",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_inline_view_ordered",
+      "selector": "kernel::footprint#inline_view_ordered",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_sorted_contains",
+      "selector": "kernel::footprint#sorted_contains",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_is_empty",
+      "selector": "kernel::footprint#Footprint::is_empty",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_inline",
+      "selector": "kernel::footprint#Footprint::inline",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_intern_sorted_files",
+      "selector": "kernel::footprint#World::intern_sorted_files",
+      "expected": 3
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_collect_files",
+      "selector": "kernel::footprint#World::collect_files",
+      "expected": 3
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_has_footprint",
+      "selector": "kernel::footprint#World::has_footprint",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_footprints_disjoint",
+      "selector": "kernel::footprint#World::footprints_disjoint",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_union_footprints",
+      "selector": "kernel::footprint#World::union_footprints",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_inline_disjoint",
+      "selector": "kernel::footprint#inline_disjoint",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_inline_view_contains",
+      "selector": "kernel::footprint#inline_view_contains",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_view_contains",
+      "selector": "kernel::footprint#view_contains",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_disjoint_symmetric",
+      "selector": "kernel::footprint#disjoint_symmetric",
+      "expected": 2
     },
     {
       "target": "//crates/kernel:verus_ranks_node_distance_definition",
