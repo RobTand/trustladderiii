@@ -660,6 +660,12 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "allocation_stopping_entry": ("kernel::allocation#stopping_entry", 1),
+            "allocation_stopping_active": ("kernel::allocation#stopping_active", 1),
+            "acknowledgements_confirmed_resources": ("kernel::acknowledgements#confirmed_resources", 1),
+            "acknowledgements_release_confirmed": ("kernel::acknowledgements#release_confirmed", 1),
+            "ranks_minimum_index": ("kernel::ranks#minimum_index", 1),
+            "allocation_stopping_cases": ("kernel::allocation_stopping_lemmas#stopped_cases", 1),
             "kernel_clones": ("kernel#*::clone", 33),
             "queries_wait_clone": ("kernel::queries#Wait::clone", 1),
             "kernel_credit_added_step_budget": ("kernel#CREDIT_ADDED_STEP_BUDGET", 1),
