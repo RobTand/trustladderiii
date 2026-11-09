@@ -601,8 +601,8 @@
     },
     "maker": {
       "model_facing_schema": {
-        "sha256": "2aefdd5ae04f286544215ab2a4ba7e348e7a99ee484bae020c6206a7f79dbb68",
-        "utf8_bytes": 4059
+        "sha256": "825ed7455e1f4b26e9e75effbb6fb36fc30a81f8dc89a9cf125acdeca5847cc1",
+        "utf8_bytes": 4066
       },
       "identities": [
         {
@@ -741,8 +741,8 @@
     },
     "planner": {
       "model_facing_schema": {
-        "sha256": "5827967525b359d10e5813c7f5da44756067c7ab17eb3993ca9e071174db1a7b",
-        "utf8_bytes": 15162
+        "sha256": "cab0877a103e362fee81d46e188f40fd6e0de7caea4cea6c08a50d203a67186c",
+        "utf8_bytes": 15170
       },
       "identities": [
         {
@@ -770,11 +770,11 @@
               "attempt": 2
             }
           },
-          "prompt_cache_identity": "tl3-cache-8b83d551ce2465429802bf75badd69bbd22f4a24fe538c19",
+          "prompt_cache_identity": "tl3-cache-49ae4807cfc4672288e84f648fb923f666617907a6f40d80",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "b9d7e022aa32bfb88d86c2347f6de64e3334c9cb6ed22d0507baff85e0b5b283",
-            "utf8_bytes": 21023
+            "sha256": "0d455234d18f57fef4f722917eef96f6ac19ecff7426575eb70ad0845cf2fedb",
+            "utf8_bytes": 21236
           }
         },
         {
@@ -806,7 +806,7 @@
               "text": "Fixture prompt: preserve café."
             }
           },
-          "prompt_cache_identity": "tl3-cache-6a37897a0293b7f69afe32ebc7c658a602836486a92e86c8",
+          "prompt_cache_identity": "tl3-cache-2f4910799f02d21b1152c84bfc007c28e9656af85df14f88",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
             "sha256": "d73cf835a1ace61baf2ea8f036518ed6a187803327de2be1e0f46e14ae5de526",
@@ -838,11 +838,11 @@
               "attempt": 2
             }
           },
-          "prompt_cache_identity": "tl3-cache-a51ba5ac2c976f35573606993ddc0d2ad7aaef0fd52099dd",
+          "prompt_cache_identity": "tl3-cache-8104219e657c15f9295a28376166663a61927338cedb4988",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "a1490faaa24c120f10d6406d23c802962878d14c539c98586d180fc10c359d2a",
-            "utf8_bytes": 21023
+            "sha256": "991388f0603f753fd63016eba4bf433ce92d6badaec466993b998d5ee03463f7",
+            "utf8_bytes": 21236
           }
         },
         {
@@ -874,7 +874,7 @@
               "text": "Fixture prompt: preserve café."
             }
           },
-          "prompt_cache_identity": "tl3-cache-07786f1b35529c6a56098cf427b8a9f3c327df0ae6fc4e81",
+          "prompt_cache_identity": "tl3-cache-2bc9c9ec9c923e8a163e07f34333dad4fad065c40658e202",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
             "sha256": "08c732d083b7ccd5ce842416b67f23bbdd3f33d6d54dab9f1f3eb9adaf34021f",
