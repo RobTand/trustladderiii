@@ -51,7 +51,7 @@ impl Fixture {
         if include_materials {
             controller.store.put_worker_materials("0", &json!({"base_checkout":{"repository":repo.path,"commit":repo.base}, "maker": {
                 "brief":"Return hello.", "goals":[{"id":"greeting","description":"Return hello.","verification":"test"}],
-                "plan":{"files":["README.md"],"checks":[{"name":"hello","kind":"demonstrating","tests":["test_greeting.py::test_hello"],"goal_ids":[0]}]}
+                "plan":{"files":["README.md"],"checks":[{"name":"hello","kind":"demonstrating","tests":["test_greeting.py::test_hello"],"goal_ids":["greeting"]}]}
             }})).unwrap();
         }
         crate::git_tests::documents(
