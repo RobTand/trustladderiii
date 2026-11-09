@@ -2501,6 +2501,55 @@
   },
   {
    "expected": {
+    "json_bytes": 624,
+    "result": {
+     "execution": {
+      "outcome": "transport_failure",
+      "phase": "summary",
+      "termination_reason": "identity_exceeds_summary_limit",
+      "test_started": false
+     },
+     "message": "Test execution transport_failure in summary: identity_exceeds_summary_limit. No test verdict is available; inspect this action, not fleet availability.",
+     "note": "Truncated: summary identity exceeds the envelope limit. No proof is available.",
+     "receipts": [
+      "receipt"
+     ],
+     "status": "infrastructure_error",
+     "tests": [],
+     "totals": {
+      "error": 0,
+      "failed": 0,
+      "passed": 0,
+      "skipped": 0
+     },
+     "wait_reference": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+   },
+   "id": "identity-cannot-fit-keeps-wait-reference",
+   "input": {
+    "limit": 900,
+    "op": "envelope",
+    "result": {
+     "action_key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "immutable": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "note": "",
+     "receipts": [
+      "receipt"
+     ],
+     "status": "completed",
+     "tests": [],
+     "totals": {
+      "error": 0,
+      "failed": 0,
+      "passed": 0,
+      "skipped": 0
+     },
+     "wait_reference": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+   }
+  },
+  {
+   "expected": {
     "json_bytes": 1724,
     "result": {
      "action_key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
