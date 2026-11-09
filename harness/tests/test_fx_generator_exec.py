@@ -360,6 +360,8 @@ def test_flux_generator_deadline_stops_owned_container_and_reports_timeout(flux,
     assert time.monotonic() - started < 30
     assert result['status'] == 'failed' and result['exit_code'] == 124, result
     assert 'deadline' in result['message'], result
+    # Receipts attribute the inner deadline as a timeout, not a generic failure.
+    assert result['timings']['container']['outcome'] == 'timeout', result
     assert 'outputs' not in result, result
     assert backend.ops[-1] == 'cleanup_runtime', backend.ops
     container = json.loads((flux['root'] / (next(iter(backend.launches.values()))['name'] + '.container.json')).read_text())
