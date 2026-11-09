@@ -68,10 +68,12 @@ struct Intent {
 /// A fence refusal. Only `Unready` leaves a never-accepted handoff unexplained.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Refusal {
-    /// The node is paused, waits on an incident, or has an open incident.
+    /// The node is paused, waits on an incident, or has another effect's open incident.
     Held,
     /// The stored node or handoff is not deliverable as recorded.
     Unready,
+    /// Only this handoff's own open incident refuses; it is not a deliberate hold.
+    Own,
 }
 #[derive(Serialize, Deserialize)]
 struct Accepted {
@@ -346,14 +348,20 @@ impl Adapter {
             .nodes
             .get(d.node().0 as usize)
             .ok_or(Error::Invalid("missing direct delivery node"))?;
-        let held = n.paused
-            || n.waiting_incident
-            || snapshot.rows.iter().any(|row| {
-                row.table == "incidents"
-                    && row.value["open"] == true
-                    && row.value["node"].as_u64() == Some(d.node().0)
-            });
-        Ok(if held {
+        let (mut own, mut foreign) = (false, false);
+        for row in &snapshot.rows {
+            if row.table == "incidents"
+                && row.value["open"] == true
+                && row.value["node"].as_u64() == Some(d.node().0)
+            {
+                if row.value["effect"] == d.key.as_str() {
+                    own = true;
+                } else {
+                    foreign = true;
+                }
+            }
+        }
+        Ok(if n.paused || n.waiting_incident || foreign {
             Some(Refusal::Held)
         } else if n.head != n.approved
             || crate::commit_sha(&snapshot, n.approved) != d.head_sha.as_deref()
@@ -362,6 +370,8 @@ impl Adapter {
             || !delivery_authority(n, d)
         {
             Some(Refusal::Unready)
+        } else if own {
+            Some(Refusal::Own)
         } else {
             None
         })
@@ -746,7 +756,9 @@ impl Adapter {
             Outcome::Ready | Outcome::Observe => return Ok(None),
         }))
     }
-    fn attempt(&mut self, d: &Delivery) -> Result<Completion> {
+    /// `consume` is false for a look: it reports a permanent refusal without
+    /// consuming the merge authorization, so the drive's reconcile raises it.
+    fn attempt(&mut self, d: &Delivery, consume: bool) -> Result<Completion> {
         self.accept(d)?;
         match self.attempt_accepted(d) {
             Ok(mut completion) => {
@@ -764,19 +776,21 @@ impl Adapter {
                 Ok(completion)
             }
             Err(Error::ChecksPending) => Ok(Completion::delivery_accepted(vec![])),
-            Err(error) => self.accepted_refusal(d, error),
+            Err(error) => self.accepted_refusal(d, error, consume),
         }
     }
     /// After durable acceptance, only a permanent refusal becomes an accepted
     /// diagnostic. A fatal stored-state error and every recoverable read or
     /// write failure return unchanged: Q7 read accounting counts them, and the
     /// merge authorization is not consumed.
-    fn accepted_refusal(&self, d: &Delivery, error: Error) -> Result<Completion> {
+    fn accepted_refusal(&self, d: &Delivery, error: Error, consume: bool) -> Result<Completion> {
         // Fatal classes are checked on their own, not only through the permanent filter.
         if !crate::input_errors::recoverable(&error) || !matches!(error, Error::Permanent { .. }) {
             return Err(error);
         }
-        self.wait(d)?;
+        if consume {
+            self.wait(d)?;
+        }
         let class = crate::looks::failure_class(&error);
         let mut completion = Completion::delivery_accepted(vec![]);
         completion.failure_class = Some(class.into());
@@ -789,9 +803,10 @@ impl Adapter {
     }
     /// State-table "Looks and stalls": a handoff Direct never durably accepted
     /// is an unacknowledged operation, so the look is pending and Q7 read
-    /// accounting escalates it. A deliberate hold (pause, incident wait, open
-    /// node incident) already has an owner and a signal, so it stays a healthy
-    /// wait, as does any refusal after acceptance.
+    /// accounting escalates it. A deliberate hold (pause, incident wait, another
+    /// effect's open incident) already has an owner and a signal, so it stays a
+    /// healthy wait, as does any refusal after acceptance. The handoff's own
+    /// incident is not a hold: an unready handoff stays pending under it.
     fn refused_look(&self, d: &Delivery) -> Result<Look> {
         let path = self.records.path(&d.key).with_extension("accepted");
         if read_file::<Accepted>(&path)?.is_some() {
@@ -799,7 +814,7 @@ impl Adapter {
         }
         Ok(match self.refusal(d)? {
             Some(Refusal::Unready) => Look::Pending,
-            Some(Refusal::Held) | None => Look::Healthy,
+            Some(Refusal::Held | Refusal::Own) | None => Look::Healthy,
         })
     }
     fn attempt_accepted(&mut self, d: &Delivery) -> Result<Completion> {
@@ -971,11 +986,11 @@ impl Adapter {
 }
 impl Executor for Adapter {
     fn execute(&mut self, d: &Delivery) -> Result<Completion> {
-        self.attempt(d)
+        self.attempt(d, true)
     }
     fn reconcile(&mut self, d: &Delivery) -> Result<Reconciliation> {
         // Recovery observes outcomes; a consumed attempt needs a new post-recovery event.
-        match self.attempt(d) {
+        match self.attempt(d, true) {
             Ok(completion) => Ok(Reconciliation::Found(Box::new(completion))),
             Err(Error::ChecksPending) => Ok(Reconciliation::Pending),
             Err(error) => Err(error),
@@ -1000,12 +1015,12 @@ impl Executor for Adapter {
         // Only the authenticated upstream translator grants this capability.
         // Silence/allowance looks without that capability are observation-only.
         if self.wakes.event(&d.key).is_some() {
-            return Ok(match self.reconcile(d)? {
-                Reconciliation::Found(c) => Look::Found(c),
-                Reconciliation::Absent => Look::Absent,
+            return match self.attempt(d, false) {
+                Ok(completion) => Ok(Look::Found(Box::new(completion))),
                 // `attempt` is pending only when the fence refused acceptance.
-                Reconciliation::Pending => self.refused_look(d)?,
-            });
+                Err(Error::ChecksPending) => self.refused_look(d),
+                Err(error) => Err(error),
+            };
         }
         match self.accept(d) {
             Err(Error::ChecksPending) => return self.refused_look(d),
@@ -1014,7 +1029,7 @@ impl Executor for Adapter {
         }
         let completion = match self.observations(d) {
             Ok(observations) => Completion::delivery_accepted(observations),
-            Err(error) => self.accepted_refusal(d, error)?,
+            Err(error) => self.accepted_refusal(d, error, false)?,
         };
         Ok(Look::Found(Box::new(completion)))
     }
@@ -1111,7 +1126,9 @@ impl Executor for Adapter {
             self.client(d)?
                 .pull_request(&full_name(&d.repository), number(d)?),
         )?;
-        Ok(true)
+        // A readable PR does not repair a never-accepted handoff that no
+        // deliberate hold explains; its incident stays open until it is accepted.
+        Ok(!matches!(self.refused_look(d)?, Look::Pending))
     }
     fn app_login(&self, installation: u64) -> Option<String> {
         self.clients
