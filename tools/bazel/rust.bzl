@@ -386,6 +386,8 @@ def _crate_test(kind, package, name, source, harness, options):
             sources = sources + native.glob(["tests/mark_handled_equivalence/*.rs"])
         if source == "tests/proof_map.rs":
             sources = sources + ["src/proofs.rs"] + native.glob(["verus/*.rs"], exclude = ["verus/progress.rs"])
+        if native.package_name() == "crates/kernel" and source == "tests/obligation_map.rs":
+            sources = sources + ["tests/transition_covers.rs", "tests/fail_fast.rs", "tests/scenarios.rs", "tests/step_report.rs", "tests/dependency_safety.rs"]
         if native.package_name() == "crates/kernel" and source == "tests/random_walks.rs":
             sources = sources + ["tests/measure_equivalence/reference.rs"]
         if native.package_name() == "crates/store":
@@ -393,7 +395,7 @@ def _crate_test(kind, package, name, source, harness, options):
     if kind == "bin" and name == "verus-runner" and native.package_name() == "crates/verus-runner":
         sources = [source]
     compile_data = options["compile_data"]
-    if source == "tests/proof_map.rs" and native.package_name() == "crates/kernel":
+    if source in ["tests/proof_map.rs", "tests/obligation_map.rs"] and native.package_name() == "crates/kernel":
         compile_data = compile_data + ["//tools/bazel:verus.bzl"]
     if native.package_name() == "crates/store":
         compile_data = compile_data + native.glob(["tests/fixtures/**"], allow_empty = True)
