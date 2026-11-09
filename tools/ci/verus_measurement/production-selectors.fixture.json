@@ -1,10 +1,20 @@
 {
-  "source_head": "968dbdf08d545b9b7e4e7754267cb314c115e326",
+  "source_head": "285da02f910d21e3054698fa53824fd8b4a5ccd5",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "68239683027e104ced1ddaada60f0368c4e461c4db9f18c907f029de7c117e4a",
-  "groups": 434,
-  "obligations": 645,
+  "source_sha256": "eed294d87d723b954d9917ef4efa9f91989eabb6d4f1814726f99a35605185f9",
+  "groups": 436,
+  "obligations": 647,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_dependencies_node_update_preserves",
+      "selector": "kernel::dependencies#node_update_preserves",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_node_update_preserves",
+      "selector": "kernel::dependencies::preservation#node_update_preserves",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_transition_safety_quiet",
       "selector": "kernel::transition_safety#quiet",
