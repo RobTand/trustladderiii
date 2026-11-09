@@ -38,7 +38,7 @@ pub(super) fn go_on(n: Node, q: Question, deposit: u8) -> (result: (Node, Option
     let mut note: Option<Notice> = None;
     match q.cont {
         Cont::Planning { must_split } => {
-            if !must_split && m.replanned && q.kind == QKind::OutOfCredit {
+            if must_split && m.replanned && q.kind == QKind::OutOfCredit {
                 note = Some(Notice::Note(NoteKind::Replanned));
             }
         }

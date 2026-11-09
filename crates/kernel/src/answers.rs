@@ -58,7 +58,7 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
     w.nodes[i] = n1;
     w.next_question = nq1;
     match note {
-        Some(x) => notice(out, i, x),
+        Some(_x) => out.push(Out::Effect { node: NodeId(i as u64), seq: w.nodes[i].next_seq, kind: EffectKind::StartRebase, head: None }),
         None => {}
     }
 }
