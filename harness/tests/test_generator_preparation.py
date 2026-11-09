@@ -85,8 +85,11 @@ def test_readonly_checkout_stages_writable_copy_before_git_and_reaches_container
         assert staged["writable"] and staged["git"] and staged["executable"], staged
         assert "100755 " in staged["listed"] and "tools/gen.py" in staged["listed"], staged
         assert "data.txt" in staged["listed"], staged
-        # Synthetic Git metadata keeps Git's own modes; only the checkout copy is opened.
-        assert not staged["git_mode"] & 0o022, staged
+        # Synthetic Git metadata keeps Git's own umask-derived mode; the generator
+        # opens only the checkout copy and never widens .git to 0777.
+        umask = os.umask(0)
+        os.umask(umask)
+        assert staged["git_mode"] == 0o777 & ~umask, (oct(staged["git_mode"]), oct(umask))
         assert not staged["root"].exists(), "generator scratch copy was not removed"
         assert modes(tree) == before, "immutable source tree changed"
     finally:
