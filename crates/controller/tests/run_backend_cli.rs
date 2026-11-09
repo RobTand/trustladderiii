@@ -22,6 +22,11 @@ fn cli(request: &Value) -> Vec<Value> {
         .collect()
 }
 
+/// Every suite Python that may import from a source checkout runs with `-B`. The flag is
+/// on the interpreter argv, so it survives the `env_clear()` of product spawn paths that
+/// drops PYTHONDONTWRITEBYTECODE; the checkout stays byte-clean.
+const PYTHON_NO_BYTECODE: &str = "-B";
+
 /// Rob 11-03: a performance-budget overrun is a recorded warning, never a failure
 /// or a rerun. Only a contractual deadline (a product timeout) fails a test.
 /// The line follows the repo `{"budget_warning": ...}` convention (tools/bazel/rust_runner.py).
@@ -764,6 +769,77 @@ fn terminal_scratch_guards_keep_ordinary_leftovers_and_reject_bad_external_evide
     assert!(!debt.exists());
 }
 
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn cleanup_helper_import_from_a_checkout_writes_no_bytecode() {
+    // The product cleanup spawn clears the environment, so PYTHONDONTWRITEBYTECODE never
+    // reaches the helper. A private checkout copy shows exactly what the helper writes.
+    let checkout = tempfile::tempdir().unwrap();
+    let package = checkout.path().join("harness/src/tl3_harness");
+    fs::create_dir_all(&package).unwrap();
+    let harness = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../harness/src/tl3_harness");
+    for entry in fs::read_dir(&harness).unwrap().flatten() {
+        if entry
+            .path()
+            .extension()
+            .is_some_and(|extension| extension == "py")
+        {
+            fs::copy(entry.path(), package.join(entry.file_name())).unwrap();
+        }
+    }
+    let imported = checkout.path().join("imported");
+    let init = package.join("__init__.py");
+    let mut text = fs::read_to_string(&init).unwrap();
+    text.push_str(&format!(
+        "\nopen({:?}, 'w').close()\n",
+        imported.to_str().unwrap()
+    ));
+    fs::write(&init, text).unwrap();
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::InJob, true);
+    let scratch = tempfile::tempdir().unwrap();
+    fs::set_permissions(scratch.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    f.request.scratch_root = scratch.path().to_owned();
+    f.intent.request_digest = digest(&serde_json::to_vec(&f.request).unwrap());
+    fs::write(
+        f.root.path().join("action-fixture.json"),
+        json!({"source": checkout.path()}).to_string(),
+    )
+    .unwrap();
+    assert_eq!(f.submit()["kind"], "accepted");
+    f.retain_fixture_allocation();
+    f.events(&completed(256));
+    let frames = f.attach();
+    assert_eq!(
+        frames.last().unwrap()["result"]["observation"]["terminal"]["ending"],
+        "infra-lost",
+        "{frames:?}"
+    );
+    assert!(
+        imported.exists(),
+        "the helper must import tl3_harness from the checkout"
+    );
+    fn bytecode(dir: &Path, found: &mut Vec<PathBuf>) {
+        for entry in fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.file_name().is_some_and(|name| name == "__pycache__")
+                || path.extension().is_some_and(|extension| extension == "pyc")
+            {
+                found.push(path.clone());
+            }
+            if entry.file_type().unwrap().is_dir() {
+                bytecode(&path, found);
+            }
+        }
+    }
+    let mut written = Vec::new();
+    bytecode(checkout.path(), &mut written);
+    assert!(
+        written.is_empty(),
+        "bytecode written into the checkout: {written:?}"
+    );
+}
+
 fn generated_action_case(mode: &str) -> Fixture {
     let mut f = Fixture::new();
     f.podman(ContainerMode::InJob, true);
@@ -830,6 +906,7 @@ fn generated_action_case(mode: &str) -> Fixture {
         .map(PathBuf::from)
         .unwrap_or_else(|| source.to_owned());
     let output = Command::new("/home/rob/venvs/pb-cpu/bin/python")
+        .arg(PYTHON_NO_BYTECODE)
         .arg(source.join("harness/tests/fx_action_e2e.py"))
         .arg(f.root.path())
         .arg(action_source)
@@ -2654,7 +2731,7 @@ impl Fixture {
         .unwrap();
         fs::write(
             source.join("cleanup-helper"),
-            r#"#!/usr/bin/python3
+            r#"#!/usr/bin/python3 __PYTHON_FLAGS__
 import json,sys,pathlib,time
 __SCRATCH_FIXTURE__
 facts=json.load(sys.stdin)
@@ -2685,7 +2762,9 @@ control=json.loads(control.read_text()) if control.exists() else {}
 time.sleep(control.get('delay',0))
 print((root/('trusted-stop-'+owned['execution']+'.json')).read_text(),flush=True)
 sys.exit(control.get('exit_code',0))
-"#.replace("__SCRATCH_FIXTURE__", include_str!("python/fx_scratch_helper.py")),
+"#
+            .replace("__PYTHON_FLAGS__", PYTHON_NO_BYTECODE)
+            .replace("__SCRATCH_FIXTURE__", include_str!("python/fx_scratch_helper.py")),
         )
         .unwrap();
         let files = ["lib/tl3_harness/runner.py", "lib/tl3_harness/runtime.py"]
