@@ -1,10 +1,10 @@
-"""Exact PB inflight checkpoint migration for the frozen budget I/O oracle."""
+"""Exact native Flux inflight checkpoint migration for the frozen budget I/O oracle."""
 from copy import deepcopy
 from difflib import SequenceMatcher
 import json
 
 
-ADDED = [', ', '"backend"', ': ', '"prismabuild"']
+ADDED = [', ', '"backend"', ': ', '"flux"']
 CHECKPOINT_FIELDS = {'version', 'generation', 'start', 'messages', 'budget_exhausted',
                      'allowance', 'inflight', 'worktree'}
 
@@ -33,7 +33,7 @@ class CheckpointMigration:
                         assert isinstance(entries, list)
                         for entry in entries:
                             assert set(entry) == {'base', 'key', 'tree', 'identity'}
-                            entry['backend'] = 'prismabuild'
+                            entry['backend'] = 'flux'
                 desired = list(encoder.iterencode(migrated))
                 spans = []
                 for kind, start, end, new_start, new_end in SequenceMatcher(
@@ -110,7 +110,8 @@ def refusal_controls():
         changed = deepcopy(list(current))
         position = next(i for i, call in enumerate(changed[0]) if call[0] == 'write_chunk' and call[2] == '"backend"')
         if fault == 'value':
-            changed[0][position + 2][2] = '"flux"'
+            # No compat: a retired PrismaBuild backend tag is a changed value.
+            changed[0][position + 2][2] = '"prismabuild"'
         elif fault == 'location':
             field = changed[0][position - 1:position + 3]
             del changed[0][position - 1:position + 3]
