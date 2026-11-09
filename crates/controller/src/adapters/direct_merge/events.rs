@@ -30,9 +30,15 @@ impl Translator {
     ) -> Result<Vec<Input>> {
         let world = crate::snapshot::decode(snapshot)?;
         let mut inputs = Vec::new();
-        for row in snapshot.rows.iter().filter(|row| {
-            row.table == "pull_requests" && row.value["number"].as_u64() == Some(pull.number)
-        }) {
+        for row in snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "pull_requests")
+        {
+            // A stored PR row whose number does not decode is corruption: fatal.
+            if crate::decode_stored::<u64>(row.value["number"].clone())? != pull.number {
+                continue;
+            }
             let node = tl3_kernel::NodeId(
                 row.id
                     .parse()
@@ -178,6 +184,19 @@ impl Translator {
 }
 impl GitHubTranslator for Translator {
     fn translate(&mut self, delivery: &GitHubDelivery, snapshot: &Snapshot) -> Result<Vec<Input>> {
+        // Corrupt served-repository rows are controller corruption: fail with
+        // the fatal stored-JSON error before any delivery is read.
+        let repos = snapshot
+            .rows
+            .iter()
+            .filter(|row| row.table == "repos")
+            .map(|row| crate::decode_stored(row.value.clone()))
+            .collect::<Result<Vec<Repository>>>()?;
+        if let GitHubDelivery::CatchUp { repository, .. } = delivery
+            && !repos.contains(repository)
+        {
+            return Ok(vec![]);
+        }
         // Legacy protection statuses have no typed Event variant. The authenticated
         // payload is still durably replayed by ingress, so decode just its wake key.
         if let GitHubDelivery::Webhook(webhook) = delivery
@@ -276,9 +295,7 @@ impl GitHubTranslator for Translator {
                     if crate::request(snapshot, node)?.repo != repo {
                         continue;
                     }
-                    let number = row.value["number"]
-                        .as_u64()
-                        .ok_or(Error::Invalid("invalid direct PR number"))?;
+                    let number: u64 = crate::decode_stored(row.value["number"].clone())?;
                     let n = world
                         .nodes
                         .get(node.0 as usize)
