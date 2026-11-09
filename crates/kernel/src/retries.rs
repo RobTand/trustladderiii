@@ -319,7 +319,7 @@ pub(super) fn out_of_room(w: &mut World, i: usize, step: ReviewStop,
             w,
             i,
             QKind::OutOfCredit,
-            Cont::Planning { must_split: true },
+            Cont::Planning { must_split: false },
             1,
             out,
         );
