@@ -1,7 +1,10 @@
 """Execution backend and checkout fixtures shared by worker contract tests."""
+import atexit
 import hashlib
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
 
 import pytest
@@ -56,6 +59,25 @@ FAKES = {}
 REAL_WIRE = {"control": _flux_execution.control, "_command": _flux_execution._command}
 
 
+def _blob_directory(fallback):
+    """A per-test directory whose path does not depend on pytest's run-numbered scratch.
+
+    Symptom blob references reach the recorded check-harness summary document,
+    which must match byte-for-byte between record and replay runs.
+    """
+    node = os.environ.get("PYTEST_CURRENT_TEST", "").rsplit(" ", 1)[0]
+    if not node:
+        return fallback
+    directory = Path("/dev/shm/tl3-flux-fixture-blobs") / hashlib.sha256(node.encode()).hexdigest()[:32]
+    try:
+        shutil.rmtree(directory, ignore_errors=True)
+        directory.mkdir(parents=True)
+    except OSError:
+        return fallback
+    atexit.register(shutil.rmtree, directory, True)
+    return directory
+
+
 class FluxFake:
     """Replace only the Rust worker-execution control and shared CLI wire.
 
@@ -70,6 +92,7 @@ class FluxFake:
     def __init__(self, state, job):
         self.state, self.job = Path(state), job
         self.state.mkdir(parents=True, exist_ok=True)
+        self.blobs = _blob_directory(self.state)
         self.prepared, self.plans, self.roots, self.payloads, self.endings = [], {}, {}, {}, {}
         self.submitted, self.attached, self.resumed = [], [], []
         # None derives the terminal ending from the job's verified output, as Rust classify does.
@@ -110,7 +133,7 @@ class FluxFake:
 
     def _blob(self, document):
         raw = json.dumps(document).encode()
-        path = self.state / f"flux-blob-{len(list(self.state.glob('flux-blob-*')))}.json"
+        path = self.blobs / f"flux-blob-{len(list(self.blobs.glob('flux-blob-*')))}.json"
         path.write_bytes(raw)
         return {"path": str(path), "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
 
