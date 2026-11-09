@@ -58,9 +58,9 @@ pub(super) proof fn node_rules_ticket_grows(before: World, after: World, m: Node
 }
 
 /// The node-level facts one internal step of node i must establish. A slot
-/// grant needs room in the width and both orientations of disjointness from
-/// every other holder: the scheduler's slot_spec gives one orientation and
-/// footprint symmetry the other, at the consumer.
+/// grant needs room in the width and disjointness from every other holder,
+/// in the orientation the scheduler's slot_spec proves; footprint symmetry
+/// gives the checker's other orientation here.
 pub(super) open spec fn step_premises(before: World, after: World, i: int) -> bool {
     0 <= i < before.nodes@.len()
         && after.nodes@ == before.nodes@.update(i, after.nodes@[i])
@@ -70,6 +70,7 @@ pub(super) open spec fn step_premises(before: World, after: World, i: int) -> bo
         && after.next_question == before.next_question
         && before.next_ticket <= after.next_ticket
         && before.gates@.len() <= u64::MAX
+        && footprint::ordered_table(before)
         && after.nodes@[i].repo == before.nodes@[i].repo
         && after.nodes@[i].footprint == before.nodes@[i].footprint
         && retirement::node_rules(after, after.nodes@[i])
@@ -81,7 +82,6 @@ pub(super) open spec fn step_premises(before: World, after: World, i: int) -> bo
             &&& forall|j: int| 0 <= j < before.nodes@.len() && j != i && before.nodes@[j].holds
                 && before.nodes@[j].repo == me.repo
                 ==> footprint::disjoint(before, before.nodes@[j].footprint, me.footprint)
-                    && footprint::disjoint(before, me.footprint, before.nodes@[j].footprint)
         })
         && (after.nodes@[i].pool && !before.nodes@[i].pool
             ==> pool_users(before.nodes@, before.nodes@.len()) < before.pool_capacity)
@@ -116,6 +116,11 @@ pub(super) proof fn step_preserves_gate_rules(before: World, after: World, i: in
             assert(after.nodes@[x] == before.nodes@[x] && after.nodes@[y] == before.nodes@[y]);
         } else if x == i {
             assert(after.nodes@[y] == before.nodes@[y]);
+            if an.holds && !bn.holds && after.nodes@[y].holds && after.nodes@[y].repo == an.repo {
+                checking::accepted_node(before, i);
+                checking::accepted_node(before, y);
+                footprint::disjoint_symmetric(before, before.nodes@[y].footprint, bn.footprint);
+            }
         } else {
             assert(after.nodes@[x] == before.nodes@[x]);
         }
