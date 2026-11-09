@@ -462,20 +462,18 @@ mod tests {
     /// A sealed sandbox bundle built from the current harness, not from any activation pin.
     fn sandbox_bundle(root: &Path, shared: &mut Shared) -> PathBuf {
         let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let pin: serde_json::Value = serde_json::from_slice(
-            &fs::read(
-                checkout.join("crates/controller/src/adapters/flux_checks/activation/qualification.json"),
+        let pin: serde_json::Value =
+            serde_json::from_slice(
+                &fs::read(checkout.join(
+                    "crates/controller/src/adapters/flux_checks/activation/qualification.json",
+                ))
+                .unwrap(),
             )
-            .unwrap(),
-        )
-        .unwrap();
+            .unwrap();
         let fixtures = checkout.join("crates/controller/qualification/fx-exact42b/fixtures");
         let source = root.join("source");
-        let (inventory, collector, cleanup) = (
-            "collector-manifest.json",
-            "host-collector",
-            "host-cleanup",
-        );
+        let (inventory, collector, cleanup) =
+            ("collector-manifest.json", "host-collector", "host-cleanup");
         let mut code = Vec::new();
         for file in pin["files"].as_array().unwrap() {
             let path = PathBuf::from(file["path"].as_str().unwrap());
@@ -506,9 +504,11 @@ mod tests {
         let config_digest = format!("sha256:{}", "b".repeat(64));
         fs::write(
             root.join("image-map.json"),
-            serde_json::to_vec(&json!({"profiles":[{"profile":"sandbox", "registry_ref":image,
+            serde_json::to_vec(
+                &json!({"profiles":[{"profile":"sandbox", "registry_ref":image,
                 "manifest_digest":format!("sha256:{}", "a".repeat(64)),
-                "config_digest":config_digest, "platform":"linux/amd64"}]}))
+                "config_digest":config_digest, "platform":"linux/amd64"}]}),
+            )
             .unwrap(),
         )
         .unwrap();
@@ -591,7 +591,10 @@ mod tests {
         let packet: serde_json::Value =
             serde_json::from_slice(&fs::read(destination.join("packet.json")).unwrap()).unwrap();
         assert_eq!(packet["status"], "HELD_NOT_RELEASED_NOT_EXECUTED");
-        assert_eq!(packet["activation"], "tl3.fx_canary_qualification_staging.v1");
+        assert_eq!(
+            packet["activation"],
+            "tl3.fx_canary_qualification_staging.v1"
+        );
         assert_eq!(
             packet["activation"],
             tl3_controller::adapters::flux_checks::staging::CANARY_QUALIFICATION_MARKER
@@ -602,7 +605,12 @@ mod tests {
         let request: api::Request =
             serde_json::from_slice(&fs::read(destination.join("request.json")).unwrap()).unwrap();
         assert_eq!(request.walltime_seconds.get(), 60);
-        assert!(request.tree.root.starts_with(staging_destination(&destination).unwrap()));
+        assert!(
+            request
+                .tree
+                .root
+                .starts_with(staging_destination(&destination).unwrap())
+        );
     }
 
     fn flux_config(activation: Option<tl3_config::FluxActivation>) -> tl3_config::Config {
