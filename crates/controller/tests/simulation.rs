@@ -538,7 +538,7 @@ fn labelled_issue_closes(settings: &tl3_config::Store) {
         "Checking",
         "Reviewing",
         "Publishing",
-        "Queued",
+        "AwaitingDelivery",
         "Stopping",
         "Closed",
     ] {
@@ -1019,7 +1019,6 @@ impl tl3_controller::executor::Executor for RetryWorker {
             return Ok(tl3_controller::executor::Completion {
                 diagnostic: None,
                 failure_class: None,
-                progress: None,
                 ack: tl3_kernel::Ack::Retryable,
                 observations: vec![],
             });
@@ -1564,7 +1563,6 @@ impl Executor for FaultyWorker {
                     return Ok(Reconciliation::Found(Box::new(Completion {
                         diagnostic: None,
                         failure_class: None,
-                        progress: None,
                         ack,
                         observations: vec![],
                     })));
@@ -1737,7 +1735,7 @@ fn watches_and_pending(settings: &tl3_config::Store) {
         (
             Upstream::Delivery,
             EffectKind::Enqueue,
-            Box::new(adapters::mergify::Fake::new(root.path())) as Box<dyn Executor>,
+            Box::new(adapters::direct_merge::Fake::new(root.path())) as Box<dyn Executor>,
         ),
     ] {
         registry.register(
@@ -1792,12 +1790,15 @@ fn watches_and_pending(settings: &tl3_config::Store) {
         if kind == EffectKind::SubmitChecks {
             // Reach the queue without delivering its merge fact, then require a rebase.
             for _ in 0..100 {
-                if controller.world().unwrap().nodes[0].phase == Phase::Queued {
+                if controller.world().unwrap().nodes[0].phase == Phase::AwaitingDelivery {
                     break;
                 }
                 assert!(controller.drive_once().unwrap());
             }
-            assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Queued);
+            assert_eq!(
+                controller.world().unwrap().nodes[0].phase,
+                Phase::AwaitingDelivery
+            );
             controller
                 .observe(
                     "conflict",
@@ -2301,7 +2302,7 @@ impl Executor for GitHeadWorker {
     }
 }
 struct ConflictQueue {
-    fake: adapters::mergify::Fake,
+    fake: adapters::direct_merge::Fake,
     root: PathBuf,
     first: Option<String>,
     conflict: bool,
@@ -2357,7 +2358,7 @@ fn closure_discards_rebase_context(settings: &tl3_config::Store, stopped: bool) 
     let phase = if stopped {
         Phase::Making
     } else {
-        Phase::Queued
+        Phase::AwaitingDelivery
     };
     for _ in 0..100 {
         if controller.world().unwrap().nodes[0].phase == phase {
@@ -2514,7 +2515,7 @@ fn mixed_registry_case(settings: &tl3_config::Store, conflict: bool) {
     registry.register(
         Upstream::Delivery,
         ConflictQueue {
-            fake: adapters::mergify::Fake::new(&records),
+            fake: adapters::direct_merge::Fake::new(&records),
             root: root.path().into(),
             first: None,
             conflict,
@@ -2540,7 +2541,7 @@ fn mixed_registry_case(settings: &tl3_config::Store, conflict: bool) {
         if checkout.join(".git").is_file() {
             created = true;
         }
-        if world.nodes[0].phase == Phase::Queued && !pushed {
+        if world.nodes[0].phase == Phase::AwaitingDelivery && !pushed {
             if !conflict {
                 let mut store = Store::open(settings).unwrap();
                 let mut saved =
@@ -2933,7 +2934,13 @@ fn postmortem_records(settings: &tl3_config::Store) {
         expected.insert(name, json!(total));
     }
     assert_eq!(phases, &serde_json::Value::Object(expected));
-    for phase in ["Making", "Checking", "Reviewing", "Publishing", "Queued"] {
+    for phase in [
+        "Making",
+        "Checking",
+        "Reviewing",
+        "Publishing",
+        "AwaitingDelivery",
+    ] {
         assert!(phases.get(phase).is_some(), "{phase}: {phases}");
     }
     assert!(

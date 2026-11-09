@@ -1,22 +1,36 @@
 {
   "crate:tl3-contracts": {
-    "max_fanout": 96,
+    "max_fanout": 93,
     "reason": "planner-contracts #730/#819: Rust-sourced wire contracts (tl3-contracts) linked by tl3-controller; schema generation adds contract sources",
     "sources": 26
   },
   "crate:tl3-controller-core": {
-    "max_fanout": 101,
+    "max_fanout": 98,
     "reason": "ctrl-core #730: new decision-only crate tl3-controller-core (no adapter dependencies) linked by tl3-controller",
     "sources": 32
   },
   "crate:tl3-delivery": {
-    "max_fanout": 107,
+    "max_fanout": 104,
     "reason": "controller-core #730: dependency-free effect-delivery decisions and protocol mirror linked by tl3-controller",
     "sources": 12
   },
   "crate:tl3-harness-core": {
-    "max_fanout": 106,
+    "max_fanout": 103,
     "reason": "Wave B harness decision crate for #730 (#824).",
     "sources": 21
+  },
+  "exact-edge:td-939-required-check-proof-inputs": {
+    "edges": [
+      [
+        "//crates/github:verus_required",
+        "//crates/github:src/checks/check.rs"
+      ],
+      [
+        "//crates/github:verus_required",
+        "//crates/github:src/checks/verification.rs"
+      ]
+    ],
+    "issue": 939,
+    "reason": "TD #939: Preserve the migrated GitHub required-check proof's direct production inputs after queue removal; credit only these two literal target/source edges."
   }
 }

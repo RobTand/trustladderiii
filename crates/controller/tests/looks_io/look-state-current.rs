@@ -14,8 +14,10 @@
             });
             if let Some(row) = incident {
                 let incident: Incident = crate::decode_stored(row.value.clone())?;
-                if decisions::incident_action(true, incident_view(&incident, &state.delivery))
-                    == decisions::IncidentAction::Probe
+                if decisions::incident_action(
+                    true,
+                    incident_view(snapshot, &incident, &state.delivery),
+                ) == decisions::IncidentAction::Probe
                 {
                     match self
                         .adapters
@@ -37,7 +39,10 @@
                 .find(|r| r.table == "incidents" && r.id == *id && r.value["open"] == true)
         {
             let incident: Incident = crate::decode_stored(row.value.clone())?;
-            match decisions::incident_action(false, incident_view(&incident, &state.delivery)) {
+            match decisions::incident_action(
+                false,
+                incident_view(snapshot, &incident, &state.delivery),
+            ) {
                 decisions::IncidentAction::Hold => {
                     // A healthy GET cannot prove command restrictions were fixed (#608).
                     self.save_allowance(state)?;
@@ -176,83 +181,43 @@
         }
         match result {
             Ok(Look::Found(completion)) => {
-                let mut completion = *completion;
+                let completion = *completion;
                 let effect = self
                     .store
                     .effect(&state.delivery.key)?
                     .expect("allowance effect");
-                let token_only =
-                    completion.progress.is_some() && completion.observations.is_empty();
-                let changed = if completion.progress.is_some() {
-                    let snapshot = self.store.load()?;
-                    let mut commit = Commit::new(
-                        format!(
-                            "look-progress:{}:{}",
-                            state.delivery.key,
-                            snapshot.revision.get()
-                        ),
-                        json!({"progress_read":state.delivery.key}),
-                        &snapshot,
-                    );
-                    let changed = self.record_progress(
-                        &snapshot,
-                        &mut commit,
-                        &state.delivery.key,
-                        completion.progress.as_ref(),
-                    )?;
-                    if !commit.rows.is_empty() {
-                        self.store.commit(&commit)?;
+                let found = serde_json::to_string(&completion)?;
+                let action = state_decisions::found_action(
+                    effect.state.is_pending(),
+                    false,
+                    state.found.as_ref() != Some(&found),
+                    !completion.observations.is_empty(),
+                );
+                state.found = Some(found);
+                if action != state_decisions::FoundAction::Skip {
+                    if completion.releases_holds() {
+                        self.retry_held_effects(upstream(state.delivery.output));
                     }
-                    changed == Some(true)
-                } else {
-                    false
-                };
-                if changed {
-                    state.progress_ms = now;
-                    state.due_ms = Some(now.saturating_add(
-                        u64::from(self.allowance(&state.delivery).no_progress_secs) * 1000,
-                    ));
-                }
-                // The typed watch row is the sole token store.
-                completion.progress = None;
-                if token_only {
-                    if effect.state.is_pending() {
+                    if action == state_decisions::FoundAction::Complete {
                         self.complete(&effect.key, completion)?;
-                    }
-                    if self.look_alive(state, changed)? {
-                        return Ok(());
-                    }
-                } else {
-                    let found = serde_json::to_string(&completion)?;
-                    let mut setup_gap = false;
-                    for observation in &completion.observations {
-                        if let Observation::Queue(fact) = observation
-                            && fact.setup()
-                            && !fact.recorded(snapshot)?
-                        {
-                            setup_gap = true;
-                            break;
+                    } else {
+                        // The final save must retain the class recorded with the observations.
+                        if let Some(class) = &completion.failure_class {
+                            state.failure = Some(class.clone());
                         }
-                    }
-                    let action = state_decisions::found_action(
-                        effect.state.is_pending(),
-                        setup_gap,
-                        state.found.as_ref() != Some(&found),
-                        !completion.observations.is_empty(),
-                    );
-                    state.found = Some(found);
-                    if action != state_decisions::FoundAction::Skip {
-                        if completion.releases_holds() {
-                            self.retry_held_effects(upstream(state.delivery.output));
-                        }
-                        if action == state_decisions::FoundAction::Complete {
-                            self.complete(&effect.key, completion)?;
-                        } else {
-                            // The final save must retain the class recorded with the observations.
-                            if let Some(class) = &completion.failure_class {
-                                state.failure = Some(class.clone());
-                            }
-                            self.look_observations(&state.delivery, completion)?;
+                        let refusal = completion.ack == Ack::DeliveryAccepted
+                            && completion.diagnostic.is_some();
+                        self.look_observations(&state.delivery, completion)?;
+                        if refusal {
+                            state.incident = self
+                                .store
+                                .load()?
+                                .rows
+                                .iter()
+                                .find(|row| {
+                                    row.table == "allowances" && row.id == state.delivery.key
+                                })
+                                .and_then(|row| row.value["incident"].as_str().map(str::to_owned));
                         }
                     }
                 }
@@ -283,7 +248,6 @@
                         Completion {
                             diagnostic: None,
                             failure_class: None,
-                            progress: None,
                             ack: Ack::Retryable,
                             observations: vec![],
                         },
@@ -408,4 +372,3 @@
         self.save_allowance(state)?;
         Ok(())
     }
-

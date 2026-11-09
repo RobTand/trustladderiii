@@ -239,7 +239,7 @@ pub(in super::super) proof fn stop_kind_value(phase: Phase, review: Option<Revie
 /// State-table CI rows: the executable cause is exactly the pre-fact decision.
 pub(in super::super) proof fn ci_cause_value(phase: Phase, current: Option<Item>, fact: Fact)
     ensures ci_cause(phase, current, fact) == match fact {
-        Fact::CiFailed { infra: false } if phase == Phase::Queued
+        Fact::CiFailed { infra: false } if phase == Phase::AwaitingDelivery
             || phase == Phase::Publishing && current == Some(Item::Do(EffectKind::Enqueue)) =>
             Some(FailedRoundCause::CiFailed),
         _ => None,

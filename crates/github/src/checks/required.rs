@@ -1,5 +1,6 @@
 //! Required-check evaluation and workflow rerun decisions (ctrl-core C1).
 //! The shell retains sorted keys, upstream payloads and every I/O boundary.
+use super::Status;
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
@@ -372,5 +373,57 @@ mod tests {
             .failure,
             Failure::Tests
         );
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
+#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
+pub enum RequiredState {
+    Pending,
+    Passed,
+    Infrastructure,
+    Tests,
+    Unknown,
+}
+
+#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_spec(result => ensures
+    result == match (check.status, check.conclusion) {
+        (Status::Completed, Some(super::Conclusion::Success | super::Conclusion::Neutral | super::Conclusion::Skipped)) => RequiredState::Passed,
+        (Status::Completed, Some(super::Conclusion::ActionRequired | super::Conclusion::Stale)) => RequiredState::Pending,
+        (Status::Completed, Some(conclusion)) => if check.app == super::App::Actions
+            && (matches!(conclusion, super::Conclusion::Cancelled | super::Conclusion::TimedOut | super::Conclusion::StartupFailure)
+                || conclusion == super::Conclusion::Failure && runner_failure) {
+            RequiredState::Infrastructure
+        } else { RequiredState::Tests },
+        (Status::Completed, None) => RequiredState::Unknown,
+        _ => RequiredState::Pending,
+    },
+))]
+pub fn required_check(check: super::CheckView, runner_failure: bool) -> RequiredState {
+    use super::{App, Conclusion};
+    if check.status != Status::Completed
+        || matches!(
+            check.conclusion,
+            Some(Conclusion::ActionRequired | Conclusion::Stale)
+        )
+    {
+        RequiredState::Pending
+    } else if matches!(
+        check.conclusion,
+        Some(Conclusion::Success | Conclusion::Neutral | Conclusion::Skipped)
+    ) {
+        RequiredState::Passed
+    } else if check.app == App::Actions
+        && (matches!(
+            check.conclusion,
+            Some(Conclusion::Cancelled | Conclusion::TimedOut | Conclusion::StartupFailure)
+        ) || check.conclusion == Some(Conclusion::Failure) && runner_failure)
+    {
+        RequiredState::Infrastructure
+    } else if check.conclusion.is_some() {
+        RequiredState::Tests
+    } else {
+        RequiredState::Unknown
     }
 }

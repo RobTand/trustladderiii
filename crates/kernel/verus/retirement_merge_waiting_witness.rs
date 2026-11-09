@@ -11,7 +11,7 @@ fn merge_waiting_world(case: u8) -> (result: World) [
         result.nodes@[0].phase == match case {
             0 => Phase::Reviewing,
             1 => Phase::Publishing,
-            2 => Phase::Queued,
+            2 => Phase::AwaitingDelivery,
             3 => Phase::Rebasing,
             _ => Phase::AwaitingRob,
         },
@@ -24,7 +24,7 @@ fn merge_waiting_world(case: u8) -> (result: World) [
     first.phase = match case {
         0 => Phase::Reviewing,
         1 => Phase::Publishing,
-        2 => Phase::Queued,
+        2 => Phase::AwaitingDelivery,
         3 => Phase::Rebasing,
         _ => Phase::AwaitingRob,
     };
@@ -36,7 +36,7 @@ fn merge_waiting_world(case: u8) -> (result: World) [
     first.approved = first.head;
     first.attempt = 1;
     first.footprint = Footprint::inline(1);
-    first.holds = case < 4;
+    first.holds = case < 4 && case != 2;
     if case == 0 || case == 3 {
         first.pos = 1;
         first.run = Some(0);

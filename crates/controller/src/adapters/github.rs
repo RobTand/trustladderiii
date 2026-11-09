@@ -1136,7 +1136,6 @@ fn writer_facts(
                 Notice::Note(NoteKind::UnapprovedMerge) => "A change was merged without the required approval. I have recorded the merge and the problem.",
                 Notice::Note(NoteKind::Replanned) => "The earlier approach did not work. I will try a different plan for your request.",
                 Notice::Note(NoteKind::PrClosed) => "The proposed change was closed. Work on this request is stopping.",
-                Notice::Note(NoteKind::PrDequeued) => "The proposed change was taken out of the merge queue. Work on this request is stopping.",
                 Notice::Note(NoteKind::OutsidePush) => "Someone changed the proposed code. It needs fresh checks and review.",
                 Notice::Note(NoteKind::DependencyAbandoned { .. } | NoteKind::DependencyCycle { .. }) => delivery.note.as_deref().unwrap_or("A merge prerequisite prevents work from starting. Please change or stop the request."),
                 Notice::Note(NoteKind::LateMerge) => "The change was merged after work stopped. I have recorded what was delivered.",

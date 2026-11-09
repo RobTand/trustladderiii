@@ -11,8 +11,10 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
         old(w).next_question < u64::MAX,
     ensures (node_checked(*old(w), old(w).nodes@[i as int])
             && (!old(w).nodes@[i as int].paused || old(w).nodes@[i as int].phase is Stopping)
-            && ack == Ack::Confirmed && (match old(w).nodes@[i as int].effect {
-                Some(e) => e.seq == seq, None => false,
+            && (match old(w).nodes@[i as int].effect {
+                Some(e) => e.seq == seq && (if e.kind == EffectKind::Enqueue {
+                    ack == Ack::DeliveryAccepted
+                } else { ack == Ack::Confirmed }), None => false,
             }) ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
         (old(w).nodes@[i as int].phase is Closed && old(w).nodes@[i as int].effect.is_none()
             ==> final(w).nodes@[i as int].phase is Closed),
@@ -40,12 +42,27 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
     if e.seq != seq {
         return;
     }
+    if ack == Ack::DeliveryAccepted && e.kind != EffectKind::Enqueue {
+        return;
+    }
+    if !e.cancelling && e.kind == EffectKind::Enqueue {
+        if ack == Ack::Confirmed {
+            return;
+        }
+        if ack == Ack::DeliveryAccepted
+            && (w.nodes[i].phase != Phase::Publishing
+                || w.nodes[i].current() != Some(Item::Do(EffectKind::Enqueue)))
+        {
+            return;
+        }
+    }
     w.nodes[i].effect = None;
     if e.cancelling {
         return;
     }
     match ack {
         Ack::Confirmed => confirmed(&mut w.nodes[i], e.kind),
+        Ack::DeliveryAccepted => delivery_accepted(&mut w.nodes[i]),
         Ack::Retryable => delivery_failed(w, i, e.kind, out),
         Ack::Permanent => effect_failed(w, i, e.kind, out),
         Ack::BodyPolicyRefused if e.kind == EffectKind::OpenPr => {
@@ -53,6 +70,42 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
         }
         Ack::BodyPolicyRefused => effect_failed(w, i, e.kind, out),
     }
+}
+}
+
+kernel_fn! {
+/// PRD #878 / TD acceptance: release ownership and preserve approved delivery evidence.
+fn delivery_accepted(m: &mut Node) -> (result: ()) [
+    requires old(m).generation < u64::MAX, old(m).effect.is_none(),
+    ensures final(m).phase == Phase::AwaitingDelivery,
+        final(m).generation as int == old(m).generation as int + 1,
+        final(m).pos == 0, !final(m).holds, final(m).ticket.is_none(),
+        final(m).run.is_none(), final(m).job.is_none(), !final(m).pool,
+        final(m).effect.is_none(), final(m).question.is_none(),
+        final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
+        final(m).head == old(m).head, final(m).checked == old(m).checked,
+        final(m).approved == old(m).approved, final(m).proposed == old(m).proposed,
+        final(m).adopted == old(m).adopted, final(m).worktree == old(m).worktree,
+        final(m).pr_open == old(m).pr_open, final(m).had_pr == old(m).had_pr,
+        final(m).merged == old(m).merged, final(m).credit == old(m).credit,
+        final(m).attempt == old(m).attempt, final(m).round == old(m).round,
+        final(m).replanned == old(m).replanned, final(m).plan_retries == old(m).plan_retries,
+        final(m).rechecks == old(m).rechecks, final(m).review_restarted == old(m).review_restarted,
+        final(m).paused == old(m).paused, final(m).waiting_incident == old(m).waiting_incident,
+        final(m).incident_needs_rob == old(m).incident_needs_rob,
+        final(m).next_seq == old(m).next_seq, final(m).last_cmd == old(m).last_cmd,
+        final(m).fx_failures == 0, final(m).fx_incidents == 0,
+        settle_shape(*old(m)) ==> settle_shape(*final(m)),
+        old(m).phase == Phase::Publishing ==> distance(*final(m)) + 2 <= distance(*old(m)),
+] proof [reveal(distance);] {
+    m.fx_failures = 0;
+    m.fx_incidents = 0;
+    m.holds = false;
+    m.run = None;
+    m.job = None;
+    m.pool = false;
+    m.question = None;
+    set_phase(m, Phase::AwaitingDelivery);
 }
 }
 
@@ -66,6 +119,7 @@ pub(super) fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
             ==> distance(*final(m)) == distance(*old(m))),
         (old(m).effect.is_none() && old(m).question.is_none() && !old(m).waiting_incident
             && (!old(m).paused || old(m).phase is Stopping)
+            && kind != EffectKind::Enqueue
             && (current_item(*old(m)) == Some(Item::Do(kind))
                 || current_item(*old(m)) == Some(Item::Teardown(kind)))
             ==> distance(*final(m)) + 2 <= distance(*old(m))),
@@ -110,6 +164,7 @@ fn confirmed_agenda(m: &mut Node, kind: EffectKind) -> (result: ()) [
             ==> distance(*final(m)) == distance(*old(m))),
         (old(m).effect.is_none() && old(m).question.is_none() && !old(m).waiting_incident
             && (!old(m).paused || old(m).phase is Stopping)
+            && kind != EffectKind::Enqueue
             && (current_item(*old(m)) == Some(Item::Do(kind))
                 || current_item(*old(m)) == Some(Item::Teardown(kind)))
             ==> distance(*final(m)) + 2 <= distance(*old(m))),
@@ -125,7 +180,7 @@ fn confirmed_agenda(m: &mut Node, kind: EffectKind) -> (result: ()) [
         final(m).fx_incidents == old(m).fx_incidents,
         final(m).last_cmd == old(m).last_cmd,
 ] proof [reveal(distance);] {
-    if !kind.starts_operation() {
+    if kind != EffectKind::Enqueue && !kind.starts_operation() {
         if let Some(Item::Do(k) | Item::Teardown(k)) = m.current() {
             if k == kind {
                 if kind == EffectKind::PrepareWorktree && !m.adopted {

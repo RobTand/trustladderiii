@@ -12,7 +12,7 @@ pub struct Registration {
     pub webhooks: Webhooks,
     pub workers: adapters::workers::WorkerOutputSource,
     pub bell: CheckSource,
-    pub mergify: adapters::delivery_events::Translator,
+    pub delivery: adapters::direct_merge::Translator,
     pub adoption: crate::adoption::Translator,
 }
 
@@ -132,22 +132,16 @@ fn register_owned(
     let direct_wakes = adapters::direct_merge::Wakes::default();
     adapters.register(
         Upstream::Delivery,
-        adapters::delivery_router::Router::new(
-            adapters::mergify::Adapter::new(clients.clone(), epoch, &records.join("mergify"))?
-                .with_repositories(&config.github.repos)?
-                .with_store(config.store.clone()),
-            adapters::direct_merge::Adapter::new(
-                clients.clone(),
-                epoch,
-                &records.join("direct-merge"),
-                config.store.clone(),
-            )?
-            .with_wakes(direct_wakes.clone()),
-            &config.github.repos,
-        ),
+        adapters::direct_merge::Adapter::new(
+            clients.clone(),
+            epoch,
+            &records.join("direct-merge"),
+            config.store.clone(),
+        )?
+        .with_wakes(direct_wakes.clone()),
     );
-    let mergify =
-        adapters::delivery_events::Translator::new(clients.clone())?.with_wakes(direct_wakes);
+    let delivery =
+        adapters::direct_merge::Translator::new(clients.clone())?.with_wakes(direct_wakes);
     let adoption = crate::adoption::Translator::new(clients.clone(), bootstrap.clone())?;
     let webhooks = Webhooks::bind(
         listen,
@@ -162,7 +156,7 @@ fn register_owned(
         webhooks,
         workers,
         bell,
-        mergify,
+        delivery,
         adoption,
     })
 }

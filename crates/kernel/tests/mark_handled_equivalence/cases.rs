@@ -55,7 +55,7 @@ fn phases(outcome: Outcome) -> [Phase; 20] {
         Phase::Checking,
         Phase::Reviewing,
         Phase::Publishing,
-        Phase::Queued,
+        Phase::AwaitingDelivery,
         Phase::Rebasing,
         Phase::AwaitingRob,
         Phase::Stopping(outcome),

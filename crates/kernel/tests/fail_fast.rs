@@ -99,7 +99,11 @@ impl Run {
             self.send(Event::Ack {
                 node: NodeId(0),
                 seq: e.seq,
-                ack: Ack::Confirmed,
+                ack: if e.kind == EffectKind::Enqueue {
+                    Ack::DeliveryAccepted
+                } else {
+                    Ack::Confirmed
+                },
             });
         }
         panic!("effects never stopped");
@@ -163,7 +167,7 @@ impl Run {
         self.reply(Reply::Approved {
             head: HeadId(self.head),
         });
-        assert_eq!(self.phase(), Phase::Queued);
+        assert_eq!(self.phase(), Phase::AwaitingDelivery);
     }
 
     /// Round 0 fails review, so the free fix round starts.

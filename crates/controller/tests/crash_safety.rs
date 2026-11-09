@@ -246,7 +246,7 @@ fn child(args: &[String]) {
             "stop-checks" => {
                 node.phase == Phase::Checking && node.job.is_some() && node.effect.is_none()
             }
-            "stop-pr" => node.phase == Phase::Queued,
+            "stop-pr" => node.phase == Phase::AwaitingDelivery,
             _ => false,
         };
         if stop {

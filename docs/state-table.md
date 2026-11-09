@@ -74,7 +74,7 @@ For slice one, the bounds are 2 requests, or 3 after a new one arrives; 2 repos 
 - every node waiting on Rob has an open question with an id;
 - a closed node holds nothing.
 
-The holding phases are Making, Checking, Reviewing, Publishing, Queued and Rebasing.
+The holding phases are Making, Checking, Reviewing, Publishing and Rebasing. AwaitingDelivery retains the approved footprint as data, but owns no slot or files.
 
 **The progress measure** sums, over every open node, a distance to Closed, taken from its phase and its position in any effect sequence. It then adds the tokens that settle hasn't consumed yet.
 
@@ -289,7 +289,7 @@ Code computes a signature for each failure from the upstream's error class, and 
 - Only environment failures count. A tool error gets an id only for an environment errno, such as a permission, read-only, full-disk, I/O or descriptor error, never for a missing, overlong or looping path, a file used as a directory, or a tree nested too deeply to walk. A test run that the tested code could have cut short isn't evidence, and a later completed run of the same tests retires an earlier failure.
 - A `blocked` reply is an infrastructure failure. It retries in a new generation, every second failure raises an incident, and it spends no credit. When the blocked reply itself raises the incident, the incident text cites the worker-recorded evidence: the action key or tool-error id, the tool and the error class. The maker's own report never goes into the GitHub post.
 - `cant_meet` stays the reply for a change that can't meet a goal. Dropped connections and worker crashes keep their existing path.
-- Queue failures use typed Change, Environment or Unattributed evidence. Environment requires an independent same-base failure fingerprint match, bound to the PR's current destination. Existing PR reads or held failures rebind a same-head retargeted hold to the current destination and clear its old witness, preserving the hold start and command budget; fresh dispatch validates the hold and witness destinations. Same-base health establishes Change only for the complete failed check identities or a destination merge. Unattributed holds the open PR durably without a failed round, credit charge, fail_fast or Rob. A successful destination merge, or a settled batch passing the complete failed check identities, at a different newer base after the failure authorizes one requeue shared with Q58. Later held failures union their reporter identities; incompleteness stays incomplete and invalidates any attached batch witness that no longer covers the failed set. Incomplete identities reject batch witnesses. Reconcile already-journaled witnesses whenever a held failure creates or updates a hold. Persist pre-dispatch failure identities in the shared command receipt; only a new identity after its Sent receipt is a retest failure and takes the existing failed round, including Q54, regardless of completion timestamps. Without a witness within the existing no-progress allowance, raise a TL3-side Q51 environment incident. Retire holds on merge, close or head retirement. Retain the newest 128 gates globally by event time then identity; attached witnesses remain in their holds. #854 (program lead 2026-11-06, under Rob's Q50/Q51).
+- Delivery CI evidence retains Change, Environment or Unattributed causes. Required-check classification follows Q47, and current-head change failures retain the failed-round, findings, credit and Q54 rules. Infrastructure evidence in AwaitingDelivery stutters without a failed round or charge. During Publishing with a live handoff, it cancels the pending effect and follows the existing infrastructure retry and incident ladder without spending work credit. The Mergify-only same-base queue holds, shared one-requeue budget, retest command receipts and elapsed hold expiry are retired with their producers under TD. Healthy Direct waits resume on authenticated evidence; Q7 read-failure escalation remains separate from that wait.
 
 **Cause classes and releases,** as Rob approved on 2026-11-01 (Q51):
 
@@ -578,38 +578,26 @@ Coordinator defaults, for Rob to check: the ladder clamps at its last entry. A c
 
 ### Publishing
 
-Direct delivery variant ([#830](https://github.com/RobTand/trustladderiii/issues/830), Q27 approved by Rob, 2026-11-05): for a repository configured with `delivery = "direct"`, step 4 uses GitHub's SHA-pinned merge API behind the same Enqueue effect. At execution, reread the open PR and its head, TL3's passed Checking and independent approval on that exact head, the own-app approval check, the repository's allowed merge methods, and every still-required protection check. Fence the epoch and durably record the attempt's intent before each upstream write. The adapter adds "delivered directly (CI bypassed by repo config)" to the PR body before merging. A pending protection check waits for check/webhook evidence without a timer or retry charge. A failed protection check follows the existing enqueue CI-failure row below; an observed conflict follows the publication Conflict rule. A permission refusal or otherwise unexplained merge refusal raises an effect incident. The approval check, holds, pause, stop, effect fences and postmortems remain in force. Q52's Mergify missing-check rule and Mergify dequeue handling apply only to queue delivery.
-
 The publishing sequence has four steps:
 
 1. Push the branch.
 2. Post the approval check on the head.
 3. Open the PR, or reopen it.
-4. Enqueue it.
+4. Hand the exact approved head to delivery, using the generic `EffectKind::Enqueue` obligation.
 
-When the last step confirms, the leaf moves to Queued.
+TD, approved under PRD #878, replaces queue delivery with one neutral handoff. A keyed `Ack::DeliveryAccepted` atomically clears the live Enqueue effect, advances one generation and enters AwaitingDelivery. It preserves the exact approved/checked/current head, valid footprint, work history, PR evidence and credit, while releasing slot, files, pool, run, job and ticket. Ordinary `Confirmed`, stale or wrong-effect acknowledgements cannot accept responsibility. A cancelling acknowledgement can finish cancellation but cannot revive delivery or undo Stop.
+
+Direct durably records responsibility before waiting for required checks. The same typed acceptance is returned by execute, reconcile and look. Acceptance means neither check success nor merge success. Publishing authorization uses the original generation; accepted authorization uses AwaitingDelivery at original generation plus one. The accepted outcome watch survives a terminal delivery row and recovery. Later authenticated exact-head check success wakes the existing Direct executor.
+
+Direct rereads the open PR, exact head, passed Checking and independent approval, own-app approval check, allowed merge method and all required protection checks before a SHA-pinned merge. Epoch, pause, incident, consumed-event and write-ahead intent fences remain binding. A consumed event cannot authorize another write after a crash. Missing or pending checks wait for evidence without a timer or retry charge; permission and unexplained merge refusals raise effect incidents. Route selection is fixed before dispatch, without a late mutable configuration read. The kernel has no route field.
 
 | Event | Condition | Next | Effects |
 |---|---|---|---|
-| Conflict with current main | | Rebasing | Rebase onto main, in a new generation (Q46, Rob 2026-10-31) |
-| CI failed | A required check failed on the approved head before enqueue, because a test failed on the code | A failed round | Cancel the pending enqueue; remove `tl3-queue` if it was added (Q47, Rob, 2026-11-01). Apply the typed Q50 attribution and hold above before charging a failure. #854 (program lead 2026-11-06, under Rob's Q50/Q51). |
-| CI failed | The runner or its setup failed at the enqueue step | See "Failures" | Rerun the check, then enqueue when the failure rules allow (Q47, Rob, 2026-11-01) |
-| Check-suite or check-run evidence | All check suites on the approved head have completed, but a required context from the expected app is absent | Publishing, enqueue pending | Open a deduplicated repo setup incident naming the head, context and expected app. No failure count or credit charge. (Q52, Rob, 2026-11-01) |
-| Required check reports | The context and expected app match an open missing-check incident on that head | Publishing | Clear that incident; evaluate the reported check normally (Q52) |
-| `clear incident <id>` | Rob names an open missing-check incident | Publishing | Clear the incident; required-check enforcement still applies (Q52) |
-| Check-suite or check-run evidence | Mergify waits on unmet queue-entry conditions on the approved head. Every check other than Mergify's own has completed. Every suite has completed, except that, for #447 only, a queued suite with a positive read of zero check runs is nonblocking once Mergify's queue check on the same head has since completed | Publishing, enqueue pending | On TL3's own PR, once Mergify's queue check on the same head has completed, failed non-required head checks evidenced by the unmet conditions count as change failures and go first to maker repair with the checks, summaries and unmet conditions, subject to Q50's environment classification. Otherwise open a deduplicated repo setup incident naming the head, the unmet conditions and the failed checks outside the required set, with no failure count or credit charge. #447; #854 (2026-11-06, program lead, under Rob's Q50/Q51 rules). |
+| Conflict with current main | Publishing | Rebasing | Rebase in one new generation under Q46; preserve credit |
+| CI failed | Required check failed on the approved head at the live handoff | A failed round | Cancel the pending handoff; retain failure evidence and apply the existing ladder, report and Q54 rules |
+| CI failed | Infrastructure failure at the live Publishing handoff | Publishing retry, or incident wait | Cancel the pending handoff and apply the existing infrastructure failure counter, retry and incident rules without spending work credit |
 
-Publication guards report a Conflict fact when the checked head conflicts with current main, including before the push or PR opening completes and before enqueue. Rebasing uses the same credit and recheck rules as a conflict in Queued. A clean main advance needs no rebase; publish the checked head and let Mergify update the merge tree.
-
-Required head-check failures at the enqueue step use the same credit costs and infrastructure retry limits as failures in Queued (Q47).
-
-The missing-check rows decide on the check-suite and check-run webhooks TL3 already receives, with no timer or polling. A cleared incident stays cleared for that head, context and app. Waiting for required checks arms no allowance timer and spends no retry. The incident also clears when its head is replaced or the leaf closes.
-
-These clarify how the controller already applies Q52 and #447 (#735). They add no rule:
-
-- **Unreadable statuses.** A requirement with no expected app can be met by a legacy commit status. If GitHub refuses the status read (HTTP 403 or 404), its absence can't be known, so no missing-check incident opens for it. The refused read opens a check-setup incident instead.
-- **Clearing in any open phase.** When the missing context reports on its head from the expected app, TL3 clears the incident in whatever open phase the leaf is in, not only in Publishing. A closed leaf's incidents have already cleared with it.
-- **The blocked-queue incident (#447)** opens only for the approved head, while the leaf is Queued or still enqueuing, after the maker-repair precedence above. The setup incident itself never reaches the kernel, and it clears when its head stops being the node's head or approved head, or the leaf closes. #854 (2026-11-06, program lead, under Rob's Q50/Q51 rules).
+Publication guards still report Conflict before push or PR opening completes. A clean main advance requires no rebase. Shared required-check identity and enforcement remain; Mergify queue-entry setup incidents, labels and recovery commands are removed.
 
 ### A failed round
 
@@ -622,17 +610,20 @@ These clarify how the controller already applies Q52 and #447 (#735). They add n
   - After attempt 3 of a re-planned leaf: release the slot and files, and go to AwaitingRob(can't meet, continue to Ready(Making, new attempt)).
 - **Not enough credit for the next step:** release the slot and files, and go to AwaitingRob(out of credit, continue to that step).
 
-### Queued
+### AwaitingDelivery
 
-With direct delivery ([#830](https://github.com/RobTand/trustladderiii/issues/830)), this phase acknowledges the same Enqueue effect before consuming the existing merged or refused fact; it adds no kernel transition. An already-merged PR converges without another merge write. A moved head or HTTP 409 follows the outside-push row and returns to Checking. A lost response or restart reconciles PR state first. If the PR remains open, a fresh attempt rechecks the exact-head preconditions and records a new fenced intent before retrying the pinned PUT. An HTTP 405 after a racing merge rereads and converges to the merged fact. GitHub's pinned, single-merge operation permits at most one successful merge, including when an old issuer races the retry. An observed or recorded merge suppresses later writes. The status/board says "delivered directly (CI bypassed by repo config)"; default-branch CI still runs and its failures remain visible to the repo leads. The Mergify-specific rows below do not apply to direct delivery.
+This phase has rank 4 and the one-item blocked agenda `[Delivery]` at position 0. It has no internal action or resume variant. It retains a valid footprint and exact head/checked/approved identity, worktree/PR evidence and work history, but holds no slot, file lock, pool grant, run, job, ticket, question or effect. Both the executable checker and the formal node/retirement rules enforce these facts. Overlapping Ready work may acquire the released resources.
 
 | Event | Condition | Next | Effects |
 |---|---|---|---|
-| CI failed | Change evidence, including a new failure identity after the single health-witness requeue's Sent receipt, absent from its pre-dispatch identities | A failed round | Dequeue; retain failing checks as evidence. Q54 applies unchanged. #854 (program lead 2026-11-06, under Rob's Q50/Q51). |
-| CI failed | Environment or Unattributed evidence | Queued, on a restart-safe Q50 hold | Keep the PR open, charge nothing, and use the witness/requeue/incident bound above. Q58 shares the single requeue. #854 (program lead 2026-11-06, under Rob's Q50/Q51). |
-| Conflict | | Rebasing | Rebase onto main, in a new generation |
-| GitHub or Mergify stalled | No incident is already open | Queued, waiting on an incident | Raise an incident. A probe or Rob clears the first; only Rob clears later incidents. See "Looks and stalls" and Q7. |
-| Check-suite or check-run evidence | Mergify waits on unmet queue-entry conditions on the approved head. Every check other than Mergify's own has completed. Every suite has completed, except that, for #447 only, a queued suite with a positive read of zero check runs is nonblocking once Mergify's queue check on the same head has since completed | Queued | On TL3's own PR, once Mergify's queue check on the same head has completed, failed non-required head checks evidenced by the unmet conditions count as change failures and go first to maker repair with the checks, summaries and unmet conditions, subject to Q50's environment classification. Otherwise open a deduplicated repo setup incident naming the head, the unmet conditions and the failed checks outside the required set, with no failure count or credit charge. #447; #854 (2026-11-06, program lead, under Rob's Q50/Q51 rules). |
+| PR merged | Truthful exact-head and checks evidence | Stopping(Merged) | Use full teardown and merge credit rules; wrong-head or false-check merges still raise incidents |
+| CI failed | Change failure on the current head | A failed round | Preserve the ladder, evidence, reports and Q54. Any Making destination is Ready(Making), which must reacquire resources |
+| CI failed | Infrastructure | AwaitingDelivery | Stutter with no generation, retry, credit, failure or report charge |
+| Conflict | | Ready(Rebasing) | Advance one generation; retain no ownership and charge no credit |
+| Push by another person | New head | Ready(Checking), or the existing out-of-credit question | Preserve recheck costs, historical approval and outside-push note; retire the old head's delivery authority |
+| PR closed by a person; Stop; replacement | | Existing Stopping destination | Retire delivery authority and complete full teardown |
+
+An already-merged PR converges without another merge write. A moved head or HTTP 409 takes the outside-push path. A lost response or restart reconciles PR state before considering another write; a fresh eligible event and all original fences are required for a new attempt. HTTP 405 after a racing merge rereads and converges. GitHub's pinned operation permits at most one successful merge. Late outcomes obey the same closed/stopping frames and report contract.
 
 ### Rebasing
 
@@ -696,7 +687,7 @@ Teardown is a sequence. It runs even while the node is paused, and each step is 
 1. Stop the node's runs, and confirm they've stopped.
 2. Withdraw its PrismaBuild jobs.
 3. Cancel its outstanding effects, and wait until each one is final.
-4. Dequeue its PR and close it.
+4. Close its PR and retire delivery authority.
 5. Stop its open children.
 6. Release its slot and files.
 7. Remove the worktree, then delete the branch. Deleting a branch closes any PR still on it.
@@ -721,9 +712,8 @@ Closed is final. It accepts only two kinds of event: a late merge, covered under
 | Event | Facts | Then |
 |---|---|---|
 | PR merged | Record the merged head and tree | From any phase except Stopping and Closed, go to Stopping(Merged). In Stopping, the outcome becomes Merged. If the merged head wasn't approved, or the required checks didn't pass on the merged tree, also raise an incident and tell Rob. |
-| Push by someone other than TL3 | Record the new head | In Publishing or Queued: dequeue, release the slot and files, and go to Ready(Checking), so the new head is tested and reviewed. This counts against the leaf's free rechecks, and Rob gets a note. |
+| Push by someone other than TL3 | Record the new head | In Publishing or AwaitingDelivery: retire delivery authority, release any slot and files, and go to Ready(Checking), so the new head is tested and reviewed. This counts against the leaf's free rechecks, and Rob gets a note. |
 | PR closed by a person | Record it | Stopping(Stopped), from any phase except Stopping and Closed. Rob gets a note saying how to start the request again. |
-| PR dequeued by a person | Record it | In Queued: release the slot and files, go to Ready(Publishing from step 4), and add a pause owned by Rob. Rob gets a note. Resuming puts the PR back in the queue. |
 | Effect permanently failed | Raise an incident | Outside Stopping: release any slot and files, and go to AwaitingRob(effect failed). The continuation retries the failed effect and carries on. A leaf that held a slot carries on through Ready; any other node returns to the same phase. For Stopping, see Stopping. |
 | Prerequisite merged or truly closed (#839, Q27) | Mark delivered; retain typed closure reason on dependent if unmerged | Settle admits planning when every prerequisite resolves; an open stopped prerequisite keeps waiting |
 | Prerequisite reopened before dependent planning (#839, Q27) | Replace provisional delivery with pending current state; keep historical closure evidence | Wait again. A later closure can deliver. Once planning_started is true, reopening does not roll back that attempt |
@@ -739,8 +729,7 @@ Closed is final. It accepts only two kinds of event: a late merge, covered under
 **Pausing.** While a pause is in place, no new operation starts. What happens to work already under way depends on where the node is:
 
 - **A leaf with a run or effect in flight** lets it finish. It then releases its slot and files, and waits in Ready, resuming at the next step.
-- **A leaf whose finished effect put its PR in the queue** stays in Queued instead, because a PR already in the queue can still merge.
-- **A leaf in Queued** stays too. If the queue sends it back, it waits in Ready instead of starting the fix or the rebase.
+- **A leaf in AwaitingDelivery** stays waiting with no ownership. A paused accepted delivery cannot authorize a new merge write. If a failure or conflict sends it to Ready, it waits for resume before reacquiring resources.
 - **A leaf with nothing in flight** releases its slot and files at once, and cancels any run it requested that hasn't started.
 - **A node in any other phase** stores its next start as its pending start.
 
@@ -802,7 +791,7 @@ TL3 promises deduplication, not exactly-once delivery. Each effect has a deliver
 | Approval check | At least once after a human-authorized retry; duplicates converge to identical conclusion and output | Head and external id; reconciliation updates every visible copy | |
 | Push a branch | Converges | The branch's head on GitHub | |
 | Open or reopen a PR | Converges | Any PR for the branch, open or closed | |
-| Enqueue, dequeue | Converges | The PR's queue state | Dequeue: the PR isn't queued |
+| Delivery handoff | Converges | Durable responsibility for the exact key and head | Acceptance releases ownership; outcome watch remains |
 | Close a PR | Converges | The PR's state | The PR is closed or merged |
 | Worktree, branch | Converges | Whether they exist | Missing |
 | Start or stop an agent run | Once per operation | The worker supervisor's record for the operation id | Stop: the run has ended |
@@ -857,7 +846,7 @@ Each pending operation has two allowances, set in config for each upstream: one 
 |---|---|---|
 | Agent worker | The supervisor's record, and the record of any outside job the agent has declared it is waiting on | New tool results, or an outside job the agent has declared it is waiting on (such as a PrismaBuild test run) that, by that job's own record, has neither ended nor been lost (Q43) |
 | PrismaBuild | The job's record | Tests completed, as committed by TL3's harness under PrismaBuild's progress contract |
-| Mergify and GitHub | The PR, its checks and the queue | Checks finishing, or the queue moving |
+| GitHub delivery | The PR and its exact-head checks | Authenticated check and PR events |
 
 What the look finds enters the kernel as replies, acknowledgements and facts.
 
@@ -865,11 +854,11 @@ What the look finds enters the kernel as replies, acknowledgements and facts.
 
 - **Agent runs:** TL3 stops the run and counts it as an infrastructure failure.
 - **PrismaBuild jobs:** TL3 sets no deadline on them. A job its own record shows queued or running is alive, however quiet (#369). Under PrismaBuild's progress contract, PrismaBuild ends a quiet job itself, and the ending arrives as a failed run.
-- **Mergify and GitHub:** the stall raises an incident.
+- **GitHub delivery:** failed reads retain incident handling; healthy required-check waits spend no retry or timer.
 
 A look ends work only when the upstream's own record shows no progress.
 
-A record that doesn't yet show an acknowledgement, such as an enqueue Mergify hasn't acknowledged, is a live operation waiting, not a failed read. A failed look is a read that errors, or an operation still unacknowledged when its no-progress allowance runs out. That second case is how a never-acknowledged enqueue still ends in a read incident. Webhooks can bring several looks within seconds, so failed looks within one silence allowance count as one failure (#356).
+A record that doesn't yet show an acknowledgement, such as a delivery handoff not yet durably accepted, is a live operation waiting, not a failed read. A failed look is a read that errors, or an operation still unacknowledged when its no-progress allowance runs out. That second case is how a never-acknowledged enqueue still ends in a read incident. Webhooks can bring several looks within seconds, so failed looks within one silence allowance count as one failure (#356).
 
 After a restart or a gap in webhooks, every pending operation gets a look.
 

@@ -13,7 +13,7 @@ fn github_installation_and_synchronous_token_bridge() {
         .build()
         .unwrap();
     let server = runtime.block_on(MockServer::start());
-    let pem = include_str!("../../../../mergify/tests/fixtures/throwaway-key.pem").into();
+    let pem = include_str!("../../../../github/tests/fixtures/throwaway-key.pem").into();
     let github = tl3_github::GitHub::new(
         tl3_github::AppConfig {
             id: 123,

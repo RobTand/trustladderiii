@@ -20,7 +20,7 @@ use wiremock::{
 };
 
 static KEYS: LazyLock<(String, String)> = LazyLock::new(|| {
-    let pem = include_str!("../../mergify/tests/fixtures/throwaway-key.pem");
+    let pem = include_str!("../../github/tests/fixtures/throwaway-key.pem");
     let key = RsaPrivateKey::from_pkcs8_pem(pem).unwrap();
     (
         pem.into(),

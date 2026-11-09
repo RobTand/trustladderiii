@@ -327,7 +327,6 @@ fn production(config: tl3_config::Config) -> Result<()> {
         registration.adapters,
         Bootstrap::from_config(&config)?,
     )?;
-    controller.reconcile_repository_delivery(&config.github.repos)?;
     controller.set_allowances(config.allowances.clone());
     controller.set_model_quota_policy(
         &config.models,
@@ -343,14 +342,14 @@ fn production(config: tl3_config::Config) -> Result<()> {
     );
     controller.start_release(&crate::release::id())?;
     controller.run_postmortems(crate::PostmortemPace::from_config(&config));
-    controller.register_github_translator("mergify", registration.mergify);
+    controller.register_github_translator("delivery", registration.delivery);
     controller.register_github_translator("adoption", registration.adoption);
     eprintln!(
         "GitHub webhooks listening on {}",
         registration.webhooks.address()
     );
     eprintln!(
-        "production adapters registered: GitHub, worktrees, PrismaBuild, Mergify, workers; looks and incidents enabled"
+        "production adapters registered: GitHub, worktrees, PrismaBuild, Direct delivery, workers; looks and incidents enabled"
     );
     let mut sources = crate::ingress::Sources::default();
     sources.register(registration.webhooks);

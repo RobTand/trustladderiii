@@ -23,7 +23,7 @@ pub open spec fn phase_rank(p: Phase) -> nat
     match p {
         Phase::Closed(_) => 0,
         Phase::Stopping(_) => 2,
-        Phase::Queued => 4,
+        Phase::AwaitingDelivery => 4,
         Phase::Publishing => 6,
         Phase::Reviewing => 10,
         Phase::Checking => 14,
@@ -63,7 +63,7 @@ pub(super) open spec fn items(p: Phase) -> Seq<Item> {
         Phase::Reviewing => seq![I::Start(Role::Review), I::Await],
         Phase::Publishing => seq![I::Do(K::Push), I::Do(K::PostApproval),
             I::Do(K::OpenPr), I::Do(K::Enqueue)],
-        Phase::Queued => seq![I::Merge],
+        Phase::AwaitingDelivery => seq![I::Delivery],
         Phase::Rebasing => seq![I::StartRebase, I::Await],
         Phase::AwaitingRob => seq![I::Answer],
         Phase::Stopping(_) => seq![I::Teardown(K::StopRun), I::Teardown(K::WithdrawJob),
@@ -78,7 +78,7 @@ pub(super) open spec fn current_item(n: Node) -> Option<Item> {
 
 pub open spec fn holding(p: Phase) -> bool {
     matches!(p, Phase::Making | Phase::Checking | Phase::Reviewing
-        | Phase::Publishing | Phase::Queued | Phase::Rebasing)
+        | Phase::Publishing | Phase::Rebasing)
 }
 
 pub(super) open spec fn pause_due(n: Node) -> bool {
@@ -136,7 +136,7 @@ pub(super) open spec fn distance(n: Node) -> nat {
             Phase::Making => Resume::Making,
             Phase::Checking => Resume::Checking,
             Phase::Reviewing => Resume::Reviewing,
-            Phase::Publishing | Phase::Queued => Resume::Publishing,
+            Phase::Publishing => Resume::Publishing,
             _ => Resume::Rebasing,
         })) * 64 + 10
     } else {
@@ -165,7 +165,7 @@ pub(super) open spec fn internal_height(n: Node) -> nat {
     else if n.effect.is_some() { 0 }
     else { match current_item(n) {
         None => match n.phase {
-            Phase::Publishing => 1,
+            Phase::Publishing => 0,
             Phase::Stopping(_) => if n.question.is_none() { 1 } else { 0 },
             _ => 0,
         },
@@ -568,7 +568,7 @@ pub(super) open spec fn advance_enabled(n: Node, context: AdvanceContext) -> boo
     else if n.waiting_incident { n.ticket.is_some() }
     else if n.effect.is_some() { false }
     else { match current_item(n) {
-        None => n.phase == Phase::Publishing || (n.phase is Stopping && n.question.is_none()),
+        None => n.phase is Stopping && n.question.is_none(),
         Some(Item::Do(_) | Item::StartChecks | Item::StartRebase) =>
             !n.paused || holding(n.phase) || n.ticket.is_some(),
         Some(Item::Start(_)) => if n.paused { holding(n.phase) || n.ticket.is_some() }
@@ -578,7 +578,7 @@ pub(super) open spec fn advance_enabled(n: Node, context: AdvanceContext) -> boo
             else { n.ticket.is_none() || context.slot },
         Some(Item::Release) => true,
         Some(Item::Teardown(_)) => n.question.is_none(),
-        Some(Item::Await | Item::Merge | Item::Answer) => false,
+        Some(Item::Await | Item::Delivery | Item::Answer) => false,
     } }
 }
 
@@ -676,11 +676,6 @@ kernel_fn! {
         kernel_snapshot! { before_phase = node.phase }
         let n = *node;
         match n.phase {
-            Phase::Publishing => {
-                set_phase(node, Phase::Queued);
-                kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
-                true
-            }
             Phase::Stopping(outcome) if n.question.is_none() => {
                 close_node(node, context.node, outcome, out);
                 kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
@@ -1023,7 +1018,7 @@ kernel_fn! {
     fn advance_idle(_node: &mut Node, _next_ticket: &mut u64,
         _context: AdvanceContext, _out: &mut Outbox, _report: &mut Report) -> (result: bool) [
         requires advance_pre(*old(_node), *old(_next_ticket), old(_out).len),
-            !(old(_node).phase is Closed) && !old(_node).waiting_incident && old(_node).effect.is_none() && matches!(current_item(*old(_node)), Some(Item::Await | Item::Merge | Item::Answer)),
+            !(old(_node).phase is Closed) && !old(_node).waiting_incident && old(_node).effect.is_none() && matches!(current_item(*old(_node)), Some(Item::Await | Item::Delivery | Item::Answer)),
         ensures report::no_new_stop(old(_node).phase, final(_node).phase,
                 old(_report).entries@, final(_report).entries@),
             (!result ==> final(_out).len == old(_out).len),
@@ -1063,7 +1058,7 @@ kernel_fn! {
             Item::Start(role) => advance_start(node, next_ticket, context, out, report, role),
             Item::StartChecks => advance_checks(node, next_ticket, context, out, report),
             Item::StartRebase => advance_rebase(node, next_ticket, context, out, report),
-            Item::Await | Item::Merge | Item::Answer => advance_idle(node, next_ticket, context, out, report),
+            Item::Await | Item::Delivery | Item::Answer => advance_idle(node, next_ticket, context, out, report),
             Item::Admit => advance_admit(node, next_ticket, context, out, report),
             Item::Slot => advance_slot(node, next_ticket, context, out, report),
             Item::Release => advance_release(node, next_ticket, context, out, report),

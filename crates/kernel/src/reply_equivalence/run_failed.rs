@@ -49,7 +49,7 @@ proptest! {
         let phases = [n.phase, Phase::Ingesting, Phase::Auditing, Phase::Unplanned,
             Phase::Planning { must_split: false }, Phase::Ready(Resume::Making),
             Phase::Making, Phase::Checking, Phase::Reviewing, Phase::Publishing,
-            Phase::Queued, Phase::Rebasing, Phase::AwaitingRob,
+            Phase::AwaitingDelivery, Phase::Rebasing, Phase::AwaitingRob,
             Phase::Stopping(Outcome::Stopped), Phase::Closed(Outcome::Stopped)];
         for phase in phases {
             for failures in 0..=1 {

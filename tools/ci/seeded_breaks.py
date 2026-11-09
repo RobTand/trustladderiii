@@ -40,7 +40,7 @@ SEEDS = [
 WORKTREES_REACH = {
     'required': ['//crates/worktrees:', '//crates/config:', '//crates/store:',
                  '//crates/controller:test_test_workers'],
-    'forbidden': ['//crates/kernel:', '//crates/github:', '//crates/mergify:', '//crates/prismabuild:'],
+    'forbidden': ['//crates/kernel:', '//crates/github:', '//crates/prismabuild:'],
 }
 
 

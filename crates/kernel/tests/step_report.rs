@@ -43,7 +43,11 @@ impl Run {
             self.send(Event::Ack {
                 node: NodeId(0),
                 seq: effect.seq,
-                ack: Ack::Confirmed,
+                ack: if effect.kind == EffectKind::Enqueue {
+                    Ack::DeliveryAccepted
+                } else {
+                    Ack::Confirmed
+                },
             });
         }
         panic!("effects did not settle");
@@ -100,7 +104,7 @@ impl Run {
         self.reviewing();
         self.reply(Reply::Approved { head: HEAD });
         self.confirm();
-        assert_eq!(self.world.nodes[0].phase, Phase::Queued);
+        assert_eq!(self.world.nodes[0].phase, Phase::AwaitingDelivery);
     }
 
     fn failed(&self, cause: FailedRoundCause) {
@@ -191,7 +195,11 @@ fn ci_failure_before_enqueue_reports_exactly_one_failed_round() {
         run.send(Event::Ack {
             node: NodeId(0),
             seq: effect.seq,
-            ack: Ack::Confirmed,
+            ack: if effect.kind == EffectKind::Enqueue {
+                Ack::DeliveryAccepted
+            } else {
+                Ack::Confirmed
+            },
         });
     }
     panic!("publishing never reached Enqueue");
@@ -206,7 +214,7 @@ fn ci_failure_reports_its_fact_path_review_stop() {
     run.reply(PASS);
     run.reply(Reply::Approved { head: HEAD });
     run.confirm();
-    assert_eq!(run.world.nodes[0].phase, Phase::Queued);
+    assert_eq!(run.world.nodes[0].phase, Phase::AwaitingDelivery);
     run.world.fail_fast = true;
     run.fact(Fact::CiFailed { infra: false });
     assert_eq!(
@@ -308,11 +316,27 @@ fn review_stop_keeps_the_failing_step() {
 }
 
 #[test]
-fn dequeue_pauses_without_a_stop_report() {
+fn delivery_wait_conflict_enters_ready_rebasing_without_a_stop_report() {
     let mut run = Run::new();
     run.queued();
-    run.fact(Fact::PrDequeuedByPerson);
-    assert_eq!(run.world.nodes[0].phase, Phase::Ready(Resume::Publishing));
+    let before = run.world.nodes[0];
+    let event = Event::Fact {
+        node: NodeId(0),
+        fact: Fact::Conflict,
+    };
+    let (_, _, trace) = step_traced(run.world.clone(), event);
+    let admitted = trace.first().expect("the actual apply boundary is traced");
+    admitted.check().unwrap();
+    assert_eq!(admitted.nodes[0].phase, Phase::Ready(Resume::Rebasing));
+    assert_eq!(admitted.nodes[0].generation, before.generation + 1);
+    assert_eq!(admitted.nodes[0].credit, before.credit);
+    assert!(!admitted.nodes[0].holds);
+    run.fact(Fact::Conflict);
+    assert_eq!(run.world.nodes[0].phase, Phase::Rebasing);
+    assert!(
+        run.world.nodes[0].holds,
+        "settlement reacquires the free slot"
+    );
     assert!(run.report.entries.is_empty());
 }
 
@@ -402,13 +426,11 @@ fn unknown_fact_targets_leave_reports_empty_for_every_fact_variant() {
             checks_passed: true,
         },
         Fact::PrClosedByPerson,
-        Fact::PrDequeuedByPerson,
         Fact::PushByOther { head: HEAD },
         Fact::CiFailed { infra: false },
         Fact::CiFailed { infra: true },
         Fact::Conflict,
         Fact::IncidentCleared { by_rob: true },
-        Fact::UpstreamStalled,
         Fact::Priority(Priority::P0),
     ];
     for fact in facts {

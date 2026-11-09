@@ -3,6 +3,242 @@ use super::*;
 use crate::executor::{Executor, Reconciliation, Upstream};
 use std::sync::{Arc, Mutex};
 
+#[test]
+fn td_completion_checks_typed_receipts_and_retains_only_live_hydrated_watches() {
+    for cancel in [false, true] {
+        let mut database = store_support::Database::start();
+        let settings = database.create(if cancel {
+            "td_cancelled_receipt"
+        } else {
+            "td_live_receipt"
+        });
+        let root = tempfile::tempdir().unwrap();
+        let mut controller = Controller::open(
+            Store::open(&settings).unwrap(),
+            adapters::simulation(root.path()).unwrap(),
+            Bootstrap {
+                repos: vec![Repository {
+                    owner: "owner".into(),
+                    name: "sandbox".into(),
+                    installation: 3,
+                }],
+                rob: 42,
+                slots: 1,
+                pool: 1,
+                fail_fast: false,
+                operations: None,
+            },
+        )
+        .unwrap();
+        controller
+            .intake(LabelledIssue {
+                delivery: "td-receipt".into(),
+                owner: "owner".into(),
+                repo: "sandbox".into(),
+                installation: 3,
+                number: 12,
+                title: "delivery receipt".into(),
+                actor: 42,
+                label: "tl3".into(),
+                labels: vec![],
+            })
+            .unwrap();
+        let mut key = None;
+        // This pauses a live controller before dispatch. Crash/recovery is
+        // qualified separately by the real SIGKILL Direct regression.
+        let paused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            for _ in 0..300 {
+                assert!(
+                    controller
+                        .drive_once_with(|boundary, pending| {
+                            if boundary != Boundary::BeforeDispatch {
+                                return;
+                            }
+                            let effect = Store::open(&settings)
+                                .unwrap()
+                                .effect(pending)
+                                .unwrap()
+                                .unwrap();
+                            let delivery: Delivery =
+                                serde_json::from_value(effect.payload).unwrap();
+                            if matches!(
+                                delivery.output,
+                                DeliveryOutput::Effect {
+                                    kind: tl3_kernel::EffectKind::Enqueue,
+                                    ..
+                                }
+                            ) {
+                                key = Some(pending.to_owned());
+                                panic!("TD pause before handoff dispatch");
+                            }
+                        })
+                        .unwrap()
+                );
+            }
+        }));
+        let error = paused.expect_err("must reach the actual handoff dispatch");
+        assert_eq!(
+            error.downcast_ref::<&str>(),
+            Some(&"TD pause before handoff dispatch")
+        );
+        let key = key.unwrap();
+        let snapshot = controller.snapshot().unwrap();
+        let effect = snapshot
+            .pending_effects
+            .iter()
+            .find(|effect| effect.key == key)
+            .unwrap();
+        let delivery: Delivery = serde_json::from_value(effect.payload.clone()).unwrap();
+        assert_eq!(effect.state, EffectState::Sent);
+        let before = controller.world().unwrap();
+        before.check().unwrap();
+        assert_eq!(before.nodes[0].phase, tl3_kernel::Phase::Publishing);
+        let mut accepted = Completion::confirmed(vec![]);
+        accepted.ack = Ack::DeliveryAccepted;
+
+        assert!(
+            controller
+                .prepare_completion(&snapshot, &key, Completion::confirmed(vec![]))
+                .is_err()
+        );
+        let mut wrong = snapshot.clone();
+        let mut wrong_delivery = delivery.clone();
+        if let DeliveryOutput::Effect { kind, .. } = &mut wrong_delivery.output {
+            *kind = tl3_kernel::EffectKind::PostApproval;
+        }
+        wrong
+            .pending_effects
+            .iter_mut()
+            .find(|effect| effect.key == key)
+            .unwrap()
+            .payload = json!(wrong_delivery);
+        assert!(
+            controller
+                .prepare_completion(&wrong, &key, accepted.clone())
+                .is_err()
+        );
+        let mut stale = snapshot.clone();
+        stale.pending_effects.retain(|effect| effect.key != key);
+        assert!(
+            controller
+                .prepare_completion(&stale, &key, accepted.clone())
+                .is_err()
+        );
+        assert_eq!(
+            controller.snapshot().unwrap(),
+            snapshot,
+            "refused receipts must not write"
+        );
+
+        if cancel {
+            assert!(
+                tl3_store::ConsoleCommands::open(&settings)
+                    .unwrap()
+                    .submit(
+                        "00000000-0000-4000-8000-000000000001",
+                        0,
+                        &json!({"kind": "stop"})
+                    )
+                    .unwrap()
+            );
+            ingress::drain(&mut controller).unwrap();
+            assert!(controller.drive_once().unwrap());
+            let cancelling = controller.snapshot().unwrap();
+            assert_eq!(
+                cancelling
+                    .pending_effects
+                    .iter()
+                    .find(|effect| effect.key == key)
+                    .unwrap()
+                    .state,
+                EffectState::Cancelling
+            );
+            for completion in [Completion::confirmed(vec![]), accepted.clone()] {
+                let commit = controller
+                    .prepare_completion(&cancelling, &key, completion)
+                    .unwrap();
+                assert!(!commit.rows.iter().any(|row| matches!(row,
+                    RowChange::Put { table, id: row_id, .. } if table == "watches" && row_id == &key)),
+                    "cancelling receipts must not recreate a watch");
+            }
+        } else {
+            let commit = controller
+                .prepare_completion(&snapshot, &key, accepted.clone())
+                .unwrap();
+            assert!(
+                commit
+                    .transitions
+                    .iter()
+                    .any(|transition| transition.key == key
+                        && transition.from == EffectState::Sent
+                        && transition.to == EffectState::Confirmed)
+            );
+            let expected = hydrate(effect, &snapshot).unwrap();
+            assert!(
+                expected.pull_request.is_some(),
+                "published PR must be hydrated before waiting"
+            );
+            assert_eq!(expected.head_sha, delivery.head_sha);
+            assert!(commit.rows.iter().any(|row| matches!(row,
+                RowChange::Put { table, id: row_id, value } if table == "watches" && row_id == &key && *value == json!(expected))));
+        }
+        controller.complete(&key, accepted).unwrap();
+        let after = controller.world().unwrap();
+        after.check().unwrap();
+        if cancel {
+            // The receipt cannot rearm a watch. Existing watches retire through
+            // the real dispatch loop after cancellation has settled.
+            for _ in 0..300 {
+                let current = controller.snapshot().unwrap();
+                if !current
+                    .rows
+                    .iter()
+                    .any(|row| row.table == "watches" && row.id == key)
+                {
+                    break;
+                }
+                assert_ne!(
+                    controller.world().unwrap().nodes[0].phase,
+                    tl3_kernel::Phase::AwaitingDelivery
+                );
+                assert!(controller.drive_once().unwrap());
+            }
+            controller.world().unwrap().check().unwrap();
+        }
+        let retained = controller.snapshot().unwrap();
+        if cancel {
+            assert_ne!(after.nodes[0].phase, tl3_kernel::Phase::AwaitingDelivery);
+            assert!(
+                !retained
+                    .rows
+                    .iter()
+                    .any(|row| row.table == "watches" && row.id == key)
+            );
+        } else {
+            assert_eq!(
+                controller.effect(&key).unwrap().unwrap().state,
+                EffectState::Confirmed
+            );
+            assert_eq!(after.nodes[0].phase, tl3_kernel::Phase::AwaitingDelivery);
+            assert_eq!(after.nodes[0].generation, before.nodes[0].generation + 1);
+            assert_eq!(after.nodes[0].approved, before.nodes[0].approved);
+            assert_eq!(after.nodes[0].footprint, before.nodes[0].footprint);
+            assert!(
+                !after.nodes[0].holds && !after.nodes[0].pool && after.nodes[0].effect.is_none()
+            );
+            let watch = retained
+                .rows
+                .iter()
+                .find(|row| row.table == "watches" && row.id == key)
+                .unwrap();
+            let hydrated: Delivery = serde_json::from_value(watch.value.clone()).unwrap();
+            assert!(hydrated.pull_request.is_some());
+            assert_eq!(hydrated.head_sha, delivery.head_sha);
+            assert_eq!(hydrated.generation, delivery.generation);
+        }
+    }
+}
+
 struct Refusing {
     fake: adapters::github::Fake,
     class: &'static str,

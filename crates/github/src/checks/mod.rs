@@ -5,17 +5,10 @@ mod verification;
 
 pub mod check;
 pub mod required;
-pub use check::{App, CheckView, Conclusion, Head, Name, Status, Time};
+pub use check::{App, CheckView, Conclusion, Head, Status, Time};
 
 use crate::CheckRun;
 use std::collections::BTreeMap;
-
-/// The check run Mergify's GitHub App posts for a queued PR.
-pub const QUEUE_CHECK: &str = "Mergify Merge Queue";
-/// The check run for TL3's queue rule.
-pub const QUEUE_RULE_CHECK: &str = "Rule: Queue TL3-approved PRs (queue)";
-pub const MERGIFY_APP_ID: u64 = 10562;
-pub const MERGIFY_APP_SLUG: &str = "mergify";
 
 /// Parse check runs into the core's views at the adapter boundary. `head` is
 /// the commit the caller reads; `required` marks the caller's required
@@ -45,7 +38,6 @@ pub fn views(
                 },
                 app: App::parse(check.app.as_ref().map(|app| (app.id, app.slug.as_str()))),
                 app_key,
-                name: Name::parse(&check.name),
                 name_key,
                 required: required(check),
                 status: Status::parse(&check.status),

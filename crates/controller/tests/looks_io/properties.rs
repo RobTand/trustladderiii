@@ -69,7 +69,7 @@ fn mandatory_maintenance_postmortem_notice() {
         assert_eq!(state(&r)["incident"], Value::Null);
     }
 }
-/// Preserved existing behaviour (no rule): a healthy GET cannot clear a refused queue command.
+/// Preserved existing behaviour (no rule): a healthy GET cannot clear a retained publication refusal.
 #[test]
 fn mandatory_refused_command_hold() {
     let r = io::compare(&Schedule {
@@ -231,81 +231,71 @@ fn source_pins_and_production_copies() {
             function(include_str!("current.rs"), name, false)
         );
     }
-    for (source, copy) in [
-        (base, include_str!("reference.rs")),
-        (
-            include_str!("../../src/looks.rs"),
-            include_str!("current.rs"),
-        ),
+    // The immutable source pin above still binds every historical statement.
+    // TD adapts the expanded reference only at the receipt, queue-deletion and
+    // scripted quota projection boundaries documented in the exact delta map.
+    assert_eq!(
+        format!("{:x}", Sha256::digest(include_bytes!("reference.rs"))),
+        "d8ae723fb4b371fa0723c78e9ee8618ea3dc27c5cadfeed048fd1cf819197e90"
+    );
+    let source = include_str!("../../src/looks.rs");
+    let copy = include_str!("current.rs");
+    for name in [
+        "look_state",
+        "look_alive",
+        "finish_stall",
+        "rearm",
+        "look_failed",
+        "look_observations",
+        "probe_passed",
+        "save_allowance",
+        "allowance_row",
+        "progress_allowance",
+        "quota_allowance",
+        "expire_model_quotas",
     ] {
-        for name in [
-            "look_state",
-            "look_alive",
-            "finish_stall",
-            "rearm",
-            "look_failed",
-            "look_observations",
-            "probe_passed",
-            "save_allowance",
-            "allowance_row",
-            "record_progress",
-            "progress_allowance",
-            "quota_allowance",
-            "expire_model_quotas",
-        ] {
-            let frozen = match name {
-                "look_state" => {
-                    // FX adds only Flux routing to this otherwise frozen extraction.
-                    if source != base {
-                        let old = function(copy, name, true).replace(
-                            r#"matches!(wait.upstream.as_str(), "prismabuild" | "flux")"#,
-                            r#"wait.upstream == "prismabuild""#,
-                        );
-                        assert_eq!(
-                            format!("{:x}", Sha256::digest(old.as_bytes())),
-                            "a9c9ec39cc5c88298ca802e01a5a4aee810d0f260dbedccfee4a24703b8016d1"
-                        );
-                    }
-                    Some("083f35cccd402e981d106410768f2f062dd1aa49c327836f1bbf8d63f1b7ef29")
-                }
-                "look_observations" => {
-                    Some("1a991da694bcffaf150cb7de7e62345efda6f2ca2bce8252f1fd462433a83c2f")
-                }
-                "quota_allowance" => {
-                    Some("110744e12e5b6193b0c1753b4b1d140b92b246a5e5b33807367ab975c0a52aed")
-                }
-                _ => None,
-            };
-            if source != base
-                && let Some(digest) = frozen
-            {
-                assert_eq!(
-                    format!("{:x}", Sha256::digest(function(copy, name, true))),
-                    digest,
-                    "{name}"
-                );
-            } else {
-                assert_eq!(
-                    function(source, name, true),
-                    function(copy, name, true),
-                    "{name}"
-                );
-            }
-        }
-        for name in [
-            "incident_needs_rob",
-            "incident_id",
-            "incident_note",
-            "failure_class",
-            "incident_summary",
-            "queue_command_detail",
-        ] {
+        if name == "quota_allowance" {
             assert_eq!(
-                function(source, name, false),
-                function(copy, name, false),
+                format!("{:x}", Sha256::digest(function(copy, name, true))),
+                "110744e12e5b6193b0c1753b4b1d140b92b246a5e5b33807367ab975c0a52aed"
+            );
+        } else {
+            assert_eq!(
+                function(source, name, true),
+                function(copy, name, true),
                 "{name}"
             );
         }
+    }
+    for name in [
+        "incident_needs_rob",
+        "incident_id",
+        "incident_note",
+        "failure_class",
+        "incident_summary",
+    ] {
+        assert_eq!(
+            function(source, name, false),
+            function(copy, name, false),
+            "{name}"
+        );
+    }
+    // All unmodified reference methods still compare directly to their source.
+    for name in [
+        "finish_stall",
+        "rearm",
+        "probe_passed",
+        "save_allowance",
+        "allowance_row",
+        "progress_allowance",
+        "quota_allowance",
+        "expire_model_quotas",
+    ] {
+        assert_eq!(
+            function(base, name, true),
+            function(include_str!("reference.rs"), name, true),
+            "{name}"
+        );
     }
 }
 
@@ -350,9 +340,9 @@ fn mandatory_reprobe_and_probe_outcomes() {
 #[test]
 fn mandatory_worker_and_queue_stalls() {
     for (worker, progress, expected) in [
-        (true, false, "no_progress"),
-        (false, false, "queue_unfinished"),
-        (false, true, "queue_requeue"),
+        (true, false, json!("no_progress")),
+        (false, false, Value::Null),
+        (false, true, Value::Null),
     ] {
         let r = io::compare(&Schedule {
             worker,
@@ -362,7 +352,10 @@ fn mandatory_worker_and_queue_stalls() {
         });
         assert_eq!(state(&r)["failure"], expected);
         assert_eq!(r.trace.iter().any(|(op, _)| op == "stop_stalled"), worker);
-        assert_eq!(r.trace.iter().any(|(op, _)| op == "observe"), !worker);
+        assert!(!r.trace.iter().any(|(op, _)| op == "observe"));
+        if worker {
+            assert!(r.trace.iter().any(|(op, _)| op == "queue_observation"));
+        }
     }
 }
 
@@ -399,7 +392,13 @@ fn mandatory_kernel_incident_probe_clearance() {
 #[test]
 fn mandatory_stall_transition_persists() {
     let r = io::compare(&Schedule {
-        entries: vec![Entry::Alive(false), Entry::Alive(false)],
+        worker: true,
+        entries: vec![
+            Entry::Alive(false),
+            Entry::DrainObservations,
+            Entry::Alive(false),
+            Entry::DrainObservations,
+        ],
         ..Schedule::default()
     });
     let kernel: Value = serde_json::from_slice(&r.files["kernel-state"]).unwrap();
@@ -407,9 +406,10 @@ fn mandatory_stall_transition_persists() {
     assert_eq!(kernel["run_incidents"], 1);
     assert!(r.files.keys().any(|key| key.starts_with("kernel-output/")));
     let held = io::compare(&Schedule {
+        worker: true,
         incident: true,
         kernel_incident: true,
-        entries: vec![Entry::Alive(false)],
+        entries: vec![Entry::Alive(false), Entry::DrainObservations],
         ..Schedule::default()
     });
     let kernel: Value = serde_json::from_slice(&held.files["kernel-state"]).unwrap();

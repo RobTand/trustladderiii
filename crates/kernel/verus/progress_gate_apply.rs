@@ -42,7 +42,7 @@ pub(super) open spec fn gate_world(w: World) -> bool {
 
 /// State-table Queued merge row: exactly the unobstructed original merge input.
 pub(super) open spec fn merge_input(w: World) -> bool {
-    gate_world(w) && w.nodes@[0].phase == Phase::Queued && !w.nodes@[0].paused
+    gate_world(w) && w.nodes@[0].phase == Phase::AwaitingDelivery && !w.nodes@[0].paused
         && w.nodes@[0].effect.is_none() && !w.nodes@[0].waiting_incident
         && w.nodes@[0].question.is_none()
 }
@@ -84,7 +84,7 @@ pub(super) open spec fn resume_apply_post(before: World, after: World, event: Ev
 pub(super) open spec fn resume_input(w: World) -> bool {
     let n = w.nodes@[0];
     gate_world(w) && n.paused && matches!(n.phase,
-        Phase::Ready(Resume::Making) | Phase::Queued | Phase::Making | Phase::Unplanned)
+        Phase::Ready(Resume::Making) | Phase::Rebasing | Phase::Making | Phase::Unplanned)
 }
 
 /// #771 / #806: original small construction implies headroom and indexed edges.
