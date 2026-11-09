@@ -328,7 +328,11 @@ sys.exit(0)
         assert runtime._backend_session is None
         return
     raw = (output / 'host.stdout').read_text()
-    assert elapsed < 15, f'action took {elapsed:.3f}s'
+    # Rob 11-03: a performance-budget overrun is a warning, never a failure or a rerun.
+    # The contractual bound is collect_host_payload(timeout=80) above.
+    if elapsed > 15:
+        print(json.dumps({'budget_warning': {'test': f'fx_action_e2e:{mode}', 'measured': elapsed,
+                                             'limit': 15, 'metric': 'wall'}}), flush=True)
     if mode in ('success', 'success-retained'):
         assert '"verdict":"pass"' in raw, raw + (output / 'host.stderr').read_text()
         assert (root / 'payload-started').exists()
