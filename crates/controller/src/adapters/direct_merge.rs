@@ -1019,6 +1019,11 @@ impl Executor for Adapter {
         Ok(Look::Found(Box::new(completion)))
     }
     fn reconcile_cancellation(&mut self, d: &Delivery) -> Result<Reconciliation> {
+        // An authenticated merge receipt can arrive before the handoff is
+        // acknowledged; like `attempt`, prefer it to a fresh GitHub read.
+        if let Some(merged) = self.recorded(d)? {
+            return Ok(Reconciliation::Found(Box::new(self.merged(d, merged)?)));
+        }
         let github = self.client(d)?;
         let pull = self
             .runtime
