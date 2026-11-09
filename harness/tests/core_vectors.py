@@ -173,6 +173,12 @@ def cases(kind):
         yield 'identity-compaction', {'op': 'summary', 'limit': 1000, 'selectors': [NODE + 'x' * 2000],
                                      'entries': [{'test': NODE + 'x' * 2000, 'outcome': 'passed', 'message': ''}]}
         yield 'identity-cannot-fit', {'op': 'summary', 'limit': 500, 'immutable': 'x' * 1000, 'entries': []}
+        # S4 (PB-REMOVAL): the identity diagnostic cites the Flux wait reference, never a PB action key.
+        yield 'identity-cannot-fit-keeps-wait-reference', {
+            'op': 'envelope', 'limit': 900,
+            'result': {'status': 'completed', 'tests': [], 'note': '', 'immutable': 'x' * 1000,
+                       'totals': {'passed': 0, 'failed': 0, 'error': 0, 'skipped': 0},
+                       'wait_reference': 'c' * 64, 'action_key': 'b' * 64, 'receipts': ['receipt']}}
         group = {'status': 'completed', 'tests': [{'test': str(i), 'outcome': o, 'message': 'failure' * 80}
                  for i, o in enumerate(['failed', 'passed', 'error', 'passed'])],
                  'totals': {'passed': 2, 'failed': 1, 'error': 1, 'skipped': 0}, 'note': '',
