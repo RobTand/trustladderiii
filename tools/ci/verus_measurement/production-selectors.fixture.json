@@ -1,9 +1,9 @@
 {
-  "source_head": "285da02f910d21e3054698fa53824fd8b4a5ccd5",
+  "source_head": "23aedaf6d94b6ed04278cb90fd4885171d6441ce",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "eed294d87d723b954d9917ef4efa9f91989eabb6d4f1814726f99a35605185f9",
+  "source_sha256": "e325ae6f51a3cb54a7ac9024192d576e333af685b66add8b12a4c6c64347eea5",
   "groups": 436,
-  "obligations": 647,
+  "obligations": 648,
   "selections": [
     {
       "target": "//crates/kernel:verus_dependencies_node_update_preserves",
@@ -398,7 +398,7 @@
     {
       "target": "//crates/kernel:verus_internal_safety",
       "selector": "kernel::internal_safety",
-      "expected": 6
+      "expected": 7
     },
     {
       "target": "//crates/kernel:verus_kernel_outbox_occupied",
