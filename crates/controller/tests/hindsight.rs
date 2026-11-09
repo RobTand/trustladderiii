@@ -118,7 +118,7 @@ impl Fixture {
         })).unwrap()).unwrap();
         fs::write(attempt.join("memory.json"), serde_json::to_vec(&json!({
             "activity": {"files_read": ["greeting.py"], "files_changed": ["greeting.py"],
-                "tests": [{"action_key": "pb-fixture-action", "status": "completed", "totals": {"passed": 2}}]},
+                "tests": [{"wait_reference": "worker:9d3e8f1c4a6b02d57e90c183ab64f27018d4ce39a6025b78f3d91ac04e67b258", "status": "completed", "totals": {"passed": 2}}]},
             "reply": reply, "outcome": "succeeded", "reason": null
         })).unwrap()).unwrap();
         fs::write(attempt.join("exit.json"), r#"{"code":0}"#).unwrap();
@@ -168,8 +168,8 @@ fn one_record_per_role_with_inputs_activity_reply_and_outcome() {
         assert_eq!(record["inputs"]["goals"][0], "Fix greeting");
         assert_eq!(record["activity"]["files_read"][0], "greeting.py");
         assert_eq!(
-            record["activity"]["tests"][0]["action_key"],
-            "pb-fixture-action"
+            record["activity"]["tests"][0]["wait_reference"],
+            "worker:9d3e8f1c4a6b02d57e90c183ab64f27018d4ce39a6025b78f3d91ac04e67b258"
         );
         assert_eq!(record["reply"]["summary"], "Fixed greeting");
         assert_eq!(record["outcome"], "succeeded");
@@ -570,9 +570,9 @@ fn record_limit_uses_postgres_jsonb_text_size() {
 }
 
 #[test]
-fn public_action_ids_survive_only_in_structured_test_activity() {
+fn public_wait_references_survive_only_in_structured_test_activity() {
     let f = Fixture::new();
-    let public_id = "9d3e8f1c4a6b02d57e90c183ab64f27018d4ce39a6025b78f3d91ac04e67b258";
+    let public_id = "worker:9d3e8f1c4a6b02d57e90c183ab64f27018d4ce39a6025b78f3d91ac04e67b258";
     let bare_secret = "f9c83a01b647de2390abc81456fed279";
     let attempt = f.attempt(
         "audit",
@@ -582,7 +582,9 @@ fn public_action_ids_survive_only_in_structured_test_activity() {
     );
     let path = attempt.join("memory.json");
     let mut summary: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    summary["activity"]["tests"][0]["action_key"] = json!(public_id);
+    summary["activity"]["tests"][0]["wait_reference"] = json!(public_id);
+    // No compat: a retired PrismaBuild action ID gets no exemption.
+    summary["activity"]["tests"][0]["action_key"] = json!(bare_secret);
     fs::write(path, summary.to_string()).unwrap();
     memory::queue_attempt(&mut f.store(), "public-action-id", &attempt).unwrap();
     assert_eq!(f.flush(), 1);
@@ -594,9 +596,10 @@ fn public_action_ids_survive_only_in_structured_test_activity() {
     )
     .unwrap();
     assert_eq!(
-        record["activity"]["tests"][0]["action_key"], public_id,
-        "PrismaBuild action IDs are public identifiers in structured test results"
+        record["activity"]["tests"][0]["wait_reference"], public_id,
+        "native worker wait references are public identifiers in structured test results"
     );
+    assert!(record["activity"]["tests"][0].get("action_key").is_none());
     for secret in [
         bare_secret,
         "fixture-input-secret",
