@@ -110,7 +110,7 @@ reserves allow a cold call because compaction or removal of tools may invalidate
 the cache. An original input larger than the entire allowance fails with a
 fixed diagnostic naming the role.
 
-The allowances retain headroom above the recorded PrismaBuild paths. Ingest
+The allowances retain headroom above the recorded request paths. Ingest
 #1968 used four exploration turns and 447,698 raw input tokens with a 101,064
 peak context. With a reusable prefix, most of the later input costs 0.1 times
 its raw size; 300k still permits a cold initial call and reserved final answer.
@@ -177,17 +177,18 @@ An outside job declares its owner and durable key before blocking:
 
 `run_tests` and `run_generator` emit this event before each attach to the run,
 including a reattachment. A declaration does not count as agent work. The next `model_turn` or
-`tool_result` clears it. Only `prismabuild` has a record reader today. Its keys
-require 64 lowercase hexadecimal digits. Unknown owners cannot grant liveness.
+`tool_result` clears it. Workers declare only `flux` waits. Their keys are
+`worker:` followed by 64 lowercase hexadecimal digits. Unknown owners cannot
+grant liveness.
 
 The supervisor persists the declaration with the output offset and attempt.
-A restart preserves it without refreshing agent progress. The look reads
-PrismaBuild's action record and verifies that `checkout_snapshot.parent` is an
-ancestor of HEAD in the declaring run's worktree. A wait whose action has
-unrelated lineage gives no liveness. This check cannot distinguish sibling runs
-from the same base. Git runs with `GIT_NO_LAZY_FETCH=1` so the worktree cannot
-trigger an implicit fetch. Missing actions give no liveness. Read or parse errors
-remain outages.
+A restart preserves it without refreshing agent progress. The look loads the
+retained worker run for the key, validates it against the declaring run's
+checkout, and reads the Flux backend's liveness for the run's owner. The live
+run must be the retained run binding. A committed terminal that matches the
+journal ends the wait. A fresh native observation of a queued, running or
+finishing run keeps it alive. Anything else is uncertain: the look retains the
+binding and inputs and grants no liveness.
 
 Maker looks use the served checkout, including after recovery or a `RunFailed`
 retry. The private `run_tests` input retains that checkout's HEAD as its parent.
@@ -197,12 +198,11 @@ because that snapshot needs it, so every `run_tests` copies that
 history. Its Git commands run with a fixed environment that inherits nothing
 from the worker's, so no `GIT_*` setting or hook can change what gets staged.
 
-Queued or claimed actions keep the agent alive. The controller registers their
-keys with PrismaBuild's bell source and disarms the agent's allowance timer.
-Without an event, it reads no action record and commits no wait state. An ending,
-loss or withdrawal requests a look. A bell reset rereads the record and requests
-a look only if the record has ended or errored. Missing records also count as
-ended. The first ending starts the agent's own no-progress allowance once.
+Queued or running worker runs keep the agent alive. The controller watches the
+retained run's owner through the Flux backend and disarms the agent's allowance
+timer. Without an event, it reads no run record and commits no wait state. An
+ending, loss or withdrawal requests a look. The first ending starts the agent's
+own no-progress allowance once.
 Progress, replacement and completion remove the subscription.
 
 Exactly one reply ends a successful run, followed by exit 0. Any other exit is
@@ -557,16 +557,15 @@ bytes, then returns at most 20 memories, 4,096 characters per memory, and
 
 ## Evaluate the comment classifier
 
-Submit one pass through PrismaBuild from a clean commit. The key file is only
-on dl380g10, so this live action requires `--tag dl380g10`:
+Run one pass from a clean commit as a Flux job on dl380g10, where the key file
+is. Give the job 2 cores and an explicit environment: start from `--env=-*`,
+because Flux otherwise copies the caller's whole environment into the jobspec,
+then allow only `PATH=/home/rob/.local/bin:/usr/local/bin:/usr/bin:/bin`,
+`OMP_NUM_THREADS=1`, `MKL_NUM_THREADS=1`, `OPENBLAS_NUM_THREADS=1`,
+`UV_CONCURRENT_DOWNLOADS=2` and `UV_CONCURRENT_BUILDS=2`. The job runs:
 
 ```sh
-python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
-  --cwd "$PWD" --tag dl380g10 --cpus 2 --demand mem_gb=4 --priority -10 \
-  --env PATH=/home/rob/.local/bin:/usr/local/bin:/usr/bin:/bin \
-  --env OMP_NUM_THREADS=1 --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 \
-  --env UV_CONCURRENT_DOWNLOADS=2 --env UV_CONCURRENT_BUILDS=2 --detach -- \
-  /home/rob/.local/bin/uv run --project workers --locked --no-editable \
+/home/rob/.local/bin/uv run --project workers --locked --no-editable \
   --python 3.14+gil python -m tl3_workers.classifier_eval \
   --config /home/rob/.config/tl3/tl3.toml
 ```
@@ -601,7 +600,7 @@ even if the reply fails the state contract. Exit 0 means every label matched
 and every usage record arrived. Exit 1 means ordinary misses. Exit 2 means
 setup or report writing failed. Exit 3 means any destructive miss or missing
 usage. `--output FILE` also saves the full JSON report.
-Retain it with the PrismaBuild logs. The report itself isn't imported into
+Retain it with the Flux job's output. The report itself isn't imported into
 MLflow.
 
 ## MLflow traces
