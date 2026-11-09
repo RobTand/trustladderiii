@@ -4858,8 +4858,31 @@ fn generator_no_container_failure_refuses_forged_and_unproven_closure() {
                 "{case}: scratch debt not retained"
             );
         }
-        // Unproven cleanup keeps the runtime gate closed for every other owner.
-        let held = distinct_owner_submit(&f, "held");
-        assert_eq!(held.last().unwrap()["kind"], "error", "{case}: {held:?}");
+        let next = distinct_owner_submit(&f, "next");
+        if case == "conflicting-native-exit" {
+            // Classification stays fail-closed (Unknown, no receipt), but cleanup is
+            // proven: no executions, native clean, own scratch absent. No debt is
+            // held for this owner and the runtime gate admits the next owner.
+            assert!(
+                cleanup_debts(&f).is_empty(),
+                "{case}: {:?}",
+                cleanup_debts(&f)
+            );
+            assert_eq!(
+                next.last().unwrap()["result"]["submission"]["kind"],
+                "accepted",
+                "{case}: {next:?}"
+            );
+        } else {
+            // Unproven cleanup keeps the runtime gate closed for every other owner.
+            assert!(!cleanup_debts(&f).is_empty(), "{case}: debt not retained");
+            assert_eq!(next.last().unwrap()["kind"], "error", "{case}: {next:?}");
+            assert!(
+                json!(next)
+                    .to_string()
+                    .contains("unresolved runtime cleanup debt"),
+                "{case}: {next:?}"
+            );
+        }
     }
 }
