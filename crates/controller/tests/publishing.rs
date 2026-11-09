@@ -1079,7 +1079,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
             },
         )
         .unwrap();
-        // Consuming the final input must still reach an idle Queued node within budget.
+        // Consuming the final input must still reach an idle AwaitingDelivery node within budget.
         drain(&mut c, &mut source, &mut store, Phase::AwaitingDelivery);
         assert!(
             c.snapshot()
@@ -1177,7 +1177,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         git(&f.source, &["push", f.remote.to_str().unwrap(), "main"]);
         {
             let mut state = server.api.state.lock().unwrap();
-            state.delivery_fixture = "dequeued";
+            state.delivery_fixture = "running";
             state.mergeable_override = Some(false);
             let pull = state.pull.as_mut().unwrap();
             pull["mergeable"] = json!(false);
@@ -1255,7 +1255,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
         git(&f.source, &["push", f.remote.to_str().unwrap(), "main"]);
         {
             let mut state = server.api.state.lock().unwrap();
-            state.delivery_fixture = "dequeued";
+            state.delivery_fixture = "running";
             let pull = state.pull.as_mut().unwrap();
             pull["mergeable"] = json!(false);
             pull["mergeable_state"] = json!("dirty");

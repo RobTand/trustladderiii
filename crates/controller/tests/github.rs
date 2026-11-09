@@ -1877,7 +1877,7 @@ fn parsed_deliveries_and_translators(settings: &tl3_config::Store) {
     }
     let mut controller = controller(settings, root.path(), &api.uri());
     let calls = Arc::new(Mutex::new(vec![]));
-    controller.register_github_translator("mergify-test", RecordingTranslator(calls.clone()));
+    controller.register_github_translator("recording-test", RecordingTranslator(calls.clone()));
     controller.register_github_translator("retry-test", TransientOnce(true));
     ingress::drain(&mut controller).unwrap();
     assert_eq!(calls.lock().unwrap().len(), 7);
@@ -1940,7 +1940,7 @@ fn parsed_deliveries_and_translators(settings: &tl3_config::Store) {
     assert!(store.ingress_after(0).unwrap().is_empty());
     drop(controller);
     let mut restored = self::controller(settings, root.path(), &api.uri());
-    restored.register_github_translator("mergify-test", RecordingTranslator(calls.clone()));
+    restored.register_github_translator("recording-test", RecordingTranslator(calls.clone()));
     drain(&mut restored);
     assert_eq!(
         calls.lock().unwrap().len(),
@@ -2002,7 +2002,7 @@ fn catch_up_preserves_evidence(settings: &tl3_config::Store) {
     assert!(store.ingress_cursor("github-catch-up").unwrap().is_some());
     let mut controller = controller(settings, root.path(), &api.uri());
     let calls = Arc::new(Mutex::new(vec![]));
-    controller.register_github_translator("mergify-test", RecordingTranslator(calls.clone()));
+    controller.register_github_translator("recording-test", RecordingTranslator(calls.clone()));
     drain(&mut controller);
     assert!(
         matches!(&calls.lock().unwrap()[0], GitHubDelivery::CatchUp { changes, .. } if changes.check_runs.len() == 1 && changes.check_suites.len() == 1 && changes.pull_requests.len() == 1)

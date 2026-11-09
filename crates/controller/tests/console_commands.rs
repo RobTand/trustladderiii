@@ -757,7 +757,7 @@ fn tl3d_wakes_for_a_filed_command() {
     let root = tempfile::tempdir().unwrap();
     let records = root.path().join("records");
     std::fs::create_dir_all(&records).unwrap();
-    // The request waits in the merge queue, so it stays open to pause.
+    // The request awaits delivery, so it stays open to pause.
     std::fs::write(records.join("hold-merges"), "hold").unwrap();
     let config = include_str!("../../config/example.toml")
         .replace("port = 5432", &format!("port = {}", settings.port))
