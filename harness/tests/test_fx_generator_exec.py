@@ -55,7 +55,10 @@ print('generated ok', flush=True)
 '''
 
 
-def write_podman(root, image):
+CGROUP = '0::/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/shell-fABC:sys.service\n'
+
+
+def write_podman(root, image, cgroup='0::/fixture\n'):
     """Emulates Podman plus /harness/runtime_evidence.py's gate. It refuses unowned launches."""
     podman = Path(root) / 'podman'
     podman.write_text(f'''#!{sys.executable}
@@ -78,7 +81,7 @@ if args[:1] == ['run']:
     status = pathlib.Path('/proc/self/status').read_text()
     allowed = next(line.split(':', 1)[1].strip() for line in status.splitlines()
                    if line.startswith('Cpus_allowed_list:'))
-    print('TL3_RUNTIME_EVIDENCE ' + json.dumps({{'Cpus_allowed_list': allowed, 'cgroup': '0::/fixture\\n'}}),
+    print('TL3_RUNTIME_EVIDENCE ' + json.dumps({{'Cpus_allowed_list': allowed, 'cgroup': {cgroup!r}}}),
           file=sys.stderr, flush=True)
     if os.read(0, 1) != b'\\x01':
         sys.exit(125)
@@ -444,15 +447,33 @@ def driver():
                                           mode='in_job', executable=podman, **kwargs)
 
         runtime.command = command
+        request = runtime.backend_request
+
+        def trusted_stop(command, **kwargs):
+            # The Rust fixture cleanup helper replays these observations, as in fx_action_e2e.
+            if command['op'] == 'cleanup_runtime':
+                state = json.loads((root / 'journal' / os.environ['TL3_RUN_CORRELATION'] / 'state.json').read_text())
+                owned = {item['execution'] for item in state['runtime_ownerships']}
+                for item in state['runtime_ownerships']:
+                    facts = runtime.cleanup_observations(item, podman=str(podman), systemctl='/unused-fixture', timeout=1)
+                    (output / ('trusted-stop-' + item['execution'] + '.json')).write_text(json.dumps(facts))
+                for launch in state['container_launches'].values():
+                    if launch['launcher']['execution'] not in owned:
+                        facts = runtime.cleanup_observations(launch['launcher'], launch=launch, podman=str(podman),
+                                                             systemctl='/unused-fixture', timeout=1)
+                        (output / ('trusted-stop-' + launch['launcher']['execution'] + '.json')).write_text(
+                            json.dumps(facts))
+            return request(command, **kwargs)
+
+        runtime.backend_request = trusted_stop
         snapshot = runtime.Evidence.host_snapshot
-        runtime.Evidence.host_snapshot = staticmethod(lambda: {**snapshot(), 'hostname': 'dl380g10',
-            'cgroup': '0::/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/shell-fABC:sys.service\n'})
+        runtime.Evidence.host_snapshot = staticmethod(lambda: {**snapshot(), 'hostname': 'dl380g10', 'cgroup': CGROUP})
         (output / 'action-pid.json').write_text(json.dumps({'pid': os.getpid()}))
         os.chdir(root / 'generator-work')
         sys.argv = ['generator', settings['image']]
         generator.main()
         return
-    write_podman(root, settings['image'])
+    write_podman(root, settings['image'], CGROUP)
     pus = ','.join(map(str, sorted(os.sched_getaffinity(0))))
     (root / 'all.json').write_text(json.dumps({'version': 1, 'execution': {
         'R_lite': [{'rank': '0', 'children': {'core': '37'}}], 'nodelist': ['dl380g10']},
