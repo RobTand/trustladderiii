@@ -82,6 +82,11 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
         }
         Reply::MakerCantMeet => {
             next_rung(w, i, ReviewStop::MakerCantMeet, out, report);
+            kernel_proof! {
+                if !(before_work@.phase is Closed || before_work@.phase is Stopping) {
+                    handler_safety::rung_ladder(w.fail_fast, before_work@, w.nodes@[i as int], before_work_out@, *out);
+                }
+            }
             kernel_proof! { report::lemmas::round_delta(before_report@, report.entries@,
                 NodeId(i as u64), Some(FailedRoundCause::MakerCantMeet)); }
         }

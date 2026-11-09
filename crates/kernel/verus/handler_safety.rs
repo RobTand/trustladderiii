@@ -339,4 +339,16 @@ pub(super) proof fn failed_review_stop(b: Node, a: Node, bo: Outbox, ao: Outbox)
     reveal(retirement::incident);
 }
 
+
+/// next_rung's plain rows (design (3)): the caller forms the ladder row.
+pub(super) proof fn rung_ladder(fast: bool, b: Node, n: Node, ob: Outbox, oa: Outbox)
+    requires
+        fast ==> n.review_stop.is_some() && n.credit == b.credit && oa.len == ob.len
+            && n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none(),
+        !fast ==> transition_safety::retried(b, n) && n.review_stop == b.review_stop,
+    ensures ladder(fast, true, b, n, ob, oa),
+{
+    reveal(ladder);
+}
+
 }

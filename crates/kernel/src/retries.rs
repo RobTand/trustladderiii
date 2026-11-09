@@ -182,6 +182,11 @@ pub(super) fn failed_round(w: &mut World, i: usize, step: ReviewStop,
         kernel_snapshot! { before_rung_report = report.entries@ }
         next_rung(w, i, step, out, report);
         kernel_proof! {
+            if !(before_failed@.phase is Closed || before_failed@.phase is Stopping) {
+                handler_safety::rung_ladder(w.fail_fast, before_failed@, w.nodes@[i as int], before_failed_out@, *out);
+            }
+        }
+        kernel_proof! {
             report::lemmas::round_delta(before_rung_report@, report.entries@,
                 NodeId(i as u64),
                 if step == ReviewStop::MakerCantMeet { Some(FailedRoundCause::MakerCantMeet) }
@@ -213,10 +218,11 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-        !(old(w).nodes@[i as int].phase is Closed || old(w).nodes@[i as int].phase is Stopping) ==> handler_safety::ladder(old(w).fail_fast, true, old(w).nodes@[i as int], final(w).nodes@[i as int], *old(out), *final(out)),
+        !(old(w).nodes@[i as int].phase is Closed || old(w).nodes@[i as int].phase is Stopping) && old(w).fail_fast ==> final(w).nodes@[i as int].review_stop.is_some() && final(w).nodes@[i as int].credit == old(w).nodes@[i as int].credit
+            && final(out).len == old(out).len && final(w).nodes@[i as int].phase == Phase::Stopping(Outcome::Stopped)
+            && final(w).nodes@[i as int].question.is_none(),
+        !(old(w).nodes@[i as int].phase is Closed || old(w).nodes@[i as int].phase is Stopping) && !old(w).fail_fast ==> transition_safety::retried(old(w).nodes@[i as int], final(w).nodes@[i as int]) && final(w).nodes@[i as int].review_stop == old(w).nodes@[i as int].review_stop,
 ] proof [reveal(retry_bounds);] {
-    kernel_snapshot! { before_rung = w.nodes@[i as int] }
-    kernel_snapshot! { before_rung_out = *out }
     kernel_snapshot! { before_report = report.entries@ }
     if step == ReviewStop::MakerCantMeet {
         report.record_failed_round(NodeId(i as u64), FailedRoundCause::MakerCantMeet);
@@ -232,11 +238,6 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
     let m = &mut w.nodes[i];
     if fail_fast {
         stop_for_review(m, step);
-        kernel_proof! {
-            if !(before_rung@.phase is Closed || before_rung@.phase is Stopping) {
-                handler_safety::stop_ladder(before_rung@, step, before_rung_out@);
-            }
-        }
     } else if m.attempt < 3 {
         m.attempt += 1;
         m.review_restarted = false;
@@ -244,9 +245,6 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
         if m.credit.can_spend(1) {
             m.credit.spend(1);
             set_phase(m, if m.holds { Phase::Making } else { Phase::Ready(Resume::Making) });
-            kernel_proof! {
-                handler_safety::retry_ladder(before_rung@, w.nodes@[i as int], before_rung_out@, *out);
-            }
         } else {
             ask_rob(
                 w,
@@ -256,9 +254,6 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
                 1,
                 out,
             );
-            kernel_proof! {
-                handler_safety::retry_ladder(before_rung@, w.nodes@[i as int], before_rung_out@, *out);
-            }
         }
     } else if !m.replanned {
         m.replanned = true;
@@ -268,9 +263,6 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
             m.plan_retries = 0;
             set_phase(m, Phase::Planning { must_split: false });
             notice(out, i, Notice::Note(NoteKind::Replanned));
-            kernel_proof! {
-                handler_safety::retry_ladder(before_rung@, w.nodes@[i as int], before_rung_out@, *out);
-            }
         } else {
             ask_rob(
                 w,
@@ -280,15 +272,9 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
                 1,
                 out,
             );
-            kernel_proof! {
-                handler_safety::retry_ladder(before_rung@, w.nodes@[i as int], before_rung_out@, *out);
-            }
         }
     } else {
         ask_rob(w, i, QKind::CantMeet, Cont::Ready(Resume::Making), 1, out);
-        kernel_proof! {
-            handler_safety::retry_ladder(before_rung@, w.nodes@[i as int], before_rung_out@, *out);
-        }
     }
 }
 }
