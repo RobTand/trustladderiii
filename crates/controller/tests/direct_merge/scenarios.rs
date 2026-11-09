@@ -13,6 +13,17 @@ struct DirectState {
     reject_as_merged: bool,
     root: std::path::PathBuf,
     intent_roots: Vec<std::path::PathBuf>,
+    /// PR reads that fail with HTTP 502 once a durable acceptance exists.
+    fail_reads_after_acceptance: usize,
+    failed_reads: usize,
+    no_merge_method: bool,
+}
+fn accepted_records(root: &std::path::Path) -> Vec<Value> {
+    std::fs::read_dir(root).into_iter().flatten()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "accepted"))
+        .map(|path| serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap())
+        .collect()
 }
 #[derive(Clone)]
 struct DirectApi { base: Api, direct: Arc<Mutex<DirectState>> }
@@ -21,11 +32,17 @@ impl Respond for DirectApi {
         let path = request.url.path();
         let method = request.method.as_str();
         if method == "GET" && path == "/repos/owner/sandbox" {
-            return ResponseTemplate::new(200).set_body_json(json!({"allow_merge_commit":true,"allow_squash_merge":true,"allow_rebase_merge":true}));
+            let allowed = !self.direct.lock().unwrap().no_merge_method;
+            return ResponseTemplate::new(200).set_body_json(json!({"allow_merge_commit":allowed,"allow_squash_merge":allowed,"allow_rebase_merge":allowed}));
         }
         if method == "GET" && path == "/repos/owner/sandbox/pulls/100" {
             let mut direct = self.direct.lock().unwrap();
             direct.reads += 1;
+            if direct.fail_reads_after_acceptance > 0 && !accepted_records(&direct.root).is_empty() {
+                direct.fail_reads_after_acceptance -= 1;
+                direct.failed_reads += 1;
+                return ResponseTemplate::new(502);
+            }
             if direct.fail_read_after_put && !direct.puts.is_empty() { return ResponseTemplate::new(503); }
             let mut state = self.base.0.lock().unwrap();
             if direct.moved { state.pull["head"]["sha"] = json!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"); }
@@ -1299,4 +1316,199 @@ fn changed_head_after_durable_intent_process_crash_never_replays_put() {
     recovered.look_key(&delivery.key).unwrap();
     assert_eq!(r1_kernel_facts(&settings), before, "retired delivery cannot revive the old attempt");
     assert!(fixture.direct.lock().unwrap().puts.is_empty());
+}
+
+fn open_read_incidents(controller: &mut Controller) -> Vec<(String, Value)> {
+    controller.snapshot().unwrap().rows.into_iter()
+        .filter(|row| row.table == "incidents" && row.value["open"] == true && row.id.ends_with(".read"))
+        .map(|row| (row.id, row.value))
+        .collect()
+}
+/// Silence looks only: no webhook is delivered, so nothing new authorizes a PUT.
+fn look_until_read_incident(fixture: &DirectFixture, controller: &mut Controller) -> Vec<(String, Value)> {
+    for _ in 0..10 {
+        if !open_read_incidents(controller).is_empty() { break; }
+        fixture.clock.0.set(fixture.clock.0.get() + Duration::from_secs(2));
+        controller.look_due().unwrap();
+        drain(controller);
+    }
+    open_read_incidents(controller)
+}
+/// Stops the real Direct adapter just before it writes the durable acceptance,
+/// leaving the Publishing Enqueue handoff dispatched but never accepted.
+fn unaccepted_handoff(fixture: &DirectFixture, settings: &tl3_config::Store) -> Delivery {
+    let stop = direct_merge::WriteBoundary { write: direct_merge::Write::Acceptance, after: false };
+    let adapter = fixture.adapter(settings).with_write_boundary(move |boundary| {
+        if boundary == stop { panic!("fixture stops before durable acceptance"); }
+    });
+    let controller = fixture.open_adapter(settings, adapter);
+    let stopped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fixture.start_controller(settings, controller)));
+    assert!(stopped.is_err(), "the handoff must stop before durable acceptance");
+    let snapshot = Store::open(settings).unwrap().load().unwrap();
+    let effect = snapshot.pending_effects.iter()
+        .find(|effect| matches!(serde_json::from_value::<Delivery>(effect.payload.clone()).unwrap().output,
+            Out::Effect { kind: EffectKind::Enqueue, .. }))
+        .expect("pending Enqueue handoff");
+    let mut delivery: Delivery = serde_json::from_value(effect.payload.clone()).unwrap();
+    delivery.epoch = effect.epoch.get();
+    delivery.pull_request = Some(100);
+    assert!(accepted_records(&fixture.root.path().join("direct")).is_empty());
+    delivery
+}
+fn fresh_adapter(fixture: &DirectFixture, settings: &tl3_config::Store) -> direct_merge::Adapter {
+    direct_merge::Adapter::new(fixture.api.clients(), 0, &fixture.root.path().join("direct"), settings.clone()).unwrap()
+}
+
+/// Review MF1(a): a read that keeps failing after durable acceptance is a failed
+/// look. Q7 read accounting counts it and raises the `.read` incident; it is
+/// never turned into an uncounted acceptance.
+#[test]
+fn persistent_read_failure_after_acceptance_raises_read_incident() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_accepted_read_outage");
+    let fixture = DirectFixture::new();
+    fixture.direct.lock().unwrap().fail_reads_after_acceptance = usize::MAX;
+    let (mut controller, _) = fixture.start(&settings);
+    drain(&mut controller);
+    assert_eq!(accepted_records(&fixture.root.path().join("direct")).len(), 1, "the failure must follow durable acceptance");
+    let incidents = look_until_read_incident(&fixture, &mut controller);
+    assert_eq!(incidents.len(), 1, "a persistent read failure after acceptance must end in a read incident: world={:?}, rows={:?}",
+        controller.world().unwrap(),
+        controller.snapshot().unwrap().rows.iter().filter(|r| matches!(r.table.as_str(), "allowances" | "incidents")).collect::<Vec<_>>());
+    let (_, incident) = &incidents[0];
+    assert_eq!(incident["signature"]["upstream"], "Delivery");
+    assert!(fixture.direct.lock().unwrap().failed_reads >= 2);
+    let node = controller.world().unwrap().nodes[0];
+    assert_eq!(node.phase, Phase::Publishing, "a failed read is not an acknowledgement of the handoff");
+    assert_eq!(node.effect.map(|effect| effect.kind), Some(EffectKind::Enqueue));
+    assert!(fixture.direct.lock().unwrap().puts.is_empty());
+    assert!(controller.world().unwrap().valid());
+}
+
+/// Review MF1(b): one transient 5xx on the first attempt keeps the initial merge
+/// authorization. Once the read recovers the PR merges exactly once, with no
+/// new webhook.
+#[test]
+fn transient_read_failure_on_first_attempt_still_merges_once() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_accepted_transient_read");
+    let fixture = DirectFixture::new();
+    fixture.direct.lock().unwrap().fail_reads_after_acceptance = 1;
+    let (mut controller, delivery) = fixture.start(&settings);
+    drain(&mut controller);
+    for _ in 0..5 {
+        if controller.world().unwrap().nodes[0].phase == Phase::Closed(Outcome::Merged) { break; }
+        fixture.clock.0.set(fixture.clock.0.get() + Duration::from_secs(2));
+        controller.look_due().unwrap();
+        drain(&mut controller);
+    }
+    let direct = fixture.direct.lock().unwrap();
+    assert_eq!(direct.failed_reads, 1, "the first attempt must meet exactly one transient read failure");
+    assert_eq!(direct.puts.len(), 1, "the recovered read must merge exactly once without a new webhook: world={:?}", controller.world().unwrap());
+    assert_eq!(direct.puts[0]["sha"], json!(delivery.head_sha));
+    assert_eq!(direct.successes, 1);
+    drop(direct);
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged));
+    assert!(open_read_incidents(&mut controller).is_empty());
+}
+
+/// Review MF2(c): a fatal stored-state error raised after durable acceptance
+/// propagates. It is never converted into an acceptance and never consumes the
+/// merge authorization.
+#[test]
+fn fatal_stored_error_after_acceptance_propagates() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_accepted_fatal_store");
+    let fixture = DirectFixture::new();
+    let delivery = unaccepted_handoff(&fixture, &settings);
+    let corrupt = settings.clone();
+    let after_acceptance = direct_merge::WriteBoundary { write: direct_merge::Write::Acceptance, after: true };
+    let mut adapter = fresh_adapter(&fixture, &settings).with_write_boundary(move |boundary| {
+        if boundary != after_acceptance { return; }
+        let mut store = Store::open(&corrupt).unwrap();
+        let snapshot = store.load().unwrap();
+        let mut commit = tl3_store::Commit::new("fixture-corrupt-world", json!({"fixture": "corrupt"}), &snapshot);
+        commit.rows.push(tl3_store::RowChange::Put { table: "nodes".into(), id: "0".into(), value: json!("corrupt") });
+        store.commit(&commit).unwrap();
+    });
+    let result = adapter.execute(&delivery);
+    let accepted = accepted_records(&fixture.root.path().join("direct"));
+    assert_eq!(accepted.len(), 1, "the fatal error must follow durable acceptance");
+    match result {
+        Err(tl3_controller::Error::StoredJson(_)) => {}
+        Err(error) => panic!("a corrupt stored world must stay fatal, got {error}"),
+        Ok(completion) => panic!("a fatal stored error became an acceptance: {completion:?}"),
+    }
+    assert!(accepted[0]["waiting_through"].is_null(), "a fatal error must not consume the merge authorization");
+    assert!(fixture.direct.lock().unwrap().puts.is_empty());
+}
+
+/// Review MF1/MF2(d): a permanent refusal after durable acceptance keeps the
+/// existing conversion to DeliveryAccepted with its diagnostic, from both the
+/// attempt and the look.
+#[test]
+fn permanent_refusal_after_acceptance_is_an_accepted_diagnostic() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_accepted_permanent");
+    let fixture = DirectFixture::new();
+    let delivery = unaccepted_handoff(&fixture, &settings);
+    fixture.direct.lock().unwrap().no_merge_method = true;
+    let completion = fresh_adapter(&fixture, &settings).execute(&delivery).unwrap();
+    assert_eq!(completion.ack, tl3_kernel::Ack::DeliveryAccepted);
+    assert_eq!(completion.failure_class.as_deref(), Some("direct_merge_method"));
+    assert!(completion.diagnostic.is_some(), "a permanent refusal keeps its diagnostic");
+    assert_eq!(accepted_records(&fixture.root.path().join("direct")).len(), 1);
+    let tl3_controller::executor::Look::Found(found) = fresh_adapter(&fixture, &settings).look(&delivery).unwrap() else {
+        panic!("a permanent refusal in the look must stay an accepted diagnostic");
+    };
+    assert_eq!(found.ack, tl3_kernel::Ack::DeliveryAccepted);
+    assert_eq!(found.failure_class.as_deref(), Some("direct_merge_method"));
+    assert!(found.diagnostic.is_some());
+    assert!(fixture.direct.lock().unwrap().puts.is_empty());
+}
+
+/// State-table "Looks and stalls" (docs/state-table.md:861): a never-acknowledged
+/// enqueue still ends in a read incident. The real Direct adapter never accepts
+/// this Publishing handoff because its fence keeps refusing (here the node is
+/// paused), and Q7 read accounting must still escalate it.
+#[test]
+fn never_accepted_direct_handoff_ends_in_read_incident() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_never_accepted");
+    let fixture = DirectFixture::new();
+    let mut controller = fixture.open(&settings);
+    controller.intake(LabelledIssue { delivery:"direct-label".into(), owner:"owner".into(), repo:"sandbox".into(), installation:3, number:12, title:"change".into(), actor:42, label:"tl3".into(), labels:vec![] }).unwrap();
+    let mut paused = false;
+    for _ in 0..100 {
+        let node = controller.world().unwrap().nodes[0];
+        if node.phase == Phase::Publishing && node.effect.is_some_and(|effect| effect.kind == EffectKind::Enqueue) {
+            controller.observe("fixture-pause", tl3_controller::executor::Observation::Steering {
+                node: NodeId(0), command: tl3_kernel::Command::Pause }).unwrap();
+            paused = true;
+            break;
+        }
+        if !controller.drive_once().unwrap() { break; }
+    }
+    assert!(paused, "the fixture must reach the Publishing Enqueue handoff");
+    drain(&mut controller);
+    let handoff = |controller: &mut Controller| {
+        let node = controller.world().unwrap().nodes[0];
+        assert_eq!(node.phase, Phase::Publishing, "the handoff is never accepted");
+        assert!(node.paused);
+        assert_eq!(node.effect.map(|effect| effect.kind), Some(EffectKind::Enqueue));
+    };
+    handoff(&mut controller);
+    assert!(accepted_records(&fixture.root.path().join("direct")).is_empty(), "Direct must never accept the handoff");
+    let incidents = look_until_read_incident(&fixture, &mut controller);
+    assert_eq!(incidents.len(), 1, "a never-acknowledged enqueue must end in a read incident: rows={:?}",
+        controller.snapshot().unwrap().rows.iter().filter(|r| matches!(r.table.as_str(), "allowances" | "incidents")).collect::<Vec<_>>());
+    let (_, incident) = &incidents[0];
+    assert_eq!(incident["signature"]["upstream"], "Delivery");
+    let key = incident["effect"].as_str().unwrap().to_owned();
+    assert!(controller.effect(&key).unwrap().unwrap().state.is_pending(),
+        "the read incident neither acknowledges nor replaces the handoff");
+    handoff(&mut controller);
+    assert!(accepted_records(&fixture.root.path().join("direct")).is_empty());
+    assert!(fixture.direct.lock().unwrap().puts.is_empty());
+    assert!(controller.world().unwrap().valid());
 }
