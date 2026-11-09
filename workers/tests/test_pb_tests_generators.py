@@ -17,6 +17,10 @@ from worker_process import KEY
 from worker_process import configured_generator
 from worker_process import generator_backend  # noqa: F401
 from worker_process import generator_repo  # noqa: F401
+from tl3_harness import runtime as harness_runtime
+
+# The real launch-context reader, captured before any fixture installs a job context.
+REAL_LAUNCH_CONTEXT = harness_runtime.launch_context
 
 
 @pytest.mark.parametrize('unknown_first', [False, True])
@@ -641,8 +645,10 @@ def test_generator_stage_timeout_is_attributed_without_losing_inner_verdict(
 
 def test_generator_still_requires_flux_admission_before_any_work(tmp_path, monkeypatch):
     from tl3_harness import generator
+    # No Flux job: the real reader, without the backend a Rust-launched job carries.
+    monkeypatch.setattr(harness_runtime, "launch_context", REAL_LAUNCH_CONTEXT)
     monkeypatch.delenv("TL3_EXECUTION_BACKEND", raising=False)
-    # Without a Flux job the generator (or the fail-closed launch context) refuses first.
+    # The generator guard (or item5's fail-closed launch context) refuses before any work.
     with pytest.raises(RuntimeError, match="Flux"):
         generator.run(tmp_path, generator.Container(IMAGE), "python3 generate.py",
                       ["**/BUILD.bazel"], [], ["tests/BUILD.bazel"])
