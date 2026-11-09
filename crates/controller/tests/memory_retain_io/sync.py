@@ -7,9 +7,9 @@ ROOT = Path(__file__).resolve().parents[4]
 HERE = Path(__file__).resolve().parent
 BASE = "f5b0ba2fb1"
 SOURCE = "crates/controller/src/memory.rs"
-CHANGED = ["queue_attempt", "flush", "curate"]
+CHANGED = ["queue_attempt", "flush", "curate", "activity_section"]
 HELPERS = ["clip", "sensitive_key", "redact_text", "safe_text", "sanitize", "section",
-           "bound_section", "activity_section", "read", "clip_chars", "uuid", "client",
+           "bound_section", "read", "clip_chars", "uuid", "client",
            "bank_url", "memory_id", "valid_id", "queue_lesson", "normalized", "verify",
            "tokens", "identifier_like", "identifiers", "named_files", "contradicts", "cite",
            "review_memories", "stored_json_bytes", "memory_attempt"]

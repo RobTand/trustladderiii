@@ -21,7 +21,7 @@ fn source_pins_no_shared_changed_shims() {
     let reference = include_str!("reference.rs");
     let current = include_str!("current.rs");
     let helpers = include_str!("helpers.rs");
-    for name in ["queue_attempt", "flush", "curate"] {
+    for name in ["queue_attempt", "flush", "curate", "activity_section"] {
         assert_eq!(
             function(old, name),
             function(reference, name),
@@ -49,13 +49,18 @@ fn source_pins_no_shared_changed_shims() {
             "compiled helper {name}"
         );
     }
-    // Strip only the three permitted bodies and the new import. This catches
+    // Strip only the four permitted bodies, the new import and the M1 test module
+    // declaration (its tests live in src/memory/activity_tests.rs). This catches
     // accidental edits to feed, ownership, fences, recall and any other helper.
     let strip = |text: &str| {
         let mut text = text.to_owned();
-        for name in ["queue_attempt", "flush", "curate"] {
+        for name in ["queue_attempt", "flush", "curate", "activity_section"] {
             text = text.replace(function(&text, name), "");
         }
+        text = text.replace(
+            "\n\n#[cfg(test)]\n#[path = \"memory/activity_tests.rs\"]\nmod activity_tests;\n",
+            "\n",
+        );
         text.lines()
             .filter(|line| {
                 !line.starts_with("use tl3_controller_core::memory_retain")
@@ -183,7 +188,9 @@ fn mandatory_queue_qualification_and_persisted_payloads() {
     assert_eq!(record["head_sha"], "a".repeat(40));
     assert!(record["inputs"].get("tests").is_none());
     assert!(record["inputs"]["repo"].get("materials").is_none());
-    assert_eq!(record["activity"]["tests"][0]["action_key"], "a".repeat(64));
+    // activity_section is a changed body (PB-REMOVAL M1): the shared schedule stays
+    // neutral to it, and memory::activity_tests pins the native wait_reference rule.
+    assert_eq!(record["activity"]["tests"][0]["wait_reference"], "short");
     assert_eq!(success.rows.len(), 1);
     assert_eq!(success.effects.len(), 1);
     assert_eq!(success.result, "Ok(0)");

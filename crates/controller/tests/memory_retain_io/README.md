@@ -2,8 +2,11 @@
 
 The immutable base is f5b0ba2fb1. `base-memory.rs.txt` is the real Git blob,
 SHA-256 8efab26226bc1c23c33ff1309608db45f8f5f99522852dcf0312e6df15e95502.
-`sync.py` refreshes three separate, verbatim function bodies on each side:
-`queue_attempt`, `flush`, and `curate`. The Rust source check pins each reference
+`sync.py` refreshes four separate, verbatim function bodies on each side:
+`queue_attempt`, `flush`, `curate`, and `activity_section` (PB-REMOVAL M1: the
+native `wait_reference` exemption replaced the retired PrismaBuild `action_key`
+one; `memory::activity_tests` pins that rule, and the shared schedule stays
+neutral to it). The Rust source check pins each reference
 body to the base, each current body to production, and forbids sharing any of
 these changed functions. Every shared helper is source checked and unchanged.
 The same check rejects edits elsewhere in memory.rs, including feed ownership,
