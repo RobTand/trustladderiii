@@ -571,15 +571,15 @@ pub(super) proof fn disjoint_under_table_growth(before: World, after: World, a: 
 }
 
 /// K5 G19: node rules are monotone in the world bounds they read.
-pub(super) proof fn node_rules_grow(before: World, after: World, n: crate::Node)
-    requires crate::retirement::node_rules(before, n),
+pub(super) proof fn node_rules_grow(before: World, after: World, n: super::Node)
+    requires super::retirement::node_rules(before, n),
         after.gates@.len() >= before.gates@.len(),
         after.file_sets@.len() >= before.file_sets@.len(),
         after.next_ticket >= before.next_ticket,
         after.next_question >= before.next_question,
-    ensures crate::retirement::node_rules(after, n),
+    ensures super::retirement::node_rules(after, n),
 {
-    reveal(crate::retirement::node_rules);
+    reveal(super::retirement::node_rules);
     valid_under_table_growth(before, after, n.footprint);
 }
 }
