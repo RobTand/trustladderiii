@@ -696,31 +696,13 @@ impl SchemaOrder for Tests {
         TypeOrder::of::<Self>(&[
             (
                 "",
-                &[
-                    "type",
-                    "properties",
-                    "required",
-                    "additionalProperties",
-                    "oneOf",
-                ],
+                &["type", "properties", "required", "additionalProperties"],
             ),
             (
                 "/properties",
-                &[
-                    "image",
-                    "tools_path",
-                    "execution",
-                    "cpus",
-                    "mem_gb",
-                    "quiet_seconds",
-                ],
+                &["image", "execution", "cpus", "mem_gb", "quiet_seconds"],
             ),
             ("/properties/image", &["type", "pattern"]),
-            ("/properties/tools_path", &["type", "pattern", "minLength"]),
-            ("/oneOf/0", &["required", "not"]),
-            ("/oneOf/0/not", &["required"]),
-            ("/oneOf/1", &["required", "not"]),
-            ("/oneOf/1/not", &["required"]),
             ("/properties/execution", &["oneOf"]),
             (
                 "/properties/execution/oneOf/0",
