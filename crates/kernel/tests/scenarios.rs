@@ -1144,7 +1144,10 @@ fn conflict_rows_keep_their_exact_destinations_and_frames() {
             phase,
             pos: 0,
             ticket: None,
-            effect: n.effect.map(|e| InFlight { cancelling: true, ..e }),
+            effect: n.effect.map(|e| InFlight {
+                cancelling: true,
+                ..e
+            }),
             ..n
         }
     }
@@ -1157,9 +1160,16 @@ fn conflict_rows_keep_their_exact_destinations_and_frames() {
         };
         let (_, out, trace) = step_traced(w.clone(), event);
         let applied = &trace[0];
-        assert_eq!(applied.nodes[0], phased(before, to), "exact Conflict row from {from:?}");
+        assert_eq!(
+            applied.nodes[0],
+            phased(before, to),
+            "exact Conflict row from {from:?}"
+        );
         assert_eq!(applied.nodes.len(), w.nodes.len());
-        assert!(applied.nodes[1..] == w.nodes[1..], "other nodes are untouched");
+        assert!(
+            applied.nodes[1..] == w.nodes[1..],
+            "other nodes are untouched"
+        );
         assert_eq!(
             (applied.next_ticket, applied.next_question),
             (w.next_ticket, w.next_question)
@@ -1186,7 +1196,11 @@ fn conflict_rows_keep_their_exact_destinations_and_frames() {
     run.reply(Reply::ReviewerOutOfRoom);
     run.reply(Reply::Approved { head: HeadId(1) });
     assert!(!run.node().holds);
-    conflict_row(&run.w, Phase::AwaitingDelivery, Phase::Ready(Resume::Rebasing));
+    conflict_row(
+        &run.w,
+        Phase::AwaitingDelivery,
+        Phase::Ready(Resume::Rebasing),
+    );
 }
 
 #[test]
