@@ -138,18 +138,14 @@ proof fn owner_rules(w: World, n: Node, m: Node)
     reveal(retirement::node_rules);
 }
 
-/// Every node rule survives a single-owner wait/credit update.
+/// Every node rule survives when only node i changes and node i already keeps its rules.
 proof fn frame_node_rules(before: World, after: World, i: int)
     requires 0 <= i < before.nodes@.len(), after.nodes@.len() == before.nodes@.len(),
         after.gates@ == before.gates@, after.file_sets@ == before.file_sets@,
         after.next_ticket == before.next_ticket, after.next_question == before.next_question,
         forall|j: int| 0 <= j < before.nodes@.len() && j != i
             ==> #[trigger] after.nodes@[j] == before.nodes@[j],
-        after.nodes@[i] == (Node { waiting_prerequisite: after.nodes@[i].waiting_prerequisite,
-            credit: Credit { withheld: after.nodes@[i].credit.withheld, ..before.nodes@[i].credit },
-            ..before.nodes@[i] }),
-        after.nodes@[i].credit.withheld ==> before.nodes@[i].credit.withheld
-            || (before.nodes@[i].credit.ready && early(before.nodes@[i].phase)),
+        retirement::node_rules(after, after.nodes@[i]),
         forall|j: int| 0 <= j < before.nodes@.len()
             ==> retirement::node_rules(before, #[trigger] before.nodes@[j]),
     ensures forall|j: int| 0 <= j < after.nodes@.len()
@@ -157,9 +153,10 @@ proof fn frame_node_rules(before: World, after: World, i: int)
 {
     assert forall|j: int| 0 <= j < after.nodes@.len()
         implies retirement::node_rules(after, #[trigger] after.nodes@[j]) by {
-        retirement::node_frame(before, after, before.nodes@[j]);
-        assert(retirement::node_rules(before, before.nodes@[j]));
-        if j == i { owner_rules(after, before.nodes@[i], after.nodes@[i]); }
+        if j != i {
+            retirement::node_frame(before, after, before.nodes@[j]);
+            assert(retirement::node_rules(before, before.nodes@[j]));
+        }
     }
 }
 
@@ -215,6 +212,8 @@ pub(super) proof fn checker_frame(before: World, after: World, i: int)
         && after.nodes@[j].repo == before.nodes@[j].repo && after.nodes@[j].pool == before.nodes@[j].pool
         && after.nodes@[j].footprint == before.nodes@[j].footprint
         && after.nodes@[j].ticket == before.nodes@[j].ticket by {}
+    retirement::node_frame(before, after, before.nodes@[i]);
+    owner_rules(after, before.nodes@[i], after.nodes@[i]);
     frame_node_rules(before, after, i);
     frame_holders(before, after);
     frame_pairs(before, after);
