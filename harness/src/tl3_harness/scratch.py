@@ -3,7 +3,6 @@ import json
 import os
 from pathlib import Path
 import stat
-import sys
 import tempfile
 
 
@@ -22,40 +21,11 @@ def environment():
     }
 
 
-def registered_leaf():
-    # The admitted progress helper belongs to the action's pinned PB generation.
-    sdk_source = Path(os.environ['PRISMABUILD_ACTION_PROGRESS_HELPER']).resolve().parents[1]
-    sys.path.insert(0, str(sdk_source))
-    # gazelle:ignore prismabuild
-    # gazelle:ignore prismabuild.client
-    from prismabuild import client
-
-    queue = client.PoolQueue(os.environ['PRISMABUILD_QUEUE_ROOT'])
-    record = client.read_claimed_record(queue, os.environ['PRISMABUILD_ACTION_KEY'])
-    registration = record[client.SCRATCH_LIFETIME_FIELD]
-    declaration = client.bind_ephemeral_scratch(queue, root_env='TL3_SCRATCH_ROOT', name='pytest',
-                                               claim_snapshot=record)
-    entries = [entry for entry in registration['entries'] if entry['declaration'] == declaration]
-    if not registration['registration_complete'] or len(entries) != 1 or entries[0]['cleaned']:
-        raise RuntimeError('pytest scratch requires the admitted action\'s registered ephemeral leaf')
-    leaf = client.ephemeral_scratch_path(declaration)
-    info = leaf.lstat()
-    identity = entries[0]['identity'][-1]
-    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
-            or info.st_mode & 0o777 != 0o700 or (info.st_dev, info.st_ino) != (identity['dev'], identity['ino'])):
-        raise RuntimeError('pytest scratch ownership changed after PB registration')
-    return leaf
-
-
 def directory():
     from .runtime import temporary_root
 
-    root = temporary_root()
-    if root is not None:
-        return private_directory(root)
-    leaf = registered_leaf()
-    # Keep the registered leaf private. Only this fresh child enters the container.
-    return Path(tempfile.mkdtemp(prefix='pytest-', dir=leaf))
+    # Flux is the only executor (PB-REMOVAL): the launch context owns the job scratch leaf.
+    return private_directory(temporary_root())
 
 
 _owned = {}
