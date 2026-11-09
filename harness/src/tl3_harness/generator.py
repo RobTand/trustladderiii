@@ -3,6 +3,7 @@ import base64
 from contextlib import contextmanager
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import shlex
@@ -14,6 +15,7 @@ import sys
 import tempfile
 import time
 
+from . import runtime
 from .execution import Container, container_command as test_container_command, require_admission
 from .trees import git
 
@@ -45,6 +47,37 @@ def budget(cpus=1, mem_gb=2, timeout_s=TIMEOUT):
 
 class StageTimeout(TimeoutError):
     pass
+
+
+class FluxContainerUnsupported(RuntimeError):
+    """Flux containers need the durable launch/binding protocol, which generators lack."""
+
+
+def _cause(error, operation):
+    """Bounded, structured failure cause. Never exception text, argv, paths or stderr."""
+    errno = getattr(error, "errno", None)
+    detail = None
+    if isinstance(error, subprocess.CalledProcessError):
+        detail = f"exit status {int(error.returncode)}"
+    elif isinstance(errno, int):
+        detail = os.strerror(errno)[:120]
+    kind = type(error).__name__
+    return {"operation": operation, "type": kind if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", kind) else "Exception",
+            "errno": errno if isinstance(errno, int) else None, "detail": detail}
+
+
+def _flux_allocation():
+    """Bind the native allocation grant so Rust can later prove this job's scratch absence."""
+    evidence = runtime.evidence_sink("tl3-generator-" + os.urandom(16).hex())
+    if evidence is not None:
+        runtime.prepare_allocation(evidence)
+
+
+def _release_flux_scratch():
+    """Remove only the empty job scratch root require_admission created; anything else stays debt."""
+    root = runtime.temporary_root()
+    if root is not None and root.exists():
+        root.rmdir()
 
 
 @contextmanager
@@ -206,6 +239,9 @@ def container_command(tree, container, argv, cidfile):
     # Only trusted configuration supplies the image interpreter and arguments.
     # Never read an entrypoint or shebang from the maker's writable checkout.
     _check_interpreter(argv)
+    if runtime.launch_context() is not None:
+        # Never start an unowned Podman container outside Rust's launch intent/binding.
+        raise FluxContainerUnsupported()
     command = test_container_command(tree, container, ())
     # Preserve every test containment flag and PB's Docker shim/affinity. Only
     # the private copy is writable; Git's synthetic metadata stays read-only.
@@ -243,32 +279,47 @@ def run(tree, container, command, generated_files, protected_paths, files, timeo
                           ("preparation", "container", "validation", "cleanup")}}
     result["timings"]["container"]["scope"] = "startup_and_command"
     temporary, log, cidfile = None, None, None
+    flux = runtime.launch_context() is not None
+    operation = "allocation"
     try:
         with _phase(result, "preparation", PREPARATION_SECONDS):
+            if flux:
+                _flux_allocation()
+            operation = "input_manifest"
             before = manifest(tree)
             result["input_manifest"] = digest(before)
             if sum(entry["bytes"] for entry in before.values()) > INPUT_BYTES:
                 raise ValueError("generator input exceeds the 512-MiB snapshot limit")
             # Memory-backed scratch stays charged to the admitted scope.
+            operation = "scratch"
             temporary = tempfile.TemporaryDirectory(prefix="tl3-generator-", dir="/dev/shm")
             root = Path(temporary.name)
             root.chmod(0o755)
             copy = root / "checkout"
+            operation = "copy"
             shutil.copytree(tree, copy)
             if (copy / ".git").exists():
                 raise ValueError("generator input must not contain Git metadata")
-            git(copy, "init", "--quiet", "--template=")
-            git(copy, "add", "--force", "--all")
-            git(copy, "config", "safe.directory", "/checkout")
+            # copytree keeps an immutable 0500 source's modes. Open the private copy
+            # before Git creates metadata; synthetic .git keeps Git's own modes.
+            operation = "permissions"
             for path in [copy, *copy.rglob("*")]:
-                if ".git" in path.relative_to(copy).parts:
-                    continue
                 path.chmod(0o777 if path.is_dir() else 0o666 | (path.stat().st_mode & 0o111))
+            operation = "git_init"
+            git(copy, "init", "--quiet", "--template=")
+            operation = "git_add"
+            git(copy, "add", "--force", "--all")
+            operation = "git_config"
+            git(copy, "config", "safe.directory", "/checkout")
             cidfile = root / "container.id"
+            operation = "container_command"
+            launch = container_command(copy, container, argv, cidfile)
+            # No container log exists until a container may run.
             log = tempfile.TemporaryFile(dir=root)
+        operation = "container"
         result["phase"] = "container"
         with _phase(result, "container"):
-            child = subprocess.run(container_command(copy, container, argv, cidfile), cwd=copy,
+            child = subprocess.run(launch, cwd=copy,
                                    stdout=log, stderr=subprocess.STDOUT, timeout=timeout)
             result["exit_code"] = child.returncode
             if child.returncode:
@@ -292,16 +343,18 @@ def run(tree, container, command, generated_files, protected_paths, files, timeo
                                     "data": base64.b64encode(raw).decode("ascii")})
                 result.update(status="completed", phase="completed", message="Generator completed.",
                               outputs=outputs, output_manifest=digest(after))
-    except subprocess.TimeoutExpired:
-        result.update(exit_code=124, message=f"Generator exceeded its {timeout}-second deadline.")
-    except StageTimeout:
-        result.update(exit_code=124, message=f"Generator {result['phase']} exceeded its stage deadline.")
-    except UnicodeDecodeError:
-        result["message"] = "Generator output must be UTF-8 text."
+    except subprocess.TimeoutExpired as error:
+        result.update(exit_code=124, message=f"Generator exceeded its {timeout}-second deadline.",
+                      cause=_cause(error, operation))
+    except StageTimeout as error:
+        result.update(exit_code=124, message=f"Generator {result['phase']} exceeded its stage deadline.",
+                      cause=_cause(error, operation))
+    except UnicodeDecodeError as error:
+        result.update(message="Generator output must be UTF-8 text.", cause=_cause(error, "validation"))
     except ValueError as error:
-        result.update(status="refused", message=str(error)[:1000])
-    except (OSError, RuntimeError, subprocess.SubprocessError):
-        result["message"] = "Generator action infrastructure failed."
+        result.update(status="refused", message=str(error)[:1000], cause=_cause(error, operation))
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        result.update(message="Generator action infrastructure failed.", cause=_cause(error, operation))
     finally:
         try:
             with _phase(result, "cleanup", CLEANUP_SECONDS):
@@ -316,6 +369,8 @@ def run(tree, container, command, generated_files, protected_paths, files, timeo
                     log.close()
                 if temporary is not None:
                     temporary.cleanup()
+                if flux:
+                    _release_flux_scratch()
         except (OSError, ValueError, RuntimeError, StageTimeout, subprocess.SubprocessError):
             if result["status"] == "completed":
                 result.update(status="failed", phase="cleanup", message="Generator cleanup failed.")

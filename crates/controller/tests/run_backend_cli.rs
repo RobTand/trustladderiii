@@ -4524,3 +4524,408 @@ fn native_submit_recovery_and_liveness_normalize_job_ids() {
         }
     }
 }
+
+/// FX-GEN-PREP: real generator producer -> real host collector -> Rust collector,
+/// terminal and scratch closure. Only host identity and native Flux are fixtures.
+fn generator_prep_case(mode: &str) -> (Fixture, Value) {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::InJob, true);
+    let scratch = tempfile::tempdir().unwrap();
+    fs::set_permissions(scratch.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    f.request.scratch_root = scratch.path().to_owned();
+    f.request.reservation.cpus = 1.try_into().unwrap();
+    f.request.reservation.parallelism = 1.try_into().unwrap();
+    f.request.suite = Suite::Generator {
+        input_digest: "a".repeat(64),
+    };
+    f.request.no_progress_seconds = Some(10.try_into().unwrap());
+    f.intent.request_digest = digest(&serde_json::to_vec(&f.request).unwrap());
+    f.submit();
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_owned();
+    let mut environment = f.request.environment.clone();
+    for (name, value) in [
+        ("TL3_EXECUTION_BACKEND", "flux".to_owned()),
+        (
+            "TL3_RUN_BACKEND_CLI",
+            env!("CARGO_BIN_EXE_tl3-run-backend").to_owned(),
+        ),
+        (
+            "TL3_RUN_BACKEND_CONFIG",
+            f.config.to_string_lossy().into_owned(),
+        ),
+        ("TL3_RUN_OWNER", f.intent.owner.clone()),
+        ("TL3_RUN_CORRELATION", f.intent.correlation.clone()),
+        (
+            "TL3_RUN_DIAGNOSTIC_DIR",
+            f.intent.output_dir.to_string_lossy().into_owned(),
+        ),
+        ("FLUX_JOB_ID", "fABC".to_owned()),
+        ("TL3_RUN_BACKEND_SESSION", "1".to_owned()),
+    ] {
+        environment.insert(name.into(), value);
+    }
+    fs::write(
+        f.root.path().join("action-fixture.json"),
+        serde_json::to_vec(&json!({
+            "environment": environment, "output_dir": f.intent.output_dir,
+            "scratch": scratch.path().join("fABC"), "mode": mode, "source": source,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let output = Command::new("/home/rob/venvs/pb-cpu/bin/python")
+        .arg(source.join("harness/tests/fx_generator_prep_e2e.py"))
+        .arg(f.root.path())
+        .arg(&source)
+        .arg(mode)
+        .output()
+        .unwrap();
+    eprintln!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    f.scratch = Some(scratch);
+    assert!(output.status.success(), "generator driver crashed");
+    let driver: Value = serde_json::from_slice(
+        &fs::read(f.intent.output_dir.join("generator-driver.json")).unwrap(),
+    )
+    .unwrap();
+    (f, driver)
+}
+
+fn retain_generator_evidence(f: &Fixture, name: &str, frames: &[Value]) {
+    if let Ok(destination) = std::env::var("FX_E2E_EVIDENCE") {
+        let destination = Path::new(&destination).join(name);
+        fs::create_dir_all(&destination).unwrap();
+        for entry in fs::read_dir(&f.intent.output_dir).unwrap().flatten() {
+            if entry.file_type().unwrap().is_file() {
+                fs::copy(entry.path(), destination.join(entry.file_name())).unwrap();
+            }
+        }
+        let state = f
+            .options
+            .journal_root
+            .join(&f.intent.correlation)
+            .join("state.json");
+        if state.is_file() {
+            fs::copy(state, destination.join("state.json")).unwrap();
+        }
+        fs::write(
+            destination.join("attach-frames.json"),
+            serde_json::to_vec(frames).unwrap(),
+        )
+        .unwrap();
+    }
+}
+
+fn generator_frame(f: &Fixture) -> Value {
+    let stdout = fs::read_to_string(f.intent.output_dir.join("host.stdout")).unwrap();
+    let lines: Vec<_> = stdout
+        .lines()
+        .filter_map(|line| line.strip_prefix("TL3_GENERATOR_ARTIFACT "))
+        .collect();
+    assert_eq!(lines.len(), 1, "{stdout}");
+    serde_json::from_str(lines[0]).unwrap()
+}
+
+fn cleanup_debts(f: &Fixture) -> Vec<String> {
+    let dir = f
+        .options
+        .journal_root
+        .join("cleanup-debt")
+        .join(&f.request.runtime.manifest_digest);
+    fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| name.starts_with(&f.intent.correlation))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A distinct owner dispatching on the same runtime manifest through the real
+/// unresolved-debt gate. Returns the submit frames; its output is removed.
+fn distinct_owner_submit(f: &Fixture, tag: &str) -> Vec<Value> {
+    let mut intent = f.intent.clone();
+    intent.owner = format!("fixture-owner-{tag}");
+    intent.correlation = format!("{}-{tag}", f.intent.correlation);
+    intent.output_dir = Path::new("/mnt/shared/flux-out/tl3").join(&intent.correlation);
+    let frames = f.call(json!({"op":"submit","request":f.request,"intent":intent}));
+    let _ = fs::remove_dir_all(&intent.output_dir);
+    frames
+}
+
+fn unrelated_debt(f: &Fixture) -> PathBuf {
+    let dir = f
+        .options
+        .journal_root
+        .join("cleanup-debt")
+        .join(&f.request.runtime.manifest_digest);
+    fs::create_dir_all(&dir).unwrap();
+    let mut intent = f.intent.clone();
+    intent.owner = "unrelated-owner".into();
+    intent.correlation = "unrelated-correlation-out".into();
+    let path = dir.join("unrelated-correlation-out.unregistered");
+    fs::write(&path, serde_json::to_vec(&intent).unwrap()).unwrap();
+    path
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn generator_preparation_failure_closes_typed_failed_through_real_collector() {
+    for (mode, operation) in [
+        ("readonly-checkout", "container_command"),
+        ("prep-failure", "input_manifest"),
+    ] {
+        let (f, driver) = generator_prep_case(mode);
+        assert!(driver["error_type"].is_null(), "{mode}: {driver}");
+        assert_eq!(driver["code"], 0, "{mode}: {driver}");
+        assert_eq!(driver["scratch_absent"], true, "{mode}: {driver}");
+        let state = f.state();
+        assert!(state.allocation_grant.is_some(), "{mode}");
+        assert!(state.container_launches.is_empty() && state.runtime_ownerships.is_empty());
+        let produced = generator_frame(&f);
+        assert_eq!(produced["status"], "failed", "{mode}: {produced}");
+        assert_eq!(produced["phase"], "preparation", "{mode}: {produced}");
+        assert_eq!(produced["timings"]["container"]["outcome"], "skipped");
+        assert_eq!(
+            produced["cause"]["operation"], operation,
+            "{mode}: {produced}"
+        );
+        // The unrelated owner's debt must survive this owner's closure.
+        let unrelated = (mode == "readonly-checkout").then(|| unrelated_debt(&f));
+        f.events(&completed(0));
+        let frames = f.attach();
+        retain_generator_evidence(&f, &format!("generator-{mode}"), &frames);
+        let terminal = frames.last().unwrap()["result"]["observation"]["terminal"].clone();
+        // A typed generator failure is never a pass, even when native exits zero.
+        assert_eq!(terminal["ending"], "failed", "{mode}: {frames:?}");
+        let receipt: Value =
+            serde_json::from_slice(&fs::read(f.intent.output_dir.join("receipt.json")).unwrap())
+                .unwrap();
+        assert!(
+            receipt["evidence"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["path"].as_str().unwrap().contains("/scratch-absence-")),
+            "{receipt}"
+        );
+        assert!(cleanup_debts(&f).is_empty(), "{:?}", cleanup_debts(&f));
+        let next = distinct_owner_submit(&f, "next");
+        if let Some(unrelated) = &unrelated {
+            assert!(unrelated.exists(), "closure cleared another owner's debt");
+            assert_eq!(next.last().unwrap()["kind"], "error", "{next:?}");
+            assert!(
+                json!(next)
+                    .to_string()
+                    .contains("unresolved runtime cleanup debt"),
+                "{next:?}"
+            );
+        } else {
+            // A distinct owner on the same runtime passes the real dispatch gate.
+            assert_eq!(
+                next.last().unwrap()["result"]["submission"]["kind"],
+                "accepted",
+                "{next:?}"
+            );
+        }
+        let repeated = f.attach();
+        assert_eq!(
+            repeated.last().unwrap()["result"]["observation"]["terminal"],
+            terminal
+        );
+        let result = f.call(json!({"op":"worker_payload","owner":f.intent.owner,"correlation":f.intent.correlation,"terminal":terminal}));
+        let reference: BlobRef =
+            serde_json::from_value(result.last().unwrap()["result"]["payload"]["artifact"].clone())
+                .unwrap_or_else(|_| panic!("{mode}: {result:?}"));
+        // Producer bytes on host stdout are exactly the bytes the worker receives.
+        let stdout = fs::read_to_string(f.intent.output_dir.join("host.stdout")).unwrap();
+        let line = stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("TL3_GENERATOR_ARTIFACT "))
+            .unwrap();
+        let bytes = fs::read(&reference.path).unwrap();
+        assert_eq!(bytes, line.as_bytes());
+        assert!(!String::from_utf8_lossy(&bytes).contains("ghp_"));
+        // A replayed frame after terminal is refused.
+        let replay = collect_worker(&f, stdout.as_bytes());
+        assert_eq!(replay.last().unwrap()["kind"], "error", "{replay:?}");
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn generator_no_container_failure_refuses_forged_and_unproven_closure() {
+    let (f, driver) = generator_prep_case("prep-failure");
+    assert!(driver["error_type"].is_null(), "{driver}");
+    let produced = generator_frame(&f);
+    let frame = |value: &Value| format!("TL3_GENERATOR_ARTIFACT {value}\n");
+    let mut variants = vec![("malformed", "TL3_GENERATOR_ARTIFACT {\n".to_owned())];
+    let mut forged = produced.clone();
+    forged["status"] = json!("completed");
+    forged["exit_code"] = json!(0);
+    forged["phase"] = json!("completed");
+    forged["output_manifest"] = json!("c".repeat(64));
+    forged["outputs"] = json!([]);
+    variants.push(("forged-success", frame(&forged)));
+    let mut begun = produced.clone();
+    begun["timings"]["container"]["outcome"] = json!("failed");
+    variants.push(("container-begun", frame(&begun)));
+    let mut phase = produced.clone();
+    phase["phase"] = json!("container");
+    variants.push(("container-phase", frame(&phase)));
+    let mut exited = produced.clone();
+    exited["exit_code"] = json!(1);
+    variants.push(("exit-code", frame(&exited)));
+    let mut secret = produced.clone();
+    secret["cause"]["detail"] = json!(format!("token ghp_{}", "Q".repeat(36)));
+    variants.push(("secret-cause", frame(&secret)));
+    let mut multiline = produced.clone();
+    multiline["message"] = json!("x\n".repeat(20_000));
+    variants.push(("unbounded-message", frame(&multiline)));
+    // Single-field mutations of the genuine frame: each pins exactly one clause of
+    // generator_failed_before_container; without that clause the frame would collect.
+    let mut log = produced.clone();
+    log["log"] = json!("x");
+    variants.push(("log-present", frame(&log)));
+    let mut outputs = produced.clone();
+    outputs["outputs"] = json!([]);
+    variants.push(("outputs-present", frame(&outputs)));
+    let mut manifest = produced.clone();
+    manifest["output_manifest"] = json!("c".repeat(64));
+    variants.push(("output-manifest-present", frame(&manifest)));
+    let mut validated = produced.clone();
+    validated["timings"]["validation"]["outcome"] = json!("completed");
+    variants.push(("validation-completed", frame(&validated)));
+    let mut prepared = produced.clone();
+    prepared["timings"]["preparation"]["outcome"] = json!("completed");
+    variants.push(("preparation-completed", frame(&prepared)));
+    for (name, raw) in &variants {
+        let result = collect_worker(&f, raw.as_bytes());
+        assert_eq!(
+            result.last().unwrap()["kind"],
+            "error",
+            "{name}: {result:?}"
+        );
+    }
+    // A foreign run is refused by collect_worker's durable-binding check.
+    let stdout = api::durable::blob(
+        &f.intent.output_dir.join("raw-worker-stdout"),
+        frame(&produced).as_bytes(),
+    )
+    .unwrap();
+    let mut run = f.ownership().run;
+    run.job = "fABD".into();
+    let foreign = f.call(json!({"op":"collect_worker","owner":f.intent.owner,"correlation":f.intent.correlation,"facts":{
+        "run":run,"stdout":stdout,"runtime_binding":null,"cleanup":null}}));
+    assert_eq!(foreign.last().unwrap()["kind"], "error", "{foreign:?}");
+    // A claimed runtime binding observation contradicts a no-container failure. The
+    // run is exact, so refusal comes from the predicate/identity, not the binding check.
+    let claimed = RuntimeBindingInput {
+        execution: "fixture-execution".into(),
+        container_id: None,
+        run: f.ownership().run,
+        request_digest: f.intent.request_digest.clone(),
+        allocation: stdout.clone(),
+        topology: stdout.clone(),
+        host: ProcessPlacement {
+            rank: 0,
+            host: "dl380g10".into(),
+            allowed_cpus: "0".into(),
+            cgroup: "0::/user.slice/native-broker".into(),
+        },
+        container: None,
+        container_scope: None,
+    };
+    let bound = f.call(json!({"op":"collect_worker","owner":f.intent.owner,"correlation":f.intent.correlation,"facts":{
+        "run":f.ownership().run,"stdout":stdout,"runtime_binding":claimed,"cleanup":null}}));
+    assert_eq!(bound.last().unwrap()["kind"], "error", "{bound:?}");
+    assert_eq!(
+        bound.last().unwrap()["message"],
+        "worker frame structure, linkage or artifact bytes invalid",
+        "{bound:?}"
+    );
+    // The genuine producer frame still collects while no execution exists ...
+    assert_eq!(
+        collect_worker(&f, frame(&produced).as_bytes())
+            .last()
+            .unwrap()["kind"],
+        "result"
+    );
+    // ... but never once a container launch began. Register the launch through the
+    // real durable prelaunch intent; the backend refuses ownership without one.
+    let launcher = f.ownership();
+    let begun = f.call(json!({"op":"begin_container_launch","owner":f.intent.owner,"correlation":f.intent.correlation,"launcher":launcher}));
+    assert_eq!(begun.last().unwrap()["kind"], "result", "{begun:?}");
+    assert_eq!(f.state().container_launches.len(), 1);
+    let result = collect_worker(&f, frame(&produced).as_bytes());
+    assert_eq!(result.last().unwrap()["kind"], "error", "{result:?}");
+
+    // Closure negatives each start from a fresh real producer/collector run.
+    for case in [
+        "conflicting-native-exit",
+        "missing-clean",
+        "scratch-retained",
+    ] {
+        let (f, driver) = generator_prep_case("prep-failure");
+        assert!(driver["error_type"].is_null(), "{case}: {driver}");
+        match case {
+            "conflicting-native-exit" => f.events(&completed(1)),
+            "missing-clean" => f.events(&completed(0)[..2]),
+            _ => {
+                fs::create_dir(f.request.scratch_root.join("fABC")).unwrap();
+                f.events(&completed(0));
+            }
+        }
+        let frames = f.attach();
+        retain_generator_evidence(&f, &format!("generator-negative-{case}"), &frames);
+        assert_eq!(
+            frames.last().unwrap()["result"]["observation"]["kind"],
+            "unknown",
+            "{case}: {frames:?}"
+        );
+        assert!(!f.intent.output_dir.join("receipt.json").exists(), "{case}");
+        if case == "scratch-retained" {
+            assert!(f.request.scratch_root.join("fABC").exists());
+            assert!(
+                !cleanup_debts(&f).is_empty(),
+                "{case}: scratch debt not retained"
+            );
+        }
+        let next = distinct_owner_submit(&f, "next");
+        if case == "conflicting-native-exit" {
+            // Classification stays fail-closed (Unknown, no receipt), but cleanup is
+            // proven: no executions, native clean, own scratch absent. No debt is
+            // held for this owner and the runtime gate admits the next owner.
+            assert!(
+                cleanup_debts(&f).is_empty(),
+                "{case}: {:?}",
+                cleanup_debts(&f)
+            );
+            assert_eq!(
+                next.last().unwrap()["result"]["submission"]["kind"],
+                "accepted",
+                "{case}: {next:?}"
+            );
+        } else {
+            // Unproven cleanup keeps the runtime gate closed for every other owner.
+            assert!(!cleanup_debts(&f).is_empty(), "{case}: debt not retained");
+            assert_eq!(next.last().unwrap()["kind"], "error", "{case}: {next:?}");
+            assert!(
+                json!(next)
+                    .to_string()
+                    .contains("unresolved runtime cleanup debt"),
+                "{case}: {next:?}"
+            );
+        }
+    }
+}
