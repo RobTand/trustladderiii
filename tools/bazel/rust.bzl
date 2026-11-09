@@ -323,6 +323,9 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
         compile_data = compile_data,
         edition = "2024",
         crate_features = features,
+        # Redaction scans every policy pattern per call; at fastbuild the S1 cut sweep ran 2-3x Python.
+        # Optimize, but keep debug assertions and overflow checks on in these security tests.
+        rustc_flags = ["-Copt-level=3", "-Cdebug-assertions=on", "-Coverflow-checks=on"] if directory in ["crates/redaction", "crates/action"] else [],
         aliases = aliases(),
         deps = deps + script,
     )
@@ -358,6 +361,8 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
         compile_data = compile_data,
         crate_features = features,
         deps = test_deps,
+        # The producer cut sweep checks every 8 KB output for secret fragments (S1).
+        rustc_flags = ["-Copt-level=3", "-Cdebug-assertions=on", "-Coverflow-checks=on"] if directory == "crates/action" else [],
     )
     _crate_test("lib", package, crate, "src/lib.rs", True, options)
     if directory == "crates/controller":
