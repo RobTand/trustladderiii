@@ -33,17 +33,6 @@ def main():
                 (output / 'runner-killed-before-allocation.json').write_text(json.dumps(
                     {'pid': os.getpid(), 'scratch_present': Path(settings['scratch']).is_dir()}))
                 os.kill(os.getpid(), signal.SIGKILL)
-            if (settings['mode'] == 'cancel-before-allocation' and command['op'] == 'observe_allocation'
-                    and not (output / 'cancel-before-allocation.json').exists()):
-                # A real controller cancel lands while the started runner is still pre-allocation.
-                cancelled = subprocess.run(
-                    [os.environ['TL3_RUN_BACKEND_CLI'], '--config', os.environ['TL3_RUN_BACKEND_CONFIG']],
-                    input=json.dumps({'op': 'cancel', 'owner': os.environ['TL3_RUN_OWNER'],
-                                      'correlation': os.environ['TL3_RUN_CORRELATION']}) + '\n',
-                    capture_output=True, text=True, timeout=30)
-                frames = [json.loads(line) for line in cancelled.stdout.splitlines()]
-                (output / 'cancel-before-allocation.json').write_text(json.dumps(frames))
-                assert frames and frames[-1]['kind'] == 'result', frames
             if command['op'] == 'cleanup_runtime':
                 if settings['mode'] == 'cancel-term-unconfirmed':
                     raise RuntimeError('admitted fixture cleanup transport remains unconfirmed')

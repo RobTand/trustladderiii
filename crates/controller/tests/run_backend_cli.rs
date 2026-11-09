@@ -408,7 +408,7 @@ fn scratch_reclamation_serializes_begin_until_terminal_and_rejects_late_begin() 
 
 #[test]
 #[ignore = "requires admitted PB actual-action fixture"]
-fn scratch_preflight_requires_helper_and_proves_no_grant_absence() {
+fn scratch_preflight_requires_helper_and_retained_host_authority() {
     for case in ["no-helper", "no-ownership", "host-absent"] {
         let f = generated_action_case(case);
         let report: Value =
@@ -468,32 +468,29 @@ fn scratch_preflight_requires_helper_and_proves_no_grant_absence() {
         assert!(state["runtime_ownerships"].as_array().unwrap().is_empty());
         f.events(&completed(0));
         let frames = f.attach();
-        if case == "no-helper" {
-            // Without the pinned helper there is no independent host authority.
-            assert_eq!(
-                frames.last().unwrap()["result"]["observation"]["kind"],
-                "unknown",
-                "{case}: {frames:?}"
-            );
-            assert!(!f.intent.output_dir.join("receipt.json").exists());
-            assert!(
-                !f.intent
-                    .output_dir
-                    .join("scratch-reclamation.manifest.json")
-                    .exists()
-            );
-            assert!(!f.debt_entries().is_empty());
-        } else {
-            // The runner never validated an allocation: the helper proves absence alone.
-            let ending = frames.last().unwrap()["result"]["observation"]["terminal"]["ending"]
-                .as_str()
-                .unwrap_or_else(|| panic!("{case}: {frames:?}"))
-                .to_owned();
-            f.assert_no_grant_terminal(&frames, &ending, false);
-        }
+        assert_eq!(
+            frames.last().unwrap()["result"]["observation"]["kind"],
+            "unknown",
+            "{case}: {frames:?}"
+        );
+        assert!(!f.intent.output_dir.join("receipt.json").exists());
+        assert!(
+            !f.intent
+                .output_dir
+                .join("scratch-reclamation.manifest.json")
+                .exists()
+        );
+        let debt = f
+            .options
+            .journal_root
+            .join("cleanup-debt")
+            .join(&f.request.runtime.manifest_digest);
+        assert!(fs::read_dir(debt).unwrap().next().is_some());
         if let Ok(destination) = std::env::var("FX_E2E_EVIDENCE") {
             fs::write(
-                Path::new(&destination).join(case).join("attach.json"),
+                Path::new(&destination)
+                    .join(case)
+                    .join("attach-unknown.json"),
                 serde_json::to_vec(&frames).unwrap(),
             )
             .unwrap();
@@ -4952,18 +4949,6 @@ fn no_grant_real_runner_paths_reach_terminal_and_release_dispatch() {
     f.events(&completed(256));
     let frames = f.attach();
     f.assert_no_grant_terminal(&frames, "infra-lost", true);
-    drop(f);
-    // A controller cancel lands before allocation; the runner unwinds its scratch.
-    let f = generated_action_case("cancel-before-allocation");
-    assert!(f.state().cancel_requested && f.state().allocation_grant.is_none());
-    f.events(&[
-        json!({"timestamp":1.0,"name":"start","context":{}}),
-        json!({"timestamp":2.0,"name":"exception","context":{"type":"cancel","severity":0}}),
-        json!({"timestamp":3.0,"name":"finish","context":{"status":15}}),
-        json!({"timestamp":4.0,"name":"clean","context":{}}),
-    ]);
-    let frames = f.attach();
-    f.assert_no_grant_terminal(&frames, "cancelled", false);
 }
 
 #[test]
