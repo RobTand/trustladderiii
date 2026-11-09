@@ -457,6 +457,52 @@ pub(super) proof fn nodes_step_trans(w0: World, w1: World, w2: World)
     }
 }
 
+/// check_outputs for handlers that emit no effect: every emitted item is a
+/// notice, so no effect-key, pause or Enqueue-head rule applies.
+#[verifier::opaque]
+pub(super) open spec fn no_effects(out: Seq<Option<Out>>) -> bool {
+    forall|k: int| 0 <= k < out.len() ==> match #[trigger] out[k] {
+        Some(Out::Effect { .. }) => false,
+        _ => true,
+    }
+}
+
+/// An untouched outbox emitted nothing.
+pub(super) proof fn quiet(o: Outbox)
+    requires o.len <= OUTBOX,
+    ensures no_effects(emitted(o, o)),
+{
+    reveal(no_effects);
+    assert(o.items@.len() == OUTBOX);
+    assert(emitted(o, o).len() == 0);
+}
+
+/// One appended notice is not an effect.
+pub(super) proof fn noticed(o0: Outbox, o1: Outbox, node: NodeId, notice: Notice)
+    requires o0.len < OUTBOX, o1.len == o0.len + 1,
+        o1.items@ == o0.items@.update(o0.len as int, Some(Out::Notice { node, notice })),
+    ensures no_effects(emitted(o0, o1)),
+{
+    reveal(no_effects);
+    assert(o0.items@.len() == OUTBOX);
+    assert(emitted(o0, o1) =~= seq![Some(Out::Notice { node, notice })]);
+}
+
+/// check_outputs holds for any suffix without effects.
+pub(super) proof fn outputs_quiet(before: World, after: World, out: Seq<Option<Out>>,
+    exempt: Option<int>)
+    requires no_effects(out),
+    ensures outputs_ok(before, after, out, exempt),
+{
+    reveal(no_effects);
+    assert forall|k: int| 0 <= k < out.len() implies match #[trigger] out[k] {
+        Some(Out::Effect { node, seq, kind, head }) => node.0 < after.nodes@.len()
+            && effect_ok(before, after.nodes@[node.0 as int], node.0 as int, seq, kind, head,
+                exempt == Some(node.0 as int)),
+        _ => true,
+    } by {}
+}
+
 /// K4b: Q54 check_fail_fast and the check_apply event rows for one apply.
 pub(super) proof fn apply_rules(before: World, after: World, event: Event, out: Seq<Option<Out>>)
     requires transition_safety(before, after, Transition::Apply(event), out),
