@@ -4792,6 +4792,23 @@ fn generator_no_container_failure_refuses_forged_and_unproven_closure() {
     let mut multiline = produced.clone();
     multiline["message"] = json!("x\n".repeat(20_000));
     variants.push(("unbounded-message", frame(&multiline)));
+    // Single-field mutations of the genuine frame: each pins exactly one clause of
+    // generator_failed_before_container; without that clause the frame would collect.
+    let mut log = produced.clone();
+    log["log"] = json!("x");
+    variants.push(("log-present", frame(&log)));
+    let mut outputs = produced.clone();
+    outputs["outputs"] = json!([]);
+    variants.push(("outputs-present", frame(&outputs)));
+    let mut manifest = produced.clone();
+    manifest["output_manifest"] = json!("c".repeat(64));
+    variants.push(("output-manifest-present", frame(&manifest)));
+    let mut validated = produced.clone();
+    validated["timings"]["validation"]["outcome"] = json!("completed");
+    variants.push(("validation-completed", frame(&validated)));
+    let mut prepared = produced.clone();
+    prepared["timings"]["preparation"]["outcome"] = json!("completed");
+    variants.push(("preparation-completed", frame(&prepared)));
     for (name, raw) in &variants {
         let result = collect_worker(&f, raw.as_bytes());
         assert_eq!(
@@ -4800,7 +4817,7 @@ fn generator_no_container_failure_refuses_forged_and_unproven_closure() {
             "{name}: {result:?}"
         );
     }
-    // Claimed runtime binding observations contradict a no-container failure.
+    // A foreign run is refused by collect_worker's durable-binding check.
     let stdout = api::durable::blob(
         &f.intent.output_dir.join("raw-worker-stdout"),
         frame(&produced).as_bytes(),
@@ -4811,6 +4828,32 @@ fn generator_no_container_failure_refuses_forged_and_unproven_closure() {
     let foreign = f.call(json!({"op":"collect_worker","owner":f.intent.owner,"correlation":f.intent.correlation,"facts":{
         "run":run,"stdout":stdout,"runtime_binding":null,"cleanup":null}}));
     assert_eq!(foreign.last().unwrap()["kind"], "error", "{foreign:?}");
+    // A claimed runtime binding observation contradicts a no-container failure. The
+    // run is exact, so refusal comes from the predicate/identity, not the binding check.
+    let claimed = RuntimeBindingInput {
+        execution: "fixture-execution".into(),
+        container_id: None,
+        run: f.ownership().run,
+        request_digest: f.intent.request_digest.clone(),
+        allocation: stdout.clone(),
+        topology: stdout.clone(),
+        host: ProcessPlacement {
+            rank: 0,
+            host: "dl380g10".into(),
+            allowed_cpus: "0".into(),
+            cgroup: "0::/user.slice/native-broker".into(),
+        },
+        container: None,
+        container_scope: None,
+    };
+    let bound = f.call(json!({"op":"collect_worker","owner":f.intent.owner,"correlation":f.intent.correlation,"facts":{
+        "run":f.ownership().run,"stdout":stdout,"runtime_binding":claimed,"cleanup":null}}));
+    assert_eq!(bound.last().unwrap()["kind"], "error", "{bound:?}");
+    assert_eq!(
+        bound.last().unwrap()["message"],
+        "worker frame structure, linkage or artifact bytes invalid",
+        "{bound:?}"
+    );
     // The genuine producer frame still collects while no execution exists ...
     assert_eq!(
         collect_worker(&f, frame(&produced).as_bytes())
