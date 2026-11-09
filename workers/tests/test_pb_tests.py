@@ -140,14 +140,9 @@ def test_malformed_flux_payload_is_infrastructure(submission, supported_fake_run
         path.write_bytes(response)
         payload["summary"].update(bytes=len(response), sha256=hashlib.sha256(response).hexdigest())
     supported_fake_runtime.on_payload = malform
-    if response == b"not json":
-        result = call(submission, Summary().result)
-        assert result["status"] == "infrastructure_error"
-        assert sum(result["totals"].values()) == 0
-    else:
-        # A non-object summary never yields a verdict (payload-summary root-* vectors).
-        with pytest.raises(AttributeError):
-            call(submission, Summary().result)
+    result = call(submission, Summary().result)
+    assert result["status"] == "infrastructure_error"
+    assert sum(result["totals"].values()) == 0
 
 
 @pytest.mark.durability

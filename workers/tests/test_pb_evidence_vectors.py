@@ -93,7 +93,7 @@ def test_ledger_bounds_retirement_and_newest_entry():
 def test_summary_container_and_root_errors_are_preserved():
     cases = {case['case']: case['output'] for case in read_vectors()['payload-summary']}
     for shape, cls in [('null', 'NoneType'), ('list', 'list'), ('string', 'str'), ('int', 'int'), ('bool', 'bool')]:
-        assert cases['root-' + shape]['raise'] == {'type': 'AttributeError', 'message': f"'{cls}' object has no attribute 'get'"}
+        assert cases['root-' + shape]['raise'] == {'type': 'ValueError', 'message': 'Invalid summary structure'}, cls
 
 
 def test_summary_bounds_use_the_enriched_python_json_bytes():

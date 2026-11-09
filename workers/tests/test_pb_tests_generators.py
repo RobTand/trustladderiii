@@ -421,6 +421,28 @@ def test_flux_generator_without_a_completed_payload_fails_closed_and_keeps_its_b
     assert supported_fake_runtime.submitted == [KEY]
 
 
+@pytest.mark.parametrize("ending", ["failed", "refused", "infra-lost", "cancelled"])
+def test_completed_generator_artifact_without_a_passed_ending_imports_nothing(
+        generator_repo, generator_backend, supported_fake_runtime, tmp_path, monkeypatch, ending):
+    from tl3_workers import flux_execution
+    original = flux_execution.execute
+
+    def execute(plan, **kwargs):
+        payload = original(plan, **kwargs)
+        assert payload["artifact"]["status"] == "completed" and payload["receipt"]["ending"] == "passed"
+        payload["receipt"]["ending"] = ending
+        return payload
+    monkeypatch.setattr(flux_execution, "execute", execute)
+    before = (generator_repo / "tests/BUILD.bazel").read_bytes()
+    tree, generate = configured_generator(generator_repo, tmp_path)
+    with tree:
+        result = generate()
+        assert result["status"] == "failed"
+        assert "ending" in result["message"]
+        assert json.loads(tree.generator_state.read_text())["phase"] == "submitted"
+    assert (generator_repo / "tests/BUILD.bazel").read_bytes() == before
+
+
 def test_flux_generator_refuses_another_payload_protocol(
         generator_repo, generator_backend, supported_fake_runtime, tmp_path):
     supported_fake_runtime.job = lambda root, document: ("tests", {"status": "completed"}, [])
