@@ -223,12 +223,14 @@ are local. The explicit slot resources contain memory alongside cores, with no
 unit cap and96G aggregate host cap. Real peak measurement remains a native
 acceptance requirement.
 
-Native jobspec generation starts with `--env=-*`. Only fixed PATH, HOME,
-XDG_RUNTIME_DIR, approved scratch, thread limits and stage-specific Cargo or nonce
-values enter `attributes.system.environment`. The CLI supervisor separately pins
-Flux URI, binary and library paths. Caller environment and API keys never enter
-the original jobspec. Raw operational output, manifest paths and all dispatch
-records remain private. Do not publish raw jobspecs or output logs.
+Native jobspec generation starts with `--env=-* --rlimit=-*`. Only fixed PATH,
+HOME, XDG_RUNTIME_DIR, approved scratch, thread limits and stage-specific Cargo
+or nonce values enter `attributes.system.environment`, and the caller's
+resource limits never enter `attributes.system.shell.options.rlimit`. The CLI
+supervisor separately pins Flux URI, binary and library paths. Caller
+environment and API keys never enter the original jobspec. Raw operational
+output, manifest paths and all dispatch records remain private. Do not publish
+raw jobspecs or output logs.
 
 Each dispatch lives in a unique0700directory under
 `/home/rob/.local/share/tl3/deploy-admission`. The shared directory
