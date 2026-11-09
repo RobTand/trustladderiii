@@ -1,7 +1,7 @@
 {
-  "source_head": "ec896f47496d1e5c924b7c7daa5abef5c100be48",
+  "source_head": "58219adcaf88b278981d65b791f4d8007bec0695",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "8580835dbc13cfae3fd604e629ce31f88aef0c4fb2deae185c4e1275b0551a14",
+  "source_sha256": "d308e879b79160c2963af9ef5354934a3757d061aa6bf61cc37002893cfe937b",
   "groups": 402,
   "obligations": 599,
   "selections": [
@@ -2011,8 +2011,8 @@
       "expected": 1
     },
     {
-      "target": "//crates/kernel:verus_dependencies_record_wait",
-      "selector": "kernel::dependencies#World::record_wait",
+      "target": "//crates/kernel:verus_dependencies_record_hold",
+      "selector": "kernel::dependencies#World::record_hold",
       "expected": 1
     }
   ]
