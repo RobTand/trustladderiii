@@ -43,6 +43,38 @@ fn write_dependency(table: &mut Vec<Dependency>, existing: Option<usize>,
 }
 }
 
+kernel_fn! {
+/// #693 / #806: record_dependency's original note statements, isolated for
+/// bounded solver work. A rejected cycle or an abandonment emits one note.
+fn record_note(out: &mut Outbox, i: usize, dependency: Dependency) -> (result: ()) [
+    requires old(out).len < OUTBOX,
+    ensures final(out).len <= old(out).len + 1,
+        !dependency.rejected && dependency.status != DependencyStatus::Abandoned ==> *final(out) == *old(out),
+        !dependency.rejected && dependency.status == DependencyStatus::Abandoned ==>
+            final(out).len == old(out).len + 1 && final(out).items@[old(out).len as int]
+                == Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Note(
+                    NoteKind::DependencyAbandoned { number: dependency.target.number }) }),
+] {
+    if dependency.rejected {
+        notice(
+            out,
+            i,
+            Notice::Note(NoteKind::DependencyCycle {
+                number: dependency.target.number,
+            }),
+        );
+    } else if dependency.status == DependencyStatus::Abandoned {
+        notice(
+            out,
+            i,
+            Notice::Note(NoteKind::DependencyAbandoned {
+                number: dependency.target.number,
+            }),
+        );
+    }
+}
+}
+
 #[cfg(verus_keep_ghost)]
 verus! {
 /// An actual live declaration, independent of either traversal's storage.
@@ -1509,6 +1541,34 @@ impl World {
     }
 
     kernel_fn! {
+    /// #693 / #806: record_dependency's original wait-number statements,
+    /// isolated for bounded solver work. Only this node's wait number changes.
+    fn record_wait(&mut self, i: usize, node: NodeId) -> (result: ()) [
+        requires i < old(self).nodes@.len(),
+        ensures final(self).nodes@ == old(self).nodes@.update(i as int, Node {
+                waiting_prerequisite: final(self).nodes@[i as int].waiting_prerequisite,
+                ..old(self).nodes@[i as int]
+            }),
+            final(self).dependencies@ == old(self).dependencies@,
+            final(self).next_ticket == old(self).next_ticket,
+            final(self).next_question == old(self).next_question,
+            final(self).gates@ == old(self).gates@,
+            final(self).pool_capacity == old(self).pool_capacity,
+            final(self).fail_fast == old(self).fail_fast,
+            final(self).file_sets@ == old(self).file_sets@,
+            dependency_retirement::edge_domain(*old(self)) && i == 0 && node == NodeId(0)
+                ==> final(self).nodes@[0].waiting_prerequisite
+                    == if old(self).dependencies@[0].status == DependencyStatus::Delivered { None }
+                        else { Some(old(self).dependencies@[0].target.number) },
+    ] {
+        let waiting = self.first_undelivered(node);
+        self.nodes[i].waiting_prerequisite = match waiting {
+            Some(d) => Some(d.target.number), None => None,
+        };
+    }
+    }
+
+    kernel_fn! {
     /// #693 / #771: store the validated declaration, then reconcile wait flags.
     /// This separates the unchanged writes from cycle-query validation.
     // The pinned Verus frontend needs an explicit match to retain the exact wait number.
@@ -1551,23 +1611,7 @@ impl World {
         kernel_proof! {
             writes::length(before_record@.dependencies@, self.dependencies@, existing, dependency);
         }
-        if dependency.rejected {
-            notice(
-                out,
-                i,
-                Notice::Note(NoteKind::DependencyCycle {
-                    number: dependency.target.number,
-                }),
-            );
-        } else if dependency.status == DependencyStatus::Abandoned {
-            notice(
-                out,
-                i,
-                Notice::Note(NoteKind::DependencyAbandoned {
-                    number: dependency.target.number,
-                }),
-            );
-        }
+        record_note(out, i, dependency);
         kernel_proof! {
             if dependency_retirement::edge_domain(before_record@) && i == 0 && existing == Some(0usize)
                 && dependency.node == NodeId(0) && dependency.target == before_record@.dependencies@[0].target
@@ -1577,10 +1621,7 @@ impl World {
                 assert(self.dependencies@[0] == dependency);
             }
         }
-        let waiting = self.first_undelivered(node);
-        self.nodes[i].waiting_prerequisite = match waiting {
-            Some(d) => Some(d.target.number), None => None,
-        };
+        self.record_wait(i, node);
         kernel_proof! {
             if dependency_retirement::edge_domain(before_record@) && i == 0 && existing == Some(0usize)
                 && dependency.node == NodeId(0) && dependency.target == before_record@.dependencies@[0].target
