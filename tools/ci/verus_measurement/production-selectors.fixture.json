@@ -1,10 +1,15 @@
 {
-  "source_head": "c4ac7a44f71f68db86a57a9bef25d3715ef55217",
+  "source_head": "78f7af93a632daaaba4d0accff0771d11a126f4c",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "9d4838f98a6a5b93420d6c96a5270681e274606c86d86a45bd1b26bcea2c18ad",
-  "groups": 459,
-  "obligations": 665,
+  "source_sha256": "cb5e52ad953ac98d3de59df863143ee6ed2f707751f813233a2bccee2c7f48e3",
+  "groups": 460,
+  "obligations": 666,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_handler_safety_distance_last_cmd",
+      "selector": "kernel::handler_safety#distance_last_cmd",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_commands_stop_command",
       "selector": "kernel::commands#stop_command",
