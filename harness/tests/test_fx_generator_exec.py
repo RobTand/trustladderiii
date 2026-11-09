@@ -429,6 +429,73 @@ def test_flux_generator_term_unwinds_owned_cleanup_and_emits_no_artifact(flux, m
     assert stat.S_ISDIR(tree.stat().st_mode)
 
 
+def modes(tree):
+    return {str(path.relative_to(tree)): stat.S_IMODE(path.lstat().st_mode)
+            for path in [tree, *sorted(tree.rglob('*'))]}
+
+
+def test_flux_generator_stages_readonly_checkout_as_private_writable_copy(flux, monkeypatch):
+    # Ported from test_generator_preparation's docker-era staging test: an immutable 0500
+    # source becomes a private writable copy with Git metadata before the owned launch.
+    import subprocess
+    from tl3_harness import generator
+
+    use_backend(monkeypatch, flux)
+    tree = source_tree(flux['root'])
+    (tree / 'tools/gen.py').chmod(0o555)
+    (tree / 'data.txt').chmod(0o444)
+    (tree / 'tools').chmod(0o500)
+    tree.chmod(0o500)
+    before_modes = modes(tree)
+    before = generator.manifest(tree)
+    staged = {}
+    original = generator.container_command
+
+    def observed(copy, *args):
+        listed = subprocess.run(['git', '-C', str(copy), 'ls-files', '-s'], check=True,
+                                stdout=subprocess.PIPE, text=True).stdout
+        staged.update(writable=bool(copy.stat().st_mode & stat.S_IWUSR), git=(copy / '.git').is_dir(),
+                      listed=listed, executable=bool((copy / 'tools/gen.py').stat().st_mode & stat.S_IXUSR),
+                      git_mode=stat.S_IMODE((copy / '.git').stat().st_mode))
+        return original(copy, *args)
+
+    monkeypatch.setattr(generator, 'container_command', observed)
+    try:
+        result = generator.run(tree, generator.Container(IMAGE), **contract('ok'))
+        assert result['status'] == 'completed', result
+        assert [output['path'] for output in result['outputs']] == ['generated/out.txt'], result
+        generator.validate_artifact(result, before, contract('ok'))
+        assert staged['writable'] and staged['git'] and staged['executable'], staged
+        assert '100755 ' in staged['listed'] and 'tools/gen.py' in staged['listed'], staged
+        assert 'data.txt' in staged['listed'], staged
+        # Synthetic Git metadata keeps Git's own umask-derived mode; never widened to 0777.
+        umask = os.umask(0)
+        os.umask(umask)
+        assert staged['git_mode'] == 0o777 & ~umask, (oct(staged['git_mode']), oct(umask))
+        assert modes(tree) == before_modes, 'immutable source tree changed'
+        assert not flux['leaf'].exists(), 'generator scratch copy was not released'
+    finally:
+        for path in [tree, *tree.rglob('*')]:
+            if path.is_dir():
+                path.chmod(0o700)
+
+
+def test_generator_outside_flux_is_refused_before_any_work(tmp_path, monkeypatch):
+    # The PB docker branch is gone: no admission other than a Flux job may stage or launch.
+    from tl3_harness import generator, runtime
+
+    monkeypatch.setattr(runtime, 'launch_context', lambda: None)
+    monkeypatch.setattr(generator, 'require_admission', lambda: None)
+    work = []
+    monkeypatch.setattr(generator, 'manifest', lambda root: work.append(('manifest', root)) or {})
+    monkeypatch.setattr(generator, 'git', lambda *args: work.append(('git', args)))
+    tree = source_tree(tmp_path)
+    with pytest.raises(RuntimeError, match='Flux'):
+        generator.run(tree, generator.Container(IMAGE), **contract('ok'))
+    assert not work, work
+    assert not runtime_calls(tmp_path)
+
+
 def driver():
     """Real host collector -> real Rust collect_worker driver. Native Flux stays the Rust fixture."""
     root, source, mode = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
