@@ -1,6 +1,6 @@
 use crate::bounded::{Text as BoundedText, *};
 use crate::render::{Layout, TypeOrder, TypeUse};
-use crate::run_binding::{self, BackendTag, Ending, RunBinding};
+use crate::run_binding::{self, BackendId, BackendTag, Ending, RunBinding, SubmissionIntent};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -830,7 +830,7 @@ pub struct MakerReplyDone {
         deserialize_with = "present",
         skip_serializing_if = "Option::is_none"
     )]
-    #[schemars(with = "GenerationReceipt", default)]
+    #[schemars(with = "GenerationReceiptFields", default)]
     #[schemars(
         description = "Added by worker code after verified import. The model must omit this field."
     )]
@@ -1072,12 +1072,17 @@ pub fn schema_value() -> serde_json::Value {
     reply_schema_value::<MakerReply>("maker", |g| {
         g.subschema_for::<BudgetExhaustion>();
         g.subschema_for::<CheckingHandoff>();
-        g.subschema_for::<GenerationReceipt>();
+        g.subschema_for::<GenerationReceiptFields>();
         g.subschema_for::<Text>();
         g.subschema_for::<SelectorIdentity>();
         g.subschema_for::<TestRun>();
         g.subschema_for::<Totals>();
         g.subschema_for::<Reproduction>();
+        g.subschema_for::<RunBinding>();
+        g.subschema_for::<BackendId>();
+        g.subschema_for::<SubmissionIntent>();
+        g.subschema_for::<BackendTag>();
+        g.subschema_for::<Ending>();
     })
 }
 
@@ -1085,12 +1090,17 @@ pub fn schema_text() -> String {
     let types = [
         TypeOrder::of::<BudgetExhaustion>(BUDGET_EXHAUSTION_ORDER),
         TypeOrder::of::<CheckingHandoff>(CHECKING_HANDOFF_ORDER),
-        TypeOrder::of::<GenerationReceipt>(GENERATION_RECEIPT_ORDER),
+        TypeOrder::of::<GenerationReceiptFields>(GENERATION_RECEIPT_ORDER),
         TypeOrder::of::<Text>(TEXT_ORDER),
         TypeOrder::of::<SelectorIdentity>(SELECTOR_IDENTITY_ORDER),
         TypeOrder::of::<TestRun>(TEST_RUN_ORDER),
         TypeOrder::of::<Totals>(TOTALS_ORDER),
         TypeOrder::of::<Reproduction>(REPRODUCTION_ORDER),
+        TypeOrder::of::<RunBinding>(RUN_BINDING_ORDER),
+        TypeOrder::of::<BackendId>(BACKEND_ID_ORDER),
+        TypeOrder::of::<SubmissionIntent>(SUBMISSION_INTENT_ORDER),
+        TypeOrder::of::<BackendTag>(NATIVE_ENUM_ORDER),
+        TypeOrder::of::<Ending>(NATIVE_ENUM_ORDER),
     ];
     let shared = [
         TypeUse {
@@ -1124,6 +1134,26 @@ pub fn schema_text() -> String {
         TypeUse {
             pointer: "/$defs/reproduction",
             order: &types[7],
+        },
+        TypeUse {
+            pointer: "/$defs/RunBinding",
+            order: &types[8],
+        },
+        TypeUse {
+            pointer: "/$defs/BackendId",
+            order: &types[9],
+        },
+        TypeUse {
+            pointer: "/$defs/SubmissionIntent",
+            order: &types[10],
+        },
+        TypeUse {
+            pointer: "/$defs/BackendTag",
+            order: &types[11],
+        },
+        TypeUse {
+            pointer: "/$defs/Ending",
+            order: &types[12],
         },
     ];
     crate::render::render(
@@ -1378,6 +1408,11 @@ pub const ROOT_ORDER: &[crate::render::ObjectOrder<'static>] = &[
             "test_run",
             "totals",
             "reproduction",
+            "RunBinding",
+            "BackendId",
+            "SubmissionIntent",
+            "BackendTag",
+            "Ending",
         ],
     ),
 ];
@@ -1553,7 +1588,7 @@ pub const GENERATION_RECEIPT_ORDER: &[crate::render::ObjectOrder<'static>] = &[
             "inner",
         ],
     ),
-    ("/properties/backend", &["type", "enum"]),
+    ("/properties/backend", &["$ref"]),
     ("/properties/wait_reference", &["type", "pattern"]),
     ("/properties/run_binding", &["$ref"]),
     ("/properties/ending", &["const"]),
@@ -1831,11 +1866,11 @@ pub const TEST_RUN_ORDER: &[crate::render::ObjectOrder<'static>] = &[
         "/properties/receipts/items/properties",
         &["backend", "wait_reference", "run_binding", "receipt_sha256", "ending"],
     ),
-    ("/properties/receipts/items/properties/backend", &["type", "enum"]),
+    ("/properties/receipts/items/properties/backend", &["$ref"]),
     ("/properties/receipts/items/properties/wait_reference", &["type", "pattern"]),
     ("/properties/receipts/items/properties/run_binding", &["$ref"]),
     ("/properties/receipts/items/properties/receipt_sha256", &["type", "pattern"]),
-    ("/properties/receipts/items/properties/ending", &["type", "enum"]),
+    ("/properties/receipts/items/properties/ending", &["$ref"]),
     ("/properties/runs", &["type", "maxItems", "items"]),
     (
         "/properties/runs/items",
@@ -1863,6 +1898,23 @@ pub const TOTALS_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     ("/properties/error", &["type", "minimum"]),
     ("/properties/skipped", &["type", "minimum"]),
 ];
+/// Key order for the shared native binding types, emitted once as named `$defs`.
+pub const RUN_BINDING_ORDER: &[crate::render::ObjectOrder<'static>] = &[
+    ("", &["type", "properties", "required", "additionalProperties"]),
+    ("/properties", &["id", "intent"]),
+];
+pub const BACKEND_ID_ORDER: &[crate::render::ObjectOrder<'static>] = &[
+    ("", &["type", "properties", "required", "additionalProperties"]),
+    ("/properties", &["backend", "instance", "uri", "job"]),
+];
+pub const SUBMISSION_INTENT_ORDER: &[crate::render::ObjectOrder<'static>] = &[
+    ("", &["type", "properties", "required", "additionalProperties"]),
+    (
+        "/properties",
+        &["backend", "instance", "uri", "owner", "correlation", "request_digest", "output_dir"],
+    ),
+];
+pub const NATIVE_ENUM_ORDER: &[crate::render::ObjectOrder<'static>] = &[("", &["type", "enum"])];
 pub const REPRODUCTION_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     ("", &["oneOf"]),
     (
