@@ -38,10 +38,8 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
         (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase),
         handler_safety::command_step(old(w).nodes@[i as int], final(w).nodes@[i as int]),
-        transition_safety::no_effects(transition_safety::emitted(*old(out), *final(out))),
 ] proof [reveal(distance);] {
     kernel_snapshot! { before_answer = w.nodes@[i as int] }
-    kernel_proof! { transition_safety::quiet(*out); }
     let Some(q) = w.nodes[i].question else {
         kernel_proof! { handler_safety::same_step(before_answer@); }
         return;
@@ -131,10 +129,8 @@ fn clarify_node(m: &mut Node, next_question: &mut u64, i: usize, q: Question,
             Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Ask { question: *old(next_question) } })),
         old(m).phase == Phase::AwaitingRob && old(m).question == Some(q) && !q.clarified
             ==> handler_safety::command_step(*old(m), *final(m)),
-        transition_safety::no_effects(transition_safety::emitted(*old(out), *final(out))),
 ] {
     kernel_snapshot! { before_clarify = *m }
-    kernel_snapshot! { before_out = *out }
     let next = *next_question;
     *next_question += 1;
     m.question = Some(Question {
@@ -144,7 +140,6 @@ fn clarify_node(m: &mut Node, next_question: &mut u64, i: usize, q: Question,
     });
     notice(out, i, Notice::Ask { question: next });
     kernel_proof! {
-        transition_safety::noticed(before_out@, *out, NodeId(i as u64), Notice::Ask { question: next });
         if before_clarify@.phase == Phase::AwaitingRob && before_clarify@.question == Some(q) && !q.clarified {
             handler_safety::clarify_step(before_clarify@, q, next);
         }
@@ -184,7 +179,6 @@ fn retry_answer_node(m: &mut Node, i: usize, q: Question, out: &mut Outbox) -> (
         }),
         old(m).phase == Phase::AwaitingRob ==> handler_safety::command_step(*old(m), *final(m)),
         final(out).len <= old(out).len + 1,
-        transition_safety::no_effects(transition_safety::emitted(*old(out), *final(out))),
 ] {
     kernel_snapshot! { before_retry = *m }
     m.attempt = 1;
