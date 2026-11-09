@@ -1,4 +1,4 @@
-"""The committed PB corpus is an in-process oracle for the Rust port (#821)."""
+"""The committed native evidence corpus is an in-process oracle for the Rust port (#821)."""
 import json
 
 from pb_evidence_vectors import KINDS, check_coverage, check_vectors, read_vectors
@@ -20,30 +20,23 @@ def test_current_python_matches_committed_vectors():
         assert len(json.dumps(result['state']['test_runs']).encode()) <= 65_536, case['case']
 
 
-def test_ending_corruptions_reject_at_the_original_boundary():
-    cases = {case['case']: case['output'] for case in read_vectors()['ending-summary']}
-    assert cases['executed']['return']['status'] == 'completed'
-    assert cases['cache-hit']['return']['receipts'][0]['status'] == 'cache_hit'
-    for name in ('key', 'status', 'exit', 'succeeded', 'verified', 'receipt-sha', 'receipt-type',
-                 'log-size-negative', 'log-size-bool', 'log-size-limit', 'log-size-changed',
-                 'log-sha', 'no-summary', 'two-summaries', 'json', 'shape-status', 'shape-tests',
-                 'shape-note', 'shape-totals', 'totals-keys', 'totals-negative', 'totals-bool',
-                 'totals-float', 'test-shape', 'test-name', 'test-outcome', 'symptom-missing',
-                 'symptom-run-index', 'symptom-run-sha', 'symptom-run-summary'):
-        error = cases[name]['raise']
-        assert error['type'] == 'ExecutionFailure', name
-        assert error['execution']['outcome'] == 'transport_failure', name
-        assert error['execution']['phase'] == 'summary', name
-
-
-def test_failed_record_matches_publication_and_filters_private_metadata():
-    cases = {case['case']: case['output']['return'] for case in read_vectors()['failure-receipt']}
-    assert cases['published-record']['termination_reason'] == 'memory_limit_oom'
-    for name in ('wrong-key', 'wrong-publication', 'invalid-record-json', 'record-over-limit'):
-        assert cases[name]['termination_reason'] == 'worker_lost'
-    assert 'private_metadata' not in json.dumps(cases)
-    assert 'termination_reason' not in cases['reason-unsafe']
-    assert 'memory_peak_bytes' not in cases['peak-bool']
+def test_payload_corruptions_reject_before_a_verdict():
+    cases = {case['case']: case['output'] for case in read_vectors()['payload-summary']}
+    accepted = cases['executed']['return']
+    assert accepted['status'] == 'completed'
+    assert accepted['wait_reference'].startswith('worker:') and accepted['receipts'][0]['backend'] == 'flux'
+    assert set(accepted['receipts'][0]) == {'backend', 'wait_reference', 'run_binding', 'receipt_sha256', 'ending'}
+    for name in ('shape-status', 'shape-tests', 'shape-note', 'shape-totals', 'totals-keys', 'totals-negative',
+                 'totals-bool', 'totals-float', 'test-shape', 'test-name', 'test-outcome'):
+        assert cases[name]['raise'] == {'type': 'ValueError', 'message': 'Invalid summary structure'}, name
+    assert cases['symptom-missing']['raise']['message'] == 'missing symptom run receipt'
+    for name in ('symptom-run-index', 'symptom-run-sha', 'symptom-run-summary'):
+        assert cases[name]['raise']['message'] == 'symptom run receipt changed', name
+    assert cases['payload-bytes-changed']['raise']['message'] == 'Verified worker payload bytes changed'
+    assert cases['payload-over-bound']['raise']['message'] == 'Verified worker payload exceeds its generated bound'
+    for name in ('foreign-binding', 'null-binding'):
+        assert 'another run binding' in cases[name]['raise']['message'], name
+    assert cases['not-passed']['raise']['message'] == 'Shared execution retained an unknown or refused outcome'
 
 
 def test_post_wait_consistency_classifies_each_mismatch():
@@ -55,20 +48,6 @@ def test_post_wait_consistency_classifies_each_mismatch():
         result = cases[name]['return']
         assert result['status'] == 'infrastructure_error'
         assert result['execution']['termination_reason'] == reason
-
-
-def test_capability_and_stdout_paths_keep_their_transport_rules():
-    cases = {case['case']: case['output']['return'] for case in read_vectors()['machine-record-fallback']}
-    supported = cases['supported-private-wins']
-    assert supported['value'][1] == {'source': 'private'}
-    assert supported['calls'] == ['probe', 'private']
-    assert supported['fallbacks'] == []
-    for name in ('absent', 'bool', 'float', 'zero', 'exit-2-fallback', 'probe-io-fallback'):
-        assert cases[name]['value'][1] == {'source': 'stdout'}, name
-        assert cases[name]['calls'] == ['probe', 'stdout'], name
-        assert cases[name]['fallbacks'] == ['pbrun'], name
-    assert cases['private-empty']['error']['execution']['termination_reason'] == 'machine_record_empty'
-    assert cases['private-empty']['calls'] == ['probe', 'private']
 
 
 def test_generator_verification_imports_only_the_verified_artifact():
@@ -103,7 +82,6 @@ def test_ledger_bounds_retirement_and_newest_entry():
     assert recovered['state']['infrastructure_keys'] == []
     assert all(not citation['cites'] for citation in recovered['citations'])
     assert cases['base-does-not-retire-head']['citations'][0]['cites'] is True
-    assert cases['cache-hit']['state']['test_runs'][0]['fresh'] is False
     newest = cases['ten-entries-newest-kept']['state']['test_runs']
     assert len(newest) == 10 and newest[-1]['tree'] == f'{11:040x}'
     bounded = cases['byte-bound-and-selector-identity']['state']['test_runs']
@@ -113,25 +91,19 @@ def test_ledger_bounds_retirement_and_newest_entry():
 
 
 def test_summary_container_and_root_errors_are_preserved():
-    cases = {case['case']: case['output'] for case in read_vectors()['ending-summary']}
-    for field in ('result', 'stdout'):
-        for shape in ('null', 'list', 'string', 'int', 'bool', 'empty'):
-            error = cases[field + '-' + shape]['raise']
-            assert error['type'] == 'ExecutionFailure'
-            assert error['execution']['termination_reason'] == ('unverified_receipt' if field == 'result' else 'invalid_log_receipt')
-            assert error['cause']['type'] in ('TypeError', 'KeyError')
+    cases = {case['case']: case['output'] for case in read_vectors()['payload-summary']}
     for shape, cls in [('null', 'NoneType'), ('list', 'list'), ('string', 'str'), ('int', 'int'), ('bool', 'bool')]:
         assert cases['root-' + shape]['raise'] == {'type': 'AttributeError', 'message': f"'{cls}' object has no attribute 'get'"}
 
 
 def test_summary_bounds_use_the_enriched_python_json_bytes():
-    cases = {case['case']: case['output'] for case in read_vectors()['ending-summary']}
+    cases = {case['case']: case['output'] for case in read_vectors()['payload-summary']}
     for name, size in [('below', 15871), ('at', 15872), ('above', 15873)]:
         result = cases['summary-bytes-' + name]['return']
         assert result['before_bytes'] == size
         assert result['after_bytes'] <= 15872
         summary = result['summary']
-        assert summary['totals']['passed'] == 1 and summary['receipts'][0]['action_key']
+        assert summary['totals']['passed'] == 1 and summary['receipts'][0]['wait_reference']
         # These raw summaries already exceed the former action limit, before
         # receipts are attached. #823 now enforces that limit in Rust first.
         assert summary['tests'] == [] and summary['note'].startswith('Truncated:')
@@ -139,7 +111,7 @@ def test_summary_bounds_use_the_enriched_python_json_bytes():
         result = cases['action-summary-bytes-' + name]['return']
         assert result['before_bytes'] == size and result['after_bytes'] <= 15872
         summary = result['summary']
-        assert summary['totals']['passed'] == 1 and summary['receipts'][0]['action_key']
+        assert summary['totals']['passed'] == 1 and summary['receipts'][0]['wait_reference']
         if name == 'above':
             assert summary['tests'] == [] and summary['note'].startswith('Truncated:')
         else:
@@ -173,10 +145,3 @@ def test_invalid_ledger_selectors_and_state_keep_their_refusals():
         assert cases[name]['raise'] == {'type': 'ValueError', 'message': 'invalid evidence selectors'}
     for name in ('invalid-state-key', 'invalid-state-tool', 'invalid-state-runs', 'invalid-state-run'):
         assert cases[name]['raise'] == {'type': 'ValueError', 'message': 'invalid evidence state'}
-
-
-def test_unavailable_descriptor_does_not_submit_or_fall_back():
-    case = next(case for case in read_vectors()['machine-record-fallback'] if case['case'] == 'descriptor-unavailable')
-    result = case['output']['return']
-    assert result['calls'] == ['probe'] and result['fallbacks'] == []
-    assert result['error']['execution']['termination_reason'] == 'machine_record_descriptor_unavailable'

@@ -5114,23 +5114,6 @@
                     ]
                   ],
                   [
-                    "tools_path",
-                    [
-                      [
-                        "type",
-                        "string"
-                      ],
-                      [
-                        "pattern",
-                        "^/"
-                      ],
-                      [
-                        "minLength",
-                        1
-                      ]
-                    ]
-                  ],
-                  [
                     "execution",
                     [
                       [
@@ -5232,55 +5215,13 @@
               [
                 "required",
                 [
-                  "image"
+                  "image",
+                  "execution"
                 ]
               ],
               [
                 "additionalProperties",
                 false
-              ],
-              [
-                "oneOf",
-                [
-                  [
-                    [
-                      "required",
-                      [
-                        "tools_path"
-                      ]
-                    ],
-                    [
-                      "not",
-                      [
-                        [
-                          "required",
-                          [
-                            "execution"
-                          ]
-                        ]
-                      ]
-                    ]
-                  ],
-                  [
-                    [
-                      "required",
-                      [
-                        "execution"
-                      ]
-                    ],
-                    [
-                      "not",
-                      [
-                        [
-                          "required",
-                          [
-                            "tools_path"
-                          ]
-                        ]
-                      ]
-                    ]
-                  ]
-                ]
               ]
             ]
           ],
@@ -6025,7 +5966,7 @@
                   [
                     [
                       "description",
-                      "An action_key whose run_tests summary had status infrastructure_error, or a tool_error id, recorded in this run."
+                      "A wait_reference whose run_tests summary had status infrastructure_error, or a tool_error id, recorded in this run."
                     ],
                     [
                       "oneOf",
@@ -6039,7 +5980,7 @@
                             "properties",
                             [
                               [
-                                "action_key",
+                                "wait_reference",
                                 [
                                   [
                                     "type",
@@ -6047,7 +5988,7 @@
                                   ],
                                   [
                                     "pattern",
-                                    "^[0-9a-f]{64}$"
+                                    "^worker:[0-9a-f]{64}$"
                                   ]
                                 ]
                               ],
@@ -6069,7 +6010,7 @@
                           [
                             "required",
                             [
-                              "action_key",
+                              "wait_reference",
                               "class"
                             ]
                           ],
@@ -6801,7 +6742,16 @@
                 "properties",
                 [
                   [
-                    "action_key",
+                    "backend",
+                    [
+                      [
+                        "$ref",
+                        "#/$defs/BackendTag"
+                      ]
+                    ]
+                  ],
+                  [
+                    "wait_reference",
                     [
                       [
                         "type",
@@ -6809,7 +6759,25 @@
                       ],
                       [
                         "pattern",
-                        "^[0-9a-f]{64}$"
+                        "^worker:[0-9a-f]{64}$"
+                      ]
+                    ]
+                  ],
+                  [
+                    "run_binding",
+                    [
+                      [
+                        "$ref",
+                        "#/$defs/RunBinding"
+                      ]
+                    ]
+                  ],
+                  [
+                    "ending",
+                    [
+                      [
+                        "const",
+                        "passed"
                       ]
                     ]
                   ],
@@ -7521,76 +7489,16 @@
                         false
                       ]
                     ]
-                  ],
-                  [
-                    "outer",
-                    [
-                      [
-                        "type",
-                        "object"
-                      ],
-                      [
-                        "properties",
-                        [
-                          [
-                            "status",
-                            [
-                              [
-                                "enum",
-                                [
-                                  "executed",
-                                  "cache_hit"
-                                ]
-                              ]
-                            ]
-                          ],
-                          [
-                            "exit_code",
-                            [
-                              [
-                                "const",
-                                0
-                              ]
-                            ]
-                          ],
-                          [
-                            "elapsed_s",
-                            [
-                              [
-                                "type",
-                                [
-                                  "number",
-                                  "null"
-                                ]
-                              ],
-                              [
-                                "minimum",
-                                0
-                              ]
-                            ]
-                          ]
-                        ]
-                      ],
-                      [
-                        "required",
-                        [
-                          "status",
-                          "exit_code",
-                          "elapsed_s"
-                        ]
-                      ],
-                      [
-                        "additionalProperties",
-                        false
-                      ]
-                    ]
                   ]
                 ]
               ],
               [
                 "required",
                 [
-                  "action_key",
+                  "backend",
+                  "wait_reference",
+                  "run_binding",
+                  "ending",
                   "artifact_sha256",
                   "receipt_sha256",
                   "output_manifest",
@@ -7605,8 +7513,7 @@
                   "budget",
                   "timings",
                   "phase",
-                  "inner",
-                  "outer"
+                  "inner"
                 ]
               ],
               [
@@ -7737,7 +7644,7 @@
               ],
               [
                 "description",
-                "A completed run_tests call with its PrismaBuild receipts (#408)."
+                "A completed run_tests call with its native Flux receipt."
               ],
               [
                 "properties",
@@ -7921,19 +7828,6 @@
                     ]
                   ],
                   [
-                    "fresh",
-                    [
-                      [
-                        "type",
-                        "boolean"
-                      ],
-                      [
-                        "description",
-                        "False when PrismaBuild replayed a stored result."
-                      ]
-                    ]
-                  ],
-                  [
                     "repeat",
                     [
                       [
@@ -8008,7 +7902,16 @@
                             "properties",
                             [
                               [
-                                "action_key",
+                                "backend",
+                                [
+                                  [
+                                    "$ref",
+                                    "#/$defs/BackendTag"
+                                  ]
+                                ]
+                              ],
+                              [
+                                "wait_reference",
                                 [
                                   [
                                     "type",
@@ -8016,54 +7919,16 @@
                                   ],
                                   [
                                     "pattern",
-                                    "^[0-9a-f]{64}$"
+                                    "^worker:[0-9a-f]{64}$"
                                   ]
                                 ]
                               ],
                               [
-                                "status",
+                                "run_binding",
                                 [
                                   [
-                                    "enum",
-                                    [
-                                      "executed",
-                                      "cache_hit"
-                                    ]
-                                  ]
-                                ]
-                              ],
-                              [
-                                "exit_code",
-                                [
-                                  [
-                                    "type",
-                                    "integer"
-                                  ]
-                                ]
-                              ],
-                              [
-                                "attempt",
-                                [
-                                  [
-                                    "type",
-                                    "integer"
-                                  ],
-                                  [
-                                    "minimum",
-                                    1
-                                  ]
-                                ]
-                              ],
-                              [
-                                "generation",
-                                [
-                                  [
-                                    "type",
-                                    "string"
-                                  ],
-                                  [
-                                    "pattern",
-                                    "^[0-9a-f]{64}$"
+                                    "$ref",
+                                    "#/$defs/RunBinding"
                                   ]
                                 ]
                               ],
@@ -8081,15 +7946,11 @@
                                 ]
                               ],
                               [
-                                "log_sha256",
+                                "ending",
                                 [
                                   [
-                                    "type",
-                                    "string"
-                                  ],
-                                  [
-                                    "pattern",
-                                    "^[0-9a-f]{64}$"
+                                    "$ref",
+                                    "#/$defs/Ending"
                                   ]
                                 ]
                               ]
@@ -8098,11 +7959,11 @@
                           [
                             "required",
                             [
-                              "action_key",
-                              "status",
-                              "exit_code",
+                              "backend",
+                              "wait_reference",
+                              "run_binding",
                               "receipt_sha256",
-                              "log_sha256"
+                              "ending"
                             ]
                           ],
                           [
@@ -8198,7 +8059,6 @@
                   "parallel",
                   "status",
                   "tree",
-                  "fresh",
                   "totals",
                   "receipts"
                 ]
@@ -8401,6 +8261,239 @@
                       false
                     ]
                   ]
+                ]
+              ]
+            ]
+          ],
+          [
+            "RunBinding",
+            [
+              [
+                "type",
+                "object"
+              ],
+              [
+                "properties",
+                [
+                  [
+                    "id",
+                    [
+                      [
+                        "$ref",
+                        "#/$defs/BackendId"
+                      ]
+                    ]
+                  ],
+                  [
+                    "intent",
+                    [
+                      [
+                        "$ref",
+                        "#/$defs/SubmissionIntent"
+                      ]
+                    ]
+                  ]
+                ]
+              ],
+              [
+                "required",
+                [
+                  "id",
+                  "intent"
+                ]
+              ],
+              [
+                "additionalProperties",
+                false
+              ]
+            ]
+          ],
+          [
+            "BackendId",
+            [
+              [
+                "type",
+                "object"
+              ],
+              [
+                "properties",
+                [
+                  [
+                    "backend",
+                    [
+                      [
+                        "$ref",
+                        "#/$defs/BackendTag"
+                      ]
+                    ]
+                  ],
+                  [
+                    "instance",
+                    [
+                      [
+                        "type",
+                        "string"
+                      ]
+                    ]
+                  ],
+                  [
+                    "uri",
+                    [
+                      [
+                        "type",
+                        "string"
+                      ]
+                    ]
+                  ],
+                  [
+                    "job",
+                    [
+                      [
+                        "type",
+                        "string"
+                      ]
+                    ]
+                  ]
+                ]
+              ],
+              [
+                "required",
+                [
+                  "backend",
+                  "instance",
+                  "uri",
+                  "job"
+                ]
+              ],
+              [
+                "additionalProperties",
+                false
+              ]
+            ]
+          ],
+          [
+            "SubmissionIntent",
+            [
+              [
+                "type",
+                "object"
+              ],
+              [
+                "properties",
+                [
+                  [
+                    "backend",
+                    [
+                      [
+                        "$ref",
+                        "#/$defs/BackendTag"
+                      ]
+                    ]
+                  ],
+                  [
+                    "instance",
+                    [
+                      [
+                        "type",
+                        "string"
+                      ]
+                    ]
+                  ],
+                  [
+                    "uri",
+                    [
+                      [
+                        "type",
+                        "string"
+                      ]
+                    ]
+                  ],
+                  [
+                    "owner",
+                    [
+                      [
+                        "type",
+                        "string"
+                      ]
+                    ]
+                  ],
+                  [
+                    "correlation",
+                    [
+                      [
+                        "type",
+                        "string"
+                      ]
+                    ]
+                  ],
+                  [
+                    "request_digest",
+                    [
+                      [
+                        "type",
+                        "string"
+                      ]
+                    ]
+                  ],
+                  [
+                    "output_dir",
+                    [
+                      [
+                        "type",
+                        "string"
+                      ]
+                    ]
+                  ]
+                ]
+              ],
+              [
+                "required",
+                [
+                  "backend",
+                  "instance",
+                  "uri",
+                  "owner",
+                  "correlation",
+                  "request_digest",
+                  "output_dir"
+                ]
+              ],
+              [
+                "additionalProperties",
+                false
+              ]
+            ]
+          ],
+          [
+            "BackendTag",
+            [
+              [
+                "type",
+                "string"
+              ],
+              [
+                "enum",
+                [
+                  "flux"
+                ]
+              ]
+            ]
+          ],
+          [
+            "Ending",
+            [
+              [
+                "type",
+                "string"
+              ],
+              [
+                "enum",
+                [
+                  "passed",
+                  "failed",
+                  "refused",
+                  "infra-lost",
+                  "cancelled"
                 ]
               ]
             ]

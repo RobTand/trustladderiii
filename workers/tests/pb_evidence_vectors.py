@@ -1,37 +1,38 @@
-"""Record the existing Python PB contract; run this oracle on BuildBuddy only.
+"""Record the worker's native evidence decisions; run this oracle on BuildBuddy only.
 
-No served code or real PB records are used. Only external reads/submissions are
-replaced; decisions and serialization execute in their production functions.
+No served code or live backend records are used. Only the Rust worker-execution
+control and shared-CLI wire are replaced; payload checks, receipt mapping,
+decisions and serialization execute in their production functions.
 """
 import argparse
 import ast
 import base64
 from copy import deepcopy
-from contextlib import nullcontext
 import hashlib
 import inspect
 import json
-import os
 import re
 from pathlib import Path
 import tempfile
 import textwrap
 from types import SimpleNamespace
+from contextlib import ExitStack
 from unittest.mock import patch
 
 from tl3_harness import generator, test_tool
 from tl3_harness.model import Forcing
 from tl3_harness.selector_identity import selector_identity
-from tl3_harness.supervision import ExecutionFailure
-from tl3_harness.test_tool import OUTCOMES, PREFIX, Summary
+from tl3_harness.supervision import ExecutionFailure, model_result
+from tl3_harness.test_tool import OUTCOMES, Summary
 from tl3_workers import forcing_rehearsal as rehearsal
-from tl3_workers import pb_generators, pb_tests, tools
+from tl3_workers import flux_execution, generators, tests_tool, tools
 from tl3_workers.tools import Evidence, Worktree
 
 DIRECTORY = Path(__file__).with_name('pb-evidence-vectors')
-KINDS = ('ending-summary', 'failure-receipt', 'post-wait-consistency',
-         'machine-record-fallback', 'generator-artifact', 'rehearsal-identity', 'evidence-ledger')
-KEY = 'a' * 64
+KINDS = ('payload-summary', 'post-wait-consistency', 'generator-artifact', 'rehearsal-identity',
+         'evidence-ledger')
+KEY = 'worker:' + 'a' * 64
+EXECUTION = {'backend': 'flux', 'profile': '/fixture/attempt/execution.json'}
 IMAGE = 'sha256:' + 'b' * 64
 NODE = 'tests/test_old.py::test_old'
 BASE = 'c' * 40
@@ -55,21 +56,18 @@ def completed():
     return summary.result
 
 
+def binding(key=KEY):
+    """An authoritative-shaped RunBinding for a worker wait reference (run_backend.rs)."""
+    correlation = key.replace('worker:', 'worker-')
+    return {'id': {'backend': 'flux', 'instance': 'tl3-fixture', 'uri': 'local:///run/flux/fixture', 'job': 'f2'},
+            'intent': {'backend': 'flux', 'instance': 'tl3-fixture', 'uri': 'local:///run/flux/fixture',
+                       'owner': 'worker-tools', 'correlation': correlation, 'request_digest': 'c' * 64,
+                       'output_dir': '/mnt/shared/flux-out/tl3/' + correlation}}
+
+
 def receipt():
-    return {'action_key': KEY, 'status': 'executed', 'exit_code': 0,
-            'receipt_sha256': 'd' * 64, 'log_sha256': 'e' * 64}
-
-
-def ending(raw):
-    return {'action_key': KEY, 'status': 'executed', 'exit_code': 0, 'succeeded': True,
-            'attempt': 2, 'publication': {'generation': 'f' * 64},
-            'result': {'verified': True, 'receipt_sha256': 'd' * 64,
-                       'stdout': {'path': '$LOG', 'bytes': len(raw), 'sha256': digest(raw)}}}
-
-
-def log_input(value, prefix=PREFIX):
-    raw = (prefix + json.dumps(value, ensure_ascii=False) + '\n').encode()
-    return {'ending': ending(raw), 'log': raw.decode()}
+    return {'backend': 'flux', 'wait_reference': KEY, 'run_binding': binding(),
+            'receipt_sha256': 'd' * 64, 'ending': 'passed'}
 
 
 def assign(value, path, replacement):
@@ -90,51 +88,16 @@ def variants(original, mutations):
 
 
 def cases(kind):
-    if kind == 'ending-summary':
-        good = log_input(completed())
-        yield 'executed', good
-        for name, size in [('below', 1_048_575), ('at', 1_048_576), ('above', 1_048_577)]:
-            yield 'log-bytes-' + name, {**good, 'log_padding': size}
-        for field in ('result', 'stdout'):
-            for name, malformed in [('null', None), ('list', []), ('string', 'bad'),
-                                    ('int', 1), ('bool', True), ('empty', {})]:
-                item = deepcopy(good)
-                if field == 'result':
-                    item['ending']['result'] = malformed
-                else:
-                    item['ending']['result']['stdout'] = malformed
-                yield field + '-' + name, item
+    if kind == 'payload-summary':
+        yield 'executed', {'summary': completed()}
         for name, value in [('null', None), ('list', []), ('string', 'bad'), ('int', 1), ('bool', True)]:
-            yield 'root-' + name, log_input(value)
+            yield 'root-' + name, {'summary': value}
         for name, size in [('below', 14_335), ('at', 14_336), ('above', 14_337)]:
             yield 'default-summary-bytes-' + name, {'target_bytes': size, 'default_bound': True}
             yield 'action-summary-bytes-' + name, {'action_target_bytes': size}
         yield 'identity-over-limit', {'target_bytes': 15_873, 'identity': True}
         for name, size in [('below', 15_871), ('at', 15_872), ('above', 15_873)]:
             yield 'summary-bytes-' + name, {'target_bytes': size}
-        for name, value in variants(good, [
-            ('cache-hit', 'ending.status', 'cache_hit'),
-            ('key', 'ending.action_key', '0' * 64), ('status', 'ending.status', 'waiting'),
-            ('exit', 'ending.exit_code', 1), ('succeeded', 'ending.succeeded', False),
-            ('verified', 'ending.result.verified', False),
-            ('receipt-sha', 'ending.result.receipt_sha256', 'Z' * 64),
-            ('receipt-type', 'ending.result.receipt_sha256', None),
-            ('log-size-negative', 'ending.result.stdout.bytes', -1),
-            ('log-size-bool', 'ending.result.stdout.bytes', True),
-            ('log-size-limit', 'ending.result.stdout.bytes', 1_048_577),
-            ('log-size-changed', 'ending.result.stdout.bytes', 1),
-            ('log-sha', 'ending.result.stdout.sha256', '0' * 64),
-            ('attempt-bool-ignored', 'ending.attempt', True),
-            ('generation-invalid-ignored', 'ending.publication.generation', 'bad'),
-        ]):
-            yield name, value
-        for name, raw in [('no-summary', 'noise\n'), ('two-summaries', good['log'] * 2),
-                          ('json', PREFIX + '{\n'), ('missing-log', None)]:
-            item = deepcopy(good)
-            item['log'] = raw
-            if raw is not None:
-                item['ending'] = ending(raw.encode())
-            yield name, item
         for name, value in variants(completed(), [
             ('shape-status', 'status', 'passed'), ('shape-tests', 'tests', {}),
             ('shape-note', 'note', None), ('shape-totals', 'totals', []),
@@ -144,10 +107,13 @@ def cases(kind):
             ('test-name', 'tests.0.test', 1), ('test-outcome', 'tests.0.outcome', 'unknown'),
             ('totals-not-equal-node-count-accepted', 'totals.passed', 99),
         ]):
-            yield name, log_input(value)
-        # These permissive Python comparisons are part of the oracle, not fixes.
-        yield 'exit-bool-accepted', {**good, 'ending': {**good['ending'], 'exit_code': False}}
-        yield 'succeeded-truthy-accepted', {**good, 'ending': {**good['ending'], 'succeeded': 1}}
+            yield name, {'summary': value}
+        # The verified payload blob and the run binding stand behind every summary.
+        yield 'payload-bytes-changed', {'summary': completed(), 'corrupt': 'bytes'}
+        yield 'payload-over-bound', {'summary': completed(), 'corrupt': 'bound'}
+        yield 'foreign-binding', {'summary': completed(), 'observed': 'foreign'}
+        yield 'null-binding', {'summary': completed(), 'observed': 'null'}
+        yield 'not-passed', {'summary': completed(), 'ending': 'infra-lost'}
         run = {'run': 1, 'records': [{'test': NODE, 'outcome': 'symptom'}]}
         run['sha256'] = digest(json.dumps(run['records'], sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode())
         summary = {**completed(), 'declared_symptom': SYMPTOM,
@@ -156,38 +122,7 @@ def cases(kind):
                               ('symptom-run-index', [{**run, 'run': 2}]),
                               ('symptom-run-sha', [{**run, 'sha256': '0' * 64}]),
                               ('symptom-run-summary', [{**run, 'extra': True}])]:
-            raw = ''.join('TL3_SYMPTOM_RUN ' + json.dumps(r) + '\n' for r in records)
-            raw += PREFIX + json.dumps(summary) + '\n'
-            yield name, {'ending': ending(raw.encode()), 'log': raw}
-    elif kind == 'failure-receipt':
-        good = {'action_key': KEY, 'status': 'failed', 'exit_code': None,
-                'reason': 'worker_lost', 'attempt': 1,
-                'publication': {'generation': 'f' * 64, 'published_unix': 42},
-                'diagnostics': {'returncode': 137, 'resource_profile': {'scope': {'memory_peak_bytes': 0}}}}
-        yield 'missing-record', {'ending': good}
-        record = {'action_key': KEY, 'published_unix': 42,
-                  'detail': {'termination_reason': 'memory_limit_oom', 'private_metadata': 'must-not-copy'}}
-        yield 'published-record', {'ending': good, 'record': record}
-        for name, size in [('below', 2_097_151), ('at', 2_097_152), ('above', 2_097_153)]:
-            yield 'record-bytes-' + name, {'ending': good, 'record': record, 'record_bytes': size}
-        for size in (127, 128):
-            yield 'reason-bytes-' + str(size), {'ending': {**good, 'reason': 'x' * size}}
-        for name, r in variants(record, [('wrong-key', 'action_key', '0' * 64),
-                                         ('wrong-publication', 'published_unix', 43)]):
-            yield name, {'ending': good, 'record': r}
-        yield 'invalid-record-json', {'ending': good, 'record_raw': '{'}
-        yield 'record-over-limit', {'ending': good, 'record_padding': 2_097_153}
-        for name, e in variants(good, [
-            ('diagnostic-oom', 'diagnostics.termination_reason', 'memory_limit_oom'),
-            ('exit-precedence', 'exit_code', 3), ('reason-unsafe', 'reason', 'private/path'),
-            ('reason-empty', 'reason', ''), ('reason-long', 'reason', 'x' * 129),
-            ('attempt-bool', 'attempt', True), ('attempt-zero', 'attempt', 0),
-            ('generation-case', 'publication.generation', 'F' * 64),
-            ('peak-bool', 'diagnostics.resource_profile.scope.memory_peak_bytes', True),
-            ('peak-negative', 'diagnostics.resource_profile.scope.memory_peak_bytes', -1),
-            ('peak-positive', 'diagnostics.resource_profile.scope.memory_peak_bytes', 123456),
-        ]):
-            yield name, {'ending': e}
+            yield name, {'summary': summary, 'symptom_runs': records}
     elif kind == 'post-wait-consistency':
         good = {'operation': 'wait', 'result': {**completed(), 'proof': {'mode': 'head-observer'},
                 'forcing': Forcing.parse(FORCING).as_json(), 'selectors': [NODE], 'declared_symptom': SYMPTOM},
@@ -217,50 +152,17 @@ def cases(kind):
             yield 'selectors-' + name, {'operation': 'selectors', 'value': selected}
         for value in (None, -10, 0, -11, 1, True, 0.0, '0'):
             yield 'priority-' + repr(value), {'operation': 'priority', 'value': value}
-        settings = {'image': IMAGE, 'tools_path': '/fixture/tools'}
+        settings = {'image': IMAGE, 'execution': dict(EXECUTION)}
         yield 'settings-default', {'operation': 'settings', 'value': settings}
-        yield 'settings-execution-with-tools', {'operation': 'settings', 'value': {
-            **settings, 'execution': {'backend': 'flux', 'profile': '/fixture/profile.json'}}}
+        yield 'settings-retired-tools-path', {'operation': 'settings', 'value': {
+            **settings, 'tools_path': '/fixture/tools'}}
+        yield 'settings-missing-execution', {'operation': 'settings', 'value': {'image': IMAGE}}
         for name, item in variants(settings, [('mutable-image', 'image', 'ubuntu:latest'),
-                                             ('relative-tools', 'tools_path', 'relative'),
+                                             ('relative-profile', 'execution.profile', 'relative'),
+                                             ('other-backend', 'execution.backend', 'other'),
                                              ('cpus-zero', 'cpus', 0), ('mem-bool', 'mem_gb', True),
                                              ('quiet-float', 'quiet_seconds', 1.0)]):
             yield 'settings-' + name, {'operation': 'settings', 'value': item}
-    elif kind == 'machine-record-fallback':
-        capability = {'schema': 'prismabuild.machine_record_capability.v1', 'machine_record_fd': 1}
-        good = {'capability': json.dumps(capability) + '\n', 'capability_rc': 0,
-                'private': '{"source":"private"}\n', 'stdout': '{"source":"stdout"}\n', 'rc': 0}
-        yield 'supported-private-wins', good
-        yield 'descriptor-unavailable', {**good, 'descriptor': 2}
-        for name, size in [('below', 4095), ('at', 4096), ('above', 4097)]:
-            yield 'probe-bytes-' + name, {**good, 'capability_bytes': size}
-        for channel in ('private', 'stdout'):
-            for name, size in [('below', 2_097_151), ('at', 2_097_152), ('above', 2_097_153)]:
-                yield channel + '-bytes-' + name, {**good, 'channel_bytes': size,
-                                                  'capability_rc': 0 if channel == 'private' else 2}
-        for name, value in [('absent', ''), ('wrong-schema', '{"schema":"wrong","machine_record_fd":1}\n'),
-                            ('bool', json.dumps({**capability, 'machine_record_fd': True}) + '\n'),
-                            ('float', json.dumps({**capability, 'machine_record_fd': 1.0}) + '\n'),
-                            ('zero', json.dumps({**capability, 'machine_record_fd': 0}) + '\n'),
-                            ('extra-field', json.dumps({**capability, 'extra': 1}) + '\n'),
-                            ('no-newline', json.dumps(capability)), ('two-lines', '{}\n{}\n'),
-                            ('oversized', ' ' * 4097)]:
-            yield name, {**good, 'capability': value}
-        yield 'exit-2-fallback', {**good, 'capability_rc': 2}
-        for name, value in [('empty', ''), ('unterminated', '{}'), ('not-object', '[]\n'),
-                            ('invalid-json', '{\n'), ('multiple', '{}\n{}\n')]:
-            yield 'private-' + name, {**good, 'private': value}
-        yield 'private-oversized', {**good, 'private_padding': 2_097_153}
-        yield 'private-killed', {**good, 'rc': -9}
-        yield 'submission-refused', {**good, 'private': '', 'rc': 2, 'detach': True}
-        for name, value in [('invalid-json', '{'), ('not-object', '[]'), ('no-newline-accepted', '{}')]:
-            yield 'stdout-' + name, {**good, 'capability_rc': 2, 'stdout': value}
-        yield 'stdout-killed', {**good, 'capability_rc': 2, 'rc': -9}
-        yield 'stdout-refused', {**good, 'capability_rc': 2, 'stdout': '', 'rc': 2, 'detach': True}
-        yield 'stdout-oversized', {**good, 'capability_rc': 2, 'stdout_padding': 2_097_153}
-        yield 'probe-io-fallback', {**good, 'probe_io_error': True}
-        yield 'private-io', {**good, 'action_io_error': True}
-        yield 'stdout-io', {**good, 'capability_rc': 2, 'action_io_error': True}
     elif kind == 'generator-artifact':
         contract = {'command': 'python3 generate.py', 'generated_files': ['**/BUILD.bazel'],
                     'protected_paths': [], 'files': ['tests/BUILD.bazel']}
@@ -273,10 +175,8 @@ def cases(kind):
                     'budget': selected, 'phase': 'completed', 'timings': {}, 'input_manifest': generator.digest({}),
                     'output_manifest': generator.digest({'tests/BUILD.bazel': entry}),
                     'outputs': [{'path': 'tests/BUILD.bazel', 'entry': entry, 'data': base64.b64encode(raw).decode()}]}
-        good = {**log_input(artifact, generator.PREFIX), 'contract': contract, 'before': {}, 'artifact': artifact}
+        good = {'contract': contract, 'before': {}, 'artifact': artifact}
         yield 'verified-import', good
-        for name, size in [('below', 50_331_647), ('at', 50_331_648), ('above', 50_331_649)]:
-            yield 'artifact-bytes-' + name, {**good, 'log_padding': size}
         # Recipes expand into actual base64 artifacts remotely, at the real limits.
         for label, sizes in [('file-bytes-below', [16_777_215]), ('file-bytes-at', [16_777_216]),
                              ('file-bytes-above', [16_777_217]),
@@ -297,24 +197,13 @@ def cases(kind):
                                'after': {'tests/BUILD.bazel': {**entry, 'mode': 0o755}}}
         yield 'path-control', {'operation': 'path-control'}
         yield 'invalid-interpreter', {'operation': 'argv', 'command': './generate.py'}
-        yield 'artifact-failed', {**good, **log_input({**artifact, 'status': 'failed', 'message': 'fixture generator failed'}, generator.PREFIX)}
+        yield 'artifact-failed', {**good, 'artifact': {**artifact, 'status': 'failed', 'message': 'fixture generator failed'}}
         for name, size in [('path-bytes-at', 3072), ('path-bytes-above', 3073),
                            ('component-bytes-at', 255), ('component-bytes-above', 256)]:
             yield name, {'operation': 'path', 'size': size, 'component': name.startswith('component')}
         for field, maximum in [('cpus', 16), ('mem_gb', 64), ('timeout_s', 600)]:
             for name, value in [('below', 0), ('min', 1), ('at', maximum), ('above', maximum + 1)]:
                 yield 'budget-' + field + '-' + name, {'operation': 'budget', 'value': {field: value}}
-        for name, item in variants(good, [
-            ('key', 'ending.action_key', '0' * 64), ('status', 'ending.status', 'failed'),
-            ('exit', 'ending.exit_code', 1), ('success-bool-required', 'ending.succeeded', 1),
-            ('unverified', 'ending.result.verified', False), ('receipt-sha', 'ending.result.receipt_sha256', 'bad'),
-            ('empty-log', 'ending.result.stdout.bytes', 0),
-            ('oversized-log', 'ending.result.stdout.bytes', generator.ARTIFACT_BYTES + 1),
-            ('log-size', 'ending.result.stdout.bytes', 1), ('log-sha', 'ending.result.stdout.sha256', '0' * 64),
-        ]):
-            yield name, item
-        for name, log in [('no-artifact', 'noise\n'), ('two-artifacts', good['log'] * 2)]:
-            yield name, {**good, 'log': log, 'ending': ending(log.encode())}
         for name, a in variants(artifact, [
             ('stale-input', 'input_manifest', '0' * 64), ('argv', 'argv', ['python3', 'other.py']),
             ('count', 'outputs', {}), ('digest', 'outputs.0.entry.sha256', '0' * 64),
@@ -325,12 +214,12 @@ def cases(kind):
             ('identity', 'identity.image', 'sha256:' + '0' * 64), ('budget', 'budget.cpus', 2),
             ('command', 'command', 'python3 other.py'),
         ]):
-            yield name, {**good, **log_input(a, generator.PREFIX), 'artifact': a}
+            yield name, {**good, 'artifact': a}
         duplicate = {**artifact, 'outputs': artifact['outputs'] * 2}
-        yield 'duplicate-output', {**good, **log_input(duplicate, generator.PREFIX), 'artifact': duplicate}
+        yield 'duplicate-output', {**good, 'artifact': duplicate}
         yield 'protected-output', {**good, 'contract': {**contract, 'protected_paths': ['**/BUILD.bazel']}}
         yield 'unchanged-output', {**good, 'before': {'tests/BUILD.bazel': entry},
-                                  **log_input({**artifact, 'input_manifest': generator.digest({'tests/BUILD.bazel': entry})}, generator.PREFIX)}
+                                  'artifact': {**artifact, 'input_manifest': generator.digest({'tests/BUILD.bazel': entry})}}
     elif kind == 'rehearsal-identity':
         forcing = {**FORCING, 'symptom': 'café 雪 😀', 'patches': [
             {'target': 'subject.one', 'returns': 1}, {'target': 'subject.two', 'returns': 1.0}]}
@@ -358,17 +247,16 @@ def cases(kind):
         yield 'violations-terminal-failure', {'candidate': wanted, 'receipts': [], 'failure': {'message': 'candidate budget exhausted'}}
     elif kind == 'evidence-ledger':
         success = {**completed(), 'tree': 'e' * 40, 'receipts': [receipt()]}
-        infra = {'status': 'infrastructure_error', 'action_key': KEY}
+        infra = {'status': 'infrastructure_error', 'wait_reference': KEY}
         selectors = [False, [NODE]]
         def event(result, selected=selectors, **extra):
             return {'result': result, 'selectors': selected, **extra}
         yield 'infra-retirement-and-roundtrip', {'events': [event(infra),
             event({'status': 'infrastructure_error'}, tool_error=True), event(success)],
-            'cites': [{'action_key': KEY}, {'tool_error': 'tool-error-1'}]}
-        yield 'base-does-not-retire-head', {'events': [event(infra), event(success, [True, [NODE]])], 'cites': [{'action_key': KEY}]}
-        yield 'test-run-origin-not-citable', {'events': [event({**infra, 'origin': 'test_run'})], 'cites': [{'action_key': KEY}]}
-        yield 'completed-without-receipt-retires', {'events': [event(infra), event(completed())], 'cites': [{'action_key': KEY}]}
-        yield 'cache-hit', {'events': [event({**success, 'receipts': [{**receipt(), 'status': 'cache_hit'}]})]}
+            'cites': [{'wait_reference': KEY}, {'tool_error': 'tool-error-1'}]}
+        yield 'base-does-not-retire-head', {'events': [event(infra), event(success, [True, [NODE]])], 'cites': [{'wait_reference': KEY}]}
+        yield 'test-run-origin-not-citable', {'events': [event({**infra, 'origin': 'test_run'})], 'cites': [{'wait_reference': KEY}]}
+        yield 'completed-without-receipt-retires', {'events': [event(infra), event(completed())], 'cites': [{'wait_reference': KEY}]}
         yield 'ten-entries-newest-kept', {'events': [event({**success, 'tree': f'{n:040x}'}) for n in range(12)]}
         yield 'byte-bound-and-selector-identity', {'events': [event(success, [False, [f'test_{i}_{n}_' + 'x' * 1900 for n in range(256)]]) for i in range(5)]}
         yield 'base-proof-and-repeat', {'events': [event({**success, 'proof': {'mode': 'head-observer'},
@@ -385,9 +273,88 @@ def cases(kind):
                             ('run', {**valid_state, 'test_runs': [None]})]:
             yield 'invalid-state-' + name, {'operation': 'restore', 'value': state}
         yield 'spend-retires', {'events': [event(infra), event({'status': 'infrastructure_error'})], 'spend': True,
-                               'cites': [{'action_key': KEY}, {'tool_error': 'tool-error-1'}]}
+                               'cites': [{'wait_reference': KEY}, {'tool_error': 'tool-error-1'}]}
     else:
         raise AssertionError(kind)
+
+
+def wire(root, kind, document, symptoms=(), *, corrupt=None, observed='own', ending=None):
+    """Patch only the Rust control and shared-CLI wire; the real execute verifies the payload."""
+    out = root / 'flux-out'
+    out.mkdir(exist_ok=True)
+
+    def blob(value):
+        raw = json.dumps(value).encode()
+        path = out / f'blob-{len(list(out.iterdir()))}.json'
+        path.write_bytes(raw)
+        return {'path': str(path), 'bytes': len(raw), 'sha256': digest(raw)}
+
+    main = blob(document)
+    payload = ({'kind': 'generator', 'artifact': main} if kind == 'generator' else
+               {'kind': 'tests', 'summary': main, 'symptom_runs': [blob(run) for run in symptoms]})
+    bound = 64 * 1048576
+    if corrupt == 'bytes':
+        Path(main['path']).write_bytes(Path(main['path']).read_bytes() + b' ')
+    if corrupt == 'bound':
+        bound = main['bytes'] - 1
+    if ending is None:
+        failed = kind == 'generator' and isinstance(document, dict) and document.get('status') != 'completed'
+        ending = 'failed' if failed else 'passed'
+    bound_to = {'own': binding(), 'foreign': binding('worker:' + 'e' * 64), 'null': None}[observed]
+    plan = {'key': KEY, 'submit': {'op': 'submit'}, 'attach': {'op': 'attach'},
+            'owner': {'owner': 'worker-tools', 'correlation': KEY.replace('worker:', 'worker-')},
+            'bounds': {'payload_bytes': bound}}
+
+    def command(plan, request):
+        if request['op'] == 'submit':
+            return {}
+        if request['op'] == 'attach':
+            return {'observation': {'kind': 'terminal', 'binding': bound_to, 'terminal': {
+                'ending': ending, 'reason': 'exited', 'receipt': {'sha256': 'd' * 64}}}}
+        assert request['op'] == 'worker_payload'
+        if request['terminal']['ending'] not in ('passed', 'failed'):
+            raise ValueError('Shared execution retained an unknown or refused outcome')
+        return {'payload': payload}
+
+    stack = ExitStack()
+    staged = root / 'input'
+    staged.mkdir(exist_ok=True)
+    stack.enter_context(patch.object(flux_execution, 'activation', lambda settings: None))
+    stack.enter_context(patch.object(flux_execution, 'allocate', lambda settings: ('e' * 64, staged)))
+    stack.enter_context(patch.object(flux_execution, 'prepare', lambda *args, **kwargs: plan))
+    stack.enter_context(patch.object(flux_execution, 'resume', lambda *args, **kwargs: plan))
+    stack.enter_context(patch.object(flux_execution, '_command', command))
+    return stack
+
+
+def settings():
+    return tests_tool.TestSettings(IMAGE, execution=dict(EXECUTION))
+
+
+def consume(root, summary, symptoms=(), **options):
+    """The real run_tests consumer layer (its inner run) for one verified Flux payload."""
+    work = SimpleNamespace(check_base_sha=None, test_checkout=root)
+    with wire(root, 'tests', summary, symptoms, **options), \
+            patch.object(tests_tool, '_stage', return_value='1' * 40), \
+            patch.object(tests_tool, '_git', return_value='2' * 40):
+        run_tests = tests_tool.make_test_tool(work, settings())
+        [run] = [cell.cell_contents for name, cell in zip(run_tests.__code__.co_freevars, run_tests.__closure__)
+                 if name == 'run']
+        return run([NODE])
+
+
+def verify(root, summary, symptoms=(), **options):
+    """The run_tests verdict steps after submission: the real execute, then the summary checks.
+
+    Refusals keep their own text, as the former PB summary reader's did."""
+    with wire(root, 'tests', summary, symptoms, **options):
+        plan = flux_execution.prepare(settings(), 'e' * 64, root, '1' * 40, {})
+        payload = flux_execution.execute(plan)
+    if payload['kind'] != 'tests':
+        raise ValueError('Flux returned a different worker protocol')
+    result = tests_tool._verified_test_summary(payload['summary'], payload['symptom_runs'])
+    result.update(wait_reference=KEY, receipts=payload['receipts'])
+    return tests_tool.bounded(model_result(result), limit=test_tool.SUMMARY_BYTES - 512)
 
 
 def evaluate(kind, data, root):
@@ -431,42 +398,32 @@ def evaluate(kind, data, root):
         result = generator.validate_artifact(artifact, {}, contract)
         return {'outputs': len(outputs), 'bytes': sum(e['bytes'] for e in result.values()),
                 'manifest': generator.digest(result)}
-    if kind == 'ending-summary' and 'action_target_bytes' in data:
+    if kind == 'payload-summary' and 'action_target_bytes' in data:
         summary = completed()
         summary['tests'][0]['message'] = 'x' * (data['action_target_bytes'] - len(json.dumps(summary).encode()))
         before_bytes = len(json.dumps(summary).encode())
         assert before_bytes == data['action_target_bytes']
-        value = evaluate(kind, log_input(summary), root)
+        value = consume(root, summary)
         return {'before_bytes': before_bytes, 'after_bytes': len(json.dumps(value).encode()), 'summary': value}
-    if kind == 'ending-summary' and 'target_bytes' in data:
+    if kind == 'payload-summary' and 'target_bytes' in data:
         summary = completed()
         if data.get('identity'):
             summary['proof'] = {'identity': ''}
-        enriched = {**summary, 'action_key': KEY, 'receipts': [{**receipt(), 'attempt': 2, 'generation': 'f' * 64}]}
+        enriched = {**summary, 'wait_reference': KEY, 'receipts': [receipt()]}
         padding = 'x' * (data['target_bytes'] - len(json.dumps(enriched).encode()))
         if data.get('identity'):
             summary['proof']['identity'] = padding
         else:
             summary['tests'][0]['message'] += padding
+        enriched = {**summary, 'wait_reference': KEY, 'receipts': [receipt()]}
         before_bytes = len(json.dumps(enriched).encode())
         assert before_bytes == data['target_bytes']
-        value = test_tool.bounded(enriched) if data.get('default_bound') else evaluate(kind, log_input(summary), root)
+        value = test_tool.bounded(enriched) if data.get('default_bound') else consume(root, summary)
         return {'before_bytes': before_bytes, 'after_bytes': len(json.dumps(value).encode()), 'summary': value}
-    if kind in ('ending-summary', 'generator-artifact'):
-        if 'log_padding' in data:
-            raw = (data['log'] + ' ' * (data['log_padding'] - len(data['log'].encode()))).encode()
-            assert len(raw) == data['log_padding']
-            data['log'] = raw.decode()
-            data['ending'] = ending(raw)
-        log = root / 'log'
-        if data['log'] is not None:
-            log.write_bytes(data['log'].encode())
-        result = data['ending'].get('result')
-        if isinstance(result, dict) and isinstance(result.get('stdout'), dict) and 'path' in result['stdout']:
-            result['stdout']['path'] = str(log)
-        if kind == 'ending-summary':
-            return pb_tests._summary(data['ending'], KEY)
-        artifact, rec = pb_generators._artifact(data['ending'], KEY)
+    if kind == 'payload-summary':
+        return verify(root, data['summary'], data.get('symptom_runs', ()), corrupt=data.get('corrupt'),
+                      observed=data.get('observed', 'own'), ending=data.get('ending'))
+    if kind == 'generator-artifact':
         # Invoke the real worker shell for its identity check and final import.
         work = root / 'work'
         work.mkdir()
@@ -476,103 +433,40 @@ def evaluate(kind, data, root):
             target.write_bytes(b'# generated\n')
         with Worktree(work) as tree:
             tree.test_checkout = work
-            tree.test_settings = pb_tests.TestSettings(IMAGE, root / 'tools')
+            tree.test_settings = tests_tool.TestSettings(IMAGE, execution=dict(EXECUTION), mem_gb=2)
             tree.generator = data['contract']['command']
             tree.generated_files = data['contract']['generated_files']
             tree.protected_paths = data['contract']['protected_paths']
             tree.generator_files = data['contract']['files']
             selected = generator.budget(1, 2, generator.TIMEOUT)
             identity = {**data['contract'], 'timeout': selected['timeout_s'], 'cpus': 1, 'mem_gb': 2,
-                        'image': IMAGE, 'scratch': pb_generators.scratch_environment(),
+                        'image': IMAGE, 'scratch': generators.scratch_environment(),
                         'implementation': generator.IMPLEMENTATION, 'budget': selected}
             # make_generator_tool adds timeout/cpus/memory to its contract.
             tree.generator_checkpoint = {'phase': 'submitted', 'contract': identity, 'key': KEY,
                                          'before': data['before'], 'input_tree': '1' * 40}
-            waited = {'schema': 'prismabuild.endings.v1', 'complete': True, 'endings': [data['ending']]}
-            with patch.object(pb_generators, '_json_command', return_value=(0, waited)), \
-                    patch.object(pb_generators, '_stage', return_value='2' * 40):
-                result = pb_generators.make_generator_tool(tree)()
-            return {'artifact': artifact, 'receipt': rec, 'result': result,
-                    'files': {name: (work / name).read_text() for name in generator.manifest(work)}}
-    if kind == 'failure-receipt':
-        tools_path = root / 'repo' / 'tools'
-        tools_path.mkdir(parents=True)
-        target = root / 'pb-queue' / 'failed' / (KEY + '.json')
-        if any(key in data for key in ('record', 'record_raw', 'record_padding')):
-            target.parent.mkdir(parents=True)
-            raw = ' ' * data['record_padding'] if 'record_padding' in data else data.get('record_raw', json.dumps(data.get('record')))
-            if 'record_bytes' in data:
-                raw += ' ' * (data['record_bytes'] - len(raw.encode()))
-                assert len(raw.encode()) == data['record_bytes']
-            target.write_text(raw)
-        return pb_tests._failure_receipt(data['ending'], pb_tests.TestSettings(IMAGE, tools_path))
+            with wire(root, 'generator', data['artifact']), \
+                    patch.object(generators, '_stage', return_value='2' * 40):
+                result = generators.make_generator_tool(tree)()
+            return {'result': result, 'files': {name: (work / name).read_text() for name in generator.manifest(work)}}
     if kind == 'post-wait-consistency':
         op = data['operation']
         if op == 'selectors':
-            return list(pb_tests._selectors(data['value']))
+            return list(tests_tool._selectors(data['value']))
         if op == 'priority':
-            return pb_tests._priority(data['value'])
+            return tests_tool._priority(data['value'])
         if op == 'settings':
-            return vars(pb_tests.TestSettings(**data['value']))
+            return vars(tests_tool.TestSettings(**data['value']))
         work = SimpleNamespace(check_base_sha=BASE, test_checkout=root)
         def stage(tree, directory, base, **kwargs):
             (directory / 'proof.json').write_text(json.dumps(data['proof']))
             return '1' * 40
-        waited = {'schema': 'prismabuild.endings.v1', 'complete': True,
-                  'endings': [{'action_key': KEY, 'succeeded': True}]}
-        with patch.object(pb_tests, '_stage', side_effect=stage), \
-                patch.object(pb_tests, '_git', return_value='2' * 40), \
-                patch.object(pb_tests, '_summary', return_value=data['result']), \
-                patch.object(pb_tests, '_json_command', side_effect=[
-                    (0, {'schema': 'prismabuild.submission.v1', 'action_key': KEY}), (0, waited)]):
-            return pb_tests.make_test_tool(work, pb_tests.TestSettings(IMAGE, root),
+        with wire(root, 'tests', data['result']), \
+                patch.object(tests_tool, '_stage', side_effect=stage), \
+                patch.object(tests_tool, '_git', return_value='2' * 40):
+            return tests_tool.make_test_tool(work, settings(),
                 forcing=Forcing.parse(data['forcing']), declared_symptom=data['declared_symptom'],
                 _checks=())([NODE], base=data['base'])
-    if kind == 'machine-record-fallback':
-        calls, fallbacks = [], []
-        def run(args, **kwargs):
-            probe = '--machine-record-capability' in args
-            calls.append('probe' if probe else 'private' if '--machine-record-fd' in args else 'stdout')
-            if data.get('probe_io_error') and probe or data.get('action_io_error') and not probe:
-                raise OSError('fixture I/O unavailable')
-            if probe:
-                raw = data['capability'].encode()
-                if 'capability_bytes' in data:
-                    raw = raw.rstrip(b'\n') + b' ' * (data['capability_bytes'] - len(raw)) + b'\n'
-                    assert len(raw) == data['capability_bytes']
-                kwargs['stdout'].write(raw)
-                return SimpleNamespace(returncode=data['capability_rc'])
-            private = '--machine-record-fd' in args
-            raw = (' ' * data['private_padding'] if private and 'private_padding' in data else
-                   ' ' * data['stdout_padding'] if not private and 'stdout_padding' in data else
-                   data['private'] if private else data['stdout']).encode()
-            if 'channel_bytes' in data:
-                raw = raw.rstrip(b'\n') + b' ' * (data['channel_bytes'] - len(raw)) + b'\n'
-                assert len(raw) == data['channel_bytes']
-            if private:
-                os.write(int(args[args.index('--machine-record-fd') + 1]), raw)
-            else:
-                kwargs['stdout'].write(raw)
-            return SimpleNamespace(returncode=data['rc'])
-        pb_tests._machine_record_supported.cache_clear()
-        from tl3_workers import facts
-        with patch.object(pb_tests.subprocess, 'run', side_effect=run), \
-                patch.object(facts, 'record_prismabuild_fallback', side_effect=fallbacks.append):
-            try:
-                if 'descriptor' in data:
-                    assert pb_tests._machine_record_supported(str(root / 'pbrun.py'))
-                channel = (patch.object(pb_tests.tempfile, 'TemporaryFile',
-                                        return_value=nullcontext(SimpleNamespace(fileno=lambda: data['descriptor'])))
-                           if 'descriptor' in data else nullcontext())
-                with channel:
-                    value = pb_tests._json_command(['python3', str(root / 'pbrun.py'), *(['--detach'] if data.get('detach') else [])])
-                # The probe must be cached, including when unsupported.
-                supported = pb_tests._machine_record_supported(str(root / 'pbrun.py'))
-                return {'value': value, 'supported': supported, 'calls': calls, 'fallbacks': fallbacks}
-            except ExecutionFailure as error:
-                return {'error': failure(error), 'calls': calls, 'fallbacks': fallbacks}
-            finally:
-                pb_tests._machine_record_supported.cache_clear()
     if kind == 'rehearsal-identity':
         if 'result' in data:
             return rehearsal.unusable(data['result'], data['selectors'], data['outcome'])
@@ -634,19 +528,17 @@ def observe(kind, data):
 
 
 # Scope is the evidence decisions, not generator process lifecycle or staging.
-COVERED = (pb_tests._summary, pb_tests._verified_test_summary, pb_tests.TestSettings.__post_init__, pb_tests._selectors, pb_tests._priority,
-           pb_tests._json_command, pb_tests._stdout_json_command, pb_generators._artifact,
+COVERED = (tests_tool._verified_test_summary, tests_tool.TestSettings.__post_init__, tests_tool._selectors,
+           tests_tool._priority, flux_execution._blob, flux_execution._same_run,
            generator.validate_artifact, generator.text, generator.changed, generator.path_parts,
            generator._check_interpreter, generator.budget, tools._selectors, Evidence.restore,
-           pb_tests._machine_record_supported, pb_tests._failure_receipt, Evidence.test_result,
-           test_tool.bounded, test_tool._summary_limit, rehearsal.unusable, rehearsal.ForcingRehearsals.violations)
+           Evidence.test_result, test_tool.bounded, test_tool._summary_limit, rehearsal.unusable,
+           rehearsal.ForcingRehearsals.violations)
 
 REQUIRED_CASES = {
-    'ending-summary': {'result-null', 'result-list', 'result-string', 'result-empty',
-                       'stdout-null', 'stdout-list', 'stdout-string', 'stdout-empty',
-                       'root-null', 'root-list', 'root-string', 'root-int', 'root-bool',
-                       'summary-bytes-below', 'summary-bytes-at', 'summary-bytes-above'},
-    'machine-record-fallback': {'descriptor-unavailable'},
+    'payload-summary': {'root-null', 'root-list', 'root-string', 'root-int', 'root-bool',
+                        'summary-bytes-below', 'summary-bytes-at', 'summary-bytes-above',
+                        'payload-bytes-changed', 'payload-over-bound', 'foreign-binding', 'null-binding'},
     'generator-artifact': {'file-bytes-below', 'file-bytes-at', 'file-bytes-above',
                            'total-bytes-below', 'total-bytes-at', 'total-bytes-above',
                            'outputs-below', 'outputs-at', 'outputs-above', 'control-text', 'invalid-utf8'},
@@ -790,129 +682,41 @@ BOUND_CASES = {'generator.budget: 1 <= cpus <= 16': ['generator-artifact/budget-
  'generator.validate_artifact: total > OUTPUT_BYTES': ['generator-artifact/total-bytes-below',
                                                        'generator-artifact/total-bytes-at',
                                                        'generator-artifact/total-bytes-above'],
- "pb_generators._artifact: 0 < log['bytes'] <= generator.ARTIFACT_BYTES": ['generator-artifact/artifact-bytes-below',
-                                                                           'generator-artifact/artifact-bytes-at',
-                                                                           'generator-artifact/artifact-bytes-above'],
- "pb_generators._artifact: ending['exit_code'] != 0": ['generator-artifact/verified-import',
-                                                       'generator-artifact/exit'],
- 'pb_generators._artifact: len(records) != 1': ['generator-artifact/verified-import',
-                                                'generator-artifact/no-artifact',
-                                                'generator-artifact/two-artifacts'],
- "pb_generators._artifact: re.fullmatch('[0-9a-f]{64}', evidence['receipt_sha256'])": ['generator-artifact/verified-import',
-                                                                                       'generator-artifact/receipt-sha'],
- 'pb_generators._artifact: stream.read(generator.ARTIFACT_BYTES + 1)': ['generator-artifact/artifact-bytes-below',
-                                                                        'generator-artifact/artifact-bytes-at',
-                                                                        'generator-artifact/artifact-bytes-above'],
- "pb_tests.TestSettings.__post_init__: re.fullmatch('(?:[\\\\w./:-]+@)?sha256:[0-9a-f]{64}', self.image)": ['post-wait-consistency/settings-default',
-                                                                                                            'post-wait-consistency/settings-mutable-image'],
- 'pb_tests.TestSettings.__post_init__: v < 1': ['post-wait-consistency/settings-default',
-                                                'post-wait-consistency/settings-cpus-zero',
-                                                'post-wait-consistency/settings-mem-bool'],
- "pb_tests._failure_receipt: ending['attempt'] > 0": ['failure-receipt/published-record',
-                                                      'failure-receipt/attempt-zero',
-                                                      'failure-receipt/attempt-bool'],
- 'pb_tests._failure_receipt: len(raw) <= 2097152': ['failure-receipt/record-bytes-below',
-                                                    'failure-receipt/record-bytes-at',
-                                                    'failure-receipt/record-bytes-above'],
- 'pb_tests._failure_receipt: peak >= 0': ['failure-receipt/published-record',
-                                          'failure-receipt/peak-negative',
-                                          'failure-receipt/peak-positive'],
- "pb_tests._failure_receipt: re.fullmatch('[0-9a-f]{64}', generation)": ['failure-receipt/published-record',
-                                                                         'failure-receipt/generation-case'],
- "pb_tests._failure_receipt: re.fullmatch('[a-z][a-z0-9_]{0,127}', reason)": ['failure-receipt/reason-empty',
-                                                                              'failure-receipt/reason-bytes-127',
-                                                                              'failure-receipt/reason-bytes-128',
-                                                                              'failure-receipt/reason-long'],
- 'pb_tests._failure_receipt: stream.read(2097153)': ['failure-receipt/record-bytes-below',
-                                                     'failure-receipt/record-bytes-at',
-                                                     'failure-receipt/record-bytes-above'],
- 'pb_tests._json_command: channel.read(2097153)': ['machine-record-fallback/private-bytes-below',
-                                                   'machine-record-fallback/private-bytes-at',
-                                                   'machine-record-fallback/private-bytes-above'],
- 'pb_tests._json_command: fd <= 2': ['machine-record-fallback/descriptor-unavailable',
-                                     'machine-record-fallback/supported-private-wins'],
- 'pb_tests._json_command: len(raw) > 2097152': ['machine-record-fallback/private-bytes-below',
-                                                'machine-record-fallback/private-bytes-at',
-                                                'machine-record-fallback/private-bytes-above'],
- 'pb_tests._json_command: result.returncode < 0': ['machine-record-fallback/private-killed',
-                                                   'machine-record-fallback/supported-private-wins'],
- 'pb_tests._machine_record_supported: len(raw) > 4096': ['machine-record-fallback/probe-bytes-below',
-                                                         'machine-record-fallback/probe-bytes-at',
-                                                         'machine-record-fallback/probe-bytes-above'],
- 'pb_tests._machine_record_supported: output.read(4097)': ['machine-record-fallback/probe-bytes-below',
-                                                           'machine-record-fallback/probe-bytes-at',
-                                                           'machine-record-fallback/probe-bytes-above'],
- "pb_tests._machine_record_supported: raw.count(b'\\n') != 1": ['machine-record-fallback/supported-private-wins',
-                                                                'machine-record-fallback/two-lines',
-                                                                'machine-record-fallback/no-newline'],
- "pb_tests._machine_record_supported: value['machine_record_fd'] >= 1": ['machine-record-fallback/supported-private-wins',
-                                                                         'machine-record-fallback/zero',
-                                                                         'machine-record-fallback/bool',
-                                                                         'machine-record-fallback/float'],
- 'pb_tests._priority: -10 <= priority <= 0': ['post-wait-consistency/priority--11',
-                                              'post-wait-consistency/priority--10',
-                                              'post-wait-consistency/priority-0',
-                                              'post-wait-consistency/priority-1'],
- 'pb_tests._selectors: len(test) > 2048': ['post-wait-consistency/selectors-bytes-below',
-                                           'post-wait-consistency/selectors-bytes-at',
-                                           'post-wait-consistency/selectors-too-long'],
- 'pb_tests._selectors: len(tests) > 256': ['post-wait-consistency/selectors-count-below',
-                                           'post-wait-consistency/selectors-count-at',
-                                           'post-wait-consistency/selectors-too-many'],
- 'pb_tests._stdout_json_command: len(raw) > 2097152': ['machine-record-fallback/stdout-bytes-below',
-                                                       'machine-record-fallback/stdout-bytes-at',
-                                                       'machine-record-fallback/stdout-bytes-above'],
- 'pb_tests._stdout_json_command: output.read(2097153)': ['machine-record-fallback/stdout-bytes-below',
-                                                         'machine-record-fallback/stdout-bytes-at',
-                                                         'machine-record-fallback/stdout-bytes-above'],
- 'pb_tests._stdout_json_command: result.returncode < 0': ['machine-record-fallback/stdout-killed',
-                                                          'machine-record-fallback/exit-2-fallback'],
- "pb_tests._summary: 0 <= log['bytes'] <= 1048576": ['ending-summary/log-bytes-below',
-                                                     'ending-summary/log-bytes-at',
-                                                     'ending-summary/log-bytes-above',
-                                                     'ending-summary/log-size-negative'],
- 'pb_tests._verified_test_summary: bounded(result, limit=SUMMARY_BYTES - 2048)': ['ending-summary/action-summary-bytes-below',
-                                                                    'ending-summary/action-summary-bytes-at',
-                                                                    'ending-summary/action-summary-bytes-above'],
- 'pb_tests._summary: bounded(model_result(result), limit=SUMMARY_BYTES - 512)': ['ending-summary/summary-bytes-below',
-                                                                   'ending-summary/summary-bytes-at',
-                                                                   'ending-summary/summary-bytes-above'],
- 'pb_tests._verified_test_summary: count < 0': ['ending-summary/executed',
-                                  'ending-summary/totals-negative',
-                                  'ending-summary/totals-bool'],
- "pb_tests._summary: ending['attempt'] > 0": ['ending-summary/executed', 'ending-summary/attempt-bool-ignored'],
- "pb_tests._summary: ending['exit_code'] != 0": ['ending-summary/executed',
-                                                 'ending-summary/exit',
-                                                 'ending-summary/exit-bool-accepted'],
- 'pb_tests._summary: len(records) != 1': ['ending-summary/executed',
-                                          'ending-summary/no-summary',
-                                          'ending-summary/two-summaries'],
- "pb_tests._summary: re.fullmatch('[0-9a-f]{64}', evidence['receipt_sha256'])": ['ending-summary/executed',
-                                                                                 'ending-summary/receipt-sha',
-                                                                                 'ending-summary/receipt-type'],
- "pb_tests._summary: re.fullmatch('[0-9a-f]{64}', generation)": ['ending-summary/executed',
-                                                                 'ending-summary/generation-invalid-ignored'],
- 'pb_tests._summary: stream.read(1048577)': ['ending-summary/log-bytes-below',
-                                             'ending-summary/log-bytes-at',
-                                             'ending-summary/log-bytes-above',
-                                             'ending-summary/log-size-negative'],
- 'test_tool.bounded: default limit=SUMMARY_BYTES - 2048': ['ending-summary/default-summary-bytes-below',
-                                                           'ending-summary/default-summary-bytes-at',
-                                                           'ending-summary/default-summary-bytes-above'],
+ 'test_tool.bounded: default limit=SUMMARY_BYTES - 2048': ['payload-summary/default-summary-bytes-below',
+                                                           'payload-summary/default-summary-bytes-at',
+                                                           'payload-summary/default-summary-bytes-above'],
+ "tests_tool.TestSettings.__post_init__: re.fullmatch('(?:[\\\\w./:-]+@)?sha256:[0-9a-f]{64}', self.image)": ['post-wait-consistency/settings-default',
+                                                                                                              'post-wait-consistency/settings-mutable-image'],
+ 'tests_tool.TestSettings.__post_init__: v < 1': ['post-wait-consistency/settings-default',
+                                                  'post-wait-consistency/settings-cpus-zero',
+                                                  'post-wait-consistency/settings-mem-bool'],
+ 'tests_tool._priority: -10 <= priority <= 0': ['post-wait-consistency/priority--11',
+                                                'post-wait-consistency/priority--10',
+                                                'post-wait-consistency/priority-0',
+                                                'post-wait-consistency/priority-1'],
+ 'tests_tool._selectors: len(test) > 2048': ['post-wait-consistency/selectors-bytes-below',
+                                             'post-wait-consistency/selectors-bytes-at',
+                                             'post-wait-consistency/selectors-too-long'],
+ 'tests_tool._selectors: len(tests) > 256': ['post-wait-consistency/selectors-count-below',
+                                             'post-wait-consistency/selectors-count-at',
+                                             'post-wait-consistency/selectors-too-many'],
+ 'tests_tool._verified_test_summary: bounded(result, limit=SUMMARY_BYTES - 2048)': ['payload-summary/action-summary-bytes-below',
+                                                                                    'payload-summary/action-summary-bytes-at',
+                                                                                    'payload-summary/action-summary-bytes-above'],
+ 'tests_tool._verified_test_summary: count < 0': ['payload-summary/executed',
+                                                  'payload-summary/totals-negative',
+                                                  'payload-summary/totals-bool'],
  'tools.Evidence.restore: -TEST_EVIDENCE:': ['evidence-ledger/restore-count-over-limit'],
  'tools.Evidence.test_result: -TEST_EVIDENCE:': ['evidence-ledger/ten-entries-newest-kept'],
  'tools.Evidence.test_result: len(json.dumps(entry).encode()) > TEST_EVIDENCE_ENTRY_BYTES': ['evidence-ledger/byte-bound-and-selector-identity'],
  'tools.Evidence.test_result: len(json.dumps(runs).encode()) > TEST_EVIDENCE_BYTES': ['evidence-ledger/byte-bound-and-selector-identity'],
  'tools.Evidence.test_result: len(runs) > 1': ['evidence-ledger/byte-bound-and-selector-identity'],
- "tools.Evidence.test_result: re.fullmatch('[0-9a-f]{64}', key)": ['evidence-ledger/infra-retirement-and-roundtrip',
-                                                                   'evidence-ledger/test-run-origin-not-citable']}
+ "tools.Evidence.test_result: re.fullmatch('worker:[0-9a-f]{64}', key)": ['evidence-ledger/infra-retirement-and-roundtrip',
+                                                                          'evidence-ledger/test-run-origin-not-citable']}
 
 
 DYNAMIC_CASES = {
     "generator.validate_artifact: artifact['message']": ['generator-artifact/validate-failed'],
-    'pb_tests._json_command: cause': ['machine-record-fallback/private-empty', 'machine-record-fallback/private-io'],
-    'pb_tests._stdout_json_command: cause': ['machine-record-fallback/stdout-invalid-json', 'machine-record-fallback/stdout-io'],
-    'pb_tests._summary: cause': ['ending-summary/key', 'ending-summary/stdout-null'],
 }
 
 
