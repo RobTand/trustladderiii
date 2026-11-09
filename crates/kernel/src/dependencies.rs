@@ -1767,8 +1767,6 @@ pub(super) proof fn append_preserves(before: World, after: World)
     requires rules_ok(before),
         after.dependencies@ == before.dependencies@,
         after.nodes@.len() >= before.nodes@.len(),
-        forall|j: int| 0 <= j < before.nodes@.len()
-            ==> same_endpoint(#[trigger] before.nodes@[j], after.nodes@[j]),
         forall|j: int| before.nodes@.len() <= j < after.nodes@.len()
             ==> !(#[trigger] after.nodes@[j]).credit.withheld,
     ensures rules_ok(after),
