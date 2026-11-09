@@ -355,7 +355,7 @@ pub(super) fn plan_retry(w: &mut World, i: usize, cant_meet: bool,
     let phase = m.phase;
     kernel_snapshot! { counted_plan = *m }
     if fail_fast && cant_meet {
-        stop_for_review(m, ReviewStop::PlanCantMeet);
+        stop_for_review(m, ReviewStop::MakerCantMeet);
         kernel_proof! {
             if before_plan@.phase is Planning {
                 handler_safety::stop_ladder(counted_plan@, ReviewStop::PlanCantMeet, before_plan_out@);
