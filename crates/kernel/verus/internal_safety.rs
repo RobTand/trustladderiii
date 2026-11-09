@@ -78,10 +78,6 @@ pub(super) open spec fn step_premises(before: World, after: World, i: int) -> bo
             &&& me.repo.0 < before.gates@.len()
             &&& scheduler::other_holders(before.nodes@, before.nodes@.len(), me.repo, i)
                 < before.gates@[me.repo.0 as int].w
-            &&& forall|j: int| 0 <= j < before.nodes@.len() && j != i && before.nodes@[j].holds
-                && before.nodes@[j].repo == me.repo
-                ==> footprint::disjoint(before, before.nodes@[j].footprint, me.footprint)
-                    && footprint::disjoint(before, me.footprint, before.nodes@[j].footprint)
         })
         && (after.nodes@[i].pool && !before.nodes@[i].pool
             ==> pool_users(before.nodes@, before.nodes@.len()) < before.pool_capacity)
