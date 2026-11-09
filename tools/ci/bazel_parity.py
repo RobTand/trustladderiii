@@ -179,9 +179,9 @@ def has_nested_suite(source):
                 # A replace() fragment may end midway through a Python statement.
                 lines = textwrap.dedent(literal.value).splitlines()
                 while lines:
-                    fragment = '\n'.join(lines)
+                    fragment = '\n'.join(lines).encode('utf-8', 'backslashreplace').decode('utf-8')
                     try:
-                        ast.parse(fragment.encode('utf-8', 'backslashreplace'))
+                        ast.parse(fragment)
                     except SyntaxError as error:
                         lines = lines[:error.lineno - 1]
                     else:

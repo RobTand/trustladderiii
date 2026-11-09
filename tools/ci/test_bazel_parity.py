@@ -384,6 +384,18 @@ class NestedSuiteSizingTests(unittest.TestCase):
         embedded = "message = " + literal + '\nsubprocess.run(["python", "-m", "pytest"])'
         self.assertTrue(bazel_parity.has_nested_suite('script.write_text(' + repr(embedded) + ')'))
 
+    def test_embedded_coding_cookie_keeps_text_parse_semantics(self):
+        for cookie in ['bogus', 'ascii', 'utf-8']:
+            embedded = '# coding: ' + cookie + "\nmessage = '界'\nsubprocess.run(['python', '-m', 'pytest'])"
+            with self.subTest(cookie=cookie):
+                self.assertTrue(bazel_parity.has_nested_suite('script.write_text(' + repr(embedded) + ')'))
+
+    def test_embedded_real_surrogate_is_escaped_before_recursion(self):
+        embedded = "message = 'cause \u754c\udcff'"
+        self.assertFalse(bazel_parity.has_nested_suite('script.write_text(' + repr(embedded) + ')'))
+        embedded += '\nsubprocess.run(["python", "-m", "pytest"])'
+        self.assertTrue(bazel_parity.has_nested_suite('script.write_text(' + repr(embedded) + ')'))
+
     def test_detects_runners_in_any_package_and_embedded_scripts(self):
         sources = [
             'subprocess.run([sys.executable, "-m", "pytest", "tests"])',
