@@ -4,10 +4,48 @@ use crate::adapters::prismabuild::checks;
 use std::os::unix::fs::PermissionsExt;
 use tl3_worktrees::Worktrees;
 
+/// Recorded in canary packets staged without an activation record (FX-REQUAL-43 OQ-1).
+#[cfg(feature = "activation-qualification")]
+pub const CANARY_QUALIFICATION_MARKER: &str = "tl3.fx_canary_qualification_staging.v1";
+
+/// What binds staged requests to a qualified deployment.
+enum Gate {
+    Activated(Box<super::activation::RuntimeActivation>),
+    /// Canary packet staging before a pin exists: no record, structural preflight only.
+    /// Only the fx-stage-packet example enables this; deployed binaries never compile it.
+    #[cfg(feature = "activation-qualification")]
+    CanaryQualification,
+}
+
+impl Gate {
+    fn validate_options(&self, options: &backend::Options) -> Result<()> {
+        match self {
+            Self::Activated(activation) => activation.validate_options(options),
+            #[cfg(feature = "activation-qualification")]
+            Self::CanaryQualification => Ok(()),
+        }
+    }
+
+    fn validate_prepared(
+        &self,
+        prepared: &backend::PreparedRuntime,
+        reservation: &backend::Reservation,
+    ) -> Result<()> {
+        match self {
+            Self::Activated(activation) => activation.validate_prepared(prepared, reservation),
+            #[cfg(feature = "activation-qualification")]
+            Self::CanaryQualification => {
+                crate::adapters::run_backend::flux::validate_prepared_runtime(prepared)
+                    .map_err(|_| Error::Invalid("flux.activation.preflight"))
+            }
+        }
+    }
+}
+
 /// Production staging settings. Job environment is supplied by the one production mapper.
 pub struct Stager {
     config: tl3_config::Flux,
-    activation: super::activation::RuntimeActivation,
+    gate: Gate,
     images: crate::adapters::images::Images,
     protected: crate::scope::ProtectedPaths,
     global_protected: Vec<String>,
@@ -16,6 +54,41 @@ pub struct Stager {
 
 impl Stager {
     pub fn new(config: &tl3_config::Config) -> Result<Self> {
+        Self::gated(config, |flux| {
+            Ok(Gate::Activated(Box::new(
+                super::activation::RuntimeActivation::load(flux)?,
+            )))
+        })
+    }
+
+    /// Stage a canary packet before the activation pin exists. Refuses a configured record,
+    /// which must use the gated `new`. Example-only: deployed binaries never enable the feature.
+    #[cfg(feature = "activation-qualification")]
+    pub fn for_canary_qualification(config: &tl3_config::Config) -> Result<Self> {
+        Self::gated(config, |flux| {
+            if flux.activation.is_some() {
+                return Err(Error::Invalid("flux.activation.canary_qualification"));
+            }
+            if !tl3_config::immutable_image(&flux.container_image) {
+                return Err(Error::Invalid("flux.activation.image"));
+            }
+            Ok(Gate::CanaryQualification)
+        })
+    }
+
+    /// The packet marker for a canary-qualification Stager; `None` for every activated one.
+    #[cfg(feature = "activation-qualification")]
+    pub fn canary_qualification_marker(&self) -> Option<&'static str> {
+        match self.gate {
+            Gate::Activated(_) => None,
+            Gate::CanaryQualification => Some(CANARY_QUALIFICATION_MARKER),
+        }
+    }
+
+    fn gated(
+        config: &tl3_config::Config,
+        gate: impl FnOnce(&tl3_config::Flux) -> Result<Gate>,
+    ) -> Result<Self> {
         let tl3_config::SelectedExecution::Flux(flux) = config.selected_execution()? else {
             return Err(Error::Invalid(
                 "Flux preparation requires explicit Flux selection",
@@ -23,7 +96,7 @@ impl Stager {
         };
         Ok(Self {
             config: flux.clone(),
-            activation: super::activation::RuntimeActivation::load(flux)?,
+            gate: gate(flux)?,
             images: crate::adapters::images::Images::new(&config.github.repos),
             protected: crate::scope::ProtectedPaths::new(&config.github.repos),
             global_protected: config.planning.protected_paths.clone(),
@@ -74,7 +147,7 @@ impl Stager {
 
     /// Build immutable input and shared runtime identities without launching native work.
     pub fn prepare_request(&self, delivery: &Delivery) -> Result<PreparedCheck> {
-        self.activation
+        self.gate
             .validate_options(&crate::production::flux_options(&self.config))?;
         let reservation = self.reservation(delivery)?;
         let image = self
@@ -102,7 +175,7 @@ impl Stager {
             &reservation,
             arguments,
         )?;
-        self.activation.validate_prepared(&prepared, &reservation)?;
+        self.gate.validate_prepared(&prepared, &reservation)?;
         let backend::ExecutionRuntime::RootlessPodman { trusted_root, .. } =
             &prepared.runtime.runtime
         else {
@@ -156,7 +229,7 @@ impl Preparation for Stager {
         self.prepare_request(delivery)
     }
     fn capacity(&self, delivery: &Delivery) -> Result<(backend::Reservation, backend::Placement)> {
-        self.activation
+        self.gate
             .validate_options(&crate::production::flux_options(&self.config))?;
         let reservation = self.reservation(delivery)?;
         let image = self
@@ -169,7 +242,7 @@ impl Preparation for Stager {
             &reservation,
             vec![],
         )?;
-        self.activation.validate_prepared(&prepared, &reservation)?;
+        self.gate.validate_prepared(&prepared, &reservation)?;
         Ok((reservation, prepared.runtime.placement()))
     }
 }
