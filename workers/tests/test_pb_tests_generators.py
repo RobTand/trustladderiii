@@ -5,8 +5,10 @@ import json
 from pathlib import Path
 import subprocess
 import pytest
+from copy import deepcopy
 from pb_fixtures import FLUX_EXECUTION
 from pb_fixtures import flux_settings
+from pb_fixtures import run_binding
 from pb_fixtures import supported_fake_runtime as supported_fake_runtime
 from tl3_workers.tools import build_tools
 
@@ -612,3 +614,132 @@ def test_generator_still_requires_pb_admission_before_any_work(tmp_path, monkeyp
     with pytest.raises(RuntimeError, match="admitted PrismaBuild"):
         generator.run(tmp_path, generator.Container(IMAGE), "python3 generate.py",
                       ["**/BUILD.bazel"], [], ["tests/BUILD.bazel"])
+
+
+# FX-GEN-PREP 80ddef3e: the real generator/collector's typed preparation failure.
+FX_FAILURE = json.loads((Path(__file__).with_name("fixtures") / "fx-gen-prep"
+                         / "preparation-failure-artifact.json").read_bytes())
+
+
+def typed_failure_generator(generator_repo, tmp_path, fake, artifact=None):
+    """Configure the generator the FX artifact was produced for and return its document."""
+    from tl3_workers.tests_tool import TestSettings
+    tree, generate = configured_generator(generator_repo, tmp_path)
+    tree.generator = FX_FAILURE["command"]
+    tree.generator_timeout_s = FX_FAILURE["budget"]["timeout_s"]
+    tree.test_settings = TestSettings(FX_FAILURE["identity"]["image"], cpus=FX_FAILURE["budget"]["cpus"],
+                                      mem_gb=FX_FAILURE["budget"]["mem_gb"], execution=dict(FLUX_EXECUTION))
+    document = deepcopy(FX_FAILURE if artifact is None else artifact)
+    fake.job = lambda root, prepared: ("generator", deepcopy(document), [])
+    return tree, generate, document
+
+
+@pytest.mark.durability
+def test_typed_failed_generator_preparation_capture(generator_repo, generator_backend, supported_fake_runtime,
+                                                    tmp_path):
+    before = (generator_repo / "tests/BUILD.bazel").read_bytes()
+    tree, generate, document = typed_failure_generator(generator_repo, tmp_path, supported_fake_runtime)
+    supported_fake_runtime.ending = "failed"
+    with tree:
+        result = generate()
+        assert result["status"] == "failed", result
+        assert result["ending"] == "failed"
+        assert result["outer"] == {"status": "failed", "exit_code": None, "elapsed_s": None}
+        assert result["inner"] == {"status": "failed", "exit_code": None}
+        assert result["phase"] == "preparation" and result["exit_code"] is None
+        for name in ("command", "argv", "identity", "budget", "timings", "message"):
+            assert result[name] == document[name], name
+        assert result["backend"] == "flux" and result["wait_reference"] == KEY
+        assert result["run_binding"] == run_binding(KEY) and result["receipt_sha256"] == "b" * 64
+        assert result["artifact_sha256"] == hashlib.sha256(json.dumps(document).encode()).hexdigest()
+        assert "cause" not in result, "the bounded cause stays in the verified artifact"
+        assert not {"output_tree", "output_manifest", "output_count", "input_tree"} & set(result)
+        assert tree.generation_receipt == result
+        checkpoint = json.loads(tree.generator_state.read_text())
+        assert checkpoint["phase"] == "failed" and checkpoint["receipt"] == result
+        assert generate() == result, "a recorded failure is returned again, never resubmitted"
+    assert supported_fake_runtime.submitted == [KEY] and supported_fake_runtime.attached == [KEY]
+    assert (generator_repo / "tests/BUILD.bazel").read_bytes() == before
+
+
+@pytest.mark.parametrize("case", ["passed_ending", "refused", "infra-lost", "cancelled", "unknown", "digest",
+                                  "wrong_kind", "wrong_binding", "identity", "completed_with_failed_ending"])
+def test_typed_failed_generator_preparation_refusals_keep_the_binding(
+        generator_repo, generator_backend, supported_fake_runtime, tmp_path, case):
+    artifact = deepcopy(FX_FAILURE)
+    if case == "identity":
+        artifact["identity"]["image"] = "sha256:" + "9" * 64
+    if case == "completed_with_failed_ending":
+        artifact["status"] = "completed"
+    before = (generator_repo / "tests/BUILD.bazel").read_bytes()
+    tree, generate, _ = typed_failure_generator(generator_repo, tmp_path, supported_fake_runtime, artifact)
+    supported_fake_runtime.ending = {"passed_ending": "passed", "refused": "refused", "infra-lost": "infra-lost",
+                                     "cancelled": "cancelled"}.get(case, "failed")
+    if case == "digest":
+        def corrupt(payload):
+            path = Path(payload["artifact"]["path"])
+            path.write_bytes(path.read_bytes() + b" ")
+        supported_fake_runtime.on_payload = corrupt
+    if case == "wrong_kind":
+        supported_fake_runtime.job = lambda root, prepared: ("tests", deepcopy(artifact), [])
+    if case == "unknown":
+        supported_fake_runtime.observation = lambda key: {"kind": "unknown"}
+    if case == "wrong_binding":
+        # Another run's authoritative binding must never stand behind this wait reference.
+        other = "worker:" + "e" * 64
+        supported_fake_runtime.observation = lambda key: {
+            "kind": "terminal", "binding": run_binding(other),
+            "terminal": {"ending": "failed", "reason": "exited", "receipt": {"sha256": "b" * 64}}}
+    with tree:
+        result = generate()
+        assert result["status"] == "failed", result
+        assert "inner" not in result and "ending" not in result, "no typed capture from a refused payload"
+        assert result["wait_reference"] == KEY
+        assert json.loads(tree.generator_state.read_text())["phase"] == "submitted", "the binding is retained"
+    assert supported_fake_runtime.submitted == [KEY]
+    assert (generator_repo / "tests/BUILD.bazel").read_bytes() == before
+
+
+@pytest.mark.parametrize("overhead", [30000])
+def test_typed_failed_generator_preparation_admission_stays_failed(
+        generator_repo, generator_backend, supported_fake_runtime, tmp_path, monkeypatch, overhead):
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+    from tl3_workers import runtime
+    from tl3_workers.contracts import validate
+    supported_fake_runtime.job = lambda root, prepared: ("generator", deepcopy(FX_FAILURE), [])
+    supported_fake_runtime.ending = "failed"
+    before = (generator_repo / "tests/BUILD.bazel").read_bytes()
+    turn = AIMessage(content=json.dumps({"kind": "done", "self_check": [
+        {"goal_id": "build", "status": "met", "evidence": "Model work finished."}]}))
+    monkeypatch.setattr(runtime, "create_model", lambda request: FakeMessagesListChatModel(responses=[turn]))
+    request = {"protocol": 1, "role": "maker", "worktree": str(generator_repo),
+               "operation": {"node": 1574, "generation": 0, "kind": "make"},
+               "inputs": {"brief": "Regenerate BUILD files after model work.",
+                          "goals": [{"id": "build", "description": "Update BUILD files."}],
+                          "plan": {"files": ["tests/BUILD.bazel"], "checks": [
+                              {'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'},
+                               "name": "build", "kind": "demonstrating",
+                               "tests": ["tests/test_wait.py::test_wait"], "goal_ids": ["build"]}]},
+                          "forecast": {"fit_tokens": 100000, "context_tokens": 150000,
+                                       "overhead_tokens": {"work": overhead},
+                                       "generated_files": ["**/BUILD.bazel"],
+                                       "generator": FX_FAILURE["command"], "generator_available": True,
+                                       "generator_timeout_s": FX_FAILURE["budget"]["timeout_s"]},
+                          "attempt": 1, "round": 0, "context_size": 150000,
+                          "tests": {"image": FX_FAILURE["identity"]["image"], "execution": dict(FLUX_EXECUTION),
+                                    "cpus": FX_FAILURE["budget"]["cpus"], "mem_gb": FX_FAILURE["budget"]["mem_gb"]}}}
+    request["inputs"]["footprint"] = request["inputs"]["plan"]["files"]
+    events = []
+    runtime.run(request, events.append)
+    reply = events[-1]["reply"]
+    assert reply["kind"] == "cant_meet", reply
+    assert "head" not in reply and "generation_evidence" not in reply, "a typed failure never completes generation"
+    report = reply["report"]
+    assert report.startswith("Generation failed before final head: " + FX_FAILURE["message"])
+    for fragment in ('"ending": "failed"', '"phase": "preparation"', KEY, '"status": "failed"'):
+        assert fragment in report, fragment
+    assert '"status": "completed"' not in report and "Permission denied" not in report
+    assert supported_fake_runtime.submitted == [KEY], "fail_fast must not retry work"
+    assert (generator_repo / "tests/BUILD.bazel").read_bytes() == before
+    validate("maker-reply", reply)
