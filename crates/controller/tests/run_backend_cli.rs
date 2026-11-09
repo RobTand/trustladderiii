@@ -1491,7 +1491,7 @@ job)
     submit) cp "$3" "$fixture/jobspec.json"; if [ "$mode" = unknown ]; then exit 1; fi; cat "$fixture/submit-id";;
     info)
         if [ "$mode" = quiet-info ]; then touch "$fixture/watching"; exec /bin/sleep 300; fi
-        if [ "$3" = --original ]; then cat "$fixture/jobspec.json"; else cat "$fixture/all.json"; fi;;
+        if [ "$3" = --original ]; then if [ -e "$fixture/jobspec-$4.json" ]; then cat "$fixture/jobspec-$4.json"; else cat "$fixture/jobspec.json"; fi; else cat "$fixture/all.json"; fi;;
     eventlog)
         if [ "$mode" = quiet ]; then touch "$fixture/watching"; exec /bin/sleep 300; fi
         if [ "$mode" = interrupted ]; then head -n 1 "$fixture/events"; exit 1; fi
@@ -4716,4 +4716,357 @@ fn native_submit_recovery_and_liveness_normalize_job_ids() {
             );
         }
     }
+}
+
+// FX-ATTACH-RACE: the job's runner observes its placement while the submit's acceptance
+// is still unknown, before any controller attach has recovered the binding.
+/// Submit whose reply is lost after dispatch: the intent is durable, the binding is not.
+fn acceptance_unknown(f: &Fixture) {
+    fs::write(f.root.path().join("mode"), "unknown").unwrap();
+    assert_eq!(f.submit()["kind"], "unknown");
+    fs::write(f.root.path().join("mode"), "normal").unwrap();
+    assert!(f.state().dispatched);
+    assert!(f.state().binding.is_none());
+}
+
+/// The live native R graph for the single-host first-cut placement.
+fn early_allocation(f: &Fixture) -> String {
+    let count = f.request.reservation.cpus.get();
+    let cpus = (0..count)
+        .map(|n| n.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let nodes = std::iter::once(json!({"metadata":{"type":"node","rank":0,"id":0,"name":"dl380g10"}}))
+        .chain((0..count).map(|n| json!({"metadata":{"type":"core","rank":0,"id":n,"properties":{"os-pus":n.to_string()}}})))
+        .collect::<Vec<_>>();
+    fs::write(
+        f.root.path().join("all.json"),
+        json!({"version":1,"execution":{"R_lite":[{"rank":"0","children":{"core":cpus}}],"nodelist":["dl380g10"]},"scheduling":{"graph":{"nodes":nodes}}}).to_string(),
+    )
+    .unwrap();
+    cpus
+}
+
+/// The runner's own observe_allocation for `job` (its FLUX_JOB_ID), asserting nothing.
+fn early_observe(f: &Fixture, job: &str) -> Vec<Value> {
+    let cpus = early_allocation(f);
+    let mut run = f.ownership().run;
+    run.job = job.into();
+    f.call(json!({"op":"observe_allocation","owner":f.intent.owner,"correlation":f.intent.correlation,
+        "observed":{"run":run,"request_digest":f.intent.request_digest,"hostname":"dl380g10","allowed_cpus":cpus,
+        "cgroup":format!("0::/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/shell-{job}:sys.service")}}))
+}
+
+fn early_validate(f: &Fixture, facts: &Value) -> Vec<Value> {
+    f.call(json!({"op":"validate_allocation","owner":f.intent.owner,"correlation":f.intent.correlation,"facts":facts}))
+}
+
+fn native_calls(calls: &str, prefix: &str) -> usize {
+    calls
+        .lines()
+        .filter(|line| line.starts_with(prefix))
+        .count()
+}
+
+fn observation_blobs(f: &Fixture) -> usize {
+    fs::read_dir(&f.intent.output_dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("allocation-observation-")
+                })
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+/// A same-name native job whose immutable original jobspec is not the retained one.
+fn foreign_original(f: &Fixture, job: &str) {
+    let mut spec: Value =
+        serde_json::from_slice(&fs::read(f.root.path().join("jobspec.json")).unwrap()).unwrap();
+    spec["attributes"]["system"]["duration"] = json!(1.0);
+    fs::write(
+        f.root.path().join(format!("jobspec-{job}.json")),
+        spec.to_string(),
+    )
+    .unwrap();
+}
+
+fn listed_jobs(f: &Fixture, jobs: &[&str]) {
+    let jobs = jobs
+        .iter()
+        .enumerate()
+        .map(|(id, job)| json!({"name":f.intent.correlation,"jobid":job,"id":id + 42}))
+        .collect::<Vec<_>>();
+    fs::write(
+        f.root.path().join("jobs.json"),
+        json!({ "jobs": jobs }).to_string(),
+    )
+    .unwrap();
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn acceptance_unknown_early_observe_recovers_exact_job_and_admits() {
+    let f = Fixture::new();
+    acceptance_unknown(&f);
+    let observed = early_observe(&f, "fABC");
+    assert_eq!(observed.last().unwrap()["kind"], "result", "{observed:?}");
+    assert_eq!(f.state().binding.unwrap().id.job, "fABC");
+    let calls = f.calls();
+    assert_eq!(native_calls(&calls, "jobs -a "), 1, "{calls}");
+    assert!(
+        calls.contains("job info --original fABC jobspec"),
+        "{calls}"
+    );
+    assert_eq!(native_calls(&calls, "job submit "), 1, "{calls}");
+    let granted = early_validate(&f, &observed.last().unwrap()["result"]["facts"]);
+    assert_eq!(granted.last().unwrap()["kind"], "result", "{granted:?}");
+    assert_eq!(f.state().allocation_grant.unwrap().run.job, "fABC");
+    f.report(ReportOutcome::Passed, true);
+    f.events(&completed(0));
+    let frames = f.attach();
+    assert_eq!(
+        frames.last().unwrap()["result"]["observation"]["terminal"]["ending"],
+        "passed",
+        "{frames:?}"
+    );
+    let calls = f.calls();
+    assert_eq!(native_calls(&calls, "jobs -a "), 1, "{calls}");
+    assert_eq!(native_calls(&calls, "job submit "), 1, "{calls}");
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn early_observe_for_cancelled_terminal_or_undispatched_job_is_refused_without_recovery() {
+    for case in ["cancelled", "undispatched", "terminal"] {
+        let f = Fixture::new();
+        if case == "cancelled" {
+            acceptance_unknown(&f);
+            // The cancel's own reconciliation cannot prove the job, so no binding exists.
+            fs::write(f.root.path().join("mode"), "query-error").unwrap();
+            f.call(
+                json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}),
+            );
+            fs::write(f.root.path().join("mode"), "normal").unwrap();
+            assert!(f.state().cancel_requested, "{case}");
+            assert!(f.state().binding.is_none(), "{case}");
+        } else {
+            // The output directory already exists, so nothing is dispatched.
+            fs::create_dir_all(&f.intent.output_dir).unwrap();
+            assert_eq!(f.submit()["kind"], "unknown", "{case}");
+            assert!(!f.state().dispatched, "{case}");
+            if case == "terminal" {
+                f.call(
+                    json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}),
+                );
+                assert!(f.state().terminal.is_some(), "{case}");
+            }
+        }
+        let before = f.calls().lines().count();
+        let observed = early_observe(&f, "fABC");
+        assert_eq!(
+            observed.last().unwrap()["kind"],
+            "error",
+            "{case}: {observed:?}"
+        );
+        let after = f
+            .calls()
+            .lines()
+            .skip(before)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(native_calls(&after, "jobs "), 0, "{case}: {after}");
+        assert_eq!(native_calls(&after, "job info "), 0, "{case}: {after}");
+        assert!(f.state().binding.is_none(), "{case}");
+        assert!(f.state().allocation_grant.is_none(), "{case}");
+        assert_eq!(observation_blobs(&f), 0, "{case}");
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn early_observe_without_matching_job_is_refused() {
+    for case in ["no-candidate", "query-error", "foreign-only"] {
+        let f = Fixture::new();
+        acceptance_unknown(&f);
+        match case {
+            "no-candidate" => listed_jobs(&f, &[]),
+            "query-error" => fs::write(f.root.path().join("mode"), "query-error").unwrap(),
+            _ => {
+                foreign_original(&f, "fZZZ");
+                listed_jobs(&f, &["fZZZ"]);
+            }
+        }
+        let observed = early_observe(&f, "fABC");
+        assert_eq!(
+            observed.last().unwrap()["kind"],
+            "error",
+            "{case}: {observed:?}"
+        );
+        assert!(f.state().binding.is_none(), "{case}");
+        assert!(f.state().allocation_grant.is_none(), "{case}");
+        assert_eq!(observation_blobs(&f), 0, "{case}");
+        assert!(
+            !f.calls().contains("job info fABC R"),
+            "{case}: {}",
+            f.calls()
+        );
+        let frames = f.attach();
+        assert_eq!(
+            frames.last().unwrap()["result"]["observation"]["kind"],
+            "unknown",
+            "{case}: {frames:?}"
+        );
+        assert!(f.state().binding.is_none(), "{case}");
+        assert_eq!(native_calls(&f.calls(), "job submit "), 1, "{case}");
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn early_observe_with_conflicting_same_name_job_is_refused() {
+    let f = Fixture::new();
+    acceptance_unknown(&f);
+    foreign_original(&f, "fDEF");
+    listed_jobs(&f, &["fABC", "fDEF"]);
+    let observed = early_observe(&f, "fABC");
+    assert_eq!(observed.last().unwrap()["kind"], "error", "{observed:?}");
+    let calls = f.calls();
+    assert!(
+        calls.contains("job info --original fABC jobspec"),
+        "{calls}"
+    );
+    assert!(
+        calls.contains("job info --original fDEF jobspec"),
+        "{calls}"
+    );
+    assert!(f.state().binding.is_none());
+    assert!(f.state().allocation_grant.is_none());
+    assert_eq!(observation_blobs(&f), 0);
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn early_observe_for_wrong_run_is_refused_after_exact_recovery() {
+    let f = Fixture::new();
+    acceptance_unknown(&f);
+    let observed = early_observe(&f, "fDEF");
+    assert_eq!(observed.last().unwrap()["kind"], "error", "{observed:?}");
+    // Recovery bound only the exact original job, never the runner's claimed one.
+    assert_eq!(f.state().binding.unwrap().id.job, "fABC");
+    assert!(f.state().allocation_grant.is_none());
+    assert!(!f.calls().contains("job info fDEF R"), "{}", f.calls());
+    let exact = early_observe(&f, "fABC");
+    assert_eq!(exact.last().unwrap()["kind"], "result", "{exact:?}");
+    let mut forged = exact.last().unwrap()["result"]["facts"].clone();
+    forged["run"]["job"] = json!("fDEF");
+    let refused = early_validate(&f, &forged);
+    assert_eq!(refused.last().unwrap()["kind"], "error", "{refused:?}");
+    assert!(f.state().allocation_grant.is_none());
+    assert_eq!(f.state().binding.unwrap().id.job, "fABC");
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn early_observe_replay_is_idempotent() {
+    // Repeated observation reuses the durable binding and retains identical facts.
+    let f = Fixture::new();
+    acceptance_unknown(&f);
+    let first = early_observe(&f, "fABC");
+    assert_eq!(first.last().unwrap()["kind"], "result", "{first:?}");
+    let second = early_observe(&f, "fABC");
+    assert_eq!(second.last().unwrap()["kind"], "result", "{second:?}");
+    assert_eq!(
+        first.last().unwrap()["result"]["facts"],
+        second.last().unwrap()["result"]["facts"]
+    );
+    assert_eq!(native_calls(&f.calls(), "jobs -a "), 1, "{}", f.calls());
+    // A replayed submit returns the recovered binding and never resubmits.
+    let replay = f.submit();
+    assert_eq!(replay["kind"], "accepted", "{replay:?}");
+    assert_eq!(replay["binding"]["id"]["job"], "fABC", "{replay:?}");
+    assert_eq!(native_calls(&f.calls(), "job submit "), 1, "{}", f.calls());
+
+    // Interruption after the binding commit: the native R read fails, then a retry
+    // proceeds from the committed binding without recovering again.
+    let f = Fixture::new();
+    acceptance_unknown(&f);
+    let cpus = early_allocation(&f);
+    let graph = fs::read(f.root.path().join("all.json")).unwrap();
+    fs::remove_file(f.root.path().join("all.json")).unwrap();
+    let mut run = f.ownership().run;
+    run.job = "fABC".into();
+    let interrupted = f.call(json!({"op":"observe_allocation","owner":f.intent.owner,"correlation":f.intent.correlation,
+        "observed":{"run":run,"request_digest":f.intent.request_digest,"hostname":"dl380g10","allowed_cpus":cpus,
+        "cgroup":"0::/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/shell-fABC:sys.service"}}));
+    assert_eq!(
+        interrupted.last().unwrap()["kind"],
+        "error",
+        "{interrupted:?}"
+    );
+    assert_eq!(f.state().binding.unwrap().id.job, "fABC");
+    fs::write(f.root.path().join("all.json"), graph).unwrap();
+    let resumed = early_observe(&f, "fABC");
+    assert_eq!(resumed.last().unwrap()["kind"], "result", "{resumed:?}");
+    assert_eq!(native_calls(&f.calls(), "jobs -a "), 1, "{}", f.calls());
+    let granted = early_validate(&f, &resumed.last().unwrap()["result"]["facts"]);
+    assert_eq!(granted.last().unwrap()["kind"], "result", "{granted:?}");
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn concurrent_attach_and_early_observe_commit_one_binding() {
+    let f = Fixture::new();
+    acceptance_unknown(&f);
+    fs::write(f.root.path().join("mode"), "held-query").unwrap();
+    // Release the held query on every exit, so a failing assertion never strands the attach.
+    struct Release(PathBuf);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            let _ = fs::write(&self.0, "");
+        }
+    }
+    let release = Release(f.root.path().join("query-release"));
+    let mut attach = Command::new(env!("CARGO_BIN_EXE_tl3-run-backend"))
+        .args(["--config", f.config.to_str().unwrap()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writeln!(
+        attach.stdin.take().unwrap(),
+        "{}",
+        json!({"op":"attach","owner":f.intent.owner,"correlation":f.intent.correlation})
+    )
+    .unwrap();
+    wait_until(
+        "attach recovery query started",
+        Duration::from_secs(5),
+        || f.root.path().join("query-started").exists(),
+    );
+    // The runner observes while attach's recovery query is still in flight.
+    let observed = early_observe(&f, "fABC");
+    assert_eq!(observed.last().unwrap()["kind"], "result", "{observed:?}");
+    assert_eq!(f.state().binding.unwrap().id.job, "fABC");
+    drop(release);
+    let output = attach.wait_with_output().unwrap();
+    let frames = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    let observation = &frames.last().unwrap()["result"]["observation"];
+    assert_eq!(observation["binding"]["id"]["job"], "fABC", "{frames:?}");
+    assert_ne!(
+        observation["reason"], "recovery transport or identity unavailable",
+        "{frames:?}"
+    );
+    assert_eq!(f.state().binding.unwrap().id.job, "fABC");
+    assert_eq!(native_calls(&f.calls(), "jobs -a "), 2, "{}", f.calls());
+    assert_eq!(native_calls(&f.calls(), "job submit "), 1, "{}", f.calls());
 }
