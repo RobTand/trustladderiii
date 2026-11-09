@@ -1,10 +1,25 @@
 {
-  "source_head": "65eaf2044a3d22ea7a7897a14d909e2bb5a57378",
+  "source_head": "03d0116bf0e2c015111891ee5faaa9e3ae8a9877",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "9f4aecd45129c6b3c983e3b7966ef58515aa37ba3a1f706300aea7cda741bd55",
-  "groups": 422,
-  "obligations": 605,
+  "source_sha256": "3357ce688b0b17c377fbee7f6cdfad6d9c06a402c9bc12e584b3caaa765fb68e",
+  "groups": 425,
+  "obligations": 608,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_frame_node_rules",
+      "selector": "kernel::dependencies::preservation#frame_node_rules",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_frame_holders",
+      "selector": "kernel::dependencies::preservation#frame_holders",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_frame_pairs",
+      "selector": "kernel::dependencies::preservation#frame_pairs",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_dependencies_node_update_preserves",
       "selector": "kernel::dependencies#node_update_preserves",
