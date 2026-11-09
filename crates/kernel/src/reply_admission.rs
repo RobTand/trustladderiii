@@ -119,6 +119,9 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
                     && final(w).next_question == old(w).next_question
                     && *final(out) == *old(out)
             }),
+        transition_safety::fail_fast_event(Event::Reply { node: NodeId(i as u64), generation, reply }) ==> handler_safety::reply_rows(old(w).fail_fast,
+            transition_safety::retry_due(*old(w), Event::Reply { node: NodeId(i as u64), generation, reply }), transition_safety::funding_due(*old(w), Event::Reply { node: NodeId(i as u64), generation, reply }),
+            old(w).nodes@[i as int], final(w).nodes@[i as int], *old(out), *final(out)),
 ] {
     kernel_snapshot! { before_report = report.entries@ }
     kernel_snapshot! { before_reply = *w }
@@ -126,6 +129,7 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
     let n = &w.nodes[i];
     if n.phase.is_stopping() {
         on_stopping_reply(w, i, generation, reply, out);
+        kernel_proof! { handler_safety::quiet_due(before_reply@, w.nodes@[i as int], i as int, generation, reply, before_outputs@, *out); }
         kernel_proof! { report::lemmas::reply_result(before_report@, report.entries@, NodeId(i as u64),
             before_reply@.nodes@[i as int].phase, current_item(before_reply@.nodes@[i as int]),
             before_reply@.nodes@[i as int].run, before_reply@.nodes@[i as int].job,
@@ -150,6 +154,7 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
             before_reply@.nodes@[i as int].phase, current_item(before_reply@.nodes@[i as int]),
             before_reply@.nodes@[i as int].run, before_reply@.nodes@[i as int].job,
             generation, reply, port_t860_contracts::admissible(before_reply@, before_reply@.nodes@[i as int], reply)); }
+kernel_proof! { handler_safety::quiet_due(before_reply@, w.nodes@[i as int], i as int, generation, reply, before_outputs@, *out); }
         return; // stale
     }
     // A reply that breaks its schema or names the wrong commit counts as a failed run.
@@ -162,6 +167,7 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
     }
     if !accepts(w, n, &reply) {
         on_rejected_reply(w, i, generation, reply, out, report);
+        kernel_proof! { handler_safety::quiet_due(before_reply@, w.nodes@[i as int], i as int, generation, reply, before_outputs@, *out); }
         kernel_proof! { report::lemmas::round_delta(before_report@, report.entries@,
             NodeId(i as u64), Some(FailedRoundCause::RunFailed)); }
         kernel_proof! { report::lemmas::reply_result(before_report@, report.entries@, NodeId(i as u64),
@@ -176,6 +182,12 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
         }
     }
     on_admitted_reply(w, i, generation, reply, out, report);
+    kernel_proof! {
+        if handler_safety::fail_fast_reply(reply) {
+            handler_safety::admitted_due(before_reply@, w.nodes@[i as int], i as int, generation, reply,
+                before_outputs@, *out);
+        }
+    }
     kernel_proof! {
         report::lemmas::read_forwards(before_report@, report.entries@,
             report::round_entries(NodeId(i as u64), report::work_failure(reply)));
@@ -264,6 +276,9 @@ pub(super) fn on_admitted_reply(w: &mut World, i: usize, _generation: u64, reply
                     && final(w).next_question == old(w).next_question
                     && *final(out) == *old(out)
             }),
+        handler_safety::fail_fast_admitted(old(w).nodes@[i as int], reply) ==> handler_safety::reply_rows(old(w).fail_fast,
+            handler_safety::admitted_retry(old(w).nodes@[i as int], reply), handler_safety::admitted_fund(old(w).nodes@[i as int], reply),
+            old(w).nodes@[i as int], final(w).nodes@[i as int], *old(out), *final(out)),
 ] {
     kernel_snapshot! { before_report = report.entries@ }
     kernel_proof! { report::lemmas::work_kind(reply); }
@@ -287,6 +302,11 @@ pub(super) fn on_admitted_reply(w: &mut World, i: usize, _generation: u64, reply
             kernel_proof! { footprint::valid_under_table_growth(before_operation@, *w, files); }
             reply_files(w, i, files, fits, out);
             kernel_proof! {
+                if handler_safety::fail_fast_admitted(before_reply@.nodes@[i as int], reply) {
+                    handler_safety::files_admitted(before_reply@.fail_fast, files, fits,
+                        before_reply@.nodes@[i as int], after_operation@.nodes@[i as int],
+                        w.nodes@[i as int], before_outputs@, *out);
+                }
                 port_t860_link::irrelevant(before_reply@, *w, i as int, _generation, reply, before_outputs@, *out);
                 progress_gate_contracts::maker_reply_inactive(before_reply@, *w, i as int,
                     _generation, reply, before_outputs@, *out);
@@ -294,6 +314,13 @@ pub(super) fn on_admitted_reply(w: &mut World, i: usize, _generation: u64, reply
         }
         _ => {
             reply_transition(w, i, reply, out, report);
+            kernel_proof! {
+                if handler_safety::fail_fast_admitted(before_reply@.nodes@[i as int], reply) {
+                    handler_safety::transition_admitted(before_reply@.fail_fast, reply,
+                        before_reply@.nodes@[i as int], after_operation@.nodes@[i as int],
+                        w.nodes@[i as int], before_outputs@, *out);
+                }
+            }
             kernel_proof! { report::lemmas::round_delta(before_report@, report.entries@,
                 NodeId(i as u64), report::work_failure(reply)); }
             kernel_proof! {
@@ -356,8 +383,10 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        !(old(w).nodes@[i as int].phase is Closed || old(w).nodes@[i as int].phase is Stopping) ==> handler_safety::files_post(old(w).fail_fast, files, fits, old(w).nodes@[i as int], final(w).nodes@[i as int], *old(out), *final(out)),
 ] proof [reveal(retry_bounds); reveal(footprint::ordered_table);] {
     kernel_snapshot! { before_files = *w }
+    kernel_snapshot! { before_files_out = *out }
     if fits && !files.is_empty() && w.nodes[i].credit.can_spend(1) {
         let footprint = w.union_footprints(w.nodes[i].footprint, files);
         kernel_snapshot! { after_union = *w }
@@ -366,6 +395,10 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
         m.footprint = footprint;
         m.holds = false;
         set_phase(m, Phase::Ready(Resume::Making));
+        kernel_proof! {
+            handler_safety::files_rows(before_files@.fail_fast, files, fits, before_files@.nodes@[i as int],
+                w.nodes@[i as int], before_files_out@, *out);
+        }
         kernel_proof! { footprint::valid_under_table_growth(after_union@, *w, footprint); }
     } else if fits && !files.is_empty() && w.fail_fast {
         // Q54 stops retries, not credit decisions: Rob funds the extension.
@@ -380,9 +413,21 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
             1,
             out,
         );
+        kernel_proof! {
+            handler_safety::fund_fast(before_files@.nodes@[i as int], w.nodes@[i as int]);
+            handler_safety::files_rows(before_files@.fail_fast, files, fits, before_files@.nodes@[i as int],
+                w.nodes@[i as int], before_files_out@, *out);
+        }
         kernel_proof! { footprint::valid_under_table_growth(after_union@, *w, footprint); }
     } else {
         out_of_room(w, i, ReviewStop::MakerNeedsFiles, out);
+        kernel_proof! {
+            if fits && !footprint::footprint_empty(files) {
+                handler_safety::fund_off(before_files@.nodes@[i as int], w.nodes@[i as int]);
+            }
+            handler_safety::files_rows(before_files@.fail_fast, files, fits, before_files@.nodes@[i as int],
+                w.nodes@[i as int], before_files_out@, *out);
+        }
         kernel_proof! { footprint::valid_under_table_growth(before_files@, *w, w.nodes@[i as int].footprint); }
     }
     }
@@ -428,6 +473,9 @@ pub(super) fn reply_transition(w: &mut World, i: usize, reply: Reply,
                     && final(w).next_question == old(w).next_question
                     && *final(out) == *old(out)
             }),
+        !(reply is MakerNeedsFiles) && handler_safety::fail_fast_admitted(old(w).nodes@[i as int], reply)
+            ==> handler_safety::ladder(old(w).fail_fast, handler_safety::admitted_retry(old(w).nodes@[i as int], reply),
+                old(w).nodes@[i as int], final(w).nodes@[i as int], *old(out), *final(out)),
 ] proof [reveal(port_t860_contracts::transition_post); reveal(progress_gate_contracts::maker_transition); reveal(distance);] {
     kernel_snapshot! { before_report = report.entries@ }
     kernel_proof! { report::lemmas::work_kind(reply); }
@@ -519,6 +567,7 @@ pub(super) fn on_rejected_reply(w: &mut World, i: usize, _generation: u64, _repl
                     && final(w).next_question == old(w).next_question
                     && *final(out) == *old(out)
             }),
+        final(w).nodes@[i as int].review_stop == old(w).nodes@[i as int].review_stop,
 ] {
     kernel_snapshot! { before_report = report.entries@ }
     kernel_snapshot! { before_reply = *w }
@@ -615,6 +664,7 @@ pub(super) fn on_stopping_reply(w: &mut World, i: usize, generation: u64, _reply
                     && final(w).next_question == old(w).next_question
                     && *final(_out) == *old(_out)
             }),
+        final(w).nodes@[i as int].review_stop == old(w).nodes@[i as int].review_stop,
 ] {
     kernel_snapshot! { before_reply = *w }
     kernel_snapshot! { before_stopping_node = w.nodes@[i as int] }
