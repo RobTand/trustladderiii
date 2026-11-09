@@ -48,7 +48,7 @@ def test_selected_flux_generator_retains_unknown_and_imports_once(generator_repo
             raise ValueError('unknown acceptance; original binding retained')
         artifact = generator.run(root / 'checkout', generator.Container(IMAGE), **plan['contract'])
         return {'kind': 'generator', 'artifact': artifact, 'receipt': {
-            'backend': 'flux', 'receipt_sha256': 'b' * 64, 'outer': {'status': 'passed'}}}
+            'backend': 'flux', 'receipt_sha256': 'b' * 64, 'ending': 'passed', 'outer': {'status': 'passed'}}}
     monkeypatch.setattr(flux_execution, 'execute', execute)
     with tree:
         result = generate()
