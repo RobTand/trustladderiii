@@ -25,8 +25,15 @@ def launch_context():
 
 
 def podman_command(tree, image, scratch, threads, *, mode, cpus=None, memory=None,
-                   executable='podman', harness=None, interpreter='python3', oci_runtime=None, init_path=None):
+                   executable='podman', harness=None, interpreter='python3', oci_runtime=None, init_path=None,
+                   writable_checkout=False, extra=(), payload=('-',)):
+    # One containment surface for tests and generators. A generator gets only a
+    # writable private copy with read-only Git metadata, trusted extra flags
+    # and the gated exec payload; every other flag is shared.
     harness = Path(harness) if harness is not None else Path(__file__).resolve().parent
+    checkout = ['--mount', f'type=bind,src={tree},dst=/checkout' + ('' if writable_checkout else ',readonly')]
+    if writable_checkout:
+        checkout += ['--mount', f'type=bind,src={Path(tree) / ".git"},dst=/checkout/.git,readonly']
     if mode == 'in_job':
         if cpus is not None or memory is not None:
             raise ValueError('in_job cannot set independent CPU or memory limits')
@@ -46,12 +53,13 @@ def podman_command(tree, image, scratch, threads, *, mode, cpus=None, memory=Non
         *prefix, '--network=none', '--http-proxy=false', '--read-only', '--read-only-tmpfs=false',
         '--interactive', '--rm', '--pull=never', '--cap-drop=ALL',
         '--security-opt=no-new-privileges', '--pids-limit=128', '--ipc=private', '--pid=private', '--workdir=/checkout',
-        '--mount', f'type=bind,src={tree},dst=/checkout,readonly',
+        *checkout,
         '--mount', f'type=bind,src={harness},dst=/harness,readonly',
         '--mount', f'type=bind,src={scratch},dst=/tmp',
         '--env', 'HOME=/tmp', '--env', 'TMPDIR=/tmp', '--env', 'PYTEST_DISABLE_PLUGIN_AUTOLOAD=1',
         *[arg for name in NATIVE_THREAD_ENVIRONMENT for arg in ('--env', f'{name}={threads}')],
-        f'--entrypoint={interpreter}', image, '-I', '-B', '/harness/runtime_evidence.py', '-',
+        *extra,
+        f'--entrypoint={interpreter}', image, '-I', '-B', '/harness/runtime_evidence.py', *payload,
     ]
 
 
@@ -915,7 +923,7 @@ def journal_path(path):
     return Path(context['output_dir']) / f'{path.stem}-{uuid.uuid4().hex}.jsonl'
 
 
-def command(tree, scratch):
+def command(tree, scratch, *, writable_checkout=False, extra=(), payload=('-',)):
     import shutil
 
     check_rootless_directory(os.environ)
@@ -929,7 +937,8 @@ def command(tree, scratch):
     return podman_command(tree, configured['image'], scratch, context['native_threads'],
                           mode=configured['mode'],
                           executable=configured['executable'], harness=configured['trusted_root'],
-                          interpreter=configured['interpreter'], oci_runtime=oci_runtime, init_path=init_path)
+                          interpreter=configured['interpreter'], oci_runtime=oci_runtime, init_path=init_path,
+                          writable_checkout=writable_checkout, extra=extra, payload=payload)
 
 
 def prepare_scratch():
