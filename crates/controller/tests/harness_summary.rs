@@ -78,8 +78,11 @@ fn rust_generated_harness_schema_has_no_drift() {
     assert_eq!(tl3_controller::check_harness::wire_schema(), committed);
 }
 
-/// #823/#760: the old and new shells retain all report/progress/log I/O order,
-/// including byte-identical persisted progress at any generated crash point.
+/// #823/#760: the old and new harness action shells retain all report/progress
+/// I/O order, and the old and new staging shells retain every staging I/O step,
+/// including byte-identical persisted state at any generated crash point. The
+/// PrismaBuild submission, wait and log transport is deleted; the native worker
+/// tests cover the Flux transport.
 #[test]
 fn extraction_preserves_recorded_io_schedules_and_crash_state() {
     use proptest::prelude::*;
@@ -148,7 +151,6 @@ fn extraction_preserves_recorded_io_schedules_and_crash_state() {
         "stage-flush",
         "stage-file-close",
         "selection-close",
-        "verified-log-close",
         "fsync",
         "rename",
         "proof-is-file",
@@ -159,10 +161,6 @@ fn extraction_preserves_recorded_io_schedules_and_crash_state() {
         "source-file",
         "base-export",
         "assemble-proof",
-        "upstream-wait",
-        "reattach-read",
-        "checkpoint-write",
-        "progress-emit",
     ] {
         assert!(
             coverage.borrow().contains(required),
