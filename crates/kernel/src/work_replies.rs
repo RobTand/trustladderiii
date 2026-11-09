@@ -17,6 +17,8 @@ pub(super) fn reply_plan(w: &mut World, i: usize, reply: Reply,
             || match reply { Reply::PlanLeaf { footprint, .. } => final(w).nodes@[i as int].footprint == footprint, _ => false },
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        reply == Reply::PlanCantMeet && old(w).nodes@[i as int].phase is Planning ==> handler_safety::ladder(old(w).fail_fast,
+            true, old(w).nodes@[i as int], final(w).nodes@[i as int], *old(out), *final(out)),
 ] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds);] {
     kernel_proof! { footprint::inline_is_valid(*w, 1); }
     match reply {
@@ -64,8 +66,12 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        handler_safety::fail_fast_reply(reply) && !(old(w).nodes@[i as int].phase is Closed || old(w).nodes@[i as int].phase is Stopping) ==> handler_safety::ladder(old(w).fail_fast,
+            handler_safety::work_retry(old(w).nodes@[i as int], reply), old(w).nodes@[i as int], final(w).nodes@[i as int], *old(out), *final(out)),
 ] proof [reveal(progress_gate_contracts::maker_transition); reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds);] {
     kernel_snapshot! { before_report = report.entries@ }
+    kernel_snapshot! { before_work = w.nodes@[i as int] }
+    kernel_snapshot! { before_work_out = *out }
     kernel_proof! { report::lemmas::work_kind(reply); }
     match reply {
         Reply::MakerDone { head } => {
@@ -76,6 +82,11 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
         }
         Reply::MakerCantMeet => {
             next_rung(w, i, ReviewStop::MakerCantMeet, out, report);
+            kernel_proof! {
+                if !(before_work@.phase is Closed || before_work@.phase is Stopping) {
+                    handler_safety::rung_ladder(w.fail_fast, before_work@, w.nodes@[i as int], before_work_out@, *out);
+                }
+            }
             kernel_proof! { report::lemmas::round_delta(before_report@, report.entries@,
                 NodeId(i as u64), Some(FailedRoundCause::MakerCantMeet)); }
         }
@@ -87,6 +98,9 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
                 let m = &mut w.nodes[i];
                 m.checked = m.head;
                 set_phase(m, Phase::Reviewing);
+                kernel_proof! {
+                    handler_safety::same_ladder(w.fail_fast, before_work@, w.nodes@[i as int], before_work_out@, *out);
+                }
             } else {
                 failed_round(w, i, ReviewStop::ChecksFailed, out, report);
                 kernel_proof! {
@@ -114,7 +128,12 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
                 out_of_room(w, i, ReviewStop::ReviewerOutOfRoom, out);
             } else {
                 w.nodes[i].review_restarted = true;
+                kernel_snapshot! { restarted_review = w.nodes@[i as int] }
                 recheck(w, i, Phase::Reviewing, out);
+                kernel_proof! {
+                    handler_safety::kept_ladder(w.fail_fast, before_work@, restarted_review@,
+                        w.nodes@[i as int], before_work_out@, *out);
+                }
             }
         }
         _ => reply_rebase(w, i, reply, out),
