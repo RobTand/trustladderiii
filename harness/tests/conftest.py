@@ -42,7 +42,10 @@ def flux_context(monkeypatch, *, no_progress_seconds=120, **extra):
 
     def launch_context():
         # require_admission (often stubbed here) recreates the leaf the workspace removed.
-        leaf.mkdir(mode=0o700, exist_ok=True)
+        # A real job has one workspace; a test running several rounds starts each afresh.
+        if not leaf.exists():
+            (output / 'action-scratch-absence.json').unlink(missing_ok=True)
+            leaf.mkdir(mode=0o700)
         leaf.chmod(0o700)
         return context
 
