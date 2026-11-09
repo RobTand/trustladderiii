@@ -108,6 +108,7 @@ use retries::*;
 mod acknowledgements;
 use acknowledgements::*;
 mod facts;
+mod facts_family_values;
 use facts::*;
 mod commands;
 use commands::*;

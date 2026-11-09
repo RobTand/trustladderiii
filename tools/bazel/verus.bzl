@@ -443,6 +443,11 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::facts_family_values::node_rows": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::facts_family_values::notices": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::facts_family_values::merge_notices": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::facts_family_values::appended": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::facts_family_values::notice_suffix": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::event_target": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::others_unchanged": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::effect_node_ok": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -742,6 +747,12 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "facts_family_value_node_rows": ("kernel::facts_family_values#value_node_rows", 1),
+            "facts_family_ordinary_fact_value": ("kernel::facts_family_values#ordinary_fact_value", 1),
+            "facts_family_merge_fact_value": ("kernel::facts_family_values#merge_fact_value", 1),
+            "facts_family_append_fact_notices": ("kernel::facts_family_values#append_fact_notices", 2),
+            "facts_family_ordinary_fact_entry": ("kernel::facts_family_values#ordinary_fact_entry", 1),
+            "facts_family_dependency_entry": ("kernel::facts_family_values#fact_dependency_entry", 1),
             "facts_family_on_fact_rows": ("kernel::facts_family_lemmas#on_fact_rows", 1),
             "facts_family_notices_outputs": ("kernel::facts_family_lemmas#notices_outputs", 1),
             "facts_family_selected_apply_rows": ("kernel::facts_family_lemmas#selected_apply_rows", 1),
