@@ -4696,7 +4696,10 @@ fn generator_preparation_failure_closes_typed_failed_through_real_collector() {
         assert_eq!(produced["status"], "failed", "{mode}: {produced}");
         assert_eq!(produced["phase"], "preparation", "{mode}: {produced}");
         assert_eq!(produced["timings"]["container"]["outcome"], "skipped");
-        assert_eq!(produced["cause"]["operation"], operation, "{mode}: {produced}");
+        assert_eq!(
+            produced["cause"]["operation"], operation,
+            "{mode}: {produced}"
+        );
         // The unrelated owner's debt must survive this owner's closure.
         let unrelated = (mode == "readonly-checkout").then(|| unrelated_debt(&f));
         f.events(&completed(0));
@@ -4713,10 +4716,7 @@ fn generator_preparation_failure_closes_typed_failed_through_real_collector() {
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|item| item["path"]
-                    .as_str()
-                    .unwrap()
-                    .contains("/scratch-absence-")),
+                .any(|item| item["path"].as_str().unwrap().contains("/scratch-absence-")),
             "{receipt}"
         );
         assert!(cleanup_debts(&f).is_empty(), "{:?}", cleanup_debts(&f));
@@ -4725,7 +4725,9 @@ fn generator_preparation_failure_closes_typed_failed_through_real_collector() {
             assert!(unrelated.exists(), "closure cleared another owner's debt");
             assert_eq!(next.last().unwrap()["kind"], "error", "{next:?}");
             assert!(
-                json!(next).to_string().contains("unresolved runtime cleanup debt"),
+                json!(next)
+                    .to_string()
+                    .contains("unresolved runtime cleanup debt"),
                 "{next:?}"
             );
         } else {
@@ -4792,7 +4794,11 @@ fn generator_no_container_failure_refuses_forged_and_unproven_closure() {
     variants.push(("unbounded-message", frame(&multiline)));
     for (name, raw) in &variants {
         let result = collect_worker(&f, raw.as_bytes());
-        assert_eq!(result.last().unwrap()["kind"], "error", "{name}: {result:?}");
+        assert_eq!(
+            result.last().unwrap()["kind"],
+            "error",
+            "{name}: {result:?}"
+        );
     }
     // Claimed runtime binding observations contradict a no-container failure.
     let stdout = api::durable::blob(
@@ -4807,7 +4813,9 @@ fn generator_no_container_failure_refuses_forged_and_unproven_closure() {
     assert_eq!(foreign.last().unwrap()["kind"], "error", "{foreign:?}");
     // The genuine producer frame still collects while no execution exists ...
     assert_eq!(
-        collect_worker(&f, frame(&produced).as_bytes()).last().unwrap()["kind"],
+        collect_worker(&f, frame(&produced).as_bytes())
+            .last()
+            .unwrap()["kind"],
         "result"
     );
     // ... but never once any runtime execution was registered.
@@ -4818,7 +4826,11 @@ fn generator_no_container_failure_refuses_forged_and_unproven_closure() {
     assert_eq!(result.last().unwrap()["kind"], "error", "{result:?}");
 
     // Closure negatives each start from a fresh real producer/collector run.
-    for case in ["conflicting-native-exit", "missing-clean", "scratch-retained"] {
+    for case in [
+        "conflicting-native-exit",
+        "missing-clean",
+        "scratch-retained",
+    ] {
         let (f, driver) = generator_prep_case("prep-failure");
         assert!(driver["error_type"].is_null(), "{case}: {driver}");
         match case {
@@ -4839,7 +4851,10 @@ fn generator_no_container_failure_refuses_forged_and_unproven_closure() {
         assert!(!f.intent.output_dir.join("receipt.json").exists(), "{case}");
         if case == "scratch-retained" {
             assert!(f.request.scratch_root.join("fABC").exists());
-            assert!(!cleanup_debts(&f).is_empty(), "{case}: scratch debt not retained");
+            assert!(
+                !cleanup_debts(&f).is_empty(),
+                "{case}: scratch debt not retained"
+            );
         }
         // Unproven cleanup keeps the runtime gate closed for every other owner.
         let held = distinct_owner_submit(&f, "held");
