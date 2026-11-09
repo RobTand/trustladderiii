@@ -3,6 +3,59 @@ use super::*;
 
 kernel_fn! {
 /// Question answer rows / #771: one clarification or one paid continuation.
+/// K5: the world entry for answer_node; one node write-back, one next-question
+/// write and at most one notice, so the world frame is proved once here.
+pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures (node_checked(*old(w), old(w).nodes@[i as int])
+            && answer_progress_input(old(w).nodes@[i as int], id, answer)
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
+        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
+        final(w).nodes@[i as int].credit.start == old(w).nodes@[i as int].credit.start,
+        final(w).nodes@[i as int].credit.earned == old(w).nodes@[i as int].credit.earned,
+        final(w).nodes@[i as int].credit.added as int <= old(w).nodes@[i as int].credit.added as int + 255,
+        final(w).nodes@[i as int].credit.spent as int <= old(w).nodes@[i as int].credit.spent as int + 1,
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question as int <= old(w).next_question as int + 1,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len <= old(out).len + 1,
+        final(w).nodes@[i as int].proposed == old(w).nodes@[i as int].proposed,
+        final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
+        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase),
+        handler_safety::command_step(old(w).nodes@[i as int], final(w).nodes@[i as int]),
+] {
+    kernel_proof! {
+        if node_checked(*w, w.nodes@[i as int]) { handler_safety::checked_node_ok(*w, w.nodes@[i as int]); }
+    }
+    let (n1, nq1, note) = answer_node(w.nodes[i], w.next_question, id, answer);
+    w.nodes[i] = n1;
+    w.next_question = nq1;
+    match note {
+        Some(x) => notice(out, i, x),
+        None => {}
+    }
+}
+}
+
+kernel_fn! {
+/// Question answer rows / #771: one clarification or one paid continuation.
 /// K5 value form of on_answer's work: the node and next question id come in by
 /// value; the answered node, the next id and at most one notice are returned.
 pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)

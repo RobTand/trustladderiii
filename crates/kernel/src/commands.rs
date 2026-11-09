@@ -96,20 +96,13 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
                 if node_checked(before_command_world@, before_command_node@) {
                     footprint::valid_under_table_growth(before_command_world@, *w, w.nodes@[i as int].footprint);
                     assert(node_checked(*w, w.nodes@[i as int]));
-                    handler_safety::checked_node_ok(*w, w.nodes@[i as int]);
                     if command_progress_input(before_command_node@, command) {
                         assert(answer_progress_input(w.nodes@[i as int], question, answer));
                         assert(distance(w.nodes@[i as int]) == distance(before_command_node@));
                     }
                 }
             }
-            let (n1, nq1, note) = answer_node(w.nodes[i], w.next_question, question, answer);
-            w.nodes[i] = n1;
-            w.next_question = nq1;
-            match note {
-                Some(x) => notice(out, i, x),
-                None => {}
-            }
+            on_answer(w, i, question, answer, out);
         },
     }
     kernel_proof! {
