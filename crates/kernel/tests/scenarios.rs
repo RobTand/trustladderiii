@@ -1133,6 +1133,62 @@ fn publishing_conflict_rebases_at_every_publication_step() {
     }
 }
 
+/// State-table Conflict rows at the executable level (docs/state-table.md:596 and :622),
+/// observed on the world right after the real apply, before settle. Covers the #806
+/// isolation of the Conflict arm: exact destination, one generation, everything else kept.
+#[test]
+fn conflict_rows_keep_their_exact_destinations_and_frames() {
+    fn phased(n: Node, phase: Phase) -> Node {
+        Node {
+            generation: n.generation + 1,
+            phase,
+            pos: 0,
+            ticket: None,
+            effect: n.effect.map(|e| InFlight { cancelling: true, ..e }),
+            ..n
+        }
+    }
+    fn conflict_row(w: &World, from: Phase, to: Phase) {
+        let before = w.nodes[0];
+        assert_eq!(before.phase, from);
+        let event = Event::Fact {
+            node: NodeId(0),
+            fact: Fact::Conflict,
+        };
+        let (_, out, trace) = step_traced(w.clone(), event);
+        let applied = &trace[0];
+        assert_eq!(applied.nodes[0], phased(before, to), "exact Conflict row from {from:?}");
+        assert_eq!(applied.nodes.len(), w.nodes.len());
+        assert!(applied.nodes[1..] == w.nodes[1..], "other nodes are untouched");
+        assert_eq!(
+            (applied.next_ticket, applied.next_question),
+            (w.next_ticket, w.next_question)
+        );
+        assert!(
+            !out.iter().any(|o| matches!(o, Out::Notice { .. })),
+            "a conflict emits no notice"
+        );
+    }
+    // :596 Publishing -> Rebasing: one new generation, credit and slot kept.
+    let mut r = Run::new();
+    r.start_making();
+    r.reply(Reply::MakerDone { head: HeadId(1) });
+    r.reply(CHECKS_PASS);
+    r.send(Event::Reply {
+        node: NodeId(0),
+        generation: r.node().generation,
+        reply: Reply::Approved { head: HeadId(1) },
+    });
+    assert!(r.node().holds);
+    conflict_row(&r.w, Phase::Publishing, Phase::Rebasing);
+    // :622 AwaitingDelivery -> Ready(Rebasing): one generation, no ownership, no credit charge.
+    let mut run = q44_review();
+    run.reply(Reply::ReviewerOutOfRoom);
+    run.reply(Reply::Approved { head: HeadId(1) });
+    assert!(!run.node().holds);
+    conflict_row(&run.w, Phase::AwaitingDelivery, Phase::Ready(Resume::Rebasing));
+}
+
 #[test]
 fn publishing_conflict_cycles_exhaust_credit_or_recheck_allowance() {
     for clean in [false, true] {
