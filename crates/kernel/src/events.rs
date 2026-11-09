@@ -86,6 +86,10 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
             Event::Command { node, .. } => node.0 < old(w).nodes@.len() ==>
                 handler_safety::command_step(old(w).nodes@[node.0 as int], final(w).nodes@[node.0 as int])
                 && transition_safety::no_effects(transition_safety::emitted(*old(out), *final(out))),
+            Event::Reply { node, generation, reply } => node.0 < old(w).nodes@.len()
+                && transition_safety::fail_fast_event(event) ==> handler_safety::reply_rows(old(w).fail_fast,
+                    transition_safety::retry_due(*old(w), event), transition_safety::funding_due(*old(w), event),
+                    old(w).nodes@[node.0 as int], final(w).nodes@[node.0 as int], *old(out), *final(out)),
             _ => true,
         }),
         (match event {
