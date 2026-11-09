@@ -159,7 +159,7 @@ pub(super) open spec fn work_retry(b: Node, reply: Reply) -> bool {
 #[verifier::opaque]
 pub(super) open spec fn funding(fast: bool, b: Node, n: Node) -> bool {
     n.credit == b.credit && n.review_stop == b.review_stop
-        && (fast ==> match n.question {
+        && (fast ==> n.phase == Phase::AwaitingRob && match n.question {
             Some(q) => q.kind == QKind::OutOfCredit && q.cont == Cont::Ready(Resume::Making),
             None => false })
         && (!fast ==> match n.question {
@@ -181,6 +181,7 @@ pub(super) open spec fn files_post(fast: bool, files: Footprint, fits: bool, b: 
 /// The flag-on funding branch.
 pub(super) proof fn fund_fast(b: Node, n: Node)
     requires n.credit == b.credit, n.review_stop == b.review_stop,
+        n.phase == Phase::AwaitingRob,
         match n.question {
             Some(q) => q.kind == QKind::OutOfCredit && q.cont == Cont::Ready(Resume::Making),
             None => false },

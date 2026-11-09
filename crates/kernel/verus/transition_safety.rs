@@ -561,7 +561,7 @@ pub(super) open spec fn fail_fast_rows(before: World, after: World, event: Event
         && n.phase == Phase::Stopping(Outcome::Stopped) && n.credit == b.credit
         && n.question.is_none() && out.len() == 0)
     && (funding_due(before, event) ==> n.credit == b.credit
-        && (fast ==> n.review_stop.is_none() && match n.question {
+        && (fast ==> n.review_stop.is_none() && n.phase == Phase::AwaitingRob && match n.question {
             Some(q) => q.kind == QKind::OutOfCredit && q.cont == Cont::Ready(Resume::Making),
             None => false })
         && (!fast ==> match n.question {
