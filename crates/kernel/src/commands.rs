@@ -58,121 +58,58 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
                 }),
             _ => true,
         }),
-] {
-    kernel_snapshot! { before_command = w.nodes@[i as int] }
-    kernel_proof! {
-        if node_checked(*w, w.nodes@[i as int]) { handler_safety::checked_node_ok(*w, w.nodes@[i as int]); }
-        if command == Command::Resume && id > w.nodes@[i as int].last_cmd
-            && command_progress_input(w.nodes@[i as int], command)
-            && node_checked(*w, w.nodes@[i as int]) { resume_decreases(*w, w.nodes@[i as int]); }
-    }
-    let (n, nq, note) = command_node(w.nodes[i], w.next_question, id, command);
-    w.nodes[i] = n;
-    w.next_question = nq;
-    match note {
-        Some(x) => notice(out, i, x),
-        None => {}
-    }
-    kernel_proof! {
-        if command == Command::Resume && id > before_command@.last_cmd {
-            assert(distance(w.nodes@[i as int]) == distance(Node { paused: false, ..before_command@ }))
-                by { reveal(distance); }
-        }
-    }
-}
-}
-
-kernel_fn! {
-/// Command rows / #771: on_command's node work as a value function (K5): the
-/// node and next question id come in by value; the commanded node, the next id
-/// and at most one notice are returned for on_command to write back.
-fn command_node(n: Node, nq: u64, id: u64, command: Command)
-    -> (result: (Node, u64, Option<Notice>)) [
-    requires node_headroom(n),
-        arithmetic_consistent(n),
-        nq < u64::MAX,
-    ensures (handler_safety::node_ok(n, nq) && id > n.last_cmd && command != Command::Resume
-            && command_progress_input(n, command)
-            ==> distance(result.0) < distance(n)),
-        (command == Command::Resume && id > n.last_cmd
-            ==> result.0 == (Node { paused: false, last_cmd: id, ..n })),
-        (n.phase is Closed ==> result.0.phase is Closed),
-        result.0.repo == n.repo,
-        result.0.footprint == n.footprint,
-        (settle_shape(n) ==> settle_shape(result.0)),
-        result.0.generation as int <= n.generation as int + 1,
-        result.0.next_seq == n.next_seq,
-        result.0.credit.start == n.credit.start,
-        result.0.credit.earned == n.credit.earned,
-        result.0.credit.added as int <= n.credit.added as int + 255,
-        result.0.credit.spent as int <= n.credit.spent as int + 1,
-        result.0.last_cmd == if id > n.last_cmd { id } else { n.last_cmd },
-        result.1 as int <= nq as int + 1,
-        command == Command::Resume ==> result.1 == nq,
-        progress_gate_apply::resume_post(n, result.0, id, command),
-        result.0.proposed == n.proposed,
-        result.0.adopted == n.adopted,
-        (n.phase is Closed ==> result.0.phase == n.phase),
-        handler_safety::command_step(n, result.0),
-        (match command {
-            Command::Answer { question, .. } => handler_safety::node_ok(n, nq)
-                && result.0 != (Node { last_cmd: result.0.last_cmd, ..n })
-                ==> (match n.question {
-                    Some(q) => q.id == question,
-                    None => false,
-                }) && (match result.0.question {
-                    Some(q) => q.id != question,
-                    None => true,
-                }),
-            _ => true,
-        }),
-] {
-    let mut m = n;
-    let mut nq = nq;
-    let mut note: Option<Notice> = None;
-    if id <= m.last_cmd {
+] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);] {
+    if id <= w.nodes[i].last_cmd {
         kernel_proof! { reveal(progress_gate_apply::resume_post); reveal(progress_gate_apply::resumed); }
         kernel_proof! {
-            handler_safety::same_step(m);
-            handler_safety::step_identity(m, m);
+            handler_safety::same_step(w.nodes@[i as int]);
+            handler_safety::step_identity(w.nodes@[i as int], w.nodes@[i as int]);
         }
-        return (m, nq, note); // a repeated command
+        return; // a repeated command
     }
-    kernel_snapshot! { before_command_node = m }
-    m.last_cmd = id;
-    kernel_snapshot! { after_id = m }
+    kernel_snapshot! { before_command_node = w.nodes@[i as int] }
+    kernel_snapshot! { before_command_world = *w }
     kernel_proof! {
-        assert(distance(m) == distance(before_command_node@)) by { reveal(distance); }
+        if command == Command::Resume && command_progress_input(w.nodes@[i as int], command)
+            && node_checked(*w, w.nodes@[i as int]) { resume_decreases(*w, w.nodes@[i as int]); }
     }
+    w.nodes[i].last_cmd = id;
+    kernel_snapshot! { after_id = w.nodes@[i as int] }
     match command {
-        Command::Stop => m = enter_stopping_v(m, Outcome::Stopped),
-        Command::ChangeRequest => m = enter_stopping_v(m, Outcome::Replaced),
+        Command::Stop => enter_stopping(&mut w.nodes[i], Outcome::Stopped),
+        Command::ChangeRequest => enter_stopping(&mut w.nodes[i], Outcome::Replaced),
         Command::Pause => {
+            let m = &mut w.nodes[i];
             if !m.phase.is_stopping() && !m.phase.is_closed() {
                 m.paused = true;
             }
         }
         Command::Resume => {
-            m.paused = false;
+            w.nodes[i].paused = false;
             kernel_proof! {
                 reveal(progress_gate_apply::resumed); reveal(progress_gate_apply::resume_post);
-                assert(progress_gate_apply::resume_post(before_command_node@, m, id, command));
+                assert(progress_gate_apply::resume_post(before_command_node@, w.nodes@[i as int], id, command));
             }
         },
         Command::Answer { question, answer } => {
             kernel_proof! {
-                if command_progress_input(before_command_node@, command) {
-                    assert(answer_progress_input(m, question, answer));
-                    assert(distance(m) == distance(before_command_node@));
-                }
-                if handler_safety::node_ok(before_command_node@, nq) {
-                    assert(handler_safety::node_ok(m, nq));
+                if node_checked(before_command_world@, before_command_node@) {
+                    footprint::valid_under_table_growth(before_command_world@, *w, w.nodes@[i as int].footprint);
+                    assert(node_checked(*w, w.nodes@[i as int]));
+                    handler_safety::checked_node_ok(*w, w.nodes@[i as int]);
+                    if command_progress_input(before_command_node@, command) {
+                        assert(answer_progress_input(w.nodes@[i as int], question, answer));
+                        assert(distance(w.nodes@[i as int]) == distance(before_command_node@));
+                    }
                 }
             }
-            let (m1, nq1, x) = answer_node(m, nq, question, answer);
-            m = m1;
-            nq = nq1;
-            note = x;
+            let (n1, nq1, note) = answer_node(w.nodes[i], w.next_question, question, answer);
+            w.nodes[i] = n1;
+            w.next_question = nq1;
+            match note {
+                Some(x) => notice(out, i, x),
+                None => {}
+            }
         },
     }
     kernel_proof! {
@@ -180,14 +117,13 @@ fn command_node(n: Node, nq: u64, id: u64, command: Command)
             Command::Stop => handler_safety::stop_step(after_id@, Outcome::Stopped),
             Command::ChangeRequest => handler_safety::stop_step(after_id@, Outcome::Replaced),
             Command::Answer { .. } => {},
-            _ => handler_safety::field_step(after_id@, m),
+            _ => handler_safety::field_step(after_id@, w.nodes@[i as int]),
         }
-        handler_safety::last_cmd_step(before_command_node@, after_id@, m);
-        handler_safety::step_identity(before_command_node@, m);
+        handler_safety::last_cmd_step(before_command_node@, after_id@, w.nodes@[i as int]);
+        handler_safety::step_identity(before_command_node@, w.nodes@[i as int]);
     }
     kernel_proof! {
         if command != Command::Resume { reveal(progress_gate_apply::resume_post); }
     }
-    (m, nq, note)
 }
 }
