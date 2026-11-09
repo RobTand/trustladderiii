@@ -562,8 +562,7 @@ struct ScanMemo {
 #[derive(Clone)]
 struct NearToken {
     whole_start: usize,
-    start: usize,
-    end: usize,
+    value: Option<Span>,
     quoted: bool,
 }
 impl ScanMemo {
@@ -625,9 +624,8 @@ impl ScanMemo {
         for token in matches(&rule("NEAR_TOKEN")?, text)? {
             let whole = token.get(0).ok_or("missing nearby token")?;
             let quoted = token.name("qv").is_some();
-            if let Some((start, end)) = span(&token, if quoted { "qv" } else { "v" }) {
-                tokens.push(NearToken { whole_start: whole.start(), start, end, quoted });
-            }
+            tokens.push(NearToken { whole_start: whole.start(),
+                value: span(&token, if quoted { "qv" } else { "v" }), quoted });
         }
         if self.reserve(text.len() + tokens.len() * std::mem::size_of::<NearToken>() + 128) {
             self.nearby.insert(text.into(), tokens.clone());
@@ -815,8 +813,11 @@ fn spans_memoized(text: &str, enabled: bool) -> Result<Vec<Span>> {
             if token.whole_start >= limit {
                 break;
             }
-            if memo.secretish(&rest[token.start..token.end], token.quoted)? {
-                found.push((word.end() + token.start, word.end() + token.end));
+            let value = token.value.map_or("", |(start, end)| &rest[start..end]);
+            if memo.secretish(value, token.quoted)?
+                && let Some((start, stop)) = token.value
+            {
+                found.push((word.end() + start, word.end() + stop));
             }
         }
     }

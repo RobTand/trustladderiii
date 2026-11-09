@@ -360,7 +360,6 @@
           "uniqueItems": true
         },
         "red_message": {
-          "description": "Planner-declared EXPECTED assertion message, never captured run evidence.\nRust checks actual-run RED messages independently before accepting the proof.",
           "maxLength": 160,
           "minLength": 1,
           "type": "string"
