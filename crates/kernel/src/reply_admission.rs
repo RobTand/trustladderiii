@@ -409,7 +409,7 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
             w,
             i,
             QKind::OutOfCredit,
-            Cont::Ready(Resume::Making),
+            Cont::Planning { must_split: true },
             1,
             out,
         );
