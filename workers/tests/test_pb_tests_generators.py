@@ -217,7 +217,7 @@ def test_generator_deadline_is_a_failure_not_a_hang(generator_repo, generator_ba
     shutil.copytree(generator_repo, staged, ignore=shutil.ignore_patterns(".git"))
     result = generator.run(staged, generator.Container(IMAGE),
                            "python3 -c 'import time; time.sleep(60)'", ["**/BUILD.bazel"], [],
-                           ["tests/BUILD.bazel"], timeout=2)
+                           ["tests/BUILD.bazel"], timeout=15)
     assert result["status"] == "failed" and result["exit_code"] == 124
     assert "deadline" in result["message"]
 
@@ -510,7 +510,7 @@ def test_generator_trusted_phase_receipts_include_timeout_and_cleanup(
     # The inner timeout is the owned container's supervised deadline.
     command = "python3 -c 'import time; time.sleep(60)'" if fail else "python3 generate.py"
     result = generator.run(staged, generator.Container(IMAGE), command,
-                           ["**/BUILD.bazel"], [], ["tests/BUILD.bazel"], timeout=2 if fail else 120)
+                           ["**/BUILD.bazel"], [], ["tests/BUILD.bazel"], timeout=15 if fail else 120)
     assert result["status"] == ("failed" if fail else "completed"), result
     assert "timings" in result, "trusted stages must survive both success and inner timeout"
     phases = result["timings"]
@@ -534,13 +534,13 @@ def test_request_163_implicit_generator_failure_retains_safe_causal_receipt(
     from tl3_workers import runtime
     from tl3_workers.contracts import validate
     from tl3_harness import generator
-    # The configured generator hangs; its contract deadline (300 s) is compressed to 2 s
+    # The configured generator hangs; its contract deadline (300 s) is compressed to 15 s
     # at the supervision boundary so the owned container's real deadline path runs.
     (generator_repo / "generate.py").write_text("import time\ntime.sleep(60)\n")
     supervised = generator.Supervised
     def compressed(command, selection, tests, *, deadline_seconds):
         assert deadline_seconds == 300
-        return supervised(command, selection, tests, deadline_seconds=2)
+        return supervised(command, selection, tests, deadline_seconds=15)
     monkeypatch.setattr(generator, "Supervised", compressed)
     turn = AIMessage(content=json.dumps({"kind": "done", "self_check": [
         {"goal_id": "build", "status": "met", "evidence": "Model work finished."}]}))

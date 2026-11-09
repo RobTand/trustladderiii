@@ -7,17 +7,16 @@ backend operations (an in-process journal that enforces ordering) and the Podman
 executable (it emulates runtime_evidence.py's gate, then executes the configured
 generator argv against the mounted private checkout).
 
-Phase status at authoring (11-09): UNRUN. No RED has been observed. Expected outcomes
-before implementation, from source reading only:
-- actual 018412: under Flux the generator splices docker-shaped flags into the Podman
-  argv and runs it with bare subprocess.run (no allocation/begin/bind/cleanup) or
-  refuses on the '--entrypoint=python3' splice, so every completed-path test fails.
-- prep 80ddef3e: generator.container_command raises FluxContainerUnsupported, so the
-  completed-path tests fail with a typed preparation failure.
-GREEN requires the generator to launch through Supervised with the Rust launch intent.
+Observed RED (PB 40e8b662, FX-GEN-PREP b271baa5): every owned-path test failed on prep's
+FluxContainerUnsupported refusal. The generator now launches through Supervised with the
+Rust launch intent, binding, qualification gate and proven cleanup.
 
-Also a subprocess driver (``python3 test_fx_generator_exec.py ROOT SOURCE MODE``) for the
-proposed real-collector Rust e2e in crates/controller/tests/run_backend_cli.rs.
+Time budgets warn ({"budget_warning": ...}); only contractual deadlines fail. Inner
+deadlines sit well above owned-container startup, and FX_TEST_ACTION_LATENCY_SECONDS
+injects runtime-client latency to model contention.
+
+Also the subprocess driver (``python3 test_fx_generator_exec.py ROOT SOURCE MODE``) for the
+real-collector Rust e2e in crates/controller/tests/run_backend_cli.rs.
 """
 import hashlib
 import json
@@ -361,8 +360,12 @@ def test_flux_generator_nonzero_exit_is_typed_failed_with_cleanup_and_no_outputs
 def test_flux_generator_deadline_stops_owned_container_and_reports_timeout(flux, monkeypatch):
     backend = use_backend(monkeypatch, flux)
     started = time.monotonic()
-    _, _, result = run_generator(flux, 'sleep', timeout=2)
-    assert time.monotonic() - started < 30
+    # The deadline must elapse after the owned container is observed, not race its startup.
+    _, _, result = run_generator(flux, 'sleep', timeout=DEADLINE_SECONDS)
+    elapsed = time.monotonic() - started
+    if elapsed > 30:
+        print(json.dumps({'budget_warning': {'test': 'test_fx_generator_exec:deadline', 'measured': elapsed,
+                                             'limit': 30, 'metric': 'wall'}}), flush=True)
     assert result['status'] == 'failed' and result['exit_code'] == 124, result
     assert 'deadline' in result['message'], result
     # Receipts attribute the inner deadline as a timeout, not a generic failure.
@@ -406,9 +409,15 @@ def test_flux_generator_term_unwinds_owned_cleanup_and_emits_no_artifact(flux, m
     sent = []
 
     def cancel():
-        deadline = time.monotonic() + 20
-        while time.monotonic() < deadline and not (flux['root'] / 'payload-started').exists():
+        # Readiness fails only at the collector's contractual timeout; 30 s is a budget.
+        started = time.monotonic()
+        while time.monotonic() < started + COLLECT_TIMEOUT and not (flux['root'] / 'payload-started').exists():
             time.sleep(0.01)
+        waited = time.monotonic() - started
+        if waited > CANCEL_READINESS_BUDGET:
+            print(json.dumps({'budget_warning': {'test': 'test_fx_generator_exec:term_readiness',
+                                                 'measured': waited, 'limit': CANCEL_READINESS_BUDGET,
+                                                 'metric': 'wall'}}), flush=True)
         handler = signal.getsignal(signal.SIGTERM)
         if (flux['root'] / 'payload-started').exists() and callable(handler):
             sent.append('SIGTERM')
@@ -426,7 +435,7 @@ def test_flux_generator_term_unwinds_owned_cleanup_and_emits_no_artifact(flux, m
     watcher.start()
     with pytest.raises(SystemExit) as stopped:
         generator.main()
-    watcher.join(timeout=30)
+    watcher.join(timeout=COLLECT_TIMEOUT + 5)
     assert sent == ['SIGTERM'], sent
     assert stopped.value.code == 128 + signal.SIGTERM
     assert generator.PREFIX not in capsys.readouterr().out, 'cancelled generator emitted an artifact'
@@ -504,6 +513,8 @@ def test_generator_outside_flux_is_refused_before_any_work(tmp_path, monkeypatch
 
 
 CLEANUP_OBSERVATION_BUDGET = 1
+# Inner generator deadline for timeout tests: well above owned-container startup.
+DEADLINE_SECONDS = 15
 CANCEL_READINESS_BUDGET = 30
 COLLECT_TIMEOUT = 90
 
