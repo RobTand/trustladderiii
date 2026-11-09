@@ -1,4 +1,5 @@
 {
+ "s1_input_migration": "S1 input metadata migration: required goal_ids added as []; these post-admission check requests contain no ingest-goal context. Original fixture attribution and recorded results are unchanged; no recapture.",
  "fixture": "harness/tests/test_contract_vectors.py::head-failure",
  "request": {
   "base": "75d791f4d1184173c29e34c9ee5020deaf87b76b",
@@ -7,6 +8,7 @@
   "image": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
   "plan": [
    {
+    "goal_ids": [],
     "kind": "regression",
     "name": "value stays one",
     "tests": [

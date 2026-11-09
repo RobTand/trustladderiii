@@ -1,4 +1,5 @@
 {
+ "s1_input_migration": "S1 input metadata migration: required goal_ids added as []; these post-admission check requests contain no ingest-goal context. Original fixture attribution and recorded results are unchanged; no recapture.",
  "fixture": "harness/tests/test_contract_vectors.py::red-message-source-assertion",
  "request": {
   "base": "ed36bc15a94d3b765f1194157a95f9ebf0e19174",
@@ -7,6 +8,7 @@
   "image": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
   "plan": [
    {
+    "goal_ids": [],
     "kind": "demonstrating",
     "name": "hold reaches the minimum",
     "proof": {
