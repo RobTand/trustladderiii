@@ -197,14 +197,14 @@
           "const": "blocked"
         },
         "evidence": {
-          "description": "An action_key whose run_tests summary had status infrastructure_error, or a tool_error id, recorded in this run.",
+          "description": "A wait_reference whose run_tests summary had status infrastructure_error, or a tool_error id, recorded in this run.",
           "oneOf": [
             {
               "type": "object",
               "properties": {
-                "action_key": {
+                "wait_reference": {
                   "type": "string",
-                  "pattern": "^[0-9a-f]{64}$"
+                  "pattern": "^worker:[0-9a-f]{64}$"
                 },
                 "class": {
                   "const": "test_infrastructure",
@@ -212,7 +212,7 @@
                 }
               },
               "required": [
-                "action_key",
+                "wait_reference",
                 "class"
               ],
               "additionalProperties": false
@@ -506,9 +506,18 @@
     "generation_receipt": {
       "type": "object",
       "properties": {
-        "action_key": {
+        "backend": {
+          "$ref": "#/$defs/BackendTag"
+        },
+        "wait_reference": {
           "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
+          "pattern": "^worker:[0-9a-f]{64}$"
+        },
+        "run_binding": {
+          "$ref": "#/$defs/RunBinding"
+        },
+        "ending": {
+          "const": "passed"
         },
         "artifact_sha256": {
           "type": "string",
@@ -771,37 +780,13 @@
             "exit_code"
           ],
           "additionalProperties": false
-        },
-        "outer": {
-          "type": "object",
-          "properties": {
-            "status": {
-              "enum": [
-                "executed",
-                "cache_hit"
-              ]
-            },
-            "exit_code": {
-              "const": 0
-            },
-            "elapsed_s": {
-              "type": [
-                "number",
-                "null"
-              ],
-              "minimum": 0
-            }
-          },
-          "required": [
-            "status",
-            "exit_code",
-            "elapsed_s"
-          ],
-          "additionalProperties": false
         }
       },
       "required": [
-        "action_key",
+        "backend",
+        "wait_reference",
+        "run_binding",
+        "ending",
         "artifact_sha256",
         "receipt_sha256",
         "output_manifest",
@@ -816,8 +801,7 @@
         "budget",
         "timings",
         "phase",
-        "inner",
-        "outer"
+        "inner"
       ],
       "additionalProperties": false
     },
@@ -861,7 +845,7 @@
     },
     "test_run": {
       "type": "object",
-      "description": "A completed run_tests call with its PrismaBuild receipts (#408).",
+      "description": "A completed run_tests call with its native Flux receipt.",
       "properties": {
         "tests": {
           "type": "array",
@@ -927,10 +911,6 @@
           "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
           "description": "The git tree of the checkout this run tested."
         },
-        "fresh": {
-          "type": "boolean",
-          "description": "False when PrismaBuild replayed a stored result."
-        },
         "repeat": {
           "type": "integer",
           "minimum": 1,
@@ -957,42 +937,30 @@
           "items": {
             "type": "object",
             "properties": {
-              "action_key": {
+              "backend": {
+                "$ref": "#/$defs/BackendTag"
+              },
+              "wait_reference": {
                 "type": "string",
-                "pattern": "^[0-9a-f]{64}$"
+                "pattern": "^worker:[0-9a-f]{64}$"
               },
-              "status": {
-                "enum": [
-                  "executed",
-                  "cache_hit"
-                ]
-              },
-              "exit_code": {
-                "type": "integer"
-              },
-              "attempt": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "generation": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{64}$"
+              "run_binding": {
+                "$ref": "#/$defs/RunBinding"
               },
               "receipt_sha256": {
                 "type": "string",
                 "pattern": "^[0-9a-f]{64}$"
               },
-              "log_sha256": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{64}$"
+              "ending": {
+                "$ref": "#/$defs/Ending"
               }
             },
             "required": [
-              "action_key",
-              "status",
-              "exit_code",
+              "backend",
+              "wait_reference",
+              "run_binding",
               "receipt_sha256",
-              "log_sha256"
+              "ending"
             ],
             "additionalProperties": false
           }
@@ -1031,7 +999,6 @@
         "parallel",
         "status",
         "tree",
-        "fresh",
         "totals",
         "receipts"
       ],
@@ -1108,6 +1075,98 @@
           ],
           "additionalProperties": false
         }
+      ]
+    },
+    "RunBinding": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/BackendId"
+        },
+        "intent": {
+          "$ref": "#/$defs/SubmissionIntent"
+        }
+      },
+      "required": [
+        "id",
+        "intent"
+      ],
+      "additionalProperties": false
+    },
+    "BackendId": {
+      "type": "object",
+      "properties": {
+        "backend": {
+          "$ref": "#/$defs/BackendTag"
+        },
+        "instance": {
+          "type": "string"
+        },
+        "uri": {
+          "type": "string"
+        },
+        "job": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "backend",
+        "instance",
+        "uri",
+        "job"
+      ],
+      "additionalProperties": false
+    },
+    "SubmissionIntent": {
+      "type": "object",
+      "properties": {
+        "backend": {
+          "$ref": "#/$defs/BackendTag"
+        },
+        "instance": {
+          "type": "string"
+        },
+        "uri": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "correlation": {
+          "type": "string"
+        },
+        "request_digest": {
+          "type": "string"
+        },
+        "output_dir": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "backend",
+        "instance",
+        "uri",
+        "owner",
+        "correlation",
+        "request_digest",
+        "output_dir"
+      ],
+      "additionalProperties": false
+    },
+    "BackendTag": {
+      "type": "string",
+      "enum": [
+        "flux"
+      ]
+    },
+    "Ending": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "failed",
+        "refused",
+        "infra-lost",
+        "cancelled"
       ]
     }
   }
