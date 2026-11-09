@@ -538,7 +538,10 @@ def test_request_163_implicit_generator_failure_retains_safe_causal_receipt(
     assert KEY in reply["report"], "implicit failure must keep the failed run identity"
     assert "b" * 64 in reply["report"], "implicit failure must keep the verified receipt"
     assert '"exit_code": 124' in reply["report"]
-    assert '"status": "passed"' in reply["report"], "outer success must remain distinct from inner failure"
+    # FX classify: a typed generator failure ends Failed natively, with no native exit or time;
+    # that outer verdict stays distinct from the inner generator exit 124.
+    assert '"outer": {"elapsed_s": null, "exit_code": null, "status": "failed"}' in reply["report"], \
+        "the native outer verdict must remain distinct from the inner failure"
     assert '"timeout_s": 300' in reply["report"]
     assert "container" in reply["report"]
     [prepared] = generator_backend[0]
