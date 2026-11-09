@@ -287,17 +287,18 @@ def test_absent_container_does_not_hide_a_live_owned_process(launcher, monkeypat
         child.stdout.close()
 
 
-def test_explicit_backend_selection_keeps_pb_default(monkeypatch):
+def test_backend_selection_is_flux_only_and_fail_closed(monkeypatch):
+    """PB-REMOVAL: Flux is the only executor. A missing, retired or unknown backend is
+    refused before any launch; nothing falls back to a PrismaBuild action."""
     from tl3_harness import runtime
 
-    monkeypatch.delenv('TL3_EXECUTION_BACKEND', raising=False)
     monkeypatch.setenv('FLUX_JOB_ID', 'nested-native-job')
-    assert runtime.launch_context() is None
-    monkeypatch.setenv('TL3_EXECUTION_BACKEND', 'prismabuild')
-    assert runtime.launch_context() is None
-    monkeypatch.setenv('TL3_EXECUTION_BACKEND', 'misspelled')
-    with pytest.raises(RuntimeError, match='execution backend'):
-        runtime.launch_context()
+    monkeypatch.delenv('TL3_EXECUTION_BACKEND', raising=False)
+    for backend in (None, 'prismabuild', 'misspelled', ''):
+        if backend is not None:
+            monkeypatch.setenv('TL3_EXECUTION_BACKEND', backend)
+        with pytest.raises(RuntimeError, match='execution backend'):
+            runtime.launch_context()
 
 
 @pytest.fixture
