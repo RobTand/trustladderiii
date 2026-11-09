@@ -736,7 +736,7 @@ mod runtime {
             "execution",
             input.field("execution").cloned().unwrap_or(execution),
         );
-        for name in ["action_key", "receipts"] {
+        for name in ["wait_reference", "receipts"] {
             if let Some(value) = input.field(name) {
                 result.set(name, value.clone());
             }
