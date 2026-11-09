@@ -100,3 +100,8 @@ def test_git_failure_cause_never_carries_multiline_stderr_or_argv(tmp_path, flux
     assert result["cause"] == {"operation": "git_init", "type": "CalledProcessError",
                                "errno": None, "detail": "exit status 128"}, result
     assert not flux["leaf"].exists()
+
+
+def test_generator_identity_is_the_contract_implementation():
+    # crates/contracts maker_reply.rs pins generation evidence to this implementation.
+    assert generator.IMPLEMENTATION == "tl3-generator-v4"
