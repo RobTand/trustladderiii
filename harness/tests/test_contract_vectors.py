@@ -17,7 +17,7 @@ import sys
 
 import pytest
 
-from tl3_harness import execution, test_tool
+from tl3_harness import execution, proof, test_tool
 from tl3_harness.execution import result_json, run_checks
 from tl3_harness.model import Check, Forcing, Kind, Proof
 
@@ -175,6 +175,9 @@ SCENARIOS['proof-refusal'] = dict(
 
 @pytest.fixture
 def produce(tmp_path, monkeypatch):
+    # Production mounts the checkout read-only. These direct children must not
+    # add pytest caches to the source tree before its proof receipt is hashed.
+    monkeypatch.setenv('PYTEST_ADDOPTS', '-p no:cacheprovider')
     command = lambda tree, container, tests: [sys.executable, '-I', '-B', str(RUNNER), '-', str(tree)]
     for module in (execution, test_tool):
         monkeypatch.setattr(module, 'require_admission', lambda: None)
@@ -226,3 +229,21 @@ def test_committed_vector_matches_the_harness(produce, name):
 def test_every_scenario_has_one_committed_vector():
     assert sorted(path.stem for path in VECTORS.glob('*.json')) == sorted(SCENARIOS), (
         f'Add or remove vectors with: {REGENERATE}')
+
+
+@pytest.mark.parametrize('mask', [0o022, 0o002, 0o077])
+def test_proof_vector_is_independent_of_callers_umask(produce, monkeypatch, mask):
+    tree_sha256 = proof.tree_sha256
+
+    def source_hash(tree):
+        assert not any(path.name in ('.pytest_cache', '__pycache__') for path in tree.rglob('*'))
+        return tree_sha256(tree)
+
+    monkeypatch.setattr(proof, 'tree_sha256', source_hash)
+    previous = os.umask(mask)
+    try:
+        produced = produce('proof')
+    finally:
+        os.umask(previous)
+    committed = json.loads((VECTORS / 'proof.json').read_text())
+    assert produced == committed
