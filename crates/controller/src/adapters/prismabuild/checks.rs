@@ -518,13 +518,44 @@ mod tests {
             .find(|candidate| candidate.is_file())
             .unwrap();
         std::os::unix::fs::symlink(git, tools.join("git")).unwrap();
-        std::os::unix::fs::symlink(
-            repository.join("workers/.venv/bin/python"),
-            tools.join("python3"),
-        )
-        .unwrap();
+        // Under Bazel workers/.venv/bin/python is a launcher whose
+        // `#!/usr/bin/env python3` would resolve to job-tools/python3 again (an
+        // exec loop), and it supplies pytest only through PYTHONPATH, which -I
+        // drops. Build a job venv on the real interpreter whose .pth lists only
+        // third-party site-packages, never the repository's own tl3_harness.
+        let query = std::process::Command::new(repository.join("workers/.venv/bin/python"))
+            .args(["-c", "import json, sys, pytest; print(json.dumps([sys.executable, sys.path]))"])
+            .output()
+            .unwrap();
+        assert!(query.status.success(), "{}", String::from_utf8_lossy(&query.stderr));
+        let (interpreter, paths): (String, Vec<String>) = serde_json::from_slice(&query.stdout).unwrap();
+        let venv = fixture.root.path().join("job-python");
+        let created = std::process::Command::new(&interpreter)
+            .args(["-m", "venv", "--without-pip"])
+            .arg(&venv)
+            .output()
+            .unwrap();
+        assert!(created.status.success(), "{}", String::from_utf8_lossy(&created.stderr));
+        let python = venv.join("bin/python");
+        let purelib = std::process::Command::new(&python)
+            .args(["-I", "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"])
+            .output()
+            .unwrap();
+        assert!(purelib.status.success(), "{}", String::from_utf8_lossy(&purelib.stderr));
+        let purelib = PathBuf::from(String::from_utf8(purelib.stdout).unwrap().trim());
+        let dependencies: Vec<_> = paths
+            .iter()
+            .filter(|path| path.contains("site-packages") && Path::new(path).is_dir())
+            .map(String::as_str)
+            .collect();
+        assert!(!dependencies.is_empty(), "no third-party site-packages in {paths:?}");
+        fs::create_dir_all(&purelib).unwrap();
+        fs::write(purelib.join("tl3-job-deps.pth"), dependencies.join("\n") + "\n").unwrap();
+        let launcher = tools.join("python3");
+        fs::write(&launcher, format!("#!/bin/sh\nexec '{}' \"$@\"\n", python.display())).unwrap();
+        fs::set_permissions(&launcher, <fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755)).unwrap();
         let probe = || {
-            std::process::Command::new(repository.join("workers/.venv/bin/python"))
+            std::process::Command::new(&python)
                 .args(["-I", "-B"])
                 .arg(repository.join("harness/tools/staged_job_probe.py"))
                 .arg(&bundle)

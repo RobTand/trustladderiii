@@ -4787,6 +4787,17 @@ fn oversized_planner_reply_reaches_plan_feedback(settings: &tl3_config::Store) {
     registry.register(Upstream::Workers, support::workers::Workers::new(
         None, adapters::workers::Fake::new(&fakes), vec![], move |_, completion: &mut Completion| {
             for observation in &mut completion.observations {
+                // S1 planner admission reads the accepted brief's goals; the
+                // simulation Fake ingest emits only a kernel IngestDone and stores none.
+                if let Observation::Kernel(tl3_kernel::Event::Reply {node, generation, reply: tl3_kernel::Reply::IngestDone {..}}) = observation {
+                    let forecast = serde_json::json!({"tokenizer":"o200k_base", "brief_tokens":1, "file_tokens":{}, "overhead_tokens":0,
+                        "tokens":1, "fit_tokens":100, "context_tokens":150, "fits":true});
+                    let reply = serde_json::json!({"kind":"brief", "brief":"Keep the plan within budget.",
+                        "goals":[{"description":"Keep the plan within budget.","verification":"test"}],
+                        "memory_ids":[], "files":[], "forecast":forecast});
+                    *observation = Observation::WorkerReply {node: *node, generation: *generation, role: "ingest".into(), reply, plan_check: None, model: None};
+                    continue;
+                }
                 if let Observation::Plan {node, generation, ..} = observation {
                     let forecast = serde_json::json!({"tokenizer":"o200k_base", "brief_tokens":1, "file_tokens":{"value.py":0}, "overhead_tokens":0,
                         "tokens":1, "fit_tokens":100, "context_tokens":150, "fits":true});

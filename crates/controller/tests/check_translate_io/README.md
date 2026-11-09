@@ -26,6 +26,9 @@ reports/findings, every optional field, all gate outcomes, errors, bounds and
 Unicode. Persisted regressions live beside the test. A read tape advances on
 every read, never by key, so caching/duplicating a read changes the trace.
 
-One unrelated pre-existing behavior remains: a nonempty fallback adoption plan contains
-goal_ids from maker_inputs and fails Check's deny_unknown_fields decode.
-The fallback retains its deterministic shell witness. #838 separately checks the old malformed-findings panic and the new boundary error; only structurally valid records participate in equality schedules. The new property runs 256 changing-read schedules with every write crash point and compares serialized record bytes.
+S1 made plan checks canonical: each check is named, lists `tests`, cites goal
+indexes and must pass goal admission. The frozen base arm cannot decode that
+schema. For rejected plans, `compare_rejection` therefore requires identical calls,
+rows, intern state and zero writes on both sides; only the error text may differ.
+The fallback read-order case uses a publishing-stage goal, so its empty plan is
+admitted by both sides and still compares byte for byte. #838 separately checks the old malformed-findings panic and the new boundary error; only structurally valid records participate in equality schedules. The new property runs 256 changing-read schedules with every write crash point and compares serialized record bytes.

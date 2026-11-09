@@ -125,6 +125,9 @@ fn production_and_reference_sources_are_pinned() {
                 changed || (name == "helpers" && part.contains("fn footprint(")) || production.contains(part),
                 "production leaf drift: {name}"
             );
+            // S1 made Check.goal_ids required; the compiled reference copy needs that
+            // one field to build. Every other frozen byte stays pinned.
+            let compiled = compiled.replace("                goal_ids: vec![],\n", "");
             let normalized = compiled.replace("pub(super) fn", "fn");
             assert!(
                 compiled.contains(part) || normalized.contains(part),
@@ -412,11 +415,13 @@ fn fixed_seed_changing_reads_and_optional_fields() {
         compare(&s);Ok(())
     }).unwrap();
     let counts = domains.borrow();
-    assert_eq!(counts.values().sum::<usize>(),256);
+    // Proptest replays each persisted regression seed before the 256 generated cases.
+    let replays = include_str!("proptest-regressions.txt").lines().filter(|line| line.starts_with("cc ")).count();
+    assert_eq!(counts.values().sum::<usize>(),256 + replays);
     for role in ["ingest","audit","planner","maker","reviewer"] {
         assert!(counts.get(role).copied().unwrap_or(0) >= 1, "missing unchanged-domain role {role}");
     }
-    println!("unchanged-domain generated schedules=256 roles={counts:?}; discarded=0");
+    println!("unchanged-domain schedules generated=256 replayed={replays} roles={counts:?}; discarded=0");
 }
 fn reproduction(tests: bool) -> Schedule {
     let mut s = schedule("maker", reply("maker"));
