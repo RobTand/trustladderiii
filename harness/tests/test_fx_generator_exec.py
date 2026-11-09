@@ -58,11 +58,15 @@ print('generated ok', flush=True)
 CGROUP = '0::/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/shell-fABC:sys.service\n'
 
 
-def write_podman(root, image, cgroup='0::/fixture\n'):
-    """Emulates Podman plus /harness/runtime_evidence.py's gate. It refuses unowned launches."""
+def write_podman(root, image, cgroup='0::/fixture\n', latency=0):
+    """Emulates Podman plus /harness/runtime_evidence.py's gate. It refuses unowned launches.
+
+    latency models a slow runtime client under contention: every invocation waits first.
+    """
     podman = Path(root) / 'podman'
     podman.write_text(f'''#!{sys.executable}
-import hashlib, json, os, pathlib, sys
+import hashlib, json, os, pathlib, sys, time
+time.sleep({latency!r})
 root = pathlib.Path({str(root)!r})
 args = sys.argv[1:]
 with (root / 'runtime-calls.jsonl').open('a') as log:
@@ -499,6 +503,17 @@ def test_generator_outside_flux_is_refused_before_any_work(tmp_path, monkeypatch
     assert not runtime_calls(tmp_path)
 
 
+def latency_knob(name):
+    """Test-only latency knob (FX-TEST-BUDGETS convention): unset is 0, else finite seconds >= 0."""
+    value = os.environ.get(name)
+    if value is None:
+        return 0
+    seconds = float(value)
+    if not 0 <= seconds < float('inf'):
+        raise ValueError(f'{name} must be non-negative seconds, got {value!r}')
+    return seconds
+
+
 def driver():
     """Real host collector -> real Rust collect_worker driver. Native Flux stays the Rust fixture."""
     root, source, mode = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
@@ -543,7 +558,8 @@ def driver():
         sys.argv = ['generator', settings['image']]
         generator.main()
         return
-    write_podman(root, settings['image'], CGROUP)
+    latency = latency_knob('FX_TEST_ACTION_LATENCY_SECONDS')
+    write_podman(root, settings['image'], CGROUP, latency)
     pus = ','.join(map(str, sorted(os.sched_getaffinity(0))))
     (root / 'all.json').write_text(json.dumps({'version': 1, 'execution': {
         'R_lite': [{'rank': '0', 'children': {'core': '37'}}], 'nodelist': ['dl380g10']},
@@ -558,7 +574,8 @@ def driver():
     signals = []
 
     def cancel():
-        deadline = time.monotonic() + 30
+        # Injected latency delays launch and binding (several runtime-client calls).
+        deadline = time.monotonic() + 30 + 10 * latency
         while time.monotonic() < deadline:
             if (root / 'payload-started').exists() and (output / 'action-pid.json').exists():
                 pid = json.loads((output / 'action-pid.json').read_text())['pid']
@@ -578,7 +595,7 @@ def driver():
     except Exception as error:
         outcome = {'error_type': type(error).__name__, 'diagnostic': getattr(error, 'diagnostic', None)}
     if watcher is not None:
-        watcher.join(timeout=35)
+        watcher.join(timeout=35 + 10 * latency)
     outcome.update(signals=signals, scratch_absent=not Path(settings['scratch']).exists(),
                    payload_started=(root / 'payload-started').exists(),
                    runtime_calls=[call[:1] for call in runtime_calls(root)])
