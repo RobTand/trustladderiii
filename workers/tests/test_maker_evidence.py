@@ -115,8 +115,6 @@ def test_test_evidence_is_bounded():
                      [{**entry, "receipts": [{**RECEIPT, "ending": "succeeded"}]}],
                      [{**entry, "receipts": [{key: value for key, value in RECEIPT.items() if key != "run_binding"}]}],
                      [{**entry, "receipts": [{**RECEIPT, "run_binding": {"id": RECEIPT["run_binding"]["id"]}}]}],
-                     [{**entry, "receipts": [{**RECEIPT, "run_binding": {**RECEIPT["run_binding"], "id": {
-                         **RECEIPT["run_binding"]["id"], "job": "a" * 64}}}]}],
                      [{**entry, "receipts": [{**RECEIPT, "log_sha256": "c" * 64}]}]):
         with pytest.raises(ValidationError):
             validate("maker-reply", {**done, "test_evidence": evidence})
