@@ -36,7 +36,7 @@
    "kind": "demonstrating",
    "name": "value is one",
    "proof": {
-    "base_tree_sha256": "3d214845606837c248773de9c4f4d09cbc7e4c274b50c52c14429b37e94a5a0e",
+    "base_tree_sha256": "f830b430daaa9afd5f5c650ce0011fba8d101c30523252e324e33becb5f4d998",
     "declaration": {
      "observer_support": [],
      "red_message": "value too small",
@@ -56,7 +56,7 @@
      "tests/test_value.py::test_value": "message"
     },
     "rule": "subject-observer-v1",
-    "source_base_tree_sha256": "3d214845606837c248773de9c4f4d09cbc7e4c274b50c52c14429b37e94a5a0e",
+    "source_base_tree_sha256": "f830b430daaa9afd5f5c650ce0011fba8d101c30523252e324e33becb5f4d998",
     "subjects": {
      "product.py::value": {
       "base": "4480052910accecafe6f206dbd8be95b8447320ff6d2332761858fd6399c1255",
