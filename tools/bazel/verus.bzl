@@ -443,6 +443,12 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::transition_safety::event_target": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::transition_safety::others_unchanged": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::transition_safety::effect_node_ok": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::transition_safety::node_outputs": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::transition_safety::node_event_rules": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::transition_safety::node_safety": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::handler_safety::node_ok": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::notice_only": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::handler_safety::keeps_review_stop": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -736,6 +742,9 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "transition_safety_unchanged_node": ("kernel::transition_safety#unchanged_node", 1),
+            "transition_safety_lift_apply": ("kernel::transition_safety#lift_apply", 1),
+            "transition_safety_lift_apply_none": ("kernel::transition_safety#lift_apply_none", 1),
             "handler_safety_distance_last_cmd": ("kernel::handler_safety#distance_last_cmd", 1),
             "commands_stop_command": ("kernel::commands#stop_command", 1),
             "commands_change_request_command": ("kernel::commands#change_request_command", 1),
