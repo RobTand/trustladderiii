@@ -431,8 +431,8 @@ pub struct GenerationReceiptInner {
     pub exit_code: ReplyZero,
 }
 
-/// Completed generation evidence only stands behind a passing native terminal. A typed
-/// failed generator reaches the maker as cant_meet, never as generation evidence.
+// Completed generation evidence only stands behind a passing native terminal. A typed
+// failed generator reaches the maker as cant_meet, never as generation evidence.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
 #[schemars(transform = reply_constant_schema)]
