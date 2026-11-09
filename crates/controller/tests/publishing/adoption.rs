@@ -106,6 +106,7 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
     config.store = settings.clone();
     config.workers.python = python.into();
     config.workers.runs = root.path().join("runs");
+    support::select_flux(&mut config, root.path());
     config.workers.command = vec![
         format!(
             "{}/tests/publishing/reviewer.py",

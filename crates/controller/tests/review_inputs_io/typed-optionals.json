@@ -1,6 +1,25 @@
 {
   "generation_evidence": {
-    "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "backend": "flux",
+    "wait_reference": "worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "run_binding": {
+      "id": {
+        "backend": "flux",
+        "instance": "worker-run",
+        "uri": "local:///fixture",
+        "job": "f2"
+      },
+      "intent": {
+        "backend": "flux",
+        "instance": "worker-run",
+        "uri": "local:///fixture",
+        "owner": "worker-tools",
+        "correlation": "worker-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "request_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "output_dir": "/fixture/output"
+      }
+    },
+    "ending": "passed",
     "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "receipt_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "output_manifest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -52,11 +71,6 @@
     "inner": {
       "status": "completed",
       "exit_code": 0
-    },
-    "outer": {
-      "status": "executed",
-      "exit_code": 0,
-      "elapsed_s": null
     }
   },
   "test_evidence": [
@@ -69,7 +83,6 @@
       "parallel": 0,
       "status": "completed",
       "tree": "2222222222222222222222222222222222222222",
-      "fresh": true,
       "totals": {
         "passed": 1,
         "failed": 0,
@@ -78,11 +91,27 @@
       },
       "receipts": [
         {
-          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          "status": "executed",
-          "exit_code": 0,
+          "backend": "flux",
+          "wait_reference": "worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "run_binding": {
+            "id": {
+              "backend": "flux",
+              "instance": "worker-run",
+              "uri": "local:///fixture",
+              "job": "f2"
+            },
+            "intent": {
+              "backend": "flux",
+              "instance": "worker-run",
+              "uri": "local:///fixture",
+              "owner": "worker-tools",
+              "correlation": "worker-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "request_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "output_dir": "/fixture/output"
+            }
+          },
           "receipt_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          "log_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          "ending": "passed"
         }
       ]
     }
