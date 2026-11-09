@@ -236,6 +236,10 @@ fn python_pattern(pattern: &str) -> Result<String> {
 }
 
 fn rx(pattern: &str) -> Result<Arc<Regex>> {
+    #[cfg(test)]
+    if test_backtrack_limit().is_some() {
+        return test_limited_regex(&python_pattern(pattern)?);
+    }
     static CACHE: LazyLock<Mutex<HashMap<String, Arc<Regex>>>> = LazyLock::new(Mutex::default);
     let mut cache = CACHE.lock().map_err(|_| "redaction cache poisoned")?;
     if let Some(regex) = cache.get(pattern) {
@@ -284,12 +288,33 @@ fn start_rule(name: &str, text: &str) -> Result<bool> {
         .is_some_and(|m| m.start() == 0))
 }
 fn matches<'a>(regex: &Arc<Regex>, text: &'a str) -> Result<Vec<Captures<'a>>> {
-    regex
+    let captures = regex
         .captures_iter(text)
         .map(|m| m.map_err(|e| e.to_string()))
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+    #[cfg(test)]
+    if test_backtrack_limit().is_some() {
+        let original = TEST_DEFAULT_REGEXES.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            cache.entry(regex.as_str().to_owned()).or_insert_with(||
+                Arc::new(Regex::new(regex.as_str()).expect("same production pattern"))).clone()
+        });
+        let expected = original.captures_iter(text)
+            .collect::<std::result::Result<Vec<_>, _>>().expect("production matches");
+        let coordinates = |captures: &Vec<Captures<'_>>| captures.iter().map(|cap|
+            (0..cap.len()).map(|index|cap.get(index).map(|m|(m.start(),m.end())))
+                .collect::<Vec<_>>()).collect::<Vec<_>>();
+        assert_eq!(coordinates(&captures), coordinates(&expected),
+            "public limit must preserve every production capture");
+    }
+    Ok(captures)
 }
 fn scan_matches<'a>(regex: &Arc<Regex>, text: &'a str, optimized: bool) -> Result<Vec<Captures<'a>>> {
+    #[cfg(test)]
+    if test_backtrack_limit().is_some() && optimized && text.is_ascii() {
+        let projected = test_limited_regex(&compatibility::project_ascii(regex.as_str())?)?;
+        return matches(&projected, text);
+    }
     if optimized && text.is_ascii() {
         // CACHE retains every original Arc, so its pointer is a stable identity.
         static ASCII: LazyLock<Mutex<HashMap<usize, Arc<Regex>>>> = LazyLock::new(Mutex::default);
@@ -306,6 +331,37 @@ fn scan_matches<'a>(regex: &Arc<Regex>, text: &'a str, optimized: bool) -> Resul
         };
         matches(&projected, text)
     } else { matches(regex, text) }
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_BACKTRACK_LIMIT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    static TEST_LIMITED_REGEXES: std::cell::RefCell<HashMap<String, Arc<Regex>>> =
+        std::cell::RefCell::new(HashMap::new());
+    static TEST_DEFAULT_REGEXES: std::cell::RefCell<HashMap<String, Arc<Regex>>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+#[cfg(test)]
+fn test_backtrack_limit() -> Option<usize> {
+    TEST_BACKTRACK_LIMIT.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+fn test_limited_regex(pattern: &str) -> Result<Arc<Regex>> {
+    TEST_LIMITED_REGEXES.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(regex) = cache.get(pattern) {
+            return Ok(regex.clone());
+        }
+        // `pattern` comes from the same translation/projection as production.
+        // The public failure-pop limit is the only changed builder setting.
+        let regex = Arc::new(fancy_regex::RegexBuilder::new(pattern)
+            .backtrack_limit(test_backtrack_limit().expect("test-only limit"))
+            .build().map_err(|error| error.to_string())?);
+        cache.insert(pattern.to_owned(), regex.clone());
+        Ok(regex)
+    })
 }
 fn get<'a>(cap: &Captures<'a>, name: &str) -> &'a str {
     cap.name(name).map_or("", |m| m.as_str())
@@ -1129,6 +1185,78 @@ print(json.dumps(out))
     fn same_spans(source: &str) {
         assert_eq!(super::spans_memoized(source, true), super::spans_memoized(source, false),
             "memoized scanner differs from the original uncached operations, bytes={}", source.len());
+    }
+
+    /// Measure the minimum passing PUBLIC backtrack limit, not VM instructions
+    /// or delegated-engine work. Nonbacktracking subexpressions delegate to the
+    /// regex crate's linear engine. The intended catastrophic/superlinear risk
+    /// is VM failure-pops/retries, including backrefs, lookarounds and failed
+    /// starts, which fancy-regex bounds with `backtrack_limit`.
+    ///
+    /// Production keeps Regex::new and its actual default limit of 1_000_000.
+    /// Test construction uses those exact translated/projected pattern strings
+    /// with only the explicit public limit changed. Search is inclusive [0,
+    /// 1_000_000]: passing means the whole scanner succeeds and its spans equal
+    /// production. A limit L permits L failure-pops; pop L+1 fails. The result
+    /// is a per-invocation threshold, not a sum across calls. Walltime is only
+    /// reported. This measurement precedes the reviewed measured-constant guard.
+    #[test]
+    fn public_backtracking_limit_thresholds() {
+        fn limited(source: &str, limit: usize) -> super::Result<Vec<super::Span>> {
+            struct Reset;
+            impl Drop for Reset {
+                fn drop(&mut self) {
+                    super::TEST_BACKTRACK_LIMIT.with(|slot| slot.set(None));
+                    super::TEST_LIMITED_REGEXES.with(|cache| cache.borrow_mut().clear());
+                }
+            }
+            assert!(super::test_backtrack_limit().is_none());
+            super::TEST_BACKTRACK_LIMIT.with(|slot| slot.set(Some(limit)));
+            let _reset = Reset;
+            super::spans(source)
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let output = super::python_command().arg("-I")
+            .arg(root.join("workers/tests/tracing_policy_cases.py"))
+            .arg(root.join("crates/action/tests/fixtures/generator-inputs.json"))
+            .output().unwrap();
+        assert!(output.status.success(), "actual producer input generation failed");
+        let corpus: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let unit = corpus["adversarial"][2].as_str().unwrap();
+        let source = unit.repeat(8192 / unit.len() + 1);
+        let source: String = source.chars().take(8192).collect();
+        // Identical original setup, including compilation warmup. These are
+        // the original case2 input and its newline-prefixed companion.
+        super::text("").unwrap();
+        for (variant, source) in [source.clone(), format!("x\n{source}")].iter().enumerate() {
+            for length in std::collections::BTreeSet::from([1024, 3072, 8192, source.chars().count()]) {
+                let input: String = source.chars().take(length).collect();
+                use sha2::{Digest, Sha256};
+                let input_sha = format!("{:x}", Sha256::digest(input.as_bytes()));
+                let expected = super::spans(&input).unwrap();
+                let start = std::time::Instant::now();
+                let mut attempts = 0;
+                let mut passes = |limit| {
+                    attempts += 1;
+                    match limited(&input, limit) {
+                        Ok(actual) => { assert_eq!(actual, expected); true }
+                        Err(error) if error.contains("backtracking count exceeded") => false,
+                        Err(error) => panic!("unexpected threshold error: {error}"),
+                    }
+                };
+                let mut low = 0;
+                let mut high = 1_000_000;
+                assert!(passes(high), "explicit actual production default must pass");
+                while low < high {
+                    let mid = low + (high - low) / 2;
+                    if passes(mid) { high = mid; } else { low = mid + 1; }
+                }
+                assert!(passes(low));
+                if low > 0 { assert!(!passes(low - 1)); }
+                println!("public-limit case=2 variant={variant} bytes={} minimum_passing={low} attempts={attempts} input_sha256={input_sha} wall_ms={}",
+                    input.len(), start.elapsed().as_millis());
+            }
+        }
     }
 
     #[test]
