@@ -1467,48 +1467,138 @@ fn permanent_refusal_after_acceptance_is_an_accepted_diagnostic() {
     assert!(fixture.direct.lock().unwrap().puts.is_empty());
 }
 
-/// State-table "Looks and stalls" (docs/state-table.md:861): a never-acknowledged
-/// enqueue still ends in a read incident. The real Direct adapter never accepts
-/// this Publishing handoff because its fence keeps refusing (here the node is
-/// paused), and Q7 read accounting must still escalate it.
-#[test]
-fn never_accepted_direct_handoff_ends_in_read_incident() {
-    let mut database = support::Database::start();
-    let settings = database.create("direct_never_accepted");
-    let fixture = DirectFixture::new();
-    let mut controller = fixture.open(&settings);
+/// Drives a fresh request to its Publishing Enqueue handoff and stops while that
+/// effect is still Intended, so Direct has not yet attempted or accepted it.
+fn issued_handoff(fixture: &DirectFixture, settings: &tl3_config::Store) -> (Controller, String) {
+    let mut controller = fixture.open(settings);
     controller.intake(LabelledIssue { delivery:"direct-label".into(), owner:"owner".into(), repo:"sandbox".into(), installation:3, number:12, title:"change".into(), actor:42, label:"tl3".into(), labels:vec![] }).unwrap();
-    let mut paused = false;
     for _ in 0..100 {
         let node = controller.world().unwrap().nodes[0];
         if node.phase == Phase::Publishing && node.effect.is_some_and(|effect| effect.kind == EffectKind::Enqueue) {
-            controller.observe("fixture-pause", tl3_controller::executor::Observation::Steering {
-                node: NodeId(0), command: tl3_kernel::Command::Pause }).unwrap();
-            paused = true;
-            break;
+            let effect = controller.snapshot().unwrap().pending_effects.into_iter()
+                .find(|effect| matches!(serde_json::from_value::<Delivery>(effect.payload.clone()).unwrap().output,
+                    Out::Effect { kind: EffectKind::Enqueue, .. }))
+                .expect("pending Enqueue handoff");
+            assert_eq!(effect.state, tl3_store::EffectState::Intended, "the handoff must not be dispatched yet");
+            return (controller, effect.key);
         }
-        if !controller.drive_once().unwrap() { break; }
+        assert!(controller.drive_once().unwrap(), "the fixture must reach the Publishing Enqueue handoff");
     }
-    assert!(paused, "the fixture must reach the Publishing Enqueue handoff");
-    drain(&mut controller);
-    let handoff = |controller: &mut Controller| {
-        let node = controller.world().unwrap().nodes[0];
-        assert_eq!(node.phase, Phase::Publishing, "the handoff is never accepted");
-        assert!(node.paused);
-        assert_eq!(node.effect.map(|effect| effect.kind), Some(EffectKind::Enqueue));
-    };
-    handoff(&mut controller);
+    panic!("the fixture did not reach the Publishing Enqueue handoff");
+}
+/// Silence looks only, for a fixed number of Q7 counting periods.
+fn quiet_looks(fixture: &DirectFixture, controller: &mut Controller) {
+    for _ in 0..6 {
+        fixture.clock.0.set(fixture.clock.0.get() + Duration::from_secs(2));
+        controller.look_due().unwrap();
+        drain(controller);
+    }
+}
+fn never_accepted(fixture: &DirectFixture, controller: &mut Controller, key: &str) {
+    let node = controller.world().unwrap().nodes[0];
+    assert_eq!(node.phase, Phase::Publishing, "the handoff is never accepted");
+    assert_eq!(node.effect.map(|effect| effect.kind), Some(EffectKind::Enqueue));
+    assert!(controller.effect(key).unwrap().unwrap().state.is_pending(), "nothing acknowledges the handoff");
     assert!(accepted_records(&fixture.root.path().join("direct")).is_empty(), "Direct must never accept the handoff");
+    assert!(fixture.direct.lock().unwrap().puts.is_empty());
+    assert!(controller.world().unwrap().valid());
+}
+fn allowance_healthy(controller: &mut Controller, key: &str) -> bool {
+    controller.snapshot().unwrap().rows.iter()
+        .find(|row| row.table == "allowances" && row.id == key)
+        .is_some_and(|row| row.value["healthy"] == true && row.value["read_failures"] == 0)
+}
+
+/// Nit-4 ruling (i), state-table "Looks and stalls" (docs/state-table.md:861):
+/// a never-acknowledged enqueue whose fence refusal no deliberate hold explains
+/// ends in the `.read` incident through Q7 read accounting.
+/// No valid kernel transition reaches this refusal in Publishing, so the fixture
+/// injects an adversarial stored state at the fence boundary: after the kernel
+/// issues the Enqueue, the stored handoff payload's head_sha is rewritten (trigger
+/// disabled, as in input_error_followups.rs) so it disagrees with the approved
+/// commit. The fixture PR reports that same head. The world stays valid and the
+/// node is not paused or held.
+#[test]
+fn unexplained_never_accepted_handoff_ends_in_read_incident() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_never_accepted_unready");
+    let fixture = DirectFixture::new();
+    let (mut controller, key) = issued_handoff(&fixture, &settings);
+    postgres::Config::new().host(&settings.host).port(settings.port).user(&settings.user).dbname(&settings.database)
+        .password("tl3-disposable-test-password").connect(postgres::NoTls).unwrap()
+        .batch_execute(&format!(
+            "ALTER TABLE tl3_effects DISABLE TRIGGER tl3_effect_guard; \
+             UPDATE tl3_effects SET payload = jsonb_set(payload, '{{head_sha}}', '\"{}\"') WHERE effect_key = '{key}'; \
+             ALTER TABLE tl3_effects ENABLE TRIGGER tl3_effect_guard;",
+            "f".repeat(40)))
+        .unwrap();
+    // GitHub reports the same head, so only the kernel's approved commit disagrees.
+    fixture.api.state.lock().unwrap().pull["head"]["sha"] = json!("f".repeat(40));
+    drain(&mut controller);
+    let node = controller.world().unwrap().nodes[0];
+    assert!(!node.paused && !node.waiting_incident, "no deliberate hold explains the refusal");
+    assert!(controller.snapshot().unwrap().rows.iter().all(|row| row.table != "incidents" || row.value["open"] != true));
+    never_accepted(&fixture, &mut controller, &key);
     let incidents = look_until_read_incident(&fixture, &mut controller);
-    assert_eq!(incidents.len(), 1, "a never-acknowledged enqueue must end in a read incident: rows={:?}",
+    assert_eq!(incidents.len(), 1, "an unexplained never-acknowledged enqueue must end in a read incident: rows={:?}",
         controller.snapshot().unwrap().rows.iter().filter(|r| matches!(r.table.as_str(), "allowances" | "incidents")).collect::<Vec<_>>());
     let (_, incident) = &incidents[0];
     assert_eq!(incident["signature"]["upstream"], "Delivery");
-    let key = incident["effect"].as_str().unwrap().to_owned();
-    assert!(controller.effect(&key).unwrap().unwrap().state.is_pending(),
-        "the read incident neither acknowledges nor replaces the handoff");
-    handoff(&mut controller);
-    assert!(accepted_records(&fixture.root.path().join("direct")).is_empty());
-    assert!(fixture.direct.lock().unwrap().puts.is_empty());
-    assert!(controller.world().unwrap().valid());
+    assert_eq!(incident["effect"], json!(key));
+    never_accepted(&fixture, &mut controller, &key);
+}
+
+/// Nit-4 ruling (ii): a paused, never-accepted Publishing handoff is a deliberate
+/// hold. It raises no incident and its looks stay healthy.
+#[test]
+fn paused_never_accepted_handoff_stays_healthy() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_never_accepted_paused");
+    let fixture = DirectFixture::new();
+    let (mut controller, key) = issued_handoff(&fixture, &settings);
+    controller.observe("fixture-pause", tl3_controller::executor::Observation::Steering {
+        node: NodeId(0), command: tl3_kernel::Command::Pause }).unwrap();
+    drain(&mut controller);
+    assert!(controller.world().unwrap().nodes[0].paused);
+    never_accepted(&fixture, &mut controller, &key);
+    quiet_looks(&fixture, &mut controller);
+    let incidents: Vec<_> = controller.snapshot().unwrap().rows.into_iter()
+        .filter(|row| row.table == "incidents" && row.value["open"] == true).collect();
+    assert!(incidents.is_empty(), "a paused handoff must not page anyone: {incidents:?}");
+    assert!(allowance_healthy(&mut controller, &key), "a paused handoff stays a healthy look");
+    assert!(controller.world().unwrap().nodes[0].paused);
+    never_accepted(&fixture, &mut controller, &key);
+}
+
+/// Nit-4 ruling (iii): an open incident on the node is a deliberate hold. Here a
+/// real rejected input (a raw command id at u64::MAX, as in
+/// input_error_followups.rs) opens a non-blocking incident on node 0 after the
+/// Enqueue is issued. The never-accepted handoff raises no `.read` incident and
+/// its looks stay healthy.
+#[test]
+fn open_node_incident_never_accepted_handoff_stays_healthy() {
+    let mut database = support::Database::start();
+    let settings = database.create("direct_never_accepted_incident");
+    let fixture = DirectFixture::new();
+    let (mut controller, key) = issued_handoff(&fixture, &settings);
+    let input: tl3_controller::cli::Input = serde_json::from_value(json!({
+        "Observation": {"key": "command-id-jump", "observation": {"Kernel": {"Command": {
+            "node": 0, "id": u64::MAX, "command": "Pause"}}}}
+    })).unwrap();
+    ingress::apply(&mut controller, input).unwrap();
+    drain(&mut controller);
+    let open: Vec<_> = controller.snapshot().unwrap().rows.into_iter()
+        .filter(|row| row.table == "incidents" && row.value["open"] == true).collect();
+    assert_eq!(open.len(), 1, "the rejected input must open one incident: {open:?}");
+    assert_eq!(open[0].value["node"], json!(0), "the incident must be on the handoff's node");
+    let node = controller.world().unwrap().nodes[0];
+    assert!(!node.paused && !node.waiting_incident, "only the open incident holds the node");
+    never_accepted(&fixture, &mut controller, &key);
+    quiet_looks(&fixture, &mut controller);
+    assert!(open_read_incidents(&mut controller).is_empty(), "an open node incident must not add a read incident");
+    let still_open: Vec<_> = controller.snapshot().unwrap().rows.into_iter()
+        .filter(|row| row.table == "incidents" && row.value["open"] == true).map(|row| row.id).collect();
+    assert_eq!(still_open, vec![open[0].id.clone()]);
+    assert!(allowance_healthy(&mut controller, &key), "a held handoff stays a healthy look");
+    never_accepted(&fixture, &mut controller, &key);
 }
