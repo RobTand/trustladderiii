@@ -213,7 +213,6 @@ def _git(root, *args):
                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout
 
 
-@cache
 def _verified_test_summary(result, run_records):
     if result.get('declared_symptom') is not None:
         summaries = result.get('symptom_runs', [])
