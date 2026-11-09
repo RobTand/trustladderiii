@@ -343,6 +343,9 @@ pub(super) fn plan_retry(w: &mut World, i: usize, cant_meet: bool,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
         old(w).nodes@[i as int].phase is Planning ==> handler_safety::ladder(old(w).fail_fast, cant_meet, old(w).nodes@[i as int], final(w).nodes@[i as int], *old(out), *final(out)),
+        old(w).fail_fast && cant_meet && old(w).nodes@[i as int].phase is Planning ==>
+            final(w).nodes@[i as int].phase == Phase::Stopping(Outcome::Stopped)
+                && final(w).nodes@[i as int].review_stop == Some(ReviewStop::PlanCantMeet),
 ] proof [reveal(retry_bounds);] {
     kernel_snapshot! { before_plan = w.nodes@[i as int] }
     kernel_snapshot! { before_plan_out = *out }
