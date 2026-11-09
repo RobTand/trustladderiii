@@ -126,7 +126,7 @@ fn command_node(n: Node, nq: u64, id: u64, command: Command)
                 }),
             _ => true,
         }),
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);] {
+] {
     let mut m = n;
     let mut nq = nq;
     let mut note: Option<Notice> = None;
@@ -141,6 +141,9 @@ fn command_node(n: Node, nq: u64, id: u64, command: Command)
     kernel_snapshot! { before_command_node = m }
     m.last_cmd = id;
     kernel_snapshot! { after_id = m }
+    kernel_proof! {
+        assert(distance(m) == distance(before_command_node@)) by { reveal(distance); }
+    }
     match command {
         Command::Stop => m = enter_stopping_v(m, Outcome::Stopped),
         Command::ChangeRequest => m = enter_stopping_v(m, Outcome::Replaced),
