@@ -1541,12 +1541,16 @@ impl World {
     }
 
     kernel_fn! {
-    /// #693 / #806: record_dependency's original wait-number statements,
-    /// isolated for bounded solver work. Only this node's wait number changes.
-    fn record_wait(&mut self, i: usize, node: NodeId) -> (result: ()) [
+    /// #693 / #806: record_dependency's original wait-number and credit
+    /// statements, isolated for bounded solver work. Only this node's wait
+    /// number and credit hold change; the hold is reconciled over the table.
+    #[allow(clippy::manual_map)]
+    fn record_hold(&mut self, i: usize, node: NodeId) -> (result: ()) [
         requires i < old(self).nodes@.len(),
         ensures final(self).nodes@ == old(self).nodes@.update(i as int, Node {
                 waiting_prerequisite: final(self).nodes@[i as int].waiting_prerequisite,
+                credit: Credit { withheld: final(self).nodes@[i as int].credit.withheld,
+                    ..old(self).nodes@[i as int].credit },
                 ..old(self).nodes@[i as int]
             }),
             final(self).dependencies@ == old(self).dependencies@,
@@ -1556,15 +1560,31 @@ impl World {
             final(self).pool_capacity == old(self).pool_capacity,
             final(self).fail_fast == old(self).fail_fast,
             final(self).file_sets@ == old(self).file_sets@,
+            final(self).nodes@[i as int].credit.withheld
+                == withheld_after(old(self).nodes@[i as int].credit.withheld,
+                    final(self).nodes@[i as int].planning_started, final(self).nodes@[i as int].phase,
+                    final(self).nodes@[i as int].credit.ready, final(self).dependencies@, NodeId(i as u64)),
             dependency_retirement::edge_domain(*old(self)) && i == 0 && node == NodeId(0)
-                ==> final(self).nodes@[0].waiting_prerequisite
-                    == if old(self).dependencies@[0].status == DependencyStatus::Delivered { None }
+                && !old(self).dependencies@[0].rejected ==> final(self).nodes@[0] == (Node {
+                    waiting_prerequisite: if old(self).dependencies@[0].status == DependencyStatus::Delivered { None }
                         else { Some(old(self).dependencies@[0].target.number) },
-    ] {
+                    credit: Credit { withheld: old(self).nodes@[0].credit.withheld
+                        || (old(self).dependencies@[0].status != DependencyStatus::Delivered
+                            && !old(self).nodes@[0].planning_started
+                            && (match old(self).nodes@[0].phase { Phase::Ingesting | Phase::Auditing | Phase::Unplanned => true, _ => false })
+                            && old(self).nodes@[0].credit.ready), ..old(self).nodes@[0].credit },
+                    ..old(self).nodes@[0]
+                }),
+    ] proof [reveal(prerequisites_delivered); reveal(delivered);] {
+        kernel_snapshot! { before_hold = *self }
         let waiting = self.first_undelivered(node);
         self.nodes[i].waiting_prerequisite = match waiting {
             Some(d) => Some(d.target.number), None => None,
         };
+        kernel_proof! {
+            assert(self.nodes@[i as int].credit.withheld == before_hold@.nodes@[i as int].credit.withheld);
+        }
+        self.withhold_dependency_credit(i);
     }
     }
 
@@ -1621,18 +1641,7 @@ impl World {
                 assert(self.dependencies@[0] == dependency);
             }
         }
-        self.record_wait(i, node);
-        kernel_proof! {
-            if dependency_retirement::edge_domain(before_record@) && i == 0 && existing == Some(0usize)
-                && dependency.node == NodeId(0) && dependency.target == before_record@.dependencies@[0].target
-                && !dependency.rejected {
-                assert(self.nodes@[0].waiting_prerequisite == if dependency.status == DependencyStatus::Delivered { None } else { Some(2761u64) });
-            }
-        }
-        kernel_proof! {
-            assert(self.nodes@[i as int].credit.withheld == before_record@.nodes@[i as int].credit.withheld);
-        }
-        self.withhold_dependency_credit(i);
+        self.record_hold(i, node);
         kernel_proof! {
             writes::finish(before_record@.dependencies@, self.dependencies@, existing, dependency);
             assert(dependency_frame(before_record@, *self, i as int)) by { reveal(dependency_frame); }
