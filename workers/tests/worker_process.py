@@ -296,7 +296,7 @@ def generator_backend(tmp_path, monkeypatch):
     monkeypatch.setattr(generator, "container_command", lambda tree, container, argv, cidfile: argv)
     # The central Flux fake replaces only the Flux wire; its payload, receipt and
     # import checks run. calls lists each new submission; artifacts its payloads.
-    fake = shared.FAKES[str(tmp_path / "tools")]
+    fake = shared.fake_for(tmp_path, monkeypatch)
     fake.job = shared.generator_job
     calls, artifacts = fake.prepared, fake.payloads
     return calls, artifacts
@@ -394,7 +394,7 @@ def rehearsal(tmp_path, monkeypatch):
                          'goals': [{'description': 'Make the adoption test deterministic.', 'verification': 'test'}]},
               'forecast': {'fit_tokens': 100000, 'context_tokens': 150000, 'overhead_tokens': {'tools': 1}}}
     calls = []
-    fake = shared.FAKES[str(tmp_path / 'tools')]
+    fake = shared.fake_for(tmp_path, monkeypatch)
 
     def submit(staged, document):
         calls.append(document)
