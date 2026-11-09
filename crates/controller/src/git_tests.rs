@@ -155,3 +155,21 @@ pub fn wait_client(root: &Path, parent: &str) -> tl3_prismabuild::PrismaBuild {
     .unwrap()
     .with_production_queue(queue)
 }
+
+/// Select the only worker tests executor, Flux, with fixture-only settings (PrismaBuild is retired).
+pub fn select_flux(config: &mut tl3_config::Config, root: &Path) {
+    config.execution_backend = tl3_config::ExecutionBackend::Flux;
+    config.flux = Some(tl3_config::Flux {
+        activation: None,
+        instance_generation: "fixture/00000000000000000000000000000000".into(),
+        executable: "/fixture/flux".into(),
+        backend_cli: "/fixture/tl3-run-backend".into(),
+        container_mode: tl3_config::ContainerMode::OwnScope,
+        runtime_bundles: vec![],
+        uri: "local:///fixture/flux".into(),
+        environment: std::collections::BTreeMap::new(),
+        staging_root: root.join("staging"),
+        output_root: root.join("outputs"),
+        container_image: config.prismabuild.container_image.clone(),
+    });
+}

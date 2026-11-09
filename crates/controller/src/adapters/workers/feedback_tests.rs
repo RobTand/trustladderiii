@@ -23,6 +23,7 @@ impl Fixture {
             tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
         config.store = db.create("step_feedback");
         config.workers.runs = repo.root.path().join("runs");
+        crate::git_tests::select_flux(&mut config, repo.root.path());
         let supervisor = Supervisor::new(
             &config,
             &repo.root.path().join("records"),
@@ -815,5 +816,39 @@ fn postmortem_reads_canonical_planner_feedback() {
     assert_eq!(
         inputs["inputs"]["case"]["findings"],
         json!(["Need a smaller request"])
+    );
+}
+
+/// PB-REMOVAL: Flux is the only worker tests executor. A configuration that still selects
+/// PrismaBuild gets a typed refusal for every request that needs worker tests; it is never
+/// defaulted to a PrismaBuild tools path.
+#[test]
+fn prismabuild_selection_refuses_worker_tests_instead_of_defaulting() {
+    let mut f = Fixture::new();
+    let mut retired = f.config.clone();
+    retired.execution_backend = tl3_config::ExecutionBackend::PrismaBuild;
+    retired.flux = None;
+    f.supervisor = Supervisor::new(
+        &retired,
+        &f.repo.root.path().join("retired-records"),
+        &mut crate::store_support::ownership(),
+    )
+    .unwrap();
+    let snapshot = f.controller.snapshot().unwrap();
+    let error = f
+        .supervisor
+        .build_request(
+            &f.repo.delivery(),
+            "planner",
+            &mut Store::open(&f.config.store).unwrap(),
+            &snapshot,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            crate::Error::Invalid(message) if message.contains("execution_backend = 'flux'")
+        ),
+        "{error:?}"
     );
 }

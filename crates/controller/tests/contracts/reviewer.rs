@@ -141,8 +141,8 @@ proptest! {
         if bits & 16 != 0 {value["unresolved_displaced_failures"]=json!([text]);value["edited_selected_tests"]=json!([text]);}
         if bits & 32 != 0 {value["review_fixes"]=json!({"reviewed_sha":"d".repeat(40),"findings":[{"id":"f","report":text,"tests":[text],"proof":proof}]});}
         if bits & 64 != 0 {value["review_fixes"]=json!({"reviewed_sha":"d".repeat(40),"findings":[{"id":"f","report":text,"reason":"No tests apply","proof":proof}]});}
-        if bits & 128 != 0 {value["generation_evidence"]=shared_generation_receipt(0.5,n%129,bits&256 != 0);}
-        if bits & 512 != 0 {value["test_evidence"]=json!([{"tests":[text],"base":false,"repeat":1.0,"parallel":0,"status":"completed","tree":"a".repeat(40),"fresh":true,"totals":{"passed":1,"failed":0,"error":0,"skipped":0},"receipts":[{"action_key":"a".repeat(64),"status":"executed","exit_code":0,"receipt_sha256":"b".repeat(64),"log_sha256":"c".repeat(64)}]}]);}
+        if bits & 128 != 0 {value["generation_evidence"]=shared_generation_receipt(0.5,n%129);}
+        if bits & 512 != 0 {value["test_evidence"]=json!([{"tests":[text],"base":false,"repeat":1.0,"parallel":0,"status":"completed","tree":"a".repeat(40),"totals":{"passed":1,"failed":0,"error":0,"skipped":0},"receipts":[{"backend":"flux","wait_reference":format!("worker:{}","a".repeat(64)),"run_binding":{"id":{"backend":"flux","instance":"worker-run","uri":"local:///fixture","job":"f2"},"intent":{"backend":"flux","instance":"worker-run","uri":"local:///fixture","owner":"worker-tools","correlation":format!("worker-{}","a".repeat(64)),"request_digest":"b".repeat(64),"output_dir":"/fixture/output"}},"receipt_sha256":"c".repeat(64),"ending":"passed"}]}]);}
         let parsed: ReviewerInput=serde_json::from_value(value.clone()).unwrap();
         let typed=ReviewerInput {goals:List::new(parsed.goals.to_vec()).unwrap(), standing_rules:vec![StandingRule{id:Text::new("rule").unwrap(),description:Text::new(text).unwrap()}], ..parsed};
         let mut expected=value; expected["standing_rules"]=serde_json::to_value(&typed.standing_rules).unwrap();

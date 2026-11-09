@@ -93,7 +93,7 @@ fn planner(text: &str, bits: u16) -> Value {
     v
 }
 fn tests() -> Value {
-    json!({"image":format!("registry/image@sha256:{}","a".repeat(64)),"tools_path":"/tools","cpus":1.0,"mem_gb":1,"quiet_seconds":1})
+    json!({"image":format!("registry/image@sha256:{}","a".repeat(64)),"execution":{"backend":"flux","profile":"/fixture/execution.json"},"cpus":1.0,"mem_gb":1,"quiet_seconds":1})
 }
 fn maker(text: &str, bits: u16) -> Value {
     let mut v = json!({"brief":text,"goals":[{"id":"g","description":text}],"footprint":["src.py"],"plan":{"files":["src.py"],"checks":[{"name":"check","kind":"regression","tests":["tests.py::test_a"],"goal_ids":["g"]}]},"attempt":1.0,"round":0.0,"tests":tests(),"context_size":1});

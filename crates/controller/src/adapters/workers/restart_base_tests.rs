@@ -22,6 +22,7 @@ impl Restart {
         config.github.repos[0].base_branch = branch.into();
         config.workers.runs = repo.root.path().join("runs");
         config.worktrees_root = repo.root.path().join("worktrees");
+        crate::git_tests::select_flux(&mut config, repo.root.path());
         let mut delivery = repo.delivery();
         delivery.output = Out::Effect {
             node: NodeId(0),
