@@ -5304,10 +5304,7 @@ fn unrelated_debt(f: &Fixture) -> PathBuf {
 #[test]
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn generator_preparation_failure_closes_typed_failed_through_real_collector() {
-    for (mode, operation) in [
-        ("readonly-checkout", "container_command"),
-        ("prep-failure", "input_manifest"),
-    ] {
+    for (mode, operation) in [("prep-failure", "input_manifest")] {
         let (f, driver) = generator_prep_case(mode);
         assert!(driver["error_type"].is_null(), "{mode}: {driver}");
         assert_eq!(driver["code"], 0, "{mode}: {driver}");
@@ -5551,4 +5548,193 @@ fn generator_no_container_failure_refuses_forged_and_unproven_closure() {
             );
         }
     }
+}
+
+/// FLUX-GENERATOR-EXEC: a real generator on the owned test-job launch path -> real
+/// host collector -> Rust collector, terminal and scratch closure. Only host
+/// identity, the Podman executable and native Flux are fixtures.
+fn generator_exec_case(mode: &str) -> (Fixture, Value) {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::InJob, true);
+    let scratch = tempfile::tempdir().unwrap();
+    fs::set_permissions(scratch.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    f.request.scratch_root = scratch.path().to_owned();
+    f.request.reservation.cpus = 1.try_into().unwrap();
+    f.request.reservation.parallelism = 1.try_into().unwrap();
+    f.request.suite = Suite::Generator {
+        input_digest: "a".repeat(64),
+    };
+    f.request.no_progress_seconds = Some(10.try_into().unwrap());
+    f.intent.request_digest = digest(&serde_json::to_vec(&f.request).unwrap());
+    f.submit();
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_owned();
+    let mut environment = f.request.environment.clone();
+    for (name, value) in [
+        ("TL3_EXECUTION_BACKEND", "flux".to_owned()),
+        (
+            "TL3_RUN_BACKEND_CLI",
+            env!("CARGO_BIN_EXE_tl3-run-backend").to_owned(),
+        ),
+        (
+            "TL3_RUN_BACKEND_CONFIG",
+            f.config.to_string_lossy().into_owned(),
+        ),
+        ("TL3_RUN_OWNER", f.intent.owner.clone()),
+        ("TL3_RUN_CORRELATION", f.intent.correlation.clone()),
+        (
+            "TL3_RUN_DIAGNOSTIC_DIR",
+            f.intent.output_dir.to_string_lossy().into_owned(),
+        ),
+        ("FLUX_JOB_ID", "fABC".to_owned()),
+        ("TL3_RUN_BACKEND_SESSION", "1".to_owned()),
+    ] {
+        environment.insert(name.into(), value);
+    }
+    fs::write(
+        f.root.path().join("action-fixture.json"),
+        serde_json::to_vec(&json!({
+            "environment": environment, "output_dir": f.intent.output_dir,
+            "scratch": scratch.path().join("fABC"), "mode": mode, "source": source,
+            "image": f.request.runtime.expected_image,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let output = Command::new("/home/rob/venvs/pb-cpu/bin/python")
+        .arg(source.join("harness/tests/test_fx_generator_exec.py"))
+        .arg(f.root.path())
+        .arg(&source)
+        .arg(mode)
+        .output()
+        .unwrap();
+    eprintln!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    f.scratch = Some(scratch);
+    assert!(output.status.success(), "generator exec driver crashed");
+    let driver: Value = serde_json::from_slice(
+        &fs::read(f.intent.output_dir.join("generator-exec-driver.json")).unwrap(),
+    )
+    .unwrap();
+    // TERM may surface as a collector error; cancel asserts its own closure facts.
+    assert!(
+        mode == "cancel" || driver["error_type"].is_null(),
+        "{mode}: {driver}"
+    );
+    assert_eq!(driver["payload_started"], true, "{mode}: {driver}");
+    assert_eq!(driver["scratch_absent"], true, "{mode}: {driver}");
+    let state = f.state();
+    assert_eq!(state.container_launches.len(), 1, "{mode}");
+    assert_eq!(state.runtime_ownerships.len(), 1, "{mode}");
+    (f, driver)
+}
+
+fn generator_terminal(f: &Fixture, name: &str) -> Value {
+    f.events(&completed(0));
+    let frames = f.attach();
+    retain_generator_evidence(f, name, &frames);
+    let terminal = frames.last().unwrap()["result"]["observation"]["terminal"].clone();
+    let repeated = f.attach();
+    assert_eq!(
+        repeated.last().unwrap()["result"]["observation"]["terminal"],
+        terminal
+    );
+    terminal
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn generator_exec_success_passes_through_real_collector_with_proven_cleanup() {
+    let (f, driver) = generator_exec_case("success");
+    assert_eq!(driver["code"], 0, "{driver}");
+    let produced = generator_frame(&f);
+    assert_eq!(produced["status"], "completed", "{produced}");
+    assert_eq!(produced["exit_code"], 0, "{produced}");
+    assert_eq!(
+        produced["outputs"][0]["path"], "generated/out.txt",
+        "{produced}"
+    );
+    let terminal = generator_terminal(&f, "generator-exec-success");
+    assert_eq!(terminal["ending"], "passed", "{terminal}");
+    let receipt: Value =
+        serde_json::from_slice(&fs::read(f.intent.output_dir.join("receipt.json")).unwrap())
+            .unwrap();
+    assert!(
+        receipt["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["path"].as_str().unwrap().contains("/scratch-absence-")),
+        "{receipt}"
+    );
+    assert!(cleanup_debts(&f).is_empty(), "{:?}", cleanup_debts(&f));
+    let result = f.call(json!({"op":"worker_payload","owner":f.intent.owner,"correlation":f.intent.correlation,"terminal":terminal}));
+    let reference: BlobRef =
+        serde_json::from_value(result.last().unwrap()["result"]["payload"]["artifact"].clone())
+            .unwrap_or_else(|_| panic!("{result:?}"));
+    // Producer bytes on host stdout are exactly the bytes the worker receives.
+    let stdout = fs::read_to_string(f.intent.output_dir.join("host.stdout")).unwrap();
+    let line = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("TL3_GENERATOR_ARTIFACT "))
+        .unwrap();
+    assert_eq!(fs::read(&reference.path).unwrap(), line.as_bytes());
+    let next = distinct_owner_submit(&f, "next");
+    assert_eq!(
+        next.last().unwrap()["result"]["submission"]["kind"],
+        "accepted",
+        "{next:?}"
+    );
+    // A replayed frame after terminal is refused.
+    let replay = collect_worker(&f, stdout.as_bytes());
+    assert_eq!(replay.last().unwrap()["kind"], "error", "{replay:?}");
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn generator_exec_failure_closes_typed_failed_and_keeps_unrelated_debt() {
+    let (f, driver) = generator_exec_case("failure");
+    assert_eq!(driver["code"], 0, "{driver}");
+    let produced = generator_frame(&f);
+    assert_eq!(produced["status"], "failed", "{produced}");
+    assert_eq!(produced["exit_code"], 3, "{produced}");
+    assert_eq!(produced["timings"]["container"]["outcome"], "failed");
+    assert!(produced.get("outputs").is_none() && produced.get("output_manifest").is_none());
+    // Moved from the prep readonly-checkout row: another owner's debt survives this
+    // owner's closure and keeps the dispatch gate closed.
+    let unrelated = unrelated_debt(&f);
+    let terminal = generator_terminal(&f, "generator-exec-failure");
+    // A typed generator failure is never a pass, even when native exits zero.
+    assert_eq!(terminal["ending"], "failed", "{terminal}");
+    assert!(cleanup_debts(&f).is_empty(), "{:?}", cleanup_debts(&f));
+    assert!(unrelated.exists(), "closure cleared another owner's debt");
+    let next = distinct_owner_submit(&f, "next");
+    assert_eq!(next.last().unwrap()["kind"], "error", "{next:?}");
+    assert!(
+        json!(next)
+            .to_string()
+            .contains("unresolved runtime cleanup debt"),
+        "{next:?}"
+    );
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn generator_exec_cancel_unwinds_cleanup_without_artifact() {
+    let (f, driver) = generator_exec_case("cancel");
+    assert_eq!(driver["signals"].as_array().unwrap().len(), 1, "{driver}");
+    let stdout = fs::read_to_string(f.intent.output_dir.join("host.stdout")).unwrap_or_default();
+    assert!(!stdout.contains("TL3_GENERATOR_ARTIFACT "), "{stdout}");
+    assert!(f.intent.output_dir.join("action-sigterm.json").is_file());
+    finish_cancel_fixture(&f, false);
+    let terminal = f.attach().last().unwrap()["result"]["observation"]["terminal"].clone();
+    let result = f.call(json!({"op":"worker_payload","owner":f.intent.owner,"correlation":f.intent.correlation,"terminal":terminal}));
+    assert_eq!(result.last().unwrap()["kind"], "error", "{result:?}");
 }
