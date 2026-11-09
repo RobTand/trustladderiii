@@ -437,11 +437,6 @@ def lifecycle(module, directory, schedule):
             return change(('stage-write', self.path, value.hex() if isinstance(value, bytes) else value), lambda: self.stream.write(value))
         def flush(self): return change(('stage-flush', self.path), self.stream.flush)
 
-    class Temporary:
-        def __init__(self, **kwargs): trace.append(('stage-temporary', kwargs))
-        def __enter__(self): return str(staged)
-        def __exit__(self, *args): return change(('stage-close',), lambda: None)
-
     def opened(path, mode='r', *args, **kwargs):
         if path.is_relative_to(directory):
             call = ('stage-open', name(path), mode)
@@ -510,7 +505,6 @@ def lifecycle(module, directory, schedule):
         patch.setattr(tree, '_walk', source_walk)
         patch.setattr(tree, '_file', source_file)
         patch.setattr(os, 'fchmod', lambda fd, mode: change(('stage-chmod', mode), lambda: original_chmod(fd, mode)))
-        patch.setattr(module.tempfile, 'TemporaryDirectory', Temporary)
         patch.setattr(module.shutil, 'copytree', copytree)
         patch.setattr(module.shutil, 'rmtree', lambda path, *args, **kwargs: change(('stage-remove', name(path)), lambda: original_rmtree(path, *args, **kwargs)))
         if schedule.get('base'):
