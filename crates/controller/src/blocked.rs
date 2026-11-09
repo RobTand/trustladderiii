@@ -9,8 +9,8 @@ use tl3_store::{Commit, RowChange};
 pub(crate) const CLASS: &str = "environment_blocked";
 
 /// Evidence for an incident raised by this commit's blocked reply. Only
-/// worker-recorded facts are cited: the reply schema restricts them to an
-/// action key, a tool-error id, a tool name and a fixed class. The maker's
+/// worker-recorded facts are cited: the reply schema restricts them to a
+/// worker wait reference, a tool-error id, a tool name and a fixed class. The maker's
 /// report is model text, so it stays in the controller's records and never
 /// reaches GitHub.
 pub(crate) fn evidence(commit: &Commit, node: NodeId) -> Result<Option<String>> {
@@ -30,13 +30,13 @@ pub(crate) fn evidence(commit: &Commit, node: NodeId) -> Result<Option<String>> 
     }
     let evidence = &reply["evidence"];
     let cited = match (
-        evidence["action_key"].as_str(),
+        evidence["wait_reference"].as_str(),
         evidence["tool_error"].as_str(),
         evidence["tool"].as_str(),
         evidence["class"].as_str(),
     ) {
-        (Some(key), None, None, Some("test_infrastructure")) => {
-            format!("PrismaBuild action {key} ended in a test infrastructure error")
+        (Some(reference), None, None, Some("test_infrastructure")) => {
+            format!("Flux worker run {reference} ended in a test infrastructure error")
         }
         (None, Some(error), Some("run_tests"), Some("test_submission")) => {
             format!("the maker's run_tests tool recorded {error}, a failed test submission")
