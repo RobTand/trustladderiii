@@ -1523,6 +1523,11 @@ text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
         }
     }
     fn retain_fixture_allocation(&self) {
+        // The runner validates its allocation once, before any launch; a later
+        // report must not observe again after cancellation.
+        if self.state().allocation_grant.is_some() {
+            return;
+        }
         let count = self.request.reservation.cpus.get();
         let cpus = (0..count)
             .map(|n| n.to_string())
@@ -1903,6 +1908,18 @@ fn acceptance_unknown_never_resubmits_and_original_jobspec_recovers_one_match() 
         1
     );
     fs::write(f.root.path().join("mode"), "normal").unwrap();
+    assert!(f.state().binding.is_none());
+    // The controller's attach recovers the binding before the runner can observe placement.
+    f.attach();
+    assert_eq!(f.state().binding.unwrap().id.job, "fABC");
+    assert!(f.calls().contains("job info --original fABC jobspec"));
+    assert_eq!(
+        f.calls()
+            .lines()
+            .filter(|line| line.starts_with("job submit "))
+            .count(),
+        1
+    );
     f.report(ReportOutcome::Passed, true);
     f.events(&completed(0));
     let frames = f.attach();
@@ -2222,6 +2239,7 @@ fn separate_process_attach_cancel_and_late_terminal_preserve_journal_state() {
     use std::time::{Duration, Instant};
     let f = Fixture::new();
     f.submit();
+    f.retain_fixture_allocation();
     f.call(json!({"op":"retain_runtime","owner":f.intent.owner,"correlation":f.intent.correlation,"ownership":f.ownership()}));
     fs::write(f.root.path().join("mode"), "quiet").unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_tl3-run-backend"))
@@ -2867,6 +2885,7 @@ fn cancellation_uses_independent_cleanup_without_runner_report_after_wrapper_los
     let mut f = Fixture::new();
     f.podman(ContainerMode::OwnScope, true);
     f.submit();
+    f.retain_fixture_allocation();
     let owned = f.container_ownership();
     let retained = f.call(json!({"op":"retain_runtime","owner":f.intent.owner,"correlation":f.intent.correlation,"ownership":owned}));
     assert_eq!(retained.last().unwrap()["kind"], "result");
@@ -3006,6 +3025,7 @@ fn append_only_container_executions_require_every_independent_stop() {
     let mut f = Fixture::new();
     f.podman(ContainerMode::OwnScope, true);
     f.submit();
+    f.retain_fixture_allocation();
     let first = f.container_ownership();
     let mut second = first.clone();
     second.execution = "second-execution".into();
@@ -3240,6 +3260,7 @@ fn prelaunch_crash_hang_and_cancel_recover_only_observed_named_container() {
         let mut f = Fixture::new();
         f.podman(ContainerMode::OwnScope, true);
         f.submit();
+        f.retain_fixture_allocation();
         let observed = f.container_ownership();
         let mut launcher = observed.clone();
         launcher.container = None;
@@ -4077,6 +4098,7 @@ fn cleanup_transport_separate_cancel_late_writes_preserve_binding_debt_and_termi
     let mut f = Fixture::new();
     f.podman(ContainerMode::OwnScope, true);
     f.submit();
+    f.retain_fixture_allocation();
     let first = f.cleanup_execution("first", 'd');
     let second = f.cleanup_execution("second", 'e');
     f.cleanup_facts(&second, false);
@@ -4332,6 +4354,7 @@ fn injob_no_launch_needs_native_clean_and_does_not_leave_unregistered_debt() {
         let mut f = Fixture::new();
         f.podman(ContainerMode::InJob, true);
         assert_eq!(f.submit()["kind"], "accepted");
+        f.retain_fixture_allocation();
         if cancelled {
             f.call(
                 json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}),
