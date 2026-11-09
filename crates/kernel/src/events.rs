@@ -205,7 +205,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
                     if node_checked(before_apply@, before_apply@.nodes@[i as int]) {
                         handler_safety::command_node_safety(before_apply@, *w, event, i as int,
                             before_apply_out@, *out);
-                        transition_safety::lift_apply(before_apply@, *w, event, i as int,
+                        transition_safety::lift_apply_none(before_apply@, *w, event,
                             before_apply_out@, *out);
                     }
                     if command == Command::Resume {
