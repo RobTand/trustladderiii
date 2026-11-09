@@ -586,7 +586,7 @@ impl Controller {
     pub(crate) fn allowance(&self, delivery: &Delivery) -> &tl3_config::Allowance {
         match upstream(delivery.output) {
             Upstream::Workers => &self.allowances.agent_worker,
-            Upstream::PrismaBuild => &self.allowances.prismabuild,
+            Upstream::PrismaBuild => &self.allowances.checks,
             Upstream::GitHub | Upstream::Delivery => &self.allowances.github_mergify,
             Upstream::Worktrees => &self.allowances.worktrees,
         }

@@ -4,19 +4,6 @@ use toml::Value;
 
 const EXAMPLE: &str = include_str!("../example.toml");
 
-#[test]
-fn execution_backend_preserves_legacy_pb_and_accepts_explicit_pb() {
-    Config::parse(EXAMPLE).unwrap();
-    Config::parse(&format!("execution_backend = 'prismabuild'\n{EXAMPLE}")).unwrap();
-}
-
-#[test]
-fn execution_backend_never_falls_back_from_missing_flux_settings() {
-    for backend in ["flux", "unknown", "", "Flux"] {
-        assert!(Config::parse(&format!("execution_backend = '{backend}'\n{EXAMPLE}")).is_err());
-    }
-}
-
 /// PB-REMOVAL (D2): Flux is the only executor, so a config that could start PrismaBuild is
 /// refused when it is parsed, before anything starts. Nothing defaults to a backend.
 #[test]
@@ -106,8 +93,6 @@ fn selected_flux_requires_unique_canonical_runtime_bundle_locators() {
             .unwrap_err()
             .to_string();
         assert!(error.contains("flux.runtime_bundles"), "{error}");
-        document["execution_backend"] = "prismabuild".into();
-        Config::parse(&toml::to_string(&document).unwrap()).unwrap();
     }
     let mut document = flux_document();
     document["flux"]
@@ -121,7 +106,7 @@ fn selected_flux_requires_unique_canonical_runtime_bundle_locators() {
     );
     let config = Config::parse(&toml::to_string(&document).unwrap()).unwrap();
     assert_eq!(
-        config.flux.unwrap().runtime_bundles,
+        config.flux.runtime_bundles,
         [std::path::PathBuf::from(locator)]
     );
 }
@@ -146,7 +131,7 @@ fn flux_requires_explicit_container_mode_without_fallback() {
         let mut document = flux_document();
         document["flux"]["container_mode"] = wire.into();
         let config = Config::parse(&toml::to_string(&document).unwrap()).unwrap();
-        assert_eq!(config.flux.unwrap().container_mode, expected);
+        assert_eq!(config.flux.container_mode, expected);
         assert_eq!(serde_json::to_value(expected).unwrap(), wire);
     }
     let mut document = flux_document();
@@ -162,43 +147,6 @@ fn flux_requires_explicit_container_mode_without_fallback() {
             .insert("container_mode".into(), invalid.into());
         assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
     }
-}
-
-#[test]
-fn execution_selection_validates_only_the_selected_backend() {
-    use tl3_config::{ExecutionBackend, SelectedExecution};
-    let legacy = Config::parse(EXAMPLE).unwrap();
-    assert_eq!(legacy.execution_backend, ExecutionBackend::PrismaBuild);
-    assert!(matches!(
-        legacy.selected_execution().unwrap(),
-        SelectedExecution::PrismaBuild(_)
-    ));
-    assert_eq!(
-        serde_json::to_value(legacy.execution_backend).unwrap(),
-        "prismabuild"
-    );
-    let mut document = flux_document();
-    document.as_table_mut().unwrap().remove("prismabuild");
-    let config = Config::parse(&toml::to_string(&document).unwrap()).unwrap();
-    assert_eq!(config.execution_backend, ExecutionBackend::Flux);
-    let SelectedExecution::Flux(flux) = config.selected_execution().unwrap() else {
-        panic!("selected PB")
-    };
-    assert_eq!(flux.instance_generation, "disposable-test-generation");
-    assert_eq!(
-        serde_json::to_value(config.execution_backend).unwrap(),
-        "flux"
-    );
-    document["execution_backend"] = "prismabuild".into();
-    assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
-    document.as_table_mut().unwrap().insert(
-        "prismabuild".into(),
-        EXAMPLE.parse::<Value>().unwrap()["prismabuild"].clone(),
-    );
-    document["flux"]["executable"] = "unavailable-relative-tool".into();
-    assert!(Config::parse(&toml::to_string(&document).unwrap()).is_ok());
-    document["execution_backend"] = "flux".into();
-    assert!(Config::parse(&toml::to_string(&document).unwrap()).is_err());
 }
 
 #[test]
@@ -243,7 +191,7 @@ fn flux_access_requires_explicit_generation_shared_roots_and_immutable_image() {
     document["flux"]["instance_generation"] = "fv1-model/61f47a7f95af46d794ca89c3a71f0654".into();
     let config = Config::parse(&toml::to_string(&document).unwrap()).unwrap();
     assert_eq!(
-        config.flux.unwrap().instance_generation,
+        config.flux.instance_generation,
         "fv1-model/61f47a7f95af46d794ca89c3a71f0654"
     );
 }
@@ -291,8 +239,6 @@ fn flux_environment_rejects_reserved_variables_and_never_displays_values() {
     let mut config = Config::parse(&toml::to_string(&flux_document()).unwrap()).unwrap();
     config
         .flux
-        .as_mut()
-        .unwrap()
         .environment
         .insert("PATH".into(), "/private-fixture-value".into());
     assert!(!format!("{config:?}").contains("private-fixture-value"));
@@ -681,15 +627,15 @@ fn invalid_values_name_the_setting_and_the_fix() {
             "unicast",
         ),
         (
-            vec!["prismabuild", "container_image"],
+            vec!["flux", "container_image"],
             Value::String("tl3:latest".into()),
-            "prismabuild.container_image",
+            "flux.container_image",
             "64 lowercase",
         ),
         (
-            vec!["prismabuild", "container_image"],
+            vec!["flux", "container_image"],
             Value::String(format!("content:sha256:{}", "a".repeat(64))),
-            "prismabuild.container_image",
+            "flux.container_image",
             "harness.Container",
         ),
         (
@@ -738,7 +684,7 @@ fn all_paths_must_be_absolute() {
         vec!["worktrees_root"],
         vec!["github", "app_credentials_file"],
         vec!["models", "key_file"],
-        vec!["prismabuild", "tools_dir"],
+        vec!["flux", "executable"],
         vec!["workers", "tiktoken_cache_dir"],
     ] {
         for value in [
@@ -763,7 +709,7 @@ fn all_paths_must_be_absolute() {
 fn every_upstream_requires_two_positive_allowances() {
     for upstream in [
         "agent_worker",
-        "prismabuild",
+        "checks",
         "github_mergify",
         "model_calls",
         "hindsight",
@@ -788,7 +734,7 @@ fn unknown_keys_fail_at_every_table_depth() {
         vec!["github", "unexpected"],
         vec!["github", "rob", "unexpected"],
         vec!["models", "unexpected"],
-        vec!["prismabuild", "unexpected"],
+        vec!["flux", "unexpected"],
         vec!["hindsight", "unexpected"],
         vec!["status", "unexpected"],
         vec!["allowances", "unexpected"],
@@ -962,7 +908,7 @@ fn harness_digest_formats_accept_only_immutable_images() {
         format!("registry:5000/tl3_harness@sha256:{}", "1".repeat(64)),
     ] {
         Config::parse(&changed(
-            &["prismabuild", "container_image"],
+            &["flux", "container_image"],
             Value::String(image),
         ))
         .unwrap();
@@ -975,7 +921,7 @@ fn harness_digest_formats_accept_only_immutable_images() {
     ] {
         assert!(
             Config::parse(&changed(
-                &["prismabuild", "container_image"],
+                &["flux", "container_image"],
                 Value::String(image)
             ))
             .is_err()

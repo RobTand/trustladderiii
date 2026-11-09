@@ -10,7 +10,7 @@ mod support;
 
 use serde_json::json;
 use std::{collections::BTreeMap, fs, os::unix::fs::PermissionsExt, path::Path};
-use tl3_controller::{executor::Upstream, production};
+use tl3_controller::production;
 
 fn config(root: &Path) -> tl3_config::Config {
     let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
@@ -70,8 +70,7 @@ fn flux_activation_refusal_preserves_legacy_pb_evidence() {
         for node in ["", "0"] {
             let root = tempfile::tempdir().unwrap();
             let mut config = config(root.path());
-            config.execution_backend = tl3_config::ExecutionBackend::Flux;
-            config.flux = Some(tl3_config::Flux {
+            config.flux = tl3_config::Flux {
                 activation: None,
                 instance_generation: "disposable-generation".into(),
                 executable: "/opt/flux/bin/flux".into(),
@@ -92,8 +91,8 @@ fn flux_activation_refusal_preserves_legacy_pb_evidence() {
                 ]),
                 staging_root: "/mnt/shared/tl3-inputs".into(),
                 output_root: "/mnt/shared/flux-out/tl3".into(),
-                container_image: config.prismabuild.container_image.clone(),
-            });
+                container_image: config.flux.container_image.clone(),
+            };
             let directory = config
                 .workers
                 .runs
@@ -115,47 +114,20 @@ fn flux_activation_refusal_preserves_legacy_pb_evidence() {
     }
 }
 
+/// PB-REMOVAL (D2): production startup composes Flux checks only, and refuses before the store
+/// when the deployment-owned Flux activation is absent. No PrismaBuild adapter is ever built.
+/// (Composing every adapter needs a sealed activation record, which only the PB-admitted
+/// activation fixtures in adapters::flux_checks::activation::tests can provide.)
 #[test]
-fn production_registers_every_real_adapter_and_source() {
+fn production_refuses_to_start_without_flux_activation() {
     let root = tempfile::tempdir().unwrap();
-    let mut config = config(root.path());
-    let mut database = support::Database::start();
-    config.store = database.create("production");
-    let registered = production::register(&config).unwrap();
-    let expected = BTreeMap::from([
-        (
-            Upstream::GitHub,
-            "tl3_controller::adapters::github::Adapter",
-        ),
-        (
-            Upstream::Delivery,
-            "tl3_controller::adapters::mergify::Adapter",
-        ),
-        (
-            Upstream::PrismaBuild,
-            "tl3_controller::adapters::prismabuild::Adapter",
-        ),
-        (
-            Upstream::Workers,
-            "tl3_controller::adapters::workers::Supervisor",
-        ),
-        (
-            Upstream::Worktrees,
-            "tl3_controller::adapters::worktrees::Real",
-        ),
-    ]);
-    assert_eq!(registered.adapters.registered_types(), expected);
-    assert!(std::any::type_name_of_val(&registered.workers).ends_with("WorkerOutputSource"));
-    assert!(matches!(
-        registered.bell,
-        production::CheckSource::PrismaBuild(_)
-    ));
-    assert!(
-        std::any::type_name_of_val(&registered.mergify).ends_with("delivery_events::Translator")
-    );
-    assert!(registered.webhooks.address().ip().is_loopback());
-    drop(registered);
-    database.stop();
+    let config = config(root.path());
+    assert!(config.flux.activation.is_none());
+    let error = match production::register(&config) {
+        Ok(_) => panic!("production started without a Flux activation"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("flux.activation"), "{error}");
 }
 
 #[test]
@@ -292,13 +264,10 @@ mod flux_checks;
 fn selected_flux_refuses_unprovisioned_runtime_without_pb_fallback() {
     let root = tempfile::tempdir().unwrap();
     let mut config = config(root.path());
-    config.execution_backend = tl3_config::ExecutionBackend::Flux;
     let mut flux = flux_options::flux(root.path());
     flux.staging_root = "/mnt/shared/tl3-inputs".into();
     flux.output_root = "/mnt/shared/flux-out/tl3".into();
-    config.flux = Some(flux);
-    config.prismabuild.tools_dir = Default::default();
-    config.prismabuild.container_image.clear();
+    config.flux = flux;
     let error = match production::register(&config) {
         Ok(_) => panic!("unprovisioned Flux selection entered a backend"),
         Err(error) => error,
@@ -311,10 +280,7 @@ fn selected_flux_refuses_unprovisioned_runtime_without_pb_fallback() {
 fn selected_flux_registration_refuses_absent_activation_without_pb_or_native_launch() {
     let root = tempfile::tempdir().unwrap();
     let mut config = config(root.path());
-    config.execution_backend = tl3_config::ExecutionBackend::Flux;
-    config.flux = Some(flux_options::flux(root.path()));
-    config.prismabuild.tools_dir = Default::default();
-    config.prismabuild.container_image.clear();
+    config.flux = flux_options::flux(root.path());
     let mut database = support::Database::start();
     let settings = database.create("flux_construction");
     let mut ownership =

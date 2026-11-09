@@ -39,7 +39,6 @@ tl3_crate(
         "github": {"path": "tests/github.rs", "harness": False},
         "looks": {"path": "tests/looks.rs", "harness": False},
         "mergify": {"path": "tests/mergify.rs", "harness": False},
-        "prismabuild": {"path": "tests/prismabuild.rs", "harness": False},
         "publishing": {"path": "tests/publishing.rs", "harness": False},
         "simulation": {"path": "tests/simulation.rs", "harness": False},
         "workers": {"path": "tests/workers.rs", "harness": False},

@@ -184,7 +184,6 @@ fn prepare(
     }
     let template = source.join("crates/config/example.toml");
     let mut config = tl3_config::Config::parse(&fs::read_to_string(&template)?)?;
-    config.execution_backend = tl3_config::ExecutionBackend::Flux;
     config.worktrees_root = root.join("worktrees");
     config.workers.runs = root.join("worker-runs");
     config.store.host = root
@@ -203,7 +202,7 @@ fn prepare(
     repo.test_demand = Some(tl3_config::TestDemand::default());
     repo.selected_tests = None;
     repo.always_tests.clear();
-    config.flux = Some(tl3_config::Flux {
+    config.flux = tl3_config::Flux {
         activation: None,
         instance_generation: options.instance_generation.clone(),
         uri: options.uri.clone(),
@@ -215,7 +214,7 @@ fn prepare(
         staging_root: staging,
         output_root: "/mnt/shared/flux-out/tl3".into(),
         container_image: image.reference.clone(),
-    });
+    };
     config.validate()?; // Syntax only. No store, secrets, scheduler or container access.
     let delivery = fixture(&root.join("served"), kind)?;
     write(&root.join("delivery.json"), &delivery)?;

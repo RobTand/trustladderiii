@@ -48,12 +48,9 @@ pub struct Config {
     pub workers: Workers,
     #[serde(default)]
     pub planning: Planning,
-    #[serde(default)]
+    /// Required; Flux is the only executor (PB-REMOVAL). Nothing defaults to a backend.
     pub execution_backend: ExecutionBackend,
-    #[serde(default)]
-    pub prismabuild: PrismaBuild,
-    #[serde(default)]
-    pub flux: Option<Flux>,
+    pub flux: Flux,
     pub hindsight: Hindsight,
     pub status: Status,
     #[serde(default)]
@@ -416,7 +413,7 @@ pub struct Repository {
     pub generator_timeout_s: Option<u32>,
     #[serde(default)]
     pub container_image: Option<String>,
-    /// CPU and memory reservation for this repository's PrismaBuild tests and generators.
+    /// CPU and memory reservation for this repository's Flux tests and generators.
     #[serde(default)]
     pub test_demand: Option<TestDemand>,
     /// Run up to this many existing tests that import the change, and pass on the base,
@@ -568,19 +565,11 @@ impl Models {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+/// The only executor. A config naming any other backend, or none, is refused at parse.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionBackend {
-    #[default]
-    #[serde(rename = "prismabuild")]
-    PrismaBuild,
     Flux,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum SelectedExecution<'a> {
-    PrismaBuild(&'a PrismaBuild),
-    Flux(&'a Flux),
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, schemars::JsonSchema, PartialEq, Eq)]
@@ -826,13 +815,6 @@ fn shared_directory(field: &str, path: &Path, parent: &Path) -> Result<(), Error
     Ok(())
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PrismaBuild {
-    pub tools_dir: PathBuf,
-    pub container_image: String,
-}
-
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Hindsight {
@@ -904,7 +886,8 @@ impl Console {
 #[serde(default, deny_unknown_fields)]
 pub struct Allowances {
     pub agent_worker: Allowance,
-    pub prismabuild: Allowance,
+    /// Check executions on the Flux checks adapter (routing tag `Upstream::PrismaBuild`).
+    pub checks: Allowance,
     pub github_mergify: Allowance,
     pub model_calls: Allowance,
     pub hindsight: Allowance,
@@ -925,7 +908,7 @@ impl Default for Allowances {
                 silence_secs: 120,
                 no_progress_secs: 900,
             },
-            prismabuild: Allowance {
+            checks: Allowance {
                 silence_secs: 300,
                 no_progress_secs: 900,
             },
@@ -950,32 +933,11 @@ impl Default for Allowances {
 }
 
 impl Config {
-    /// Select once at the controller/worker boundary. Missing Flux settings never select PB.
-    pub fn selected_execution(&self) -> Result<SelectedExecution<'_>, Error> {
-        match self.execution_backend {
-            ExecutionBackend::PrismaBuild => Ok(SelectedExecution::PrismaBuild(&self.prismabuild)),
-            ExecutionBackend::Flux => self
-                .flux
-                .as_ref()
-                .map(SelectedExecution::Flux)
-                .ok_or_else(|| invalid("flux", "execution_backend = 'flux' requires [flux]")),
-        }
-    }
-
     fn validate_execution_backend(&self) -> Result<(), Error> {
-        let image = match self.selected_execution()? {
-            SelectedExecution::PrismaBuild(pb) => {
-                absolute("prismabuild.tools_dir", &pb.tools_dir)?;
-                ("prismabuild.container_image", &pb.container_image)
-            }
-            SelectedExecution::Flux(flux) => {
-                flux.validate()?;
-                ("flux.container_image", &flux.container_image)
-            }
-        };
-        if !immutable_image(image.1) {
+        self.flux.validate()?;
+        if !immutable_image(&self.flux.container_image) {
             return Err(invalid(
-                image.0,
+                "flux.container_image",
                 "use sha256:<64 lowercase hex digits> or repository@sha256:<64 lowercase hex digits>, as harness.Container requires",
             ));
         }
@@ -1451,7 +1413,7 @@ impl Config {
         }
         for (name, allowance) in [
             ("agent_worker", &self.allowances.agent_worker),
-            ("prismabuild", &self.allowances.prismabuild),
+            ("checks", &self.allowances.checks),
             ("github_mergify", &self.allowances.github_mergify),
             ("model_calls", &self.allowances.model_calls),
             ("hindsight", &self.allowances.hindsight),

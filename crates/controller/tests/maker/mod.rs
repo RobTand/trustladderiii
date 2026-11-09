@@ -1022,7 +1022,7 @@ pub(super) fn repository_images(database: &mut Database) {
         });
         let root = tempfile::tempdir().unwrap();
         let (mut config, _, _) = fixture(&settings, root.path(), "needs-files");
-        config.flux.as_mut().unwrap().container_image = format!("sha256:{}", "1".repeat(64));
+        config.flux.container_image = format!("sha256:{}", "1".repeat(64));
         config.github.repos[0].owner = "ROBTAND".into();
         config.github.repos[0].name = "TL3-SANDBOX".into();
         config.github.repos[0].container_image = override_image.clone();

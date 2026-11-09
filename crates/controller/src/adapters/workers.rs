@@ -224,7 +224,7 @@ impl Supervisor {
             records_root: records_root.to_owned(),
             materials_provider: None,
             worktrees: config.worktrees_root.clone(),
-            tests: execution::Selected::new(config)?,
+            tests: execution::Selected::new(config),
             images: super::images::Images::new(&config.github.repos),
             hindsight: config.hindsight.clone(),
             memory: crate::memory::Feed::start(
@@ -452,12 +452,12 @@ impl Supervisor {
             inputs["context_size"] = json!(self.limits.context_tokens);
             inputs["tests"] = self.tests.inputs(
                 self.images
-                    .for_repository(&delivery.repository, self.tests.image()?),
+                    .for_repository(&delivery.repository, self.tests.image()),
                 self.images
                     .test_demand(&delivery.repository)
                     .unwrap_or_default(),
                 &self.root(&delivery.key).join("execution.json"),
-            )?;
+            );
             let demand = self
                 .images
                 .test_demand(&delivery.repository)
@@ -522,10 +522,10 @@ impl Supervisor {
                 .unwrap_or_default();
             inputs["tests"] = self.tests.inputs(
                 self.images
-                    .for_repository(&delivery.repository, self.tests.image()?),
+                    .for_repository(&delivery.repository, self.tests.image()),
                 demand,
                 &self.root(&delivery.key).join("execution.json"),
-            )?;
+            );
         } else if role == "audit" {
             inputs["ingest"] = store
                 .worker_document(&node, "briefs")?
@@ -557,12 +557,12 @@ impl Supervisor {
         if matches!(role, "ingest" | "audit") && generator_available {
             inputs["tests"] = self.tests.inputs(
                 self.images
-                    .for_repository(&delivery.repository, self.tests.image()?),
+                    .for_repository(&delivery.repository, self.tests.image()),
                 self.images
                     .test_demand(&delivery.repository)
                     .unwrap_or_default(),
                 &self.root(&delivery.key).join("execution.json"),
-            )?;
+            );
         }
         if matches!(role, "ingest" | "audit" | "planner" | "maker") {
             inputs["decision_context"] =

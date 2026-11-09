@@ -21,9 +21,7 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
     use tl3_store::Store;
 
     config.validate()?;
-    if let tl3_config::SelectedExecution::Flux(flux) = config.selected_execution()? {
-        adapters::flux_checks::activation::RuntimeActivation::load(flux)?;
-    }
+    adapters::flux_checks::activation::RuntimeActivation::load(&config.flux)?;
     config.validate_secret_files()?;
     let bootstrap = Bootstrap::from_config(config)?;
     if bootstrap.operations.is_none() {

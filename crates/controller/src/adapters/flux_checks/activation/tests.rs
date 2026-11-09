@@ -483,8 +483,7 @@ fn qualified_binding_passes_real_controller_capacity_and_startup_activation() {
     fixture.seal_record();
     let mut config =
         tl3_config::Config::parse(include_str!("../../../../../config/example.toml")).unwrap();
-    config.execution_backend = tl3_config::ExecutionBackend::Flux;
-    config.flux = Some(fixture.flux.clone());
+    config.flux = fixture.flux.clone();
     for repo in &mut config.github.repos {
         repo.container_image = None;
     }

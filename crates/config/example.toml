@@ -2,8 +2,8 @@
 # Deployment placeholders parse offline. Replace them before Config::load.
 # docs/state-table.md, "Stopping": worktree lifecycle. Deployment starting path.
 worktrees_root = "/srv/tl3/worktrees"
-# Omit to keep PrismaBuild. Selecting Flux requires its provisioned settings below.
-# execution_backend = "flux"
+# Flux is the only executor (PB-REMOVAL). Required: nothing defaults to a backend.
+execution_backend = "flux"
 
 # Q17: set after deployment creates or reconciles the operations issue.
 # [operations]
@@ -74,7 +74,7 @@ installation_id = 1
 # selected_tests = 200
 # Optional repo-wide rules, run as regression checks on every leaf and round.
 # always_tests = ["tests/test_rules.py"]
-# Optional CPU-only PB reservation for Checking and maker run_tests. Default: 1 CPU, 2 GiB.
+# Optional CPU-only Flux reservation for Checking and maker run_tests. Default: 1 CPU, 2 GiB.
 # Integers only: cpus 1..16, mem_gb 1..64. No GPU field.
 # test_demand = { cpus = 4, mem_gb = 12 }
 # PrismaBuild: branch_template = "prismabuild-{issue}-tl3-{node}"
@@ -118,28 +118,22 @@ rebaser = [{ name = "default-model", family = "default", effort = "high", budget
 # Q15: an agent classifies Rob's issue comments.
 comment_classifier = [{ name = "default-model", family = "default", budget_tokens = 8000 }]
 
-[prismabuild]
-# docs/stack.md and Rob's execution policy: published PB tools, not a private copy.
-tools_dir = "/mnt/shared/prismabuild-fleet/repo/tools"
-# harness.Container accepts an image ID or repository@sha256 digest, not a tag
-# or PB's content: reference. Placeholder: replace with a prepared harness image.
-container_image = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-
-# Flux is opt-in. These are offline placeholders, not qualified runtime settings.
-# [flux]
-# instance_generation = "operator-assigned-generation"
-# executable = "/opt/flux/bin/flux"
-# backend_cli = "/opt/tl3/bin/tl3-run-backend"
-# container_mode = "own_scope" # explicit selection; runtime qualification is separate
-# runtime_bundles = ["/mnt/shared/flux-out/tl3/.runtime/0000000000000000000000000000000000000000000000000000000000000000/manifest.json"]
-# uri = "local:///run/flux/local-0"
-# environment = { PATH = "/opt/flux/bin:/usr/bin:/bin", LD_LIBRARY_PATH = "/opt/flux/lib", HOME = "/home/rob", XDG_RUNTIME_DIR = "/run/user/1000" }
-# staging_root = "/mnt/shared/tl3-inputs"
-# output_root = "/mnt/shared/flux-out/tl3"
-# container_image = "registry.example/tl3-harness@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+# Offline placeholders, not qualified runtime settings.
+[flux]
+instance_generation = "operator-assigned-generation"
+executable = "/opt/flux/bin/flux"
+backend_cli = "/opt/tl3/bin/tl3-run-backend"
+container_mode = "own_scope" # explicit selection; runtime qualification is separate
+runtime_bundles = ["/mnt/shared/flux-out/tl3/.runtime/0000000000000000000000000000000000000000000000000000000000000000/manifest.json"]
+uri = "local:///run/flux/local-0"
+environment = { PATH = "/opt/flux/bin:/usr/bin:/bin", LD_LIBRARY_PATH = "/opt/flux/lib", HOME = "/home/rob", XDG_RUNTIME_DIR = "/run/user/1000" }
+staging_root = "/mnt/shared/tl3-inputs"
+output_root = "/mnt/shared/flux-out/tl3"
+# harness.Container accepts an image ID or repository@sha256 digest, not a tag.
+# Placeholder: replace with a prepared harness image.
+container_image = "registry.example/tl3-harness@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 # A generation must change after instance history is lost, even if the URI stays fixed.
 # Inputs are immutable. Mutable work belongs in job-owned local scratch, never /mnt/shared.
-# Only the selected backend's settings are validated; Flux never falls back to PB.
 
 [hindsight]
 # Set a private, owner-only file containing the raw API key when authentication is enabled.
@@ -166,8 +160,8 @@ assets = "/srv/tl3/console"
 silence_secs = 120
 no_progress_secs = 900
 
-[allowances.prismabuild]
-# docs/stack.md: lease renewals every 30s, loss after 300s. PB owns loss detection.
+[allowances.checks]
+# Check executions on the Flux checks adapter.
 silence_secs = 300
 no_progress_secs = 900
 

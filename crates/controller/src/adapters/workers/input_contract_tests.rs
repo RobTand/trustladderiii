@@ -289,9 +289,6 @@ fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
     config.store = db.create("all_input_contracts");
     config.workers.runs = f.root.path().join("runs");
     config.worktrees_root = f.root.path().join("worktrees");
-    crate::git_tests::select_flux(&mut config, f.root.path());
-    config.prismabuild.tools_dir = PathBuf::new();
-    config.prismabuild.container_image.clear();
     let (_upstream, provider) = materials(&f, &config);
     let registry = crate::adapters::simulation(&f.root.path().join("fakes")).unwrap();
     let mut controller = crate::Controller::open(
