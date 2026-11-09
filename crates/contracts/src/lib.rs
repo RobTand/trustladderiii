@@ -11,6 +11,7 @@ pub mod execution;
 pub mod footprint;
 pub mod prerequisites;
 pub mod report;
+pub mod run_binding;
 
 pub use checks::{Check, CheckKind, CheckRequest, DeclaredSymptom, Forcing, ProofDeclaration};
 pub use report::{CheckReport, CheckResult, MESSAGE_CHARS, ProofReceipt, TestResult};
