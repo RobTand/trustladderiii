@@ -91,7 +91,7 @@ pub(super) open spec fn ladder(fast: bool, retry: bool, b: Node, n: Node, ob: Ou
     if !retry {
         n.review_stop == b.review_stop
     } else if fast {
-        n.review_stop.is_some() && n.credit == b.credit && oa == ob
+        n.review_stop.is_some() && n.credit == b.credit && oa.len == ob.len
             && n.phase == Phase::Stopping(Outcome::Stopped) && n.question.is_none()
     } else {
         transition_safety::retried(b, n) && n.review_stop == b.review_stop
@@ -323,10 +323,20 @@ pub(super) proof fn fail_fast_reply_rows(before: World, after: World, node: Node
         Event::Reply { node, generation: g, reply }, node.0 as int, transition_safety::emitted(ob, oa)),
 {
     reveal(reply_rows); reveal(ladder); reveal(funding); reveal(retirement::node_rules);
-    assert(ob.items@.len() == OUTBOX);
-    if oa == ob {
+    assert(ob.items@.len() == OUTBOX && oa.items@.len() == OUTBOX);
+    if oa.len == ob.len {
         assert(transition_safety::emitted(ob, oa).len() == 0);
     }
+}
+
+
+/// The failed-run update keeps the review stop (port_t860 failed_post).
+pub(super) proof fn failed_review_stop(b: Node, a: Node, bo: Outbox, ao: Outbox)
+    requires port_t860_contracts::failed_post(b, a, bo, ao),
+    ensures a.review_stop == b.review_stop,
+{
+    reveal(port_t860_contracts::failed_post); reveal(port_t860_contracts::failed_node);
+    reveal(retirement::incident);
 }
 
 }

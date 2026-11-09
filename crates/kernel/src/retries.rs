@@ -58,10 +58,7 @@ pub(super) fn run_failed(w: &mut World, i: usize, out: &mut Outbox, report: &mut
         kernel_proof! {
             retries_facts::finish_failed_incident(before_failed@, ready@, w.nodes@,
                 i as int, needs_rob, before_failed_out@, *out);
-            assert(w.nodes@[i as int].review_stop == before_failed@.review_stop) by {
-                reveal(port_t860_contracts::failed_post); reveal(port_t860_contracts::failed_node);
-                reveal(retirement::incident);
-            }
+            handler_safety::failed_review_stop(before_failed@, w.nodes@[i as int], before_failed_out@, *out);
         }
     }
     kernel_proof! {
