@@ -62,21 +62,13 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox, rep
             && dependencies::edges_indexable(*final(w))
             && match fact { Fact::Dependency { target, .. } =>
                 dependencies::delivery_changed(*old(w), *final(w), i as int, target), _ => false }),
-        retirement::selected(fact) && empty_outbox(*old(out)) ==> transition_safety::nodes_step(*old(w), *final(w)) && transition_safety::outputs_ok(*old(w), *final(w), transition_safety::emitted(*old(out), *final(out)), None),
 ] proof [reveal(dependencies::dependency_frame);] {
 
     kernel_snapshot! { before_fact = *w }
-    kernel_snapshot! { before_fact_out = *out }
     kernel_snapshot! { report_before = report.entries@ }
     let before_phase = w.nodes[i].phase;
     kernel_proof! {
         if fact_progress_input(*w, i as int, fact) { fact_witness_premises(*w, i as int, fact); }
-        if retirement::selected(fact) && empty_outbox(before_fact_out@) {
-            assert(retirement::notices_only(before_fact_out@)) by {
-                reveal(empty_outbox);
-                reveal(retirement::notices_only);
-            }
-        }
     }
     let ci = report::ci_failure_cause(w.nodes[i].phase, w.nodes[i].current(), fact);
     match fact {
@@ -90,12 +82,6 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox, rep
     }
 
     kernel_proof! {
-        if retirement::selected(fact) && empty_outbox(before_fact_out@) {
-            assert(w.nodes@ =~= before_fact@.nodes@.update(i as int,
-                retirement::fact_node(before_fact@.nodes@[i as int], fact)));
-            facts_family_lemmas::selected_apply_rows(before_fact@, *w, i as int,
-                fact, before_fact_out@, *out);
-        }
         if fact_progress_input(before_fact@, i as int, fact) {
             if !(fact is Dependency) {
                 assert(w.nodes@ =~= before_fact@.nodes@.update(i as int, w.nodes@[i as int]));

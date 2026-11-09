@@ -43,4 +43,33 @@ pub(super) proof fn selected_apply_rows(before: World, after: World, i: int,
     }
     notices_outputs(before, after, ob, oa);
 }
+
+pub(super) proof fn on_fact_rows(before: World, after: World, i: int,
+    fact: Fact, ob: Outbox, oa: Outbox)
+    requires 0 <= i < before.nodes@.len(),
+        ob.len + 4 <= OUTBOX,
+        oa.len <= ob.len + 4,
+        after.nodes@.len() == before.nodes@.len(),
+        forall|j: int| 0 <= j < before.nodes@.len() && j != i
+            ==> after.nodes@[j] == before.nodes@[j],
+        retirement::selected(fact) ==> after.nodes@[i]
+            == retirement::fact_node(before.nodes@[i], fact),
+        retirement::selected(fact) && retirement::notices_only(ob)
+            ==> retirement::notices_only(oa),
+    ensures retirement::selected(fact) && empty_outbox(ob)
+        ==> transition_safety::nodes_step(before, after)
+            && transition_safety::outputs_ok(before, after,
+                transition_safety::emitted(ob, oa), None),
+{
+    if retirement::selected(fact) && empty_outbox(ob) {
+        assert(ob.len == 0) by { reveal(empty_outbox); }
+        assert(retirement::notices_only(ob)) by {
+            reveal(empty_outbox);
+            reveal(retirement::notices_only);
+        }
+        assert(after.nodes@ =~= before.nodes@.update(i,
+            retirement::fact_node(before.nodes@[i], fact)));
+        selected_apply_rows(before, after, i, fact, ob, oa);
+    }
+}
 }
