@@ -1241,6 +1241,7 @@ py_binary(
     srcs = ["harness_io_schedule.py"],
     visibility = ["//visibility:public"],
     deps = [
+        ":pb_fixtures",
         "//harness/src/tl3_harness",
         "//workers/src",
         "@tl3_pip//pytest",
