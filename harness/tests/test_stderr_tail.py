@@ -13,6 +13,12 @@ from tl3_harness.supervision import Supervised
 from conftest import flux_context
 
 
+@pytest.fixture(autouse=True)
+def flux(monkeypatch):
+    # PB-REMOVAL: the harness runs only inside a Rust-launched Flux job.
+    flux_context(monkeypatch)
+
+
 IMAGE = execution.Container('sha256:' + '1' * 64)
 CAUSE = 'container shim refused: pid limit reached'
 

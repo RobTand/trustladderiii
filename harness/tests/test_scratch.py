@@ -23,10 +23,10 @@ def test_temporary_files_are_removed_after_passes_and_failures(tmp_path, monkeyp
     monkeypatch.setenv('PYTEST_DISABLE_PLUGIN_AUTOLOAD', '1')
     command = lambda tree, container, tests: [sys.executable, '-I', '-B', str(RUNNER), '-', str(tree)]
     tests = tuple(f'test_scratch.py::test_scratch[{i}]' for i in range(4))
+    flux_context(monkeypatch)
     if summary:
         monkeypatch.setattr(test_tool, 'container_command', command)
         monkeypatch.setattr(test_tool, 'require_admission', lambda: None)
-        flux_context(monkeypatch)
         result = test_tool.run_current(tmp_path, IMAGE, tests)
         assert result['status'] == 'completed'
         assert result['totals'] == {'passed': 3, 'failed': 1, 'error': 0, 'skipped': 0}

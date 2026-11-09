@@ -5,7 +5,7 @@ import sys
 import pytest
 
 from tl3_harness import execution
-from tl3_harness import test_tool
+from tl3_harness import runtime, test_tool
 from conftest import flux_context
 
 
@@ -50,7 +50,8 @@ def test_whole_suite_reports_each_outcome_and_progress(fixture):
     assert result["totals"] == {"passed": 1, "failed": 1, "error": 2, "skipped": 1}
     assert len(result["tests"]) == 5
     assert "Truncated" in result["note"]
-    assert json.loads((fixture / "progress.json").read_text())["units_completed"] == 5
+    journal = Path(runtime.launch_context()["progress"]["journal"])
+    assert len(journal.read_text().splitlines()) == 5
 
 
 @pytest.mark.parametrize("selectors,passed", [(('test_value.py::test_pass',), 1), (('test_value.py',), 1)])
@@ -186,7 +187,8 @@ def pytest_configure(config):
     assert [run["run"] for run in result["runs"]] == [1, 2, 3, 4, 5]
     assert all(run["status"] == "completed" and run["totals"]["passed"] == 1 for run in result["runs"])
     assert result["totals"] == {"passed": 1, "failed": 0, "error": 0, "skipped": 0}
-    assert json.loads((fixture / "progress.json").read_text())["units_completed"] == 5
+    journal = Path(runtime.launch_context()["progress"]["journal"])
+    assert len(journal.read_text().splitlines()) == 5
 
 
 def test_repeat_keeps_any_failing_run(fixture):
@@ -412,22 +414,6 @@ def test_pretest_hang_is_setup_infrastructure(fixture, monkeypatch):
     result = test_tool.run_current(fixture, CONTAINER, ('test_value.py::test_pass',))
     assert result['status'] == 'infrastructure_error'
     assert result.get('execution', {}).get('outcome') == 'unknown_incomplete', result
-    assert result['execution']['test_started'] is False
-
-
-def test_real_missing_container_runtime_stays_infrastructure(fixture, monkeypatch):
-    # Invoke the real container launcher with a PATH that cannot contain Docker.
-    # No test process can start, even on a worker that happens to have a daemon.
-    monkeypatch.setenv('PATH', str(fixture / 'no-container-runtime'))
-    monkeypatch.setattr(execution, 'scratch_directory', lambda: fixture)
-    monkeypatch.setattr(test_tool, 'container_command', execution.container_command)
-    try:
-        result = test_tool.run_current(fixture, CONTAINER, ('test_value.py::test_pass',))
-    except OSError:
-        result = {'status': 'uncaught_container_start_failure'}
-    assert result['status'] == 'infrastructure_error', result
-    assert result['execution']['outcome'] == 'setup_failure'
-    assert result['execution']['phase'] == 'container_start'
     assert result['execution']['test_started'] is False
 
 

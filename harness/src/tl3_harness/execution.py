@@ -9,7 +9,7 @@ from typing import Protocol
 
 from .limits import MAX_PROOF_MESSAGE_CHARS, MAX_DETAILED_FAILURES, MAX_MESSAGE_CHARS, MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES, MAX_RESULT_BYTES, RESULT_ENVELOPE_BYTES, validate_check_plan
 from .model import (ALWAYS_CHECK, SELECTED_CHECK, Check, FailureNotes, Forcing, HarnessInputError, ProofRefusal, Kind, Outcome, Result, TestResult, Verdict,
-                    judge)
+                    NATIVE_THREAD_ENVIRONMENT, judge)
 from .node_ids import validate_always_tests
 from .report import InvalidReport, decode, parse
 from .supervision import ExecutionFailure, ExecutionOutcome, Supervised
