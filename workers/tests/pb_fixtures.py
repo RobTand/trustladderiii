@@ -6,6 +6,7 @@ import subprocess
 
 import pytest
 
+from tl3_workers import flux_execution as _flux_execution
 from tl3_workers.tests_tool import TestSettings
 from tl3_workers.tools import Worktree, build_tools
 
@@ -50,6 +51,9 @@ def run_binding(key):
 
 
 FAKES = {}
+
+# The real Rust wire, captured before any test replaces it. Tests of the wire itself use it.
+REAL_WIRE = {"control": _flux_execution.control, "_command": _flux_execution._command}
 
 
 class FluxFake:

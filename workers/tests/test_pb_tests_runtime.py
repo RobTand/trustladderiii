@@ -173,12 +173,20 @@ def test_selected_flux_maker_consumes_verified_payload_and_checkpoints_before_di
         assert len(json.dumps(result)) < 10000
 
 
-@pytest.mark.parametrize('response', ['verified', 'changed_blob', 'unknown'])
+@pytest.mark.parametrize('response', ['verified', 'changed_blob', 'unknown', 'null_binding', 'foreign_binding'])
 def test_flux_observation_uses_generated_wire_and_explicit_payload(tmp_path, monkeypatch, response):
     from pathlib import Path
     import hashlib
     import sys
+    from pb_fixtures import REAL_WIRE, run_binding
     from tl3_workers import flux_execution
+    # This test drives the real shared-CLI wire, not the autouse Flux fake.
+    monkeypatch.setattr(flux_execution, '_command', REAL_WIRE['_command'])
+    key = 'worker:' + 'a' * 64
+    # A completed native payload is bound to its own run. The generic wire permits a null
+    # binding; the worker must refuse it, or another run's binding, before reading a payload.
+    binding = {'null_binding': None, 'foreign_binding': run_binding('worker:' + 'e' * 64)}.get(
+        response, run_binding(key))
     schema = Path(__file__).resolve().parents[2] / 'crates/controller/src/run_backend/schemas/run-backend.json'
     raw = json.dumps({'status': 'completed', 'tests': [], 'totals': {}, 'note': ''}).encode()
     payload = tmp_path / 'verified-summary.json'
@@ -194,13 +202,13 @@ def test_flux_observation_uses_generated_wire_and_explicit_payload(tmp_path, mon
         f'with open({str(commands)!r}, "a") as log: log.write(json.dumps(command) + "\\n")\n' +
         f'unknown = {response == "unknown"!r}\n' +
         'if unknown:\n frame = {"kind": "error", "code": "acceptance_unknown", "message": "retained uncertainty"}\n' +
-        f'elif command["op"] == "attach":\n frame = {{"kind": "result", "result": {{"op": "attach", "observation": {{"kind": "terminal", "binding": None, "terminal": {terminal!r}}}}}}}\n' +
+        f'elif command["op"] == "attach":\n frame = {{"kind": "result", "result": {{"op": "attach", "observation": {{"kind": "terminal", "binding": {binding!r}, "terminal": {terminal!r}}}}}}}\n' +
         f'elif command["op"] == "worker_payload":\n frame = {{"kind": "result", "result": {{"op": "worker_payload", "payload": {{"kind": "tests", "summary": {blob!r}, "symptom_runs": []}}}}}}\n' +
         'else: raise SystemExit("unexpected operation")\n' +
         'print(json.dumps({"schema": "tl3.run_backend.frame.v1", "sequence": 0, **frame}), flush=True)\n')
     cli.chmod(0o700)
     owner = {'owner': 'worker-tools', 'correlation': 'controlled-worker'}
-    plan = {'cli': str(cli), 'config': str(tmp_path / 'options.json'), 'key': 'worker:' + 'a' * 64,
+    plan = {'cli': str(cli), 'config': str(tmp_path / 'options.json'), 'key': key,
             'owner': owner, 'attach': {'op': 'attach', **owner},
             'bounds': {'cli_envelope_bytes': len(schema.read_bytes()), 'payload_bytes': len(raw)}}
     monkeypatch.setattr(flux_execution, 'activation', lambda settings: None)
@@ -209,11 +217,16 @@ def test_flux_observation_uses_generated_wire_and_explicit_payload(tmp_path, mon
         result = flux_execution.execute(plan, resumed=True, emit=events.append)
         assert result['summary'] == json.loads(raw)
         assert result['receipts'][0]['receipt_sha256'] == blob['sha256']
+        assert result['receipts'][0]['run_binding'] == binding
+    elif response in ('null_binding', 'foreign_binding'):
+        with pytest.raises(ValueError, match='another run binding'):
+            flux_execution.execute(plan, resumed=True, emit=events.append)
     else:
         with pytest.raises(ValueError):
             flux_execution.execute(plan, resumed=True, emit=events.append)
     observed = [json.loads(line)['op'] for line in commands.read_text().splitlines()]
-    assert observed == (['attach'] if response == 'unknown' else ['attach', 'worker_payload'])
+    assert observed == (['attach'] if response in ('unknown', 'null_binding', 'foreign_binding')
+                        else ['attach', 'worker_payload'])
     assert events[0]['wait']['key'] == plan['key']
     assert payload.exists()
 
