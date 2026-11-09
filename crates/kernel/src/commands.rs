@@ -45,6 +45,7 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
         (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase),
         handler_safety::command_step(old(w).nodes@[i as int], final(w).nodes@[i as int]),
+        transition_safety::notice_only(*old(out), *final(out), NodeId(i as u64)),
 ] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);] {
     if id <= w.nodes[i].last_cmd {
         kernel_proof! { reveal(progress_gate_apply::resume_post); reveal(progress_gate_apply::resumed); }

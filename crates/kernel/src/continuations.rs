@@ -48,6 +48,7 @@ pub(super) fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
         final(w).file_sets@ == old(w).file_sets@,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
+        transition_safety::notice_only(*old(out), *final(out), NodeId(i as u64)),
 ] {
     kernel_snapshot! { before_go_on = w.nodes@[i as int] }
     continue_node(&mut w.nodes[i], i, q, deposit, out);
@@ -87,6 +88,9 @@ pub(super) fn continue_node(m: &mut Node, i: usize, q: Question, deposit: u8,
         final(m).review_stop == old(m).review_stop, final(m).attempt == old(m).attempt,
         final(m).replanned == old(m).replanned,
         final(out).len <= old(out).len + 1,
+        final(out).len == old(out).len || (final(out).len == old(out).len + 1
+            && final(out).items@[old(out).len as int]
+                == Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Note(NoteKind::Replanned) })),
 ] proof [reveal(distance);] {
     m.credit.fund_and_pay(deposit, q.cost);
     m.question = None;
