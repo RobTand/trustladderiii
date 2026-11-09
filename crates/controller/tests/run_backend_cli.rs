@@ -4809,6 +4809,44 @@ fn no_grant_unsafe_leaf_holds_without_mutation() {
 
 #[test]
 #[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
+fn no_grant_off_placement_and_own_scope_never_reclaim() {
+    // Any host other than the first-cut placement is refused before dispatch, so
+    // a grantless scratch decision can never be reached for it.
+    let mut f = Fixture::no_grant_scratch();
+    let leaf = f.make_leaf();
+    fs::write(leaf.join("owned"), b"runner scratch bytes").unwrap();
+    let before = tree_snapshot(&leaf);
+    f.request.runtime.host_dependency.as_mut().unwrap().host = "sparky".into();
+    f.intent.request_digest = digest(&serde_json::to_vec(&f.request).unwrap());
+    let refused = f.submit();
+    assert_eq!(refused["kind"], "refused", "{refused}");
+    assert_eq!(refused["terminal"]["ending"], "refused", "{refused}");
+    assert!(!f.calls().contains("job submit "));
+    assert!(f.scratch_inputs().is_empty());
+    assert_eq!(tree_snapshot(&leaf), before);
+
+    // OwnScope without a recorded execution is never all stopped, so it holds
+    // before the scratch decision and its leaf is untouched.
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    let scratch = tempfile::tempdir().unwrap();
+    fs::set_permissions(scratch.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    f.use_scratch_root(scratch.path().to_owned());
+    f.scratch = Some(scratch);
+    assert_eq!(f.submit()["kind"], "accepted");
+    let leaf = f.make_leaf();
+    fs::write(leaf.join("owned"), b"runner scratch bytes").unwrap();
+    let before = tree_snapshot(&leaf);
+    f.events(&completed(256));
+    let frames = f.attach();
+    f.assert_scratch_held(&frames, false);
+    assert!(f.state().allocation_grant.is_none());
+    assert!(f.scratch_inputs().is_empty());
+    assert_eq!(tree_snapshot(&leaf), before);
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; execute through an admitted PrismaBuild action with --ignored"]
 fn no_grant_helper_refusals_hold_debt_and_dispatch() {
     let f = Fixture::no_grant_scratch();
     assert_eq!(f.submit()["kind"], "accepted");

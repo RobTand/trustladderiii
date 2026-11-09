@@ -311,9 +311,8 @@ sys.exit(0)
         print(f'collector_seconds={elapsed:.3f}', flush=True)
     if settings['mode'] in ('die-after-scratch-mkdir', 'die-before-allocation'):
         killed = json.loads((output / 'runner-killed-before-allocation.json').read_text())
-        process = output / 'action-process-status.json'
-        if process.exists():
-            assert json.loads(process.read_text())['returncode'] == -signal.SIGKILL
+        process = json.loads((output / 'action-process-status.json').read_text())
+        assert process['returncode'] == -signal.SIGKILL, process
         leaf = Path(settings['scratch'])
         info = leaf.lstat()
         assert killed['scratch_present'] and stat.S_ISDIR(info.st_mode)
