@@ -245,6 +245,46 @@ fn backend_error(error: backend::BackendError) -> Error {
 mod tests {
     use super::*;
 
+    /// PB-REMOVAL: without a selected Flux executor an attempt that carries worker tests is
+    /// refused before any execution profile is written; one without tests needs no executor.
+    #[test]
+    fn prismabuild_selection_refuses_to_bind_a_tests_attempt() {
+        let repo = crate::git_tests::Repo::new();
+        let root = repo.root.path();
+        let attempt = root.join("attempt-00000000");
+        fs::create_dir(&attempt).unwrap();
+        let retired = Selected(None);
+        let mut tests = json!({"worktree": repo.path, "inputs": {"tests": {
+            "image": format!("sha256:{}", "a".repeat(64)), "cpus": 1, "mem_gb": 2,
+            "execution": {"backend": "flux", "profile": attempt.join("execution.json")}}}});
+        let error = retired
+            .bind_attempt(
+                &mut tests,
+                &attempt,
+                &repo.delivery(),
+                &root.join("records/workers"),
+            )
+            .unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                Error::Invalid(message) if message.contains("execution_backend = 'flux'")
+            ),
+            "{error:?}"
+        );
+        assert!(!attempt.join("execution.json").exists());
+        let mut plain = json!({"worktree": repo.path, "inputs": {}});
+        retired
+            .bind_attempt(
+                &mut plain,
+                &attempt,
+                &repo.delivery(),
+                &root.join("records/workers"),
+            )
+            .unwrap();
+        assert!(matches!(retired.image(), Err(Error::Invalid(_))));
+    }
+
     #[test]
     fn worker_wait_rejects_other_attempt_checkout_generation_and_unrelated_suite() {
         let repo = crate::git_tests::Repo::new();
