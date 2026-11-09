@@ -431,6 +431,16 @@ pub struct GenerationReceiptInner {
     pub exit_code: ReplyZero,
 }
 
+/// Completed generation evidence only stands behind a passing native terminal. A typed
+/// failed generator reaches the maker as cant_meet, never as generation evidence.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+#[schemars(transform = reply_constant_schema)]
+pub enum GenerationReceiptEnding {
+    #[serde(rename = "passed")]
+    Value,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "generation_receipt")]
@@ -438,7 +448,7 @@ pub struct GenerationReceiptFields {
     pub backend: BackendTag,
     pub wait_reference: WorkerWaitReference,
     pub run_binding: RunBinding,
-    pub ending: Ending,
+    pub ending: GenerationReceiptEnding,
     pub artifact_sha256: ReplyText<5, 0, UNBOUNDED>,
     pub receipt_sha256: ReplyText<5, 0, UNBOUNDED>,
     pub output_manifest: ReplyText<5, 0, UNBOUNDED>,
@@ -1546,7 +1556,7 @@ pub const GENERATION_RECEIPT_ORDER: &[crate::render::ObjectOrder<'static>] = &[
     ("/properties/backend", &["type", "enum"]),
     ("/properties/wait_reference", &["type", "pattern"]),
     ("/properties/run_binding", &["$ref"]),
-    ("/properties/ending", &["type", "enum"]),
+    ("/properties/ending", &["const"]),
     ("/properties/artifact_sha256", &["type", "pattern"]),
     ("/properties/receipt_sha256", &["type", "pattern"]),
     ("/properties/output_manifest", &["type", "pattern"]),
