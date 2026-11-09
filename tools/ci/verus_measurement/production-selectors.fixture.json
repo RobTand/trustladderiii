@@ -1,10 +1,25 @@
 {
-  "source_head": "eb6aa3615c2827a84b92f4be043fafbc3ffa8ce5",
+  "source_head": "158cdf3dba7d43f5773267db030a01677f170c3d",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "59763e78bcd97bb04cb161183767b6969bd5392526d61d2009e52293deef6aa7",
-  "groups": 492,
-  "obligations": 684,
+  "source_sha256": "76a950da3de379cbe98d461cf8f699b9d25eae70c01bc05b2ebd9245de10dd9f",
+  "groups": 495,
+  "obligations": 687,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_transition_safety_unchanged_node",
+      "selector": "kernel::transition_safety#unchanged_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_transition_safety_lift_apply",
+      "selector": "kernel::transition_safety#lift_apply",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_transition_safety_lift_apply_none",
+      "selector": "kernel::transition_safety#lift_apply_none",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_handler_safety_distance_last_cmd",
       "selector": "kernel::handler_safety#distance_last_cmd",
