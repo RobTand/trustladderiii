@@ -73,7 +73,7 @@ def maker_request(tmp_path):
             "footprint": declared,
             "attempt": 1, "round": 0,
             "tests": {"image": "sha256:" + "a" * 64,
-                      "tools_path": "/mnt/shared/prismabuild-fleet/repo/tools"},
+                      "execution": {"backend": "flux", "profile": "/fixture/attempt/execution.json"}},
             "context_size": 1000,
         },
     }

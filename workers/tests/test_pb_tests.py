@@ -11,9 +11,10 @@ import subprocess
 import sys
 import pytest
 from pb_fixtures import call, submission  # noqa: F401
+from pb_fixtures import FLUX_EXECUTION, flux_settings, run_binding
 from pb_fixtures import supported_fake_runtime as supported_fake_runtime
 from tl3_harness.test_tool import SUMMARY_BYTES, Summary, infrastructure
-from tl3_workers.pb_tests import TestSettings, make_test_tool
+from tl3_workers.tests_tool import make_test_tool
 from tl3_workers.tools import Worktree
 
 from worker_process import IMAGE
@@ -22,63 +23,54 @@ from worker_process import NODE
 from worker_process import invoke
 from worker_process import prepare_base_submission
 from worker_process import reachable
-from worker_process import submitted
+
+
+def native_receipt(key=KEY):
+    """The receipt flux_execution.execute builds from the verified terminal."""
+    return {"backend": "flux", "wait_reference": key, "run_binding": run_binding(key),
+            "receipt_sha256": "b" * 64, "ending": "passed"}
 
 
 @pytest.mark.parametrize("outcome", ["passed", "failed", "error", "skipped"])
-def test_fake_submission_returns_outcomes_and_uses_only_test_action(submission, outcome):
+def test_fake_submission_returns_outcomes_and_uses_only_test_action(submission, supported_fake_runtime, outcome):
     summary = Summary()
     summary.add("tests/test_code.py::test_value", outcome, "fixture failure" if outcome == "failed" else "")
     result = call(submission, summary.result, ["tests/test_code.py::test_value"])
-    log = (submission[1] / "action.log").read_bytes()
-    expected = {**summary.result, "action_key": KEY, "receipts": [{
-        "action_key": KEY, "status": "executed", "exit_code": 0, "receipt_sha256": "b" * 64,
-        "log_sha256": hashlib.sha256(log).hexdigest()}], "tree": (submission[1] / "tree.txt").read_text()}
+    expected = {**summary.result, "wait_reference": KEY, "receipts": [native_receipt()],
+                "tree": (submission[1] / "tree.txt").read_text()}
     if outcome in ("failed", "error"):
         summary.result["tests"][0].update(classification="unverified", base_outcome="unverified")
         expected["base"] = {key: value for key, value in infrastructure(
             "The role did not supply a check base and checkout.").items() if key != "tests"}
     assert result == expected
-    args = json.loads((submission[1] / "submitted.json").read_text())
-    assert "--detach" in args and "--anywhere" in args
-    environment = [args[index + 1] for index, arg in enumerate(args) if arg == "--env"]
-    from tl3_harness.scratch import environment as scratch_environment
-    expected_env = {**scratch_environment(), 'OMP_NUM_THREADS': '1', 'MKL_NUM_THREADS': '1', 'OPENBLAS_NUM_THREADS': '1'}
-    assert dict(item.split('=', 1) for item in environment) == expected_env
-    assert "--timeout-s" not in args
-    assert args[args.index("--container-image") + 1] == IMAGE
-    assert args[args.index("--progress-phase") + 1] == "tests=120"
-    assert args[args.index("--cpus") + 1] == "1"
-    assert args[args.index("--demand") + 1] == "mem_gb=2"
-    assert args[args.index("--") + 1:] == ["python3", "-I", "-B", "action.py", IMAGE,
-                                         '["tests/test_code.py::test_value"]']
-    assert json.loads((submission[1] / "waited.json").read_text()) == ["--endings", "--until", "cleaned", KEY]
+    [prepared] = supported_fake_runtime.prepared
+    document = prepared["document"]
+    assert document["op"] == "prepare" and document["generator"] is False
+    assert document["profile"] == FLUX_EXECUTION["profile"]
+    assert document["image"] == IMAGE
+    assert (document["cpus"], document["mem_gb"], document["parallel"]) == (1, 2, 0)
+    assert document["quiet_seconds"] == 120
+    assert document["walltime_seconds"] == 86400, "no per-call timeout was requested"
+    assert document["arguments"] == ['["tests/test_code.py::test_value"]']
+    assert supported_fake_runtime.submitted == [KEY] and supported_fake_runtime.attached == [KEY]
 
 
-@pytest.mark.parametrize("schema", ["prismabuild.submission.v1", "prismaquant.prismabuild.pbrun_detach.v1"])
-def test_published_submission_schemas(submission, schema):
-    script = submission[1] / "pbrun.py"
-    script.write_text(script.read_text().replace("prismabuild.submission.v1", schema))
+def test_whole_suite(submission, supported_fake_runtime):
     assert call(submission, Summary().result)["status"] == "completed"
+    [prepared] = supported_fake_runtime.prepared
+    assert prepared["document"]["arguments"] == ["[]"]
 
 
-def test_whole_suite(submission):
-    assert call(submission, Summary().result)["status"] == "completed"
-    args = json.loads((submission[1] / "submitted.json").read_text())
-    assert args[-1] == "[]"
-
-
-@pytest.mark.parametrize("override", [
-    {"status": "failed", "succeeded": False, "exit_code": 137},
-    {"action_key": "c" * 64},
-    {"result": {"verified": False}},
-    {"result": {"verified": True, "receipt_sha256": None}},
-])
-def test_fake_infrastructure_failure_is_never_a_test_failure(submission, override):
-    result = call(submission, Summary().result, override=override)
+@pytest.mark.parametrize("ending", ["failed", "refused", "infra-lost", "cancelled", "unknown"])
+def test_fake_infrastructure_failure_is_never_a_test_failure(submission, supported_fake_runtime, ending):
+    if ending == "unknown":
+        supported_fake_runtime.observation = lambda key: {"kind": "unknown"}
+    else:
+        supported_fake_runtime.ending = ending
+    result = call(submission, Summary().result)
     assert result["status"] == "infrastructure_error"
     assert result["tests"] == [] and sum(result["totals"].values()) == 0
-    assert result["action_key"] == KEY
+    assert result["wait_reference"] == KEY
 
 
 def test_reported_container_failure_is_infrastructure(submission):
@@ -87,10 +79,20 @@ def test_reported_container_failure_is_infrastructure(submission):
     assert result["message"] == "Container failed."
 
 
-def test_submission_failure(submission):
-    (submission[1] / "pbrun.py").write_text('raise SystemExit(1)\n')
-    assert call(submission, Summary().result)["status"] == "infrastructure_error"
-    assert not (submission[1] / "waited.json").exists()
+def test_submission_failure(submission, supported_fake_runtime, monkeypatch):
+    from tl3_workers.reply_check import ReplyCheckInfrastructureError
+    original = supported_fake_runtime.control
+
+    def refuse(document):
+        if document["op"] == "prepare":
+            raise ReplyCheckInfrastructureError("fixture prepare refusal")
+        return original(document)
+    from tl3_workers import flux_execution
+    monkeypatch.setattr(flux_execution, "control", refuse)
+    # A refused preparation exits the worker for controller-owned recovery, never a test verdict.
+    with pytest.raises(ReplyCheckInfrastructureError, match="fixture prepare refusal"):
+        call(submission, Summary().result)
+    assert supported_fake_runtime.submitted == [] and supported_fake_runtime.attached == []
 
 
 def test_fixed_summary_cap_with_escaped_unicode_and_many_tests(submission):
@@ -106,12 +108,12 @@ def test_fixed_summary_cap_with_escaped_unicode_and_many_tests(submission):
 
 @pytest.mark.parametrize("tests", [["/etc/passwd"], ["../test.py"], ["-c"], [".git/test.py"],
                                     ["tests/../../test.py"], ["test.py\x00"], ["C:\\test.py"]])
-def test_selectors_reject_options_and_escape_without_submission(submission, tests):
+def test_selectors_reject_options_and_escape_without_submission(submission, supported_fake_runtime, tests):
     with Worktree(submission[0]) as tree:
-        tool = make_test_tool(tree, TestSettings(IMAGE, submission[1]))
+        tool = make_test_tool(tree, flux_settings())
         with pytest.raises(ValueError):
             tool(tests)
-    assert not (submission[1] / "submitted.json").exists()
+    assert not supported_fake_runtime.prepared and not supported_fake_runtime.submitted
 
 
 def test_missing_settings_is_explicit(submission):
@@ -131,49 +133,55 @@ def test_harness_inside_role_worktree_is_refused(submission, monkeypatch):
     assert not (submission[1] / "submitted.json").exists()
 
 
-@pytest.mark.parametrize("response", ["[]", "null", "not json"])
-@pytest.mark.parametrize("script", ["pbrun.py", "pbwait.py"])
-def test_malformed_prismabuild_response_is_infrastructure(submission, response, script):
-    (submission[1] / script).write_text("print(" + repr(response) + ")\n")
-    result = call(submission, Summary().result)
-    assert result["status"] == "infrastructure_error"
-    assert sum(result["totals"].values()) == 0
+@pytest.mark.parametrize("response", [b"[]", b"null", b"not json"])
+def test_malformed_flux_payload_is_infrastructure(submission, supported_fake_runtime, response):
+    def malform(payload):
+        path = Path(payload["summary"]["path"])
+        path.write_bytes(response)
+        payload["summary"].update(bytes=len(response), sha256=hashlib.sha256(response).hexdigest())
+    supported_fake_runtime.on_payload = malform
+    if response == b"not json":
+        result = call(submission, Summary().result)
+        assert result["status"] == "infrastructure_error"
+        assert sum(result["totals"].values()) == 0
+    else:
+        # A non-object summary never yields a verdict (payload-summary root-* vectors).
+        with pytest.raises(AttributeError):
+            call(submission, Summary().result)
 
 
 @pytest.mark.durability
-def test_wait_is_declared_before_blocking_and_on_reattach(submission, monkeypatch):
-    from tl3_workers import pb_tests
-
-    root, scripts = submission
-    (scripts / "response.json").write_text(json.dumps(Summary().result))
-    original = pb_tests._json_command
+def test_wait_is_declared_before_blocking_and_on_reattach(submission, supported_fake_runtime):
+    root, state = submission
+    (state / "response.json").write_text(json.dumps(Summary().result))
     events = []
-    waits = 0
+    observations = []
 
-    def command(args):
-        nonlocal waits
-        if args[1].endswith("pbwait.py"):
-            waits += 1
-            assert events[-1] == {"event": "progress", "unit": "external_wait",
-                                  "wait": {"upstream": "prismabuild", "key": KEY}}
-            if waits == 1:
-                return 124, {"schema": "prismabuild.endings.v1", "complete": False,
-                             "endings": [{"action_key": KEY, "status": "waiting",
-                                          "progress_observation": {"accepted_count": 7}}]}
-        return original(args)
-
-    monkeypatch.setattr(pb_tests, "_json_command", command)
+    def observe(key):
+        assert events[-1] == {"event": "progress", "unit": "external_wait",
+                              "wait": {"upstream": "flux", "key": KEY}}
+        observations.append(key)
+        if len(observations) == 1:
+            return {"kind": "unknown"}
+        return {"kind": "terminal", "binding": run_binding(key),
+                "terminal": {"ending": "passed", "reason": "exited", "receipt": {"sha256": "b" * 64}}}
+    supported_fake_runtime.observation = observe
     with Worktree(root) as tree:
         tree.progress_emit = events.append
-        result = make_test_tool(tree, TestSettings(IMAGE, scripts))()
+        tool = make_test_tool(tree, flux_settings())
+        first = tool()
+        assert first["status"] == "infrastructure_error" and first["wait_reference"] == KEY
+        result = tool()
     assert result["status"] == "completed"
-    assert waits == 2
+    assert observations == [KEY, KEY]
+    assert supported_fake_runtime.submitted == [KEY], "the retained binding is reattached, never resubmitted"
+    assert supported_fake_runtime.resumed == [KEY]
     assert len(events) == 2
     assert events[0] == events[1]
 
 
-def test_maker_staged_submission_retains_checkout_parent(submission):
-    root, scripts = submission
+def test_maker_staged_submission_retains_checkout_parent(submission, supported_fake_runtime):
+    root, state = submission
 
     def git(*args):
         return subprocess.check_output([
@@ -186,30 +194,29 @@ def test_maker_staged_submission_retains_checkout_parent(submission):
     git("commit", "--quiet", "-m", "Maker base")
     parent = git("rev-parse", "HEAD")
     before = git("status", "--porcelain")
-    script = scripts / "pbrun.py"
-    script.write_text(script.read_text().replace(
-        '(here / "submitted.json").write_text(json.dumps(args))',
-        'import subprocess\n'
-        'parent = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()\n'
-        '(here / "parent").write_text(parent)\n'
-        'shallow = subprocess.check_output(["git", "rev-parse", "--is-shallow-repository"], cwd=root, text=True).strip()\n'
-        '(here / "shallow").write_text(shallow)\n'
-        '(here / "submitted.json").write_text(json.dumps(args))',
-    ))
-    (scripts / "response.json").write_text(json.dumps(Summary().result))
+    job = supported_fake_runtime.job
+
+    def record(staged, document):
+        (state / "parent").write_text(subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=staged, text=True).strip())
+        (state / "shallow").write_text(subprocess.check_output(
+            ["git", "rev-parse", "--is-shallow-repository"], cwd=staged, text=True).strip())
+        return job(staged, document)
+    supported_fake_runtime.job = record
+    (state / "response.json").write_text(json.dumps(Summary().result))
     with Worktree(root) as tree:
         tree.test_checkout = root
-        result = make_test_tool(tree, TestSettings(IMAGE, scripts))()
+        result = make_test_tool(tree, flux_settings())()
     assert result["status"] == "completed"
-    assert (scripts / "parent").read_text() == parent, "the action must belong to the maker checkout"
-    assert (scripts / "shallow").read_text() == "false", "PrismaBuild requires complete snapshot history"
+    assert (state / "parent").read_text() == parent, "the run must belong to the maker checkout"
+    assert (state / "shallow").read_text() == "false", "the snapshot needs complete history"
     assert git("rev-parse", "HEAD") == parent
     assert git("status", "--porcelain") == before
     assert (root / "uncommitted.py").read_bytes() == b"current dirty bytes\x00\xff"
 
 
 def test_staging_git_uses_closed_protocol_policy(submission, monkeypatch, tmp_path):
-    from tl3_workers import pb_tests
+    from tl3_workers import tests_tool
     original = subprocess.run
     policies = []
 
@@ -226,18 +233,18 @@ def test_staging_git_uses_closed_protocol_policy(submission, monkeypatch, tmp_pa
     monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
     monkeypatch.setenv("GIT_CONFIG_KEY_0", "protocol.allow")
     monkeypatch.setenv("GIT_CONFIG_VALUE_0", "always")
-    monkeypatch.setattr(pb_tests.subprocess, "run", run)
+    monkeypatch.setattr(tests_tool.subprocess, "run", run)
     staged = tmp_path / "input"
     staged.mkdir()
     with Worktree(submission[0]) as tree:
-        pb_tests._stage(tree, staged)
+        tests_tool._stage(tree, staged)
     assert policies and all(policy == b"never" for policy in policies), policies
 
 
 @pytest.mark.parametrize("mode", [0o755, 0o664, 0o600, 0o700, 0o777, 0o750, 0o4750, 0o610])
 def test_staging_modes_match_commit_export(submission, tmp_path, mode):
     from tl3_harness.trees import export
-    from tl3_workers.pb_tests import _stage
+    from tl3_workers.tests_tool import _stage
 
     _, _, _, git = prepare_base_submission(submission)
     source = submission[0] / "script"
@@ -268,42 +275,41 @@ def test_staging_modes_match_commit_export(submission, tmp_path, mode):
     assert indexed.startswith(b"100755" if mode & 0o100 else b"100644")
 
 
-def test_default_submission_keeps_its_action_identity(submission):
+def test_default_submission_keeps_its_action_identity(submission, supported_fake_runtime):
     summary = Summary()
     summary.add("tests/test_code.py::test_value", "passed")
     invoke(submission, summary.result, {"tests": ["tests/test_code.py::test_value"]})
-    args = submitted(submission)
-    assert "--priority" not in args
-    action = args[args.index("--") + 1:]
-    assert "--repeat" not in action and "--parallel" not in action and "--fresh" not in action
+    [prepared] = supported_fake_runtime.prepared
+    assert prepared["document"]["arguments"] == ['["tests/test_code.py::test_value"]']
+    assert prepared["document"]["parallel"] == 0
 
 
-def test_repeat_parallel_and_priority_reach_the_action_and_reservation(submission):
-    # #408: five fresh runs, one xdist run, at the request's priority.
+def test_repeat_and_parallel_reach_the_action_and_reservation(submission, supported_fake_runtime):
+    # #408: five fresh runs and one xdist run.
     summary = Summary()
     summary.add("tests/test_code.py::test_value", "passed")
     invoke(submission, summary.result, {"tests": ["tests/test_code.py::test_value"],
                                         "repeat": 5, "parallel": 2, "priority": -10})
-    args = submitted(submission)
-    assert args[args.index("--priority") + 1] == "-10"
-    assert args[args.index("--cpus") + 1] == "2", "each xdist worker reserves a core"
-    assert args[args.index("--demand") + 1] == "mem_gb=4"
-    action = args[args.index("--") + 1:]
+    [prepared] = supported_fake_runtime.prepared
+    document = prepared["document"]
+    assert document["parallel"] == 2, "the backend reserves a core per xdist worker"
+    assert (document["cpus"], document["mem_gb"]) == (1, 2)
+    action = document["arguments"]
     assert action[action.index("--repeat") + 1] == "5"
     assert action[action.index("--parallel") + 1] == "2"
-    assert "--timeout-s" not in args, "repeat stays inside PrismaBuild's progress contract"
+    assert document["walltime_seconds"] == 86400, "repeat stays inside the backend's progress contract"
 
 
 @pytest.mark.parametrize("arguments", [
     {"repeat": 0}, {"repeat": 11}, {"repeat": True}, {"parallel": 1}, {"parallel": 5},
     {"priority": 1}, {"priority": -11},
 ])
-def test_options_are_bounded(submission, arguments):
+def test_options_are_bounded(submission, supported_fake_runtime, arguments):
     with Worktree(submission[0]) as tree:
-        tool = make_test_tool(tree, TestSettings(IMAGE, submission[1]))
+        tool = make_test_tool(tree, flux_settings())
         with pytest.raises(ValueError, match="repeat|parallel|priority"):
             tool(**arguments)
-    assert not (submission[1] / "submitted.json").exists()
+    assert not supported_fake_runtime.prepared and not supported_fake_runtime.submitted
 
 
 def test_results_carry_receipts(submission):
@@ -311,173 +317,89 @@ def test_results_carry_receipts(submission):
     summary.add("tests/test_code.py::test_value", "passed")
     result, tree = invoke(submission, summary.result, {"tests": ["tests/test_code.py::test_value"],
                                                       "repeat": 2})
-    log = (submission[1] / "action.log").read_bytes()
-    assert result["receipts"] == [{
-        "action_key": KEY, "status": "executed", "exit_code": 0,
-        "receipt_sha256": "b" * 64,
-        "log_sha256": hashlib.sha256(log).hexdigest(),
-    }]
-    # The maker cites them and the reviewer sees them, bound to the tree PrismaBuild ran (#432).
+    assert result["receipts"] == [native_receipt()]
+    # The maker cites them and the reviewer sees them, bound to the tree the backend ran (#432).
     evidence = tree.evidence.test_evidence()
     staged = (submission[1] / "tree.txt").read_text()
     assert re.fullmatch("[0-9a-f]{40}|[0-9a-f]{64}", staged)
     assert evidence == [{"tests": ["tests/test_code.py::test_value"], "base": False,
-                         "repeat": 2, "parallel": 0, "status": "completed", "tree": staged, "fresh": True,
+                         "repeat": 2, "parallel": 0, "status": "completed", "tree": staged,
                          "totals": summary.result["totals"], "receipts": result["receipts"]}]
     restored = type(tree.evidence)()
     restored.restore(tree.evidence.state())
     assert restored.test_evidence() == evidence
 
 
-def test_repeated_runs_are_never_served_from_the_cache(submission):
-    # #432: each repeat>1 call is its own action, so PrismaBuild cannot replay a stored result.
+def test_repeated_runs_are_never_served_from_the_cache(submission, supported_fake_runtime):
+    # #432: each run_tests call is its own run with its own binding; nothing replays a stored result.
     summary = Summary()
     summary.add("tests/test_code.py::test_value", "passed")
-    nonces = []
-    for _ in range(2):
-        invoke(submission, summary.result, {"tests": ["tests/test_code.py::test_value"], "repeat": 2})
-        action = submitted(submission)[submitted(submission).index("--") + 1:]
-        nonces.append(action[action.index("--fresh") + 1])
-    assert nonces[0] != nonces[1] and all(re.fullmatch("[0-9a-f]{32}", nonce) for nonce in nonces)
-
-
-def test_a_cache_hit_is_marked_as_not_fresh(submission):
-    summary = Summary()
-    summary.add("tests/test_code.py::test_value", "passed")
-    (submission[1] / "override.json").write_text(json.dumps({"status": "cache_hit"}))
-    result, tree = invoke(submission, summary.result, {"tests": ["tests/test_code.py::test_value"]})
-    assert result["receipts"][0]["status"] == "cache_hit"
-    [entry] = tree.evidence.test_evidence()
-    assert entry["fresh"] is False
+    results = [invoke(submission, summary.result, {"tests": ["tests/test_code.py::test_value"], "repeat": 2})[0]
+               for _ in range(2)]
+    keys = [item["key"] for item in supported_fake_runtime.prepared]
+    assert len(keys) == 2 and keys[0] != keys[1]
+    assert [result["wait_reference"] for result in results] == keys
+    assert supported_fake_runtime.submitted == keys
 
 
 @pytest.mark.parametrize("parallel", [0, 2])
-def test_configured_demand_reaches_maker_head_and_base_actions(submission, monkeypatch, parallel):
-    from tl3_workers import pb_tests
-    commands = []
-    original = pb_tests._json_command
-    def command(args):
-        if "--cwd" in args:
-            commands.append(args)
-        return original(args)
-    monkeypatch.setattr(pb_tests, "_json_command", command)
+def test_configured_demand_reaches_maker_head_and_base_actions(submission, supported_fake_runtime, parallel):
     root, scripts = submission
     base, _, _, _ = prepare_base_submission(submission, head_value="broken")
     with Worktree(root) as tree:
-        tree.test_settings = TestSettings(IMAGE, scripts, cpus=4, mem_gb=12)
+        tree.test_settings = flux_settings(cpus=4, mem_gb=12)
         tree.check_base_sha = base
         tree.test_checkout = root
         result = make_test_tool(tree)(["test_code.py::test_value"], parallel=parallel)
     assert result["status"] == "completed"
-    assert len(commands) == 2, "head failure automatically submits the base"
-    for index, args in enumerate(commands):
-        assert args[args.index("--cpus") + 1] == "4"
-        assert args[args.index("--demand") + 1] == f"mem_gb={12 * (max(1, parallel) if index == 0 else 1)}"
-        for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
-            assert f"{name}={max(1, 4 // parallel) if parallel and index == 0 else 4}" in args
+    documents = [item["document"] for item in supported_fake_runtime.prepared]
+    assert len(documents) == 2, "head failure automatically submits the base"
+    for index, document in enumerate(documents):
+        assert (document["cpus"], document["mem_gb"]) == (4, 12)
+        assert document["parallel"] == (parallel if index == 0 else 0)
 
 
-def test_oom_retains_allowlisted_failure_receipt(submission):
-    result = call(submission, Summary().result, override={
-        "status": "failed", "succeeded": False, "exit_code": 137,
-        "reason": "memory_limit_oom",
-        "diagnostics": {"termination_reason": "memory_limit_oom",
-                        "resource_profile": {"scope": {"memory_peak_bytes": 2147483648}},
-                        "admission_private": "never retain"},
-    })
-    assert result["status"] == "infrastructure_error"
-    receipt = result["receipts"][0]
-    assert receipt == {"action_key": KEY, "status": "failed", "exit_code": 137,
-                       "termination_reason": "memory_limit_oom", "memory_peak_bytes": 2147483648}
-    assert "memory_limit_oom" in result["message"]
-
-
-@pytest.mark.parametrize("publication, recorded_key, expected", [
-    (123, KEY, True), (122, KEY, False), (123, "c" * 64, False),
-])
-def test_legacy_ending_retains_only_matching_publication_oom(submission, publication, recorded_key, expected):
-    # pbwait currently returns RC/peak but omits the exact termination reason.
-    root, scripts = submission
-    installed_tools = root.parent / "fleet/repo/tools"
-    installed_tools.mkdir(parents=True)
-    for name in ("pbrun.py", "pbwait.py"):
-        (installed_tools / name).write_text((scripts / name).read_text())
-    (installed_tools / "response.json").write_text(json.dumps(Summary().result))
-    (installed_tools / "override.json").write_text(json.dumps({
-        "status": "failed", "succeeded": False, "exit_code": None,
-        "reason": "action ended failed", "publication": {"published_unix": 123},
-        "diagnostics": {"returncode": 137,
-                        "resource_profile": {"scope": {"memory_peak_bytes": 2147483648}}},
-    }))
-    failed = root.parent / "fleet/pb-queue/failed"
-    failed.mkdir(parents=True)
-    (failed / f"{KEY}.json").write_text(json.dumps({
-        "action_key": recorded_key, "published_unix": publication,
-        "detail": {"termination_reason": "memory_limit_oom", "private": "not copied"},
-    }))
-    with Worktree(root) as tree:
-        result = make_test_tool(tree, TestSettings(IMAGE, installed_tools))()
-    assert result["status"] == "infrastructure_error"
-    receipt = result["receipts"][0]
-    assert receipt["exit_code"] == 137
-    assert receipt["memory_peak_bytes"] == 2147483648
-    assert (receipt.get("termination_reason") == "memory_limit_oom") is expected
-    assert "private" not in json.dumps(result)
-
-
-@pytest.mark.durability
-def test_sigkill_without_oom_reason_is_not_classified_as_oom(submission):
-    result = call(submission, Summary().result, override={
-        "status": "failed", "succeeded": False, "exit_code": 137,
-        "reason": "action ended failed",
-    })
-    assert result["receipts"] == [{"action_key": KEY, "status": "failed", "exit_code": 137}]
-    assert "memory_limit_oom" not in result["message"]
-
-
-@pytest.mark.parametrize('reason', ['timeout', 'no_progress', 'cancelled', 'lease_lost'])
-def test_failure_receipts_preserve_terminal_reason_without_inventing_test_start(submission, reason):
-    result = call(submission, Summary().result, ['tests/test_owned.py::test_hang'], override={
-        'status': 'failed', 'succeeded': False, 'exit_code': None,
-        'diagnostics': {'termination_reason': reason, 'private': 'never retain'},
-    })
+@pytest.mark.parametrize('ending', ['failed', 'refused', 'infra-lost', 'cancelled'])
+def test_failed_runs_keep_their_binding_without_inventing_test_start(submission, supported_fake_runtime, ending):
+    supported_fake_runtime.ending = ending
+    result = call(submission, Summary().result, ['tests/test_owned.py::test_hang'])
     assert result['status'] == 'infrastructure_error'
-    assert result['receipts'][0].get('termination_reason') == reason, result
-    assert result.get('execution', {}).get('outcome') == 'unknown_incomplete', result
+    assert result['wait_reference'] == KEY
+    assert result.get('execution', {}).get('outcome') == 'transport_failure', result
+    assert result['execution']['phase'] == 'retrieval'
     assert result['execution']['test_started'] is False
     assert result['selectors'] == ['tests/test_owned.py::test_hang']
-    assert 'private' not in json.dumps(result)
+    assert 'receipts' not in result, 'a run without a verified completed report has no test receipt'
 
 
 @pytest.mark.parametrize('change', ['input', 'selectors', 'contract', 'identical'])
 @pytest.mark.durability
-def test_reattach_checks_staged_input_selection_and_execution_contract(submission, monkeypatch, change):
-    from tl3_workers import pb_tests
+def test_reattach_checks_staged_input_selection_and_execution_contract(submission, supported_fake_runtime, change):
     root, scripts = submission
     (scripts / 'response.json').write_text(json.dumps(Summary().result))
     calls = []
-    original = pb_tests._json_command
     with Worktree(root) as tree:
-        tool = make_test_tool(tree, TestSettings(IMAGE, scripts))
+        tool = make_test_tool(tree, flux_settings())
         tree.pb_submitted = lambda key, base, staged: calls.append(
-            {'key': key, 'tree': staged, 'identity': getattr(tree, 'pb_identity', None)})
+            {'key': key, 'tree': staged, 'identity': getattr(tree, 'pb_identity', None), 'base': base})
         tool(['test_one.py::test_one'])
         saved = calls[-1]
         assert saved['identity'], 'checkpoint must bind the input and trusted executor contract'
-        tree.pb_reattach = {False: saved}
+        tree.pb_reattach = {False: {**saved, 'backend': 'flux'}}
         if change == 'input':
             (root / 'test_one.py').write_text('def test_one():\n    assert True\n')
         if change == 'contract':
-            tool = make_test_tool(tree, TestSettings(IMAGE, scripts, quiet_seconds=60))
-        def command(args):
-            if args[1].endswith('pbrun.py') and change == 'identical':
-                pytest.fail('identical interrupted execution must reattach')
-            return original(args)
-        monkeypatch.setattr(pb_tests, '_json_command', command)
-        tool(['test_two.py::test_two'] if change == 'selectors' else ['test_one.py::test_one'])
-    assert len(calls) == (1 if change == 'identical' else 2)
-    if change != 'identical':
-        assert calls[-1]['identity'] != saved['identity']
+            tool = make_test_tool(tree, flux_settings(quiet_seconds=60))
+        result = tool(['test_two.py::test_two'] if change == 'selectors' else ['test_one.py::test_one'])
+    assert len(calls) == 1, 'a retained binding is never replaced by a new submission'
+    if change == 'identical':
+        assert result['status'] == 'completed'
+        assert supported_fake_runtime.resumed == [saved['key']]
+    else:
+        assert result['status'] == 'infrastructure_error'
+        assert result['execution']['termination_reason'] == 'checkpoint_identity_changed'
+        assert result['wait_reference'] == saved['key']
+        assert supported_fake_runtime.resumed == []
 
 
 def test_owned_timeout_receipt_cannot_validate_a_q50_blocker(submission):
@@ -490,7 +412,7 @@ def test_owned_timeout_receipt_cannot_validate_a_q50_blocker(submission):
     result = call(submission, summary.result, ['tests/test_owned.py::test_hang'])
     evidence = Evidence()
     evidence.test_result(result, (False, ('tests/test_owned.py::test_hang',)))
-    assert not evidence.cites({'action_key': KEY})
+    assert not evidence.cites({'wait_reference': KEY})
     assert result['totals']['failed'] == 0 and result['totals']['error'] == 1
     assert result['receipts'][0]['receipt_sha256'] == 'b' * 64
     assert 'base' not in result, 'a hang has no assertion outcome to compare or retry'
@@ -524,7 +446,7 @@ def test_oversized_incomplete_report_cannot_become_q50_evidence(submission, monk
     result = call(submission, summary, selected)
     evidence = Evidence()
     evidence.test_result(result, (False, tuple(selected)))
-    assert not evidence.cites({'action_key': KEY}), result
+    assert not evidence.cites({'wait_reference': KEY}), result
     assert result['status'] == 'infrastructure_error'
     assert result['origin'] == 'test_run'
     assert result['execution'] == {'outcome': 'unknown_incomplete', 'phase': 'unknown',
@@ -536,14 +458,20 @@ def test_oversized_incomplete_report_cannot_become_q50_evidence(submission, monk
 
 
 @pytest.mark.parametrize('stage', ['admission', 'retrieval'])
-def test_transport_failure_has_typed_diagnostic_and_no_test_verdict(submission, monkeypatch, stage):
-    from tl3_workers import pb_tests
-    original = pb_tests._json_command
-    def command(args):
-        if args[1].endswith('pbrun.py' if stage == 'admission' else 'pbwait.py'):
+def test_transport_failure_has_typed_diagnostic_and_no_test_verdict(submission, supported_fake_runtime, monkeypatch, stage):
+    if stage == 'admission':
+        original = supported_fake_runtime.control
+
+        def control(document):
+            if document['op'] == 'activation':
+                raise OSError('transport fixture')
+            return original(document)
+        from tl3_workers import flux_execution
+        monkeypatch.setattr(flux_execution, 'control', control)
+    else:
+        def observe(key):
             raise OSError('transport fixture')
-        return original(args)
-    monkeypatch.setattr(pb_tests, '_json_command', command)
+        supported_fake_runtime.observation = observe
     result = call(submission, Summary().result, ['tests/test_owned.py::test_hang'])
     assert result['status'] == 'infrastructure_error'
     assert result.get('execution', {}).get('outcome') == 'transport_failure', result
@@ -690,7 +618,7 @@ def test_stderr_raw_boundary_keeps_section_context_before_redaction(context_kind
         failure.log()
         output = capsys.readouterr().out
         assert 'TL3_EXECUTION_FAILURE ' in output
-        assert secret not in output, 'later raw cut re-exposed a redacted secret in the PB log'
+        assert secret not in output, 'later raw cut re-exposed a redacted secret in the operator log'
         assert secret not in json.dumps(diagnostic), 'later raw cut replaced redaction with a secret'
         assert secret not in Redactor(None).text(json.dumps(diagnostic))
         assert diagnostic['stderr_tail'] == 'stderr withheld: redaction context lost'
@@ -740,14 +668,14 @@ def test_new_stderr_secret_after_context_eviction(context_kind, monkeypatch, cap
 @pytest.mark.parametrize('role', ['planner', 'maker'])
 def test_proof_refusal_keeps_shared_rule_data(submission, monkeypatch, role):
     from tl3_harness.model import ProofRefusal
-    from tl3_workers import pb_tests
+    from tl3_workers import tests_tool
     root, scripts = submission
     def refused(*args, **kwargs):
         assert kwargs['role'] == role
         raise ProofRefusal('proof.observer.module_missing', module='tests/test_missing.py', role=role, field='/checks/0/tests/0')
-    monkeypatch.setattr(pb_tests, '_stage', refused)
+    monkeypatch.setattr(tests_tool, '_stage', refused)
     with Worktree(root) as tree:
-        result = make_test_tool(tree, TestSettings(IMAGE, scripts), role=role)(['tests/test_missing.py::test_value'])
+        result = make_test_tool(tree, flux_settings(), role=role)(['tests/test_missing.py::test_value'])
     data = result['proof_refusal']
     assert result['status'] == 'not_available'
     assert data['rule'] == 'proof.observer.module_missing'

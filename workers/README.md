@@ -142,8 +142,8 @@ test actions and the environment evidence a blocked reply cites (Q50).
 A rerun resumes from the last complete tool result and keeps that state. A
 checkpoint that fails to decode, has the wrong shape or has another version
 starts the visit afresh with a fixed stderr note. run_tests records each
-PrismaBuild key as soon as pbrun returns. If the visit stopped during that call, the
-rerun waits on the same action and uses its result as the tool result, so the
+run's wait reference before it submits the run. If the visit stopped during that call, the
+rerun reattaches to the same run and uses its result as the tool result, so the
 model cannot submit it twice. Any other interrupted call is dropped, and the
 model is told it may have run. A dropped-call retry keeps the final-answer
 reserve. A repair prompt keeps at most 2 KB of a validation message.
@@ -172,11 +172,11 @@ startup, middleware hooks and elapsed time do not produce progress events.
 An outside job declares its owner and durable key before blocking:
 
 ```json
-{"event":"progress","unit":"external_wait","wait":{"upstream":"prismabuild","key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
+{"event":"progress","unit":"external_wait","wait":{"upstream":"flux","key":"worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
 ```
 
-`run_tests` emits this event after submission and on each reattachment to
-`pbwait`. A declaration does not count as agent work. The next `model_turn` or
+`run_tests` and `run_generator` emit this event before each attach to the run,
+including a reattachment. A declaration does not count as agent work. The next `model_turn` or
 `tool_result` clears it. Only `prismabuild` has a record reader today. Its keys
 require 64 lowercase hexadecimal digits. Unknown owners cannot grant liveness.
 
@@ -191,9 +191,9 @@ remain outages.
 
 Maker looks use the served checkout, including after recovery or a `RunFailed`
 retry. The private `run_tests` input retains that checkout's HEAD as its parent.
-PrismaBuild seals the staged files above that parent without changing the maker's
+The run's snapshot seals the staged files above that parent without changing the maker's
 HEAD, index or files. The staged input fetches the checkout's full history,
-because PrismaBuild's snapshot needs it, so every `run_tests` copies that
+because that snapshot needs it, so every `run_tests` copies that
 history. Its Git commands run with a fixed environment that inherits nothing
 from the worker's, so no `GIT_*` setting or hook can change what gets staged.
 
@@ -381,7 +381,7 @@ For example, to add `planner`:
    1's `model_turn` and `tool_result` progress events. The runtime validates the
    returned reply and emits the version 1 reply event. Maker uses this hook to
    check context usage and commit after checking its proposal.
-3. Add the role's tests in its own test module. Run them through PrismaBuild.
+3. Add the role's tests in its own test module. Run them as Bazel tests on BuildBuddy.
    `test_discovered_roles_have_prompts_and_schemas_without_orphans` checks every
    discovered role's packaged resources and rejects orphan schema files.
 
@@ -475,8 +475,8 @@ The maker's delete tool removes only existing regular files in its footprint and
 refuses protected, generated and reserved paths, directories and symlinks.
 No role can declare shell, general network or delegation tools. The model
 transport still connects to the configured proxy. The `TOOL_FACTORIES` table
-supplies PrismaBuild tests and read-only Hindsight recall without changing
-`build_tools` or file confinement. Tests submit admitted work through PrismaBuild.
+supplies the admitted test runner and read-only Hindsight recall without changing
+`build_tools` or file confinement. Tests submit admitted runs through the Flux run backend.
 
 Maker commits in worker code with hooks disabled and no inherited Git overrides
 or user or system Git configuration. An agent-written `.gitattributes` can name
@@ -494,24 +494,10 @@ protocol field, CLI flag or environment switch. The fake never reads a key.
 Tests deny socket connections and DNS in both parent and child. All key files
 created by tests contain fixture text.
 
-Run from a clean commit through PrismaBuild. For example, from the repo root:
-
-```bash
-python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
-  --cwd "$PWD/workers" --anywhere --cpus 2 --demand mem_gb=4 --priority -10 \
-  --env PATH=/home/rob/.local/bin:/usr/local/bin:/usr/bin:/bin \
-  --env OMP_NUM_THREADS=1 --env MKL_NUM_THREADS=1 --env OPENBLAS_NUM_THREADS=1 \
-  --env UV_CONCURRENT_DOWNLOADS=2 --env UV_CONCURRENT_BUILDS=2 \
-  --env CARGO_BUILD_JOBS=2 \
-  --env LANGSMITH_TRACING=false --env LANGCHAIN_TRACING_V2=false \
-  --detach -- /home/rob/.local/bin/uv run --locked --no-editable --python 3.14+gil pytest -q
-```
-
-The first run downloads dependencies from PyPI before the tests start.
-`--no-editable` installs the worker wheel, so the tests also check its packaged
-schemas and prompts.
-Use the published `pbwait.py` to wait for the action key, then inspect its
-terminal record, logs and CAS receipt. An acknowledgement is not a pass.
+Run the worker suites as Bazel tests on BuildBuddy from a pushed commit, as
+[the Bazel guide](../docs/bazel.md#running-tests) describes. Read each run's own
+verdict and logs; an acknowledgement is not a pass. The test targets install the
+worker wheel, so they also check its packaged schemas and prompts.
 
 Planning and sized ingest replies append a code-generated `forecast`. With
 forecast settings in ingest inputs, ingest must declare `files` for the root's
@@ -830,8 +816,8 @@ proxy boundary; it does not prove which provider failed behind it. A direct
 provider response can name the provider boundary. Wrapped API errors keep their
 bounded cause. The session ID also correlates calls without a response ID.
 
-For focused process coverage, run `cargo test -p tl3-controller --test workers --
---worker-facts` through PrismaBuild. This exercises completion ingress, retirement,
+For focused process coverage, run the controller `workers` test target with
+`--worker-facts` on BuildBuddy. This exercises completion ingress, retirement,
 worker and supervisor crashes, retries and deliberate stops.
 
 ## Postmortems

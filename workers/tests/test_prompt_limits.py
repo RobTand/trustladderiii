@@ -133,7 +133,7 @@ def test_what_the_prompts_say_about_path_is_what_the_tools_do(tmp_path):
 
 
 def test_run_tests_options_say_what_the_tool_enforces():
-    # #408: prompts and the tool description state the bounds pb_tests enforces.
+    # #408: prompts and the tool description state the bounds tests_tool enforces.
     from importlib.resources import files
 
     def text(role):

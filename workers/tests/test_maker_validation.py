@@ -187,8 +187,8 @@ def test_path_escapes_stay_refused(tmp_path, maker_request, monkeypatch, path):
 
 @pytest.mark.parametrize("field,value", [
     ("round", 2), ("attempt", 0), ("attempt", 4), ("context_size", 0),
-    ("tests", {"image": "mutable:latest", "tools_path": "/tools"}),
-    ("tests", {"image": "sha256:" + "a" * 64, "tools_path": "relative"}),
+    ("tests", {"image": "mutable:latest", "execution": {"backend": "flux", "profile": "/fixture/execution.json"}}),
+    ("tests", {"image": "sha256:" + "a" * 64, "execution": {"backend": "flux", "profile": "relative"}}),
     ("round", 1),
 ])
 def test_invalid_inputs_fail_at_request_boundary(maker_request, field, value):

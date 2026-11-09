@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 import json
+from pathlib import Path
 import pytest
 from pb_fixtures import supported_fake_runtime as supported_fake_runtime
 from tl3_workers.forcing_rehearsal import ForcingRehearsals
@@ -17,18 +18,44 @@ from worker_process import rehearsal  # noqa: F401
 
 
 def test_flux_worker_settings_do_not_require_pb_tools_or_environment(monkeypatch):
-    from tl3_workers.pb_tests import TestSettings
+    from tl3_workers.tests_tool import TestSettings
     for name in ('PB_ACTION_KEY', 'PB_QUEUE_ROOT', 'PB_CONTAINER_IMAGE'):
         monkeypatch.delenv(name, raising=False)
     settings = TestSettings(image='sha256:' + '1' * 64,
                             execution={'backend': 'flux', 'profile': '/fixture/attempt/execution.json'})
     assert settings.backend == 'flux'
-    assert settings.tools_path is None
+    assert not hasattr(settings, 'tools_path')
+
+
+def test_test_settings_require_the_selected_flux_execution_profile():
+    from pathlib import Path
+    from tl3_workers.tests_tool import TestSettings
+    image = 'sha256:' + '1' * 64
+    execution = {'backend': 'flux', 'profile': '/fixture/attempt/execution.json'}
+    with pytest.raises(TypeError):
+        TestSettings(image, tools_path=Path('/fixture/prismabuild/tools'))
+    with pytest.raises(ValueError, match='execution profile'):
+        TestSettings(image)
+    for invalid in ({'backend': 'flux', 'profile': 'relative.json'}, {'backend': 'other', 'profile': '/p.json'},
+                    {**execution, 'tools_path': '/fixture/prismabuild/tools'}):
+        with pytest.raises(ValueError, match='execution profile'):
+            TestSettings(image, execution=invalid)
+    assert TestSettings(image, execution=dict(execution)).execution == execution
+
+
+def test_worker_facts_and_test_transport_carry_no_prismabuild_fallback():
+    from tl3_workers import facts, tests_tool
+    capture = facts.Facts({'model': {'name': 'fixture'}})
+    assert not hasattr(capture, 'prismabuild')
+    assert 'prismabuild' not in capture.row('succeeded')
+    assert not hasattr(facts, 'record_prismabuild_fallback')
+    assert [name for name in ('_machine_record_supported', '_json_command', '_stdout_json_command',
+                              '_summary', '_failure_receipt') if hasattr(tests_tool, name)] == []
 
 
 def test_flux_activation_transports_only_the_selected_profile_and_image(monkeypatch):
     from tl3_workers import flux_execution
-    from tl3_workers.pb_tests import TestSettings
+    from tl3_workers.tests_tool import TestSettings
     settings = TestSettings(image='sha256:' + '1' * 64,
                             execution={'backend': 'flux', 'profile': '/fixture/attempt/execution.json'})
     documents = []
@@ -38,25 +65,20 @@ def test_flux_activation_transports_only_the_selected_profile_and_image(monkeypa
                           'image': settings.image}]
 
 
-@pytest.mark.parametrize('backend', ['prismabuild', 'flux'])
-def test_selected_flux_rehearsal_retains_backend_in_contract(rehearsal, tmp_path, backend):
+def test_selected_flux_rehearsal_retains_backend_in_contract(rehearsal, tmp_path):
     ledger, root, inputs, _ = rehearsal
-    if backend == 'flux':
-        inputs['tests'] = {'image': 'sha256:' + '1' * 64,
-                          'execution': {'backend': 'flux', 'profile': '/fixture/attempt/execution.json'}}
     checkpoint = tmp_path / 'rehearsal.json'
     restored = ForcingRehearsals(ledger.worktree, inputs, checkout=root, checkpoint=checkpoint)
-    assert restored.worktree.test_settings.backend == backend
+    assert restored.worktree.test_settings.backend == 'flux'
     restored.active = {}
     restored.worktree.pb_identity = 'identity'
-    restored.submitted(('worker:' if backend == 'flux' else '') + 'a' * 64, True, 'tree')
-    assert json.loads(checkpoint.read_text())['active']['inflight']['backend'] == backend
+    restored.submitted('worker:' + 'a' * 64, True, 'tree')
+    assert json.loads(checkpoint.read_text())['active']['inflight']['backend'] == 'flux'
     resumed = ForcingRehearsals(ledger.worktree, inputs, checkout=root, checkpoint=checkpoint)
-    assert resumed.active['inflight']['backend'] == backend
+    assert resumed.active['inflight']['backend'] == 'flux'
     changed = deepcopy(inputs)
-    changed['tests'] = ({'image': 'sha256:' + '1' * 64, 'tools_path': '/fixture/tools'}
-                        if backend == 'flux' else {'image': 'sha256:' + '1' * 64,
-                            'execution': {'backend': 'flux', 'profile': '/fixture/attempt/execution.json'}})
+    changed['tests'] = {'image': 'sha256:' + '1' * 64,
+                        'execution': {'backend': 'flux', 'profile': '/fixture/other-attempt/execution.json'}}
     before = checkpoint.read_bytes()
     with pytest.raises(ValueError, match='contract changed'):
         ForcingRehearsals(ledger.worktree, changed, checkout=root, checkpoint=checkpoint)
@@ -65,26 +87,23 @@ def test_selected_flux_rehearsal_retains_backend_in_contract(rehearsal, tmp_path
 
 @pytest.mark.parametrize('rehearsal_call', [False, True])
 def test_selected_flux_maker_reaches_activation_hold_without_pb_transport(rehearsal, monkeypatch, rehearsal_call):
-    from tl3_workers import pb_tests
+    from tl3_workers import tests_tool
     ledger, _, _, calls = rehearsal
-    ledger.worktree.test_settings = pb_tests.TestSettings(
+    ledger.worktree.test_settings = tests_tool.TestSettings(
         image='sha256:' + '1' * 64,
         execution={'backend': 'flux', 'profile': '/fixture/attempt/execution.json'})
-    def forbidden(_):
-        pytest.fail('selected Flux invoked a PB transport')
-    monkeypatch.setattr(pb_tests, '_json_command', forbidden)
     from tl3_workers import flux_execution
     from tl3_harness.supervision import ExecutionFailure, ExecutionOutcome
     def held(settings):
         raise ExecutionFailure(ExecutionOutcome.UNKNOWN_INCOMPLETE, 'admission', 'runtime_activation_held')
     monkeypatch.setattr(flux_execution, 'activation', held)
-    monkeypatch.setattr(pb_tests, 'bounded', lambda value, **kwargs: value)
+    monkeypatch.setattr(tests_tool, 'bounded', lambda value, **kwargs: value)
     if rehearsal_call:
         observed = ledger.run([NODE], reachable())
         assert observed['status'] == 'infrastructure_error'
         result = observed['unforced']
     else:
-        result = pb_tests.make_test_tool(ledger.worktree)([NODE])
+        result = tests_tool.make_test_tool(ledger.worktree)([NODE])
     assert result['status'] == 'infrastructure_error'
     assert result['execution']['termination_reason'] == 'runtime_activation_held'
     assert not calls
@@ -93,10 +112,10 @@ def test_selected_flux_maker_reaches_activation_hold_without_pb_transport(rehear
 @pytest.mark.parametrize('symptom', [False, True])
 @pytest.mark.parametrize('unknown_first', [False, True])
 def test_selected_flux_maker_consumes_verified_payload_and_checkpoints_before_dispatch(rehearsal, monkeypatch, tmp_path, unknown_first, symptom):
-    from tl3_workers import pb_tests, flux_execution
+    from tl3_workers import tests_tool, flux_execution
     ledger, _, _, _ = rehearsal
     worktree = ledger.worktree
-    worktree.test_settings = pb_tests.TestSettings(image='sha256:' + '1' * 64,
+    worktree.test_settings = tests_tool.TestSettings(image='sha256:' + '1' * 64,
         execution={'backend': 'flux', 'profile': '/fixture/attempt/execution.json'})
     key = 'worker:' + 'a' * 64
     declaration = ({'node': NODE, 'exception': 'builtins.RuntimeError', 'phase': 'call',
@@ -115,8 +134,8 @@ def test_selected_flux_maker_consumes_verified_payload_and_checkpoints_before_di
     worktree.pb_submitted = lambda key, base, tree: retained.append((key, base, tree))
     monkeypatch.setattr(flux_execution, 'activation', lambda settings: None)
     monkeypatch.setattr(flux_execution, 'allocate', lambda settings: ('a' * 64, tmp_path))
-    monkeypatch.setattr(pb_tests, '_stage', lambda *args, **kwargs: 'b' * 40)
-    monkeypatch.setattr(pb_tests, '_git', lambda *args: 'c' * 40)
+    monkeypatch.setattr(tests_tool, '_stage', lambda *args, **kwargs: 'b' * 40)
+    monkeypatch.setattr(tests_tool, '_git', lambda *args: 'c' * 40)
     def prepare(settings, call, root, tree, contract, **kwargs):
         assert kwargs['parallel'] == 4
         assert contract['repeat'] == 3
@@ -139,13 +158,12 @@ def test_selected_flux_maker_consumes_verified_payload_and_checkpoints_before_di
                 symptom_runs=[{key: value for key, value in item.items() if key != 'records'} for item in runs])
         return payload
     monkeypatch.setattr(flux_execution, 'execute', execute)
-    monkeypatch.setattr(pb_tests, '_json_command', lambda command: pytest.fail('Flux invoked PB'))
-    monkeypatch.setattr(pb_tests, 'bounded', lambda value, **kwargs: value)
-    result = pb_tests.make_test_tool(worktree, declared_symptom=declaration)([NODE], repeat=3, parallel=4)
+    monkeypatch.setattr(tests_tool, 'bounded', lambda value, **kwargs: value)
+    result = tests_tool.make_test_tool(worktree, declared_symptom=declaration)([NODE], repeat=3, parallel=4)
     if unknown_first:
         assert result['status'] == 'infrastructure_error'
         assert worktree.pb_reattach[False]['key'] == key
-        result = pb_tests.make_test_tool(worktree, declared_symptom=declaration)([NODE], repeat=3, parallel=4)
+        result = tests_tool.make_test_tool(worktree, declared_symptom=declaration)([NODE], repeat=3, parallel=4)
     assert attached == ([False, True] if unknown_first else [False])
     assert result['status'] == 'completed', result
     assert result['tree'] == 'b' * 40
@@ -155,12 +173,20 @@ def test_selected_flux_maker_consumes_verified_payload_and_checkpoints_before_di
         assert len(json.dumps(result)) < 10000
 
 
-@pytest.mark.parametrize('response', ['verified', 'changed_blob', 'unknown'])
+@pytest.mark.parametrize('response', ['verified', 'changed_blob', 'unknown', 'null_binding', 'foreign_binding'])
 def test_flux_observation_uses_generated_wire_and_explicit_payload(tmp_path, monkeypatch, response):
     from pathlib import Path
     import hashlib
     import sys
+    from pb_fixtures import REAL_WIRE, run_binding
     from tl3_workers import flux_execution
+    # This test drives the real shared-CLI wire, not the autouse Flux fake.
+    monkeypatch.setattr(flux_execution, '_command', REAL_WIRE['_command'])
+    key = 'worker:' + 'a' * 64
+    # A completed native payload is bound to its own run. The generic wire permits a null
+    # binding; the worker must refuse it, or another run's binding, before reading a payload.
+    binding = {'null_binding': None, 'foreign_binding': run_binding('worker:' + 'e' * 64)}.get(
+        response, run_binding(key))
     schema = Path(__file__).resolve().parents[2] / 'crates/controller/src/run_backend/schemas/run-backend.json'
     raw = json.dumps({'status': 'completed', 'tests': [], 'totals': {}, 'note': ''}).encode()
     payload = tmp_path / 'verified-summary.json'
@@ -176,13 +202,13 @@ def test_flux_observation_uses_generated_wire_and_explicit_payload(tmp_path, mon
         f'with open({str(commands)!r}, "a") as log: log.write(json.dumps(command) + "\\n")\n' +
         f'unknown = {response == "unknown"!r}\n' +
         'if unknown:\n frame = {"kind": "error", "code": "acceptance_unknown", "message": "retained uncertainty"}\n' +
-        f'elif command["op"] == "attach":\n frame = {{"kind": "result", "result": {{"op": "attach", "observation": {{"kind": "terminal", "binding": None, "terminal": {terminal!r}}}}}}}\n' +
+        f'elif command["op"] == "attach":\n frame = {{"kind": "result", "result": {{"op": "attach", "observation": {{"kind": "terminal", "binding": {binding!r}, "terminal": {terminal!r}}}}}}}\n' +
         f'elif command["op"] == "worker_payload":\n frame = {{"kind": "result", "result": {{"op": "worker_payload", "payload": {{"kind": "tests", "summary": {blob!r}, "symptom_runs": []}}}}}}\n' +
         'else: raise SystemExit("unexpected operation")\n' +
         'print(json.dumps({"schema": "tl3.run_backend.frame.v1", "sequence": 0, **frame}), flush=True)\n')
     cli.chmod(0o700)
     owner = {'owner': 'worker-tools', 'correlation': 'controlled-worker'}
-    plan = {'cli': str(cli), 'config': str(tmp_path / 'options.json'), 'key': 'worker:' + 'a' * 64,
+    plan = {'cli': str(cli), 'config': str(tmp_path / 'options.json'), 'key': key,
             'owner': owner, 'attach': {'op': 'attach', **owner},
             'bounds': {'cli_envelope_bytes': len(schema.read_bytes()), 'payload_bytes': len(raw)}}
     monkeypatch.setattr(flux_execution, 'activation', lambda settings: None)
@@ -191,11 +217,16 @@ def test_flux_observation_uses_generated_wire_and_explicit_payload(tmp_path, mon
         result = flux_execution.execute(plan, resumed=True, emit=events.append)
         assert result['summary'] == json.loads(raw)
         assert result['receipts'][0]['receipt_sha256'] == blob['sha256']
+        assert result['receipts'][0]['run_binding'] == binding
+    elif response in ('null_binding', 'foreign_binding'):
+        with pytest.raises(ValueError, match='another run binding'):
+            flux_execution.execute(plan, resumed=True, emit=events.append)
     else:
         with pytest.raises(ValueError):
             flux_execution.execute(plan, resumed=True, emit=events.append)
     observed = [json.loads(line)['op'] for line in commands.read_text().splitlines()]
-    assert observed == (['attach'] if response == 'unknown' else ['attach', 'worker_payload'])
+    assert observed == (['attach'] if response in ('unknown', 'null_binding', 'foreign_binding')
+                        else ['attach', 'worker_payload'])
     assert events[0]['wait']['key'] == plan['key']
     assert payload.exists()
 
@@ -282,33 +313,41 @@ def test_rehearsal_failure_diagnostic_reaches_cant_meet(rehearsal, monkeypatch, 
 @pytest.mark.parametrize('stage', ['unforced', 'forced'])
 @pytest.mark.parametrize('boundary', ['submission', 'execution', 'retrieval', 'adapter'])
 def test_rehearsal_infrastructure_exits_worker_without_reply_repair(
-        rehearsal, monkeypatch, tmp_path, stage, boundary):
+        rehearsal, supported_fake_runtime, monkeypatch, tmp_path, stage, boundary):
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
     from langchain_core.messages import AIMessage
-    from tl3_workers import pb_tests, runtime
+    from tl3_workers import flux_execution, runtime
     _, root, inputs, calls = rehearsal
-    original = pb_tests._json_command
-    current_phase = None
+    fake = supported_fake_runtime
+    control, command = fake.control, fake.command
+    phases = {}
 
-    def command(args):
-        nonlocal current_phase
-        if args[1].endswith('pbrun.py'):
-            current_phase = 'forced' if '--forcing' in args else 'unforced'
-            if current_phase == stage and boundary == 'submission':
+    def staged(document):
+        if document['op'] == 'prepare':
+            phase = 'forced' if '--forcing' in document['arguments'] else 'unforced'
+            if phase == stage and boundary == 'submission':
                 raise OSError('submission fixture')
-        if current_phase == stage and args[1].endswith('pbwait.py'):
-            if boundary == 'retrieval':
-                raise OSError('retrieval fixture')
-            code, value = original(args)
-            ending = value['endings'][0]
-            if boundary == 'execution':
-                ending.update(status='failed', succeeded=False, exit_code=137, reason='worker_lost')
-            elif boundary == 'adapter':
-                ending['result']['verified'] = False
-            return code, value
-        return original(args)
+            plan = control(document)
+            phases[plan['key']] = phase
+            return plan
+        return control(document)
 
-    monkeypatch.setattr(pb_tests, '_json_command', command)
+    def wire(plan, request):
+        if phases.get(plan['key']) == stage:
+            if boundary == 'retrieval' and request['op'] == 'attach':
+                raise OSError('retrieval fixture')
+            if boundary == 'execution' and request['op'] == 'attach':
+                observed = command(plan, request)
+                observed['observation']['terminal']['ending'] = 'infra-lost'
+                return observed
+            if boundary == 'adapter' and request['op'] == 'worker_payload':
+                observed = command(plan, request)
+                Path(observed['payload']['summary']['path']).write_bytes(b'changed')
+                return observed
+        return command(plan, request)
+
+    monkeypatch.setattr(flux_execution, 'control', staged)
+    monkeypatch.setattr(flux_execution, '_command', wire)
     model = FakeMessagesListChatModel(responses=[
         AIMessage(content='', tool_calls=[{'name': 'rehearse_forcing', 'id': 'force',
                                           'args': {'tests': [NODE], 'forcing': reachable()}}]),
@@ -329,29 +368,30 @@ def test_rehearsal_infrastructure_exits_worker_without_reply_repair(
     assert type(error).__name__ == 'ForcingInfrastructureError'
     assert error.result['status'] == 'infrastructure_error'
     result = error.result[stage]
-    assert result['execution']['phase'] == ('admission' if boundary == 'submission' else
-                                           'unknown' if boundary == 'execution' else
-                                           'summary' if boundary == 'adapter' else 'retrieval')
+    assert result['execution']['phase'] == ('admission' if boundary == 'submission' else 'retrieval')
     if boundary != 'submission':
-        assert result['action_key'] == KEY
+        assert result['wait_reference'] == KEY if stage == 'unforced' else result['wait_reference'].startswith('worker:')
     assert model.i == 1 and not any(e['event'] == 'reply' for e in events)
-    assert len(calls) <= (2 if stage == 'forced' else 1)
+    assert len(fake.submitted) <= (2 if stage == 'forced' else 1)
     assert json.loads(facts.read_text())['failure']['class'] == 'ForcingInfrastructureError'
     reason = json.loads(memory.read_text())['reason']
     assert reason['failure_class'] == 'ForcingInfrastructureError'
     assert stage in reason['failure_message'] and result['execution']['phase'] in reason['failure_message']
     if boundary != 'submission':
-        assert KEY in reason['failure_message']
+        assert result['wait_reference'] in reason['failure_message']
     if boundary == 'retrieval':
-        admitted = len(calls)
-        monkeypatch.setattr(pb_tests, '_json_command', original)
+        admitted = len(fake.submitted)
+        monkeypatch.setattr(flux_execution, 'control', control)
+        monkeypatch.setattr(flux_execution, '_command', command)
         model.i = 0
         model.responses[1] = AIMessage(content=json.dumps(plan(reachable())))
         request['operation']['generation'] += 1
         runtime.run(request, events.append)
         assert events[-1]['reply']['kind'] == 'leaf'
         assert events[-1]['reply']['violations'] == []
-        assert len(calls) == admitted + (1 if stage == 'unforced' else 0), 'recovery must reattach admitted actions'
+        assert len(fake.submitted) == admitted + (1 if stage == 'unforced' else 0), \
+            'recovery must reattach admitted runs'
+        assert fake.resumed, 'the retained binding was reattached'
 
 
 def test_planner_explores_before_final_reply_without_format_repair(rehearsal, monkeypatch):

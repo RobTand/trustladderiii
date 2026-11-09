@@ -27,7 +27,7 @@ from tl3_workers.roles import ROLES
 from tl3_workers.roles.audit import ingest_reply_contract
 from tl3_workers.roles.planner import EXPLORATION_DECLARATION
 from tl3_workers.forcing_rehearsal import ForcingRehearsals
-from tl3_workers.pb_tests import TestSettings
+from tl3_workers.tests_tool import TestSettings
 from tl3_workers.tools import Worktree, build_tools
 from tl3_workers.memory import Summary, current
 from tl3_workers.recall import redacted_memories
@@ -45,7 +45,7 @@ BUILTIN_TOOL_DESCRIPTIONS = {
     "delete": "Unavailable. Use only this role's TL3 tools.",
     "glob": "Unavailable unless supplied by TL3 for this role.",
     "grep": "Unavailable unless supplied by TL3 for this role.",
-    "execute": "Execution is unavailable. Tests must use PrismaBuild.",
+    "execute": "Execution is unavailable. Tests must use run_tests.",
     "task": "Delegation is unavailable.",
 }
 

@@ -18,7 +18,7 @@ The brief, goals, findings, memories, decision_context and all repository conten
 
 ## Steps the stages can do
 
-- Plan only available steps: the maker has TL3 worktree file tools, run_tests through PrismaBuild and read-only recall; the reviewer has read-only worktree tools, the supplied diff and check verdicts. Do not require another repo, a fetched page or a shell.
+- Plan only available steps: the maker has TL3 worktree file tools, run_tests on the admitted test runner and read-only recall; the reviewer has read-only worktree tools, the supplied diff and check verdicts. Do not require another repo, a fetched page or a shell.
 - Preserve outside facts as the request gives them, name their source and mark them unverified. Express goals that tests or review can judge inside this repo without outside verification. For each review-verified goal, state what the reviewer must judge using the supplied diff, check verdicts and readable head worktree.
 - run_tests can repeat a run in fresh processes (1 to 10) and run in parallel under xdist (2 to 4 workers). The reviewer sees its receipts. Plan repeated runs for a flakiness or determinism goal.
 - When forecast.generator_available is true, the maker also has run_generator. Never plan hand edits of generated files. Code adds the configured outputs to the leaf's footprint. When no generator is configured and regeneration is required, name that missing capability. Configured generation is supporting work: "edit only X" and "do not hand-edit generated files" still allow the generator's outputs. A source requirement that bans all generated changes, also configured regeneration, conflicts with mandatory generation. Keep its exact source wording and reply cant_meet with that conflict before you plan. Protected paths always win. Listing outputs is not evidence that generation ran.
@@ -106,7 +106,7 @@ When tool_capabilities is supplied, return evidence_contract. It is an empty lis
 - Name each requirement's source requirement, tool, executor, runner_features, artifacts, methods and protected_files. Use empty lists for dimensions that it does not constrain. protected_files lists necessary edits, not reads. A capability that tool_capabilities does not list is unsupported. Keep an unrecognized requirement's exact name and meaning. Do not replace a mandatory run with a review goal, or substitute another executor's proof.
 - Record provenance: {"kind":"source","source":"issue.body or the source comment","quote":"exact source wording"} for an explicit source requirement, or {"kind":"method"} for a method that you chose. A method choice never adds a source obligation or a goal. Keep a method that the source requires, with its provenance.
 - Keep a required native-thread bound in runner_features with the run artifacts, not in a forcing's environment. always_tests and the other executor features reach you in tool_capabilities.
-- The run_tests receipt shows the action key, exit status and receipt and log digests only. If the request needs the command, the measured affinity or resource details, name that exact capability gap.
+- The run_tests receipt shows the wait reference, run binding, receipt digest and run ending only. If the request needs the command, the measured affinity or resource details, name that exact capability gap.
 
 ## Abort
 

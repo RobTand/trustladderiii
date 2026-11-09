@@ -11,7 +11,7 @@ from tl3_harness import Check, Forcing, Kind, HarnessInputError
 from tl3_harness.node_ids import selects
 from tl3_harness.forcing_ownership import ForcingError, preflight_owner
 from tl3_workers.evidence import proof_applicability
-from tl3_workers.pb_tests import TestSettings, make_test_tool, _git
+from tl3_workers.tests_tool import TestSettings, make_test_tool, _git
 from tl3_workers.session import save
 
 
@@ -24,7 +24,7 @@ GUIDANCE = (
     'uses its exact exception, node, call/setup phase and fixed repeat/parallel campaign instead. '
     'Bind goal_ids to the source goals. A source assertion/new-observer obligation must use '
     'a new deterministic assertion and cannot be replaced by an old-node symptom campaign. '
-    f'At most {MAX_REHEARSALS} distinct candidates run, each with at most two PB-admitted actions '
+    f'At most {MAX_REHEARSALS} distinct candidates run, each with at most two admitted actions '
     f'and a {REHEARSAL_SECONDS}-second execution limit per action. '
     'A completed zero-hit or no-assertion-RED candidate is unusable evidence. Use its feedback '
     'for a distinct candidate within the remaining budget, or return cant_meet with the precise '
@@ -95,8 +95,8 @@ class ForcingInfrastructureError(Exception):
         # Only identifiers from trusted boundary diagnostics go into controller incidents.
         def token(value):
             return value if isinstance(value, str) and re.fullmatch(r'[a-z0-9_]{1,64}', value) else 'unknown'
-        key = evidence.get('action_key')
-        key = key if isinstance(key, str) and re.fullmatch(r'[a-f0-9]{64}', key) else 'not_admitted'
+        key = evidence.get('wait_reference')
+        key = key if isinstance(key, str) and re.fullmatch(r'worker:[a-f0-9]{64}', key) else 'not_admitted'
         super().__init__(f"Forcing rehearsal {stage}: action={key}; "
                          f"phase={token(execution.get('phase'))}; "
                          f"outcome={token(execution.get('outcome'))}; "
@@ -127,7 +127,6 @@ class ForcingRehearsals:
         worktree.test_checkout = Path.cwd() if checkout is None else Path(checkout)
         worktree.check_base_sha = self.base_sha
         worktree.test_settings = TestSettings(**inputs['tests']) if 'tests' in inputs else None
-        worktree.pb_strict_reattach = True
         worktree.pb_submitted = self.submitted
 
     def persist(self):
@@ -210,7 +209,7 @@ class ForcingRehearsals:
                             'execution': {'phase': 'reattachment', 'outcome': 'transport_failure',
                                           'termination_reason': 'pending_candidate_mismatch'}}
                 if self.active['inflight']:
-                    evidence['action_key'] = self.active['inflight']['key']
+                    evidence['wait_reference'] = self.active['inflight']['key']
                 self.infrastructure = {**deepcopy(pending), stage: evidence, 'stage': stage,
                                        'status': 'infrastructure_error', 'message': evidence['message']}
                 return deepcopy(self.infrastructure)

@@ -116,6 +116,18 @@ def _blob(reference, bound):
     return json.loads(raw)
 
 
+def _same_run(key, binding):
+    """The observed RunBinding must be this worker run's own (execution.rs Worker::validate)."""
+    intent = binding.get('intent') if isinstance(binding, dict) else None
+    identity = binding.get('id') if isinstance(binding, dict) else None
+    if (not isinstance(intent, dict) or not isinstance(identity, dict)
+            or intent.get('backend') != 'flux' or identity.get('backend') != 'flux'
+            or intent.get('owner') != 'worker-tools'
+            or intent.get('correlation') != key.replace('worker:', 'worker-', 1)
+            or (identity.get('instance'), identity.get('uri')) != (intent.get('instance'), intent.get('uri'))):
+        raise ValueError('Flux returned another run binding; retain the original binding and input')
+
+
 def execute(plan, *, resumed=False, emit=lambda event: None):
     # Callers must validate activation(settings) before preparing or resuming this plan.
     # Rust Prepare gates new requests; Resume keeps its original retained binding.
@@ -127,6 +139,7 @@ def execute(plan, *, resumed=False, emit=lambda event: None):
     observation = _command(plan, plan['attach'])['observation']
     if observation['kind'] != 'terminal':
         raise ValueError('Flux acceptance or observation is unknown; retain the original binding and input')
+    _same_run(plan['key'], observation['binding'])
     terminal = observation['terminal']
     payload = _command(plan, {'op': 'worker_payload', **plan['owner'], 'terminal': terminal})['payload']
     receipt = {'backend': 'flux', 'wait_reference': plan['key'], 'run_binding': observation['binding'],

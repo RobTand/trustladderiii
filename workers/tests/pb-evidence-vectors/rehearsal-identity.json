@@ -479,11 +479,27 @@
           "note": "",
           "receipts": [
             {
-              "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-              "status": "executed",
-              "exit_code": 0,
+              "backend": "flux",
+              "wait_reference": "worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "run_binding": {
+                "id": {
+                  "backend": "flux",
+                  "instance": "tl3-fixture",
+                  "uri": "local:///run/flux/fixture",
+                  "job": "f2"
+                },
+                "intent": {
+                  "backend": "flux",
+                  "instance": "tl3-fixture",
+                  "uri": "local:///run/flux/fixture",
+                  "owner": "worker-tools",
+                  "correlation": "worker-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "request_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                  "output_dir": "/mnt/shared/flux-out/tl3/worker-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              },
               "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-              "log_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+              "ending": "passed"
             }
           ]
         },
@@ -546,11 +562,27 @@
           "note": "",
           "receipts": [
             {
-              "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-              "status": "executed",
-              "exit_code": 0,
+              "backend": "flux",
+              "wait_reference": "worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "run_binding": {
+                "id": {
+                  "backend": "flux",
+                  "instance": "tl3-fixture",
+                  "uri": "local:///run/flux/fixture",
+                  "job": "f2"
+                },
+                "intent": {
+                  "backend": "flux",
+                  "instance": "tl3-fixture",
+                  "uri": "local:///run/flux/fixture",
+                  "owner": "worker-tools",
+                  "correlation": "worker-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "request_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                  "output_dir": "/mnt/shared/flux-out/tl3/worker-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              },
               "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-              "log_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+              "ending": "passed"
             }
           ]
         },
@@ -583,11 +615,27 @@
           "note": "",
           "receipts": [
             {
-              "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-              "status": "executed",
-              "exit_code": 0,
+              "backend": "flux",
+              "wait_reference": "worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "run_binding": {
+                "id": {
+                  "backend": "flux",
+                  "instance": "tl3-fixture",
+                  "uri": "local:///run/flux/fixture",
+                  "job": "f2"
+                },
+                "intent": {
+                  "backend": "flux",
+                  "instance": "tl3-fixture",
+                  "uri": "local:///run/flux/fixture",
+                  "owner": "worker-tools",
+                  "correlation": "worker-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "request_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                  "output_dir": "/mnt/shared/flux-out/tl3/worker-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              },
               "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-              "log_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+              "ending": "passed"
             }
           ]
         },
@@ -620,11 +668,27 @@
           "note": "",
           "receipts": [
             {
-              "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-              "status": "executed",
-              "exit_code": 0,
+              "backend": "flux",
+              "wait_reference": "worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "run_binding": {
+                "id": {
+                  "backend": "flux",
+                  "instance": "tl3-fixture",
+                  "uri": "local:///run/flux/fixture",
+                  "job": "f2"
+                },
+                "intent": {
+                  "backend": "flux",
+                  "instance": "tl3-fixture",
+                  "uri": "local:///run/flux/fixture",
+                  "owner": "worker-tools",
+                  "correlation": "worker-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "request_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                  "output_dir": "/mnt/shared/flux-out/tl3/worker-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              },
               "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-              "log_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+              "ending": "passed"
             }
           ]
         },

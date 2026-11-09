@@ -70,7 +70,7 @@ def _summary_limit(result):
     diagnostic = infrastructure(failure.message(), origin=result.get('origin'))
     diagnostic.update(totals=result['totals'], execution=result.get('execution', failure.as_json()),
                       note='Truncated: summary identity exceeds the envelope limit. No proof is available.')
-    for field in ('action_key', 'receipts'):
+    for field in ('wait_reference', 'receipts'):
         if field in result:
             diagnostic[field] = result[field]
     return diagnostic

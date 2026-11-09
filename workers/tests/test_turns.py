@@ -14,7 +14,8 @@ from tl3_workers import runtime
 from tl3_workers.turns import InvalidReply
 from message_invariants import agent_calls, assert_tool_pairs
 import message_invariants as test_maker
-from pb_fixtures import machine_cli, supported_fake_runtime as supported_fake_runtime
+from pb_fixtures import FLUX_EXECUTION, KEY, run_binding
+from pb_fixtures import supported_fake_runtime as supported_fake_runtime
 import test_prompt_cache
 import test_reviewer
 import test_workers
@@ -270,7 +271,7 @@ def generated_scope_request(doc):
     doc["inputs"]["issue"]["body"] = (
         "Do not hand-edit generated BUILD files; configured regeneration is permitted.")
     doc["inputs"]["tool_capabilities"] = [{
-        "tool": "run_generator", "executor": "prismabuild_generator", "runner_features": [],
+        "tool": "run_generator", "executor": "flux_generator", "runner_features": [],
         "artifacts": [], "methods": [], "protected_files": []}]
     return doc
 
@@ -364,6 +365,25 @@ def test_generated_scope_source_and_capability_controls(request_doc, monkeypatch
         assert any(source in objection and "issue.body" in objection for objection in audit["objections"])
 
 
+def test_generated_scope_follows_the_admitted_run_generator_tool_not_its_executor_name():
+    from tl3_workers.generated_scope import generation_scope_conflicts
+    issue = {"title": "Regenerate outputs", "body": "Never regenerate generated files."}
+    brief = {"kind": "brief", "brief": "Change the generator input.", "goals": []}
+
+    def conflicts(*capabilities):
+        return generation_scope_conflicts({"issue": issue, "tool_capabilities": list(capabilities)}, brief)
+
+    def capability(tool, executor):
+        return {"tool": tool, "executor": executor, "runner_features": [], "artifacts": [],
+                "methods": [], "protected_files": []}
+
+    expected = [("issue.body", "Never regenerate generated files.")]
+    assert conflicts(capability("run_generator", "flux_generator")) == expected
+    assert conflicts(capability("run_generator", "any_backend_generator")) == expected
+    assert conflicts(capability("run_tests", "flux_pytest")) == []
+    assert conflicts() == []
+
+
 def test_tool_call_in_a_repair_turn_is_never_executed(maker_request, monkeypatch):
     maker_request["inputs"]["context_size"] = 150_000
     install(monkeypatch, [ROLES["maker"][1], reply({"kind": "done"}),
@@ -429,57 +449,32 @@ def test_unusable_visit_checkpoint_starts_the_visit_afresh(maker_request, tmp_pa
     assert "tl3_workers: maker: visit checkpoint unusable; starting the visit afresh" in capsys.readouterr().err
 
 
-def pb_scripts(tmp_path):
-    scripts = tmp_path / "pb-tools"
-    scripts.mkdir()
-    (scripts / "pbrun.py").write_text(
-        "import json, pathlib\n"
-        "log = pathlib.Path(__file__).with_name('submitted.log')\n"
-        "log.write_text(log.read_text() + 'x' if log.exists() else 'x')\n"
-        "print(json.dumps({'schema': 'prismabuild.submission.v1', 'action_key': 'a' * 64}))\n")
-    (scripts / "pbwait.py").write_text(
-        "import hashlib, json, pathlib, sys\n"
-        "here = pathlib.Path(__file__).parent\n"
-        "(here / 'waited.log').open('a').write(sys.argv[-1] + '\\n')\n"
-        "summary = {'status': 'completed', 'totals': {'passed': 1, 'failed': 0, 'error': 0, 'skipped': 0},\n"
-        "           'tests': [{'test': 'test_greeting.py::test_hello', 'outcome': 'passed', 'message': ''}],\n"
-        "           'note': ''}\n"
-        "raw = ('TL3_TEST_SUMMARY ' + json.dumps(summary) + '\\n').encode()\n"
-        "(here / 'action.log').write_bytes(raw)\n"
-        "ending = {'action_key': 'a' * 64, 'status': 'executed', 'succeeded': True, 'exit_code': 0,\n"
-        "          'result': {'verified': True, 'receipt_sha256': 'b' * 64, 'stdout': {\n"
-        "              'path': str(here / 'action.log'), 'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()}}}\n"
-        "print(json.dumps({'schema': 'prismabuild.endings.v1', 'complete': True, 'endings': [ending]}))\n")
-    for name in ("pbrun.py", "pbwait.py"):
-        script = scripts / name
-        script.write_text(machine_cli(script.read_text()))
-    return scripts
-
-
 @pytest.mark.durability
-def test_resume_reattaches_to_the_in_flight_test_action(maker_request, tmp_path, monkeypatch):
-    from tl3_workers import pb_tests
-
+def test_resume_reattaches_to_the_in_flight_test_action(maker_request, supported_fake_runtime, tmp_path, monkeypatch):
     maker_visit(maker_request, tmp_path)
-    scripts = pb_scripts(tmp_path)
-    maker_request["inputs"]["tests"]["tools_path"] = str(scripts)
-    original = pb_tests._json_command
+    maker_request["inputs"]["tests"] = {"image": maker_request["inputs"]["tests"]["image"],
+                                        "execution": dict(FLUX_EXECUTION)}
+    summary = {"status": "completed", "totals": {"passed": 1, "failed": 0, "error": 0, "skipped": 0},
+               "tests": [{"test": "test_greeting.py::test_hello", "outcome": "passed", "message": ""}],
+               "note": ""}
+    (supported_fake_runtime.state / "response.json").write_text(json.dumps(summary))
     killing = True
 
-    def command(args):
-        if killing and args[1].endswith("pbwait.py"):
+    def observe(key):
+        if killing:
             raise Killed()
-        return original(args)
+        return {"kind": "terminal", "binding": run_binding(key),
+                "terminal": {"ending": "passed", "reason": "exited", "receipt": {"sha256": "b" * 64}}}
 
-    monkeypatch.setattr(pb_tests, "_json_command", command)
+    supported_fake_runtime.observation = observe
     tests = call("run_tests", {"tests": ["test_greeting.py::test_hello"]})
     interrupted(maker_request, monkeypatch, [ROLES["maker"][1], tests])
-    assert (scripts / "submitted.log").read_text() == "x"
+    assert supported_fake_runtime.submitted == [KEY]
     killing = False
     model, events = rerun(maker_request, monkeypatch, [reply(test_maker.DONE)])
     assert events[-1]["reply"]["kind"] == "done"
-    assert (scripts / "submitted.log").read_text() == "x", "the resumed run waits; it never resubmits"
-    assert (scripts / "waited.log").read_text() == "a" * 64 + "\n"
+    assert supported_fake_runtime.submitted == [KEY], "the resumed run waits; it never resubmits"
+    assert supported_fake_runtime.resumed == [KEY]
     results = tool_results(model.calls[0][0])
     assert results[-1].tool_call_id == "run_tests" and '"status": "completed"' in results[-1].text
     assert_tool_pairs(model.calls[0][0])
@@ -592,17 +587,18 @@ def test_environment_evidence_survives_a_checkpoint_round_trip():
     from tl3_workers.tools import Evidence
 
     evidence = Evidence()
-    key = "c" * 64
+    key = "worker:" + "c" * 64
     head = (False, ("tests/test_a.py::test_one",))
-    evidence.test_result({"status": "infrastructure_error", "action_key": key}, head)
+    evidence.test_result({"status": "infrastructure_error", "wait_reference": key}, head)
     error = evidence.tool_error("read", "os_error", head)
     restored = Evidence()
     restored.restore(json.loads(json.dumps(evidence.state())))
-    assert restored.detail({"action_key": key}) == {"class": "test_infrastructure"}
+    assert restored.detail({"wait_reference": key}) == {"class": "test_infrastructure"}
+    assert restored.detail({"wait_reference": "c" * 64}) is None, "only the exact recorded reference"
     assert restored.detail({"tool_error": error}) == {"tool": "read", "class": "os_error"}
     # A later complete run of the same selectors still retires the restored entries.
     restored.test_result({"status": "completed"}, head)
-    assert restored.detail({"action_key": key}) is None and restored.detail({"tool_error": error}) is None
+    assert restored.detail({"wait_reference": key}) is None and restored.detail({"tool_error": error}) is None
 
 
 @pytest.mark.parametrize('message, expected', [

@@ -111,6 +111,32 @@
             "repeat": 2,
             "parallel": 0
           },
+          "wait_reference": "worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "receipts": [
+            {
+              "backend": "flux",
+              "wait_reference": "worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "run_binding": {
+                "id": {
+                  "backend": "flux",
+                  "instance": "tl3-fixture",
+                  "uri": "local:///run/flux/fixture",
+                  "job": "f2"
+                },
+                "intent": {
+                  "backend": "flux",
+                  "instance": "tl3-fixture",
+                  "uri": "local:///run/flux/fixture",
+                  "owner": "worker-tools",
+                  "correlation": "worker-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "request_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                  "output_dir": "/mnt/shared/flux-out/tl3/worker-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              },
+              "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "ending": "passed"
+            }
+          ],
           "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
           "base_semantics": "base_subject_head_observer",
           "demonstrating_proof": "pending_checking",
@@ -205,7 +231,7 @@
           "selectors": [
             "tests/test_old.py::test_old"
           ],
-          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          "wait_reference": "worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       }
     },
@@ -289,7 +315,7 @@
           "selectors": [
             "tests/test_old.py::test_old"
           ],
-          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          "wait_reference": "worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       }
     },
@@ -382,7 +408,7 @@
           "selectors": [
             "tests/test_old.py::test_old"
           ],
-          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          "wait_reference": "worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       }
     },
@@ -468,7 +494,7 @@
           "selectors": [
             "tests/test_old.py::test_old"
           ],
-          "action_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          "wait_reference": "worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       }
     },
@@ -581,6 +607,32 @@
             "repeat": 2,
             "parallel": 0
           },
+          "wait_reference": "worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "receipts": [
+            {
+              "backend": "flux",
+              "wait_reference": "worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "run_binding": {
+                "id": {
+                  "backend": "flux",
+                  "instance": "tl3-fixture",
+                  "uri": "local:///run/flux/fixture",
+                  "job": "f2"
+                },
+                "intent": {
+                  "backend": "flux",
+                  "instance": "tl3-fixture",
+                  "uri": "local:///run/flux/fixture",
+                  "owner": "worker-tools",
+                  "correlation": "worker-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "request_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                  "output_dir": "/mnt/shared/flux-out/tl3/worker-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              },
+              "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "ending": "passed"
+            }
+          ],
           "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
           "base_semantics": "base_subject_head_observer",
           "demonstrating_proof": "pending_checking",
@@ -707,6 +759,32 @@
             "repeat": 2,
             "parallel": 0
           },
+          "wait_reference": "worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "receipts": [
+            {
+              "backend": "flux",
+              "wait_reference": "worker:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "run_binding": {
+                "id": {
+                  "backend": "flux",
+                  "instance": "tl3-fixture",
+                  "uri": "local:///run/flux/fixture",
+                  "job": "f2"
+                },
+                "intent": {
+                  "backend": "flux",
+                  "instance": "tl3-fixture",
+                  "uri": "local:///run/flux/fixture",
+                  "owner": "worker-tools",
+                  "correlation": "worker-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "request_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                  "output_dir": "/mnt/shared/flux-out/tl3/worker-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              },
+              "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "ending": "passed"
+            }
+          ],
           "base_sha": "cccccccccccccccccccccccccccccccccccccccc",
           "base_semantics": "base_subject_head_observer",
           "demonstrating_proof": "pending_checking",
@@ -1806,7 +1884,7 @@
       "output": {
         "raise": {
           "type": "ValueError",
-          "message": "Use priority -10 to 0, or leave it out for PrismaBuild's default"
+          "message": "Use priority -10 to 0, or leave it out for the default"
         }
       }
     },
@@ -1819,7 +1897,7 @@
       "output": {
         "raise": {
           "type": "ValueError",
-          "message": "Use priority -10 to 0, or leave it out for PrismaBuild's default"
+          "message": "Use priority -10 to 0, or leave it out for the default"
         }
       }
     },
@@ -1832,7 +1910,7 @@
       "output": {
         "raise": {
           "type": "ValueError",
-          "message": "Use priority -10 to 0, or leave it out for PrismaBuild's default"
+          "message": "Use priority -10 to 0, or leave it out for the default"
         }
       }
     },
@@ -1845,7 +1923,7 @@
       "output": {
         "raise": {
           "type": "ValueError",
-          "message": "Use priority -10 to 0, or leave it out for PrismaBuild's default"
+          "message": "Use priority -10 to 0, or leave it out for the default"
         }
       }
     },
@@ -1858,7 +1936,7 @@
       "output": {
         "raise": {
           "type": "ValueError",
-          "message": "Use priority -10 to 0, or leave it out for PrismaBuild's default"
+          "message": "Use priority -10 to 0, or leave it out for the default"
         }
       }
     },
@@ -1868,31 +1946,51 @@
         "operation": "settings",
         "value": {
           "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "tools_path": "/fixture/tools"
+          "execution": {
+            "backend": "flux",
+            "profile": "/fixture/attempt/execution.json"
+          }
         }
       },
       "output": {
         "return": {
           "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "tools_path": "/fixture/tools",
           "cpus": 1,
           "mem_gb": 2,
           "quiet_seconds": 120,
-          "execution": null
+          "execution": {
+            "backend": "flux",
+            "profile": "/fixture/attempt/execution.json"
+          }
         }
       }
     },
     {
-      "case": "settings-execution-with-tools",
+      "case": "settings-retired-tools-path",
       "input": {
         "operation": "settings",
         "value": {
           "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "tools_path": "/fixture/tools",
           "execution": {
             "backend": "flux",
-            "profile": "/fixture/profile.json"
-          }
+            "profile": "/fixture/attempt/execution.json"
+          },
+          "tools_path": "/fixture/tools"
+        }
+      },
+      "output": {
+        "raise": {
+          "type": "TypeError",
+          "message": "TestSettings.__init__() got an unexpected keyword argument 'tools_path'"
+        }
+      }
+    },
+    {
+      "case": "settings-missing-execution",
+      "input": {
+        "operation": "settings",
+        "value": {
+          "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         }
       },
       "output": {
@@ -1908,7 +2006,10 @@
         "operation": "settings",
         "value": {
           "image": "ubuntu:latest",
-          "tools_path": "/fixture/tools"
+          "execution": {
+            "backend": "flux",
+            "profile": "/fixture/attempt/execution.json"
+          }
         }
       },
       "output": {
@@ -1919,18 +2020,40 @@
       }
     },
     {
-      "case": "settings-relative-tools",
+      "case": "settings-relative-profile",
       "input": {
         "operation": "settings",
         "value": {
           "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "tools_path": "relative"
+          "execution": {
+            "backend": "flux",
+            "profile": "relative"
+          }
         }
       },
       "output": {
         "raise": {
           "type": "ValueError",
-          "message": "PrismaBuild tools_path must be absolute"
+          "message": "Use the controller's selected execution profile"
+        }
+      }
+    },
+    {
+      "case": "settings-other-backend",
+      "input": {
+        "operation": "settings",
+        "value": {
+          "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "execution": {
+            "backend": "other",
+            "profile": "/fixture/attempt/execution.json"
+          }
+        }
+      },
+      "output": {
+        "raise": {
+          "type": "ValueError",
+          "message": "Use the controller's selected execution profile"
         }
       }
     },
@@ -1940,7 +2063,10 @@
         "operation": "settings",
         "value": {
           "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "tools_path": "/fixture/tools",
+          "execution": {
+            "backend": "flux",
+            "profile": "/fixture/attempt/execution.json"
+          },
           "cpus": 0
         }
       },
@@ -1957,7 +2083,10 @@
         "operation": "settings",
         "value": {
           "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "tools_path": "/fixture/tools",
+          "execution": {
+            "backend": "flux",
+            "profile": "/fixture/attempt/execution.json"
+          },
           "mem_gb": true
         }
       },
@@ -1974,7 +2103,10 @@
         "operation": "settings",
         "value": {
           "image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "tools_path": "/fixture/tools",
+          "execution": {
+            "backend": "flux",
+            "profile": "/fixture/attempt/execution.json"
+          },
           "quiet_seconds": 1.0
         }
       },

@@ -32,11 +32,11 @@
               "attempt": 2
             }
           },
-          "prompt_cache_identity": "tl3-cache-d6316c58c884f3cc577a213f2931095b9111e6b2c20b4c5e",
+          "prompt_cache_identity": "tl3-cache-c8f5736f165373998edc2eec09561492954e285285e05df2",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "a3dcb203b1f8c8e9569b1cfbef751f08e67c34599c532b69dcbe5fcc0d05148c",
-            "utf8_bytes": 10214
+            "sha256": "cac2c72f8f55cbdb4f3d0b2e17d4623ca82ec7f9111223aead03152b0e34895f",
+            "utf8_bytes": 10222
           }
         },
         {
@@ -100,11 +100,11 @@
               "attempt": 2
             }
           },
-          "prompt_cache_identity": "tl3-cache-56a33867ecdf1d905592f8994d5da10458ab854a00f6e4d6",
+          "prompt_cache_identity": "tl3-cache-5faf9c973cbfe1c3be423b7f504bfca4331fe032a170b980",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "d4370e103329b8095363f754c897c09dba4a736ad5fd470baabdcdd47c3192aa",
-            "utf8_bytes": 10214
+            "sha256": "864ae9f486f6a95344954b4fa56942c5de1e14cc8ce2dda328a0d612ddd7e925",
+            "utf8_bytes": 10222
           }
         },
         {
@@ -401,11 +401,11 @@
               "attempt": 2
             }
           },
-          "prompt_cache_identity": "tl3-cache-6a1ab88891db7a62ace755c29aefe282dea00d2993ab1bff",
+          "prompt_cache_identity": "tl3-cache-885273033c52c72ed971b9db1cec9553349d96f21c690592",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "d35985d7b9c9d5a030b1a34647ed7103e40082d6d2e7fc965e6e8bcb6045a21d",
-            "utf8_bytes": 12312
+            "sha256": "9f13834d3b88cbbb962022d3adfea82752b1100a70fdff3600f57d5111785224",
+            "utf8_bytes": 12327
           }
         },
         {
@@ -469,11 +469,11 @@
               "attempt": 2
             }
           },
-          "prompt_cache_identity": "tl3-cache-065ebbf0a103002556ceb6ec6e9413b9c0dd4dc2f796d092",
+          "prompt_cache_identity": "tl3-cache-537d730cb1e5196c68ee1b646740c67e9c654babfe839812",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "ec7490cbf2e03c0c234fd2123a536ba73e3bdaef317275619d7f00afcdd1df15",
-            "utf8_bytes": 12312
+            "sha256": "9ab8aa068742d9e0e9fc7e48d77fe45b339b5b138bcb33cc9e07da7ff065cf0c",
+            "utf8_bytes": 12327
           }
         },
         {
@@ -601,8 +601,8 @@
     },
     "maker": {
       "model_facing_schema": {
-        "sha256": "2aefdd5ae04f286544215ab2a4ba7e348e7a99ee484bae020c6206a7f79dbb68",
-        "utf8_bytes": 4059
+        "sha256": "4339fc13f698459232c1487842dfdc6adaa29dfbc4f924f0422d13545aa6402d",
+        "utf8_bytes": 4077
       },
       "identities": [
         {
@@ -633,8 +633,8 @@
           "prompt_cache_identity": "tl3-17-3-2",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "fbac02b2f0c288145c06c35c8877b10aa2d0987d8f7eb55da8647dd91976ab0f",
-            "utf8_bytes": 9423
+            "sha256": "2949e60e0949442d8e163ed86fdd3900f8a19f57e27e1bb0f9de6e27ce4f4300",
+            "utf8_bytes": 9450
           }
         },
         {
@@ -770,11 +770,11 @@
               "attempt": 2
             }
           },
-          "prompt_cache_identity": "tl3-cache-8b83d551ce2465429802bf75badd69bbd22f4a24fe538c19",
+          "prompt_cache_identity": "tl3-cache-8b0dcd69f7962dc2b0fca249269562f75c9b2cbb5d21e1f6",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "b9d7e022aa32bfb88d86c2347f6de64e3334c9cb6ed22d0507baff85e0b5b283",
-            "utf8_bytes": 21023
+            "sha256": "6354e264ed247c279aef77ada9b402630b3b487a34a82beceb43824ac2e59136",
+            "utf8_bytes": 21035
           }
         },
         {
@@ -806,11 +806,11 @@
               "text": "Fixture prompt: preserve café."
             }
           },
-          "prompt_cache_identity": "tl3-cache-6a37897a0293b7f69afe32ebc7c658a602836486a92e86c8",
+          "prompt_cache_identity": "tl3-cache-57f93037d9656465f41eb821872c6d725a7161d74bea17c4",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "d73cf835a1ace61baf2ea8f036518ed6a187803327de2be1e0f46e14ae5de526",
-            "utf8_bytes": 2841
+            "sha256": "4b451cc773b0021b92b4ef89b9ac8e6c8321f4d35352566b983910b619c70049",
+            "utf8_bytes": 2838
           }
         },
         {
@@ -838,11 +838,11 @@
               "attempt": 2
             }
           },
-          "prompt_cache_identity": "tl3-cache-a51ba5ac2c976f35573606993ddc0d2ad7aaef0fd52099dd",
+          "prompt_cache_identity": "tl3-cache-15164f68ebcfb88074366e56c0839d63c2171a6208bd58bf",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "a1490faaa24c120f10d6406d23c802962878d14c539c98586d180fc10c359d2a",
-            "utf8_bytes": 21023
+            "sha256": "a1b7f04327e9d05762bf030fb56f17b92cd77790ca7d9c7755ea02486bac0feb",
+            "utf8_bytes": 21035
           }
         },
         {
@@ -874,11 +874,11 @@
               "text": "Fixture prompt: preserve café."
             }
           },
-          "prompt_cache_identity": "tl3-cache-07786f1b35529c6a56098cf427b8a9f3c327df0ae6fc4e81",
+          "prompt_cache_identity": "tl3-cache-c13944cdf0265fe2708f6aeca9f8b4f3fd0cef338cf882a4",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "08c732d083b7ccd5ce842416b67f23bbdd3f33d6d54dab9f1f3eb9adaf34021f",
-            "utf8_bytes": 2841
+            "sha256": "0714bf82fcf1c6286352cde51df6fca670ba2efa755488d316710cdd9bb74a3e",
+            "utf8_bytes": 2838
           }
         }
       ],
@@ -1142,8 +1142,8 @@
           "prompt_cache_identity": "tl3-17-3-2",
           "session_identity": "tl3-17-3-2",
           "role_prompt": {
-            "sha256": "6a35bd443a73919a44623b64a6afadc265b064697f948edb350461d325492848",
-            "utf8_bytes": 8413
+            "sha256": "112197742b63be721bfa8efa7b013c6154d00edfa035fc9a7229d09d8dd76a99",
+            "utf8_bytes": 8359
           }
         },
         {

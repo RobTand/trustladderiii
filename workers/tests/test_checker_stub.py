@@ -279,3 +279,26 @@ def test_concurrent_checker_processes_consume_each_step_once(tmp_path, monkeypat
             if process.pid is not None and process.is_alive():
                 process.terminate()
                 process.join(5)
+
+
+def test_recordings_leave_p5_commands_to_their_own_cursor(tmp_path, monkeypatch):
+    oracle = tmp_path / "oracle"
+    oracle.write_text(f"#!{sys.executable} -IS\nimport sys\nsys.stdin.read()\nsys.stdout.write('{{\"ok\": true}}')\n")
+    oracle.chmod(0o755)
+    recordings = tmp_path / "recordings"
+    recordings.mkdir()
+    monkeypatch.setenv("TL3_BINARY", str(oracle))
+    monkeypatch.setenv("TEST_RECORD_CHECKER_DIR", str(recordings))
+    recording = checker_stub.record("p5 split", tmp_path, monkeypatch)
+    next(recording)
+    for command in (["check-budget"], ["check-inputs", "maker"], ["check-quota"]):
+        subprocess.run([os.environ["TL3_BINARY"], *command], input='{"kind": "k"}', text=True,
+                       capture_output=True, check=True)
+        child = subprocess.Popen([os.environ["TL3_BINARY"], *command], text=True,
+                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        assert child.communicate('{"kind": "k"}', timeout=30)[0] == '{"ok": true}'
+    with pytest.raises(StopIteration):
+        next(recording)
+    [saved] = recordings.iterdir()
+    rows = json.loads(saved.read_text())["p5 split"]
+    assert [row["command"] for row in rows] == [["check-budget"], ["check-budget"]]

@@ -101,8 +101,7 @@ def output_freezes(text):
 
 
 def generation_scope_conflicts(inputs, ingest):
-    if not any(capability["tool"] == "run_generator" and capability["executor"] == "prismabuild_generator"
-               for capability in inputs.get("tool_capabilities", ())):
+    if not any(capability["tool"] == "run_generator" for capability in inputs.get("tool_capabilities", ())):
         return []
     issue = inputs["issue"]
     source = [("issue.title", issue.get("title", "")), ("issue.body", issue.get("body", ""))]

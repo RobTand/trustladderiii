@@ -31,7 +31,7 @@ def test_maker_and_rehearsal_use_the_same_source_partition_as_checking(tmp_path)
     from tl3_harness.model import Check, Forcing, Kind, Proof
     from tl3_harness.proof import assemble_proof
     from tl3_harness.trees import export, git, configuration
-    from tl3_workers.pb_tests import _stage
+    from tl3_workers.tests_tool import _stage
     from tl3_workers.tools import Worktree
 
     repo = tmp_path / 'repo'
@@ -88,7 +88,7 @@ def test_review662_mixed_checks_keep_their_own_source_partitions(rehearsal, monk
     from tl3_harness.model import Check, Forcing, Kind, Proof
     from tl3_harness.proof import assemble_proof
     from tl3_harness.trees import export, configuration
-    from tl3_workers import pb_tests
+    from tl3_workers import tests_tool
     ledger, root, inputs, calls = rehearsal
     from worker_process import git
     (root / 'pyproject.toml').write_text('[tool.tl3.harness]\ncommand=["python", "-m", "pytest"]\ntest-files=["tests/*.py"]\n')
@@ -108,16 +108,16 @@ def test_review662_mixed_checks_keep_their_own_source_partitions(rehearsal, monk
     checks[0]['proof']['subjects'] = ['publisher.py']
     ledger.worktree.test_checks = checks
     staged = []
-    stage = pb_tests._stage
+    stage = tests_tool._stage
     def capture(*args, **kwargs):
         result = stage(*args, **kwargs)
         destination = args[1]
         staged.append(((destination / 'checkout' / path).read_bytes(), json.loads((destination / 'proof.json').read_text())))
         return result
-    monkeypatch.setattr(pb_tests, '_stage', capture)
+    monkeypatch.setattr(tests_tool, '_stage', capture)
     # No rehearsal bookkeeping: this is the maker's run_tests path.
     ledger.worktree.pb_submitted = lambda *args: None
-    pb_tests.make_test_tool(ledger.worktree)([node, path + '::test_adopt'], base=True)
+    tests_tool.make_test_tool(ledger.worktree)([node, path + '::test_adopt'], base=True)
     base = tmp_path / 'checking-base'
     export(root, inputs['base_sha'], base)
     head = tmp_path / 'checking-head'
@@ -131,8 +131,9 @@ def test_review662_mixed_checks_keep_their_own_source_partitions(rehearsal, monk
                   Proof.parse(item['proof']) if 'proof' in item else None), configuration(base))
         expected.append(((destination / path).read_bytes(), receipt))
     assert staged == expected, 'maker and Checking must assemble the same per-check trees and receipts'
-    assert len(calls) == 2 and '--forcing' not in calls[0] and '--forcing' in calls[1]
-    assert json.loads(calls[1][calls[1].index('--forcing') + 1]) == Forcing.parse(checks[1]['forcing']).as_json()
+    assert len(calls) == 2 and '--forcing' not in calls[0]['arguments'] and '--forcing' in calls[1]['arguments']
+    arguments = calls[1]['arguments']
+    assert json.loads(arguments[arguments.index('--forcing') + 1]) == Forcing.parse(checks[1]['forcing']).as_json()
 
 
 def test_review662_request229_replays_saved_contract_and_untouched_setup_error(rehearsal):

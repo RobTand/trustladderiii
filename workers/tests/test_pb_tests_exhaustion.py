@@ -25,4 +25,4 @@ def test_negative_cache_and_exhaustion_preserve_eight_candidate_cap(rehearsal):
     assert ledger.run([NODE], reachable()) == exhausted
     assert len(calls) == 16
     assert ledger.violations(inputs['base_sha'], plan(reachable())['checks']) == [exhausted['message']]
-    assert all(cmd[cmd.index('--timeout-s') + 1] == '120' for cmd in calls)
+    assert all(document['walltime_seconds'] == 120 for document in calls)

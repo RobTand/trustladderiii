@@ -75,13 +75,13 @@ def test_memory_write_failure_does_not_change_worker_reply(tmp_path, monkeypatch
     assert events[-1] == {"event": "reply", "role": "audit", "reply": {"verdict": "agree", "objections": []}}
 
 
-def test_test_tool_preserves_harness_identifiers_results_and_action_key(tmp_path, monkeypatch):
+def test_test_tool_preserves_harness_identifiers_results_and_wait_reference(tmp_path, monkeypatch):
     from tl3_harness.test_tool import Summary
     from tl3_workers import tools
 
     result = Summary()
     result.add("test_greeting.py::test_hello", "failed", "password=fixture-failure-secret")
-    result.result["action_key"] = "a" * 64
+    result.result["wait_reference"] = "worker:" + "a" * 64
 
     def run_tests(tests: list[str] | None = None) -> dict:
         return result.result
@@ -101,7 +101,7 @@ def test_test_tool_preserves_harness_identifiers_results_and_action_key(tmp_path
                  "memory": {"summary_file": str(summary)}}, lambda event: None)
     evidence = json.loads(summary.read_text())["activity"]["tests"][0]
     assert evidence["selectors"] == ["test_greeting.py::test_hello"]
-    assert evidence["action_key"] == "a" * 64
+    assert evidence["wait_reference"] == "worker:" + "a" * 64
     assert evidence["totals"]["failed"] == 1
     assert evidence["tests"] == [{"test": "test_greeting.py::test_hello", "outcome": "failed"}]
     assert "fixture-failure-secret" not in summary.read_text()

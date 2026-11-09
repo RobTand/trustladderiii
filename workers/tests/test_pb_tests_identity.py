@@ -9,11 +9,12 @@ import sys
 
 import pytest
 from pb_fixtures import submission as submission  # noqa: F401
+from pb_fixtures import flux_settings, run_binding
 from pb_fixtures import supported_fake_runtime as supported_fake_runtime
 from tl3_harness import execution, test_tool
 from tl3_harness.model import Forcing
 from tl3_workers.contracts import validate
-from tl3_workers.pb_tests import TestSettings, make_test_tool
+from tl3_workers.tests_tool import make_test_tool
 from tl3_workers.tools import Evidence, Worktree, TEST_EVIDENCE_BYTES
 from worker_process import IMAGE, KEY, reachable
 
@@ -33,7 +34,7 @@ def invoke(submission, response, selected, forcing=None):
     root, scripts = submission
     (scripts / 'response.json').write_text(json.dumps(response))
     with Worktree(root) as tree:
-        return make_test_tool(tree, TestSettings(IMAGE, scripts), forcing=forcing)(selected)
+        return make_test_tool(tree, flux_settings(), forcing=forcing)(selected)
 
 
 def test_completed_parametrized_file_keeps_digest_identity(submission, monkeypatch):
@@ -58,7 +59,7 @@ def test_completed_parametrized_file_keeps_digest_identity(submission, monkeypat
     assert result['selectors'] == identity(selected)
     assert result['totals']['passed'] == 16
     assert len(json.dumps(result).encode()) <= test_tool.SUMMARY_BYTES
-    assert result['receipts'][0]['action_key'] == KEY
+    assert result['receipts'][0]['wait_reference'] == KEY
 
 
 @pytest.mark.parametrize('damage', ['matching', 'digest', 'count', 'order', 'prefix', 'omitted', 'extra'])
@@ -102,8 +103,8 @@ def test_reviewer_evidence_keeps_digest_of_omitted_selectors():
     selected = selectors()
     evidence = Evidence()
     evidence.test_result({'status': 'completed', 'totals': {'passed': 16, 'failed': 0, 'error': 0, 'skipped': 0},
-                          'tree': 'e' * 40, 'receipts': [{'action_key': KEY, 'status': 'executed',
-                          'exit_code': 0, 'receipt_sha256': 'b' * 64, 'log_sha256': 'c' * 64}]},
+                          'tree': 'e' * 40, 'receipts': [{'backend': 'flux', 'wait_reference': KEY,
+                          'run_binding': run_binding(KEY), 'receipt_sha256': 'b' * 64, 'ending': 'passed'}]},
                          (False, tuple(selected)))
     runs = evidence.test_evidence()
     assert runs[0]['tests_identity'] == identity(selected)

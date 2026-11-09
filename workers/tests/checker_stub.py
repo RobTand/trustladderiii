@@ -107,7 +107,10 @@ def replay(case, cursor, command, document, *, script=None):
 
 
 def record(case, temporary, monkeypatch):
-    """Capture a unit scenario, including its child workers, with an explicit oracle."""
+    """Capture a unit scenario, including its child workers, with an explicit oracle.
+
+    P5 commands replay from their own cursor, so they are never checker rows.
+    """
     import hashlib
     import subprocess
 
@@ -119,7 +122,7 @@ def record(case, temporary, monkeypatch):
         "import json, subprocess, sys\n"
         "data = sys.stdin.buffer.read()\n"
         f"run = subprocess.run([{binary!r}, *sys.argv[1:]], input=data, capture_output=True)\n"
-        "if run.returncode == 0:\n"
+        f"if run.returncode == 0 and sys.argv[1] not in {sorted(P5_COMMANDS)!r}:\n"
         " row = {'command': sys.argv[1:], 'document': json.loads(data), 'response': json.loads(run.stdout)}\n"
         f" with open({str(rows)!r}, 'ab', buffering=0) as target: target.write(json.dumps(row, ensure_ascii=False).encode() + b'\\n')\n"
         "sys.stdout.buffer.write(run.stdout)\n"
@@ -132,7 +135,7 @@ def record(case, temporary, monkeypatch):
     def recorded(command, *args, **kwargs):
         if isinstance(command, (list, tuple)) and command and command[0] == str(checker):
             result = original([binary, *command[1:]], *args, **kwargs)
-            if result.returncode == 0:
+            if result.returncode == 0 and command[1] not in P5_COMMANDS:
                 row = {"command": list(command[1:]), "document": json.loads(kwargs["input"]),
                        "response": json.loads(result.stdout)}
                 with rows.open("ab", buffering=0) as target:
