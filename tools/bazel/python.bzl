@@ -16,7 +16,7 @@ _PACKAGE_DATA = {
     "deploy/ci-runners": ["//:workflows"],
     # TL3_DEPLOY_HELPER: the deployment tests drive the real helper binary.
     "deploy/dl380g10": ["//crates/config:sources", "//crates/controller:example_tl3-deploy"],
-    "harness/tests": ["//harness:project_files", "//harness/tools:verify_disk_scratch"],
+    "harness/tests": ["//harness:project_files"],
     "tools/ci": [
         "//:bazel_config",
         "//:workflows",

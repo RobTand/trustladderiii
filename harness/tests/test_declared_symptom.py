@@ -8,6 +8,7 @@ import pytest
 from tl3_harness import execution, test_tool
 from tl3_harness.model import Check, Forcing, HarnessInputError, Kind, Proof, Verdict
 from tl3_harness.trees import git
+from conftest import flux_context
 
 
 NODE = 'tests/test_original.py::test_original'
@@ -44,9 +45,7 @@ def repo(tmp_path, monkeypatch):
     command = lambda tree, container, tests: [sys.executable, '-I', '-B', str(RUNNER), '-', str(tree)]
     monkeypatch.setattr(execution, 'container_command', command)
     monkeypatch.setattr(test_tool, 'container_command', command)
-    monkeypatch.setenv('PRISMABUILD_CONTAINER_OWNER', str(root))
-    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_PATH', str(tmp_path / 'progress.json'))
-    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_TOKEN', 'fixture')
+    flux_context(monkeypatch)
     return root
 
 

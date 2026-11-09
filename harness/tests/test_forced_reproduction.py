@@ -10,6 +10,7 @@ from tl3_harness import execution
 from tl3_harness.model import Check, Forcing, HarnessInputError, Kind, Outcome, Verdict, Proof
 from tl3_harness.report import decode, parse
 from tl3_harness.trees import git
+from conftest import flux_context
 
 RUNNER = Path(__file__).parents[1] / 'src/tl3_harness/runner.py'
 CONTAINER = execution.Container('sha256:' + '1' * 64)
@@ -97,7 +98,7 @@ def pid_repo(tmp_path, monkeypatch):
     base = save(repo, 'base')
     monkeypatch.setattr(execution, 'require_admission', lambda: None)
     monkeypatch.setattr(execution, 'run_tree', run)
-    monkeypatch.setenv('PRISMABUILD_CONTAINER_OWNER', str(repo))
+    flux_context(monkeypatch)
     return repo, base
 
 
@@ -299,8 +300,7 @@ def test_forcing_reaches_the_runner_through_stdin(pid_repo, tmp_path, monkeypatc
     monkeypatch.undo()
     monkeypatch.setattr(execution, 'container_command',
                         lambda tree, container, tests: [sys.executable, '-I', '-B', str(RUNNER), '-', str(tree)])
-    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_PATH', str(tmp_path / 'progress.json'))
-    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_TOKEN', 'token')
+    flux_context(monkeypatch)
     outcomes = execution.run_tree(repo, CONTAINER, (TEST,), tmp_path / 'report.jsonl', execution.Progress(),
                                   forcing=Forcing.parse(PID_REUSE))
     assert outcomes == {TEST: Outcome.ASSERTION}

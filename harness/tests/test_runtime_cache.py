@@ -1,20 +1,23 @@
 """Job identity scopes both caches through the complete checks entry point."""
-import os
 
 import pytest
 
 from tl3_harness import execution
 from tl3_harness.model import Check, Kind, Outcome, Verdict
 from tl3_harness.trees import git
+from conftest import flux_context
+
+
+@pytest.fixture(autouse=True)
+def flux(monkeypatch):
+    # PB-REMOVAL: the harness runs only inside a Rust-launched Flux job.
+    flux_context(monkeypatch)
 
 
 @pytest.mark.parametrize('selected', [False, True])
-def test_run_checks_without_pb_variables_keeps_both_caches_job_scoped(tmp_path, monkeypatch, selected):
+def test_run_checks_keeps_both_caches_job_scoped(tmp_path, monkeypatch, selected):
     from tl3_harness import runtime
 
-    for name in tuple(os.environ):
-        if name.startswith('PRISMABUILD_'):
-            monkeypatch.delenv(name)
     repo = tmp_path / 'checkout'
     repo.mkdir()
     git(repo, 'init', '-q', '-b', 'main')

@@ -8,6 +8,13 @@ import pytest
 
 from tl3_harness import execution
 from tl3_harness.model import Outcome
+from conftest import flux_context
+
+
+@pytest.fixture(autouse=True)
+def flux(monkeypatch):
+    # PB-REMOVAL: the harness runs only inside a Rust-launched Flux job.
+    flux_context(monkeypatch)
 
 
 @pytest.mark.parametrize('name', ['fsync', 'fdatasync'])

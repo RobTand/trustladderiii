@@ -62,17 +62,6 @@ py_binary(
 )
 
 py_binary(
-    name = "verify_disk_scratch",
-    srcs = ["verify_disk_scratch.py"],
-    data = ["//harness/tests:fixtures/scratch/test_disk.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        "//harness/src/tl3_harness",
-        "@rules_python//python/runfiles",
-    ],
-)
-
-py_binary(
     name = "prepare_runtime",
     srcs = ["prepare_runtime.py"],
     visibility = ["//visibility:public"],

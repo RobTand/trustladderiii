@@ -3,7 +3,6 @@ load("@rules_python//python:defs.bzl", "py_binary", native_py_test = "py_test")
 # gazelle:resolve py _pytest.assertion.rewrite @tl3_pip//pytest
 load("//tools/bazel:python.bzl", "py_library", "tl3_py_test")
 
-exports_files(["fixtures/scratch/test_disk.py"])
 
 tl3_py_test(
     name = "test_git_environment",
@@ -212,12 +211,6 @@ tl3_py_test(
         ":conftest",
         "//harness/src/tl3_harness",
     ],
-)
-
-tl3_py_test(
-    name = "test_verify_disk_scratch",
-    srcs = ["test_verify_disk_scratch.py"],
-    deps = [":conftest"],
 )
 
 tl3_py_test(

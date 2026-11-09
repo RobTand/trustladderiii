@@ -11,6 +11,7 @@ import pytest
 
 from tl3_harness import execution, runner, test_tool
 from tl3_harness.model import Forcing
+from conftest import flux_context
 
 
 RUNNER = Path(execution.__file__).with_name('runner.py')
@@ -120,8 +121,7 @@ def repo(tmp_path, monkeypatch):
     monkeypatch.setattr(test_tool, 'require_admission', lambda: None)
     monkeypatch.setattr(test_tool, 'container_command', lambda tree, container, tests: [
         sys.executable, '-I', '-B', str(RUNNER), '-', str(tree)])
-    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_PATH', str(tmp_path / 'progress.json'))
-    monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_TOKEN', 'fixture')
+    flux_context(monkeypatch)
     return tmp_path
 
 
