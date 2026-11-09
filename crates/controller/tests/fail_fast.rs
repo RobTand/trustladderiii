@@ -750,7 +750,7 @@ fn stop_with(source: Source, operations: bool) -> Stopped {
                         }})),
                     (Source::Planner, Role::Plan) => ("planner", json!({"kind": "leaf",
                         "files": ["value.py"],
-                        "checks": [{"kind": "regression", "node_ids": ["test_value.py::test_total"], "goal_ids": [0]}],
+                        "checks": [{"name": "total-is-correct", "kind": "regression", "tests": ["test_value.py::test_total"], "goal_ids": [0]}],
                         "no_design_questions": true, "lands_on_its_own": true,
                         "violations": ["The plan declares a protected path: .github/workflows/ci.yml"],
                         "forecast": {"tokenizer": "o200k_base", "brief_tokens": 1, "file_tokens": {"value.py": 0},
@@ -1159,6 +1159,7 @@ fn stage_owned_handover_keeps_fail_fast_and_independent_checking() {
                         reproducing_unavailable: None,
                         selected_failures: Vec::new(),
                         plan: vec![adapters::prismabuild::Check {
+                            goal_ids: vec![],
                             name: "forced-deep-path".into(),
                             kind: adapters::prismabuild::Kind::Demonstrating,
                             tests: vec!["test_deep.py::test_deep_path".into()],

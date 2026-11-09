@@ -101,7 +101,13 @@ def allowlist_errors(current, previous):
     errors = []
     for key, entry in sorted(current.items()):
         crate = key.startswith('crate:')
-        reason = entry.get('reason') if crate and isinstance(entry, dict) else entry
+        relocation = key.startswith('relocation:')
+        exact_edge = key.startswith('exact-edge:')
+        reason = entry.get('reason') if (crate or relocation or exact_edge) and isinstance(entry, dict) else entry
+        if relocation:
+            errors += relocation_entry_errors(key, entry)
+        if exact_edge:
+            errors += exact_edge_entry_errors(key, entry)
         if crate and (not isinstance(entry, dict) or type(entry.get('sources')) is not int
                       or entry['sources'] < 0):
             errors.append(f'allowlist exception {key} needs a nonnegative integer sources count')
@@ -110,15 +116,102 @@ def allowlist_errors(current, previous):
             errors.append(f'allowlist exception {key} needs a nonnegative integer max_fanout')
         if not isinstance(reason, str) or not reason.strip():
             errors.append(f'allowlist exception {key} needs a reason')
-        elif (crate or key not in previous) and not re.search(
+        elif not (relocation or exact_edge) and (crate or key not in previous) and not re.search(
                 r'(?<!\w)#[1-9][0-9]*(?!\w)|'
                 r'https://github\.com/RobTand/trustladderiii/issues/[1-9][0-9]*(?![\w/])', reason):
             errors.append(f'allowlist exception {key} needs a reason naming a program issue (#730, for example)')
         prior = previous.get(key)
-        prior_reason = prior.get('reason') if crate and isinstance(prior, dict) else prior
+        prior_reason = prior.get('reason') if (crate or relocation or exact_edge) and isinstance(prior, dict) else prior
         if key in previous and prior_reason != reason:
             errors.append(f'allowlist exception {key} reason cannot change')
     return errors
+
+
+def relocation_entry_errors(key, entry):
+    if not isinstance(entry, dict) or set(entry) != {'from', 'to', 'targets', 'issue', 'reason'}:
+        return [f'allowlist exception {key} needs from, to, targets, issue and reason fields']
+    errors = []
+    labels = [entry['from'], entry['to']]
+    if (any(not isinstance(label, str) or not re.fullmatch(r'//[^:\s]*:[^:\s]+', label)
+            for label in labels) or labels[0] == labels[1]
+            or key != f'relocation:{labels[0]}=>{labels[1]}'):
+        errors.append(f'allowlist exception {key} needs matching distinct from/to source labels')
+    targets = entry['targets']
+    if (not isinstance(targets, list) or not targets
+            or any(not isinstance(target, str) for target in targets)
+            or len(set(targets)) != len(targets)):
+        errors.append(f'allowlist exception {key} needs an explicit nonempty unique target list')
+    if type(entry['issue']) is not int or entry['issue'] <= 0:
+        errors.append(f'allowlist exception {key} needs a positive integer issue')
+    return errors
+
+
+def exact_edge_entry_errors(key, entry):
+    if not isinstance(entry, dict) or set(entry) != {'edges', 'issue', 'reason'}:
+        return [f'allowlist exception {key} needs edges, issue and reason fields']
+    errors = []
+    edges = entry['edges']
+    if (not re.fullmatch(r'exact-edge:[^\s]+', key)
+            or not isinstance(edges, list) or not edges
+            or any(not isinstance(edge, list) or len(edge) != 2
+                   or any(not isinstance(label, str) or not re.fullmatch(r'//[^:\s]*:[^:\s]+', label)
+                          for label in edge) for edge in edges)
+            or len({tuple(edge) for edge in edges}) != len(edges)):
+        errors.append(f'allowlist exception {key} needs an explicit nonempty unique list of target/source edges')
+    if type(entry['issue']) is not int or entry['issue'] <= 0:
+        errors.append(f'allowlist exception {key} needs a positive integer issue')
+    return errors
+
+
+def exact_edge_sources(head, allowlist):
+    credits, errors = {}, []
+    entries = {key: entry for key, entry in allowlist.items() if key.startswith('exact-edge:')}
+    if not entries:
+        return credits, errors
+    edges = set(map(tuple, head['edges']))
+    for key, entry in sorted(entries.items()):
+        if allowlist_errors({key: entry}, {}):
+            continue
+        invalid = []
+        for target, source in entry['edges']:
+            if ((target, source) not in edges or target not in head['reach']
+                    or head['node_types'].get(target) != 'Rule'
+                    or head['node_types'].get(source) != 'SourceFile'
+                    or source not in head['loc'] or source not in head['reach'][target]):
+                invalid.append(f'{key}: head edge {target} -> {source} must exist from a measured '
+                               'test Rule to a reachable SourceFile')
+        errors += invalid
+        if not invalid:
+            for target, source in entry['edges']:
+                credits.setdefault(target, set()).add(source)
+    return credits, errors
+
+
+def relocation_sources(base, head, allowlist):
+    credits, errors = {}, []
+    for key, entry in sorted(allowlist.items()):
+        if not key.startswith('relocation:') or allowlist_errors({key: entry}, {}):
+            continue
+        origin, destination = entry['from'], entry['to']
+        invalid = []
+        if origin not in base['loc']:
+            invalid.append(f'{key}: base source {origin} is missing')
+        if origin in head['loc'] or origin in head['node_types']:
+            invalid.append(f'{key}: original source {origin} must be deleted at head')
+        if destination not in head['loc']:
+            invalid.append(f'{key}: head source {destination} is missing')
+        for target in entry['targets']:
+            if origin not in base['reach'].get(target, ()):
+                invalid.append(f'{key}: base target {target} did not reach {origin}')
+            if target not in head['reach']:
+                invalid.append(f'{key}: head target {target} is missing')
+        errors += invalid
+        if invalid:
+            continue
+        for target in entry['targets']:
+            if destination not in base['reach'][target]:
+                credits.setdefault(target, set()).add(destination)
+    return credits, errors
 
 
 def bounded_crate_sources(base, head, allowlist, previous):
@@ -232,6 +325,10 @@ def check(base, head, changed, policy, allowlist=None, previous_allowlist=None, 
     allowlist = allowlist or {}
     previous_allowlist = previous_allowlist if previous_allowlist is not None else allowlist
     errors = allowlist_errors(allowlist, previous_allowlist)
+    relocations, relocation_errors = relocation_sources(base, head, allowlist)
+    errors += relocation_errors
+    exact_sources, exact_errors = exact_edge_sources(head, allowlist)
+    errors += exact_errors
     crate_sources, crate_errors = bounded_crate_sources(base, head, allowlist, previous_allowlist)
     errors += crate_errors
     fanout_sources, fanout_errors = bounded_crate_fanout(head, allowlist, crate_sources)
@@ -253,24 +350,33 @@ def check(base, head, changed, policy, allowlist=None, previous_allowlist=None, 
     crate_sources = {credit_moves.get(source, source) for source in crate_sources}
     fanout_sources = {credit_moves.get(source, source) for source in fanout_sources}
     comparison_head = moved_head(head, moves)
+    exact_sources = {
+        target: {moves.get(source, source) for source in sources} - set(base['reach'].get(target, ()))
+        for target, sources in exact_sources.items()}
     compared = graph_impact.compare({**base, 'edge_groups': base_groups}, comparison_head, comparison_policy,
                                     changed_tests=changed, allowlist=allowlist, record_gains=record_gains)
     reach_head = crate_reach_head(base, comparison_head, crate_sources)
-    if crate_sources:
+    reach_head = {**reach_head, 'reach': {
+        target: sorted(set(sources) - relocations.get(target, set()) - exact_sources.get(target, set()))
+        for target, sources in reach_head['reach'].items()}}
+    if crate_sources or relocations or exact_sources:
         # Only per-test budgets and structural reach use the reach credits.
-        # Fanout gets its own package-scoped credit below; SCC and edges stay full.
+        # Fanout credits are separate below; SCC and edges stay full.
         budget_errors = graph_impact.compare(
             {**base, 'edge_groups': base_groups}, reach_head, comparison_policy,
             changed_tests=changed, allowlist=allowlist, record_gains=record_gains)
         compared = [error for error in compared if error.partition(' reach ')[0] not in head['reach']]
         compared += [error for error in budget_errors if error.partition(' reach ')[0] in head['reach']]
-    if fanout_sources and any(error.startswith('existing source fanout grew: ') for error in compared):
+    if (fanout_sources or exact_sources) and any(
+            error.startswith('existing source fanout grew: ') for error in compared):
         # Reuse the pinned core's consumer counting and edge attribution. Only
         # its fanout diagnostic uses this source universe; every other check
         # above sees the complete graph. Keep reach and identity paths intact.
-        fanout_head = {**comparison_head, 'loc': {
-            source: weight for source, weight in comparison_head['loc'].items()
-            if source not in fanout_sources}}
+        fanout_head = {**comparison_head,
+                       'reach': {target: sorted(set(sources) - exact_sources.get(target, set()))
+                                 for target, sources in comparison_head['reach'].items()},
+                       'loc': {source: weight for source, weight in comparison_head['loc'].items()
+                               if source not in fanout_sources}}
         fanout_errors = graph_impact.compare(
             {**base, 'edge_groups': base_groups}, fanout_head, comparison_policy,
             changed_tests=changed, allowlist=allowlist, record_gains=record_gains)

@@ -661,7 +661,7 @@ impl JsonSchema for PlannerExternalProof {
         "PlannerExternalProof".into()
     }
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        schemars::json_schema!({"$ref": "planner-reply.json#/$defs/proof"})
+        schemars::json_schema!({"$ref": "planner-reply.json#/$defs/ProofDeclaration"})
     }
 }
 

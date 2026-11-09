@@ -25,13 +25,15 @@ _POSTGRES = ["crates/controller", "crates/store"]
 
 # Files that include_str! and build.rs read from outside the crate.
 _COMPILE_DATA = {
+    "crates/action": ["//workers:schemas"],
     "crates/contracts": ["//workers:schemas", "//workers/tests:footprint_paths"],
-    "crates/controller": ["//workers:schemas"],
+    "crates/controller": ["//workers:schemas", "//crates/redaction:sources"],
     "crates/config": ["//deploy/dl380g10:models.toml"],
     "crates/github": ["//crates/mergify:sources"],
     "crates/mergify": ["//crates/github:sources"],
 }
 _BUILD_SCRIPT_DATA = {
+    "crates/action": ["//workers:schemas"],
     "crates/controller": ["//workers:schemas", "//workers/src:prompts"],
 }
 _EXAMPLE_DATA = {
@@ -40,7 +42,7 @@ _EXAMPLE_DATA = {
 }
 
 # Files other crates' tests read at run time.
-_RUNTIME = {"crates/harness-core": [
+_RUNTIME = {"crates/action": ["//workers/tests:tracing_policy_inputs"], "crates/harness-core": [
     "//harness:core_vectors",
     "//harness:test-vectors/summary/python-envelope.json",
     "//harness:test-vectors/summary/python-numbers.json",
@@ -126,8 +128,8 @@ _CONTROLLER_RUNTIME = {
     "test_test_worker_budget_orchestration": ["//workers/tests:budget_orchestration"],
     "test_test_worker_checker": ["//workers/tests:checker_recordings", ":example_checker-vectors"],
     "test_test_redaction_policy": ["//workers/src:redaction_contract"],
-    "test_test_redaction_adapter": ["//workers/tests:redaction_branches"],
-    "test_test_redaction_generated": ["//workers/tests:redaction_generated"],
+    "test_test_redaction_adapter": ["//workers/tests:redaction_branches", "//crates/redaction:sources"],
+    "test_test_redaction_generated": ["//workers/tests:redaction_generated", "//crates/redaction:sources"],
     "test_test_redaction_parity": ["//workers/tests:redaction_branches"],
     "lib_test_tl3_controller": [
         "//workers/tests:p5_references",
@@ -212,7 +214,7 @@ _LIBTEST_SHARDS["tl3-controller/approval_race"] = 37
 def tl3_rust_test(name, binary_id, gate_args, **kwargs):
     package = native.package_name()
     controller = package == "crates/controller"
-    binaries = _CONTROLLER_BINARIES.get(name, []) if controller else []
+    binaries = _CONTROLLER_BINARIES.get(name, []) if controller else ([":tl3-action"] if package == "crates/action" and name == "test_test_policy" else [])
     # Every controller test can reach the adapter, including through shared fixtures.
     if controller and ":tl3" not in binaries:
         binaries = binaries + [":tl3"]
@@ -402,11 +404,11 @@ def _crate_test(kind, package, name, source, harness, options):
         compile_data = compile_data + ["//tools/bazel:verus.bzl"]
         if native.package_name() == "crates/mergify":
             sources = sources + native.glob(["proofs/enqueue_*.rs"])
-    if native.package_name() == "crates/store":
+    if native.package_name() in ["crates/store", "crates/action"]:
         compile_data = compile_data + native.glob(["tests/fixtures/**"], allow_empty = True)
     if native.package_name() == "crates/controller":
         sources = [":library_sources", source] + native.glob(
-            (["tests/loom/**", "tests/fixtures/decisions/**", "tests/fixtures/narrowing/**", "tests/fixtures/worker-replies-d8e4f2a8.jsonl"] if kind == "lib" else
+            (["tests/loom/**", "tests/fixtures/decisions/**", "tests/fixtures/narrowing/**", "tests/fixtures/worker-replies-action-s1.jsonl"] if kind == "lib" else
              ([source.removesuffix(".rs") + "/**"] if not source.startswith("//") else [])) +
             _CONTROLLER_TEST_SOURCES.get(source, []),
             allow_empty = True,

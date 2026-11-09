@@ -351,7 +351,7 @@ fn leaf_with_declared_test_edits_maps_by_its_violations() {
     // #438: edits_tests is optional on a leaf; worker code reports its rule breaks.
     let test = "tests/test_greeting.py::test_hello";
     let mut reply = json!({"kind": "leaf", "files": ["greeting.py"], "checks": [
-        {"kind": "demonstrating", "node_ids": [test], "goal_ids": [0]},
+        {"name": "greeting-is-correct", "kind": "demonstrating", "tests": [test], "goal_ids": [0]},
     ], "edits_tests": [test], "no_design_questions": true, "lands_on_its_own": true,
     "forecast": ingest(1)["forecast"], "violations": []});
     assert!(matches!(

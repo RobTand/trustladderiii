@@ -4,7 +4,8 @@ import json
 import random
 import string
 
-rng = random.Random(20261101)
+SEED = 20261101
+rng = random.Random(SEED)
 ALNUM = string.ascii_letters + string.digits
 HEX = '0123456789abcdef'
 B64 = string.ascii_letters + string.digits + '+/'
@@ -13,7 +14,16 @@ UPPER = string.ascii_uppercase + string.digits
 
 
 def r(n, alpha=ALNUM):
-    return ''.join(rng.choice(alpha) for _ in range(n))
+    # Fixed-seed synthetic values carry a fake marker where their alphabet permits.
+    marker = 'TL3FAKE'
+    if n < len(marker) or not set(marker) <= set(alpha):
+        return ''.join(rng.choice(alpha) for _ in range(n))
+    # Retain mixed random character classes after the fixed marker. A predictable
+    # marker must not turn high-entropy carrier cases into ordinary identifiers.
+    groups = [group for chars in (string.ascii_lowercase, string.ascii_uppercase, string.digits)
+              if (group := ''.join(char for char in chars if char in alpha))]
+    return marker + ''.join(rng.choice(groups[index % len(groups)])
+                            for index in range(n - len(marker)))
 
 
 def b64(s):
@@ -325,11 +335,23 @@ add('json_x_api_key', '{{"x-api-key": "{0}"}}', gen=lambda: r(40))
 add('DOC_unquoted_spaces', 'password=two {0} words', gen=lambda: r(12), doc='D1-spaces')
 
 
-# Original #296 planted cases, shared by both engines and the exporter tests.
+# Original #296 carriers. Confidential values use their original lower-case/digit/
+# hyphen alphabet and lengths. That alphabet permits the lower-case fake marker.
+def planted_secret(length, fixture_id):
+    seeded = random.Random(SEED + fixture_id)
+    marker = 'tl3fake'
+    groups = (string.ascii_lowercase, string.digits)
+    return marker + ''.join(seeded.choice(groups[index % len(groups)])
+                            for index in range(length - len(marker)))
+
+
+_url_password = planted_secret(21, 1)
+_nested_password = planted_secret(19, 14)
+_credential_value = planted_secret(14, 15)
 PLANTED = [
     ('eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.fixtureSignature296',
      'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.fixtureSignature296'),
-    ('postgresql://u:postgres-password-296@h', 'postgres-password-296'),
+    (f'postgresql://u:{_url_password}@h', _url_password),
     ('redis://u:redis-password-296@h', 'redis-password-296'),
     ('Authorization: Basic Zml4dHVyZTI5NjpwYXNzd29yZA==', 'Zml4dHVyZTI5NjpwYXNzd29yZA=='),
     ('GITHUB_WEBHOOK_SECRET=webhook-env-296', 'webhook-env-296'),
@@ -342,8 +364,8 @@ PLANTED = [
     ('ASIA0123456789ABCDEF', 'ASIA0123456789ABCDEF'),
     ('xapp-fixture296application', 'xapp-fixture296application'),
     ('pypi-fixture296package', 'pypi-fixture296package'),
-    (json.dumps(json.dumps({'password': 'nested-password-296'})), 'nested-password-296'),
-    ('credential_value="credential-296"', 'credential-296'),
+    (json.dumps(json.dumps({'password': _nested_password})), _nested_password),
+    (f'credential_value="{_credential_value}"', _credential_value),
     ('key_value=key-value-296', 'key-value-296'),
 ]
 

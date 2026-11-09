@@ -36,7 +36,7 @@ pub(super) struct Step {
 }
 pub(super) fn check_run() -> CheckRun {
     serde_json::from_value(json!({"repository":"/served","base_sha":OTHER,
-        "plan":[{"name":"check-1","kind":"regression","tests":["tests/a.py"]}]}))
+        "plan":[{"name":"check-1","kind":"regression","tests":["tests/a.py"],"goal_ids":[]}]}))
     .unwrap()
 }
 impl Default for Step {

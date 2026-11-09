@@ -82,7 +82,7 @@ def declaration_pointer(field, check_index, role='maker'):
     pointer = field if field.startswith('/checks') else f'/checks/{check_index}' + field
     test_prefix = f'/checks/{check_index}/tests'
     if role == PLANNER.role and (pointer == test_prefix or pointer.startswith(test_prefix + '/')):
-        return f'/checks/{check_index}/node_ids' + pointer[len(test_prefix):]
+        return f'/checks/{check_index}/tests' + pointer[len(test_prefix):]
     return pointer
 
 

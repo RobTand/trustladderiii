@@ -142,7 +142,7 @@ fn reply(role: &str) -> Value {
         }
         "audit" => json!({"verdict":"agree","objections":[]}),
         "planner" => {
-            json!({"kind":"leaf","files":["safe.rs"],"checks":[{"kind":"regression","node_ids":["test_safe.py::test_safe"],"goal_ids":[0]}],"no_design_questions":true,"lands_on_its_own":true,"violations":[],"forecast":forecast()})
+            json!({"kind":"leaf","files":["safe.rs"],"checks":[{"name":"safe-behavior","kind":"regression","tests":["test_safe.py::test_safe"],"goal_ids":[0]}],"no_design_questions":true,"lands_on_its_own":true,"violations":[],"forecast":forecast()})
         }
         "maker" => {
             json!({"kind":"done","head":NEW_HEAD,"self_check":[{"goal_id":"goal-1","status":"met","evidence":"passed"}]})
@@ -387,7 +387,7 @@ fn reproduction(tests: bool) -> Schedule {
     s
 }
 fn plan(tag: &str) -> Value {
-    json!({"repository":format!("/safe/{tag}"),"base_sha":OLD_HEAD,"reviewed_sha":OLD_HEAD,"reproducing_unavailable":"safe optional evidence","selected_failures":["test_original.py::test_original"],"plan":[{"name":tag,"kind":"regression","tests":["test_safe.py::test_safe"]},{"name":"old reproduction","kind":"reproducing","tests":["test_old.py::test_old"]}]})
+    json!({"repository":format!("/safe/{tag}"),"base_sha":OLD_HEAD,"reviewed_sha":OLD_HEAD,"reproducing_unavailable":"safe optional evidence","selected_failures":["test_original.py::test_original"],"plan":[{"name":tag,"kind":"regression","tests":["test_safe.py::test_safe"],"goal_ids":[]},{"name":"old reproduction","kind":"reproducing","tests":["test_old.py::test_old"],"goal_ids":[]}]})
 }
 #[test]
 fn mandatory_reproductions_and_eager_second_plan_read() {
@@ -570,7 +570,7 @@ fn mandatory_all_reply_outcomes_and_plan_budget() {
         );
     }
     let mut reply = reply("planner");
-    reply["checks"][0]["node_ids"] = json!(["x".repeat(4 * 1024 * 1024)]);
+    reply["checks"][0]["tests"] = json!(["x".repeat(4 * 1024 * 1024)]);
     let r = routed(&schedule("planner", reply));
     assert!(r.result.to_string().contains("PlanCantMeet"));
     let plans = r

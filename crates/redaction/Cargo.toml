@@ -1,0 +1,18 @@
+[package]
+name = "tl3-redaction"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+fancy-regex = "0.18"
+regex = "1"
+regex-syntax = "0.8"
+sha2 = "0.10"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[dependencies.url]
+version = "2.5.8"

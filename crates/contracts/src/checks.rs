@@ -11,6 +11,22 @@ use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _, ser::SerializeMap};
 use std::borrow::Cow;
 
+/// Original zero-based index in request.inputs.ingest.goals, retained across splits.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(transparent)]
+pub struct GoalId(pub u64);
+
+fn check_goals<'de, D: Deserializer<'de>>(input: D) -> Result<Vec<GoalId>, D::Error> {
+    let goals = Vec::<GoalId>::deserialize(input)?;
+    let mut unique = std::collections::BTreeSet::new();
+    if goals.iter().any(|goal| !unique.insert(*goal)) {
+        return Err(D::Error::custom("check goal_ids must be unique"));
+    }
+    Ok(goals)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum CheckKind {
@@ -26,6 +42,11 @@ pub enum CheckKind {
 #[serde(deny_unknown_fields)]
 pub struct Check {
     pub name: String,
+    /// Original ingest.goals indices. Required, unique, never renumbered across splits.
+    /// The planner gate checks nonempty/range/coverage; controller controls explicitly use [].
+    #[serde(deserialize_with = "check_goals")]
+    #[schemars(with = "List<GoalId, 0, UNBOUNDED, true>")]
+    pub goal_ids: Vec<GoalId>,
     pub kind: CheckKind,
     pub tests: Vec<String>,
     // A demonstrating check's forced reproduction (#393).
@@ -50,6 +71,52 @@ pub struct Check {
     )]
     #[schemars(with = "DeclaredSymptom")]
     pub declared_symptom: Option<DeclaredSymptom>,
+}
+
+/// Planner boundary: one canonical Check, validated against the original ingest goal
+/// index space. Required goals exclude publishing goals; references may include them.
+/// Controller-added controls do not enter this model-plan admission function.
+pub fn admit_plan(
+    checks: &[Check],
+    goal_count: usize,
+    required_goals: &[GoalId],
+) -> Result<(), String> {
+    let mut names = std::collections::BTreeSet::new();
+    let mut covered = std::collections::BTreeSet::new();
+    for check in checks {
+        if check.name.trim().is_empty() || !names.insert(check.name.as_str()) {
+            return Err("check names must be nonblank and unique within the plan".into());
+        }
+        if check.kind == CheckKind::Reproducing {
+            return Err("planner cannot declare a reproducing check".into());
+        }
+        if check.tests.is_empty() || check.tests.iter().any(|test| test.trim().is_empty()) {
+            return Err("each planner check needs exact test selectors".into());
+        }
+        if check.goal_ids.is_empty()
+            || check.goal_ids.iter().any(|id| {
+                usize::try_from(id.0)
+                    .ok()
+                    .is_none_or(|index| index >= goal_count)
+            })
+        {
+            return Err("each planner check needs valid original ingest goal indices".into());
+        }
+        let distinct: std::collections::BTreeSet<_> = check.goal_ids.iter().collect();
+        if distinct.len() != check.goal_ids.len() {
+            return Err("check goal_ids must be unique".into());
+        }
+        covered.extend(check.goal_ids.iter().copied());
+    }
+    if required_goals.iter().any(|goal| {
+        usize::try_from(goal.0)
+            .ok()
+            .is_none_or(|index| index >= goal_count)
+            || !covered.contains(goal)
+    }) {
+        return Err("planner checks must cover every required non-publishing goal".into());
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -167,6 +234,8 @@ impl JsonSchema for Patch {
 pub struct ProofDeclaration {
     pub subjects: List<UnitPath, 0, 16, true>,
     pub observer_support: List<UnitPath, 0, 16, true>,
+    /// Planner-declared EXPECTED assertion message, never captured run evidence.
+    /// Rust checks actual-run RED messages independently before accepting the proof.
     pub red_message: Text<1, 160>,
 }
 

@@ -700,7 +700,7 @@ mod reply_contract_tests {
 
     #[test]
     fn mapping_matches_existing_reply_corpus() {
-        let corpus = include_str!("../../../tests/fixtures/worker-replies-d8e4f2a8.jsonl");
+        let corpus = include_str!("../../../tests/fixtures/worker-replies-action-s1.jsonl");
         let mut count = 0;
         for line in corpus.lines() {
             let record: Value = serde_json::from_str(line).unwrap();
@@ -765,7 +765,7 @@ mod reply_contract_tests {
             let typed: T = serde_json::from_value(reply.clone()).unwrap();
             assert_eq!(serde_json::to_value(typed).unwrap(), *reply);
         }
-        let corpus = include_str!("../../../tests/fixtures/worker-replies-d8e4f2a8.jsonl");
+        let corpus = include_str!("../../../tests/fixtures/worker-replies-action-s1.jsonl");
         let mut counts = [0usize; 3];
         for line in corpus.lines() {
             let record: Value = serde_json::from_str(line).unwrap();

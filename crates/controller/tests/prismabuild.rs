@@ -136,6 +136,7 @@ fn run(root: &Path, outside: bool) -> Delivery {
             reproducing_unavailable: None,
             selected_failures: Vec::new(),
             plan: vec![Check {
+                goal_ids: vec![],
                 name: "value".into(),
                 kind: Kind::Demonstrating,
                 tests: vec!["test_value.py::test_value".into()],
@@ -4665,6 +4666,7 @@ fn result_budget_rejects_repeated_checks() {
     let mut delivery = run(root.path(), false);
     delivery.checks.as_mut().unwrap().plan = (0..40000)
         .map(|i| Check {
+            goal_ids: vec![],
             name: format!("check-{i}"),
             kind: Kind::Regression,
             tests: vec!["test_value.py::test_value".into()],
@@ -4792,7 +4794,7 @@ fn oversized_planner_reply_reaches_plan_feedback(settings: &tl3_config::Store) {
                         replies.set(replies.get() + 1);
                         serde_json::json!({
                             "kind":"leaf", "files":["value.py"], "checks":[{
-                                "kind":"regression", "node_ids":[format!("test_value.py::test_{}", "x".repeat(4 * 1024 * 1024))], "goal_ids":[0]}],
+                                "name":"oversized-selector", "kind":"regression", "tests":[format!("test_value.py::test_{}", "x".repeat(4 * 1024 * 1024))], "goal_ids":[0]}],
                             "no_design_questions":true, "lands_on_its_own":true, "violations":[],
                             "forecast":forecast
                         })

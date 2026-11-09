@@ -96,6 +96,7 @@ impl Shell<'_> {
                         .map(|(index, check)| {
                             let declared = |field: &str| check.get(field).cloned();
                             Ok(adapters::prismabuild::Check {
+                                goal_ids: vec![],
                                 name: format!("check-{}", index + 1),
                                 kind: serde_json::from_value(check["kind"].clone())?,
                                 tests: adapters::workers::protocol::reply_field(check, "node_ids")?,

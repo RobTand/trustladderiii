@@ -662,6 +662,7 @@ fn shaped_schedule(tag: u8, bits: u16) -> Schedule {
     let mut run = plan("all-fields");
     if bits & 256 != 0 {
         run.plan.push(adapters::prismabuild::Check {
+            goal_ids: vec![],
             name: "planned regression".into(),
             kind: adapters::prismabuild::Kind::Regression,
             tests: vec![

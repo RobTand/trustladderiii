@@ -1,5 +1,137 @@
 //! Text matching against the authoritative Rust redaction policy.
 use fancy_regex::{Captures, Regex};
+mod azure_sas {
+    //! Confidential Azure SAS syntax, independent of signature entropy or authenticity.
+    use std::collections::BTreeMap;
+
+    const FIELD_BYTES: usize = 4096;
+
+    fn valid_percent_encoding(value: &str) -> bool {
+        let bytes = value.as_bytes();
+        let mut index = 0;
+        while index < bytes.len() {
+            if bytes[index] == b'%' {
+                if index + 2 >= bytes.len()
+                    || !bytes[index + 1..index + 3]
+                        .iter()
+                        .all(u8::is_ascii_hexdigit)
+                {
+                    return false;
+                }
+                index += 3;
+            } else {
+                index += 1;
+            }
+        }
+        true
+    }
+
+    pub(super) fn spans(text: &str) -> Vec<(usize, usize)> {
+        let mut result = Vec::new();
+        // The caller's one-MiB source bound also bounds candidate scanning and parsing.
+        let mut scanned_until = 0;
+        for (colon, _) in text.match_indices("://") {
+            if colon < scanned_until {
+                continue;
+            }
+            let start = ["https", "http"].into_iter().find_map(|scheme| {
+                let start = colon.checked_sub(scheme.len())?;
+                text.get(start..colon)?
+                    .eq_ignore_ascii_case(scheme)
+                    .then_some(start)
+            });
+            let Some(start) = start else {
+                continue;
+            };
+            if text[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_')
+            {
+                continue;
+            }
+            let end = text[start..]
+                .find(|c: char| {
+                    c.is_whitespace()
+                        || matches!(c, '"' | '\'' | '<' | '>' | '\\' | ')' | ']' | '}')
+                })
+                .map_or(text.len(), |offset| start + offset);
+            scanned_until = end;
+            let raw = &text[start..end];
+            let authority = &raw[colon + 3 - start..];
+            let authority_end = authority.find(['/', '?', '#']).unwrap_or(authority.len());
+            if authority[..authority_end].contains('@') {
+                continue;
+            }
+            let Ok(parsed) = url::Url::parse(raw) else {
+                continue;
+            };
+            if !parsed.username().is_empty() || parsed.password().is_some() {
+                continue;
+            }
+            let Some(account) = parsed
+                .host_str()
+                .and_then(|host| host.strip_suffix(".blob.core.windows.net"))
+            else {
+                continue;
+            };
+            if account.is_empty()
+                || account.len() > 63
+                || !account
+                    .bytes()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+            {
+                continue;
+            }
+            // Use the original query's byte coordinates. URL parsing only establishes authority.
+            let query_end = raw.find('#').unwrap_or(raw.len());
+            let Some(query_start) = raw[..query_end].find('?').map(|index| index + 1) else {
+                continue;
+            };
+            let mut fields = BTreeMap::new();
+            let mut offset = query_start;
+            let mut valid = true;
+            for pair in raw[query_start..query_end].split('&') {
+                if let Some((key, value)) = pair.split_once('=') {
+                    if key.len() > FIELD_BYTES
+                        || value.len() > FIELD_BYTES
+                        || !valid_percent_encoding(pair)
+                    {
+                        valid = false;
+                        break;
+                    }
+                    let mut decoded = url::form_urlencoded::parse(pair.as_bytes());
+                    let Some((key, value)) = decoded.next() else {
+                        valid = false;
+                        break;
+                    };
+                    if matches!(key.as_ref(), "sv" | "se" | "ss" | "sr" | "sig") {
+                        let span = (
+                            start + offset + pair.find('=').unwrap() + 1,
+                            start + offset + pair.len(),
+                        );
+                        if value.trim().is_empty()
+                            || fields.insert(key.into_owned(), span).is_some()
+                        {
+                            valid = false;
+                            break;
+                        }
+                    }
+                }
+                offset += pair.len() + 1;
+            }
+            if valid
+                && fields.contains_key("sv")
+                && fields.contains_key("se")
+                && (fields.contains_key("ss") || fields.contains_key("sr"))
+                && let Some(span) = fields.get("sig")
+            {
+                result.push(*span);
+            }
+        }
+        result
+    }
+}
 mod compatibility;
 mod source;
 mod unicode;
@@ -542,7 +674,7 @@ fn checked(check: Check, cap: &Captures<'_>, text: &str) -> Result<Option<Span>>
 }
 fn spans(text: &str) -> Result<Vec<Span>> {
     let chars = characters()?;
-    let mut found = Vec::new();
+    let mut found = azure_sas::spans(text);
     let ends = matches(&rule("PRIVATE_END")?, text)?
         .iter()
         .filter_map(|c| c.get(0).map(|m| m.end()))
@@ -726,7 +858,7 @@ fn spans(text: &str) -> Result<Vec<Span>> {
     }
     Ok(merged)
 }
-pub fn text(value: &str) -> crate::Result<String> {
+pub fn text(value: &str) -> Result<String> {
     let render = || -> Result<String> {
         if value.len() > LIMIT {
             return Err("redaction input exceeds one MiB".into());
@@ -745,7 +877,7 @@ pub fn text(value: &str) -> crate::Result<String> {
         out.push_str(value.get(cursor..).ok_or("invalid redaction boundary")?);
         Ok(out)
     };
-    render().map_err(|error| crate::Error::RedactionInfra(std::io::Error::other(error)))
+    render()
 }
 
 /// Serialize the authoritative Rust redaction policy for Python consumers.
@@ -792,39 +924,18 @@ pub fn generated_harness_policy() -> String {
     )
 }
 
-/// Bind the packaged Python consumer to this build's exact policy and structure.
-pub fn generated_policy_identity() -> String {
-    use sha2::{Digest, Sha256};
-    let policy = policy();
-    let identity = serde_json::json!({
-        "sha256": format!("{:x}", Sha256::digest(generated_policy().as_bytes())),
-        "fields": serde_json::to_value(policy).expect("static policy").as_object().expect("policy object").keys().cloned().collect::<Vec<_>>(),
-        "values": {
-            "schema_version": policy.schema_version, "unicode_version": policy.unicode_version,
-            "context": policy.context, "near_chars": policy.near_chars, "redacted": policy.redacted,
-        },
-        "maps": {
-            "regex": policy.regex.keys().collect::<Vec<_>>(),
-            "helpers": policy.helpers.keys().collect::<Vec<_>>(),
-            "words": policy.words.keys().collect::<Vec<_>>(),
-            "characters": policy.characters.keys().collect::<Vec<_>>(),
-        },
-        "patterns": policy.patterns.len(),
-        "checked": policy.checked.iter().map(|(_, check)| check).collect::<Vec<_>>(),
-    });
-    format!(
-        "# Generated by tl3 redaction-policy --identity-output. Do not edit.\nIDENTITY = {}\n",
-        serde_json::to_string_pretty(&identity).expect("static identity")
-    )
-}
-
-#[cfg(test)]
-fn worker_python() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../workers/.venv/bin/python")
-}
 #[cfg(test)]
 fn python_command() -> std::process::Command {
-    let mut command = std::process::Command::new(worker_python());
+    let directory = std::env::var_os("TEST_TMPDIR")
+        .expect("TEST_TMPDIR must name the explicit test-fact directory");
+    let interpreter =
+        std::fs::read_to_string(std::path::PathBuf::from(directory).join("tl3-test-python"))
+            .expect("tl3-test-python must contain the pinned test interpreter path");
+    assert!(
+        std::path::Path::new(&interpreter).is_absolute(),
+        "tl3-test-python must contain an absolute interpreter path"
+    );
+    let mut command = std::process::Command::new(interpreter);
     command.env_clear();
     for key in [
         "PATH",
@@ -916,23 +1027,218 @@ print(json.dumps(out))
 
     #[test]
     fn oversized_input_fails_closed() {
-        assert!(matches!(
-            super::text(&"x".repeat(super::LIMIT + 1)),
-            Err(crate::Error::RedactionInfra(_))
-        ));
+        assert!(super::text(&"x".repeat(super::LIMIT + 1)).is_err());
     }
 
     #[test]
     fn generated_policy_matches_the_authoritative_source() {
-        assert_eq!(
-            super::generated_policy(),
-            include_str!("redaction/policy.json")
-        );
-        let worker = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../workers/src/tl3_workers/policy.json");
-        assert_eq!(
-            super::generated_policy(),
-            std::fs::read_to_string(worker).unwrap()
-        );
+        assert_eq!(super::generated_policy(), include_str!("policy.json"));
     }
+}
+
+/// Maximum matcher input or extracted context window bytes, not raw-source length.
+pub const INPUT_BYTE_LIMIT: usize = LIMIT;
+/// Immutable context retained on each side of a character-index window.
+pub fn context_chars() -> usize {
+    policy().context
+}
+pub fn redacted_marker() -> &'static str {
+    policy().redacted
+}
+#[derive(Clone, Copy)]
+pub enum FieldRole {
+    Path,
+    Content,
+    Skipped,
+    TokenCount,
+}
+pub fn field_matches(role: FieldRole, key: &str) -> Result<bool> {
+    has(
+        match role {
+            FieldRole::Path => "PATH_KEYS",
+            FieldRole::Content => "CONTENT_KEYS",
+            FieldRole::Skipped => "SKIPPED_KEYS",
+            FieldRole::TokenCount => "TOKEN_FIELDS",
+        },
+        key,
+    )
+}
+#[derive(Clone, Copy)]
+pub enum FieldValue<'a> {
+    Null,
+    Bool,
+    Number,
+    Text(&'a str),
+    Container,
+}
+pub fn field_is_secret(key: &str, value: FieldValue<'_>, named: &str) -> Result<bool> {
+    let kind = if key.chars().count() > 128 {
+        Some(Kind::Strong)
+    } else {
+        label_kind(key)?
+    };
+    let weak_secret = if kind == Some(Kind::Weak) {
+        if let FieldValue::Text(text) = value {
+            plausible(Some(Kind::Weak), key, text, "", "", false)?
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+    Ok(
+        matches!(kind, Some(Kind::Strong)) && !matches!(value, FieldValue::Null | FieldValue::Bool)
+            || weak_secret
+            || matches!(key, "value" | "Value")
+                && label_kind(named)? == Some(Kind::Strong)
+                && matches!(value, FieldValue::Text(_) | FieldValue::Number),
+    )
+}
+
+pub fn sensitive_file(path: &str) -> Result<bool> {
+    if path.chars().count() > 4096 {
+        return Ok(false);
+    }
+    let path = path.replace('\\', "/");
+    let path = path.trim().trim_end_matches('/');
+    let name = path.rsplit('/').next().unwrap_or("").trim();
+    if path.ends_with(".docker/config.json") || path.ends_with(".kube/config") {
+        return Ok(true);
+    }
+    if full_rule("SENSITIVE_NAME", name)? {
+        return Ok(name.starts_with(".env")
+            || !rule("SOURCE_FILE")?
+                .is_match(name)
+                .map_err(|error| error.to_string())?);
+    }
+    Ok(rule("SENSITIVE_BROAD")?
+        .is_match(path)
+        .map_err(|error| error.to_string())?
+        && !rule("SOURCE_FILE")?
+            .is_match(name)
+            .map_err(|error| error.to_string())?)
+}
+
+/// Redact a character-index range with bounded surrounding source context.
+pub fn window(
+    source: &str,
+    range: std::ops::Range<usize>,
+    known_secrets: &[&str],
+) -> Result<String> {
+    let (start, end) = (range.start, range.end);
+    let length = source.chars().count();
+    if start > end || end > length {
+        return Err("invalid redaction window".into());
+    }
+    let low = start.saturating_sub(policy().context);
+    let high = end.saturating_add(policy().context).min(length);
+    let text = substring(source, low, high);
+    if text.len() > LIMIT {
+        return Err("redaction window exceeds one MiB".into());
+    }
+    let first = byte_at(text, start - low);
+    let stop = byte_at(text, end - low);
+    let mut found = spans(text)?;
+    for secret in known_secrets {
+        if !secret.is_empty() {
+            found.extend(
+                text.match_indices(*secret)
+                    .map(|(index, _)| (index, index + secret.len())),
+            );
+        }
+    }
+    found.sort_unstable();
+    let mut cursor = first;
+    let mut out = String::new();
+    for (start, end) in found {
+        if end <= cursor || start >= stop {
+            continue;
+        }
+        if start > cursor {
+            out.push_str(&text[cursor..start]);
+        }
+        out.push_str(policy().redacted);
+        cursor = cursor.max(end);
+    }
+    if cursor < stop {
+        out.push_str(&text[cursor..stop]);
+    }
+    Ok(out)
+}
+
+/// Return a safe character-index cut; reject cut > end or an end beyond the source.
+// Source rule: the removed Python settle/tail_window safety boundary. Use the
+// authoritative TOKEN_CHAR/NOT_TOKEN/PRIVATE_HEADER grammar, never rescan a huge
+// omitted prefix through every secret matcher just to choose a window.
+pub fn settled_cut(source: &str, cut: usize, end: usize, known_secrets: &[&str]) -> Result<usize> {
+    if cut > end || end > source.chars().count() {
+        return Err("invalid redaction cut".into());
+    }
+    let stop = byte_at(source, end);
+    let mut position = byte_at(source, cut);
+    if let Some(begin) = source[..position].rfind("-----BEGIN ") {
+        let header = rule("PRIVATE_HEADER")?
+            .find(&source[begin..stop])
+            .map_err(|error| error.to_string())?;
+        if header.is_some_and(|matched| matched.start() == 0)
+            && !source[begin..position].contains("-----END ")
+        {
+            position = source[position..stop]
+                .find("-----END ")
+                .and_then(|close| {
+                    let close = position + close + 9;
+                    source[close..stop]
+                        .find("-----")
+                        .map(|tail| close + tail + 5)
+                })
+                .unwrap_or(stop);
+        }
+    }
+    for secret in known_secrets {
+        if secret.is_empty() {
+            continue;
+        }
+        let mut low = position.saturating_sub(secret.len());
+        while !source.is_char_boundary(low) {
+            low += 1;
+        }
+        let mut high = position.saturating_add(secret.len()).min(stop);
+        while !source.is_char_boundary(high) {
+            high -= 1;
+        }
+        for (first, _) in source[low..high].match_indices(*secret) {
+            let first = low + first;
+            if first < position && first + secret.len() > position {
+                position = first + secret.len();
+            }
+        }
+    }
+    if position > 0 && position < stop {
+        let before = source[..position]
+            .chars()
+            .next_back()
+            .ok_or("missing cut context")?;
+        let after = source[position..stop]
+            .chars()
+            .next()
+            .ok_or("missing cut context")?;
+        if full_rule("TOKEN_CHAR", &before.to_string())?
+            && full_rule("TOKEN_CHAR", &after.to_string())?
+        {
+            position = rule("NOT_TOKEN")?
+                .find(&source[position..stop])
+                .map_err(|error| error.to_string())?
+                .map_or(stop, |matched| position + matched.start());
+        }
+    }
+    Ok(source[..position].chars().count())
+}
+
+fn byte_at(text: &str, index: usize) -> usize {
+    text.char_indices()
+        .nth(index)
+        .map_or(text.len(), |(index, _)| index)
+}
+fn substring(text: &str, start: usize, end: usize) -> &str {
+    &text[byte_at(text, start)..byte_at(text, end)]
 }

@@ -58,9 +58,9 @@
       "tests/test_cached_unit_reader_gamut.py"
     ],
     "checks": [
-      {
+      {"name": "accepted-wire-container-parser-once", 
         "kind": "demonstrating",
-        "node_ids": [
+        "tests": [
           "tests/test_cached_producer.py::test_accepted_wire_reaches_the_container_parser_once"
         ],
         "goal_ids": [
@@ -74,9 +74,9 @@
           "red_message": "accepted-wire decode is missing"
         }
       },
-      {
+      {"name": "accepted-wire-decode-matches-reader", 
         "kind": "demonstrating",
-        "node_ids": [
+        "tests": [
           "tests/test_cached_producer.py::test_accepted_wire_decode_matches_the_bytes_reader"
         ],
         "goal_ids": [
@@ -90,9 +90,9 @@
           "red_message": "accepted-wire decode is missing"
         }
       },
-      {
+      {"name": "accepted-wire-rejects-invalid-input", 
         "kind": "demonstrating",
-        "node_ids": [
+        "tests": [
           "tests/test_cached_unit_reader_gamut.py::test_accepted_wire_decode_refuses_what_the_readers_refuse",
           "tests/test_cached_unit_reader_gamut.py::test_accepted_wire_decode_refuses_a_foreign_handle"
         ],
@@ -107,9 +107,9 @@
           "red_message": "accepted-wire decode is missing"
         }
       },
-      {
+      {"name": "cached-wire-identity-and-verification", 
         "kind": "regression",
-        "node_ids": [
+        "tests": [
           "tests/test_cached_producer.py::test_sealed_historical_identity_accepts_original_without_relabelling",
           "tests/test_cached_producer.py::test_cached_blob_round_trip_keeps_original_unit_name_and_bytes",
           "tests/test_cached_producer.py::test_each_input_identity_mismatch_refuses",
@@ -130,9 +130,9 @@
           5
         ]
       },
-      {
+      {"name": "digest-loader-and-document-regressions", 
         "kind": "regression",
-        "node_ids": [
+        "tests": [
           "tests/test_parse_digest_once.py::test_a_complete_artifact_hashes_its_region_once",
           "tests/test_parse_digest_once.py::test_a_truncation_hashes_its_prefix_once",
           "tests/test_parse_digest_once.py::test_the_manifest_digest_is_still_compared_on_a_complete_artifact",

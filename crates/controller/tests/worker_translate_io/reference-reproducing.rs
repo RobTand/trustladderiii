@@ -68,6 +68,7 @@ pub(crate) fn check(reply: &Value, current: crate::findings::CurrentReview<'_>) 
             item["tests"] = json!(tests);
             item["proof"] = proof.clone();
             checks.push(Check {
+                goal_ids: vec![],
                 name: format!("reproducing/{id}"),
                 kind: Kind::Reproducing,
                 tests,

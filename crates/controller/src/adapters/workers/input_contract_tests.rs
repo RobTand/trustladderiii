@@ -375,7 +375,7 @@ fn real_builders(flux: bool) {
     );
     let mut store = Store::open(&config.store).unwrap();
     let brief = json!({"kind":"brief","brief":"Preserve evidence","memory_ids":[],"goals":[{"description":"Preserve evidence","verification":"test"}]});
-    let plan = json!({"kind":"leaf","files":["README.md"],"checks":[{"name":"evidence","kind":"regression","node_ids":["test_value.py::test_value"],"goal_ids":[0]}]});
+    let plan = json!({"kind":"leaf","files":["README.md"],"checks":[{"name":"evidence","kind":"regression","tests":["test_value.py::test_value"],"goal_ids":[0]}]});
     documents(
         &mut store,
         &[
@@ -736,4 +736,86 @@ fn ingest_validation_retry_receives_the_safe_kind_diagnostic() {
             .iter()
             .any(|row| row.table == "input_resource_contexts")
     );
+}
+
+/// Canonical name admission runs before a successful planner reply reaches maker.
+#[test]
+fn planner_leaf_admission_rejects_blank_and_duplicate_names_before_maker() {
+    fn deliver(w: &mut resource_world::World, role: &str, reply: Value) {
+        let generation = w.controller.world().unwrap().nodes[0].generation;
+        w.controller
+            .observe(
+                &format!("admission-{role}-{generation}"),
+                Observation::WorkerReply {
+                    node: NodeId(0),
+                    generation,
+                    role: role.into(),
+                    reply,
+                    model: None,
+                    plan_check: None,
+                },
+            )
+            .unwrap();
+        resource_world::World::drain(&mut w.controller);
+    }
+    for (names, valid) in [
+        ([" \t", "second-behavior"], false),
+        (["same-behavior", "same-behavior"], false),
+        (["first-behavior", "second-behavior"], true),
+    ] {
+        let mut w = resource_world::World::new();
+        let forecast = json!({"tokenizer":"o200k_base","brief_tokens":1,
+            "file_tokens":{"behavior.py":0},"overhead_tokens":0,"tokens":1,"fit_tokens":100,
+            "context_tokens":150,"fits":true});
+        deliver(
+            &mut w,
+            "ingest",
+            json!({"kind":"brief","brief":"Preserve behavior",
+            "goals":[
+                {"description":"First behavior","verification":"test"},
+                {"description":"Publish the change","verification":"review","stage":"publishing",
+                    "publication":{"non_draft":true,"body_lines":[],"proof":false}},
+                {"description":"Second behavior","verification":"test"}],
+            "memory_ids":[],"files":["behavior.py"],"merge_prerequisites":[],"forecast":forecast}),
+        );
+        deliver(&mut w, "audit", json!({"verdict":"agree","objections":[]}));
+        assert!(matches!(
+            w.controller.world().unwrap().nodes[0].phase,
+            Phase::Planning { .. }
+        ));
+        deliver(
+            &mut w,
+            "planner",
+            json!({"kind":"leaf","files":["behavior.py"],
+            "checks":[
+                {"name":names[0],"kind":"regression","tests":["tests/first.py::test_first"],"goal_ids":[0]},
+                {"name":names[1],"kind":"regression","tests":["tests/second.py::test_second"],"goal_ids":[2]}],
+            "no_design_questions":true,"lands_on_its_own":true,"forecast":forecast,"violations":[]}),
+        );
+        let snapshot = w.controller.snapshot().unwrap();
+        let plan = &snapshot
+            .rows
+            .iter()
+            .find(|row| row.table == "plans" && row.id == "0")
+            .unwrap()
+            .value;
+        assert_eq!(plan["checks"][0]["goal_ids"], json!([0]));
+        assert_eq!(plan["checks"][1]["goal_ids"], json!([2]));
+        assert_eq!(
+            matches!(w.controller.world().unwrap().nodes[0].phase, Phase::Making),
+            valid
+        );
+        if valid {
+            assert_eq!(plan["violations"], json!([]));
+        } else {
+            assert!(
+                plan["violations"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|value| value.as_str()
+                        == Some("check names must be nonblank and unique within the plan"))
+            );
+        }
+    }
 }

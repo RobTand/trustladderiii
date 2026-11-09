@@ -1,64 +1,260 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "strings": {
+      "items": {
+        "$ref": "#/$defs/text"
+      },
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "text": {
+      "minLength": 1,
+      "pattern": "\\S",
+      "type": "string"
+    }
+  },
   "$id": "https://trustladderiii.invalid/workers/protocol-1/maker-input.json",
-  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "if": {
+    "properties": {
+      "round": {
+        "const": 1
+      }
+    }
+  },
   "properties": {
-    "decision_context": {
-      "$ref": "decision-context.json"
+    "attempt": {
+      "maximum": 3,
+      "minimum": 1,
+      "type": "integer"
     },
     "brief": {
       "$ref": "#/$defs/text"
     },
-    "goals": {
-      "type": "array",
-      "minItems": 1,
+    "check_base_sha": {
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+      "type": "string"
+    },
+    "context_size": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "current_review_findings": {
       "items": {
-        "type": "object",
         "properties": {
           "id": {
             "$ref": "#/$defs/text"
           },
+          "reviewed_sha": {
+            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "decision_context": {
+      "$ref": "decision-context.json"
+    },
+    "feedback": {
+      "items": {
+        "additionalProperties": false,
+        "dependentRequired": {
+          "id": [
+            "reviewed_sha"
+          ],
+          "reviewed_sha": [
+            "id"
+          ]
+        },
+        "properties": {
+          "ci_checks": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "$ref": "#/$defs/text"
+                },
+                "summary": {
+                  "$ref": "#/$defs/text",
+                  "maxLength": 1000
+                },
+                "url": {
+                  "maxLength": 4096,
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "summary",
+                "url"
+              ],
+              "type": "object"
+            },
+            "maxItems": 20,
+            "type": "array"
+          },
+          "failed_tests": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "message": {
+                  "$ref": "#/$defs/text",
+                  "maxLength": 65536
+                },
+                "test": {
+                  "$ref": "#/$defs/text"
+                }
+              },
+              "required": [
+                "test",
+                "message"
+              ],
+              "type": "object"
+            },
+            "maxItems": 20,
+            "type": "array"
+          },
+          "goal_ids": {
+            "items": {
+              "$ref": "#/$defs/text"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "id": {
+            "$ref": "#/$defs/text"
+          },
+          "kind": {
+            "enum": [
+              "failed_check",
+              "review_finding"
+            ]
+          },
+          "outside_paths": {
+            "items": {
+              "$ref": "#/$defs/text",
+              "maxLength": 4096
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          },
+          "outside_paths_total": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "report": {
+            "$ref": "#/$defs/text",
+            "maxLength": 16000
+          },
+          "resolved_round": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "reviewed_sha": {
+            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "report",
+          "goal_ids"
+        ],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "footprint": {
+      "items": {
+        "minLength": 1,
+        "not": {
+          "pattern": "(^|/)(\\.|\\.\\.|\\.git)(/|$)"
+        },
+        "pattern": "^[^/\\\\\\u0000]+(/[^/\\\\\\u0000]+)*$",
+        "type": "string"
+      },
+      "type": "array",
+      "uniqueItems": true
+    },
+    "forecast": {
+      "$ref": "planner-input.json#/properties/forecast"
+    },
+    "goals": {
+      "items": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "else": {
+              "not": {
+                "required": [
+                  "publication"
+                ]
+              }
+            },
+            "if": {
+              "properties": {
+                "stage": {
+                  "const": "publishing"
+                }
+              },
+              "required": [
+                "stage"
+              ]
+            },
+            "then": {
+              "required": [
+                "publication"
+              ]
+            }
+          }
+        ],
+        "properties": {
           "description": {
             "$ref": "#/$defs/text"
           },
-          "verification": {
-            "enum": [
-              "test",
-              "review"
-            ]
+          "id": {
+            "$ref": "#/$defs/text"
           },
-          "stage": {
-            "enum": [
-              "maker",
-              "checking",
-              "publishing"
-            ]
+          "proof_obligation": {
+            "$ref": "ingest-reply.json#/$defs/proof_obligation"
           },
           "publication": {
-            "type": "object",
+            "additionalProperties": false,
             "properties": {
+              "body_lines": {
+                "items": {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "pattern": "^[^\\r\\n]+$",
+                  "type": "string"
+                },
+                "type": "array",
+                "uniqueItems": true
+              },
               "branch": {
-                "type": "string",
                 "minLength": 1,
-                "pattern": "\\S"
+                "pattern": "\\S",
+                "type": "string"
               },
               "branch_prefix": {
-                "type": "string",
                 "minLength": 1,
-                "pattern": "\\S"
+                "pattern": "\\S",
+                "type": "string"
               },
               "non_draft": {
                 "const": true
-              },
-              "body_lines": {
-                "type": "array",
-                "uniqueItems": true,
-                "items": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 512,
-                  "pattern": "^[^\\r\\n]+$"
-                }
               },
               "proof": {
                 "type": "boolean"
@@ -69,367 +265,336 @@
               "body_lines",
               "proof"
             ],
-            "additionalProperties": false
+            "type": "object"
           },
-          "proof_obligation": {
-            "$ref": "ingest-reply.json#/$defs/proof_obligation"
+          "stage": {
+            "enum": [
+              "maker",
+              "checking",
+              "publishing"
+            ]
+          },
+          "verification": {
+            "enum": [
+              "test",
+              "review"
+            ]
           }
         },
         "required": [
           "id",
           "description"
         ],
-        "additionalProperties": false,
-        "allOf": [
-          {
-            "if": {
-              "required": [
-                "stage"
-              ],
-              "properties": {
-                "stage": {
-                  "const": "publishing"
-                }
-              }
-            },
-            "then": {
-              "required": [
-                "publication"
-              ]
-            },
-            "else": {
-              "not": {
-                "required": [
-                  "publication"
-                ]
-              }
-            }
-          }
-        ]
-      }
-    },
-    "plan": {
-      "type": "object",
-      "properties": {
-        "files": {
-          "$ref": "#/$defs/strings"
-        },
-        "checks": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "object",
-            "properties": {
-              "name": {
-                "$ref": "#/$defs/text"
-              },
-              "kind": {
-                "enum": [
-                  "demonstrating",
-                  "regression",
-                  "behavior-preserving"
-                ]
-              },
-              "tests": {
-                "$ref": "#/$defs/strings"
-              },
-              "goal_ids": {
-                "$ref": "#/$defs/strings"
-              },
-              "forcing": {
-                "$ref": "check-report.json#/$defs/Forcing"
-              },
-              "proof": {
-                "$ref": "check-report.json#/$defs/ProofDeclaration"
-              },
-              "declared_symptom": {
-                "$ref": "check-report.json#/$defs/DeclaredSymptom"
-              }
-            },
-            "required": [
-              "name",
-              "kind",
-              "tests",
-              "goal_ids"
-            ],
-            "additionalProperties": false
-          }
-        }
+        "type": "object"
       },
-      "required": [
-        "files",
-        "checks"
-      ],
-      "additionalProperties": false
-    },
-    "footprint": {
-      "type": "array",
-      "uniqueItems": true,
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "pattern": "^[^/\\\\\\u0000]+(/[^/\\\\\\u0000]+)*$",
-        "not": {
-          "pattern": "(^|/)(\\.|\\.\\.|\\.git)(/|$)"
-        }
-      }
-    },
-    "attempt": {
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 3
-    },
-    "round": {
-      "type": "integer",
-      "enum": [
-        0,
-        1
-      ]
-    },
-    "check_base_sha": {
-      "type": "string",
-      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
-    },
-    "reviewed_sha": {
-      "type": "string",
-      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
-    },
-    "current_review_findings": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "$ref": "#/$defs/text"
-          },
-          "reviewed_sha": {
-            "type": "string",
-            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
-          }
-        },
-        "required": [
-          "id"
-        ]
-      }
-    },
-    "feedback": {
-      "type": "array",
       "minItems": 1,
-      "items": {
-        "type": "object",
-        "properties": {
-          "kind": {
-            "enum": [
-              "failed_check",
-              "review_finding"
-            ]
-          },
-          "id": {
-            "$ref": "#/$defs/text"
-          },
-          "reviewed_sha": {
-            "type": "string",
-            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
-          },
-          "resolved_round": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "report": {
-            "$ref": "#/$defs/text",
-            "maxLength": 16000
-          },
-          "goal_ids": {
-            "type": "array",
-            "uniqueItems": true,
-            "items": {
-              "$ref": "#/$defs/text"
-            }
-          },
-          "failed_tests": {
-            "type": "array",
-            "maxItems": 20,
-            "items": {
-              "type": "object",
-              "properties": {
-                "test": {
-                  "$ref": "#/$defs/text"
-                },
-                "message": {
-                  "$ref": "#/$defs/text",
-                  "maxLength": 65536
-                }
-              },
-              "required": [
-                "test",
-                "message"
-              ],
-              "additionalProperties": false
-            }
-          },
-          "outside_paths": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 100,
-            "items": {
-              "$ref": "#/$defs/text",
-              "maxLength": 4096
-            }
-          },
-          "outside_paths_total": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "ci_checks": {
-            "type": "array",
-            "maxItems": 20,
-            "items": {
-              "type": "object",
-              "properties": {
-                "name": {
-                  "$ref": "#/$defs/text"
-                },
-                "summary": {
-                  "$ref": "#/$defs/text",
-                  "maxLength": 1000
-                },
-                "url": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "maxLength": 4096
-                }
-              },
-              "required": [
-                "name",
-                "summary",
-                "url"
-              ],
-              "additionalProperties": false
-            }
-          }
-        },
-        "required": [
-          "kind",
-          "report",
-          "goal_ids"
-        ],
-        "additionalProperties": false,
-        "dependentRequired": {
-          "id": [
-            "reviewed_sha"
-          ],
-          "reviewed_sha": [
-            "id"
-          ]
-        }
-      }
-    },
-    "tests": {
-      "type": "object",
-      "properties": {
-        "image": {
-          "type": "string",
-          "pattern": "^(?:[\\w./:-]+@)?sha256:[0-9a-f]{64}$"
-        },
-        "tools_path": {
-          "type": "string",
-          "pattern": "^/",
-          "minLength": 1
-        },
-        "execution": {
-          "oneOf": [
-            {
-              "type": "object",
-              "properties": {
-                "backend": {
-                  "type": "string",
-                  "const": "flux"
-                },
-                "profile": {
-                  "type": "string",
-                  "pattern": "^/"
-                }
-              },
-              "required": [
-                "backend",
-                "profile"
-              ],
-              "additionalProperties": false
-            }
-          ]
-        },
-        "cpus": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "mem_gb": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "quiet_seconds": {
-          "type": "integer",
-          "minimum": 1
-        }
-      },
-      "required": [
-        "image"
-      ],
-      "additionalProperties": false,
-      "oneOf": [
-        {
-          "required": [
-            "tools_path"
-          ],
-          "not": {
-            "required": [
-              "execution"
-            ]
-          }
-        },
-        {
-          "required": [
-            "execution"
-          ],
-          "not": {
-            "required": [
-              "tools_path"
-            ]
-          }
-        }
-      ]
+      "type": "array"
     },
     "hindsight": {
-      "type": "object",
+      "additionalProperties": false,
       "properties": {
-        "endpoint": {
-          "type": "string",
-          "pattern": "^https?://"
-        },
         "bank": {
           "$ref": "#/$defs/text"
+        },
+        "endpoint": {
+          "pattern": "^https?://",
+          "type": "string"
         }
       },
       "required": [
         "endpoint",
         "bank"
       ],
-      "additionalProperties": false
+      "type": "object"
+    },
+    "plan": {
+      "additionalProperties": false,
+      "properties": {
+        "checks": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "declared_symptom": {
+                "additionalProperties": false,
+                "properties": {
+                  "exception": {
+                    "pattern": "^[A-Za-z_]\\w*(\\.[A-Za-z_]\\w*)+$",
+                    "type": "string"
+                  },
+                  "node": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "parallel": {
+                    "enum": [
+                      0,
+                      2,
+                      3,
+                      4
+                    ]
+                  },
+                  "phase": {
+                    "enum": [
+                      "call",
+                      "setup"
+                    ],
+                    "type": "string"
+                  },
+                  "repeat": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "node",
+                  "exception",
+                  "phase",
+                  "repeat",
+                  "parallel"
+                ],
+                "type": "object"
+              },
+              "forcing": {
+                "additionalProperties": false,
+                "description": "A forced reproduction (#393): the declarative condition the harness applies, outside the test, to recreate a flake. Only on demonstrating checks.",
+                "properties": {
+                  "environment": {
+                    "additionalProperties": {
+                      "maxLength": 1000,
+                      "type": "string"
+                    },
+                    "maxProperties": 8,
+                    "propertyNames": {
+                      "pattern": "^[A-Z_][A-Z0-9_]{0,63}$"
+                    },
+                    "type": "object"
+                  },
+                  "patches": {
+                    "items": {
+                      "additionalProperties": false,
+                      "maxProperties": 2,
+                      "minProperties": 2,
+                      "properties": {
+                        "delay_seconds": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 5,
+                          "type": "number"
+                        },
+                        "raises": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "returns": {},
+                        "target": {
+                          "maxLength": 200,
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$",
+                          "type": "string"
+                        },
+                        "value": {}
+                      },
+                      "required": [
+                        "target"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 8,
+                    "type": "array"
+                  },
+                  "symptom": {
+                    "maxLength": 1000,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "symptom",
+                  "environment",
+                  "patches"
+                ],
+                "type": "object"
+              },
+              "goal_ids": {
+                "description": "Original ingest.goals indices. Required, unique, never renumbered across splits.\nThe planner gate checks nonempty/range/coverage; controller controls explicitly use [].",
+                "items": {
+                  "description": "Original zero-based index in request.inputs.ingest.goals, retained across splits.",
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": "array",
+                "uniqueItems": true
+              },
+              "kind": {
+                "enum": [
+                  "demonstrating",
+                  "regression",
+                  "behavior-preserving",
+                  "reproducing"
+                ],
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "proof": {
+                "additionalProperties": false,
+                "properties": {
+                  "observer_support": {
+                    "items": {
+                      "maxLength": 1000,
+                      "minLength": 1,
+                      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|::|$))[^\\\\\\u0000\\r\\n]+\\.py(?:::[A-Za-z_][A-Za-z_0-9]*)*$",
+                      "type": "string"
+                    },
+                    "maxItems": 16,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "red_message": {
+                    "description": "Planner-declared EXPECTED assertion message, never captured run evidence.\nRust checks actual-run RED messages independently before accepting the proof.",
+                    "maxLength": 160,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "subjects": {
+                    "items": {
+                      "maxLength": 1000,
+                      "minLength": 1,
+                      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|::|$))[^\\\\\\u0000\\r\\n]+\\.py(?:::[A-Za-z_][A-Za-z_0-9]*)*$",
+                      "type": "string"
+                    },
+                    "maxItems": 16,
+                    "type": "array",
+                    "uniqueItems": true
+                  }
+                },
+                "required": [
+                  "subjects",
+                  "observer_support",
+                  "red_message"
+                ],
+                "type": "object"
+              },
+              "tests": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "name",
+              "goal_ids",
+              "kind",
+              "tests"
+            ],
+            "type": "object"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "files": {
+          "$ref": "#/$defs/strings"
+        }
+      },
+      "required": [
+        "files",
+        "checks"
+      ],
+      "type": "object"
     },
     "protected_paths": {
-      "type": "array",
       "items": {
-        "type": "string",
-        "minLength": 1
-      }
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
     },
-    "forecast": {
-      "$ref": "planner-input.json#/properties/forecast"
+    "reviewed_sha": {
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+      "type": "string"
     },
-    "context_size": {
-      "type": "integer",
-      "minimum": 1
+    "round": {
+      "enum": [
+        0,
+        1
+      ],
+      "type": "integer"
+    },
+    "tests": {
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "not": {
+            "required": [
+              "execution"
+            ]
+          },
+          "required": [
+            "tools_path"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "tools_path"
+            ]
+          },
+          "required": [
+            "execution"
+          ]
+        }
+      ],
+      "properties": {
+        "cpus": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "execution": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "backend": {
+                  "const": "flux",
+                  "type": "string"
+                },
+                "profile": {
+                  "pattern": "^/",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "backend",
+                "profile"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "image": {
+          "pattern": "^(?:[\\w./:-]+@)?sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "mem_gb": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "quiet_seconds": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "tools_path": {
+          "minLength": 1,
+          "pattern": "^/",
+          "type": "string"
+        }
+      },
+      "required": [
+        "image"
+      ],
+      "type": "object"
     }
   },
   "required": [
@@ -442,32 +607,10 @@
     "tests",
     "context_size"
   ],
-  "additionalProperties": false,
-  "if": {
-    "properties": {
-      "round": {
-        "const": 1
-      }
-    }
-  },
   "then": {
     "required": [
       "feedback"
     ]
   },
-  "$defs": {
-    "text": {
-      "type": "string",
-      "minLength": 1,
-      "pattern": "\\S"
-    },
-    "strings": {
-      "type": "array",
-      "minItems": 1,
-      "uniqueItems": true,
-      "items": {
-        "$ref": "#/$defs/text"
-      }
-    }
-  }
+  "type": "object"
 }
