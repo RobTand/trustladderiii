@@ -51,4 +51,7 @@ def flux_context(monkeypatch, *, no_progress_seconds=120, **extra):
 
     monkeypatch.setenv('TL3_EXECUTION_BACKEND', 'flux')
     monkeypatch.setattr(runtime, 'launch_context', launch_context)
+    # Report-content tests read the journal where they asked for it; the job's
+    # output_dir placement is runtime.journal_path's own contract.
+    monkeypatch.setattr(runtime, 'journal_path', lambda path: path)
     return context
