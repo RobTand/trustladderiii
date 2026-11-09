@@ -291,6 +291,82 @@ class BazelGraphTests(unittest.TestCase):
         result = self.check_crate(self.crate_graph(2, other=True), entries)
         self.assertEqual(result['errors'], [])
 
+    def exact_edge_graphs(self, *, unlisted=False, other_target=False, indirect=False):
+        first, second, third = '//tests:first', '//tests:second', '//tests:third'
+        anchor, source, outside = '//pkg:anchor.rs', '//pkg:source.rs', '//pkg:outside.rs'
+        deps = {first: [anchor], second: [source, outside], third: [anchor],
+                anchor: [], source: [], outside: []}
+        tests, sources = [first, second, third], [anchor, source, outside]
+        base = adapter.from_deps(deps, tests, sources)
+        deps[first] = [anchor, source]
+        if unlisted:
+            deps[first].append(outside)
+        if other_target:
+            deps[third] = [anchor, source]
+        if indirect:
+            deps[first] = [anchor, '//pkg:library']
+            deps['//pkg:library'] = [source]
+        return base, adapter.from_deps(deps, tests, sources)
+
+    def check_exact_edges(self, *, pairs=None, issue=939, **changes):
+        base, head = self.exact_edge_graphs(**changes)
+        entry = {'edges': pairs if pairs is not None else [['//tests:first', '//pkg:source.rs']],
+                 'issue': issue, 'reason': 'Exact proof input dependencies.'}
+        if issue is None:
+            del entry['issue']
+        return adapter.check(base, head, set(head['reach']), adapter.baseline(base),
+                             {'exact-edge:proof-inputs': entry}, {})
+
+    def test_exact_edge_credits_reach_and_fanout_without_hiding_metrics(self):
+        result = self.check_exact_edges()
+        self.assertEqual(result['errors'], [])
+        self.assertEqual(result['head']['reach']['//tests:first'],
+                         ['//pkg:anchor.rs', '//pkg:source.rs'])
+        self.assertEqual(result['head']['dependents']['//pkg:source.rs'], 2)
+        self.assertEqual(result['head']['source_files'], 3)
+        self.assertIn(['//tests:first', '//pkg:source.rs'], result['added_edges'])
+
+    def test_exact_edge_does_not_credit_another_edge_on_either_endpoint(self):
+        for changes, source, target in [
+                ({'unlisted': True}, '//pkg:outside.rs', '//tests:first'),
+                ({'other_target': True}, '//pkg:source.rs', '//tests:third')]:
+            with self.subTest(changes=changes):
+                errors = '; '.join(self.check_exact_edges(**changes)['errors'])
+                self.assertNotIn('needs a reason', errors)
+                self.assertIn('existing source fanout grew: ' + source + ' +1', errors)
+                self.assertIn('existing test reach grew: ' + target + ' +1', errors)
+
+    def test_exact_edge_requires_a_separate_issue(self):
+        for issue in [None, 0, False, '939']:
+            with self.subTest(issue=issue):
+                errors = '; '.join(self.check_exact_edges(issue=issue)['errors'])
+                self.assertIn('issue', errors)
+                self.assertIn('existing source fanout grew', errors)
+                self.assertIn('existing test reach grew', errors)
+
+    def test_exact_edge_rejects_missing_and_merely_transitive_edges(self):
+        for changes in [{'pairs': [['//tests:first', '//pkg:missing.rs']]},
+                        {'indirect': True}]:
+            with self.subTest(changes=changes):
+                errors = '; '.join(self.check_exact_edges(**changes)['errors'])
+                self.assertIn('head edge', errors)
+                self.assertIn('existing source fanout grew', errors)
+                self.assertIn('existing test reach grew', errors)
+
+    def test_exact_edge_object_without_pairs_does_not_credit_growth(self):
+        for pairs in [[], [['//tests:first', '//pkg:source.rs']] * 2]:
+            with self.subTest(pairs=pairs):
+                errors = '; '.join(self.check_exact_edges(pairs=pairs)['errors'])
+                self.assertIn('explicit nonempty unique list', errors)
+                self.assertIn('existing source fanout grew', errors)
+                self.assertIn('existing test reach grew', errors)
+
+    def test_exact_edge_existing_pair_does_not_credit_unlisted_gain(self):
+        errors = '; '.join(self.check_exact_edges(
+            pairs=[['//tests:second', '//pkg:source.rs']])['errors'])
+        self.assertIn('existing source fanout grew: //pkg:source.rs +1', errors)
+        self.assertIn('existing test reach grew: //tests:first +1', errors)
+
     def test_comparison_inputs_keep_package_ceiling_at_base(self):
         base = adapter.from_deps(
             {'//crates/controller:existing': ['//pkg:a.py', '//pkg:b.py'],
