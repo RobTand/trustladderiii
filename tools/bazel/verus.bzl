@@ -443,6 +443,8 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::handler_safety::node_ok": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::transition_safety::notice_only": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::handler_safety::keeps_review_stop": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::reply_owner": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::can_spend_one": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -725,6 +727,9 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "commands_command_node": ("kernel::commands#command_node", 1),
+            "handler_safety_checked_node_ok": ("kernel::handler_safety#checked_node_ok", 1),
+            "transition_safety_notice_only_effects": ("kernel::transition_safety#notice_only_effects", 1),
             "continuations_set_phase_v": ("kernel::continuations#set_phase_v", 1),
             "continuations_enter_stopping_v": ("kernel::continuations#enter_stopping_v", 1),
             "handler_safety_keep_review_stop": ("kernel::handler_safety#keep_review_stop", 1),
@@ -977,8 +982,8 @@ def verus_proofs():
             "facts_ci_infrastructure": ("kernel::facts#ci_infrastructure", 1),
             "facts_merge": ("kernel::facts#pr_merged", 1),
             "facts_merge_open": ("kernel::facts#merge_open", 1),
-            "commands": ("kernel::commands", 1),
-            "answers": ("kernel::answers#on_answer", 1),
+            "commands": ("kernel::commands#on_command", 1),
+            "answers": ("kernel::answers#answer_node", 1),
             "command_helpers_allowed": ("kernel::command_helpers#allowed", 1),
             "command_helpers_mark_handled": ("kernel::command_helpers#mark_handled", 1),
             "continuations": ("kernel::continuations#go_on", 1),
