@@ -37,7 +37,8 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 2,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(distance);] {
+        on_ack_post(*old(w), *final(w), i as int, seq, ack, *old(out), *final(out)),
+] proof [reveal(on_ack_post);] {
     let Some(e) = w.nodes[i].effect else { return };
     if e.seq != seq {
         return;
@@ -56,6 +57,51 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
             return;
         }
     }
+    ack_live(w, i, e, ack, out);
+}
+}
+
+kernel_fn! {
+/// Acknowledgement rows / #771 / K5 G4: the live part of on_ack after its guards,
+/// moved verbatim. It carries on_ack's contract for an admitted ack, plus the exact
+/// per-path node and output facts the Ack family arm consumes.
+fn ack_live(w: &mut World, i: usize, e: InFlight, ack: Ack,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+        old(w).nodes@[i as int].effect == Some(e),
+        ack == Ack::DeliveryAccepted ==> e.kind == EffectKind::Enqueue,
+        !e.cancelling && e.kind == EffectKind::Enqueue ==> ack != Ack::Confirmed
+            && (ack == Ack::DeliveryAccepted ==> old(w).nodes@[i as int].phase == Phase::Publishing
+                && current_item(old(w).nodes@[i as int]) == Some(Item::Do(EffectKind::Enqueue))),
+    ensures (node_checked(*old(w), old(w).nodes@[i as int])
+            && (!old(w).nodes@[i as int].paused || old(w).nodes@[i as int].phase is Stopping)
+            && (if e.kind == EffectKind::Enqueue { ack == Ack::DeliveryAccepted } else { ack == Ack::Confirmed })
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        (settle_shape(old(w).nodes@[i as int]) && stopping_effect_fits(old(w).nodes@[i as int])
+            ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 2,
+        final(w).nodes@[i as int].next_seq as int <= old(w).nodes@[i as int].next_seq as int + 1,
+        final(w).nodes@[i as int].credit == old(w).nodes@[i as int].credit,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question as int <= old(w).next_question as int + 1,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len <= old(out).len + 2,
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        ack_live_post(old(w).nodes@[i as int], final(w).nodes@[i as int], e, ack,
+            old(w).next_question, final(w).next_question, i as int, *old(out), *final(out)),
+] proof [reveal(distance); reveal(ack_live_post);] {
     w.nodes[i].effect = None;
     if e.cancelling {
         return;
@@ -97,6 +143,7 @@ fn delivery_accepted(m: &mut Node) -> (result: ()) [
         final(m).fx_failures == 0, final(m).fx_incidents == 0,
         settle_shape(*old(m)) ==> settle_shape(*final(m)),
         old(m).phase == Phase::Publishing ==> distance(*final(m)) + 2 <= distance(*old(m)),
+        final(m).review_stop == old(m).review_stop,
 ] proof [reveal(distance);] {
     m.fx_failures = 0;
     m.fx_incidents = 0;
@@ -133,6 +180,7 @@ pub(super) fn confirmed(m: &mut Node, kind: EffectKind) -> (result: ()) [
         final(m).question == old(m).question,
         final(m).fx_failures == 0, final(m).fx_incidents == 0,
         final(m).last_cmd == old(m).last_cmd,
+        *final(m) == agenda_spec(resources_spec(*old(m), kind), kind),
 ] {
     kernel_snapshot! { before_confirmed = *m }
     confirmed_resources(m, kind);
@@ -213,6 +261,7 @@ fn confirmed_agenda(m: &mut Node, kind: EffectKind) -> (result: ()) [
         final(m).fx_failures == old(m).fx_failures,
         final(m).fx_incidents == old(m).fx_incidents,
         final(m).last_cmd == old(m).last_cmd,
+        *final(m) == agenda_spec(*old(m), kind),
 ] proof [reveal(distance);] {
     if kind != EffectKind::Enqueue && !kind.starts_operation() {
         if let Some(Item::Do(k) | Item::Teardown(k)) = m.current() {
@@ -263,7 +312,26 @@ pub(super) fn delivery_failed(w: &mut World, i: usize, kind: EffectKind,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len <= old(out).len + 1,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] {
+        final(w).nodes@[i as int].proposed == old(w).nodes@[i as int].proposed,
+        final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
+        final(w).nodes@[i as int].review_stop == old(w).nodes@[i as int].review_stop,
+        final(w).nodes@[i as int].attempt == old(w).nodes@[i as int].attempt,
+        final(w).nodes@[i as int].replanned == old(w).nodes@[i as int].replanned,
+        final(w).nodes@[i as int].approved == old(w).nodes@[i as int].approved,
+        final(w).nodes@[i as int].checked == old(w).nodes@[i as int].checked,
+        (final(w).nodes@[i as int].phase is Planning ==> old(w).nodes@[i as int].phase is Planning),
+        final(w).nodes@[i as int].next_seq >= old(w).nodes@[i as int].next_seq,
+        final(out).len == old(out).len + 1,
+        forall|k: int| 0 <= k < old(out).len ==> #[trigger] final(out).items@[k] == old(out).items@[k],
+        match final(out).items@[old(out).len as int] {
+            Some(Out::Effect { node, seq, kind: k, head }) => node == NodeId(i as u64)
+                && seq == old(w).nodes@[i as int].next_seq && k == kind
+                && head == effect_head(kind, old(w).nodes@[i as int].head)
+                && seq < final(w).nodes@[i as int].next_seq,
+            Some(Out::Notice { node, .. }) => node == NodeId(i as u64),
+            None => false,
+        },
+] proof [reveal(retirement::incident);] {
     match failed_delivery_node(&mut w.nodes[i], kind) {
         None => emit(w, i, kind, out),
         Some(needs_rob) => raise_incident(w, i, needs_rob, out),
@@ -284,6 +352,11 @@ fn failed_delivery_node(m: &mut Node, kind: EffectKind) -> (result: Option<bool>
         final(m).question == old(m).question, final(m).last_cmd == old(m).last_cmd,
         final(m).fx_failures <= 1, final(m).fx_incidents <= 2,
         result.is_none() == (old(m).fx_failures == 0),
+        final(m).proposed == old(m).proposed, final(m).adopted == old(m).adopted,
+        final(m).review_stop == old(m).review_stop, final(m).attempt == old(m).attempt,
+        final(m).replanned == old(m).replanned, final(m).phase == old(m).phase,
+        final(m).head == old(m).head, final(m).approved == old(m).approved,
+        final(m).checked == old(m).checked,
 ] {
     m.fx_failures += 1;
     if m.fx_failures < 2 {
@@ -327,6 +400,11 @@ pub(super) fn effect_failed(w: &mut World, i: usize, kind: EffectKind,
         final(w).dependencies@ == old(w).dependencies@,
         final(out).len == old(out).len + 2,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        final(w).nodes@[i as int] == failed_spec(old(w).nodes@[i as int], kind, old(w).next_question),
+        final(out).items@ == old(out).items@.update(old(out).len as int,
+            Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob: true } }))
+            .update(old(out).len as int + 1,
+                Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Ask { question: old(w).next_question } })),
 ] {
     notice(out, i, Notice::Incident { needs_rob: true });
     if w.nodes[i].phase.is_stopping() {
@@ -357,5 +435,140 @@ pub(super) fn effect_failed(w: &mut World, i: usize, kind: EffectKind,
         },
     };
     ask_rob(w, i, QKind::EffectFailed, cont, 0, out);
+}
+}
+
+#[cfg(verus_keep_ghost)]
+verus! {
+/// K5 G4 / I-D2: the head an effect of `kind` carries (emit_node's selection).
+pub(super) open spec fn effect_head(kind: EffectKind, head: Option<HeadId>) -> Option<HeadId> {
+    match kind {
+        EffectKind::Push | EffectKind::PostApproval | EffectKind::OpenPr | EffectKind::Enqueue => head,
+        _ => None,
+    }
+}
+
+/// K5 I-D3: confirmed_resources' exact result.
+pub(super) open spec fn resources_spec(m: Node, kind: EffectKind) -> Node {
+    Node {
+        fx_failures: 0, fx_incidents: 0,
+        run: if kind == EffectKind::StopRun { None } else { m.run },
+        pool: if kind == EffectKind::StopRun { false } else { m.pool },
+        job: if kind == EffectKind::WithdrawJob { None } else { m.job },
+        pr_open: if kind == EffectKind::ClosePr { false } else { m.pr_open },
+        worktree: if kind == EffectKind::RemoveWorktree { false } else { m.worktree },
+        ..m
+    }
+}
+
+/// K5 I-D3: confirmed_agenda's exact result, including adoption into Checking.
+pub(super) open spec fn agenda_spec(m: Node, kind: EffectKind) -> Node {
+    if kind != EffectKind::Enqueue
+        && !matches!(kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase)
+        && (current_item(m) == Some(Item::Do(kind)) || current_item(m) == Some(Item::Teardown(kind))) {
+        if kind == EffectKind::PrepareWorktree && !m.adopted && m.proposed.is_some() {
+            retirement::phased(Node { adopted: true, head: m.proposed, checked: None, ..m }, Phase::Checking)
+        } else {
+            Node { pos: (m.pos + 1) as u8, ..m }
+        }
+    } else {
+        m
+    }
+}
+
+/// K5 G4 / H29.2: effect_failed's exact node result. `c` already has no effect.
+pub(super) open spec fn failed_spec(c: Node, kind: EffectKind, nq: u64) -> Node {
+    if c.phase is Stopping {
+        Node { question: Some(Question { id: nq, kind: QKind::CleanupFailed, cont: Cont::Nowhere,
+            cost: 0, clarified: false }), ..c }
+    } else {
+        let m = if matches!(kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase) {
+            Node { run: None, job: None, pool: false, effect: match c.effect {
+                Some(e) => Some(InFlight { cancelling: e.cancelling
+                    || matches!(e.kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks
+                        | EffectKind::StartRebase), ..e }),
+                None => None }, ..c }
+        } else { c };
+        let cont = match m.phase {
+            Phase::Ingesting => Cont::Ingesting,
+            Phase::Auditing => Cont::Auditing,
+            Phase::Planning { must_split } => Cont::Planning { must_split },
+            Phase::Making => Cont::Ready(Resume::Making),
+            Phase::Checking => Cont::Ready(Resume::Checking),
+            Phase::Reviewing => Cont::Ready(Resume::Reviewing),
+            Phase::Publishing => Cont::Ready(Resume::Publishing),
+            Phase::Rebasing => Cont::Ready(Resume::Rebasing),
+            _ => Cont::Unplanned,
+        };
+        retirement::phased(Node { holds: false, question: Some(Question { id: nq,
+            kind: QKind::EffectFailed, cont, cost: 0, clarified: false }), ..m }, Phase::AwaitingRob)
+    }
+}
+
+/// K5 G4: on_ack's guards; a stale, mismatched or not-yet-due ack changes nothing.
+pub(super) open spec fn ack_stutters(b: Node, seq: u64, ack: Ack) -> bool {
+    match b.effect {
+        None => true,
+        Some(e) => e.seq != seq
+            || (ack == Ack::DeliveryAccepted && e.kind != EffectKind::Enqueue)
+            || (!e.cancelling && e.kind == EffectKind::Enqueue && (ack == Ack::Confirmed
+                || (ack == Ack::DeliveryAccepted && (b.phase != Phase::Publishing
+                    || current_item(b) != Some(Item::Do(EffectKind::Enqueue)))))),
+    }
+}
+
+/// K5 G4: exact facts of an admitted ack at node i, b before and n after.
+#[verifier::opaque]
+pub(super) open spec fn ack_live_post(b: Node, n: Node, e: InFlight, ack: Ack, nq: u64, nqa: u64,
+    i: int, ob: Outbox, oa: Outbox) -> bool {
+    let c = Node { effect: None, ..b };
+    (nqa as int == if !e.cancelling && (ack == Ack::Permanent
+        || (ack == Ack::BodyPolicyRefused && e.kind != EffectKind::OpenPr)) { nq as int + 1 } else { nq as int })
+    && (e.cancelling ==> n == c && oa == ob)
+    && (!e.cancelling ==> {
+        n.proposed == b.proposed && (b.adopted ==> n.adopted) && n.credit == b.credit
+        && n.next_seq >= b.next_seq && n.attempt == b.attempt && n.replanned == b.replanned
+        && (n.phase is Planning ==> b.phase is Planning)
+        && (n.question == b.question || match n.question {
+            Some(q) => q.kind == QKind::EffectFailed || q.kind == QKind::CleanupFailed,
+            None => true,
+        })
+        && ob.len <= oa.len
+        && (forall|k: int| 0 <= k < ob.len ==> #[trigger] oa.items@[k] == ob.items@[k])
+        && (forall|k: int| ob.len <= k < oa.len ==> match #[trigger] oa.items@[k] {
+            Some(Out::Notice { node, .. }) => node == NodeId(i as u64),
+            Some(Out::Effect { node, seq, kind, head }) => node == NodeId(i as u64)
+                && seq == b.next_seq && seq < n.next_seq && kind == e.kind
+                && head == effect_head(e.kind, b.head)
+                && n.approved == b.approved && n.checked == b.checked,
+            None => false,
+        })
+        && (ack == Ack::Confirmed ==> n == agenda_spec(resources_spec(c, e.kind), e.kind) && oa == ob)
+        && ((ack == Ack::Permanent || (ack == Ack::BodyPolicyRefused && e.kind != EffectKind::OpenPr))
+            ==> n == failed_spec(c, e.kind, nq) && oa.len == ob.len + 2
+                && oa.items@ == ob.items@.update(ob.len as int, Some(Out::Notice { node: NodeId(i as u64),
+                    notice: Notice::Incident { needs_rob: true } })).update(ob.len as int + 1,
+                    Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Ask { question: nq } })))
+        && (ack == Ack::BodyPolicyRefused && e.kind == EffectKind::OpenPr
+            ==> n == retirement::stopped(Node { review_stop: Some(ReviewStop::PublicationBody), ..c },
+                Outcome::Stopped) && oa == ob)
+        && (!(ack == Ack::BodyPolicyRefused && e.kind == EffectKind::OpenPr) ==> n.review_stop == b.review_stop)
+    })
+}
+
+/// K5 G4: on_ack's exported post at node i for any outbox prefix with capacity.
+#[verifier::opaque]
+pub(super) open spec fn on_ack_post(before: World, after: World, i: int, seq: u64, ack: Ack,
+    ob: Outbox, oa: Outbox) -> bool {
+    let b = before.nodes@[i];
+    let n = after.nodes@[i];
+    if ack_stutters(b, seq, ack) {
+        n == b && oa == ob
+    } else {
+        match b.effect {
+            Some(e) => ack_live_post(b, n, e, ack, before.next_question, after.next_question, i, ob, oa),
+            None => false,
+        }
+    }
 }
 }
