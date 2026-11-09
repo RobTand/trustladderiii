@@ -1760,4 +1760,19 @@ pub(super) proof fn node_update_preserves(before: World, after: World, i: int)
 {
     preservation::node_update_preserves(before, after, i);
 }
+
+/// K5 G19 (NewRequest / NewAdoption): appending nodes that own no row and hold
+/// no withheld credit keeps the complete dependency acceptance.
+pub(super) proof fn append_preserves(before: World, after: World)
+    requires rules_ok(before),
+        after.dependencies@ == before.dependencies@,
+        after.nodes@.len() >= before.nodes@.len(),
+        forall|j: int| 0 <= j < before.nodes@.len()
+            ==> same_endpoint(#[trigger] before.nodes@[j], after.nodes@[j]),
+        forall|j: int| before.nodes@.len() <= j < after.nodes@.len()
+            ==> !(#[trigger] after.nodes@[j]).credit.withheld,
+    ensures rules_ok(after),
+{
+    preservation::append_preserves(before, after);
+}
 }
