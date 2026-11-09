@@ -1,9 +1,9 @@
 {
-  "source_head": "0a2e19853f156a7e8b6313c820a5d268d46f205b",
+  "source_head": "fe31007adc3594135ee76b345788b27ec5bce7cf",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "cbc610d36b9645ed2677bc36c30da8f3462c7c518e30df5c8b1a85a0449facd5",
-  "groups": 433,
-  "obligations": 639,
+  "source_sha256": "8484a43ba515524187ed60a583005be1190d664912b57bbb55c887671ed0298a",
+  "groups": 434,
+  "obligations": 643,
   "selections": [
     {
       "target": "//crates/kernel:verus_transition_safety_quiet",
@@ -384,6 +384,11 @@
       "target": "//crates/kernel:verus_transition_composition",
       "selector": "kernel::transition_composition",
       "expected": 8
+    },
+    {
+      "target": "//crates/kernel:verus_internal_safety",
+      "selector": "kernel::internal_safety",
+      "expected": 4
     },
     {
       "target": "//crates/kernel:verus_kernel_outbox_occupied",
