@@ -460,4 +460,93 @@ pub(super) proof fn inline_disjoint(world: World, a: u64, b: u64)
 {
     reveal(disjoint); reveal(inline_footprint);
 }
+/// K4a: an inline view lists exactly the set bits below its end.
+pub(super) proof fn inline_view_contains(bits: u64, end: nat)
+    requires end <= 64,
+    ensures forall|file: FileId| #[trigger] inline_view(bits, end).contains(file)
+        == (file.0 < end && bits & (1u64 << file.0) != 0),
+    decreases end,
+{
+    reveal(inline_view);
+    if end > 0 {
+        inline_view_contains(bits, (end - 1) as nat);
+        let prefix = inline_view(bits, (end - 1) as nat);
+        let last = FileId((end - 1) as u64);
+        assert forall|file: FileId| #[trigger] inline_view(bits, end).contains(file)
+            == (file.0 < end && bits & (1u64 << file.0) != 0) by {
+            if bits & (1u64 << ((end - 1) as u64)) != 0 {
+                assert(inline_view(bits, end) == prefix.push(last));
+                if prefix.push(last).contains(file) && file != last {
+                    let k = choose|k: int| 0 <= k < prefix.push(last).len() && prefix.push(last)[k] == file;
+                    assert(prefix[k] == file);
+                }
+                if prefix.contains(file) {
+                    let k = choose|k: int| 0 <= k < prefix.len() && prefix[k] == file;
+                    assert(prefix.push(last)[k] == file);
+                }
+                if file == last { assert(prefix.push(last)[prefix.len() as int] == last); }
+            } else {
+                assert(inline_view(bits, end) == prefix);
+            }
+        }
+    } else {
+        assert forall|file: FileId| #[trigger] inline_view(bits, end).contains(file)
+            == (file.0 < end && bits & (1u64 << file.0) != 0) by {
+            assert(inline_view(bits, end) =~= Seq::<FileId>::empty());
+        }
+    }
+}
+
+/// K4a: a footprint's view lists exactly the files it contains.
+pub(super) proof fn view_contains(world: World, footprint: Footprint)
+    ensures forall|file: FileId| #[trigger] file_view(world, footprint).contains(file)
+        == contains_file(world, footprint, file),
+{
+    reveal(file_view); reveal(contains_file);
+    if let Repr::Inline(bits) = footprint.0 {
+        inline_view_contains(bits, 64);
+    }
+}
+
+/// K4a / K4c: held-footprint disjointness does not depend on argument order.
+pub(super) proof fn disjoint_symmetric(world: World, a: Footprint, b: Footprint)
+    requires valid_footprint(world, a), valid_footprint(world, b), ordered_table(world),
+    ensures disjoint(world, a, b) == disjoint(world, b, a),
+{
+    reveal(disjoint);
+    if let (Repr::Inline(left), Repr::Inline(right)) = (a.0, b.0) {
+        assert((left & right == 0) == (right & left == 0)) by(bit_vector);
+    } else {
+        view_contains(world, a);
+        view_contains(world, b);
+        let va = file_view(world, a);
+        let vb = file_view(world, b);
+        assert(disjoint(world, a, b) == forall|file: FileId|
+            contains_file(world, a, file) ==> !contains_file(world, b, file)) by {
+            if forall|i: int| 0 <= i < va.len() ==> !contains_file(world, b, va[i]) {
+                assert forall|file: FileId| contains_file(world, a, file)
+                    implies !contains_file(world, b, file) by {
+                    assert(va.contains(file));
+                    let k = choose|k: int| 0 <= k < va.len() && va[k] == file;
+                }
+            } else {
+                let i = choose|i: int| 0 <= i < va.len() && contains_file(world, b, va[i]);
+                assert(va.contains(va[i]));
+            }
+        }
+        assert(disjoint(world, b, a) == forall|file: FileId|
+            contains_file(world, b, file) ==> !contains_file(world, a, file)) by {
+            if forall|i: int| 0 <= i < vb.len() ==> !contains_file(world, a, vb[i]) {
+                assert forall|file: FileId| contains_file(world, b, file)
+                    implies !contains_file(world, a, file) by {
+                    assert(vb.contains(file));
+                    let k = choose|k: int| 0 <= k < vb.len() && vb[k] == file;
+                }
+            } else {
+                let i = choose|i: int| 0 <= i < vb.len() && contains_file(world, a, vb[i]);
+                assert(vb.contains(vb[i]));
+            }
+        }
+    }
+}
 }
