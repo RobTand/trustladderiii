@@ -58,13 +58,14 @@ class FluxFake:
     The worker's real flux_execution.execute, payload blob checks and receipt
     mapping run. Each new submission runs ``job(root, document)`` once on its
     staged input root, as the admitted job would, and returns ``(kind, document,
-    symptom_runs)``. Rust releases a payload only for a completed report, so a
-    non-passed ending refuses the payload like the shared CLI's error frame.
+    symptom_runs)``. Rust releases a payload only for a completed report: a passed
+    run, or a trusted generator artifact reporting a typed failure with a failed
+    ending. Any other ending or pairing refuses like the shared CLI's error frame.
     """
 
     def __init__(self, state, job):
         self.state, self.job = Path(state), job
-        self.prepared, self.plans, self.roots, self.payloads = [], {}, {}, {}
+        self.prepared, self.plans, self.roots, self.payloads, self.endings = [], {}, {}, {}, {}
         self.submitted, self.attached, self.resumed = [], [], []
         self.ending = "passed"
         self.observation = None
@@ -120,11 +121,17 @@ class FluxFake:
                                     "terminal": {"ending": self.ending, "reason": "exited",
                                                  "receipt": {"sha256": "b" * 64}}}}
         if op == "worker_payload":
-            if command["terminal"]["ending"] != "passed":
+            if command["terminal"]["ending"] not in ("passed", "failed"):
                 raise ValueError("Shared execution retained an unknown or refused outcome")
             if key not in self.payloads:
                 [prepared] = [item for item in self.prepared if item["key"] == key]
                 kind, document, symptoms = self.job(prepared["root"], prepared["document"])
+                # Rust releases a payload only for a verified completed report. A trusted
+                # generator artifact reporting a typed failure ends Failed, never Passed;
+                # every other payload needs a passed ending (FX-GEN-PREP 80ddef3e:
+                # worker_protocol.rs generator_failed, evidence.rs classify).
+                self.endings[key] = ("failed" if kind == "generator" and document.get("status") != "completed"
+                                     else "passed")
                 if kind == "generator":
                     payload = {"kind": kind, "artifact": self._blob(document)}
                 else:
@@ -133,6 +140,8 @@ class FluxFake:
                 self.payloads[key] = payload
                 if self.on_payload is not None:
                     self.on_payload(payload)
+            if command["terminal"]["ending"] != self.endings[key]:
+                raise ValueError("Shared execution retained an unknown or refused outcome")
             return {"payload": self.payloads[key]}
         raise AssertionError(op)
 
