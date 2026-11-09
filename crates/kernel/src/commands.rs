@@ -308,8 +308,7 @@ fn resume_command(w: &mut World, i: usize, id: u64) -> (result: ()) [
     kernel_proof! {
         reveal(progress_gate_apply::resumed); reveal(progress_gate_apply::resume_post);
         assert(progress_gate_apply::resume_post(before_command_node@, w.nodes@[i as int], id, Command::Resume));
-        assert(distance(w.nodes@[i as int]) == distance(Node { paused: false, ..before_command_node@ }))
-            by { reveal(distance); }
+        handler_safety::distance_last_cmd(Node { paused: false, ..before_command_node@ }, id);
         handler_safety::field_step(after_id@, w.nodes@[i as int]);
     }
     kernel_proof! {

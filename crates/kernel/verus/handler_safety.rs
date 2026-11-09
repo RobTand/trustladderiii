@@ -450,4 +450,13 @@ pub(super) proof fn checked_node_ok(w: World, n: Node)
 {
 }
 
+
+/// K5 design 3 rung: the node distance does not read last_cmd, proved once
+/// here so resume_command never unfolds distance.
+pub(super) proof fn distance_last_cmd(n: Node, id: u64)
+    ensures distance(Node { last_cmd: id, ..n }) == distance(n),
+{
+    reveal(distance);
+}
+
 }

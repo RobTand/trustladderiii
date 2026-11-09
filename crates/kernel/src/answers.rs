@@ -40,6 +40,16 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
         (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase),
         handler_safety::command_step(old(w).nodes@[i as int], final(w).nodes@[i as int]),
+        transition_safety::notice_only(*old(out), *final(out), NodeId(i as u64)),
+        (node_checked(*old(w), old(w).nodes@[i as int])
+            && final(w).nodes@[i as int] != old(w).nodes@[i as int]
+            ==> (match old(w).nodes@[i as int].question {
+                Some(q) => q.id == id,
+                None => false,
+            }) && (match final(w).nodes@[i as int].question {
+                Some(q) => q.id != id,
+                None => true,
+            })),
 ] {
     kernel_proof! {
         if node_checked(*w, w.nodes@[i as int]) { handler_safety::checked_node_ok(*w, w.nodes@[i as int]); }
