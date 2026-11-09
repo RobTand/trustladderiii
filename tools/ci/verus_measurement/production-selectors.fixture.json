@@ -1,10 +1,40 @@
 {
-  "source_head": "7bf84b3c17f10bfb81398e6a5f80fe3dbce2a6de",
+  "source_head": "c101fc8e442ddae57caf0342aca54cd15dd6e85c",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "9818a23d17cbdedc61f2224f7474e3498410aff6abb354eb04af73dbbb9e400c",
-  "groups": 344,
-  "obligations": 541,
+  "source_sha256": "1296817f91b3bfa5208a070f2cc6cd029691798da51ecc788ed41d07ebe0cb7d",
+  "groups": 350,
+  "obligations": 547,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_allocation_stopping_entry",
+      "selector": "kernel::allocation#stopping_entry",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_stopping_active",
+      "selector": "kernel::allocation#stopping_active",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_confirmed_resources",
+      "selector": "kernel::acknowledgements#confirmed_resources",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_release_confirmed",
+      "selector": "kernel::acknowledgements#release_confirmed",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_minimum_index",
+      "selector": "kernel::ranks#minimum_index",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_stopping_cases",
+      "selector": "kernel::allocation_stopping_lemmas#stopped_cases",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_kernel_clones",
       "selector": "kernel#*::clone",
