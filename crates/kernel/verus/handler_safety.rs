@@ -280,51 +280,49 @@ pub(super) proof fn transition_admitted(fast: bool, reply: Reply, b: Node, m: No
 
 /// on_reply's stopping, stale and rejected paths: no row is due and the review
 /// stop is kept.
-pub(super) proof fn quiet_due(w: World, n: Node, i: int, g: u64, reply: Reply, ob: Outbox, oa: Outbox)
-    requires 0 <= i < w.nodes@.len(), n.review_stop == w.nodes@[i].review_stop,
-        w.nodes@[i].phase is Stopping || !transition_safety::reply_owner(w.nodes@[i], g)
-            || !port_t860_contracts::admissible(w, w.nodes@[i], reply),
+pub(super) proof fn quiet_due(w: World, n: Node, i: usize, g: u64, reply: Reply, ob: Outbox, oa: Outbox)
+    requires i < w.nodes@.len(), n.review_stop == w.nodes@[i as int].review_stop,
+        w.nodes@[i as int].phase is Stopping || !transition_safety::reply_owner(w.nodes@[i as int], g)
+            || !port_t860_contracts::admissible(w, w.nodes@[i as int], reply),
     ensures reply_rows(w.fail_fast,
         transition_safety::retry_due(w, Event::Reply { node: NodeId(i as u64), generation: g, reply }),
         transition_safety::funding_due(w, Event::Reply { node: NodeId(i as u64), generation: g, reply }),
-        w.nodes@[i], n, ob, oa),
+        w.nodes@[i as int], n, ob, oa),
 {
     reveal(reply_rows); reveal(ladder); reveal(port_t860_contracts::admissible);
-    assert(NodeId(i as u64).0 as int == i);
 }
 
 /// on_reply's admitted path: the node-level rows are the retry_due/funding_due rows.
-pub(super) proof fn admitted_due(w: World, n: Node, i: int, g: u64, reply: Reply, ob: Outbox, oa: Outbox)
-    requires 0 <= i < w.nodes@.len(), !(w.nodes@[i].phase is Stopping),
-        transition_safety::reply_owner(w.nodes@[i], g),
-        port_t860_contracts::admissible(w, w.nodes@[i], reply), fail_fast_reply(reply),
-        fail_fast_admitted(w.nodes@[i], reply) ==> reply_rows(w.fail_fast,
-            admitted_retry(w.nodes@[i], reply), admitted_fund(w.nodes@[i], reply), w.nodes@[i], n, ob, oa),
+pub(super) proof fn admitted_due(w: World, n: Node, i: usize, g: u64, reply: Reply, ob: Outbox, oa: Outbox)
+    requires i < w.nodes@.len(), !(w.nodes@[i as int].phase is Stopping),
+        transition_safety::reply_owner(w.nodes@[i as int], g),
+        port_t860_contracts::admissible(w, w.nodes@[i as int], reply), fail_fast_reply(reply),
+        fail_fast_admitted(w.nodes@[i as int], reply) ==> reply_rows(w.fail_fast,
+            admitted_retry(w.nodes@[i as int], reply), admitted_fund(w.nodes@[i as int], reply),
+            w.nodes@[i as int], n, ob, oa),
     ensures reply_rows(w.fail_fast,
         transition_safety::retry_due(w, Event::Reply { node: NodeId(i as u64), generation: g, reply }),
         transition_safety::funding_due(w, Event::Reply { node: NodeId(i as u64), generation: g, reply }),
-        w.nodes@[i], n, ob, oa),
+        w.nodes@[i as int], n, ob, oa),
 {
     reveal(port_t860_contracts::admissible);
-    assert(NodeId(i as u64).0 as int == i);
 }
 
 
 /// Compose's fail_fast_rows for a fail-fast reply, from on_reply's node rows
 /// and Kani's consistent-input premise (the checker's node rule for b).
-pub(super) proof fn fail_fast_reply_rows(before: World, after: World, i: int, g: u64, reply: Reply,
+pub(super) proof fn fail_fast_reply_rows(before: World, after: World, node: NodeId, g: u64, reply: Reply,
     ob: Outbox, oa: Outbox)
-    requires 0 <= i < before.nodes@.len(), 0 <= i < after.nodes@.len(), ob.len <= OUTBOX,
-        retirement::node_rules(before, before.nodes@[i]),
+    requires node.0 < before.nodes@.len(), node.0 < after.nodes@.len(), ob.len <= OUTBOX,
+        retirement::node_rules(before, before.nodes@[node.0 as int]),
         reply_rows(before.fail_fast,
-            transition_safety::retry_due(before, Event::Reply { node: NodeId(i as u64), generation: g, reply }),
-            transition_safety::funding_due(before, Event::Reply { node: NodeId(i as u64), generation: g, reply }),
-            before.nodes@[i], after.nodes@[i], ob, oa),
+            transition_safety::retry_due(before, Event::Reply { node, generation: g, reply }),
+            transition_safety::funding_due(before, Event::Reply { node, generation: g, reply }),
+            before.nodes@[node.0 as int], after.nodes@[node.0 as int], ob, oa),
     ensures transition_safety::fail_fast_rows(before, after,
-        Event::Reply { node: NodeId(i as u64), generation: g, reply }, i, transition_safety::emitted(ob, oa)),
+        Event::Reply { node, generation: g, reply }, node.0 as int, transition_safety::emitted(ob, oa)),
 {
     reveal(reply_rows); reveal(ladder); reveal(funding); reveal(retirement::node_rules);
-    assert(NodeId(i as u64).0 as int == i);
     assert(ob.items@.len() == OUTBOX);
     if oa == ob {
         assert(transition_safety::emitted(ob, oa).len() == 0);

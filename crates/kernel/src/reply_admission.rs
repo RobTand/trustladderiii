@@ -129,7 +129,7 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
     let n = &w.nodes[i];
     if n.phase.is_stopping() {
         on_stopping_reply(w, i, generation, reply, out);
-        kernel_proof! { handler_safety::quiet_due(before_reply@, w.nodes@[i as int], i as int, generation, reply, before_outputs@, *out); }
+        kernel_proof! { handler_safety::quiet_due(before_reply@, w.nodes@[i as int], i, generation, reply, before_outputs@, *out); }
         kernel_proof! { report::lemmas::reply_result(before_report@, report.entries@, NodeId(i as u64),
             before_reply@.nodes@[i as int].phase, current_item(before_reply@.nodes@[i as int]),
             before_reply@.nodes@[i as int].run, before_reply@.nodes@[i as int].job,
@@ -154,7 +154,7 @@ pub(super) fn on_reply(w: &mut World, i: usize, generation: u64, reply: Reply,
             before_reply@.nodes@[i as int].phase, current_item(before_reply@.nodes@[i as int]),
             before_reply@.nodes@[i as int].run, before_reply@.nodes@[i as int].job,
             generation, reply, port_t860_contracts::admissible(before_reply@, before_reply@.nodes@[i as int], reply)); }
-kernel_proof! { handler_safety::quiet_due(before_reply@, w.nodes@[i as int], i as int, generation, reply, before_outputs@, *out); }
+kernel_proof! { handler_safety::quiet_due(before_reply@, w.nodes@[i as int], i, generation, reply, before_outputs@, *out); }
         return; // stale
     }
     // A reply that breaks its schema or names the wrong commit counts as a failed run.
@@ -167,7 +167,7 @@ kernel_proof! { handler_safety::quiet_due(before_reply@, w.nodes@[i as int], i a
     }
     if !accepts(w, n, &reply) {
         on_rejected_reply(w, i, generation, reply, out, report);
-        kernel_proof! { handler_safety::quiet_due(before_reply@, w.nodes@[i as int], i as int, generation, reply, before_outputs@, *out); }
+        kernel_proof! { handler_safety::quiet_due(before_reply@, w.nodes@[i as int], i, generation, reply, before_outputs@, *out); }
         kernel_proof! { report::lemmas::round_delta(before_report@, report.entries@,
             NodeId(i as u64), Some(FailedRoundCause::RunFailed)); }
         kernel_proof! { report::lemmas::reply_result(before_report@, report.entries@, NodeId(i as u64),
@@ -184,7 +184,7 @@ kernel_proof! { handler_safety::quiet_due(before_reply@, w.nodes@[i as int], i a
     on_admitted_reply(w, i, generation, reply, out, report);
     kernel_proof! {
         if handler_safety::fail_fast_reply(reply) {
-            handler_safety::admitted_due(before_reply@, w.nodes@[i as int], i as int, generation, reply,
+            handler_safety::admitted_due(before_reply@, w.nodes@[i as int], i, generation, reply,
                 before_outputs@, *out);
         }
     }
