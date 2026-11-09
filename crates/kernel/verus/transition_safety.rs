@@ -173,7 +173,9 @@ pub(super) open spec fn apply_frame(before: World, after: World) -> bool {
 }
 
 /// check_advance: a moving advance changes only its node and keeps the node
-/// count; a false advance leaves the world and the output unchanged.
+/// count; a false advance leaves every node, the ticket counter, the settle
+/// field groups and the output unchanged (the view-level frame that the
+/// checker's accepted_frame consumes).
 pub(super) open spec fn advance_frame(before: World, after: World, i: int, moved: bool,
     out: Seq<Option<Out>>) -> bool {
     if moved {
@@ -181,7 +183,8 @@ pub(super) open spec fn advance_frame(before: World, after: World, i: int, moved
             && forall|j: int| 0 <= j < before.nodes@.len() && j != i
                 ==> #[trigger] after.nodes@[j] == before.nodes@[j]
     } else {
-        after == before && out.len() == 0
+        after.nodes@ == before.nodes@ && after.next_ticket == before.next_ticket
+            && settle_frame(before, after) && out.len() == 0
     }
 }
 
@@ -428,6 +431,14 @@ pub(super) proof fn transition_compose(w0: World, w1: World, w2: World, node: us
         }
     } else {
         assert(first + next =~= first);
+        assert forall|j: int| 0 <= j < w0.nodes@.len()
+            implies node_step(w0.nodes@[j], #[trigger] w2.nodes@[j]) by {
+            assert(w2.nodes@[j] == w1.nodes@[j]);
+        }
+        assert forall|k: int| 0 <= k < first.len()
+            implies settle_item(w0, w2, #[trigger] first[k]) by {
+            assert(settle_item(w0, w1, first[k]));
+        }
     }
 }
 
@@ -455,6 +466,107 @@ pub(super) proof fn nodes_step_trans(w0: World, w1: World, w2: World)
         implies node_step(w0.nodes@[j], #[trigger] w2.nodes@[j]) by {
         node_step_trans(w0.nodes@[j], w1.nodes@[j], w2.nodes@[j]);
     }
+}
+
+/// Q54 fail-fast relational inputs (LEAD-FINAL-RULINGS-1109-GO). Each is a
+/// function of the pre-state and the event only; none reads `w.fail_fast`.
+/// on_reply's admission: the node awaits this run or job generation.
+pub(super) open spec fn reply_owner(b: Node, generation: u64) -> bool {
+    current_item(b) == Some(Item::Await) && (b.run == Some(generation) || b.job == Some(generation))
+}
+
+/// Credit::can_spend(1).
+pub(super) open spec fn can_spend_one(n: Node) -> bool {
+    !n.credit.withheld && n.credit.start as int + n.credit.earned as int
+        + n.credit.added as int >= n.credit.spent as int + 1
+}
+
+/// check_fail_fast_diverts entries: the flag-off step would retry the work.
+/// PlanCantMeet always re-plans or asks; MakerCantMeet takes the next rung;
+/// MakerOutOfRoom, and MakerNeedsFiles that does not fit or names no files,
+/// go out of room; a failed check, requested changes or CI failure retries
+/// only after the free fix round; a second reviewer exhaustion goes out of room.
+pub(super) open spec fn retry_due(w: World, event: Event) -> bool {
+    match event {
+        Event::Reply { node, generation, reply } => node.0 < w.nodes@.len() && {
+            let b = w.nodes@[node.0 as int];
+            reply_owner(b, generation) && match reply {
+                Reply::PlanCantMeet => b.phase is Planning,
+                Reply::MakerCantMeet | Reply::MakerOutOfRoom => b.phase == Phase::Making,
+                Reply::MakerNeedsFiles { files, fits } => b.phase == Phase::Making
+                    && footprint::valid_footprint(w, files)
+                    && !(fits && !footprint::footprint_empty(files)),
+                Reply::ChecksDone { report, pass, in_footprint } => b.phase == Phase::Checking
+                    && report && !(pass && in_footprint) && b.round != 0,
+                Reply::ChangesRequested => b.phase == Phase::Reviewing && b.round != 0,
+                Reply::ReviewerOutOfRoom => b.phase == Phase::Reviewing && b.review_restarted,
+                _ => false,
+            }
+        },
+        Event::Fact { node, fact: Fact::CiFailed { infra: false } } => node.0 < w.nodes@.len() && {
+            let b = w.nodes@[node.0 as int];
+            (b.phase == Phase::AwaitingDelivery || (b.phase == Phase::Publishing
+                && current_item(b) == Some(Item::Do(EffectKind::Enqueue)))) && b.round != 0
+        },
+        _ => false,
+    }
+}
+
+/// check_fail_fast_funding: a fitting, non-empty, in-table extension the node
+/// cannot pay for.
+pub(super) open spec fn funding_due(w: World, event: Event) -> bool {
+    match event {
+        Event::Reply { node, generation, reply: Reply::MakerNeedsFiles { files, fits } } =>
+            node.0 < w.nodes@.len() && {
+                let b = w.nodes@[node.0 as int];
+                b.phase == Phase::Making && reply_owner(b, generation)
+                    && footprint::valid_footprint(w, files) && fits
+                    && !footprint::footprint_empty(files) && !can_spend_one(b)
+            },
+        _ => false,
+    }
+}
+
+/// check_fail_fast_diverts: what the flag-off run did counts as a retry.
+pub(super) open spec fn retried(b: Node, n: Node) -> bool {
+    n.attempt > b.attempt || n.phase is Planning || match n.question {
+        Some(q) => q.kind == QKind::CantMeet || q.kind == QKind::OutOfCredit,
+        None => false,
+    }
+}
+
+/// The nine check_fail_fast_diverts event shapes, in any phase.
+pub(super) open spec fn fail_fast_event(event: Event) -> bool {
+    match event {
+        Event::Reply { reply, .. } => matches!(reply, Reply::PlanCantMeet | Reply::MakerCantMeet
+            | Reply::MakerOutOfRoom | Reply::MakerNeedsFiles { .. } | Reply::ChecksDone { .. }
+            | Reply::ChangesRequested | Reply::ReviewerOutOfRoom),
+        Event::Fact { fact: Fact::CiFailed { .. }, .. } => true,
+        _ => false,
+    }
+}
+
+/// Q54 relational rows for one apply of a fail_fast_event to node i, from a
+/// node the checker accepts. Rows (1)-(4) of the approved interface; (5),
+/// other nodes unchanged, is apply's own frame.
+pub(super) open spec fn fail_fast_rows(before: World, after: World, event: Event, i: int,
+    out: Seq<Option<Out>>) -> bool {
+    let b = before.nodes@[i];
+    let n = after.nodes@[i];
+    let fast = before.fail_fast;
+    (fast && n.review_stop != b.review_stop && !permitted_stop(b, n, event, i)
+        ==> retry_due(before, event) && !funding_due(before, event))
+    && (!fast && retry_due(before, event) ==> retried(b, n))
+    && (fast && retry_due(before, event) ==> n.review_stop.is_some() && b.review_stop.is_none()
+        && n.phase == Phase::Stopping(Outcome::Stopped) && n.credit == b.credit
+        && n.question.is_none() && out.len() == 0)
+    && (funding_due(before, event) ==> n.credit == b.credit
+        && (fast ==> n.review_stop.is_none() && match n.question {
+            Some(q) => q.kind == QKind::OutOfCredit && q.cont == Cont::Ready(Resume::Making),
+            None => false })
+        && (!fast ==> match n.question {
+            Some(q) => q.kind == QKind::OutOfCredit && q.cont == Cont::Planning { must_split: true },
+            None => false }))
 }
 
 /// check_outputs for handlers that emit no effect: every emitted item is a
