@@ -289,7 +289,7 @@ fn parser_roundtrip() {
 
 #[test]
 fn mandatory_valid_replies_and_after_reply() {
-    let cases = include_str!("../fixtures/worker-replies-d8e4f2a8.jsonl");
+    let cases = include_str!("../fixtures/worker-replies-action-s1.jsonl");
     let mut valid = 0;
     for case in cases.lines() {
         let case: Value = serde_json::from_str(case).unwrap();
@@ -334,7 +334,7 @@ fn mandatory_valid_replies_and_after_reply() {
 #[test]
 fn valid_reply_streams() {
     use proptest::prelude::*;
-    let cases = include_str!("../fixtures/worker-replies-d8e4f2a8.jsonl")
+    let cases = include_str!("../fixtures/worker-replies-action-s1.jsonl")
         .lines()
         .map(|v| serde_json::from_str::<Value>(v).unwrap())
         .collect::<Vec<_>>();

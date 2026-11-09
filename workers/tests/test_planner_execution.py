@@ -25,7 +25,7 @@ def test_token_fitting_leaf_is_refused_when_execution_demand_exceeds_usable_budg
     proposal["files"].extend(f"source_{i}.py" for i in range(58))
     existing = Path("tests/test_existing.py")
     existing.write_text(existing.read_text() + "\n".join(f"def test_extra_{i}(): assert True" for i in range(4)))
-    proposal["checks"].extend({"kind": "regression", "node_ids": [f"tests/test_existing.py::test_extra_{i}"],
+    proposal["checks"].extend({"name": f"extra-regression-{i}", "kind": "regression", "tests": [f"tests/test_existing.py::test_extra_{i}"],
                                "goal_ids": [0, 1]} for i in range(4))
     planner.check_reply(planner_request["inputs"], proposal)
     assert proposal["forecast"]["fits"] is True, "the token forecast must stay truthful"
@@ -159,13 +159,13 @@ def request236(planner_request, monkeypatch):
         for index, name in enumerate(("test_first_document", "test_second_document")):
             forcing = {"symptom": f"The mover stops at document {index + 1}.", "environment": {},
                        "patches": [{"target": "mover.document", "value": index + 1}]}
-            check = {"kind": "demonstrating", "goal_ids": [index],
-                     "node_ids": [f"{REQUEST236_TEST}::{name}"], "forcing": forcing,
+            check = {"name": f"document-{index}", "kind": "demonstrating", "goal_ids": [index],
+                     "tests": [f"{REQUEST236_TEST}::{name}"], "forcing": forcing,
                      "proof": {"subjects": [], "observer_support": [], "red_message": forcing["symptom"]}}
             proposal["checks"].append(check)
-            ledger.receipts.append(identity(inputs["base_sha"], check["node_ids"], Forcing.parse(forcing)))
-        proposal["checks"].append({"kind": "regression", "goal_ids": [0, 1],
-                                   "node_ids": [f"{REQUEST236_TEST}::test_regression"]})
+            ledger.receipts.append(identity(inputs["base_sha"], check["tests"], Forcing.parse(forcing)))
+        proposal["checks"].append({"name": 'execution-167', "kind": "regression", "goal_ids": [0, 1],
+                                   "tests": [f"{REQUEST236_TEST}::test_regression"]})
         yield inputs, proposal, ledger
 
 

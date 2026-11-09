@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PluginResponse",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/SourceDecision"
+        },
+        "request_id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "response": {
+          "type": "string",
+          "const": "source_read"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "response",
+        "request_id",
+        "decision"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/ForcingDecision"
+        },
+        "request_id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "response": {
+          "type": "string",
+          "const": "forcing"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "response",
+        "request_id",
+        "decision"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "authorized_micros": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "request_id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "response": {
+          "type": "string",
+          "const": "delay"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "response",
+        "request_id",
+        "authorized_micros"
+      ]
+    }
+  ],
+  "$defs": {
+    "ForcingDecision": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "decision": {
+              "type": "string",
+              "const": "apply"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "decision"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "decision": {
+              "type": "string",
+              "const": "refuse"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "decision",
+            "reason"
+          ]
+        }
+      ]
+    },
+    "SourceDecision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "refuse_subject_source"
+      ]
+    }
+  }
+}

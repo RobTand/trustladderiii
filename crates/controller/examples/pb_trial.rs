@@ -97,6 +97,7 @@ fn fixture(root: &Path) -> Delivery {
             reproducing_unavailable: None,
             selected_failures: Vec::new(),
             plan: vec![Check {
+                goal_ids: vec![],
                 name: "value changes".into(),
                 kind: Kind::Demonstrating,
                 tests: vec!["test_value.py::test_value".into()],

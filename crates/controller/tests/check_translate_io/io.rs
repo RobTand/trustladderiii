@@ -36,7 +36,7 @@ pub(super) struct Step {
 }
 pub(super) fn check_run() -> CheckRun {
     serde_json::from_value(json!({"repository":"/served","base_sha":OTHER,
-        "plan":[{"name":"check-1","kind":"regression","tests":["tests/a.py"]}]}))
+        "plan":[{"name":"check-1","kind":"regression","tests":["tests/a.py"],"goal_ids":[]}]}))
     .unwrap()
 }
 impl Default for Step {
@@ -504,4 +504,25 @@ pub(super) fn compare(s: &Schedule) -> Run {
         }
     }
     old
+}
+/// S1 made plan checks canonical (named, `tests`, goal indexes, goal admission).
+/// The frozen base arm cannot decode that schema, so for rejected plans both sides
+/// must fail at the same point with identical I/O; only the error text may differ.
+/// Returns the current side.
+pub(super) fn compare_rejection(s: &Schedule) -> Run {
+    let old = run(s, false, None);
+    let new = run(s, true, None);
+    same_bytes(&old, &new);
+    let message = |r: &Run| {
+        assert_eq!(r.results.len(), 1, "one rejection: {:?}", r.results);
+        r.results[0]["error"].as_str().map(str::to_owned).unwrap_or_else(|| panic!("not a rejection: {:?}", r.results))
+    };
+    assert!(!message(&old).is_empty() && !message(&new).is_empty());
+    assert_eq!(old.calls, new.calls, "schedule {s:?}");
+    assert_eq!(old.staged_rows, new.staged_rows);
+    assert_eq!(old.persisted_rows, new.persisted_rows);
+    assert_eq!(old.pending_intern, new.pending_intern);
+    assert_eq!(old.persisted_intern, new.persisted_intern);
+    assert_eq!((old.writes, new.writes), (0, 0));
+    new
 }

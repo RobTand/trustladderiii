@@ -16,6 +16,7 @@ tl3_crate(
         "//crates/harness-core:tl3_harness_core",
         "//crates/kernel:tl3_kernel",
         "//crates/prismabuild:tl3_prismabuild",
+        "//crates/redaction:tl3_redaction",
         "//crates/store:tl3_store",
         "//crates/worktrees:tl3_worktrees",
     ],

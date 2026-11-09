@@ -43,7 +43,7 @@ def test_forced_check_names_the_old_test_at_the_base(planner_request, deflake_wo
     from tl3_workers.roles.planner import check_reply
 
     test = 'tests/test_sampler.py::test_departure_is_stated'
-    deflake_worktree['checks'][0]['node_ids'] = [test]
+    deflake_worktree['checks'][0]['tests'] = [test]
     check_reply(planner_request['inputs'], deflake_worktree)
     assert any(test in item and 'base' in item for item in deflake_worktree['violations'])
 
@@ -104,8 +104,8 @@ def test_oversized_check_plan_is_a_planner_violation(planner_request, monkeypatc
     from tl3_workers.roles.planner import check_reply
     monkeypatch.chdir(planner_request['worktree'])
     reply = copy.deepcopy(LEAF)
-    reply['checks'] = [{'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'goal_ids': [0, 1],
-                        'node_ids': ['tests/test_greeting.py::test_' + 'x' * (4 * 1024 * 1024)]}]
+    reply['checks'] = [{"name": 'forcing_evidence-107', 'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'goal_ids': [0, 1],
+                        'tests': ['tests/test_greeting.py::test_' + 'x' * (4 * 1024 * 1024)]}]
     check_reply(planner_request['inputs'], reply)
     assert any('4194304' in violation and 'reduce' in violation for violation in reply['violations'])
 
@@ -124,7 +124,7 @@ def test_existing_test_in_a_large_file_is_defined_at_the_base(planner_request, m
     monkeypatch.chdir(root)
     monkeypatch.setattr(Forecaster, 'measure', lambda *a: {'fits': True})
     reply = copy.deepcopy(LEAF)
-    reply['checks'] = [{'kind': kind, 'node_ids': ['tests/test_large.py::test_existing'], 'goal_ids': [0, 1]}]
+    reply['checks'] = [{"name": 'forcing_evidence-127', 'kind': kind, 'tests': ['tests/test_large.py::test_existing'], 'goal_ids': [0, 1]}]
     check_reply(planner_request['inputs'], reply)
     assert not any('test_large.py' in item for item in reply['violations']), reply['violations']
 
@@ -200,8 +200,8 @@ def test_source_partition_supports_test_helpers(planner_request, digests_plan, s
     planner_request['inputs']['ingest']['goals'] = [
         {'description': 'Improve helper diagnostics.', 'verification': 'test'}]
     observer = 'tests/test_observer.py' if separate else DIGESTS
-    digests_plan.update(files=list(dict.fromkeys([DIGESTS, observer])), checks=[{
-        'kind': 'demonstrating', 'node_ids': [f'{observer}::test_diagnostic'], 'goal_ids': [0],
+    digests_plan.update(files=list(dict.fromkeys([DIGESTS, observer])), checks=[{"name": 'forcing_evidence-203', 
+        'kind': 'demonstrating', 'tests': [f'{observer}::test_diagnostic'], 'goal_ids': [0],
         'proof': {'subjects': [f'{DIGESTS}::_execute'], 'observer_support': [],
                   'red_message': 'diagnostic missing'}}])
     validate('planner-reply', digests_plan)

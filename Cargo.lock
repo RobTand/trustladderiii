@@ -2991,6 +2991,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
+name = "tl3-action"
+version = "0.1.0"
+dependencies = [
+ "jsonschema",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tl3-contracts",
+ "tl3-harness-core",
+ "tl3-redaction",
+]
+
+[[package]]
 name = "tl3-config"
 version = "0.1.0"
 dependencies = [
@@ -3015,6 +3028,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "unicode-ident",
 ]
 
 [[package]]
@@ -3053,6 +3067,7 @@ dependencies = [
  "tl3-harness-core",
  "tl3-kernel",
  "tl3-prismabuild",
+ "tl3-redaction",
  "tl3-store",
  "tl3-worktrees",
  "tokio",
@@ -3134,6 +3149,19 @@ dependencies = [
  "thiserror",
  "tokio",
  "wiremock",
+]
+
+[[package]]
+name = "tl3-redaction"
+version = "0.1.0"
+dependencies = [
+ "fancy-regex 0.18.0",
+ "regex",
+ "regex-syntax",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "url",
 ]
 
 [[package]]

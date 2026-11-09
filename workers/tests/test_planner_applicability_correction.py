@@ -33,9 +33,9 @@ def applicability_plan(planner_request, monkeypatch):
     draft['files'] = ['greeting.py', FILE]
     draft['estimated_tool_turns'] = 40
     draft['checks'] = [
-        {'kind': 'regression', 'node_ids': ['tests/test_existing.py::test_existing'],
+        {"name": 'applicability_correction-36', 'kind': 'regression', 'tests': ['tests/test_existing.py::test_existing'],
          'goal_ids': list(range(1, 8))},
-        {'kind': 'demonstrating', 'node_ids': [OBSERVER], 'goal_ids': [0, 8],
+        {"name": 'applicability_correction-38', 'kind': 'demonstrating', 'tests': [OBSERVER], 'goal_ids': [0, 8],
          'proof': {'subjects': [KEPT], 'observer_support': [], 'red_message': 'hold time was not recorded'}},
     ]
     return draft
@@ -93,9 +93,9 @@ def test_applicability_correction_only_adds_the_missing_subject(
     elif change == 'goals':
         check['goal_ids'].append(1)
     elif change == 'selectors':
-        check['node_ids'] = [FILE + '::test_different_observer']
+        check['tests'] = [FILE + '::test_different_observer']
     elif change == 'other_check':
-        fixed['checks'][0]['node_ids'] = ['tests/test_existing.py::test_api']
+        fixed['checks'][0]['tests'] = ['tests/test_existing.py::test_api']
     elif change == 'scope':
         fixed['files'].append('another.py')
     elif change == 'estimate':
@@ -118,13 +118,13 @@ def test_non_omission_applicability_and_substantive_failures_stop_immediately(
     if obstacle == 'wrong_method':
         check['kind'] = 'regression'
         check.pop('proof')
-        check['node_ids'] = [SUBJECT]
+        check['tests'] = [SUBJECT]
     elif obstacle == 'old_observer':
         # The subject is still absent: that omission must not hide the wrong observer.
-        check['node_ids'] = [SUBJECT]
+        check['tests'] = [SUBJECT]
     elif obstacle == 'campaign':
         check.pop('proof')
-        check['node_ids'] = [SUBJECT]
+        check['tests'] = [SUBJECT]
         check['declared_symptom'] = {'node': SUBJECT, 'exception': 'builtins.RuntimeError',
                                      'phase': 'call', 'repeat': 2, 'parallel': 0}
     elif obstacle == 'budget':

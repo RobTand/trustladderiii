@@ -59,7 +59,7 @@ def test_proof_correction_only_fills_missing_fields(planner_request, proof_plan,
     elif change == 'scope':
         fixed['files'].append('another.py')
     else:
-        fixed['checks'][0]['node_ids'] = ['tests/test_greeting.py::test_other']
+        fixed['checks'][0]['tests'] = ['tests/test_greeting.py::test_other']
     model = planner_model(monkeypatch, proof_plan, fixed)
     events = []
     runtime.run(planner_request, events.append)

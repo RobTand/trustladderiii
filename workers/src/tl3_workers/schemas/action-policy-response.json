@@ -1,0 +1,896 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PolicyResponse",
+  "type": "object",
+  "properties": {
+    "result": {
+      "$ref": "#/$defs/PolicyResult"
+    },
+    "state": {
+      "$ref": "#/$defs/Redactor"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "state",
+    "result"
+  ],
+  "$defs": {
+    "Allowed": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "finite"
+            },
+            "values": {
+              "type": "array",
+              "items": true
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "values"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "keyword": {
+              "$ref": "#/$defs/SchemaKeyword"
+            },
+            "kind": {
+              "type": "string",
+              "const": "schema"
+            },
+            "value": true
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "keyword",
+            "value"
+          ]
+        }
+      ]
+    },
+    "AttributionMethod": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "failing_targets": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 64
+            },
+            "failing_targets_truncated": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "outside_selection"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "failing_targets"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "failed_prefix_head": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            },
+            "kind": {
+              "type": "string",
+              "const": "prefix_bisection"
+            },
+            "passed_prefix_head": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "passed_prefix_head",
+            "failed_prefix_head"
+          ]
+        }
+      ]
+    },
+    "Clip": {
+      "type": "object",
+      "properties": {
+        "gap": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "lead": {
+          "type": "boolean"
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Window"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "parts",
+        "lead",
+        "gap"
+      ]
+    },
+    "Decision": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "value": true
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "floor_bytes": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "keep": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "uint",
+                "minimum": 0
+              }
+            },
+            "shrink": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint",
+              "minimum": 0
+            },
+            "shrinking": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "keep",
+            "shrinking",
+            "floor_bytes"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "limits": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "uint",
+                  "minimum": 0
+                }
+              }
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "limits",
+            "truncated"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "spans": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "used": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "values": {
+              "description": "Cleaned Python JSON text, preserving object order and numeric atoms.",
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "used",
+            "spans"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "remove": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "uint",
+                "minimum": 0
+              }
+            },
+            "root_only": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "remove",
+            "root_only"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "fits": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "fits"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "values": {
+              "description": "Cleaned Python JSON text, preserving object order and numeric atoms.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "values"
+          ]
+        }
+      ]
+    },
+    "EditOp": {
+      "type": "string",
+      "enum": [
+        "add",
+        "replace",
+        "remove"
+      ]
+    },
+    "Evidence": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "excerpt": {
+              "description": "At most 4096 UTF-8 bytes after Violation normalization, including newline+[truncated]. JSON Schema maxLength counts characters; Violation serialization/deserialization and rendering enforce the UTF-8 byte cap.",
+              "type": "string",
+              "maxLength": 4096
+            },
+            "kind": {
+              "type": "string",
+              "const": "test_failure"
+            },
+            "log_ref": {
+              "type": "string"
+            },
+            "receipt": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            },
+            "test": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "target",
+            "test",
+            "excerpt",
+            "log_ref",
+            "receipt"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "batch_head": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            },
+            "kind": {
+              "type": "string",
+              "const": "attribution"
+            },
+            "member": {
+              "type": "string"
+            },
+            "member_head": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            },
+            "method": {
+              "$ref": "#/$defs/AttributionMethod"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "batch_head",
+            "member",
+            "member_head",
+            "method"
+          ]
+        }
+      ]
+    },
+    "FieldPointer": {
+      "type": "string",
+      "pattern": "^(?:/(?:[^~]|~[01])*)?$"
+    },
+    "Name": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/NameKind"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "value"
+      ]
+    },
+    "NameKind": {
+      "type": "string",
+      "enum": [
+        "field",
+        "path",
+        "symbol"
+      ]
+    },
+    "PolicyResult": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "trace"
+            },
+            "value": {
+              "$ref": "#/$defs/Decision"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "text"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "json"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "shaped"
+            },
+            "value": {
+              "$ref": "#/$defs/Shaped"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "size"
+            },
+            "value": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "path"
+            },
+            "value": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "permitted"
+            },
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "valid"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "rows"
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Violation"
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        }
+      ]
+    },
+    "Redactor": {
+      "type": "object",
+      "properties": {
+        "calls": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "secrets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "secrets",
+        "calls",
+        "truncated"
+      ]
+    },
+    "Repair": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "allowed": {
+              "$ref": "#/$defs/Allowed"
+            },
+            "kind": {
+              "type": "string",
+              "const": "edit"
+            },
+            "op": {
+              "$ref": "#/$defs/EditOp"
+            },
+            "pointer": {
+              "$ref": "#/$defs/FieldPointer"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "pointer",
+            "op",
+            "allowed"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "cant_meet"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "instruction": {
+              "description": "Nonblank instruction of at most 1024 UTF-8 bytes. JSON Schema maxLength counts characters; Rust deserialization and validation enforce the byte cap.",
+              "type": "string",
+              "maxLength": 1024,
+              "minLength": 1
+            },
+            "kind": {
+              "type": "string",
+              "const": "source_edit"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "path",
+            "instruction"
+          ]
+        }
+      ]
+    },
+    "Role": {
+      "type": "string",
+      "enum": [
+        "ingest",
+        "audit",
+        "planner",
+        "maker",
+        "reviewer",
+        "classifier",
+        "writer",
+        "postmortem"
+      ]
+    },
+    "SchemaKeyword": {
+      "type": "string",
+      "enum": [
+        "schema",
+        "const",
+        "enum",
+        "type",
+        "pattern",
+        "minimum",
+        "maximum",
+        "minLength",
+        "maxLength",
+        "minItems",
+        "maxItems",
+        "required",
+        "additionalProperties"
+      ]
+    },
+    "Shaped": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "null"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "bool"
+            },
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "number"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "text"
+            },
+            "value": {
+              "$ref": "#/$defs/Clip"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "array"
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Shaped"
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "object"
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/Shaped"
+                  }
+                ]
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "json"
+            },
+            "value": {
+              "type": "object",
+              "properties": {
+                "raw": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "value": {
+                  "$ref": "#/$defs/Shaped"
+                }
+              },
+              "required": [
+                "value"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        }
+      ]
+    },
+    "Violation": {
+      "type": "object",
+      "properties": {
+        "allowed": {
+          "$ref": "#/$defs/Allowed"
+        },
+        "bad_value": true,
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "maxItems": 16
+        },
+        "evidence_truncated": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "gating": {
+          "type": "boolean"
+        },
+        "names": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Name"
+          }
+        },
+        "repair": {
+          "$ref": "#/$defs/Repair"
+        },
+        "role": {
+          "$ref": "#/$defs/Role"
+        },
+        "rule_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "rule_id",
+        "role",
+        "names",
+        "bad_value",
+        "allowed",
+        "repair",
+        "gating"
+      ]
+    },
+    "Window": {
+      "type": "object",
+      "properties": {
+        "end": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "source": {
+          "type": "string"
+        },
+        "start": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "start",
+        "end"
+      ]
+    }
+  }
+}

@@ -15,7 +15,6 @@ import tokenize
 ROOT = Path(__file__).resolve().parents[2]
 ALLOWLIST = Path('tools/ci/mirror-allowlist.json')
 MANIFEST = Path('crates/contracts/generated/manifest.json')
-DRIFT_TEST = Path('crates/contracts/tests/schema_drift.rs')
 RUN_BACKEND_DRIFT_TEST = Path('crates/controller/tests/run_backend_cli.rs')
 TEST_DIRS = {'test', 'tests', 'fixture', 'fixtures', 'testdata', '__tests__'}
 DECLARATION = re.compile(
@@ -238,7 +237,7 @@ def generated_paths(root):
                 raise ValueError(f'{MANIFEST}: invalid output path')
             paths.add(Path(path))
     else:
-        drift_tests.append(root / DRIFT_TEST)
+        drift_tests.extend(root.glob('crates/*/tests/schema_drift.rs'))
     for drift in drift_tests:
         if drift.exists():
             paths.update((drift.parent / value).resolve().relative_to(root)

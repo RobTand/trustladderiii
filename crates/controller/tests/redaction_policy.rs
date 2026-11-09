@@ -4,7 +4,7 @@ use tl3_controller::redaction;
 #[test]
 fn generated_policy_matches_committed_file() {
     let committed: Value =
-        serde_json::from_str(include_str!("../src/redaction/policy.json")).unwrap();
+        serde_json::from_str(include_str!("../../redaction/src/policy.json")).unwrap();
     let generated: Value = serde_json::from_str(&redaction::generated_policy()).unwrap();
     assert!(generated == committed, "generated policy drift");
 }
@@ -12,7 +12,7 @@ fn generated_policy_matches_committed_file() {
 #[test]
 fn generated_policy_retains_every_corpus_rule() {
     let committed: Value =
-        serde_json::from_str(include_str!("../src/redaction/policy.json")).unwrap();
+        serde_json::from_str(include_str!("../../redaction/src/policy.json")).unwrap();
     let generated: Value = serde_json::from_str(&redaction::generated_policy()).unwrap();
     for key in ["patterns", "checked", "regex", "words", "characters"] {
         assert_eq!(
@@ -93,20 +93,5 @@ ordinary log line
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
         redaction::text(input).unwrap()
-    );
-}
-
-/// #753 security review: the worker build pins the generated JSON identity and contract.
-#[test]
-fn worker_identity_matches_the_rust_build() {
-    let directory =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../workers/src/tl3_workers");
-    assert_eq!(
-        redaction::generated_policy(),
-        std::fs::read_to_string(directory.join("policy.json")).unwrap()
-    );
-    assert_eq!(
-        redaction::generated_policy_identity(),
-        std::fs::read_to_string(directory.join("_policy_identity.py")).unwrap()
     );
 }

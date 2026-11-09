@@ -95,11 +95,6 @@
     "owner": "#923"
   },
   {
-    "path": "crates/controller/tests/check_translate_io/production_helpers.rs",
-    "detector": "frozen-copy",
-    "owner": "#923"
-  },
-  {
     "path": "crates/controller/tests/check_translate_io/properties.rs",
     "detector": "source-include",
     "owner": "#923"
@@ -648,11 +643,6 @@
   },
   {
     "path": "workers/src/tl3_workers/schemas/harness-wire.json",
-    "detector": "ungenerated-schema",
-    "owner": "#884"
-  },
-  {
-    "path": "workers/src/tl3_workers/schemas/planner-reply.json",
     "detector": "ungenerated-schema",
     "owner": "#884"
   },

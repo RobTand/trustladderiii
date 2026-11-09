@@ -1,4 +1,5 @@
 {
+ "s1_input_migration": "S1 input metadata migration: required goal_ids added as []; these post-admission check requests contain no ingest-goal context. Original fixture attribution and recorded results are unchanged; no recapture.",
  "fixture": "harness/tests/test_contract_vectors.py::declared-symptom",
  "request": {
   "base": "f7edff4c7a62c7925cfb86f5ef6904df7ffc09f2",
@@ -7,6 +8,7 @@
   "image": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
   "plan": [
    {
+    "goal_ids": [],
     "declared_symptom": {
      "exception": "builtins.TimeoutError",
      "node": "tests/test_original.py::test_original",

@@ -430,7 +430,7 @@ test_tool.main()
 def plan(forcing=FORCING):
     return {'kind': 'leaf', 'estimated_exploration_turns': 0,
             'files': ['tests/test_adoption.py'], 'edits_tests': [NODE],
-            'checks': [{'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'node_ids': [NODE], 'goal_ids': [0],
+            'checks': [{'name': 'forced-adoption', 'proof': {'subjects': [], 'observer_support': [], 'red_message': 'expected regression'}, 'kind': 'demonstrating', 'tests': [NODE], 'goal_ids': [0],
                         'forcing': deepcopy(forcing)}], 'no_design_questions': True, 'lands_on_its_own': True}
 
 

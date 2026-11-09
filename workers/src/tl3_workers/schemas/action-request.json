@@ -1,0 +1,478 @@
+{
+  "$defs": {
+    "Check": {
+      "additionalProperties": false,
+      "properties": {
+        "declared_symptom": {
+          "$ref": "#/$defs/DeclaredSymptom"
+        },
+        "forcing": {
+          "$ref": "#/$defs/Forcing"
+        },
+        "goal_ids": {
+          "description": "Original ingest.goals indices. Required, unique, never renumbered across splits.\nThe planner gate checks nonempty/range/coverage; controller controls explicitly use [].",
+          "items": {
+            "$ref": "#/$defs/GoalId"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "kind": {
+          "$ref": "#/$defs/CheckKind"
+        },
+        "name": {
+          "type": "string"
+        },
+        "proof": {
+          "$ref": "#/$defs/ProofDeclaration"
+        },
+        "tests": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "goal_ids",
+        "kind",
+        "tests"
+      ],
+      "type": "object"
+    },
+    "CheckKind": {
+      "enum": [
+        "demonstrating",
+        "regression",
+        "behavior-preserving",
+        "reproducing"
+      ],
+      "type": "string"
+    },
+    "CheckRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "always_tests": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "base": {
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "type": "string"
+        },
+        "effect_key": {
+          "type": "string"
+        },
+        "footprint": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "not": {
+              "pattern": "(^|/)(\\.|\\.\\.|\\.git)(/|$)"
+            },
+            "pattern": "^[^/\\\\\\u0000]+(/[^/\\\\\\u0000]+)*$",
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "generated_paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "head": {
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "plan": {
+          "items": {
+            "$ref": "#/$defs/Check"
+          },
+          "type": "array"
+        },
+        "protected_paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reviewed": {
+          "anyOf": [
+            {
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "selected_failures": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "selected_tests": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "effect_key",
+        "base",
+        "head",
+        "reviewed",
+        "plan",
+        "image",
+        "protected_paths",
+        "selected_failures",
+        "always_tests"
+      ],
+      "type": "object"
+    },
+    "DeclaredSymptom": {
+      "additionalProperties": false,
+      "properties": {
+        "exception": {
+          "pattern": "^[A-Za-z_]\\w*(\\.[A-Za-z_]\\w*)+$",
+          "type": "string"
+        },
+        "node": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "parallel": {
+          "enum": [
+            0,
+            2,
+            3,
+            4
+          ]
+        },
+        "phase": {
+          "$ref": "#/$defs/SymptomPhase"
+        },
+        "repeat": {
+          "maximum": 10,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node",
+        "exception",
+        "phase",
+        "repeat",
+        "parallel"
+      ],
+      "type": "object"
+    },
+    "Forcing": {
+      "additionalProperties": false,
+      "description": "A forced reproduction (#393): the declarative condition the harness applies, outside the test, to recreate a flake. Only on demonstrating checks.",
+      "properties": {
+        "environment": {
+          "additionalProperties": {
+            "maxLength": 1000,
+            "type": "string"
+          },
+          "maxProperties": 8,
+          "propertyNames": {
+            "pattern": "^[A-Z_][A-Z0-9_]{0,63}$"
+          },
+          "type": "object"
+        },
+        "patches": {
+          "items": {
+            "additionalProperties": false,
+            "maxProperties": 2,
+            "minProperties": 2,
+            "properties": {
+              "delay_seconds": {
+                "exclusiveMinimum": 0,
+                "maximum": 5,
+                "type": "number"
+              },
+              "raises": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "returns": {},
+              "target": {
+                "maxLength": 200,
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$",
+                "type": "string"
+              },
+              "value": {}
+            },
+            "required": [
+              "target"
+            ],
+            "type": "object"
+          },
+          "maxItems": 8,
+          "type": "array"
+        },
+        "symptom": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "symptom",
+        "environment",
+        "patches"
+      ],
+      "type": "object"
+    },
+    "GeneratorRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "argv": {
+          "description": "Already separated arguments for the configured repository generator.",
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "base": {
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "type": "string"
+        },
+        "head": {
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "type": "string"
+        },
+        "outputs": {
+          "items": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|::|$))[^\\\\\\u0000\\r\\n]+\\.py(?:::[A-Za-z_][A-Za-z_0-9]*)*$",
+            "type": "string"
+          },
+          "maxItems": 128,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "timeout_seconds": {
+          "maximum": 600,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "base",
+        "head",
+        "argv",
+        "outputs",
+        "timeout_seconds"
+      ],
+      "type": "object"
+    },
+    "GoalId": {
+      "description": "Original zero-based index in request.inputs.ingest.goals, retained across splits.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "ProofDeclaration": {
+      "additionalProperties": false,
+      "properties": {
+        "observer_support": {
+          "items": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|::|$))[^\\\\\\u0000\\r\\n]+\\.py(?:::[A-Za-z_][A-Za-z_0-9]*)*$",
+            "type": "string"
+          },
+          "maxItems": 16,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "red_message": {
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        },
+        "subjects": {
+          "items": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|::|$))[^\\\\\\u0000\\r\\n]+\\.py(?:::[A-Za-z_][A-Za-z_0-9]*)*$",
+            "type": "string"
+          },
+          "maxItems": 16,
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "subjects",
+        "observer_support",
+        "red_message"
+      ],
+      "type": "object"
+    },
+    "Role": {
+      "enum": [
+        "ingest",
+        "audit",
+        "planner",
+        "maker",
+        "reviewer",
+        "classifier",
+        "writer",
+        "postmortem"
+      ],
+      "type": "string"
+    },
+    "SymptomPhase": {
+      "enum": [
+        "call",
+        "setup"
+      ],
+      "type": "string"
+    },
+    "TestRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "base": {
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "type": "string"
+        },
+        "check_index": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "declared_symptom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeclaredSymptom"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "forcing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Forcing"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "head": {
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "type": "string"
+        },
+        "parallel": {
+          "enum": [
+            0,
+            2,
+            3,
+            4
+          ]
+        },
+        "repeat": {
+          "maximum": 10,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "role": {
+          "$ref": "#/$defs/Role"
+        },
+        "selectors": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "base",
+        "head",
+        "selectors",
+        "repeat",
+        "parallel",
+        "role",
+        "check_index"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "checks",
+          "type": "string"
+        },
+        "request": {
+          "$ref": "#/$defs/CheckRequest"
+        }
+      },
+      "required": [
+        "action",
+        "request"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "tests",
+          "type": "string"
+        },
+        "request": {
+          "$ref": "#/$defs/TestRequest"
+        }
+      },
+      "required": [
+        "action",
+        "request"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "generator",
+          "type": "string"
+        },
+        "request": {
+          "$ref": "#/$defs/GeneratorRequest"
+        }
+      },
+      "required": [
+        "action",
+        "request"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "ActionRequest"
+}

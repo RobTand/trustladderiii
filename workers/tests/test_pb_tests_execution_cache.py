@@ -45,8 +45,8 @@ def test_execution_cache_ignores_prose_and_irrelevant_order(rehearsal, tmp_path,
         assert current.attempts == 1 and current.actions == 2
         assert len(calls) == 2
         final = plan(changed)['checks']
-        final[0]['node_ids'] = reordered
+        final[0]['tests'] = reordered
         assert current.violations(inputs['base_sha'], final), 'cache reuse must not mint a changed final receipt'
         exact = plan(forcing)['checks']
-        exact[0]['node_ids'] = selectors
+        exact[0]['tests'] = selectors
         assert bool(current.violations(inputs['base_sha'], exact)) is not validated

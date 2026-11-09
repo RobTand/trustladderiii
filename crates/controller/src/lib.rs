@@ -61,7 +61,15 @@ pub mod prompts;
 mod protected_requests;
 pub mod publication_failure;
 mod question_findings;
-pub mod redaction;
+pub mod redaction {
+    //! Controller error conversion for the shared Rust redaction engine.
+    pub use tl3_redaction::{generated_harness_policy, generated_policy};
+
+    pub fn text(value: &str) -> crate::Result<String> {
+        tl3_redaction::text(value)
+            .map_err(|error| crate::Error::RedactionInfra(std::io::Error::other(error)))
+    }
+}
 pub mod release;
 pub mod replay;
 mod review_stops;
@@ -3383,23 +3391,32 @@ impl Controller {
                         .as_array()
                         .ok_or(Error::Invalid("planner checks must be an array"))?
                         .iter()
-                        .enumerate()
-                        .map(|(index, check)| {
-                            let declared = |field: &str| check.get(field).cloned();
-                            Ok(adapters::prismabuild::Check {
-                                name: format!("check-{}", index + 1),
-                                kind: serde_json::from_value(check["kind"].clone())?,
-                                tests: adapters::workers::protocol::reply_field(check, "node_ids")?,
-                                forcing: declared("forcing")
-                                    .map(serde_json::from_value)
-                                    .transpose()?,
-                                proof: declared("proof").map(serde_json::from_value).transpose()?,
-                                declared_symptom: declared("declared_symptom")
-                                    .map(serde_json::from_value)
-                                    .transpose()?,
-                            })
+                        .map(|check| {
+                            serde_json::from_value::<adapters::prismabuild::Check>(check.clone())
+                                .map_err(Error::from)
                         })
                         .collect::<Result<Vec<_>>>()?;
+                    let brief = self
+                        .store
+                        .worker_document(&node.0.to_string(), "briefs")?
+                        .ok_or(Error::Invalid("planner admission needs the accepted brief"))?;
+                    let goals = crate::goals::identified(&brief["goals"])?;
+                    let required = goals
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, goal)| goal["stage"] != "publishing")
+                        .map(|(index, _)| tl3_contracts::GoalId(index as u64))
+                        .collect::<Vec<_>>();
+                    let admission =
+                        tl3_contracts::checks::admit_plan(&checks, goals.len(), &required);
+                    if let Err(message) = admission {
+                        reply["violations"]
+                            .as_array_mut()
+                            .ok_or(Error::Invalid("planner violations must be an array"))?
+                            .push(json!(message));
+                        mapped =
+                            adapters::workers::protocol::MappedReply::Kernel(Reply::PlanCantMeet);
+                    }
                     if let Err(error) = adapters::prismabuild::validate_plan_size(&checks) {
                         match error {
                             Error::Invalid(message) => {

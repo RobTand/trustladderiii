@@ -35,6 +35,13 @@ fn production_and_reference_sources_are_pinned() {
     // adapters::workers::feedback_tests. Retain the unchanged historical checks.
     let source = include_str!("../../src/lib.rs");
     let historical_current = include_str!("current.rs");
+    let planner_leaf = |source: &str| {
+        let start = source.find("                if role == \"planner\" && reply[\"kind\"] == \"leaf\" && plan_check.is_none() {").unwrap();
+        let end = source[start..].find("                if role == \"reviewer\" {").unwrap() + start;
+        source[start..end].to_owned()
+    };
+    assert_eq!(planner_leaf(historical_current), planner_leaf(source),
+        "current S1 planner admission must match actual production");
     for (copy, expected) in [
         (include_str!("reference.rs"), base),
         (include_str!("current.rs"), arm(historical_current).split("        };\n        *detail").next().unwrap()),
@@ -118,6 +125,9 @@ fn production_and_reference_sources_are_pinned() {
                 changed || (name == "helpers" && part.contains("fn footprint(")) || production.contains(part),
                 "production leaf drift: {name}"
             );
+            // S1 made Check.goal_ids required; the compiled reference copy needs that
+            // one field to build. Every other frozen byte stays pinned.
+            let compiled = compiled.replace("                goal_ids: vec![],\n", "");
             let normalized = compiled.replace("pub(super) fn", "fn");
             assert!(
                 compiled.contains(part) || normalized.contains(part),
@@ -142,13 +152,44 @@ fn reply(role: &str) -> Value {
         }
         "audit" => json!({"verdict":"agree","objections":[]}),
         "planner" => {
-            json!({"kind":"leaf","files":["safe.rs"],"checks":[{"kind":"regression","node_ids":["test_safe.py::test_safe"],"goal_ids":[0]}],"no_design_questions":true,"lands_on_its_own":true,"violations":[],"forecast":forecast()})
+            json!({"kind":"leaf","files":["safe.rs"],"checks":[{"name":"safe-behavior","kind":"regression","tests":["test_safe.py::test_safe"],"goal_ids":[0]}],"no_design_questions":true,"lands_on_its_own":true,"violations":[],"forecast":forecast()})
         }
         "maker" => {
             json!({"kind":"done","head":NEW_HEAD,"self_check":[{"goal_id":"goal-1","status":"met","evidence":"passed"}]})
         }
         _ => json!({"verdict":"approve","head_sha":OLD_HEAD,"blocking_findings":[],"findings":[]}),
     }
+}
+fn parity_reply(role: &str) -> Value {
+    if role == "planner" {
+        json!({"kind":"cant_meet","report":"No leaf in this unchanged-domain schedule",
+            "files":["safe.rs"],"violations":[],"forecast":forecast()})
+    } else { reply(role) }
+}
+fn canonical_schedule() -> Schedule {
+    let mut s = schedule("planner", reply("planner"));
+    s.documents = vec![Read::Value(Some(json!({"brief":"Do work",
+        "goals":[{"description":"Do work","verification":"test"}]}))), Read::Value(None)];
+    s
+}
+#[test]
+fn canonical_planner_wire_has_explicit_old_and_current_outcomes() {
+    let s = canonical_schedule();
+    io::canonical_planner_accepted(&s);
+    // Obsolete node_ids is rejected by the current schema before any I/O.
+    let mut obsolete = s.clone();
+    if let Observation::WorkerReply { reply, .. } = &mut obsolete.observation {
+        let check = reply["checks"][0].as_object_mut().unwrap();
+        let tests = check.remove("tests").unwrap();
+        check.insert("node_ids".into(), tests);
+    }
+    let r = io::both_reject_obsolete_planner_wire(&obsolete);
+    assert_eq!(r.result, json!({"event":Event::Reply {node:NodeId(0),generation:7,
+        reply:Reply::RunFailed},"detailed_review":false}));
+    assert!(r.calls.is_empty() && r.rows.is_empty() && r.committed.is_empty());
+    assert_eq!(r.pending,r.persisted);
+    assert_eq!(r.writes,0);
+    println!("planner wire explicit domains: canonical acceptance=1 obsolete rejection=1");
 }
 fn routed(s: &Schedule) -> io::Run {
     let r = compare(s);
@@ -158,7 +199,7 @@ fn routed(s: &Schedule) -> io::Run {
 #[test]
 fn mandatory_roles_and_staleness() {
     for role in ["ingest", "audit", "planner", "maker", "reviewer"] {
-        let s = schedule(role, reply(role));
+        let s = schedule(role, parity_reply(role));
         let r = routed(&s);
         assert!(
             !r.result.to_string().contains("RunFailed"),
@@ -186,7 +227,7 @@ fn mandatory_roles_and_staleness() {
 #[test]
 fn mandatory_role_validation_and_error_classes() {
     for role in ["ingest", "audit", "planner", "maker", "reviewer"] {
-        let mut s = schedule(role, reply(role));
+        let mut s = schedule(role, parity_reply(role));
         s.phase = tl3_kernel::Phase::AwaitingDelivery;
         assert!(routed(&s).result.to_string().contains("RunFailed"));
         assert!(
@@ -195,7 +236,7 @@ fn mandatory_role_validation_and_error_classes() {
                 .to_string()
                 .contains("RunFailed")
         );
-        let mut s = schedule(role, reply(role));
+        let mut s = schedule(role, parity_reply(role));
         s.missing = true;
         assert!(
             compare(&s)
@@ -225,7 +266,7 @@ fn mandatory_role_validation_and_error_classes() {
         assert!(compare(&s).result.get("error").is_some());
     }
     for role in ["ingest", "audit", "planner"] {
-        let mut s = schedule(role, reply(role));
+        let mut s = schedule(role, parity_reply(role));
         s.protected = vec![2];
         assert!(compare(&s).result.get("error").is_some());
     }
@@ -357,9 +398,10 @@ fn fixed_seed_changing_reads_and_optional_fields() {
         ))),
         ..Config::default()
     };
+    let domains = std::cell::RefCell::new(BTreeMap::<String,usize>::new());
     TestRunner::new(config).run(&(0usize..5,0u8..16,any::<bool>(),prop::collection::vec(0u8..8,0..12),prop::collection::vec(any::<bool>(),0..8)),|(role,bits,review_changes,tape,failures)|{
         let role=["ingest","audit","planner","maker","reviewer"][role];
-        let mut s=schedule(role,reply(role));s.intern_failures=failures;
+        let mut s=schedule(role,parity_reply(role));s.intern_failures=failures;
         s.documents=tape.iter().map(|v|match v {0=>Read::Store,1=>Read::Json,2=>Read::Value(Some(json!({}))),3=>Read::Value(Some(json!([{"kind":"review_finding","id":"f","reviewed_sha":OLD_HEAD,"report":"fix","goal_ids":["goal-1"]}]))),_=>Read::Value(None)}).collect();
         if bits&1!=0 {s.head=None;}
         if bits&2!=0{s.round=1;}
@@ -368,8 +410,18 @@ fn fixed_seed_changing_reads_and_optional_fields() {
             if bits&8!=0 {*model=None;}
             if role=="reviewer"&&review_changes {*reply=json!({"verdict":"changes","blocking_findings":blockers(1+tape.len(),1+usize::from(bits)*200),"findings":[]});}
         }
+        assert!(!io::planner_wire_domain(&s));
+        *domains.borrow_mut().entry(role.to_owned()).or_default() += 1;
         compare(&s);Ok(())
     }).unwrap();
+    let counts = domains.borrow();
+    // Proptest replays each persisted regression seed before the 256 generated cases.
+    let replays = include_str!("proptest-regressions.txt").lines().filter(|line| line.starts_with("cc ")).count();
+    assert_eq!(counts.values().sum::<usize>(),256 + replays);
+    for role in ["ingest","audit","planner","maker","reviewer"] {
+        assert!(counts.get(role).copied().unwrap_or(0) >= 1, "missing unchanged-domain role {role}");
+    }
+    println!("unchanged-domain schedules generated=256 replayed={replays} roles={counts:?}; discarded=0");
 }
 fn reproduction(tests: bool) -> Schedule {
     let mut s = schedule("maker", reply("maker"));
@@ -387,7 +439,7 @@ fn reproduction(tests: bool) -> Schedule {
     s
 }
 fn plan(tag: &str) -> Value {
-    json!({"repository":format!("/safe/{tag}"),"base_sha":OLD_HEAD,"reviewed_sha":OLD_HEAD,"reproducing_unavailable":"safe optional evidence","selected_failures":["test_original.py::test_original"],"plan":[{"name":tag,"kind":"regression","tests":["test_safe.py::test_safe"]},{"name":"old reproduction","kind":"reproducing","tests":["test_old.py::test_old"]}]})
+    json!({"repository":format!("/safe/{tag}"),"base_sha":OLD_HEAD,"reviewed_sha":OLD_HEAD,"reproducing_unavailable":"safe optional evidence","selected_failures":["test_original.py::test_original"],"plan":[{"name":tag,"kind":"regression","tests":["test_safe.py::test_safe"],"goal_ids":[]},{"name":"old reproduction","kind":"reproducing","tests":["test_old.py::test_old"],"goal_ids":[]}]})
 }
 #[test]
 fn mandatory_reproductions_and_eager_second_plan_read() {
@@ -469,19 +521,24 @@ fn mandatory_optional_fields_and_failures() {
         s.protected = vec![1];
         assert!(routed(&s).result.to_string().contains("ProtectedPaths"));
     }
-    let mut s = schedule("planner", reply("planner"));
+    let mut s = schedule("planner", parity_reply("planner"));
     s.protected = vec![1];
     assert!(routed(&s).result.to_string().contains("ProtectedPaths"));
     let mut s = schedule("ingest", reply("ingest"));
     s.prerequisites = vec![1];
     assert!(compare(&s).result.get("error").is_some());
-    let mut s = schedule("planner", reply("planner"));
+    let mut s = canonical_schedule();
     s.snapshot.rows.retain(|r| r.table != "requests");
-    assert!(compare(&s).result.get("error").is_some());
-    let mut s = schedule("planner", reply("planner"));
+    io::old_canonical_planner_failure(&s);
+    let r = io::current_with_crash_safety(&s);
+    assert_eq!(r.result, json!({"error":"Invalid(\"missing request binding\")"}));
+    assert!(r.committed.is_empty());
+    let mut s = canonical_schedule();
     s.intern_failures = vec![false, true];
-    let r = compare(&s);
-    assert!(r.result.get("error").is_some());
+    io::old_canonical_planner_failure(&s);
+    let r = io::current_with_crash_safety(&s);
+    assert_eq!(r.result, json!({"error":format!("{:?}", Error::Store(
+        tl3_store::Error::Invalid("injected intern failure")))}));
     assert!(r.committed.is_empty());
     for read in [Read::Store, Read::Json, Read::Value(Some(json!({})))] {
         let mut s = schedule(
@@ -490,7 +547,7 @@ fn mandatory_optional_fields_and_failures() {
         );
         s.documents = vec![read];
         assert!(compare(&s).result.get("error").is_some());
-        let mut s = schedule("planner", reply("planner"));
+        let mut s = schedule("planner", parity_reply("planner"));
         s.documents = s.documents.into_iter().map(|_| Read::Store).collect();
         assert!(compare(&s).result.get("error").is_some());
     }
@@ -570,9 +627,13 @@ fn mandatory_all_reply_outcomes_and_plan_budget() {
         );
     }
     let mut reply = reply("planner");
-    reply["checks"][0]["node_ids"] = json!(["x".repeat(4 * 1024 * 1024)]);
-    let r = routed(&schedule("planner", reply));
-    assert!(r.result.to_string().contains("PlanCantMeet"));
+    reply["checks"][0]["tests"] = json!(["x".repeat(4 * 1024 * 1024)]);
+    let mut s = canonical_schedule();
+    if let Observation::WorkerReply { reply: target, .. } = &mut s.observation { *target = reply; }
+    io::old_canonical_planner_failure(&s);
+    let r = io::current_with_crash_safety(&s);
+    assert_eq!(r.result, json!({"event":Event::Reply {node:NodeId(0),generation:7,
+        reply:Reply::PlanCantMeet},"detailed_review":false}));
     let plans = r
         .rows
         .iter()

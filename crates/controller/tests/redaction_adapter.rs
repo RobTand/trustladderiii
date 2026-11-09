@@ -1,5 +1,5 @@
 //! #753 security review: run the production regex translator against Python predicates.
-#[path = "../src/redaction/compatibility.rs"]
+#[path = "../../redaction/src/compatibility.rs"]
 mod compatibility;
 
 use fancy_regex::Regex;
@@ -11,7 +11,7 @@ use std::{
 };
 
 fn policy() -> Value {
-    serde_json::from_str(include_str!("../src/redaction/policy.json")).unwrap()
+    serde_json::from_str(include_str!("../../redaction/src/policy.json")).unwrap()
 }
 
 fn classes() -> [String; 3] {
@@ -57,7 +57,7 @@ fn oracle(path: &std::path::Path) -> std::process::Output {
 fn cases() -> &'static Value {
     static DATA: LazyLock<Value> = LazyLock::new(|| {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let output = oracle(&root.join("src/redaction/policy.json"));
+        let output = oracle(&root.join("../redaction/src/policy.json"));
         assert!(
             output.status.success(),
             "{}",

@@ -1,0 +1,362 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PluginFact",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "fact": {
+          "type": "string",
+          "const": "collected"
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PythonText"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "fact",
+        "nodes"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "exception": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExceptionFact"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fact": {
+          "type": "string",
+          "const": "collection"
+        },
+        "node": {
+          "$ref": "#/$defs/PythonText"
+        },
+        "status": {
+          "$ref": "#/$defs/Status"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "fact",
+        "node",
+        "status"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "exception": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExceptionFact"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fact": {
+          "type": "string",
+          "const": "phase"
+        },
+        "node": {
+          "$ref": "#/$defs/PythonText"
+        },
+        "phase": {
+          "$ref": "#/$defs/Phase"
+        },
+        "status": {
+          "$ref": "#/$defs/Status"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "fact",
+        "node",
+        "phase",
+        "status"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "callable": {
+          "type": "boolean"
+        },
+        "fact": {
+          "type": "string",
+          "const": "forcing_target"
+        },
+        "owner_file": {
+          "$ref": "#/$defs/PythonText"
+        },
+        "owner_module": {
+          "$ref": "#/$defs/PythonText"
+        },
+        "patch": {
+          "type": "object",
+          "properties": {
+            "delay_seconds": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 5
+            },
+            "raises": {
+              "type": "string",
+              "minLength": 1
+            },
+            "returns": {},
+            "target": {
+              "type": "string",
+              "maxLength": 200,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$"
+            },
+            "value": {}
+          },
+          "additionalProperties": false,
+          "maxProperties": 2,
+          "minProperties": 2,
+          "required": [
+            "target"
+          ]
+        },
+        "request_id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "fact",
+        "request_id",
+        "patch",
+        "owner_module",
+        "owner_file",
+        "callable"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "elapsed_micros": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "fact": {
+          "type": "string",
+          "const": "delay"
+        },
+        "hits": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "patch_index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "request_id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "requested_micros": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "fact",
+        "request_id",
+        "patch_index",
+        "requested_micros",
+        "elapsed_micros",
+        "hits"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "fact": {
+          "type": "string",
+          "const": "source_read"
+        },
+        "frames": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FrameFact"
+          }
+        },
+        "operation": {
+          "$ref": "#/$defs/SourceOperation"
+        },
+        "path": {
+          "$ref": "#/$defs/PythonText"
+        },
+        "request_id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "resolved_path": {
+          "$ref": "#/$defs/PythonText"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "fact",
+        "request_id",
+        "path",
+        "resolved_path",
+        "operation",
+        "frames"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "collected": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "exit_code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "fact": {
+          "type": "string",
+          "const": "finished"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "fact",
+        "exit_code",
+        "collected"
+      ]
+    }
+  ],
+  "$defs": {
+    "ExceptionFact": {
+      "type": "object",
+      "properties": {
+        "cause": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExceptionFact"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "context": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExceptionFact"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "frames": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FrameFact"
+          }
+        },
+        "message": {
+          "$ref": "#/$defs/PythonText"
+        },
+        "qualified_type": {
+          "$ref": "#/$defs/PythonText"
+        },
+        "suppress_context": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "qualified_type",
+        "message",
+        "frames",
+        "suppress_context"
+      ]
+    },
+    "FrameFact": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "$ref": "#/$defs/PythonText"
+        },
+        "function": {
+          "$ref": "#/$defs/PythonText"
+        },
+        "line": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "function",
+        "line"
+      ]
+    },
+    "Phase": {
+      "type": "string",
+      "enum": [
+        "setup",
+        "call",
+        "teardown",
+        "worker_crash"
+      ]
+    },
+    "PythonText": {
+      "description": "Python strings can contain isolated surrogates, which Rust `String` cannot.",
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "format": "uint32",
+        "minimum": 0
+      }
+    },
+    "SourceOperation": {
+      "type": "string",
+      "enum": [
+        "open",
+        "read_text",
+        "read_bytes",
+        "loader_get_source"
+      ]
+    },
+    "Status": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "failed",
+        "skipped"
+      ]
+    }
+  }
+}

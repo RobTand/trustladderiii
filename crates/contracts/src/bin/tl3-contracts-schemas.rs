@@ -35,7 +35,12 @@ fn main() -> ExitCode {
         }
         if check {
             stale.push(file.path);
-        } else if let Err(error) = fs::write(&path, &file.text) {
+        } else if let Err(error) = path
+            .parent()
+            .map(fs::create_dir_all)
+            .transpose()
+            .and_then(|_| fs::write(&path, &file.text))
+        {
             eprintln!("{}: {error}", path.display());
             return ExitCode::FAILURE;
         } else {

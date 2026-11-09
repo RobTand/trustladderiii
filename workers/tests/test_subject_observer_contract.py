@@ -188,11 +188,11 @@ def test_request233_source_goal_checks_the_selected_method(request233, monkeypat
     ledger, root, inputs, calls, path = request233
     monkeypatch.chdir(root)
     monkeypatch.setattr(Forecaster, 'measure', lambda *args: {'fits': True})
-    check = {'kind': 'demonstrating', 'node_ids': [path + '::test_git_disables_maintenance'], 'goal_ids': [0]}
+    check = {'name': 'git-maintenance-disabled', 'kind': 'demonstrating', 'tests': [path + '::test_git_disables_maintenance'], 'goal_ids': [0]}
     if method in ('symptom', 'old_assertion'):
-        check['node_ids'] = [path + '::test_wrong_head']
+        check['tests'] = [path + '::test_wrong_head']
     if method == 'symptom':
-        check['declared_symptom'] = {'node': check['node_ids'][0], 'exception': 'builtins.FileNotFoundError',
+        check['declared_symptom'] = {'node': check['tests'][0], 'exception': 'builtins.FileNotFoundError',
                                      'phase': 'call', 'repeat': 10, 'parallel': 4}
     if method == 'old_assertion':
         check['proof'] = {'subjects': [path + '::_git'], 'observer_support': [],
@@ -202,7 +202,7 @@ def test_request233_source_goal_checks_the_selected_method(request233, monkeypat
                           'observer_support': [], 'red_message': 'automatic maintenance remains enabled'}
     reply = {'kind': 'leaf', 'estimated_exploration_turns': 0, 'files': [path], 'edits_tests': [],
              'no_design_questions': True, 'lands_on_its_own': True,
-             'checks': [check, {'kind': 'regression', 'node_ids': [path + '::test_wrong_head'], 'goal_ids': [1]}]}
+             'checks': [check, {'name': 'original-checkout-preserved', 'kind': 'regression', 'tests': [path + '::test_wrong_head'], 'goal_ids': [1]}]}
     check_reply(inputs, reply, rehearsals=ledger)
     if method == 'supported':
         assert reply['violations'] == [], reply
@@ -307,7 +307,7 @@ def test_request204_regression_selector_must_exist_on_selected_base(rehearsal, h
     assert 'test_a_passing_file_records_its_inventory' not in git(root, 'show', inputs['base_sha'] + ':' + path)
     reply = {'kind': 'leaf', 'estimated_exploration_turns': 0, 'files': [path], 'edits_tests': [],
              'no_design_questions': True, 'lands_on_its_own': True,
-             'checks': [{'kind': 'regression', 'node_ids': [node], 'goal_ids': [0]}]}
+             'checks': [{'name': 'base-inventory-observer', 'kind': 'regression', 'tests': [node], 'goal_ids': [0]}]}
     check_reply(inputs, reply)
     assert any(node in message and 'base' in message and 'demonstrating' in message
                for message in reply['violations']), reply
@@ -333,10 +333,10 @@ def test_review696_module_selector_reaches_exact_node_violation_before_applicabi
     reply = {'kind': 'leaf', 'estimated_exploration_turns': 0,
              'files': [subject_path, selector], 'edits_tests': [],
              'no_design_questions': True, 'lands_on_its_own': True,
-             'checks': [{'kind': kind, 'node_ids': [selector], 'goal_ids': [0],
+             'checks': [{'name': 'module-selector-observer', 'kind': kind, 'tests': [selector], 'goal_ids': [0],
                          'proof': {'subjects': [subject_path + '::_git'], 'observer_support': [],
                                    'red_message': 'automatic maintenance remains enabled'}},
-                        {'kind': 'regression', 'node_ids': [subject_path + '::test_wrong_head'], 'goal_ids': [1]}]}
+                        {'name': 'original-helper-verdict', 'kind': 'regression', 'tests': [subject_path + '::test_wrong_head'], 'goal_ids': [1]}]}
     validate('planner-reply', reply)
     check_reply(inputs, reply)
     exact = [m for m in reply['violations'] if m.startswith('check.selector_inexact:')]

@@ -178,7 +178,7 @@ class ForcingRehearsals:
 
     def run(self, tests: list[str], forcing: dict, declared_symptom: dict | None = None, *, goal_ids=None) -> dict:
         """Rehearse immutable old tests and cache each distinct candidate's outcome."""
-        check = {'kind': 'demonstrating', 'node_ids': tests, 'goal_ids': goal_ids}
+        check = {'kind': 'demonstrating', 'tests': tests, 'goal_ids': goal_ids}
         if declared_symptom is not None:
             check['declared_symptom'] = declared_symptom
         errors = proof_applicability(self.goals, [check], campaign=True)
@@ -309,10 +309,10 @@ class ForcingRehearsals:
         for check in checks:
             if 'forcing' not in check:
                 continue
-            wanted = identity(base_sha, check['node_ids'], Forcing.parse(check['forcing']), check.get('declared_symptom'))
+            wanted = identity(base_sha, check['tests'], Forcing.parse(check['forcing']), check.get('declared_symptom'))
             if not any(bound_identity(receipt) == bound_identity(wanted) for receipt in self.receipts):
                 errors.append(named('rehearsal.missing_receipt', 'Q55 check lacks a matching forcing rehearsal receipt for the exact base, '
-                              'selectors and forcing: ' + ', '.join(check['node_ids']), {'base': base_sha, 'nodes': check['node_ids'], 'forcing': check['forcing']}))
+                              'selectors and forcing: ' + ', '.join(check['tests']), {'base': base_sha, 'nodes': check['tests'], 'forcing': check['forcing']}))
         return errors
 
 

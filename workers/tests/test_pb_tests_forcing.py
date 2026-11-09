@@ -90,7 +90,7 @@ def test_adopt():
     assert 'declared_symptom' in inspect.signature(ledger.run).parameters, 'rehearsal cannot declare exception RED'
     result = ledger.run([NODE], forcing, declared_symptom=symptom)
     assert result['status'] == 'validated', result
-    checks = [{'kind': 'demonstrating', 'node_ids': [NODE], 'forcing': forcing, 'declared_symptom': symptom}]
+    checks = [{'kind': 'demonstrating', 'tests': [NODE], 'forcing': forcing, 'declared_symptom': symptom}]
     assert ledger.violations(inputs['base_sha'], checks) == []
     checks[0]['declared_symptom'] = {**symptom, 'repeat': 3}
     assert ledger.violations(inputs['base_sha'], checks), 'stale campaign receipt must be rejected'

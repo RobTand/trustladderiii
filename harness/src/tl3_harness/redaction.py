@@ -1,6 +1,7 @@
 """Shared stdlib redactor for the harness and trace exporter; policy comes from Rust."""
 import json
 import re
+from urllib.parse import parse_qsl, urlsplit
 
 from ._redaction_policy import POLICY
 
@@ -313,6 +314,67 @@ CHECKED = [(re.compile(pattern), globals()[check]) for pattern, check in POLICY[
 NEAR_CHARS = POLICY['near_chars']
 
 
+
+def azure_sas_spans(text):
+    """Recognize SAS syntax while retaining raw source character coordinates."""
+    # Match Rust char::is_whitespace, including its distinction from Python's
+    # additional U+001C..U+001F string whitespace. This is URL syntax only.
+    whitespace = '\t\n\v\f\r \x85\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000'
+    scanned_until = 0
+    for match in re.finditer('://', text):
+        colon = match.start()
+        if colon < scanned_until:
+            continue
+        start = next((colon - len(scheme) for scheme in ('https', 'http')
+                      if colon >= len(scheme) and text[colon - len(scheme):colon].lower() == scheme), None)
+        if start is None or start and (text[start - 1].isalnum() or text[start - 1] == '_'):
+            continue
+        end = next((index for index in range(start, len(text))
+                    if text[index] in whitespace or text[index] in '\"\'<>\\)]}'), len(text))
+        scanned_until = end
+        raw = text[start:end]
+        try:
+            parsed = urlsplit(raw)
+            # Access port as well: url::Url refuses invalid ports during parsing.
+            _ = parsed.port
+            host = parsed.hostname
+            if parsed.username is not None or parsed.password is not None or not host:
+                continue
+        except ValueError:
+            continue
+        suffix = '.blob.core.windows.net'
+        if not host.endswith(suffix):
+            continue
+        account = host[:-len(suffix)]
+        if not 1 <= len(account) <= 63 or any(char not in 'abcdefghijklmnopqrstuvwxyz0123456789' for char in account):
+            continue
+        query_end = raw.find('#') if '#' in raw else len(raw)
+        question = raw.find('?', 0, query_end)
+        if question < 0:
+            continue
+        offset, fields, valid = question + 1, {}, True
+        for pair in raw[offset:query_end].split('&'):
+            if '=' in pair:
+                key, value = pair.split('=', 1)
+                if len(key.encode()) > 4096 or len(value.encode()) > 4096 or re.search(r'%(?![0-9A-Fa-f]{2})', pair):
+                    valid = False
+                    break
+                decoded = parse_qsl(pair, keep_blank_values=True)
+                if not decoded:
+                    valid = False
+                    break
+                key, value = decoded[0]
+                if key in {'sv', 'se', 'ss', 'sr', 'sig'}:
+                    span = start + offset + pair.index('=') + 1, start + offset + len(pair)
+                    if not value.strip(whitespace) or key in fields:
+                        valid = False
+                        break
+                    fields[key] = span
+            offset += len(pair) + 1
+        if valid and 'sv' in fields and 'se' in fields and ('ss' in fields or 'sr' in fields) and 'sig' in fields:
+            yield fields['sig']
+
+
 def near_spans(text):
     found = []
     for word in NEAR_WORD.finditer(text):
@@ -438,7 +500,7 @@ class Redactor:
         self.truncated = False
 
     def spans(self, text):
-        found = []
+        found = list(azure_sas_spans(text))
         for secret in self.secrets:
             if secret:
                 start = text.find(secret)

@@ -479,6 +479,120 @@ pub(in crate::adapters) fn stage(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn staged_jobs_import_and_run_without_the_controller_action_executable() {
+        let fixture = crate::git_tests::Repo::new();
+        fs::write(
+            fixture.path.join("test_value.py"),
+            "def test_value():\n    assert True\n",
+        )
+        .unwrap();
+        fs::write(
+            fixture.path.join("pyproject.toml"),
+            "[tool.tl3.harness]\ncommand = [\"python\", \"-m\", \"pytest\"]\ntest-files = [\"test_value.py\"]\n",
+        )
+        .unwrap();
+        crate::git_tests::git(&fixture.path, &["add", "test_value.py", "pyproject.toml"]);
+        crate::git_tests::git(&fixture.path, &["commit", "-qm", "job boundary fixture"]);
+        let head = crate::git_tests::git(&fixture.path, &["rev-parse", "HEAD"]);
+        let mut delivery = fixture.delivery();
+        delivery.head_sha = Some(head.clone());
+        delivery.checks.as_mut().unwrap().base_sha = CommitId::new(&head).unwrap();
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let bundle = fixture.root.path().join("staged-job");
+        stage(
+            &bundle,
+            &repository.join("harness/src/tl3_harness"),
+            &delivery,
+            &format!("sha256:{}", "1".repeat(64)),
+            &[],
+            &Default::default(),
+        )
+        .unwrap();
+        let tools = fixture.root.path().join("job-tools");
+        fs::create_dir(&tools).unwrap();
+        let path = std::env::var_os("PATH").unwrap();
+        let git = std::env::split_paths(&path)
+            .map(|directory| directory.join("git"))
+            .find(|candidate| candidate.is_file())
+            .unwrap();
+        std::os::unix::fs::symlink(git, tools.join("git")).unwrap();
+        // Under Bazel workers/.venv/bin/python is a launcher whose
+        // `#!/usr/bin/env python3` would resolve to job-tools/python3 again (an
+        // exec loop), and it supplies pytest only through PYTHONPATH, which -I
+        // drops. Build a job venv on the real interpreter whose .pth lists only
+        // third-party site-packages, never the repository's own tl3_harness.
+        let query = std::process::Command::new(repository.join("workers/.venv/bin/python"))
+            .args(["-c", "import json, sys, pytest; print(json.dumps([sys.executable, sys.path]))"])
+            .output()
+            .unwrap();
+        assert!(query.status.success(), "{}", String::from_utf8_lossy(&query.stderr));
+        let (interpreter, paths): (String, Vec<String>) = serde_json::from_slice(&query.stdout).unwrap();
+        let venv = fixture.root.path().join("job-python");
+        let created = std::process::Command::new(&interpreter)
+            .args(["-m", "venv", "--without-pip"])
+            .arg(&venv)
+            .output()
+            .unwrap();
+        assert!(created.status.success(), "{}", String::from_utf8_lossy(&created.stderr));
+        let python = venv.join("bin/python");
+        let purelib = std::process::Command::new(&python)
+            .args(["-I", "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"])
+            .output()
+            .unwrap();
+        assert!(purelib.status.success(), "{}", String::from_utf8_lossy(&purelib.stderr));
+        let purelib = PathBuf::from(String::from_utf8(purelib.stdout).unwrap().trim());
+        let dependencies: Vec<_> = paths
+            .iter()
+            .filter(|path| path.contains("site-packages") && Path::new(path).is_dir())
+            .map(String::as_str)
+            .collect();
+        assert!(!dependencies.is_empty(), "no third-party site-packages in {paths:?}");
+        fs::create_dir_all(&purelib).unwrap();
+        fs::write(purelib.join("tl3-job-deps.pth"), dependencies.join("\n") + "\n").unwrap();
+        let launcher = tools.join("python3");
+        fs::write(&launcher, format!("#!/bin/sh\nexec '{}' \"$@\"\n", python.display())).unwrap();
+        fs::set_permissions(&launcher, <fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755)).unwrap();
+        let probe = || {
+            std::process::Command::new(&python)
+                .args(["-I", "-B"])
+                .arg(repository.join("harness/tools/staged_job_probe.py"))
+                .arg(&bundle)
+                .arg("checks")
+                .env_clear()
+                .env("PATH", &tools)
+                .env("HOME", fixture.root.path())
+                .env("LANG", "C.UTF-8")
+                .env("OMP_NUM_THREADS", "1")
+                .env("OPENBLAS_NUM_THREADS", "1")
+                .current_dir(&bundle)
+                .output()
+                .unwrap()
+        };
+        let output = probe();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(report["modules"].as_array().unwrap().len() >= 20);
+        let init = bundle.join("trusted/tl3_harness/__init__.py");
+        fs::write(
+            &init,
+            format!(
+                "import subprocess\nsubprocess.run(['tl3-action', 'policy'], check=True)\n{}",
+                fs::read_to_string(&init).unwrap()
+            ),
+        )
+        .unwrap();
+        let rejected = probe();
+        assert!(!rejected.status.success());
+        let diagnostic = String::from_utf8(rejected.stderr).unwrap();
+        assert!(diagnostic.contains("FileNotFoundError") && diagnostic.contains("tl3-action"));
+    }
+
     #[test]
     fn check_plan_base_rejects_uppercase_at_the_edge() {
         for length in [40, 64] {
