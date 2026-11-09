@@ -865,7 +865,9 @@ fn every_event_family_can_change_the_world() {
     checking.reply(Reply::MakerDone {
         head: HeadId(checking.head),
     });
-    assert!(checking.node().phase == Phase::Checking && checking.awaiting());
+    // Checking waits on its checks job, not a run (Item::Await on the job generation).
+    let c = checking.node();
+    assert!(c.phase == Phase::Checking && c.effect.is_none() && c.job == Some(c.generation));
     changes("apply_checks_done", &checking.w, checking.reply_now(CHECKS_PASS));
 
     let reviewing = Run::reviewing(false);
