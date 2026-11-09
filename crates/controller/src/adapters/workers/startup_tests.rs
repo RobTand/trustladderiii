@@ -10,6 +10,7 @@ fn planner_protected_paths_follow_the_request_repository() {
         tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
     config.store = db.create("repo_protection");
     config.workers.runs = f.root.path().join("runs");
+    crate::git_tests::select_flux(&mut config, f.root.path());
     config.planning.protected_paths.push("global/**".into());
     // The maker's retro deadline derives from this allowance (#648).
     config.allowances.agent_worker.silence_secs = 90;
@@ -101,9 +102,13 @@ fn planner_protected_paths_follow_the_request_repository() {
             request["inputs"]["tests"]["mem_gb"],
             if cpus == 4 { 12 } else { 2 }
         );
-        assert_eq!(
-            request["inputs"]["tests"]["tools_path"],
-            json!(config.prismabuild.tools_dir)
+        // Native Flux execution only: the retired PrismaBuild tools path is never sent.
+        assert!(request["inputs"]["tests"].get("tools_path").is_none());
+        assert_eq!(request["inputs"]["tests"]["execution"]["backend"], "flux");
+        assert!(
+            request["inputs"]["tests"]["execution"]["profile"]
+                .as_str()
+                .is_some_and(|profile| profile.ends_with("execution.json"))
         );
         let features = request["inputs"]["tool_capabilities"][0]["runner_features"]
             .as_array()
@@ -124,13 +129,18 @@ fn planner_protected_paths_follow_the_request_repository() {
         } else {
             assert!(forecast.get("generator").is_none());
         }
-        let mut reply = json!({"kind":"leaf", "evidence_contract":[{
-            "requirement":"Regenerate indexed Bazel outputs", "tool":"run_generator",
-            "executor":"prismabuild_generator", "runner_features":["git_index", "scoped_outputs"],
-            "artifacts":["receipt", "output_tree"], "methods":["configured_generation"], "protected_files":[],
-        }]});
-        super::evidence::preflight("planner", &request["inputs"], &mut reply).unwrap();
-        assert_eq!(reply["evidence_errors"] == json!([]), name == "TL3-SANDBOX");
+        let cite = |executor: &str| {
+            let mut reply = json!({"kind":"leaf", "evidence_contract":[{
+                "requirement":"Regenerate indexed Bazel outputs", "tool":"run_generator",
+                "executor":executor, "runner_features":["git_index", "scoped_outputs"],
+                "artifacts":["receipt", "output_tree"], "methods":["configured_generation"], "protected_files":[],
+            }]});
+            super::evidence::preflight("planner", &request["inputs"], &mut reply).unwrap();
+            reply["evidence_errors"] == json!([])
+        };
+        // The Flux generator stays registered; the retired PrismaBuild executor is never offered.
+        assert_eq!(cite("flux_generator"), name == "TL3-SANDBOX");
+        assert!(!cite("prismabuild_generator"));
         let paths = request["inputs"]["protected_paths"].as_array().unwrap();
         assert!(paths.contains(&json!(own)), "missing {own}: {paths:?}");
         assert!(
@@ -158,6 +168,7 @@ fn maker_input_stays_bounded_after_five_review_rounds() {
     config.github.repos[0].generated_files = vec!["**/BUILD.bazel".into()];
     config.github.repos[0].generator = Some("bash tools/bazel/generate.sh".into());
     config.workers.runs = f.root.path().join("runs");
+    crate::git_tests::select_flux(&mut config, f.root.path());
     let supervisor = Supervisor::new(
         &config,
         &f.root.path().join("records"),
@@ -387,6 +398,7 @@ fn hostile_maker_head() {
             config.github.repos[0].branch_template = "prismabuild-{issue}-tl3-{node}".into();
             config.workers.runs = f.root.path().join("runs");
             config.worktrees_root = f.root.path().join("worktrees");
+            crate::git_tests::select_flux(&mut config, f.root.path());
             let supervisor = Supervisor::new(
                 &config,
                 &f.root.path().join("records"),
@@ -514,6 +526,7 @@ fn maker_checks_against_the_worktree_base(database: &str, stored_on: &str, resta
     config.github.repos[0].branch_template = "prismabuild-{issue}-tl3-{node}".into();
     config.workers.runs = f.root.path().join("runs");
     config.worktrees_root = f.root.path().join("worktrees");
+    crate::git_tests::select_flux(&mut config, f.root.path());
     let supervisor = Supervisor::new(
         &config,
         &f.root.path().join("records"),

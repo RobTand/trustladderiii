@@ -70,7 +70,10 @@ impl Job {
             return Err(Error::Invalid("invalid durable controller check intent"));
         }
         if let Some(binding) = &self.binding {
-            binding.id.validate().map_err(adapter_error)?;
+            binding
+                .id
+                .validate()
+                .map_err(|error| adapter_error(error.into()))?;
             if binding.intent != self.intent
                 || binding.id.instance != self.intent.instance
                 || binding.id.uri != self.intent.uri
@@ -218,7 +221,11 @@ impl Shared {
                     "typed progress does not match the controller check binding",
                 ));
             }
-            event.progress.run.validate().map_err(adapter_error)?;
+            event
+                .progress
+                .run
+                .validate()
+                .map_err(|error| adapter_error(error.into()))?;
             if let Some(previous) = &job.progress {
                 if previous.cursor.sequence > event.sequence {
                     return Ok(None);
@@ -260,7 +267,10 @@ impl Shared {
             backend::Observation::Terminal { binding, terminal } => (binding, Some(terminal)),
         };
         if let Some(binding) = &binding {
-            binding.id.validate().map_err(adapter_error)?;
+            binding
+                .id
+                .validate()
+                .map_err(|error| adapter_error(error.into()))?;
         }
         if binding.as_ref().is_some_and(|binding| {
             binding.intent != job.intent

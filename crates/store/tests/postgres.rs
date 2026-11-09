@@ -2542,11 +2542,6 @@ fn worker_completion_facts(settings: &tl3_config::Store) {
     });
     store.commit(&identity).unwrap();
     let facts = WorkerRunFacts {
-        prismabuild: serde_json::from_value(json!([{
-            "phase": "prismabuild_capability", "cause": "machine_record_unsupported",
-            "fallback_used": true, "transport": "stdout", "runtime": "pbrun"
-        }]))
-        .unwrap(),
         started_ms: 1_000_000,
         finished_ms: Some(9_666_000),
         outcome: "succeeded".into(),
@@ -3247,7 +3242,6 @@ fn worker_identity_retention_is_bounded(settings: &tl3_config::Store) {
         session_id: None,
         failure: None,
         retro: None,
-        prismabuild: vec![],
     };
     let mut client = raw(settings);
     // Full records exercise the real SQL retention boundary without 65k client round trips.

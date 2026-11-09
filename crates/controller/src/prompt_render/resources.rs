@@ -9,7 +9,7 @@ pub(super) const PLANNER: &str = concat!(
     "uses its exact exception, node, call/setup phase and fixed repeat/parallel campaign instead. ",
     "Bind goal_ids to the source goals. A source assertion/new-observer obligation must use ",
     "a new deterministic assertion and cannot be replaced by an old-node symptom campaign. ",
-    "At most 8 distinct candidates run, each with at most two PB-admitted actions ",
+    "At most 8 distinct candidates run, each with at most two admitted actions ",
     "and a 120-second execution limit per action. ",
     "A completed zero-hit or no-assertion-RED candidate is unusable evidence. Use its feedback ",
     "for a distinct candidate within the remaining budget, or return cant_meet with the precise ",

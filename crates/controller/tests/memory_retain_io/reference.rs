@@ -236,3 +236,26 @@ fn curate(store: &mut Store, settings: &tl3_config::Hindsight) -> Result<usize> 
     }
     Ok(count)
 }
+fn activity_section(activity: &Value) -> Value {
+    let mut value = sanitize(activity, 8, &mut 256);
+    if let (Some(source), Some(tests)) = (
+        activity["tests"].as_array(),
+        value.get_mut("tests").and_then(Value::as_array_mut),
+    ) {
+        for (source, test) in source.iter().zip(tests) {
+            if let (Some(action), Some(test)) =
+                (source["action_key"].as_str(), test.as_object_mut())
+            {
+                // Structured PrismaBuild action IDs are public identifiers, unlike input keys.
+                let action = if action.len() == 64 && action.bytes().all(|b| b.is_ascii_hexdigit())
+                {
+                    action.to_owned()
+                } else {
+                    safe_text(action)
+                };
+                test.insert("action_key".into(), json!(action));
+            }
+        }
+    }
+    bound_section(value)
+}

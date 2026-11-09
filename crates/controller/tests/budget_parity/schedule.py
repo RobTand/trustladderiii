@@ -180,7 +180,7 @@ class Filesystem(IO):
 def loop(modules, schedule, crash, *, chunk_crash=0):
     """Run the real maker.run closure and session.save, rather than simulating it."""
     from tl3_workers import runtime
-    from tl3_workers.pb_tests import TestSettings
+    from tl3_workers.tests_tool import TestSettings
     io = Filesystem(schedule, crash, chunk_crash)
     module, edge, session = modules
     budget = edge.ExplorationBudget(tool_turns=8, finalization_turns=1, input_tokens=1_000_000,
@@ -190,7 +190,7 @@ def loop(modules, schedule, crash, *, chunk_crash=0):
                "session_file": "/visit/maker.json", "worktree": "/tree", "inputs": {
                    "brief": "Preserve the recorded evidence.", "context_size": 100_000,
                    "goals": [{"id": "g", "description": "Preserve behavior."}],
-                   "tests": {"image": "sha256:" + "a" * 64, "tools_path": "/unused"},
+                   "tests": {"image": "sha256:" + "a" * 64, "execution": {"backend": "flux", "profile": "/unused/execution.json"}},
                    "plan": {"files": ["f"], "checks": [{"name": "check", "goal_ids": ["g"],
                                                             "tests": ["test.py"]}]}}}
     evidence = SimpleNamespace(state=lambda: {"sample": io.read("evidence")},

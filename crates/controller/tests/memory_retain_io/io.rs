@@ -173,7 +173,7 @@ fn initial(s: &Schedule) -> Run {
     if s.shape == 21 {
         request["inputs"] = json!(["array inputs"]);
     }
-    let summary = json!({"reply":reply,"outcome":if s.shape==6 {"failed"} else {"succeeded"},"reason":"reported failure","activity":{"tests":[{"action_key":"a".repeat(64)},{"action_key":"short"}],"token":"redact"}});
+    let summary = json!({"reply":reply,"outcome":if s.shape==6 {"failed"} else {"succeeded"},"reason":"reported failure","activity":{"tests":[{"wait_reference":"short"},{"name":"short"}],"token":"redact"}});
     let mut files: BTreeMap<String,Vec<u8>> = [
         ("run/attempt/request.json".into(),request.to_string().into_bytes()),
         ("run/attempt/memory.json".into(),summary.to_string().into_bytes()),

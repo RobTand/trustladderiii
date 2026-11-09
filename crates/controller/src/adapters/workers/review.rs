@@ -594,10 +594,17 @@ mod hostile_tests {
             crate::git_tests::git(&f.path, &["rev-parse", &format!("{}^{{tree}}", f.base)]);
         let run = |base: bool, tree: &str| {
             json!({"tests": ["test_value.py::test_value"], "base": base, "repeat": 5,
-                "parallel": 0, "status": "completed", "tree": tree, "fresh": true,
+                "parallel": 0, "status": "completed", "tree": tree,
                 "totals": {"passed": 1, "failed": 0, "error": 0, "skipped": 0},
-                "receipts": [{"action_key": "a".repeat(64), "status": "executed", "exit_code": 0,
-                    "receipt_sha256": "b".repeat(64), "log_sha256": "c".repeat(64)}]})
+                "receipts": [{"backend": "flux", "wait_reference": format!("worker:{}", "a".repeat(64)),
+                    "run_binding": {
+                        "id": {"backend": "flux", "instance": "worker-run",
+                            "uri": "local:///fixture", "job": "f2"},
+                        "intent": {"backend": "flux", "instance": "worker-run",
+                            "uri": "local:///fixture", "owner": "worker-tools",
+                            "correlation": format!("worker-{}", "a".repeat(64)),
+                            "request_digest": "b".repeat(64), "output_dir": "/fixture/output"}},
+                    "receipt_sha256": "c".repeat(64), "ending": "passed"}]})
         };
         let all = json!([
             run(false, &head_tree),

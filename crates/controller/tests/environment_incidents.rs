@@ -176,7 +176,7 @@ fn maker_replies(c: &mut Controller, reply: &Value, count: usize) {
 /// recorded. The report is model text and must never reach GitHub.
 fn blocked() -> Value {
     json!({"kind": "blocked",
-        "evidence": {"action_key": KEY, "class": "test_infrastructure"},
+        "evidence": {"wait_reference": format!("worker:{KEY}"), "class": "test_infrastructure"},
         "report": "@octocat see REPORT-TEXT for the broken sandbox."})
 }
 
@@ -248,7 +248,7 @@ fn blocked_reply_without_evidence_is_rejected_as_an_invalid_reply() {
     let before = c.world().unwrap().nodes[0];
     for reply in [
         json!({"kind": "blocked", "report": "The sandbox refused to run the tests."}),
-        json!({"kind": "blocked", "evidence": {"action_key": KEY}, "report": "No class."}),
+        json!({"kind": "blocked", "evidence": {"wait_reference": format!("worker:{KEY}")}, "report": "No class."}),
     ] {
         maker_replies(&mut c, &reply, 1);
     }

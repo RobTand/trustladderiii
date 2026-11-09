@@ -1022,7 +1022,7 @@ pub(super) fn repository_images(database: &mut Database) {
         });
         let root = tempfile::tempdir().unwrap();
         let (mut config, _, _) = fixture(&settings, root.path(), "needs-files");
-        config.prismabuild.container_image = format!("sha256:{}", "1".repeat(64));
+        config.flux.as_mut().unwrap().container_image = format!("sha256:{}", "1".repeat(64));
         config.github.repos[0].owner = "ROBTAND".into();
         config.github.repos[0].name = "TL3-SANDBOX".into();
         config.github.repos[0].container_image = override_image.clone();
@@ -1053,7 +1053,7 @@ pub(super) fn repository_images(database: &mut Database) {
         .unwrap();
         assert_eq!(
             request["inputs"]["tests"]["image"],
-            override_image.unwrap_or(config.prismabuild.container_image),
+            override_image.unwrap_or(format!("sha256:{}", "1".repeat(64))),
             "staged maker input must use its repository image or the global fallback"
         );
         assert!(request["inputs"]["tests"].get("exec_scratch").is_none());

@@ -259,3 +259,24 @@ fn curate(store: &mut Store, settings: &tl3_config::Hindsight) -> Result<usize> 
     }
     Ok(count)
 }
+fn activity_section(activity: &Value) -> Value {
+    let mut value = sanitize(activity, 8, &mut 256);
+    if let (Some(source), Some(tests)) = (
+        activity["tests"].as_array(),
+        value.get_mut("tests").and_then(Value::as_array_mut),
+    ) {
+        for (source, test) in source.iter().zip(tests) {
+            // Native worker wait references are public identifiers, unlike input keys.
+            // Anything else keeps the ordinary redaction applied by `sanitize`.
+            if let (Some(reference), Some(test)) =
+                (source["wait_reference"].as_str(), test.as_object_mut())
+                && reference
+                    .strip_prefix("worker:")
+                    .is_some_and(|key| crate::run_backend::hex(key, 64))
+            {
+                test.insert("wait_reference".into(), json!(reference));
+            }
+        }
+    }
+    bound_section(value)
+}

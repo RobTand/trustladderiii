@@ -23,6 +23,7 @@ impl Fixture {
             tl3_config::Config::parse(include_str!("../../../../config/example.toml")).unwrap();
         config.store = db.create("step_feedback");
         config.workers.runs = repo.root.path().join("runs");
+        crate::git_tests::select_flux(&mut config, repo.root.path());
         let supervisor = Supervisor::new(
             &config,
             &repo.root.path().join("records"),
@@ -816,4 +817,92 @@ fn postmortem_reads_canonical_planner_feedback() {
         inputs["inputs"]["case"]["findings"],
         json!(["Need a smaller request"])
     );
+}
+
+/// PB-REMOVAL: Flux is the only worker tests executor. A configuration that still selects
+/// PrismaBuild gets a typed refusal for every request that needs worker tests; it is never
+/// defaulted to a PrismaBuild tools path. The same fixture under Flux builds the tests input.
+fn tests_request(f: &mut Fixture, role: &str, prismabuild: bool, generator: bool) -> Result<Value> {
+    let mut config = f.config.clone();
+    if generator {
+        config.github.repos[0].generated_files = vec!["**/BUILD.bazel".into()];
+        config.github.repos[0].generator = Some("bash tools/bazel/generate.sh".into());
+    }
+    if prismabuild {
+        config.execution_backend = tl3_config::ExecutionBackend::PrismaBuild;
+        config.flux = None;
+    }
+    let records = f
+        .repo
+        .root
+        .path()
+        .join(format!("records-{role}-{prismabuild}-{generator}"));
+    let supervisor =
+        Supervisor::new(&config, &records, &mut crate::store_support::ownership()).unwrap();
+    let snapshot = f.controller.snapshot().unwrap();
+    let n = f.controller.world().unwrap().nodes[0];
+    let mut delivery = f.repo.delivery();
+    delivery.generation = n.generation;
+    delivery.attempt = n.attempt;
+    delivery.round = n.round;
+    supervisor.build_request(
+        &delivery,
+        role,
+        &mut Store::open(&f.config.store).unwrap(),
+        &snapshot,
+    )
+}
+
+fn assert_refused(result: Result<Value>, role: &str) {
+    let error = result.unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            crate::Error::Invalid(message) if message.contains("execution_backend = 'flux'")
+        ),
+        "{role}: {error:?}"
+    );
+}
+
+#[test]
+fn prismabuild_selection_refuses_worker_tests_instead_of_defaulting() {
+    let mut f = Fixture::new();
+    let flux = tests_request(&mut f, "planner", false, false).unwrap();
+    assert_eq!(flux["inputs"]["tests"]["execution"]["backend"], "flux");
+    assert_refused(tests_request(&mut f, "planner", true, false), "planner");
+}
+
+#[test]
+fn prismabuild_selection_refuses_the_maker() {
+    let mut f = Fixture::new();
+    f.seed(Phase::Making, 2);
+    let flux = tests_request(&mut f, "maker", false, false).unwrap();
+    assert_eq!(flux["inputs"]["tests"]["execution"]["backend"], "flux");
+    assert_refused(tests_request(&mut f, "maker", true, false), "maker");
+}
+
+/// Ingest and audit carry worker tests only to run the configured generator. With one
+/// configured they are refused under PrismaBuild; without one, or under Flux, the PB
+/// refusal never applies. (This fixture has no ingest issue materials; full Flux ingest
+/// and audit requests are built in input_contract_tests::t653.)
+#[test]
+fn prismabuild_selection_refuses_generator_enabled_ingest_and_audit() {
+    let refused = |result: &Result<Value>| {
+        matches!(
+            result,
+            Err(crate::Error::Invalid(message)) if message.contains("execution_backend = 'flux'")
+        )
+    };
+    let mut f = Fixture::new();
+    for role in ["ingest", "audit"] {
+        assert_refused(tests_request(&mut f, role, true, true), role);
+        assert!(
+            !refused(&tests_request(&mut f, role, false, true)),
+            "{role}"
+        );
+        assert!(
+            !refused(&tests_request(&mut f, role, true, false)),
+            "{role}"
+        );
+    }
 }

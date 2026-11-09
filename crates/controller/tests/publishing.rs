@@ -744,6 +744,7 @@ fn lifecycle(settings: &tl3_config::Store, python: &Path, mode: &str) {
     let root = tempfile::tempdir().unwrap();
     let mut fixture = Fixture::create(root.path());
     let mut config = tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+    support::select_flux(&mut config);
     if mode == "repo-conventions" {
         config.github.repos[0].branch_template = "prismabuild-{issue}-tl3-{node}".into();
         config.github.repos[0].base_branch = "master".into();

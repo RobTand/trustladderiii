@@ -279,17 +279,9 @@ fn in_world(mut snapshot: Snapshot, world: &World) -> Snapshot {
     snapshot
 }
 
+/// Flux is the only worker tests executor (PB-REMOVAL), so every role builds from it.
 #[test]
 fn t653_real_builders_satisfy_every_role_and_dispatch_phase() {
-    real_builders(false);
-}
-
-#[test]
-fn selected_flux_real_builders_need_no_pb_config_in_both_input_paths() {
-    real_builders(true);
-}
-
-fn real_builders(flux: bool) {
     let f = Repo::new();
     let mut db = Database::start();
     let mut config =
@@ -297,24 +289,9 @@ fn real_builders(flux: bool) {
     config.store = db.create("all_input_contracts");
     config.workers.runs = f.root.path().join("runs");
     config.worktrees_root = f.root.path().join("worktrees");
-    if flux {
-        config.execution_backend = tl3_config::ExecutionBackend::Flux;
-        config.flux = Some(tl3_config::Flux {
-            activation: None,
-            instance_generation: "fixture/00000000000000000000000000000000".into(),
-            executable: "/fixture/flux".into(),
-            backend_cli: "/fixture/tl3-run-backend".into(),
-            container_mode: tl3_config::ContainerMode::OwnScope,
-            runtime_bundles: vec![],
-            uri: "local:///fixture/flux".into(),
-            environment: BTreeMap::new(),
-            staging_root: f.root.path().join("staging"),
-            output_root: f.root.path().join("outputs"),
-            container_image: config.prismabuild.container_image.clone(),
-        });
-        config.prismabuild.tools_dir = PathBuf::new();
-        config.prismabuild.container_image.clear();
-    }
+    crate::git_tests::select_flux(&mut config, f.root.path());
+    config.prismabuild.tools_dir = PathBuf::new();
+    config.prismabuild.container_image.clear();
     let (_upstream, provider) = materials(&f, &config);
     let registry = crate::adapters::simulation(&f.root.path().join("fakes")).unwrap();
     let mut controller = crate::Controller::open(
@@ -459,11 +436,11 @@ fn real_builders(flux: bool) {
                         .request(&delivery, role, &mut store, &snapshot)
                         .unwrap_or_else(|error| panic!("{role} {:?}: {error}", n.phase));
                     protocol::validate_inputs(role, &request["inputs"]).unwrap();
-                    if flux && matches!(role, "maker" | "planner") {
+                    if matches!(role, "maker" | "planner") {
                         assert!(request["inputs"]["tests"].get("tools_path").is_none());
                         assert_eq!(request["inputs"]["tests"]["execution"]["backend"], "flux");
                     }
-                    if flux && role == "planner" {
+                    if role == "planner" {
                         assert_eq!(
                             request["inputs"]["tool_capabilities"][0]["executor"],
                             "flux_pytest"

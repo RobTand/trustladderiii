@@ -1868,16 +1868,43 @@ fn shared_sound<T: serde::Serialize + serde::de::DeserializeOwned + PartialEq + 
 fn receipt_budget() -> Value {
     json!({"cpus":1,"mem_gb":1,"timeout_s":60,"outer_timeout_s":120})
 }
-fn shared_generation_receipt(seconds: f64, count: u64, cache: bool) -> Value {
+/// The native Flux receipt fields every completed worker run carries (canonical f25cb52a).
+fn shared_native_receipt(ending: &str) -> Value {
+    json!({"backend":"flux","wait_reference":format!("worker:{}","a".repeat(64)),
+        "run_binding":{"id":{"backend":"flux","instance":"worker-run","uri":"local:///fixture","job":"f2"},
+            "intent":{"backend":"flux","instance":"worker-run","uri":"local:///fixture","owner":"worker-tools",
+                "correlation":format!("worker-{}","a".repeat(64)),"request_digest":"b".repeat(64),
+                "output_dir":"/fixture/output"}},
+        "receipt_sha256":"c".repeat(64),"ending":ending})
+}
+fn shared_generation_receipt(seconds: f64, count: u64) -> Value {
     let phase = json!({"seconds":seconds,"outcome":"completed","scope":"startup_and_command"});
-    json!({"action_key":"a".repeat(64),"artifact_sha256":"b".repeat(64),"receipt_sha256":"c".repeat(64),
-        "output_manifest":"d".repeat(64),"input_tree":"a".repeat(40),"output_tree":"b".repeat(40),
-        "status":"completed","exit_code":0.0,"command":"python3 generate.py","argv":["python3","generate.py"],
-        "identity":{"implementation":"tl3-generator-v4","image":"image","budget":receipt_budget()},
-        "output_count":count,"budget":receipt_budget(),"phase":"completed",
-        "timings":{"preparation":phase,"container":phase,"validation":phase,"cleanup":phase,"total_seconds":seconds},
-        "inner":{"status":"completed","exit_code":0},
-        "outer":{"status":if cache {"cache_hit"} else {"executed"},"exit_code":0,"elapsed_s":seconds}})
+    let mut receipt = shared_native_receipt("passed");
+    for (key, field) in [
+        ("artifact_sha256", json!("b".repeat(64))),
+        ("output_manifest", json!("d".repeat(64))),
+        ("input_tree", json!("a".repeat(40))),
+        ("output_tree", json!("b".repeat(40))),
+        ("status", json!("completed")),
+        ("exit_code", json!(0)),
+        ("command", json!("python3 generate.py")),
+        ("argv", json!(["python3", "generate.py"])),
+        (
+            "identity",
+            json!({"implementation":"tl3-generator-v4","image":"image","budget":receipt_budget()}),
+        ),
+        ("output_count", json!(count)),
+        ("budget", receipt_budget()),
+        ("phase", json!("completed")),
+        (
+            "timings",
+            json!({"preparation":phase,"container":phase,"validation":phase,"cleanup":phase,"total_seconds":seconds}),
+        ),
+        ("inner", json!({"status":"completed","exit_code":0})),
+    ] {
+        receipt[key] = field;
+    }
+    receipt
 }
 
 proptest! {
@@ -1886,7 +1913,7 @@ proptest! {
     fn p_schema_sound_ingest_and_shared_evidence(suffix in ".{0,60}", early in any::<bool>(), publishing in any::<bool>(), source in any::<bool>()) {
         use contracts::roles::ingest_reply::{IngestReply, ToolCapability, EvidenceContract, ProofObligation};
         let text=format!("e{suffix}");
-        let capability=json!({"tool":"run_tests","executor":"prismabuild","runner_features":["tests"],"artifacts":["receipt"],"methods":[],"protected_files":[]});
+        let capability=json!({"tool":"run_tests","executor":"flux_pytest","runner_features":["tests"],"artifacts":["receipt"],"methods":[],"protected_files":[]});
         shared_sound::<ToolCapability>(capability.clone(),shared_reply_validator("ingest",Some("tool_capability")));
         let mut requirement=capability; requirement["requirement"]=json!(text);
         requirement["provenance"]=if source {json!({"kind":"source","source":"issue","quote":text})} else {json!({"kind":"method"})};
@@ -1918,14 +1945,13 @@ proptest! {
         shared_sound::<ClassifierReply>(reply,shared_reply_validator("classifier",None));
     }
     #[test]
-    fn p_schema_sound_generation_receipt_and_test_run(seconds in 0.0f64..1000.0, count in 0u64..=128, cache in any::<bool>(), repeat in 1u64..=10, parallel in select(vec![0,2,3,4]), optional in any::<bool>(), proof in proof_receipt(), exit in any::<i64>()) {
+    fn p_schema_sound_generation_receipt_and_test_run(seconds in 0.0f64..1000.0, count in 0u64..=128, cache in any::<bool>(), repeat in 1u64..=10, parallel in select(vec![0,2,3,4]), optional in any::<bool>(), proof in proof_receipt(), ending in select(vec!["passed","failed","refused","infra-lost","cancelled"])) {
         use contracts::roles::maker_reply::{GenerationReceipt, TestRun};
-        let mut receipt=shared_generation_receipt(seconds,count,cache);
+        let mut receipt=shared_generation_receipt(seconds,count);
         if optional {
             receipt["identity"]["implementation"]=json!("tl3-generator-v3");
             receipt["budget"]=json!({"cpus":16.0,"mem_gb":64.0,"timeout_s":600.0,"outer_timeout_s":660.0});
             receipt["identity"]["budget"]=json!({"cpus":1.0,"mem_gb":1.0,"timeout_s":1.0,"outer_timeout_s":61.0});
-            receipt["outer"]["elapsed_s"]=Value::Null;
             for (phase,outcome) in [("preparation","failed"),("container","timeout"),("validation","skipped"),("cleanup","completed")] {
                 receipt["timings"][phase]["outcome"]=json!(outcome);
                 receipt["timings"][phase].as_object_mut().unwrap().remove("scope");
@@ -1933,8 +1959,8 @@ proptest! {
         }
         shared_sound::<GenerationReceipt>(receipt,shared_reply_validator("maker",Some("generation_receipt")));
         let mut tests=json!({"tests":["tests/test_a.py::test_a"],"base":false,"repeat":repeat,"parallel":parallel,"status":"completed",
-            "tree":"a".repeat(40),"fresh":true,"totals":{"passed":1,"failed":0,"error":0,"skipped":0},
-            "receipts":[{"action_key":"a".repeat(64),"status":"executed","exit_code":exit,"receipt_sha256":"b".repeat(64),"log_sha256":"c".repeat(64)}]});
+            "tree":"a".repeat(40),"totals":{"passed":1,"failed":0,"error":0,"skipped":0},
+            "receipts":[shared_native_receipt(ending)]});
         if optional {
             tests["tests_identity"]=json!({"schema":"tl3.selectors.v1","count":256.0,"sha256":"a".repeat(64),"prefix":["é".repeat(120),"b","c"]});
             tests["tests_omitted"]=json!(256.0);
@@ -1942,9 +1968,6 @@ proptest! {
             tests["proof"]=proof;
             tests["execution"]=json!({"outcome":"test_timeout","phase":if cache {"test_run"} else {"cleanup"},"termination_reason":"no_progress","test_started":true,"test":"é".repeat(2048)});
             tests["runs"]=json!([{"run":repeat,"status":"completed","totals":{"passed":u64::MAX,"failed":0.0,"error":0,"skipped":0}}]);
-            tests["receipts"][0]["attempt"]=json!(1.0);
-            tests["receipts"][0]["generation"]=json!("a".repeat(64));
-            tests["receipts"][0]["status"]=json!("cache_hit");
         }
         shared_sound::<TestRun>(tests,shared_reply_validator("maker",Some("test_run")));
     }
@@ -1958,7 +1981,7 @@ proptest! {
             2 => json!({"kind":"done","head":"a".repeat(40),"self_check":[{"goal_id":text,"status":"pending","why":text}]}),
             3 => json!({"kind":"needs_files","files":[{"path":"file.py","why":text}],"fits":fits}),
             4 => json!({"kind":"cant_meet","report":text,"unfinished_obligations":[text]}),
-            5 => json!({"kind":"blocked","report":text,"evidence":{"action_key":"a".repeat(64),"class":"test_infrastructure"}}),
+            5 => json!({"kind":"blocked","report":text,"evidence":{"wait_reference":format!("worker:{}","a".repeat(64)),"class":"test_infrastructure"}}),
             _ => json!({"kind":"out_of_room"}),
         };
         shared_sound::<MakerReply>(reply,shared_reply_validator("maker",None));
@@ -2002,21 +2025,34 @@ fn shared_reply_types_reject_unsupported_shapes_and_enforce_conditionals() {
     assert!(serde_json::from_value::<Options>(json!([{"action":"one","outcome":"one"}])).is_err());
 
     use contracts::roles::maker_reply::{GenerationReceipt, TestRun};
-    let mut receipt = shared_generation_receipt(0.5, 128, true);
-    receipt["outer"]["elapsed_s"] = Value::Null;
-    shared_sound::<GenerationReceipt>(
-        receipt.clone(),
-        shared_reply_validator("maker", Some("generation_receipt")),
+    let receipt = shared_generation_receipt(0.5, 128);
+    let validator = shared_reply_validator("maker", Some("generation_receipt"));
+    shared_sound::<GenerationReceipt>(receipt.clone(), validator);
+    // No compat: retired PrismaBuild receipt fields are refused by both the type and the schema.
+    for (key, field) in [
+        ("action_key", json!("a".repeat(64))),
+        (
+            "outer",
+            json!({"status":"cache_hit","exit_code":0,"elapsed_s":null}),
+        ),
+    ] {
+        let mut stale = receipt.clone();
+        stale[key] = field;
+        assert!(
+            serde_json::from_value::<GenerationReceipt>(stale.clone()).is_err(),
+            "{key}"
+        );
+        assert!(!validator.is_valid(&stale), "{key}");
+    }
+    let mut run = json!({"tests":[],"base":false,"repeat":1.0,"parallel":0.0,"status":"completed",
+        "tree":"a".repeat(40),"totals":{"passed":0,"failed":0,"error":0,"skipped":0},
+        "receipts":[shared_native_receipt("passed")]});
+    shared_sound::<TestRun>(
+        run.clone(),
+        shared_reply_validator("maker", Some("test_run")),
     );
-    receipt["outer"]
-        .as_object_mut()
-        .unwrap()
-        .remove("elapsed_s");
-    assert!(serde_json::from_value::<GenerationReceipt>(receipt).is_err());
-    let run = json!({"tests":[],"base":false,"repeat":1.0,"parallel":0.0,"status":"completed",
-        "tree":"a".repeat(40),"fresh":false,"totals":{"passed":0,"failed":0,"error":0,"skipped":0},
-        "receipts":[{"action_key":"a".repeat(64),"status":"cache_hit","exit_code":-1.0,
-            "receipt_sha256":"b".repeat(64),"log_sha256":"c".repeat(64),"attempt":null}]});
+    run["receipts"] = json!([{"action_key":"a".repeat(64),"status":"cache_hit","exit_code":-1.0,
+        "receipt_sha256":"b".repeat(64),"log_sha256":"c".repeat(64),"attempt":null}]);
     assert!(serde_json::from_value::<TestRun>(run).is_err());
 }
 
@@ -2064,8 +2100,8 @@ fn reply_leaf_parsers_follow_existing_schema_patterns() {
             json!({"kind":"blocked","report":"blocked",
             "evidence":{"tool_error":format!("tool-error-1{suffix}"),"tool":"read","class":"EACCES"}}),
         );
-        let mut receipt = shared_generation_receipt(0.5, 1, false);
-        receipt["action_key"] = json!(format!("{}{suffix}", "a".repeat(64)));
+        let mut receipt = shared_generation_receipt(0.5, 1);
+        receipt["wait_reference"] = json!(format!("worker:{}{suffix}", "a".repeat(64)));
         compare::<GenerationReceipt>("maker", Some("generation_receipt"), receipt);
     }
 }
