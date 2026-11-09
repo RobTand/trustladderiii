@@ -12,8 +12,6 @@ const FEATURE: &str = "activation-qualification";
 const SKIP_SYMBOL: &str = "for_canary_qualification";
 const MARKER: &str = "tl3.fx_canary_qualification_staging.v1";
 const STAGING: &str = "src/adapters/flux_checks/staging.rs";
-/// tools/bazel/rust.bzl points CARGO_MANIFEST_DIR at this fixed runfiles path.
-const BAZEL_MANIFEST_DIR: &str = "/tmp/tl3-workspace/crates/controller";
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -21,10 +19,6 @@ fn manifest_dir() -> PathBuf {
 
 fn checkout() -> PathBuf {
     manifest_dir().join("../..")
-}
-
-fn bazel() -> bool {
-    env!("CARGO_MANIFEST_DIR") == BAZEL_MANIFEST_DIR
 }
 
 fn read(path: &Path) -> String {
@@ -81,7 +75,10 @@ fn feature_is_off_by_default_and_required_only_by_the_canary_example() {
         if mentions(lines) == 0 || header == "[features]" {
             continue;
         }
-        assert_eq!(header, "[[example]]", "only an example may require the feature");
+        assert_eq!(
+            header, "[[example]]",
+            "only an example may require the feature"
+        );
         required.push(lines.clone());
     }
     assert_eq!(required.len(), 1);
@@ -126,7 +123,10 @@ fn no_workspace_crate_generated_build_or_deploy_build_enables_the_feature() {
             .any(|line| line.trim_start().starts_with("features =")),
         "deployed controller binaries share the library's crate features"
     );
-    for script in ["deploy/dl380g10/build-release.sh", "deploy/dl380g10/verify.sh"] {
+    for script in [
+        "deploy/dl380g10/build-release.sh",
+        "deploy/dl380g10/verify.sh",
+    ] {
         let text = read(&checkout.join(script));
         assert!(!text.contains(FEATURE), "{script} names the feature");
         for line in text.lines().filter(|line| line.contains("cargo ")) {
@@ -209,73 +209,93 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     false
 }
 
-fn binary(name: &str, path: Option<&'static str>) -> Option<(String, Vec<u8>)> {
-    let path = path?;
-    let bytes = std::fs::read(path).unwrap_or_else(|error| panic!("{name} at {path}: {error}"));
-    assert!(bytes.starts_with(b"\x7fELF"), "{name} is not an ELF binary");
-    Some((name.into(), bytes))
-}
-
 /// A feature-enabled test build is never a deploy build; the gate builds this without it.
 #[cfg(not(feature = "activation-qualification"))]
-#[test]
-fn deployed_binaries_lack_the_skip_symbol_and_marker_while_the_example_has_it() {
-    let mut deployed = vec![
-        binary("tl3", option_env!("CARGO_BIN_EXE_tl3")),
-        binary("tl3d", option_env!("CARGO_BIN_EXE_tl3d")),
-        binary("tl3-run-backend", option_env!("CARGO_BIN_EXE_tl3-run-backend")),
-        binary(
-            "tl3-worker-supervisor",
-            option_env!("CARGO_BIN_EXE_tl3-worker-supervisor"),
-        ),
-    ];
-    let deploy_helper = binary(
-        "example_tl3-deploy",
-        option_env!("CARGO_BIN_EXE_example_tl3-deploy"),
-    );
-    let example = binary(
-        "example_fx-stage-packet",
-        option_env!("CARGO_BIN_EXE_example_fx-stage-packet"),
-    );
-    if bazel() {
-        assert!(
-            deploy_helper.is_some() && example.is_some(),
-            "the gate must scan the deploy helper and the positive control"
-        );
+mod deployed {
+    use super::*;
+
+    /// tools/bazel/rust.bzl points CARGO_MANIFEST_DIR at this fixed runfiles path.
+    const BAZEL_MANIFEST_DIR: &str = "/tmp/tl3-workspace/crates/controller";
+
+    fn bazel() -> bool {
+        env!("CARGO_MANIFEST_DIR") == BAZEL_MANIFEST_DIR
     }
-    deployed.push(deploy_helper);
-    let mut scanned = Vec::new();
-    for (name, bytes) in deployed.into_iter().flatten() {
-        for needle in [SKIP_SYMBOL, MARKER] {
+
+    fn binary(name: &str, path: Option<&'static str>) -> Option<(String, Vec<u8>)> {
+        let path = path?;
+        let bytes = std::fs::read(path).unwrap_or_else(|error| panic!("{name} at {path}: {error}"));
+        assert!(bytes.starts_with(b"\x7fELF"), "{name} is not an ELF binary");
+        Some((name.into(), bytes))
+    }
+
+    #[test]
+    fn deployed_binaries_lack_the_skip_symbol_and_marker_while_the_example_has_it() {
+        let mut deployed = vec![
+            binary("tl3", option_env!("CARGO_BIN_EXE_tl3")),
+            binary("tl3d", option_env!("CARGO_BIN_EXE_tl3d")),
+            binary(
+                "tl3-run-backend",
+                option_env!("CARGO_BIN_EXE_tl3-run-backend"),
+            ),
+            binary(
+                "tl3-worker-supervisor",
+                option_env!("CARGO_BIN_EXE_tl3-worker-supervisor"),
+            ),
+        ];
+        let deploy_helper = binary(
+            "example_tl3-deploy",
+            option_env!("CARGO_BIN_EXE_example_tl3-deploy"),
+        );
+        let example = binary(
+            "example_fx-stage-packet",
+            option_env!("CARGO_BIN_EXE_example_fx-stage-packet"),
+        );
+        if bazel() {
             assert!(
-                !contains(&bytes, needle.as_bytes()),
-                "deployed binary {name} contains {needle}"
+                deploy_helper.is_some() && example.is_some(),
+                "the gate must scan the deploy helper and the positive control"
             );
         }
-        scanned.push(name);
-    }
-    assert!(scanned.len() >= 4, "deployed binaries missing: {scanned:?}");
-    if let Some((name, bytes)) = example {
-        assert!(
-            contains(&bytes, MARKER.as_bytes()),
-            "positive control {name} lacks the marker; the absence scan would be vacuous"
-        );
-        println!(
-            "positive control {name}: marker present, symbol {}",
-            if contains(&bytes, SKIP_SYMBOL.as_bytes()) {
-                "present"
-            } else {
-                "inlined or stripped"
+        deployed.push(deploy_helper);
+        let mut scanned = Vec::new();
+        for (name, bytes) in deployed.into_iter().flatten() {
+            for needle in [SKIP_SYMBOL, MARKER] {
+                assert!(
+                    !contains(&bytes, needle.as_bytes()),
+                    "deployed binary {name} contains {needle}"
+                );
             }
-        );
+            scanned.push(name);
+        }
+        assert!(scanned.len() >= 4, "deployed binaries missing: {scanned:?}");
+        if let Some((name, bytes)) = example {
+            assert!(
+                contains(&bytes, MARKER.as_bytes()),
+                "positive control {name} lacks the marker; the absence scan would be vacuous"
+            );
+            println!(
+                "positive control {name}: marker present, symbol {}",
+                if contains(&bytes, SKIP_SYMBOL.as_bytes()) {
+                    "present"
+                } else {
+                    "inlined or stripped"
+                }
+            );
+        }
+        println!("scanned deployed binaries: {scanned:?}");
     }
-    println!("scanned deployed binaries: {scanned:?}");
 }
 
 #[test]
 fn byte_scan_finds_needles_anywhere() {
-    assert!(contains(b"xxfor_canary_qualificationyy", SKIP_SYMBOL.as_bytes()));
+    assert!(contains(
+        b"xxfor_canary_qualificationyy",
+        SKIP_SYMBOL.as_bytes()
+    ));
     assert!(contains(MARKER.as_bytes(), MARKER.as_bytes()));
-    assert!(!contains(b"for_canary_qualificatio", SKIP_SYMBOL.as_bytes()));
+    assert!(!contains(
+        b"for_canary_qualificatio",
+        SKIP_SYMBOL.as_bytes()
+    ));
     assert!(!contains(b"ffor_canary", b"fz"));
 }
