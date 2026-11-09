@@ -167,8 +167,6 @@ pub(super) proof fn step_preserves_accepted_full(before: World, after: World, i:
         before.nodes@[i].phase is Closed ==> after.nodes@[i].phase is Closed,
         after.nodes@[i].credit.withheld ==> before.nodes@[i].credit.withheld
             || !dependencies::prerequisites_delivered(before, NodeId(i as u64)),
-        dependencies::prerequisites_delivered(before, NodeId(i as u64))
-            || dependencies::owner_waiting_ok(after.nodes@[i]),
     ensures checking::accepted(after),
 {
     checking::accepted_parts(before);
