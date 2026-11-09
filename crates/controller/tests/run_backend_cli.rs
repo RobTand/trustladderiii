@@ -1500,7 +1500,7 @@ job)
     *) exit 9;; esac;;
 *) exit 9;; esac
 "#).unwrap();
-        fs::write(p.join("jobspec.py"), r#"import json,sys,pathlib,os
+        fs::write(p.join("jobspec.py"), r#"import json,sys,pathlib,os,resource
 root=pathlib.Path(sys.argv[1]);args=sys.argv[2:]
 # Read only the owned fake-native process initial environment, never the test caller.
 initial=dict(item.decode().split('=',1) for item in pathlib.Path(f'/proc/{os.getppid()}/environ').read_bytes().split(b'\0') if item)
@@ -1512,8 +1512,11 @@ for item in args:
     elif item.startswith('--env=') and '=' in item[6:]:
         key,value=item[6:].split('=',1);environment[key]=value
 user=dict(item[15:].split('=',1) for item in args if item.startswith('--setattr=user.'))
+shell_options={'output':{'stdout':{'path':option('--output=')},'stderr':{'path':option('--error=')}}}
+# Model the Flux CLI: it propagates the submitter's soft rlimits unless --rlimit=-* is given.
+if '--rlimit=-*' not in args: shell_options['rlimit']={'nofile':resource.getrlimit(resource.RLIMIT_NOFILE)[0],'core':resource.getrlimit(resource.RLIMIT_CORE)[0]}
 runner=next(i for i,item in enumerate(args) if not item.startswith('-') and item.startswith('/mnt/shared/'))
-spec={'tasks':[{'command':args[runner:]}], 'resources':[{'type':'node','count':1,'with':[{'type':'slot','count':1,'label':'task','with':[{'type':'core','count':int(args[args.index('-c')+1])}]}]}], 'attributes':{'user':user,'system':{'duration':option('-t') if any(item.startswith('-t=') for item in args) else args[args.index('-t')+1], 'constraints':option('--requires='), 'cwd':option('--cwd='),'environment':environment,'job':{'name':option('--job-name=')}, 'shell':{'options':{'output':{'stdout':{'path':option('--output=')},'stderr':{'path':option('--error=')}}}}}}}
+spec={'tasks':[{'command':args[runner:]}], 'resources':[{'type':'node','count':1,'with':[{'type':'slot','count':1,'label':'task','with':[{'type':'core','count':int(args[args.index('-c')+1])}]}]}], 'attributes':{'user':user,'system':{'duration':option('-t') if any(item.startswith('-t=') for item in args) else args[args.index('-t')+1], 'constraints':option('--requires='), 'cwd':option('--cwd='),'environment':environment,'job':{'name':option('--job-name=')}, 'shell':{'options':shell_options}}}}
 text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
 "#).unwrap();
         fs::set_permissions(&native, fs::Permissions::from_mode(0o555)).unwrap();
@@ -1865,6 +1868,89 @@ fn jobspec_and_native_access_environment_are_exact_and_exclude_caller_sentinels(
     assert_eq!(
         unisolated["attributes"]["system"]["environment"]["TL3_TEST_CALLER_BENIGN"],
         "synthetic-benign-sentinel"
+    );
+}
+
+#[test]
+#[ignore = "requires admitted PB CLI child fixture"]
+fn jobspec_submit_clears_propagated_rlimits() {
+    let f = Fixture::new();
+    // The submitting process carries a distinctive soft limit that Flux would propagate.
+    let mut child = Command::new("/bin/sh")
+        .arg("-c")
+        .arg("ulimit -S -n 777 && exec \"$0\" \"$@\"")
+        .arg(env!("CARGO_BIN_EXE_tl3-run-backend"))
+        .args(["--config", f.config.to_str().unwrap()])
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writeln!(
+        child.stdin.take().unwrap(),
+        "{}",
+        json!({"op":"submit","request":f.request,"intent":f.intent})
+    )
+    .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let frames: Vec<Value> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|r| serde_json::from_str(r).unwrap())
+        .collect();
+    assert_eq!(
+        frames.last().unwrap()["result"]["submission"]["kind"],
+        "accepted",
+        "{frames:?}"
+    );
+    let args = fs::read_to_string(f.root.path().join("args"))
+        .unwrap()
+        .lines()
+        .skip(1)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        args.iter().filter(|a| a.as_str() == "--rlimit=-*").count(),
+        1,
+        "{args:?}"
+    );
+    for path in [
+        f.root.path().join("jobspec.json"),
+        f.intent.output_dir.join("original-jobspec.json"),
+    ] {
+        let spec: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        let options = &spec["attributes"]["system"]["shell"]["options"];
+        assert!(options.is_object(), "{spec}");
+        assert!(options.get("rlimit").is_none(), "{spec}");
+    }
+    // Demonstrate this producer models propagation: without the reset the sentinel leaks.
+    let without_reset = args
+        .iter()
+        .filter(|a| a.as_str() != "--rlimit=-*")
+        .cloned()
+        .collect::<Vec<_>>();
+    let propagated = Command::new("/bin/sh")
+        .arg("-c")
+        .arg("ulimit -S -n 777 && exec /usr/bin/python3 \"$@\"")
+        .arg("jobspec-producer")
+        .arg(f.root.path().join("jobspec.py"))
+        .arg(f.root.path())
+        .args(&without_reset)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .unwrap();
+    assert!(
+        propagated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&propagated.stderr)
+    );
+    let leaked: Value = serde_json::from_slice(&propagated.stdout).unwrap();
+    assert_eq!(
+        leaked["attributes"]["system"]["shell"]["options"]["rlimit"]["nofile"],
+        777
     );
 }
 
