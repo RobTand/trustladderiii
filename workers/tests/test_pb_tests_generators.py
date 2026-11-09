@@ -642,7 +642,8 @@ def test_generator_stage_timeout_is_attributed_without_losing_inner_verdict(
 def test_generator_still_requires_flux_admission_before_any_work(tmp_path, monkeypatch):
     from tl3_harness import generator
     monkeypatch.delenv("TL3_EXECUTION_BACKEND", raising=False)
-    with pytest.raises(RuntimeError, match="admitted Flux job"):
+    # Without a Flux job the generator (or the fail-closed launch context) refuses first.
+    with pytest.raises(RuntimeError, match="Flux"):
         generator.run(tmp_path, generator.Container(IMAGE), "python3 generate.py",
                       ["**/BUILD.bazel"], [], ["tests/BUILD.bazel"])
 

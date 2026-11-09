@@ -36,6 +36,7 @@ def flux(tmp_path, monkeypatch):
     xdg.mkdir(mode=0o700)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(xdg))
+    monkeypatch.setenv("TL3_EXECUTION_BACKEND", "flux")
     output = tmp_path / "output"
     output.mkdir()
     scratch = tmp_path / "scratch"

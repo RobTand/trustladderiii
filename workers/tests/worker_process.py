@@ -344,6 +344,7 @@ sys.exit(1 if args[:2] == ['container', 'exists'] else 0)
     (root / "scratch").mkdir(mode=0o700)
     monkeypatch.setenv("PATH", f"{root / 'bin'}{os.pathsep}{os.environ.get('PATH', '/usr/bin:/bin')}")
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(root / "xdg"))
+    monkeypatch.setenv("TL3_EXECUTION_BACKEND", "flux")
     context = {
         "run": {"backend": "flux", "uri": "local:///fixture", "instance": "run/generation", "job": "fJob"},
         "owner": "owner", "correlation": "correlation", "request_digest": "f" * 64,
