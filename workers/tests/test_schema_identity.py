@@ -21,10 +21,15 @@ def test_schema_inventory():
         "601e53cf2b07578499a15b1f026ae9e374add04d88fa1098c02c6e7c715e9520"
     )
     assert set(CURRENT["schemas"]) == set(CLOSURE_PATHS) | {"maker-input.json", "maker-reply.json", "check-report.json",
-                                                                      "audit-input.json", "ingest-input.json"}
+                                                                      "audit-input.json", "ingest-input.json",
+                                                                      "planner-reply.json"}
     # #832 and #826 add worker/operator contracts outside every model prompt.
+    # S1 adds the Rust action policy/request and plugin contracts, and its canonical
+    # named planner checks re-derive planner-reply.json's current pairs.
     expected = set(BASE["schemas"]) | {"plan-check-provenance.json", "execution-failure.json",
-                                       "worker-execution.json"}
+                                       "worker-execution.json", "action-policy-request.json",
+                                       "action-policy-response.json", "action-request.json",
+                                       "plugin-fact.json", "plugin-response.json"}
     assert {path.name for path in SCHEMAS.iterdir() if path.name.endswith(".json")} == expected
 
 

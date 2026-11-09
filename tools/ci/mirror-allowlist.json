@@ -95,6 +95,11 @@
     "owner": "#923"
   },
   {
+    "path": "crates/controller/tests/check_translate_io/production_helpers_current.rs",
+    "detector": "frozen-copy",
+    "owner": "#923"
+  },
+  {
     "path": "crates/controller/tests/check_translate_io/properties.rs",
     "detector": "source-include",
     "owner": "#923"
