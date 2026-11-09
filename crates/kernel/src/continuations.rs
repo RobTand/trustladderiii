@@ -2,69 +2,54 @@
 use super::*;
 
 kernel_fn! {
-/// Question continuation rows / #771: fund and pay before changing phase.
-/// The node work is continue_node; this world entry frames the other nodes.
-pub(super) fn go_on(w: &mut World, i: usize, q: Question, deposit: u8,
-    out: &mut Outbox) -> (result: ()) [
-    requires i < old(w).nodes@.len(), old(out).len < OUTBOX, q.cost <= 1,
-        old(w).nodes@[i as int].generation < u64::MAX,
-        old(w).nodes@[i as int].credit.start as int
-            + old(w).nodes@[i as int].credit.earned as int
-            + old(w).nodes@[i as int].credit.added as int
-                >= old(w).nodes@[i as int].credit.spent as int,
-        old(w).nodes@[i as int].credit.withheld ==> q.cost == 0,
-        old(w).nodes@[i as int].credit.added as int + 255 <= u64::MAX as int,
-        old(w).nodes@[i as int].credit.spent < u64::MAX,
-    ensures (old(w).nodes@[i as int].phase == Phase::AwaitingRob
-            && old(w).nodes@[i as int].question == Some(q) && !old(w).nodes@[i as int].paused
-            && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none()
-            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
-        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
-        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
-        (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
-        final(w).nodes@.len() == old(w).nodes@.len(),
-        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
-            ==> final(w).nodes@[j] == old(w).nodes@[j],
-        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
-        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
-        final(w).nodes@[i as int].credit.start == old(w).nodes@[i as int].credit.start,
-        final(w).nodes@[i as int].credit.earned == old(w).nodes@[i as int].credit.earned,
-        final(w).nodes@[i as int].credit.added as int <= old(w).nodes@[i as int].credit.added as int + 255,
-        final(w).nodes@[i as int].credit.spent as int <= old(w).nodes@[i as int].credit.spent as int + 1,
-        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-        final(w).nodes@[i as int].question.is_none(),
-        final(w).nodes@[i as int].proposed == old(w).nodes@[i as int].proposed,
-        final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
-        final(w).nodes@[i as int].review_stop == old(w).nodes@[i as int].review_stop,
-        final(w).nodes@[i as int].attempt == old(w).nodes@[i as int].attempt,
-        final(w).nodes@[i as int].replanned == old(w).nodes@[i as int].replanned,
-        old(w).nodes@[i as int].phase == Phase::AwaitingRob
-            ==> handler_safety::command_step(old(w).nodes@[i as int], final(w).nodes@[i as int]),
-        final(w).next_ticket == old(w).next_ticket,
-        final(w).next_question == old(w).next_question,
-        final(w).gates@ == old(w).gates@,
-        final(w).pool_capacity == old(w).pool_capacity,
-        final(w).fail_fast == old(w).fail_fast,
-        final(w).file_sets@ == old(w).file_sets@,
-        final(w).dependencies@ == old(w).dependencies@,
-        final(out).len <= old(out).len + 1,
+/// Question continuation rows / #771: fund and pay before changing phase, then
+/// the replanned note, as a value function (K5): the continued node and the
+/// optional note are returned; on_command writes them back.
+pub(super) fn go_on(n: Node, q: Question, deposit: u8) -> (result: (Node, Option<Notice>)) [
+    requires q.cost <= 1,
+        n.generation < u64::MAX,
+        n.credit.start as int + n.credit.earned as int + n.credit.added as int
+            >= n.credit.spent as int,
+        n.credit.withheld ==> q.cost == 0,
+        n.credit.added as int + 255 <= u64::MAX as int,
+        n.credit.spent < u64::MAX,
+    ensures (n.phase == Phase::AwaitingRob && n.question == Some(q) && !n.paused
+            && !n.waiting_incident && n.effect.is_none()
+            ==> distance(result.0) < distance(n)),
+        result.0.repo == n.repo, result.0.footprint == n.footprint,
+        (settle_shape(n) ==> settle_shape(result.0)),
+        result.0.generation as int <= n.generation as int + 1,
+        result.0.next_seq == n.next_seq,
+        result.0.credit.start == n.credit.start, result.0.credit.earned == n.credit.earned,
+        result.0.credit.added as int <= n.credit.added as int + 255,
+        result.0.credit.spent as int <= n.credit.spent as int + 1,
+        result.0.last_cmd == n.last_cmd,
+        result.0.question.is_none(),
+        result.0.proposed == n.proposed, result.0.adopted == n.adopted,
+        result.0.review_stop == n.review_stop, result.0.attempt == n.attempt,
+        result.0.replanned == n.replanned,
+        n.phase == Phase::AwaitingRob ==> handler_safety::command_step(n, result.0),
+        result.1 == (if (match q.cont { Cont::Planning { must_split } => !must_split, _ => false })
+            && n.replanned && q.kind == QKind::OutOfCredit {
+            Some(Notice::Note(NoteKind::Replanned))
+        } else { None }),
 ] {
-    kernel_snapshot! { before_go_on = w.nodes@[i as int] }
-    let m = continue_node(w.nodes[i], q, deposit);
-    w.nodes[i] = m;
+    let m = continue_node(n, q, deposit);
+    let mut note: Option<Notice> = None;
     match q.cont {
         Cont::Planning { must_split } => {
             if !must_split && m.replanned && q.kind == QKind::OutOfCredit {
-                notice(out, i, Notice::Note(NoteKind::Replanned));
+                note = Some(Notice::Note(NoteKind::Replanned));
             }
         }
         _ => {}
     }
     kernel_proof! {
-        if before_go_on@.phase == Phase::AwaitingRob {
-            handler_safety::continue_step(before_go_on@, w.nodes@[i as int]);
+        if n.phase == Phase::AwaitingRob {
+            handler_safety::continue_step(n, m);
         }
     }
+    (m, note)
 }
 }
 
@@ -135,7 +120,7 @@ pub(super) fn continue_node(n: Node, q: Question, deposit: u8) -> (result: Node)
 kernel_fn! {
 /// K5 value form of set_phase: the same contract over the returned node, with the
 /// single borrow kept out of the callers' queries.
-fn set_phase_v(n: Node, phase: Phase) -> (result: Node) [
+pub(super) fn set_phase_v(n: Node, phase: Phase) -> (result: Node) [
     requires n.generation < u64::MAX,
     ensures
         result == (Node {
@@ -167,7 +152,7 @@ fn set_phase_v(n: Node, phase: Phase) -> (result: Node) [
 kernel_fn! {
 /// K5 value form of enter_stopping: the same contract over the returned node, with the
 /// single borrow kept out of the callers' queries.
-fn enter_stopping_v(n: Node, outcome: Outcome) -> (result: Node) [
+pub(super) fn enter_stopping_v(n: Node, outcome: Outcome) -> (result: Node) [
     requires !(n.phase is Closed || n.phase is Stopping)
         ==> n.generation < u64::MAX,
     ensures result == retirement::stopped(n, outcome),
