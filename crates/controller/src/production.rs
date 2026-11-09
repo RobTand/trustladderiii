@@ -21,8 +21,9 @@ pub fn register(config: &tl3_config::Config) -> Result<Registration> {
     use tl3_store::Store;
 
     config.validate()?;
-    adapters::flux_checks::activation::RuntimeActivation::load(&config.flux)?;
+    // Credentials refuse before anything else, including the Flux activation.
     config.validate_secret_files()?;
+    adapters::flux_checks::activation::RuntimeActivation::load(&config.flux)?;
     let bootstrap = Bootstrap::from_config(config)?;
     if bootstrap.operations.is_none() {
         return Err(Error::Invalid(
