@@ -1547,7 +1547,10 @@ impl World {
     #[allow(clippy::manual_map)]
     fn record_hold(&mut self, i: usize, node: NodeId) -> (result: ()) [
         requires i < old(self).nodes@.len(),
-        ensures final(self).nodes@ == old(self).nodes@.update(i as int, Node {
+        ensures final(self).nodes@.len() == old(self).nodes@.len(),
+            forall|j: int| 0 <= j < old(self).nodes@.len() && j != i
+                ==> final(self).nodes@[j] == old(self).nodes@[j],
+            final(self).nodes@[i as int] == (Node {
                 waiting_prerequisite: final(self).nodes@[i as int].waiting_prerequisite,
                 credit: Credit { withheld: final(self).nodes@[i as int].credit.withheld,
                     ..old(self).nodes@[i as int].credit },
