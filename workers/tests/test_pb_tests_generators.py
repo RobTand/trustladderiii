@@ -20,7 +20,8 @@ from worker_process import generator_repo  # noqa: F401
 
 
 @pytest.mark.parametrize('unknown_first', [False, True])
-def test_selected_flux_generator_retains_unknown_and_imports_once(generator_repo, tmp_path, monkeypatch, unknown_first):
+def test_selected_flux_generator_retains_unknown_and_imports_once(
+        generator_repo, generator_backend, tmp_path, monkeypatch, unknown_first):
     from tl3_harness import generator
     from tl3_workers import flux_execution
     tree, generate = configured_generator(generator_repo, tmp_path)
@@ -29,8 +30,6 @@ def test_selected_flux_generator_retains_unknown_and_imports_once(generator_repo
     root.mkdir()
     key = 'worker:' + 'a' * 64
     prepared, attached = [], []
-    monkeypatch.setattr(generator, 'require_admission', lambda: None)
-    monkeypatch.setattr(generator, 'container_command', lambda tree, container, argv, cidfile: argv)
     monkeypatch.setattr(flux_execution, 'activation', lambda settings: None)
     monkeypatch.setattr(flux_execution, 'allocate', lambda settings: ('a' * 64, root))
     def prepare(settings, call, root, served, contract, **kwargs):
@@ -214,7 +213,7 @@ def test_generator_deadline_is_a_failure_not_a_hang(generator_repo, generator_ba
     shutil.copytree(generator_repo, staged, ignore=shutil.ignore_patterns(".git"))
     result = generator.run(staged, generator.Container(IMAGE),
                            "python3 -c 'import time; time.sleep(60)'", ["**/BUILD.bazel"], [],
-                           ["tests/BUILD.bazel"], timeout=0.05)
+                           ["tests/BUILD.bazel"], timeout=2)
     assert result["status"] == "failed" and result["exit_code"] == 124
     assert "deadline" in result["message"]
 
@@ -342,15 +341,24 @@ def test_generator_tool_has_no_model_selected_command_or_arguments(generator_rep
         assert tool.args == {}
 
 
-def test_generator_image_command_cannot_be_shadowed_by_a_repository_file(tmp_path, monkeypatch):
-    monkeypatch.setattr("tl3_harness.execution.scratch_directory", lambda: tmp_path)
-    from tl3_harness import generator
-    (tmp_path / "python3").write_text("#!/usr/bin/env bash\nexit 7\n")
-    (tmp_path / "python3").chmod(0o755)
-    command = generator.container_command(tmp_path, generator.Container(IMAGE),
-                                          ["python3", "generate.py"], tmp_path / "cid")
+GATED_EXEC = ["-I", "-B", "/harness/runtime_evidence.py", "--exec", "--"]
+
+
+def test_generator_image_command_cannot_be_shadowed_by_a_repository_file(generator_backend, tmp_path):
+    from tl3_harness import generator, runtime
+    from tl3_harness.runtime_evidence import SYSTEM_PATH
+    tree = tmp_path / "checkout"
+    tree.mkdir()
+    (tree / "python3").write_text("#!/usr/bin/env bash\nexit 7\n")
+    (tree / "python3").chmod(0o755)
+    runtime.prepare_scratch()
+    command = generator.container_command(tree, ["python3", "generate.py"])
+    # The image interpreter is the configured entrypoint; the trusted gate resolves
+    # argv[0] only from fixed image system directories, never the checkout.
     assert "--entrypoint=python3" in command
-    assert command[-2:] == [IMAGE, "generate.py"]
+    assert command[command.index(IMAGE) + 1:] == [*GATED_EXEC, "python3", "generate.py"]
+    assert all(directory.startswith("/") and not directory.startswith("/checkout")
+               for directory in SYSTEM_PATH.split(":"))
 
 
 @pytest.mark.parametrize("before_mode,after_mode", [(0o644, 0o755), (0o755, 0o644), (None, 0o755)])
@@ -376,19 +384,19 @@ def test_generator_rejects_mode_changes_in_action_and_artifact_validation(before
 
 @pytest.mark.parametrize("entrypoint", ["./generate.py", "tools/generate.py", "/checkout/generate.py",
                                        "/proc/self/cwd/generate.py"])
-def test_generator_never_resolves_a_maker_written_shebang(tmp_path, entrypoint, monkeypatch):
-    monkeypatch.setattr("tl3_harness.execution.scratch_directory", lambda: tmp_path)
-    from tl3_harness import generator
-    script = tmp_path / ("generate.py" if entrypoint.startswith("/") else entrypoint.removeprefix("./"))
+def test_generator_never_resolves_a_maker_written_shebang(generator_backend, tmp_path, entrypoint):
+    from tl3_harness import generator, runtime
+    tree = tmp_path / "checkout"
+    script = tree / ("generate.py" if entrypoint.startswith("/") else entrypoint.removeprefix("./"))
     script.parent.mkdir(parents=True, exist_ok=True)
     script.write_text("#!/bin/sh -c 'printf changed > tests/BUILD.bazel'\n")
     script.chmod(0o755)
+    runtime.prepare_scratch()
     with pytest.raises(ValueError, match="configured.*interpreter"):
-        generator.container_command(tmp_path, generator.Container(IMAGE), [entrypoint], tmp_path / "cid")
-    command = generator.container_command(tmp_path, generator.Container(IMAGE),
-                                          ["python3", str(script.relative_to(tmp_path))], tmp_path / "cid")
+        generator.container_command(tree, [entrypoint])
+    command = generator.container_command(tree, ["python3", str(script.relative_to(tree))])
     assert "--entrypoint=python3" in command
-    assert command[-2:] == [IMAGE, str(script.relative_to(tmp_path))]
+    assert command[command.index(IMAGE) + 1:] == [*GATED_EXEC, "python3", str(script.relative_to(tree))]
 
 
 @pytest.mark.parametrize("cpus,mem_gb", [(1, 2), (4, 12)])
@@ -495,16 +503,10 @@ def test_generator_trusted_phase_receipts_include_timeout_and_cleanup(
     from tl3_harness import generator
     staged = tmp_path / "staged"
     shutil.copytree(generator_repo, staged, ignore=shutil.ignore_patterns(".git"))
-    if fail:
-        def timeout(*args, **kwargs):
-            raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
-        monkeypatch.setattr(generator, "container_command", lambda *args: ["generator-fixture"])
-        original = generator.subprocess.run
-        def launch(args, **kwargs):
-            return timeout(args, **kwargs) if args == ["generator-fixture"] else original(args, **kwargs)
-        monkeypatch.setattr(generator.subprocess, "run", launch)
-    result = generator.run(staged, generator.Container(IMAGE), "python3 generate.py",
-                           ["**/BUILD.bazel"], [], ["tests/BUILD.bazel"])
+    # The inner timeout is the owned container's supervised deadline.
+    command = "python3 -c 'import time; time.sleep(60)'" if fail else "python3 generate.py"
+    result = generator.run(staged, generator.Container(IMAGE), command,
+                           ["**/BUILD.bazel"], [], ["tests/BUILD.bazel"], timeout=2 if fail else 120)
     assert result["status"] == ("failed" if fail else "completed"), result
     assert "timings" in result, "trusted stages must survive both success and inner timeout"
     phases = result["timings"]
@@ -528,12 +530,14 @@ def test_request_163_implicit_generator_failure_retains_safe_causal_receipt(
     from tl3_workers import runtime
     from tl3_workers.contracts import validate
     from tl3_harness import generator
-    original = generator.subprocess.run
-    def launch(args, **kwargs):
-        if args == ["python3", "generate.py"]:
-            raise subprocess.TimeoutExpired(args, kwargs["timeout"])
-        return original(args, **kwargs)
-    monkeypatch.setattr(generator.subprocess, "run", launch)
+    # The configured generator hangs; its contract deadline (300 s) is compressed to 2 s
+    # at the supervision boundary so the owned container's real deadline path runs.
+    (generator_repo / "generate.py").write_text("import time\ntime.sleep(60)\n")
+    supervised = generator.Supervised
+    def compressed(command, selection, tests, *, deadline_seconds):
+        assert deadline_seconds == 300
+        return supervised(command, selection, tests, deadline_seconds=2)
+    monkeypatch.setattr(generator, "Supervised", compressed)
     turn = AIMessage(content=json.dumps({"kind": "done", "self_check": [
         {"goal_id": "build", "status": "met", "evidence": "Model work finished."}]}))
     monkeypatch.setattr(runtime, "create_model", lambda request: FakeMessagesListChatModel(responses=[turn]))
@@ -617,11 +621,15 @@ def test_generator_stage_timeout_is_attributed_without_losing_inner_verdict(
         return original(root)
     monkeypatch.setattr(generator, "manifest", manifest)
     if phase == "cleanup":
-        original_cleanup = generator.tempfile.TemporaryDirectory.cleanup
-        def cleanup(self):
-            original_cleanup(self)
+        from contextlib import contextmanager
+        from tl3_harness import runtime
+        original_workspace = runtime.workspace
+        @contextmanager
+        def workspace(prefix):
+            with original_workspace(prefix) as directory:
+                yield directory
             raise generator.StageTimeout("cleanup")
-        monkeypatch.setattr(generator.tempfile.TemporaryDirectory, "cleanup", cleanup)
+        monkeypatch.setattr(runtime, "workspace", workspace)
     result = generator.run(staged, generator.Container(IMAGE), "python3 generate.py",
                            ["**/BUILD.bazel"], [], ["tests/BUILD.bazel"])
     assert result["status"] == "failed", result
@@ -631,12 +639,10 @@ def test_generator_stage_timeout_is_attributed_without_losing_inner_verdict(
     assert result["exit_code"] == (0 if phase == "cleanup" else 124)
 
 
-def test_generator_still_requires_pb_admission_before_any_work(tmp_path, monkeypatch):
+def test_generator_still_requires_flux_admission_before_any_work(tmp_path, monkeypatch):
     from tl3_harness import generator
-    for name in ("PRISMABUILD_CONTAINER_OWNER", "PRISMABUILD_CONTAINER_MARKER",
-                 "PRISMABUILD_ACTION_PROGRESS_PATH", "PRISMABUILD_ACTION_PROGRESS_TOKEN"):
-        monkeypatch.delenv(name, raising=False)
-    with pytest.raises(RuntimeError, match="admitted PrismaBuild"):
+    monkeypatch.delenv("TL3_EXECUTION_BACKEND", raising=False)
+    with pytest.raises(RuntimeError, match="admitted Flux job"):
         generator.run(tmp_path, generator.Container(IMAGE), "python3 generate.py",
                       ["**/BUILD.bazel"], [], ["tests/BUILD.bazel"])
 
