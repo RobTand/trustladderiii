@@ -138,10 +138,10 @@ class Fixtures(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'selector/count differs from exact source'):
                 D['prepare'](self.source, config, D['owned_directory'](self.root / ('checking-invalid-' + str(len(change.get('selector', ''))))))
 
-    def test_all_425_production_selectors_parse(self):
+    def test_all_426_production_selectors_parse(self):
         inventory = D['loads']((HERE / 'production-selectors.fixture.json').read_bytes())
         self.assertEqual(len(inventory['selections']), inventory['groups'])
-        self.assertEqual(inventory['groups'], 425)
+        self.assertEqual(inventory['groups'], 426)
         self.assertEqual(sum(row['expected'] for row in inventory['selections']), inventory['obligations'])
         rows = []
         for selection in inventory['selections']:
@@ -221,7 +221,7 @@ class Fixtures(unittest.TestCase):
             with self.subTest(flags=flags), self.assertRaises(ValueError):
                 D['validate_execution'](bad, row, 'normal')
 
-    def test_all_425_production_selection_flags(self):
+    def test_all_426_production_selection_flags(self):
         inventory = D['loads']((HERE / 'production-selectors.fixture.json').read_bytes())
         rows = []
         for selection in inventory['selections']:
@@ -237,7 +237,7 @@ class Fixtures(unittest.TestCase):
             'source_head': inventory['source_head'], 'runner_sha256': D['digest'](self.original),
             'production_builder_source_guard': True, 'executions': 'synthetic, not Verus runs',
             'rows': rows, 'validation_passes': sum(row['validation'] == 'PASS' for row in rows)}))
-        self.assertEqual(len(rows), 425)
+        self.assertEqual(len(rows), 426)
         self.assertEqual({row['kind'] for row in rows}, {'root', 'module', 'function'})
         self.assertEqual([row for row in rows if row['validation'] != 'PASS'], [])
 
@@ -515,10 +515,10 @@ class Fixtures(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'single selector exceeds stock size limit: ' + rows[0]['target']):
             plan_for(config, lambda i, j: False)
 
-    def test_425_selector_planning_bound(self):
+    def test_426_selector_planning_bound(self):
         # Synthetic inventory, real stock serializer, no network or Run.
         rows = []
-        for index in range(425):
+        for index in range(426):
             name = D['digest'](str(index).encode())
             rows.append({'target': '//crates/kernel:verus_synthetic_' + name,
                          'selector': 'kernel::synthetic#proof_' + name, 'expected': 1})
@@ -527,7 +527,7 @@ class Fixtures(unittest.TestCase):
         runs, plans = [], []
 
         def timed_out(signum, frame):
-            raise TimeoutError('425-selector planner exceeded 30-second fixture bound')
+            raise TimeoutError('426-selector planner exceeded 30-second fixture bound')
 
         previous = signal.signal(signal.SIGALRM, timed_out)
         try:
@@ -551,7 +551,7 @@ class Fixtures(unittest.TestCase):
                     runs.append({'repeat': repeat, 'complete': complete, 'seconds': time.monotonic() - started,
                                  'stock_serializations': calls, 'bound_seconds': 30})
                     self.evidence.joinpath('planner-scale.json').write_bytes(D['encoded']({
-                        'inventory': '425 deterministic synthetic selectors; no proof execution', 'runs': runs}))
+                        'inventory': '426 deterministic synthetic selectors; no proof execution', 'runs': runs}))
                 self.assertLessEqual(calls, 3 * len(rows))
                 self.assertEqual([row for item in plan for row in item['config']['selections']], rows)
                 self.assertTrue(all(item['size']['fits'] for item in plan))
@@ -560,7 +560,7 @@ class Fixtures(unittest.TestCase):
                 plans.append(plan)
             self.assertEqual(plans[0], plans[1])
             self.evidence.joinpath('planner-scale.json').write_bytes(D['encoded']({
-                'inventory': '425 deterministic synthetic selectors; no proof execution',
+                'inventory': '426 deterministic synthetic selectors; no proof execution',
                 'runs': runs, 'deterministic': True, 'all_final_stock_guards_pass': True,
                 'batches': [{'start': item['start'], 'end': item['end'], 'size': item['size']} for item in plans[0]]}))
         finally:
