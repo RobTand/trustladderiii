@@ -30,8 +30,9 @@ def flux_context(monkeypatch, *, no_progress_seconds=120, **extra):
     output = root / 'output'
     output.mkdir()
     context = {
+        # Each fixture is its own job: job-scoped caches never leak between tests.
         'run': {'backend': 'flux', 'uri': 'local:///fixture/flux', 'instance': 'fixture',
-                'job': 'fFixture'},
+                'job': 'f' + root.name.rsplit('-', 1)[-1]},
         'scratch': {'leaf': str(leaf)},
         'progress': {'journal': str(output / 'progress.jsonl'),
                      'no_progress_seconds': no_progress_seconds},
