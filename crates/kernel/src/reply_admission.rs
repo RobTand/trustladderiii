@@ -394,6 +394,7 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
         m.credit.spend(1);
         m.footprint = footprint;
         m.holds = false;
+        m.review_stop = Some(ReviewStop::MakerNeedsFiles);
         set_phase(m, Phase::Ready(Resume::Making));
         kernel_proof! {
             handler_safety::files_rows(before_files@.fail_fast, files, fits, before_files@.nodes@[i as int],

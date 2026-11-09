@@ -172,6 +172,7 @@ pub(super) fn failed_round(w: &mut World, i: usize, step: ReviewStop,
     if m.round == 0 {
         // The fix round resumes the maker's session. It's free.
         m.round = 1;
+        m.review_stop = Some(step);
         set_phase(m, if m.holds { Phase::Making } else { Phase::Ready(Resume::Making) });
         kernel_proof! {
             handler_safety::same_ladder(w.fail_fast, before_failed@, w.nodes@[i as int], before_failed_out@, *out);
