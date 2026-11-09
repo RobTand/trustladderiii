@@ -1,10 +1,40 @@
 {
-  "source_head": "fcfdb82e40ebd49259764ca12b9c217ed6240ab7",
+  "source_head": "58b8753c046ea45d8d9ad0034ff42354f2dd2313",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "1b777e961f9d68db0bb8153fe629fbf5575b536f8b6a2d6ebcbb0a606a541dae",
-  "groups": 498,
-  "obligations": 690,
+  "source_sha256": "f5d694c152e63a7fb8350a9c45b89c68e7f4f3e53cb97455013a0aa7a51ece46",
+  "groups": 504,
+  "obligations": 697,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_facts_family_value_node_rows",
+      "selector": "kernel::facts_family_values#value_node_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_ordinary_fact_value",
+      "selector": "kernel::facts_family_values#ordinary_fact_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_merge_fact_value",
+      "selector": "kernel::facts_family_values#merge_fact_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_append_fact_notices",
+      "selector": "kernel::facts_family_values#append_fact_notices",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_ordinary_fact_entry",
+      "selector": "kernel::facts_family_values#ordinary_fact_entry",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_dependency_entry",
+      "selector": "kernel::facts_family_values#fact_dependency_entry",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_facts_family_on_fact_rows",
       "selector": "kernel::facts_family_lemmas#on_fact_rows",
