@@ -1,9 +1,9 @@
 {
-  "source_head": "05256c212834b36e780acd7d172af0a839368ba2",
+  "source_head": "552cfe2ebecfc5c68242ff5ff2eea56965568ee8",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "90d6f6708f0d8a8169e3a6b22cb2379ae071f4e102ac90b11aaf9b50b815f4b6",
-  "groups": 404,
-  "obligations": 601,
+  "source_sha256": "595507277299d24f39f12e1dc16fe2052faf4bd1a323c2c237c9ef05902951d3",
+  "groups": 422,
+  "obligations": 604,
   "selections": [
     {
       "target": "//crates/kernel:verus_dependencies_node_update_preserves",
@@ -1486,9 +1486,99 @@
       "expected": 1
     },
     {
-      "target": "//crates/kernel:verus_footprint",
-      "selector": "kernel::footprint",
-      "expected": 23
+      "target": "//crates/kernel:verus_footprint_repr_clone",
+      "selector": "kernel::footprint#Repr::clone",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_clone",
+      "selector": "kernel::footprint#Footprint::clone",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_inline_is_valid",
+      "selector": "kernel::footprint#inline_is_valid",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_valid_under_table_growth",
+      "selector": "kernel::footprint#valid_under_table_growth",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_storage_frame",
+      "selector": "kernel::footprint#storage_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_inline_view",
+      "selector": "kernel::footprint#inline_view",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_inline_view_ordered",
+      "selector": "kernel::footprint#inline_view_ordered",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_sorted_contains",
+      "selector": "kernel::footprint#sorted_contains",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_is_empty",
+      "selector": "kernel::footprint#Footprint::is_empty",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_inline",
+      "selector": "kernel::footprint#Footprint::inline",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_intern_sorted_files",
+      "selector": "kernel::footprint#World::intern_sorted_files",
+      "expected": 3
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_collect_files",
+      "selector": "kernel::footprint#World::collect_files",
+      "expected": 3
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_has_footprint",
+      "selector": "kernel::footprint#World::has_footprint",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_footprints_disjoint",
+      "selector": "kernel::footprint#World::footprints_disjoint",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_union_footprints",
+      "selector": "kernel::footprint#World::union_footprints",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_inline_disjoint",
+      "selector": "kernel::footprint#inline_disjoint",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_inline_view_contains",
+      "selector": "kernel::footprint#inline_view_contains",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_view_contains",
+      "selector": "kernel::footprint#view_contains",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_disjoint_symmetric",
+      "selector": "kernel::footprint#disjoint_symmetric",
+      "expected": 1
     },
     {
       "target": "//crates/kernel:verus_ranks_node_distance_definition",
