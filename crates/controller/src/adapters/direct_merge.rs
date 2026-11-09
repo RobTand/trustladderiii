@@ -65,6 +65,14 @@ struct Intent {
     method: MergeMethod,
     consumed_through: Option<u64>,
 }
+/// A fence refusal. Only `Unready` leaves a never-accepted handoff unexplained.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Refusal {
+    /// The node is paused, waits on an incident, or has an open incident.
+    Held,
+    /// The stored node or handoff is not deliverable as recorded.
+    Unready,
+}
 #[derive(Serialize, Deserialize)]
 struct Accepted {
     key: String,
@@ -327,7 +335,8 @@ impl Adapter {
     fn snapshot(&self) -> Result<Snapshot> {
         Ok(Store::open(&self.store)?.load()?)
     }
-    fn fence(&mut self, d: &Delivery) -> Result<()> {
+    /// Why the stored world refuses this delivery now, if it does.
+    fn refusal(&self, d: &Delivery) -> Result<Option<Refusal>> {
         let snapshot = self.snapshot()?;
         if d.epoch < self.epoch || snapshot.epoch.get() != d.epoch {
             return Err(Error::Invalid("direct delivery epoch is fenced"));
@@ -337,19 +346,28 @@ impl Adapter {
             .nodes
             .get(d.node().0 as usize)
             .ok_or(Error::Invalid("missing direct delivery node"))?;
-        if n.head != n.approved
-            || crate::commit_sha(&snapshot, n.approved) != d.head_sha.as_deref()
-            || n.checked.is_none()
-            || n.checked != n.approved
+        let held = n.paused
+            || n.waiting_incident
             || snapshot.rows.iter().any(|row| {
                 row.table == "incidents"
                     && row.value["open"] == true
                     && row.value["node"].as_u64() == Some(d.node().0)
-            })
+            });
+        Ok(if held {
+            Some(Refusal::Held)
+        } else if n.head != n.approved
+            || crate::commit_sha(&snapshot, n.approved) != d.head_sha.as_deref()
+            || n.checked.is_none()
+            || n.checked != n.approved
             || !delivery_authority(n, d)
-            || n.paused
-            || n.waiting_incident
         {
+            Some(Refusal::Unready)
+        } else {
+            None
+        })
+    }
+    fn fence(&mut self, d: &Delivery) -> Result<()> {
+        if self.refusal(d)?.is_some() {
             return Err(Error::ChecksPending);
         }
         self.boundary(Write::Fence, false);
@@ -746,20 +764,43 @@ impl Adapter {
                 Ok(completion)
             }
             Err(Error::ChecksPending) => Ok(Completion::delivery_accepted(vec![])),
-            Err(error) => {
-                self.wait(d)?;
-                let mut completion = Completion::delivery_accepted(vec![]);
-                completion.failure_class = Some(crate::looks::failure_class(&error).into());
-                if matches!(error, Error::Permanent { .. }) {
-                    completion.diagnostic = Some(crate::publication_failure::Diagnostic::capture(
-                        d,
-                        Some(&error),
-                        crate::looks::failure_class(&error),
-                    )?);
-                }
-                Ok(completion)
-            }
+            Err(error) => self.accepted_refusal(d, error),
         }
+    }
+    /// After durable acceptance, only a permanent refusal becomes an accepted
+    /// diagnostic. A fatal stored-state error and every recoverable read or
+    /// write failure return unchanged: Q7 read accounting counts them, and the
+    /// merge authorization is not consumed.
+    fn accepted_refusal(&self, d: &Delivery, error: Error) -> Result<Completion> {
+        // Fatal classes are checked on their own, not only through the permanent filter.
+        if !crate::input_errors::recoverable(&error) || !matches!(error, Error::Permanent { .. }) {
+            return Err(error);
+        }
+        self.wait(d)?;
+        let class = crate::looks::failure_class(&error);
+        let mut completion = Completion::delivery_accepted(vec![]);
+        completion.failure_class = Some(class.into());
+        completion.diagnostic = Some(crate::publication_failure::Diagnostic::capture(
+            d,
+            Some(&error),
+            class,
+        )?);
+        Ok(completion)
+    }
+    /// State-table "Looks and stalls": a handoff Direct never durably accepted
+    /// is an unacknowledged operation, so the look is pending and Q7 read
+    /// accounting escalates it. A deliberate hold (pause, incident wait, open
+    /// node incident) already has an owner and a signal, so it stays a healthy
+    /// wait, as does any refusal after acceptance.
+    fn refused_look(&self, d: &Delivery) -> Result<Look> {
+        let path = self.records.path(&d.key).with_extension("accepted");
+        if read_file::<Accepted>(&path)?.is_some() {
+            return Ok(Look::Healthy);
+        }
+        Ok(match self.refusal(d)? {
+            Some(Refusal::Unready) => Look::Pending,
+            Some(Refusal::Held) | None => Look::Healthy,
+        })
     }
     fn attempt_accepted(&mut self, d: &Delivery) -> Result<Completion> {
         number(d)?;
@@ -962,29 +1003,18 @@ impl Executor for Adapter {
             return Ok(match self.reconcile(d)? {
                 Reconciliation::Found(c) => Look::Found(c),
                 Reconciliation::Absent => Look::Absent,
-                Reconciliation::Pending => Look::Healthy,
+                // `attempt` is pending only when the fence refused acceptance.
+                Reconciliation::Pending => self.refused_look(d)?,
             });
         }
         match self.accept(d) {
-            Err(Error::ChecksPending) => return Ok(Look::Healthy),
+            Err(Error::ChecksPending) => return self.refused_look(d),
             Err(error) => return Err(error),
             Ok(()) => {}
         }
         let completion = match self.observations(d) {
             Ok(observations) => Completion::delivery_accepted(observations),
-            Err(error) => {
-                self.wait(d)?;
-                let mut completion = Completion::delivery_accepted(vec![]);
-                completion.failure_class = Some(crate::looks::failure_class(&error).into());
-                if matches!(error, Error::Permanent { .. }) {
-                    completion.diagnostic = Some(crate::publication_failure::Diagnostic::capture(
-                        d,
-                        Some(&error),
-                        crate::looks::failure_class(&error),
-                    )?);
-                }
-                completion
-            }
+            Err(error) => self.accepted_refusal(d, error)?,
         };
         Ok(Look::Found(Box::new(completion)))
     }
