@@ -395,7 +395,7 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-        final(w).nodes@[i as int].review_stop == old(w).nodes@[i as int].review_stop,
+        handler_safety::keeps_review_stop(old(w).nodes@[i as int], final(w).nodes@[i as int]),
 ] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(retry_bounds);] {
     kernel_snapshot! { before_recheck = *w }
     let m = &mut w.nodes[i];
@@ -409,6 +409,9 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
             m.holds = false;
         }
         set_phase(m, target);
+        kernel_proof! {
+            handler_safety::keep_review_stop(before_recheck@.nodes@[i as int], w.nodes@[i as int]);
+        }
     } else {
         ask_rob(
             w,
@@ -422,6 +425,9 @@ pub(super) fn recheck(w: &mut World, i: usize, target: Phase,
             1,
             out,
         );
+        kernel_proof! {
+            handler_safety::keep_review_stop(before_recheck@.nodes@[i as int], w.nodes@[i as int]);
+        }
     }
     kernel_proof! {
         assert(w.nodes@.len() == before_recheck@.nodes@.len());

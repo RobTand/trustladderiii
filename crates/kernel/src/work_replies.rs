@@ -128,9 +128,11 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
                 out_of_room(w, i, ReviewStop::ReviewerOutOfRoom, out);
             } else {
                 w.nodes[i].review_restarted = true;
+                kernel_snapshot! { restarted_review = w.nodes@[i as int] }
                 recheck(w, i, Phase::Reviewing, out);
                 kernel_proof! {
-                    handler_safety::same_ladder(w.fail_fast, before_work@, w.nodes@[i as int], before_work_out@, *out);
+                    handler_safety::kept_ladder(w.fail_fast, before_work@, restarted_review@,
+                        w.nodes@[i as int], before_work_out@, *out);
                 }
             }
         }

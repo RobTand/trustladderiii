@@ -351,4 +351,29 @@ pub(super) proof fn rung_ladder(fast: bool, b: Node, n: Node, ob: Outbox, oa: Ou
     reveal(ladder);
 }
 
+
+/// recheck keeps the review stop; opaque so that recheck's other callers do
+/// not reason about it.
+#[verifier::opaque]
+pub(super) open spec fn keeps_review_stop(b: Node, n: Node) -> bool {
+    n.review_stop == b.review_stop
+}
+
+/// Establish keeps_review_stop.
+pub(super) proof fn keep_review_stop(b: Node, n: Node)
+    requires n.review_stop == b.review_stop,
+    ensures keeps_review_stop(b, n),
+{
+    reveal(keeps_review_stop);
+}
+
+/// reply_work's non-retry recheck branch: the review stop is kept from the
+/// node before review_restarted was set.
+pub(super) proof fn kept_ladder(fast: bool, b: Node, m: Node, n: Node, ob: Outbox, oa: Outbox)
+    requires keeps_review_stop(m, n), m.review_stop == b.review_stop,
+    ensures ladder(fast, false, b, n, ob, oa),
+{
+    reveal(keeps_review_stop); reveal(ladder);
+}
+
 }
