@@ -51,13 +51,12 @@ pub(super) proof fn pool_line_order(w: World, i: int)
 /// step's advance_post is needed, not its enabling condition (mutant e3d4ff4e).
 pub(super) proof fn gate_planning_holds_nothing(w: World, i: int, after: Node,
     ticket_before: u64, ticket_after: u64, changed: bool)
-    requires checking::accepted(w), 0 <= i < w.nodes@.len(),
+    requires 0 <= i < w.nodes@.len(),
         w.nodes@[i].phase == Phase::Unplanned,
         advance_post(w.nodes@[i], after, ticket_before, ticket_after, changed),
     ensures !w.nodes@[i].holds && !w.nodes@[i].pool,
         !after.holds && !after.pool,
 {
-    checking::accepted_node(w, i);
     reveal(advance_post);
 }
 }
