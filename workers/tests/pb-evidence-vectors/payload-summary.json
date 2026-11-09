@@ -76,8 +76,8 @@
       },
       "output": {
         "raise": {
-          "type": "AttributeError",
-          "message": "'NoneType' object has no attribute 'get'"
+          "type": "ValueError",
+          "message": "Invalid summary structure"
         }
       }
     },
@@ -88,8 +88,8 @@
       },
       "output": {
         "raise": {
-          "type": "AttributeError",
-          "message": "'list' object has no attribute 'get'"
+          "type": "ValueError",
+          "message": "Invalid summary structure"
         }
       }
     },
@@ -100,8 +100,8 @@
       },
       "output": {
         "raise": {
-          "type": "AttributeError",
-          "message": "'str' object has no attribute 'get'"
+          "type": "ValueError",
+          "message": "Invalid summary structure"
         }
       }
     },
@@ -112,8 +112,8 @@
       },
       "output": {
         "raise": {
-          "type": "AttributeError",
-          "message": "'int' object has no attribute 'get'"
+          "type": "ValueError",
+          "message": "Invalid summary structure"
         }
       }
     },
@@ -124,8 +124,8 @@
       },
       "output": {
         "raise": {
-          "type": "AttributeError",
-          "message": "'bool' object has no attribute 'get'"
+          "type": "ValueError",
+          "message": "Invalid summary structure"
         }
       }
     },

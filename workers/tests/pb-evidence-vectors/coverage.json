@@ -22,6 +22,11 @@
         "tests_tool._verified_test_summary"
       ],
       "cases": [
+        "payload-summary/root-bool",
+        "payload-summary/root-int",
+        "payload-summary/root-list",
+        "payload-summary/root-null",
+        "payload-summary/root-string",
         "payload-summary/shape-note",
         "payload-summary/shape-status",
         "payload-summary/shape-tests",
