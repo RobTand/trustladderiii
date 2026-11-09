@@ -1,10 +1,35 @@
 {
-  "source_head": "a7cfe07e4267b111925785c1d8e7e56ee549d50a",
+  "source_head": "c4ac7a44f71f68db86a57a9bef25d3715ef55217",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "d27213481d059843ad0306497b222aaf2274f87161bfc977b41793f1db070896",
-  "groups": 454,
-  "obligations": 660,
+  "source_sha256": "9d4838f98a6a5b93420d6c96a5270681e274606c86d86a45bd1b26bcea2c18ad",
+  "groups": 459,
+  "obligations": 665,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_commands_stop_command",
+      "selector": "kernel::commands#stop_command",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_commands_change_request_command",
+      "selector": "kernel::commands#change_request_command",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_commands_pause_command",
+      "selector": "kernel::commands#pause_command",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_commands_resume_command",
+      "selector": "kernel::commands#resume_command",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_commands_answer_command",
+      "selector": "kernel::commands#answer_command",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_answers_on_answer",
       "selector": "kernel::answers#on_answer",
