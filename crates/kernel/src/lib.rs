@@ -583,6 +583,8 @@ impl Credit {
                 final(self).earned == old(self).earned,
                 final(self).added == old(self).added,
                 final(self).withheld == old(self).withheld,
+                final(self).ready == old(self).ready,
+                final(self).merge_credited == old(self).merge_credited,
         ] {
             self.spent += cost;
         }
