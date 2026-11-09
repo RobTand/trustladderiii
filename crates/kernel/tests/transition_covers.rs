@@ -1048,3 +1048,89 @@ fn w_slot_waiters_block_planning_and_fewer_admit_it() {
         assert!(matches!(g.node(admitted).phase, Phase::Planning { .. }));
     }
 }
+
+// ---- K5 G17 second cut, part B ----
+
+/// proofs.rs:568 cover!(changed == moves, "the phase moves under settle, or waits").
+/// `step_traced` records the world after apply and after every moving advance,
+/// so in a one-request world each consecutive pair is one moving `advance` of
+/// node 0 from the earlier world, which Kani's `any_world` domain admits when
+/// it is consistent (settled or not).
+fn moves_from(trace: &[World], phase: impl Fn(Phase) -> bool) -> bool {
+    trace.windows(2).any(|pair| {
+        phase(pair[0].nodes[0].phase) && pair[0].consistent() && pair[0].nodes[0] != pair[1].nodes[0]
+    })
+}
+
+#[test]
+fn every_phase_moves_under_settle_or_waits() {
+    let (_, _, trace) = step_traced(World::new(&[1], 1), Event::NewRequest {
+        repo: RepoId(0),
+        priority: Priority::Unranked,
+    });
+    assert!(moves_from(&trace, |p| p == Phase::Ingesting), "advance_ingesting");
+
+    let ingesting = Run::new(false);
+    let (_, _, trace) = step_traced(ingesting.w.clone(), ingesting.reply_now(Reply::IngestDone { size: 1 }));
+    assert!(moves_from(&trace, |p| p == Phase::Auditing), "advance_auditing");
+
+    let mut auditing = Run::new(false);
+    auditing.reply(Reply::IngestDone { size: 1 });
+    let (_, _, trace) = step_traced(auditing.w.clone(), auditing.reply_now(Reply::AuditAgrees));
+    assert!(moves_from(&trace, |p| p == Phase::Unplanned), "advance_unplanned");
+    assert!(moves_from(&trace, |p| matches!(p, Phase::Planning { .. })), "advance_planning");
+
+    let mut planning = Run::planning();
+    let footprint = planning.w.intern_footprint([FileId(0)]);
+    let (_, _, trace) = step_traced(planning.w.clone(), planning.reply_now(Reply::PlanLeaf { footprint, fits: true }));
+    assert!(moves_from(&trace, |p| matches!(p, Phase::Ready(_))), "advance_ready");
+    assert!(moves_from(&trace, |p| p == Phase::Making), "advance_making");
+
+    let making = Run::making();
+    let (_, _, trace) = step_traced(making.w.clone(), making.reply_now(Reply::MakerDone { head: HeadId(5) }));
+    assert!(moves_from(&trace, |p| p == Phase::Checking), "advance_checking");
+
+    let mut checking = Run::making();
+    checking.head += 1;
+    checking.reply(Reply::MakerDone {
+        head: HeadId(checking.head),
+    });
+    let (_, _, trace) = step_traced(checking.w.clone(), checking.reply_now(CHECKS_PASS));
+    assert!(moves_from(&trace, |p| p == Phase::Reviewing), "advance_reviewing");
+
+    let reviewing = Run::reviewing(false);
+    let (_, _, trace) = step_traced(
+        reviewing.w.clone(),
+        reviewing.reply_now(Reply::Approved { head: HeadId(reviewing.head) }),
+    );
+    assert!(moves_from(&trace, |p| p == Phase::Publishing), "advance_publishing");
+    let (_, _, trace) = step_traced(reviewing.w.clone(), reviewing.command(Command::Stop));
+    assert!(moves_from(&trace, |p| matches!(p, Phase::Stopping(_))), "advance_stopping");
+
+    let delivered = Run::delivered(false);
+    let (_, _, trace) = step_traced(delivered.w.clone(), Event::Fact {
+        node: NodeId(0),
+        fact: Fact::Conflict,
+    });
+    assert!(moves_from(&trace, |p| p == Phase::Rebasing), "advance_rebasing");
+    // advance_awaiting_delivery: check_advance(Phase::AwaitingDelivery, false);
+    // the waiting phase does not move, so settle leaves the world unchanged.
+    assert_eq!(delivered.node().phase, Phase::AwaitingDelivery);
+    assert!(delivered.w.consistent());
+    assert_eq!(settle_world(delivered.w.clone()).0, delivered.w);
+}
+
+#[test]
+fn ci_failure_in_round_one_under_fail_fast_stops_for_review() {
+    // proofs.rs:1452 cover!(before.fail_fast && b.round == 1 && b.review_stop.is_none()
+    //     && n.review_stop == Some(ReviewStop::CiFailed), "fail_fast stops for TL3 review")
+    let mut run = Run::at_enqueue(true);
+    run.w.fail_fast = true;
+    assert!(run.w.valid());
+    let b = run.node();
+    run.send(ci_failed());
+    let n = run.node();
+    assert!(run.w.fail_fast && b.round == 1 && b.review_stop.is_none());
+    assert_eq!(n.review_stop, Some(ReviewStop::CiFailed));
+    assert_eq!(n.credit, b.credit);
+}
