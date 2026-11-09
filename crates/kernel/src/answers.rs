@@ -3,45 +3,36 @@ use super::*;
 
 kernel_fn! {
 /// Question answer rows / #771: one clarification or one paid continuation.
-pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
+/// on_command's answer work, verified against one node.
+pub(super) fn answer_node(m: &mut Node, next_question: &mut u64, i: usize, id: u64, answer: Answer,
     out: &mut Outbox) -> (result: ()) [
-    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
-        node_headroom(old(w).nodes@[i as int]),
-        arithmetic_consistent(old(w).nodes@[i as int]),
-        old(w).next_question < u64::MAX,
-    ensures (node_checked(*old(w), old(w).nodes@[i as int])
-            && answer_progress_input(old(w).nodes@[i as int], id, answer)
-            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
-        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
-        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
-        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
-        (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
-        final(w).nodes@.len() == old(w).nodes@.len(),
-        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
-            ==> final(w).nodes@[j] == old(w).nodes@[j],
-        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
-        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
-        final(w).nodes@[i as int].credit.start == old(w).nodes@[i as int].credit.start,
-        final(w).nodes@[i as int].credit.earned == old(w).nodes@[i as int].credit.earned,
-        final(w).nodes@[i as int].credit.added as int <= old(w).nodes@[i as int].credit.added as int + 255,
-        final(w).nodes@[i as int].credit.spent as int <= old(w).nodes@[i as int].credit.spent as int + 1,
-        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-        final(w).next_ticket == old(w).next_ticket,
-        final(w).next_question as int <= old(w).next_question as int + 1,
-        final(w).gates@ == old(w).gates@,
-        final(w).pool_capacity == old(w).pool_capacity,
-        final(w).fail_fast == old(w).fail_fast,
-        final(w).file_sets@ == old(w).file_sets@,
-        final(w).dependencies@ == old(w).dependencies@,
+    requires old(out).len < OUTBOX,
+        node_headroom(*old(m)),
+        arithmetic_consistent(*old(m)),
+        *old(next_question) < u64::MAX,
+    ensures (answer_progress_input(*old(m), id, answer)
+            ==> distance(*final(m)) < distance(*old(m))),
+        (old(m).phase is Closed ==> final(m).phase is Closed),
+        final(m).repo == old(m).repo,
+        final(m).footprint == old(m).footprint,
+        (settle_shape(*old(m)) ==> settle_shape(*final(m))),
+        final(m).generation as int <= old(m).generation as int + 1,
+        final(m).next_seq == old(m).next_seq,
+        final(m).credit.start == old(m).credit.start,
+        final(m).credit.earned == old(m).credit.earned,
+        final(m).credit.added as int <= old(m).credit.added as int + 255,
+        final(m).credit.spent as int <= old(m).credit.spent as int + 1,
+        final(m).last_cmd == old(m).last_cmd,
+        *final(next_question) as int <= *old(next_question) as int + 1,
         final(out).len <= old(out).len + 1,
-        final(w).nodes@[i as int].proposed == old(w).nodes@[i as int].proposed,
-        final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
-        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase),
-        handler_safety::command_step(old(w).nodes@[i as int], final(w).nodes@[i as int]),
+        final(m).proposed == old(m).proposed,
+        final(m).adopted == old(m).adopted,
+        (old(m).phase is Closed ==> final(m).phase == old(m).phase),
+        handler_safety::command_step(*old(m), *final(m)),
         transition_safety::notice_only(*old(out), *final(out), NodeId(i as u64)),
 ] proof [reveal(distance);] {
-    kernel_snapshot! { before_answer = w.nodes@[i as int] }
-    let Some(q) = w.nodes[i].question else {
+    kernel_snapshot! { before_answer = *m }
+    let Some(q) = m.question else {
         kernel_proof! { handler_safety::same_step(before_answer@); }
         return;
     };
@@ -49,17 +40,16 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         kernel_proof! { handler_safety::same_step(before_answer@); }
         return; // an answer to a question that is no longer open
     }
-    match w.nodes[i].phase {
+    match m.phase {
         Phase::Stopping(_) => match answer {
             Answer::Retry => {
-                w.nodes[i].question = None;
-                kernel_proof! { handler_safety::field_step(before_answer@, w.nodes@[i as int]); }
+                m.question = None;
+                kernel_proof! { handler_safety::field_step(before_answer@, *m); }
             }
             Answer::MarkHandled => {
-                let m = &mut w.nodes[i];
                 m.question = None;
                 mark_handled(m);
-                kernel_proof! { handler_safety::field_step(before_answer@, w.nodes@[i as int]); }
+                kernel_proof! { handler_safety::field_step(before_answer@, *m); }
             }
             _ => { kernel_proof! { handler_safety::same_step(before_answer@); } }
         },
@@ -67,7 +57,7 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
             if answer == Answer::Unclear {
                 // One clarifying question. After that the question just stays open.
                 if !q.clarified {
-                    clarify_node(&mut w.nodes[i], &mut w.next_question, i, q, out);
+                    clarify_node(m, next_question, i, q, out);
                 }
                 kernel_proof! { if q.clarified { handler_safety::same_step(before_answer@); } }
                 return;
@@ -77,25 +67,25 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
                 return;
             }
             match answer {
-                Answer::Continue => go_on(w, i, q, 0, out),
-                Answer::TryAgain => retry_answer_node(&mut w.nodes[i], i, q, out),
+                Answer::Continue => go_on(m, i, q, 0, out),
+                Answer::TryAgain => retry_answer_node(m, i, q, out),
                 Answer::AddCredit(k) => {
-                    go_on(w, i, q, k, out);
+                    go_on(m, i, q, k, out);
                 }
                 Answer::ChangeRequest => {
-                    kernel_snapshot! { before_replace = w.nodes@[i as int] }
-                    enter_stopping(&mut w.nodes[i], Outcome::Replaced);
+                    kernel_snapshot! { before_replace = *m }
+                    enter_stopping(m, Outcome::Replaced);
                     kernel_proof! {
-                        assert(w.nodes@[i as int].proposed == before_replace@.proposed && w.nodes@[i as int].adopted == before_replace@.adopted)
+                        assert(m.proposed == before_replace@.proposed && m.adopted == before_replace@.adopted)
                             by { reveal(retirement::stopped); }
                         handler_safety::stop_step(before_replace@, Outcome::Replaced);
                     }
                 }
                 Answer::Stop => {
-                    kernel_snapshot! { before_stop = w.nodes@[i as int] }
-                    enter_stopping(&mut w.nodes[i], Outcome::Stopped);
+                    kernel_snapshot! { before_stop = *m }
+                    enter_stopping(m, Outcome::Stopped);
                     kernel_proof! {
-                        assert(w.nodes@[i as int].proposed == before_stop@.proposed && w.nodes@[i as int].adopted == before_stop@.adopted)
+                        assert(m.proposed == before_stop@.proposed && m.adopted == before_stop@.adopted)
                             by { reveal(retirement::stopped); }
                         handler_safety::stop_step(before_stop@, Outcome::Stopped);
                     }
@@ -152,7 +142,7 @@ fn clarify_node(m: &mut Node, next_question: &mut u64, i: usize, q: Question,
 
 kernel_fn! {
 /// TryAgain rows / #771: restart the first attempt, then continue with at least
-/// one credit; the continuation is go_on's node work.
+/// one credit; the continuation is continue_node, then go_on's replanned note.
 fn retry_answer_node(m: &mut Node, i: usize, q: Question, out: &mut Outbox) -> (result: ()) [
     requires old(out).len < OUTBOX, q.cost <= 1,
         old(m).generation < u64::MAX,
@@ -193,14 +183,20 @@ fn retry_answer_node(m: &mut Node, i: usize, q: Question, out: &mut Outbox) -> (
     m.replanned = false;
     continue_node(
         m,
-        i,
         Question {
             cost: q.cost.max(1),
             ..q
         },
         0,
-        out,
     );
+    match q.cont {
+        Cont::Planning { must_split } => {
+            if !must_split && m.replanned && q.kind == QKind::OutOfCredit {
+                notice(out, i, Notice::Note(NoteKind::Replanned));
+            }
+        }
+        _ => {}
+    }
     kernel_proof! {
         if before_retry@.phase == Phase::AwaitingRob {
             handler_safety::continue_step(before_retry@, *m);

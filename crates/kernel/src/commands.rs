@@ -46,50 +46,92 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase),
         handler_safety::command_step(old(w).nodes@[i as int], final(w).nodes@[i as int]),
         transition_safety::notice_only(*old(out), *final(out), NodeId(i as u64)),
+] {
+    kernel_snapshot! { before_command = w.nodes@[i as int] }
+    kernel_proof! {
+        if command == Command::Resume && id > w.nodes@[i as int].last_cmd
+            && command_progress_input(w.nodes@[i as int], command)
+            && node_checked(*w, w.nodes@[i as int]) { resume_decreases(*w, w.nodes@[i as int]); }
+    }
+    command_node(&mut w.nodes[i], &mut w.next_question, i, id, command, out);
+    kernel_proof! {
+        if command == Command::Resume && id > before_command@.last_cmd {
+            assert(distance(w.nodes@[i as int]) == distance(Node { paused: false, ..before_command@ }))
+                by { reveal(distance); }
+        }
+    }
+}
+}
+
+kernel_fn! {
+/// Command rows / #771: on_command's node work, verified against one node so
+/// the world frame is proved once at the call.
+fn command_node(m: &mut Node, next_question: &mut u64, i: usize, id: u64, command: Command,
+    out: &mut Outbox) -> (result: ()) [
+    requires old(out).len < OUTBOX,
+        node_headroom(*old(m)),
+        arithmetic_consistent(*old(m)),
+        *old(next_question) < u64::MAX,
+    ensures (id > old(m).last_cmd && command != Command::Resume
+            && command_progress_input(*old(m), command)
+            ==> distance(*final(m)) < distance(*old(m))),
+        (command == Command::Resume && id > old(m).last_cmd
+            ==> *final(m) == (Node { paused: false, last_cmd: id, ..*old(m) })),
+        (old(m).phase is Closed ==> final(m).phase is Closed),
+        final(m).repo == old(m).repo,
+        final(m).footprint == old(m).footprint,
+        (settle_shape(*old(m)) ==> settle_shape(*final(m))),
+        final(m).generation as int <= old(m).generation as int + 1,
+        final(m).next_seq == old(m).next_seq,
+        final(m).credit.start == old(m).credit.start,
+        final(m).credit.earned == old(m).credit.earned,
+        final(m).credit.added as int <= old(m).credit.added as int + 255,
+        final(m).credit.spent as int <= old(m).credit.spent as int + 1,
+        final(m).last_cmd == if id > old(m).last_cmd { id } else { old(m).last_cmd },
+        *final(next_question) as int <= *old(next_question) as int + 1,
+        final(out).len <= old(out).len + 1,
+        command == Command::Resume ==> *final(next_question) == *old(next_question),
+        progress_gate_apply::resume_post(*old(m), *final(m), id, command),
+        final(m).proposed == old(m).proposed,
+        final(m).adopted == old(m).adopted,
+        (old(m).phase is Closed ==> final(m).phase == old(m).phase),
+        handler_safety::command_step(*old(m), *final(m)),
+        transition_safety::notice_only(*old(out), *final(out), NodeId(i as u64)),
 ] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);] {
-    if id <= w.nodes[i].last_cmd {
+    if id <= m.last_cmd {
         kernel_proof! { reveal(progress_gate_apply::resume_post); reveal(progress_gate_apply::resumed); }
         kernel_proof! {
-            handler_safety::same_step(w.nodes@[i as int]);
-            handler_safety::step_identity(w.nodes@[i as int], w.nodes@[i as int]);
+            handler_safety::same_step(*m);
+            handler_safety::step_identity(*m, *m);
         }
         return; // a repeated command
     }
-    kernel_snapshot! { before_command_node = w.nodes@[i as int] }
-    kernel_snapshot! { before_command_world = *w }
-    kernel_proof! {
-        if command == Command::Resume && command_progress_input(w.nodes@[i as int], command)
-            && node_checked(*w, w.nodes@[i as int]) { resume_decreases(*w, w.nodes@[i as int]); }
-    }
-    w.nodes[i].last_cmd = id;
-    kernel_snapshot! { after_id = w.nodes@[i as int] }
+    kernel_snapshot! { before_command_node = *m }
+    m.last_cmd = id;
+    kernel_snapshot! { after_id = *m }
     match command {
-        Command::Stop => enter_stopping(&mut w.nodes[i], Outcome::Stopped),
-        Command::ChangeRequest => enter_stopping(&mut w.nodes[i], Outcome::Replaced),
+        Command::Stop => enter_stopping(m, Outcome::Stopped),
+        Command::ChangeRequest => enter_stopping(m, Outcome::Replaced),
         Command::Pause => {
-            let m = &mut w.nodes[i];
             if !m.phase.is_stopping() && !m.phase.is_closed() {
                 m.paused = true;
             }
         }
         Command::Resume => {
-            w.nodes[i].paused = false;
+            m.paused = false;
             kernel_proof! {
                 reveal(progress_gate_apply::resumed); reveal(progress_gate_apply::resume_post);
-                assert(progress_gate_apply::resume_post(before_command_node@, w.nodes@[i as int], id, command));
+                assert(progress_gate_apply::resume_post(before_command_node@, *m, id, command));
             }
         },
         Command::Answer { question, answer } => {
             kernel_proof! {
-                if node_checked(before_command_world@, before_command_node@)
-                    && command_progress_input(before_command_node@, command) {
-                    footprint::valid_under_table_growth(before_command_world@, *w, w.nodes@[i as int].footprint);
-                    assert(node_checked(*w, w.nodes@[i as int]));
-                    assert(answer_progress_input(w.nodes@[i as int], question, answer));
-                    assert(distance(w.nodes@[i as int]) == distance(before_command_node@));
+                if command_progress_input(before_command_node@, command) {
+                    assert(answer_progress_input(*m, question, answer));
+                    assert(distance(*m) == distance(before_command_node@));
                 }
             }
-            on_answer(w, i, question, answer, out);
+            answer_node(m, next_question, i, question, answer, out);
         },
     }
     kernel_proof! {
@@ -97,10 +139,10 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
             Command::Stop => handler_safety::stop_step(after_id@, Outcome::Stopped),
             Command::ChangeRequest => handler_safety::stop_step(after_id@, Outcome::Replaced),
             Command::Answer { .. } => {},
-            _ => handler_safety::field_step(after_id@, w.nodes@[i as int]),
+            _ => handler_safety::field_step(after_id@, *m),
         }
-        handler_safety::last_cmd_step(before_command_node@, after_id@, w.nodes@[i as int]);
-        handler_safety::step_identity(before_command_node@, w.nodes@[i as int]);
+        handler_safety::last_cmd_step(before_command_node@, after_id@, *m);
+        handler_safety::step_identity(before_command_node@, *m);
     }
     kernel_proof! {
         if command != Command::Resume { reveal(progress_gate_apply::resume_post); }
