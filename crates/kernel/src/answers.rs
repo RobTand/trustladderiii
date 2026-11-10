@@ -406,3 +406,25 @@ pub(super) fn answer_value(n: Node, nq: u64, id: u64, answer: Answer)
 
 }
 }
+
+kernel_fn! {
+/// The unchanged TryAgain cost floor `q.cost.max(1)`, as a value with an exact post.
+fn retry_cost(c: u8) -> (result: u8) [
+    ensures result == (if c > 1 { c } else { 1u8 }),
+] {
+    c.max(1)
+}
+}
+
+kernel_fn! {
+/// MarkHandled on a cleanup question: the unchanged two statements as one value
+/// step, so the dispatcher sees one equation and not mark_handled's borrow.
+fn cleanup_handled_v(n: Node) -> (result: Node) [
+    ensures result == handler_safety::handled_node(Node { question: None, ..n }),
+] {
+    let mut m = n;
+    m.question = None;
+    mark_handled(&mut m);
+    m
+}
+}

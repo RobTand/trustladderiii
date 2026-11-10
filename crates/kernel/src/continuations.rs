@@ -282,3 +282,30 @@ pub(super) fn go_on_exact(n: Node, q: Question, deposit: u8) -> (result: (Node, 
 
 }
 }
+
+kernel_fn! {
+/// K5 value form of Credit::fund_and_pay: the same update returned whole, so
+/// exact callers see the spec's own paid_credit term, not a prophecy Credit.
+pub(super) fn fund_and_pay_v(c: Credit, deposit: u8, cost: u8) -> (result: Credit) [
+    requires cost <= 1,
+        c.start as int + c.earned as int + c.added as int >= c.spent as int,
+        c.withheld ==> cost == 0,
+        c.added as int + 255 <= u64::MAX as int,
+        c.spent as int + cost as int <= u64::MAX as int,
+    ensures result == handler_safety::paid_credit(c, deposit, cost),
+] {
+    let mut m = c;
+    m.fund_and_pay(deposit, cost);
+    m
+}
+}
+
+kernel_fn! {
+/// Exact-only view of enter_stopping_v for exact-result callers: the same call.
+pub(super) fn stopped_v(n: Node, outcome: Outcome) -> (result: Node) [
+    requires !(n.phase is Closed || n.phase is Stopping) ==> n.generation < u64::MAX,
+    ensures result == retirement::stopped(n, outcome),
+] {
+    enter_stopping_v(n, outcome)
+}
+}
