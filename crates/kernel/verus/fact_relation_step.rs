@@ -18,6 +18,7 @@ pub(super) proof fn priority(before: World, after: World, i: int, priority: Prio
         after.next_ticket == before.next_ticket, after.next_question == before.next_question,
         after.gates@ == before.gates@, after.pool_capacity == before.pool_capacity,
         after.fail_fast == before.fail_fast, after.file_sets@ == before.file_sets@,
+        after.dependencies@ == before.dependencies@,
         ob.len <= OUTBOX, oa == ob,
     ensures checking::accepted(after),
         transition_safety::transition_safety(before, after,
