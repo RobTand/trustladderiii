@@ -1,10 +1,205 @@
 {
-  "source_head": "65df99fbc2de38e8a53ed4010aa48b19a1df6b08",
+  "source_head": "cca95edb192e11c908f3ebe4b71a2bca9636c418",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "5490565aaec57126cc38edc0363fa5378c5b09e30946d0bb1828e1b5194e7277",
-  "groups": 830,
-  "obligations": 1035,
+  "source_sha256": "0d90385180669e7bbea9b9e792556fcccb26eba12476ae81717497c9ae5b3b3d",
+  "groups": 869,
+  "obligations": 1074,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_permanent_rows",
+      "selector": "kernel::acknowledgements#ack_permanent_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_incident_count",
+      "selector": "kernel::acknowledgements#ack_incident_count",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_retry_restart_value",
+      "selector": "kernel::acknowledgements#ack_retry_restart_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_retry_plain_incident_value",
+      "selector": "kernel::acknowledgements#ack_retry_plain_incident_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_retry_incident_bridge",
+      "selector": "kernel::acknowledgements#ack_retry_incident_bridge",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_retry_emit_value",
+      "selector": "kernel::acknowledgements#ack_retry_emit_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_retry_incident_value",
+      "selector": "kernel::acknowledgements#ack_retry_incident_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_phase_value",
+      "selector": "kernel::acknowledgements#ack_phase_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_abandon_value",
+      "selector": "kernel::acknowledgements#ack_abandon_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_append_value",
+      "selector": "kernel::acknowledgements#ack_append_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_resources_value",
+      "selector": "kernel::acknowledgements#ack_resources_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_emit_value",
+      "selector": "kernel::acknowledgements#ack_emit_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_stopped_value",
+      "selector": "kernel::acknowledgements#ack_stopped_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_cancel_value",
+      "selector": "kernel::acknowledgements#ack_cancel_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_confirmed_value",
+      "selector": "kernel::acknowledgements#ack_confirmed_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_delivery_value",
+      "selector": "kernel::acknowledgements#ack_delivery_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_retry_value",
+      "selector": "kernel::acknowledgements#ack_retry_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_permanent_value",
+      "selector": "kernel::acknowledgements#ack_permanent_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_body_policy_value",
+      "selector": "kernel::acknowledgements#ack_body_policy_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_value",
+      "selector": "kernel::acknowledgements#ack_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_result_properties",
+      "selector": "kernel::acknowledgements#ack_result_properties",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_confirmed_agenda_adopt",
+      "selector": "kernel::acknowledgements#confirmed_agenda_adopt",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_confirmed_agenda_step",
+      "selector": "kernel::acknowledgements#confirmed_agenda_step",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_confirmed_agenda_idle",
+      "selector": "kernel::acknowledgements#confirmed_agenda_idle",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_confirmed_agenda_value",
+      "selector": "kernel::acknowledgements#confirmed_agenda_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_agenda_result_properties",
+      "selector": "kernel::acknowledgements#agenda_result_properties",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_cancel_post",
+      "selector": "kernel::acknowledgements#ack_cancel_post",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_confirmed_post",
+      "selector": "kernel::acknowledgements#ack_confirmed_post",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_delivery_post",
+      "selector": "kernel::acknowledgements#ack_delivery_post",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_retry_post",
+      "selector": "kernel::acknowledgements#ack_retry_post",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_permanent_post",
+      "selector": "kernel::acknowledgements#ack_permanent_post",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_review_post",
+      "selector": "kernel::acknowledgements#ack_review_post",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ack_family_adoption_ack_result",
+      "selector": "kernel::ack_family_safety#adoption_ack_result",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ack_family_bpr_ack_result_equiv",
+      "selector": "kernel::ack_family_safety#bpr_ack_result_equiv",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_live",
+      "selector": "kernel::acknowledgements#ack_live",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ack_family_node_safety",
+      "selector": "kernel::ack_family_safety#ack_node_safety",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ack_family_adoption_facts",
+      "selector": "kernel::ack_family_safety#adoption_facts",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ack_family_bpr_equiv",
+      "selector": "kernel::ack_family_safety#bpr_equiv",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ack_family_bpr_open_pr_quiet",
+      "selector": "kernel::ack_family_safety#bpr_open_pr_quiet",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_dependency_owner_waiting_ok",
       "selector": "kernel::dependency_owner_exports#waiting_owner_ok",
