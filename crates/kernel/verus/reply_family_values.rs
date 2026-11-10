@@ -134,7 +134,7 @@ pub(super) open spec fn plan_retry(n: Node, fast: bool, cant_meet: bool) -> Repl
     let m = Node { plan_retries: if n.plan_retries < 255 { (n.plan_retries + 1) as u8 }
         else { 255u8 }, ..n };
     if fast && cant_meet { ReplyChange::Done { node: retirement::stopped(
-        Node { review_stop: Some(ReviewStop::PlanCantMeet), ..m }, Outcome::Stopped), note: None } }
+        Node { review_stop: Some(ReviewStop::MakerCantMeet), ..m }, Outcome::Stopped), note: None } }
     else if m.plan_retries < 2 { ReplyChange::Done {
         node: retirement::phased(m, m.phase), note: None } }
     else { ReplyChange::Ask { node: Node { plan_retries: 0, ..m },
