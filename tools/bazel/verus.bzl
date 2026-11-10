@@ -443,6 +443,8 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::advance_family_post::teardown_rows": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::advance_family_post::teardown_gone": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::advance_family_post::retains_holds": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::advance_family_post::holds_item": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::advance_family_post::holds_frame": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -764,6 +766,12 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "ranks_advance_teardown_missing_value": ("kernel::ranks#advance_teardown_missing_value", 1),
+            "ranks_advance_teardown_emitting_value": ("kernel::ranks#advance_teardown_emitting_value", 1),
+            "ranks_advance_release_value": ("kernel::ranks#advance_release_value", 1),
+            "advance_family_post_teardown_rows_intro": ("kernel::advance_family_post#teardown_rows_intro", 1),
+            "advance_family_post_stopping_items": ("kernel::advance_family_post#stopping_items", 1),
+            "advance_family_rules_teardown_rows_reveal": ("kernel::advance_family_rules#teardown_rows_reveal", 1),
             "ranks_advance_rebase_value": ("kernel::ranks#advance_rebase_value", 1),
             "ranks_advance_finished_value": ("kernel::ranks#advance_finished_value", 1),
             "advance_family_post_retains_holds_intro": ("kernel::advance_family_post#retains_holds_intro", 1),
