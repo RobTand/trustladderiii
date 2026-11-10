@@ -33,6 +33,7 @@ tl3_crate(
         "pb_trial": "examples/pb_trial.rs",
         "tl3-deploy": "//deploy/dl380g10:helper.rs",
     },
+    example_features = {"fx-stage-packet": ["activation-qualification"]},
     declared_tests = {
         "crash_safety": {"path": "tests/crash_safety.rs", "harness": False},
         "github": {"path": "tests/github.rs", "harness": False},

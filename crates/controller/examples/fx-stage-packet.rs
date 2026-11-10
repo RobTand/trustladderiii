@@ -1,4 +1,7 @@
 //! Preparation-only sandbox fixture. Never constructs or calls a native backend.
+//!
+//! Canary packets are staged before an activation pin exists, so this example alone uses
+//! the `activation-qualification` staging gate. Deployed binaries never enable it.
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{
@@ -204,6 +207,7 @@ fn prepare(
     repo.selected_tests = None;
     repo.always_tests.clear();
     config.flux = Some(tl3_config::Flux {
+        // Canary packets precede the pin they qualify; Stager refuses a record here.
         activation: None,
         instance_generation: options.instance_generation.clone(),
         uri: options.uri.clone(),
@@ -219,7 +223,11 @@ fn prepare(
     config.validate()?; // Syntax only. No store, secrets, scheduler or container access.
     let delivery = fixture(&root.join("served"), kind)?;
     write(&root.join("delivery.json"), &delivery)?;
-    let prepared = Stager::new(&config)?.prepare_request(&delivery)?;
+    let stager = Stager::for_canary_qualification(&config)?;
+    let activation = stager
+        .canary_qualification_marker()
+        .ok_or("canary packets require the qualification staging gate")?;
+    let prepared = stager.prepare_request(&delivery)?;
     let mut request = prepared.request;
     if request.reservation != reservation
         || request.environment != production::flux_job_environment()
@@ -292,7 +300,7 @@ fn prepare(
     write(
         &root.join("packet.json"),
         &json!({
-            "status":"HELD_NOT_RELEASED_NOT_EXECUTED", "runtime_qualified":false,
+            "status":"HELD_NOT_RELEASED_NOT_EXECUTED", "runtime_qualified":false, "activation":activation,
             "release_requires":["PB lead DONE and passing checks/receipt", "explicit NEW generation and context verification", "parent inspection and sole FXR execution"],
             "source_snapshot":git(source, &["rev-parse", "HEAD"])?,
             "example_source":identity(&source.join("crates/controller/examples/fx-stage-packet.rs"))?,
@@ -429,6 +437,237 @@ mod tests {
             "FX_RUST_JUDGE {}",
             serde_json::to_string(&judgments).unwrap()
         );
+    }
+
+    /// Shared-mount paths a fixture created; made writable and removed on drop.
+    struct Shared(Vec<PathBuf>);
+
+    impl Drop for Shared {
+        fn drop(&mut self) {
+            fn writable(path: &Path) {
+                if path.is_dir() && !path.is_symlink() {
+                    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
+                    for child in fs::read_dir(path).into_iter().flatten().flatten() {
+                        writable(&child.path());
+                    }
+                }
+            }
+            for path in &self.0 {
+                writable(path);
+                let _ = fs::remove_dir_all(path);
+            }
+        }
+    }
+
+    /// A sealed sandbox bundle built from the current harness, not from any activation pin.
+    fn sandbox_bundle(root: &Path, shared: &mut Shared) -> PathBuf {
+        let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let pin: serde_json::Value =
+            serde_json::from_slice(
+                &fs::read(checkout.join(
+                    "crates/controller/src/adapters/flux_checks/activation/qualification.json",
+                ))
+                .unwrap(),
+            )
+            .unwrap();
+        let fixtures = checkout.join("crates/controller/qualification/fx-exact42b/fixtures");
+        let source = root.join("source");
+        let (inventory, collector, cleanup) =
+            ("collector-manifest.json", "host-collector", "host-cleanup");
+        let mut code = Vec::new();
+        for file in pin["files"].as_array().unwrap() {
+            let path = PathBuf::from(file["path"].as_str().unwrap());
+            if path == Path::new(inventory) {
+                continue;
+            }
+            let name = path.file_name().unwrap();
+            let original = if fixtures.join(name).is_file() {
+                fixtures.join(name)
+            } else {
+                checkout.join("harness/src/tl3_harness").join(name)
+            };
+            let raw = fs::read(&original).unwrap();
+            fs::create_dir_all(source.join(&path).parent().unwrap()).unwrap();
+            fs::write(source.join(&path), &raw).unwrap();
+            if path != Path::new(collector) && path != Path::new(cleanup) {
+                code.push(json!({"path": path, "bytes": raw.len(),
+                    "sha256": api::durable::digest(&raw)}));
+            }
+        }
+        fs::write(
+            source.join(inventory),
+            serde_json::to_vec(&json!({"interpreter": "/usr/bin/python3.14", "files": code}))
+                .unwrap(),
+        )
+        .unwrap();
+        let image = format!("fixture.invalid/sandbox@sha256:{}", "a".repeat(64));
+        let config_digest = format!("sha256:{}", "b".repeat(64));
+        fs::write(
+            root.join("image-map.json"),
+            serde_json::to_vec(
+                &json!({"profiles":[{"profile":"sandbox", "registry_ref":image,
+                "manifest_digest":format!("sha256:{}", "a".repeat(64)),
+                "config_digest":config_digest, "platform":"linux/amd64"}]}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            root.join("image-inspect.json"),
+            serde_json::to_vec(&json!({"Id":config_digest, "Os":"linux", "Architecture":"amd64"}))
+                .unwrap(),
+        )
+        .unwrap();
+        let bundle = api::prepared::prepare_bundle(&api::PrepareBundleInput {
+            source_root: source,
+            code_inventory: inventory.into(),
+            collector: collector.into(),
+            cleanup: cleanup.into(),
+            trusted_root: "lib/tl3_harness".into(),
+            producer_commit: "f".repeat(40),
+            container_interpreter: "/opt/tl3/bin/python".into(),
+            cleanup_arguments: vec![],
+            image_inventory: root.join("image-map.json"),
+            image_inspect: root.join("image-inspect.json"),
+            profile: "sandbox".into(),
+            mode: tl3_config::ContainerMode::InJob,
+            prerequisites: api::ModePrerequisites {
+                no_cgroups_supported: true,
+                init_available: true,
+                user_scope_supported: false,
+            },
+        })
+        .unwrap();
+        shared.0.push(bundle.path.parent().unwrap().to_owned());
+        bundle.path
+    }
+
+    #[test]
+    #[ignore = "PB fixture: canonical shared bundle and packet paths under /mnt/shared"]
+    fn canary_packet_stages_without_activation_record() {
+        let temporary = tempfile::Builder::new()
+            .prefix("fx-qual-staging-test-")
+            .tempdir_in("/mnt/shared")
+            .unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let mut shared = Shared(vec![]);
+        let bundle = sandbox_bundle(&root, &mut shared);
+        let generation = format!("fixture/{}", "0".repeat(32));
+        let flux = tl3_config::Flux {
+            activation: None,
+            instance_generation: generation.clone(),
+            uri: "local:///fixture-endpoint".into(),
+            executable: "/no-native-execution/flux".into(),
+            backend_cli: "/no-native-execution/tl3-run-backend".into(),
+            environment: production::flux_job_environment(),
+            container_mode: tl3_config::ContainerMode::InJob,
+            runtime_bundles: vec![bundle.clone()],
+            staging_root: root.join("unused-staging"),
+            output_root: "/mnt/shared/flux-out/tl3".into(),
+            container_image: format!("fixture.invalid/sandbox@sha256:{}", "a".repeat(64)),
+        };
+        let context = root.join("context.json");
+        fs::write(
+            &context,
+            serde_json::to_vec(&production::flux_options(&flux)).unwrap(),
+        )
+        .unwrap();
+        let destination = Path::new("/mnt/shared/flux-out/tl3").join(format!(
+            "fx-qual-staging-test-{}",
+            api::durable::digest(root.to_str().unwrap().as_bytes())
+        ));
+        shared.0.push(destination.clone());
+        shared.0.push(staging_destination(&destination).unwrap());
+        let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        prepare(
+            &destination,
+            &bundle,
+            &context,
+            &checkout,
+            &generation,
+            FixtureKind::Success,
+        )
+        .expect("a canary packet stages without an activation record");
+        let packet: serde_json::Value =
+            serde_json::from_slice(&fs::read(destination.join("packet.json")).unwrap()).unwrap();
+        assert_eq!(packet["status"], "HELD_NOT_RELEASED_NOT_EXECUTED");
+        assert_eq!(
+            packet["activation"],
+            "tl3.fx_canary_qualification_staging.v1"
+        );
+        assert_eq!(
+            packet["activation"],
+            tl3_controller::adapters::flux_checks::staging::CANARY_QUALIFICATION_MARKER
+        );
+        assert_eq!(packet["runtime_qualified"], false);
+        assert_eq!(packet["native_backend_calls"], 0);
+        assert_eq!(packet["container_calls"], 0);
+        let request: api::Request =
+            serde_json::from_slice(&fs::read(destination.join("request.json")).unwrap()).unwrap();
+        assert_eq!(request.walltime_seconds.get(), 60);
+        assert!(
+            request
+                .tree
+                .root
+                .starts_with(staging_destination(&destination).unwrap())
+        );
+    }
+
+    fn flux_config(activation: Option<tl3_config::FluxActivation>) -> tl3_config::Config {
+        let mut config =
+            tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
+        config.execution_backend = tl3_config::ExecutionBackend::Flux;
+        config.flux = Some(tl3_config::Flux {
+            activation,
+            instance_generation: format!("fixture/{}", "0".repeat(32)),
+            uri: "local:///fixture-endpoint".into(),
+            executable: "/no-native-execution/flux".into(),
+            backend_cli: "/no-native-execution/tl3-run-backend".into(),
+            environment: production::flux_job_environment(),
+            container_mode: tl3_config::ContainerMode::InJob,
+            runtime_bundles: vec![],
+            staging_root: "/mnt/shared/flux-out/fx2-inputs/unused".into(),
+            output_root: "/mnt/shared/flux-out/tl3".into(),
+            container_image: format!("fixture.invalid/sandbox@sha256:{}", "a".repeat(64)),
+        });
+        config
+    }
+
+    fn refusal<T>(result: tl3_controller::Result<T>) -> String {
+        result.err().expect("expected a refusal").to_string()
+    }
+
+    #[test]
+    fn qualification_gate_refuses_records_and_production_still_requires_one() {
+        use tl3_controller::adapters::flux_checks::staging::CANARY_QUALIFICATION_MARKER;
+        let config = flux_config(None);
+        let canary = Stager::for_canary_qualification(&config).unwrap();
+        assert_eq!(
+            canary.canary_qualification_marker(),
+            Some(CANARY_QUALIFICATION_MARKER)
+        );
+        // The production constructor stays activation-gated in this same build.
+        assert_eq!(refusal(Stager::new(&config)), "flux.activation");
+        // A configured record must use the gated path; the bypass never downgrades it.
+        let record = Some(tl3_config::FluxActivation {
+            record: "/mnt/shared/flux-out/tl3/.activation/absent.json".into(),
+            sha256: "0".repeat(64),
+        });
+        let configured = flux_config(record);
+        assert_eq!(
+            refusal(Stager::for_canary_qualification(&configured)),
+            "flux.activation.canary_qualification"
+        );
+        assert_eq!(refusal(Stager::new(&configured)), "flux.activation.record");
+        let mut mutable = flux_config(None);
+        mutable.flux.as_mut().unwrap().container_image = "fixture.invalid/sandbox:latest".into();
+        assert_eq!(
+            refusal(Stager::for_canary_qualification(&mutable)),
+            "flux.activation.image"
+        );
+        let mut prismabuild = flux_config(None);
+        prismabuild.execution_backend = tl3_config::ExecutionBackend::PrismaBuild;
+        assert!(Stager::for_canary_qualification(&prismabuild).is_err());
     }
 
     #[test]

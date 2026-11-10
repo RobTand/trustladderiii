@@ -39,7 +39,8 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         final(w).nodes@[i as int].proposed == old(w).nodes@[i as int].proposed,
         final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
         (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase),
-        handler_safety::command_step(old(w).nodes@[i as int], final(w).nodes@[i as int]),
+        handler_safety::answer_pair(old(w).nodes@[i as int], final(w).nodes@[i as int], true, id, answer,
+            final(w).dependencies@, NodeId(i as u64)),
         transition_safety::notice_only(*old(out), *final(out), NodeId(i as u64)),
         (node_checked(*old(w), old(w).nodes@[i as int])
             && final(w).nodes@[i as int] != old(w).nodes@[i as int]
@@ -69,8 +70,37 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
     kernel_proof! {
         if node_checked(*w, w.nodes@[i as int]) { handler_safety::checked_node_ok(*w, w.nodes@[i as int]); }
     }
+    kernel_snapshot! { before_answer = w.nodes@[i as int] }
+    let withhold = match w.nodes[i].question {
+        Some(q) => w.nodes[i].phase == Phase::AwaitingRob
+            && q.id == id
+            && matches!(answer, Answer::Continue | Answer::AddCredit(_))
+            && allowed(q.kind, answer),
+        None => false,
+    };
+    kernel_proof! {
+        assert(withhold == handler_safety::answer_withholds(before_answer@, id, answer));
+    }
     let (n1, nq1, note) = answer_node(w.nodes[i], w.next_question, id, answer);
+    kernel_proof! { handler_safety::step_withheld(before_answer@, n1); }
     w.nodes[i] = n1;
+    if withhold {
+        kernel_snapshot! { continued = w.nodes@[i as int] }
+        w.withhold_dependency_credit(i);
+        kernel_proof! {
+            let n = w.nodes@[i as int];
+            assert(n == handler_safety::unwithheld(continued@, n.credit.withheld));
+            handler_safety::distance_withheld(continued@, n.credit.withheld);
+            if continued@ == before_answer@ {
+                // An answer that left the node AwaitingRob withholds nothing.
+                handler_safety::unwithheld_same(before_answer@);
+            }
+        }
+    }
+    kernel_proof! {
+        handler_safety::answer_pair_intro(before_answer@, n1, w.nodes@[i as int], id, answer,
+            w.dependencies@, NodeId(i as u64));
+    }
     w.next_question = nq1;
     match note {
         Some(x) => notice(out, i, x),
@@ -95,8 +125,9 @@ pub(super) fn on_answer_exact(w: &mut World, i: usize, id: u64, answer: Answer,
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-    ensures final(w).nodes@ == old(w).nodes@.update(i as int, apply_answer_values::answered(
-            old(w).nodes@[i as int], old(w).next_question, id, answer).0),
+    ensures final(w).nodes@ == old(w).nodes@.update(i as int, apply_command_safety::held_answer(
+            old(w).nodes@[i as int], old(w).next_question, id, answer, old(w).dependencies@,
+            NodeId(i as u64))),
         final(w).next_question == apply_answer_values::answered(
             old(w).nodes@[i as int], old(w).next_question, id, answer).1,
         final(w).next_ticket == old(w).next_ticket,
@@ -109,9 +140,27 @@ pub(super) fn on_answer_exact(w: &mut World, i: usize, id: u64, answer: Answer,
         transition_safety::notice_only(*old(out), *final(out), NodeId(i as u64)),
 ] {
     kernel_snapshot! { before_exact = *w }
+    kernel_snapshot! { before_answer = w.nodes@[i as int] }
+    let withhold = match w.nodes[i].question {
+        Some(q) => w.nodes[i].phase == Phase::AwaitingRob
+            && q.id == id
+            && matches!(answer, Answer::Continue | Answer::AddCredit(_))
+            && allowed(q.kind, answer),
+        None => false,
+    };
+    kernel_proof! {
+        assert(withhold == handler_safety::answer_withholds(before_answer@, id, answer));
+    }
     let (n1, nq1, note) = answer_value(w.nodes[i], w.next_question, id, answer);
     w.nodes[i] = n1;
-    kernel_proof! { assert(w.nodes@ =~= before_exact@.nodes@.update(i as int, n1)); }
+    if withhold {
+        w.withhold_dependency_credit(i);
+    }
+    kernel_proof! {
+        assert(w.nodes@ =~= before_exact@.nodes@.update(i as int, apply_command_safety::held_answer(
+            before_answer@, before_exact@.next_question, id, answer, before_exact@.dependencies@,
+            NodeId(i as u64))));
+    }
     w.next_question = nq1;
     match note {
         Some(x) => notice(out, i, x),

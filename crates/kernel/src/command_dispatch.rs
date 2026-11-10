@@ -46,7 +46,12 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         final(w).nodes@[i as int].proposed == old(w).nodes@[i as int].proposed,
         final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
         (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase),
-        handler_safety::command_step(old(w).nodes@[i as int], final(w).nodes@[i as int]),
+        (match command {
+            Command::Answer { question, answer } => handler_safety::answer_pair(
+                old(w).nodes@[i as int], final(w).nodes@[i as int], id > old(w).nodes@[i as int].last_cmd,
+                question, answer, final(w).dependencies@, NodeId(i as u64)),
+            _ => handler_safety::command_step(old(w).nodes@[i as int], final(w).nodes@[i as int]),
+        }),
         transition_safety::notice_only(*old(out), *final(out), NodeId(i as u64)),
         (match command {
             Command::Answer { question, .. } => node_checked(*old(w), old(w).nodes@[i as int])
@@ -64,7 +69,6 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         (final(w).nodes@[i as int].holds ==> old(w).nodes@[i as int].holds),
         (final(w).nodes@[i as int].pool ==> old(w).nodes@[i as int].pool),
         final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket || final(w).nodes@[i as int].ticket.is_none(),
-        final(w).nodes@[i as int].credit.withheld == old(w).nodes@[i as int].credit.withheld,
         final(w).nodes@ == old(w).nodes@.update(i as int, final(w).nodes@[i as int]),
         old(w).next_question <= final(w).next_question,
         (retirement::node_rules(*old(w), old(w).nodes@[i as int])
@@ -77,6 +81,11 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         kernel_proof! {
             handler_safety::same_step(w.nodes@[i as int]);
             handler_safety::step_identity(w.nodes@[i as int], w.nodes@[i as int]);
+            match command {
+                Command::Answer { question, answer } => handler_safety::answer_pair_same(
+                    w.nodes@[i as int], question, answer, w.dependencies@, NodeId(i as u64)),
+                _ => {}
+            }
         }
         kernel_proof! { assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, w.nodes@[i as int])); }
         return; // a repeated command

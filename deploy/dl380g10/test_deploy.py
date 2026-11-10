@@ -126,6 +126,28 @@ class PostgresPackageTests(unittest.TestCase):
             self.assertEqual(sleep.call_count, 2)
 
 
+RELEASE_TARGETS = [("lib", "tl3_controller"), ("bin", "tl3"), ("bin", "tl3d"), ("bin", "tl3-run-backend"),
+                   ("bin", "tl3-worker-supervisor"), ("example", "tl3-deploy")]
+
+
+def release_messages(features=(), targets=RELEASE_TARGETS):
+    """Cargo --message-format=json compiler-artifact lines for the tl3-controller release build."""
+    package = "path+file:///fixture/crates/controller#tl3-controller@0.1.0"
+    lines = [json.dumps({"reason": "compiler-artifact", "package_id": package,
+                         "target": {"kind": [kind], "name": name}, "features": list(features)})
+             for kind, name in targets]
+    lines.append(json.dumps({"reason": "build-finished", "success": True}))
+    return "\n".join(lines) + "\n"
+
+
+def fake_release_cargo(path, messages, extra=""):
+    """A fake cargo that writes release binaries and prints the given JSON messages on stdout."""
+    path.write_text("#!/bin/sh\nmkdir -p \"$CARGO_TARGET_DIR/release/examples\"\n"
+                    "for name in tl3 tl3d tl3-run-backend tl3-worker-supervisor; do printf binary > \"$CARGO_TARGET_DIR/release/$name\"; done\n"
+                    + extra + "cat <<'CARGO_MESSAGES'\n" + messages + "CARGO_MESSAGES\n")
+    path.chmod(0o700)
+
+
 class ReleasePublicationTests(unittest.TestCase):
     def test_failed_copy_does_not_publish_or_wedge_release_retry(self):
         script = Path(__file__).with_name("build-release.sh").resolve()
@@ -135,12 +157,9 @@ class ReleasePublicationTests(unittest.TestCase):
             tools.mkdir()
             git = tools / "git"
             git.write_text("#!/bin/sh\ncase \"$*\" in *status*) exit 0;; *rev-parse*) echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;; esac\n")
-            cargo = tools / "cargo"
-            cargo.write_text("#!/bin/sh\nmkdir -p \"$CARGO_TARGET_DIR/release/examples\"\n"
-                             "for name in tl3 tl3d tl3-worker-supervisor; do printf binary > \"$CARGO_TARGET_DIR/release/$name\"; done\n"
-                             "if [ \"$TL3_TEST_SKIP_HELPER\" = 0 ]; then printf helper > \"$CARGO_TARGET_DIR/release/examples/tl3-deploy\"; fi\n")
+            fake_release_cargo(tools / "cargo", release_messages(),
+                               "if [ \"$TL3_TEST_SKIP_HELPER\" = 0 ]; then printf helper > \"$CARGO_TARGET_DIR/release/examples/tl3-deploy\"; fi\n")
             git.chmod(0o700)
-            cargo.chmod(0o700)
             output = root / "release"
             environment = os.environ | {"PATH": str(tools) + os.pathsep + os.environ["PATH"],
                                          "CARGO_TARGET_DIR": str(root / "target"), "TL3_TEST_SKIP_HELPER": "1"}
@@ -153,6 +172,78 @@ class ReleasePublicationTests(unittest.TestCase):
                                     capture_output=True, timeout=30)
             self.assertEqual(second.returncode, 0, second.stderr.decode())
             self.assertEqual(json.loads((output / "SOURCE.json").read_text())["head"], "a" * 40)
+
+    def test_canary_qualification_staging_bytes_refuse_release(self):
+        """FX-REQUAL-43 OQ-1: the example-only staging gate never reaches release artifacts."""
+        script = Path(__file__).with_name("build-release.sh").resolve()
+        for name, payload in [("tl3d", "tl3.fx_canary_qualification_staging.v1"),
+                              ("tl3-run-backend", "tl3.fx_canary_qualification_staging.v1"),
+                              ("examples/tl3-deploy", "_ZN4core24for_canary_qualification17h0E")]:
+            with self.subTest(binary=name), \
+                 tempfile.TemporaryDirectory(prefix="tl3-build-qualification-") as temporary:
+                root = Path(temporary)
+                tools = root / "tools"
+                tools.mkdir()
+                git = tools / "git"
+                git.write_text("#!/bin/sh\ncase \"$*\" in *status*) exit 0;; *rev-parse*) echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;; esac\n")
+                fake_release_cargo(tools / "cargo", release_messages(),
+                                   "printf helper > \"$CARGO_TARGET_DIR/release/examples/tl3-deploy\"\n"
+                                   "printf '\\000%s\\000' \"$TL3_TEST_PAYLOAD\" > \"$CARGO_TARGET_DIR/release/$TL3_TEST_BINARY\"\n")
+                git.chmod(0o700)
+                output = root / "release"
+                environment = os.environ | {"PATH": str(tools) + os.pathsep + os.environ["PATH"],
+                                             "CARGO_TARGET_DIR": str(root / "target"),
+                                             "TL3_TEST_BINARY": name, "TL3_TEST_PAYLOAD": payload}
+                result = subprocess.run(["bash", str(script), str(output), "a" * 40], env=environment,
+                                        capture_output=True, timeout=30)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(b"refusing release", result.stderr)
+                self.assertFalse(output.exists())
+
+    def test_release_build_with_canary_feature_or_unproven_features_refuses(self):
+        """FX-REQUAL-43 OQ-1 SHOULD-1: Cargo's own artifact report must show the feature off."""
+        script = Path(__file__).with_name("build-release.sh").resolve()
+        cases = {
+            "feature on the controller library": (
+                release_messages(), release_messages(features=["activation-qualification"],
+                                                     targets=RELEASE_TARGETS[:1]),
+                b"activation-qualification"),
+            "feature on a shipped binary": (
+                release_messages(), release_messages(features=["activation-qualification"],
+                                                     targets=[("bin", "tl3d")]),
+                b"activation-qualification"),
+            "controller library artifact missing": (
+                release_messages(targets=RELEASE_TARGETS[1:]), "", b"no Cargo artifact report"),
+            "no artifact report at all": ("", "", b"no Cargo artifact report"),
+        }
+        for case, (messages, extra_messages, reason) in cases.items():
+            with self.subTest(case=case), \
+                 tempfile.TemporaryDirectory(prefix="tl3-build-features-") as temporary:
+                root = Path(temporary)
+                tools = root / "tools"
+                tools.mkdir()
+                git = tools / "git"
+                git.write_text("#!/bin/sh\ncase \"$*\" in *status*) exit 0;; *rev-parse*) echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;; esac\n")
+                git.chmod(0o700)
+                fake_release_cargo(tools / "cargo", messages + extra_messages,
+                                   "printf helper > \"$CARGO_TARGET_DIR/release/examples/tl3-deploy\"\n")
+                output = root / "release"
+                environment = os.environ | {"PATH": str(tools) + os.pathsep + os.environ["PATH"],
+                                             "CARGO_TARGET_DIR": str(root / "target")}
+                result = subprocess.run(["bash", str(script), str(output), "a" * 40], env=environment,
+                                        capture_output=True, timeout=30)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(b"refusing release", result.stderr)
+                self.assertIn(reason, result.stderr)
+                self.assertFalse(output.exists())
+                self.assertEqual(sorted(path.name for path in root.iterdir()), ["target", "tools"])
+
+    def test_release_build_asks_cargo_for_its_artifact_report(self):
+        text = Path(__file__).with_name("build-release.sh").read_text()
+        builds = [line for line in text.splitlines() if line.startswith("cargo build")]
+        self.assertEqual(len(builds), 1)
+        self.assertIn("--message-format=json-render-diagnostics", builds[0])
+        self.assertNotIn("--features", builds[0])
 
 
 class FreshInitTests(unittest.TestCase):
@@ -169,7 +260,11 @@ class FreshInitTests(unittest.TestCase):
         (self.cluster / "pg_wal/segment").write_bytes(b"diagnostic WAL")
         (self.root / "world/snapshot").write_bytes(b"old world")
         (self.root / "journal/receipt").write_bytes(b"old receipt")
-        deploy.write_file(self.config / "tl3.toml", b"fixture config\n")
+        self.runs = self.root / "worker-runs"
+        self.runs.mkdir(mode=0o700)
+        self.worker_config = ('[workers]\nruns=' + json.dumps(str(self.runs)) +
+                              '\nlauncher=' + json.dumps(deploy.LAUNCHER) + '\n')
+        deploy.write_file(self.config / "tl3.toml", self.worker_config.encode())
         deploy.write_file(self.config / "production-ready", b"")
         self.sources = {"data": self.cluster, "world": self.root / "world",
                         "journal": self.root / "journal", "config": self.config}
@@ -178,7 +273,8 @@ class FreshInitTests(unittest.TestCase):
             for child in path.rglob("*"):
                 child.chmod(0o700 if child.is_dir() else 0o600)
         self.backup = self.home / "backups/cold"
-        self.states = {"tl3d.service": "inactive", "tl3-postgres.service": "inactive"}
+        self.states = {"tl3d.service": "inactive", "tl3-postgres.service": "inactive",
+                       "tl3-workers.slice": "inactive"}
         self.calls = []
         self.transport = patch.object(deploy, "run", side_effect=self.transport_run)
         self.transport.start()
@@ -259,7 +355,8 @@ class FreshInitTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "backup"):
             deploy.verify_cold_backup(self.sources, self.backup)
 
-    def test_selected_daemon_is_stopped_before_postgres_and_dependents_start_last(self):
+    @contextlib.contextmanager
+    def fresh_attempt(self, failure=None, fail_start=None):
         args = SimpleNamespace(home=self.home, head="a" * 40, lane="release", evidence=self.home,
                                binaries=self.home / "release", backup=self.backup,
                                state_manifest=self.home / "scope.json")
@@ -271,7 +368,7 @@ class FreshInitTests(unittest.TestCase):
         deploy.write_file(args.binaries / "SHA256SUMS", ''.join(
             f"{hashes[name]}  {name}\n" for name in deploy.RELEASE_BINARIES).encode())
         deploy.write_file(args.state_manifest, b"fixture scope")
-        deploy.write_file(self.config / "tl3.toml", b'[github]\nwebhook_listen="127.0.0.1:8742"\n')
+        deploy.write_file(self.config / "tl3.toml", (self.worker_config + '[github]\nwebhook_listen="127.0.0.1:8742"\n').encode())
         self.states.update({unit: "active" for unit in
                             ("tl3d.service", "tl3-postgres.service", "tl3-mlflow.service",
                              "tl3-status.service", "tl3-console.service")})
@@ -283,6 +380,10 @@ class FreshInitTests(unittest.TestCase):
                 self.states[argv[3]] = "inactive"
             if argv[:3] == ["systemctl", "--user", "start"]:
                 self.states[argv[3]] = "active"
+                if argv[3] == "tl3d.service":
+                    self.states["tl3-workers.slice"] = "active"
+                if argv[3] == fail_start:
+                    raise RuntimeError("partial start failure")
             if "fresh-database" in argv:
                 self.assertEqual(self.states["tl3d.service"], "inactive")
                 for unit in ("tl3-mlflow.service", "tl3-status.service", "tl3-console.service"):
@@ -293,7 +394,13 @@ class FreshInitTests(unittest.TestCase):
         with patch.object(deploy, "fresh_scope", return_value=(self.sources, ("world", "journal"), self.config / "tl3.toml")), \
              patch.object(deploy, "run", side_effect=transport), \
              patch.object(deploy, "listener_ready", return_value=True), \
-             patch.object(deploy, "cold_cluster_identity", return_value="123456"), patch.object(deploy.time, "sleep"):
+             patch.object(deploy, "cold_cluster_identity", return_value="123456"), patch.object(deploy.time, "sleep"), \
+             (patch.object(deploy, "verify_stability", side_effect=failure)
+              if failure is not None else contextlib.nullcontext()):
+            yield args
+
+    def test_selected_daemon_is_stopped_before_postgres_and_dependents_start_last(self):
+        with self.fresh_attempt() as args:
             deploy.fresh_init(args)
         stops = [call[-1] for call in self.calls if call[:3] == ["systemctl", "--user", "stop"]]
         self.assertEqual(stops, ["tl3d.service", "tl3-mlflow.service", "tl3-status.service",
@@ -301,9 +408,270 @@ class FreshInitTests(unittest.TestCase):
         starts = [call[-1] for call in self.calls if call[:3] == ["systemctl", "--user", "start"]]
         self.assertEqual(starts, ["tl3-postgres.service", "tl3d.service", "tl3-mlflow.service",
                                   "tl3-status.service", "tl3-console.service"])
+        self.assertTrue(any("--property=NRestarts" in call for call in self.calls))
         reset_index = next(i for i, call in enumerate(self.calls) if "fresh-database" in call)
         controller_index = self.calls.index(["systemctl", "--user", "start", "tl3d.service"])
         self.assertLess(reset_index, controller_index)
+
+    def test_worker_guard_active_scope_refuses_before_backup_or_reset(self):
+        self.states["tl3-workers.slice"] = "active"
+        with self.fresh_attempt() as args:
+            with self.assertRaisesRegex(RuntimeError, "worker"):
+                deploy.fresh_init(args)
+        self.assertFalse(self.backup.exists())
+        self.assertTrue((self.root / "world/snapshot").exists())
+        self.assertFalse(any("fresh-database" in call for call in self.calls))
+        self.assertFalse(any(call[:3] == ["systemctl", "--user", "stop"] for call in self.calls))
+
+    def test_worker_guard_stability_failure_freezes_attempt(self):
+        self.states["tl3-workers.slice"] = "inactive"
+        with self.fresh_attempt(failure=RuntimeError("console stability failure")) as args:
+            with self.assertRaisesRegex(RuntimeError, "console stability failure"):
+                deploy.fresh_init(args)
+        self.assertTrue(all(self.states[unit] == "inactive" for unit in
+                            (*deploy.CLIENT_UNITS, "tl3-workers.slice", "tl3-postgres.service")), self.states)
+        self.assertEqual((self.backup / "world/snapshot").read_bytes(), b"old world")
+        self.assertFalse((self.root / "world/snapshot").exists())
+        stops = [call[3] for call in self.calls if call[:3] == ["systemctl", "--user", "stop"]]
+        self.assertEqual(stops[-6:], ["tl3d.service", *reversed(deploy.DEPENDENT_UNITS),
+                                    "tl3-workers.slice", "tl3-postgres.service"])
+        self.assertFalse(any("restore" in item for call in self.calls for item in call))
+
+    @contextlib.contextmanager
+    def recorded_worker(self, record="claim.json", stat_value=None, machine="fixture-machine", boot="fixture-boot"):
+        attempt = self.runs / "ab" / "attempt-00000001"
+        attempt.mkdir(parents=True, mode=0o700, exist_ok=True)
+        attempt.parent.chmod(0o700)
+        identity = {"pid": 123, "start": 456, "machine": "fixture-machine", "boot": "fixture-boot"}
+        deploy.write_file(attempt / record, json.dumps(identity).encode())
+        original = Path.read_text
+        process_stat = "123 (synthetic supervisor) " + " ".join(["S"] + ["0"] * 18 + ["456"])
+
+        def read(path, *args, **kwargs):
+            if str(path) == "/etc/machine-id":
+                if isinstance(machine, Exception):
+                    raise machine
+                return machine
+            if str(path) == "/proc/sys/kernel/random/boot_id":
+                if isinstance(boot, Exception):
+                    raise boot
+                return boot
+            if str(path) == "/proc/123/stat":
+                if isinstance(stat_value, Exception):
+                    raise stat_value
+                return process_stat if stat_value is None else stat_value
+            if str(path).startswith("/proc/"):
+                raise AssertionError("unexpected process discovery")
+            return original(path, *args, **kwargs)
+
+        with patch.object(Path, "read_text", read):
+            yield attempt / record, identity
+
+    def test_worker_guard_recorded_supervisor_refuses_before_backup(self):
+        with self.recorded_worker(record="process.json"), self.fresh_attempt() as args:
+            with self.assertRaisesRegex(RuntimeError, "worker|supervisor"):
+                deploy.fresh_init(args)
+        self.assertFalse(self.backup.exists())
+        self.assertFalse(any(call[:3] == ["systemctl", "--user", "stop"] for call in self.calls))
+
+    def test_worker_guard_unknown_states_and_query_failure_refuse(self):
+        for state in ("active", "activating", "deactivating", "reloading", "failed", "", "unknown"):
+            with self.subTest(state=state):
+                self.states[deploy.WORKER_SLICE] = state
+                with self.assertRaises(RuntimeError):
+                    deploy.require_workers_stopped(self.home)
+        with patch.object(deploy, "unit_state", side_effect=RuntimeError("query timed out")):
+            with self.assertRaisesRegex(RuntimeError, "query timed out"):
+                deploy.require_workers_stopped(self.home)
+        with patch.object(deploy, "unit_state", side_effect=["inactive", "active"]):
+            with self.assertRaisesRegex(RuntimeError, "changed"):
+                deploy.require_workers_stopped(self.home)
+
+    def test_worker_guard_record_liveness_and_stale_pid_reuse(self):
+        for record in ("claim.json", "process.json"):
+            with self.subTest(record=record), self.recorded_worker(record=record) as (path, identity):
+                with self.assertRaisesRegex(RuntimeError, "active"):
+                    deploy.require_workers_stopped(self.home)
+                for stale in (dict(identity, start=457), dict(identity, boot="old-boot"), {"cancelled": True}):
+                    deploy.write_file(path, json.dumps(stale).encode())
+                    deploy.require_workers_stopped(self.home)
+                path.unlink()
+        for observation in (FileNotFoundError(), "123 (exited) " + " ".join(["Z"] + ["0"] * 18 + ["456"])):
+            with self.subTest(observation=observation), self.recorded_worker(stat_value=observation) as (path, _):
+                deploy.require_workers_stopped(self.home)
+                path.unlink()
+
+    def test_worker_guard_malformed_and_unreadable_records_refuse(self):
+        with self.recorded_worker() as (path, identity):
+            for value in ([], {}, dict(identity, pid=True), dict(identity, pid=-1), dict(identity, start="456"),
+                          dict(identity, machine="foreign"), dict(identity, pid=2**31), dict(identity, start=2**64),
+                          {"cancelled": False}, {"cancelled": 1}, {"cancelled": True, "pid": 123}):
+                with self.subTest(value=value):
+                    deploy.write_file(path, json.dumps(value).encode())
+                    with self.assertRaises(RuntimeError):
+                        deploy.require_workers_stopped(self.home)
+            path.write_text("{broken")
+            with self.assertRaises(RuntimeError):
+                deploy.require_workers_stopped(self.home)
+            path.unlink()
+            path.symlink_to(self.home / "missing-record")
+            with self.assertRaisesRegex(RuntimeError, "ownership"):
+                deploy.require_workers_stopped(self.home)
+        for observation in (PermissionError(), "malformed stat", "123 (worker) S"):
+            with self.subTest(observation=observation), self.recorded_worker(stat_value=observation):
+                with self.assertRaises(RuntimeError):
+                    deploy.require_workers_stopped(self.home)
+
+    def test_worker_guard_missing_machine_or_boot_observation_refuses(self):
+        for field in ("machine", "boot"):
+            for value in ("", PermissionError("identity read denied")):
+                with self.subTest(field=field, value=value), self.recorded_worker(**{field: value}):
+                    with self.assertRaises(RuntimeError):
+                        deploy.require_workers_stopped(self.home)
+
+    def test_worker_guard_empty_world_and_launcher_scope(self):
+        deploy.require_workers_stopped(self.home)
+        for launcher in ([], ["another-launcher"]):
+            config = '[workers]\nruns=' + json.dumps(str(self.runs)) + '\nlauncher=' + json.dumps(launcher)
+            deploy.write_file(self.config / "tl3.toml", config.encode())
+            with self.assertRaisesRegex(RuntimeError, "launcher"):
+                deploy.require_workers_stopped(self.home)
+
+    def test_worker_guard_partial_start_failure_freezes_all_service_subsets(self):
+        for unit in ("tl3-postgres.service", *deploy.CLIENT_UNITS):
+            with self.subTest(unit=unit):
+                # Each attempt needs its own untouched fixture and new backup.
+                fixture = FreshInitTests()
+                fixture.setUp()
+                try:
+                    with fixture.fresh_attempt(fail_start=unit) as args:
+                        with self.assertRaisesRegex(RuntimeError, "partial start failure") as caught:
+                            deploy.fresh_init(args)
+                    self.assertTrue(all(fixture.states[name] == "inactive" for name in
+                                        (*deploy.CLIENT_UNITS, deploy.WORKER_SLICE, "tl3-postgres.service")))
+                    self.assertIn("verified frozen", " ".join(caught.exception.__notes__))
+                    self.assertTrue((fixture.backup / "data/pg_wal/segment").exists())
+                finally:
+                    fixture.doCleanups()
+
+    def cleanup_transport(self, stopped_states=None, failed_stop=None):
+        stopped_states = stopped_states or {}
+        self.states.update({unit: "active" for unit in
+                            (*deploy.CLIENT_UNITS, deploy.WORKER_SLICE, "tl3-postgres.service")})
+        self.calls.clear()
+
+        def transport(command, **kwargs):
+            argv = list(map(str, command))
+            if argv[:3] == ["systemctl", "--user", "stop"]:
+                self.assertEqual(kwargs["timeout"], 150)
+                self.states[argv[3]] = stopped_states.get(argv[3], "inactive")
+                if argv[3] == failed_stop:
+                    self.calls.append(argv)
+                    raise RuntimeError("stop response lost")
+            return self.transport_run(command, **kwargs)
+
+        return patch.object(deploy, "run", side_effect=transport)
+
+    def cleanup_stops(self):
+        return [call[3] for call in self.calls if call[:3] == ["systemctl", "--user", "stop"]]
+
+    def test_worker_guard_cleanup_accepts_failed_services_after_explicit_stop(self):
+        expected = ["tl3d.service", *reversed(deploy.DEPENDENT_UNITS),
+                    deploy.WORKER_SLICE, "tl3-postgres.service"]
+        for failed in (*deploy.CLIENT_UNITS, "tl3-postgres.service"):
+            with self.subTest(failed=failed), self.cleanup_transport({failed: "failed"}):
+                deploy.freeze_fresh_attempt(self.home)
+                self.assertEqual(self.cleanup_stops(), expected)
+                self.assertEqual(self.states[failed], "failed")
+                self.assertFalse(any("reset-failed" in call for call in self.calls))
+
+    def test_worker_guard_cleanup_continues_after_stop_error_when_unit_is_quiescent(self):
+        expected = ["tl3d.service", *reversed(deploy.DEPENDENT_UNITS),
+                    deploy.WORKER_SLICE, "tl3-postgres.service"]
+        for failed in expected:
+            with self.subTest(failed=failed), self.cleanup_transport(failed_stop=failed):
+                with self.assertRaisesRegex(RuntimeError, "NOT established.*stop response lost"):
+                    deploy.freeze_fresh_attempt(self.home)
+                self.assertEqual(self.cleanup_stops(), expected)
+                self.assertTrue(all(state == "inactive" for state in self.states.values()))
+
+    def test_worker_guard_cleanup_rejects_noninactive_slice_after_stop(self):
+        for state in ("active", "activating", "deactivating", "unknown", "", "failed"):
+            with self.subTest(state=state), self.cleanup_transport({deploy.WORKER_SLICE: state}):
+                with self.assertRaisesRegex(RuntimeError, "NOT established"):
+                    deploy.freeze_fresh_attempt(self.home)
+                self.assertIn(deploy.WORKER_SLICE, self.cleanup_stops())
+                self.assertNotIn("tl3-postgres.service", self.cleanup_stops())
+                self.assertEqual(self.states["tl3-postgres.service"], "active")
+
+    def test_worker_guard_failed_service_with_lingering_worker_is_not_frozen(self):
+        with self.cleanup_transport({"tl3d.service": "failed"}), self.recorded_worker():
+            with self.assertRaisesRegex(RuntimeError, "NOT established.*recorded TL3"):
+                deploy.freeze_fresh_attempt(self.home)
+            self.assertIn(deploy.WORKER_SLICE, self.cleanup_stops())
+            self.assertNotIn("tl3-postgres.service", self.cleanup_stops())
+
+    def test_worker_guard_cleanup_collects_each_stop_and_verification_error(self):
+        def transport(command, **kwargs):
+            self.calls.append(list(command))
+            raise RuntimeError("stop failed")
+
+        self.states.update({unit: "active" for unit in deploy.CLIENT_UNITS})
+        with patch.object(deploy, "run", side_effect=transport), \
+             patch.object(deploy, "unit_state", side_effect=lambda unit: self.states[unit]):
+            with self.assertRaisesRegex(RuntimeError, "NOT established") as caught:
+                deploy.freeze_fresh_attempt(self.home)
+        for unit in deploy.CLIENT_UNITS:
+            self.assertIn(unit, str(caught.exception))
+        self.assertEqual(str(caught.exception).count("stop failed"), len(deploy.CLIENT_UNITS))
+        self.assertEqual(self.cleanup_stops(), ["tl3d.service", *reversed(deploy.DEPENDENT_UNITS)])
+
+    def test_worker_guard_cleanup_failure_keeps_postgres_and_preserves_original(self):
+        for failed in (*deploy.CLIENT_UNITS, deploy.WORKER_SLICE, "tl3-postgres.service"):
+            states = {unit: "active" for unit in (*deploy.CLIENT_UNITS, deploy.WORKER_SLICE, "tl3-postgres.service")}
+            stops = []
+
+            def transport(command, **kwargs):
+                self.assertEqual(kwargs["timeout"], 150)
+                unit = command[3]
+                stops.append(unit)
+                if unit == failed:
+                    raise RuntimeError("stop failed")
+                states[unit] = "inactive"
+                return b""
+
+            with self.subTest(failed=failed), patch.object(deploy, "run", side_effect=transport), \
+                 patch.object(deploy, "unit_state", side_effect=lambda unit: states[unit]):
+                with self.assertRaisesRegex(RuntimeError, "NOT established"):
+                    deploy.freeze_fresh_attempt(self.home)
+                if failed != "tl3-postgres.service":
+                    self.assertNotIn("tl3-postgres.service", stops)
+                if failed == "tl3d.service":
+                    self.assertNotIn(deploy.WORKER_SLICE, stops)
+        with self.fresh_attempt(failure=RuntimeError("original stability failure")) as args, \
+             patch.object(deploy, "freeze_fresh_attempt", side_effect=RuntimeError("cleanup NOT established")):
+            with self.assertRaisesRegex(RuntimeError, "original stability failure") as caught:
+                deploy.fresh_init(args)
+        self.assertIn("cleanup NOT established", " ".join(caught.exception.__notes__))
+
+    def test_worker_guard_cleanup_verifies_final_state_and_bounds_stops(self):
+        self.states.update({unit: "inactive" for unit in deploy.CLIENT_UNITS})
+        with patch.object(deploy, "require_workers_stopped", side_effect=[None, RuntimeError("late worker")]):
+            with self.assertRaisesRegex(RuntimeError, "final quiescence"):
+                deploy.freeze_fresh_attempt(self.home)
+        self.assertTrue(all(call.kwargs["timeout"] == 150 for call in deploy.run.call_args_list
+                            if call.args[0][:3] == ["systemctl", "--user", "stop"]))
+        self.states["tl3d.service"] = "deactivating"
+        with self.assertRaisesRegex(RuntimeError, "NOT established"):
+            deploy.freeze_fresh_attempt(self.home)
+
+    def test_worker_guard_cleanup_does_not_claim_stopped_with_lingering_record(self):
+        self.states.update({unit: "inactive" for unit in deploy.CLIENT_UNITS})
+        self.states["tl3-postgres.service"] = "active"
+        with self.recorded_worker():
+            with self.assertRaisesRegex(RuntimeError, "NOT established"):
+                deploy.freeze_fresh_attempt(self.home)
+        self.assertFalse(any(call == ["systemctl", "--user", "stop", "tl3-postgres.service"] for call in self.calls))
 
     def test_qualification_refusal_does_not_stop_any_unit(self):
         args = SimpleNamespace(home=self.home, head="a" * 40, lane="release", evidence=self.home)
@@ -517,6 +885,17 @@ class FreshInitTests(unittest.TestCase):
                             ("tl3d.service", "tl3-mlflow.service", "tl3-status.service", "tl3-console.service")})
         self.states["tl3-postgres.service"] = "active"
         with patch.object(deploy, "fresh_scope", return_value=(self.sources, (), self.config / "tl3.toml")):
+            for state in ("active", "activating", "deactivating", "unknown"):
+                self.states[deploy.WORKER_SLICE] = state
+                with self.assertRaisesRegex(RuntimeError, "worker"):
+                    deploy.authorize_fresh_database(context, self.config / "tl3.toml", capability)
+                self.assertFalse(context.with_suffix(".consumed").exists())
+            self.states[deploy.WORKER_SLICE] = "inactive"
+            with self.recorded_worker():
+                with self.assertRaisesRegex(RuntimeError, "supervisor"):
+                    deploy.authorize_fresh_database(context, self.config / "tl3.toml", capability)
+                self.assertFalse(context.with_suffix(".consumed").exists())
+            (self.runs / "ab/attempt-00000001/claim.json").unlink()
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
                 deploy.authorize_fresh_database(context, self.config / "tl3.toml", capability)

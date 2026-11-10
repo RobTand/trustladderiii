@@ -83,8 +83,14 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
                 final(w).nodes@.len() == old(w).nodes@.len() + 1
                 && final(w).nodes@[old(w).nodes@.len() as int].proposed == Some(head)
                 && !final(w).nodes@[old(w).nodes@.len() as int].adopted,
-            Event::Command { node, command, .. } => node.0 < old(w).nodes@.len() ==>
-                handler_safety::command_step(old(w).nodes@[node.0 as int], final(w).nodes@[node.0 as int])
+            Event::Command { node, id, command } => node.0 < old(w).nodes@.len() ==>
+                (match command {
+                    Command::Answer { question, answer } => handler_safety::answer_pair(
+                        old(w).nodes@[node.0 as int], final(w).nodes@[node.0 as int],
+                        id > old(w).nodes@[node.0 as int].last_cmd, question, answer,
+                        final(w).dependencies@, node),
+                    _ => handler_safety::command_step(old(w).nodes@[node.0 as int], final(w).nodes@[node.0 as int]),
+                })
                 && transition_safety::notice_only(*old(out), *final(out), node)
                 && (match command {
                     Command::Answer { question, .. } => node_checked(*old(w), old(w).nodes@[node.0 as int])
@@ -853,8 +859,14 @@ fn apply_command(w: &mut World, node: NodeId, id: u64, command: Command,
                 final(w).nodes@.len() == old(w).nodes@.len() + 1
                 && final(w).nodes@[old(w).nodes@.len() as int].proposed == Some(head)
                 && !final(w).nodes@[old(w).nodes@.len() as int].adopted,
-            Event::Command { node, command, .. } => node.0 < old(w).nodes@.len() ==>
-                handler_safety::command_step(old(w).nodes@[node.0 as int], final(w).nodes@[node.0 as int])
+            Event::Command { node, id, command } => node.0 < old(w).nodes@.len() ==>
+                (match command {
+                    Command::Answer { question, answer } => handler_safety::answer_pair(
+                        old(w).nodes@[node.0 as int], final(w).nodes@[node.0 as int],
+                        id > old(w).nodes@[node.0 as int].last_cmd, question, answer,
+                        final(w).dependencies@, node),
+                    _ => handler_safety::command_step(old(w).nodes@[node.0 as int], final(w).nodes@[node.0 as int]),
+                })
                 && transition_safety::notice_only(*old(out), *final(out), node)
                 && (match command {
                     Command::Answer { question, .. } => node_checked(*old(w), old(w).nodes@[node.0 as int])
@@ -904,7 +916,6 @@ fn apply_command(w: &mut World, node: NodeId, id: u64, command: Command,
             (retirement::node_rules(*old(w), b) ==> retirement::node_rules(*final(w), n))
                 && (n.holds ==> b.holds) && (n.pool ==> b.pool)
                 && (n.ticket == b.ticket || n.ticket.is_none())
-                && n.credit.withheld == b.credit.withheld
                 && n.repo == b.repo && n.footprint == b.footprint
                 && final(w).nodes@ == old(w).nodes@.update(node.0 as int, n)
         }),

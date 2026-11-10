@@ -3,6 +3,12 @@ load("//tools/bazel:python.bzl", "py_library", "tl3_py_test")
 
 exports_files(["helper.rs"])
 
+# The canary-qualification absence test reads the release build commands.
+exports_files([
+    "build-release.sh",
+    "verify.sh",
+])
+
 # crates/config tests include_str! the deployment model defaults.
 exports_files(["models.toml"])
 

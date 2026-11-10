@@ -1,9 +1,9 @@
 {
-  "source_head": "290e8785920bd88ff6707cd42f8bdb2f1f018845",
+  "source_head": "0db78386d2de348da7e3219a5696c453e6ce28b1",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "e799bd747aa6c5d6557a9b9fa34fc4018d5ca6b02ee315b91f1b211deff34143",
-  "groups": 604,
-  "obligations": 802,
+  "source_sha256": "95685d5dad48dbc71189a82ac1b8129713c1296b435b9ba4bd61411b7e26ef38",
+  "groups": 612,
+  "obligations": 810,
   "selections": [
     {
       "target": "//crates/kernel:verus_apply_command_safety_answered_parts",
@@ -513,6 +513,46 @@
     {
       "target": "//crates/kernel:verus_apply_new_safety_adoption_c2",
       "selector": "kernel::apply_new_safety#adoption_c2",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_step_rows_carry",
+      "selector": "kernel::handler_safety#step_rows_carry",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_step_withheld",
+      "selector": "kernel::handler_safety#step_withheld",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_distance_withheld",
+      "selector": "kernel::handler_safety#distance_withheld",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_unwithheld_same",
+      "selector": "kernel::handler_safety#unwithheld_same",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_answer_pair_intro",
+      "selector": "kernel::handler_safety#answer_pair_intro",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_answer_pair_rebase",
+      "selector": "kernel::handler_safety#answer_pair_rebase",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_answer_pair_same",
+      "selector": "kernel::handler_safety#answer_pair_same",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_handler_safety_answer_pair_rows",
+      "selector": "kernel::handler_safety#answer_pair_rows",
       "expected": 1
     },
     {

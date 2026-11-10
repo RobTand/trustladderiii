@@ -320,7 +320,9 @@ pub(super) fn answer_command(w: &mut World, i: usize, id: u64, question: u64, an
         final(w).nodes@[i as int].proposed == old(w).nodes@[i as int].proposed,
         final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
         (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase),
-        handler_safety::command_step(old(w).nodes@[i as int], final(w).nodes@[i as int]),
+        handler_safety::answer_pair(old(w).nodes@[i as int], final(w).nodes@[i as int],
+            id > old(w).nodes@[i as int].last_cmd, question, answer, final(w).dependencies@,
+            NodeId(i as u64)),
         transition_safety::notice_only(*old(out), *final(out), NodeId(i as u64)),
         (match (Command::Answer { question, answer }) {
             Command::Answer { question, .. } => node_checked(*old(w), old(w).nodes@[i as int])
@@ -338,7 +340,6 @@ pub(super) fn answer_command(w: &mut World, i: usize, id: u64, question: u64, an
         (final(w).nodes@[i as int].holds ==> old(w).nodes@[i as int].holds),
         (final(w).nodes@[i as int].pool ==> old(w).nodes@[i as int].pool),
         final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket || final(w).nodes@[i as int].ticket.is_none(),
-        final(w).nodes@[i as int].credit.withheld == old(w).nodes@[i as int].credit.withheld,
         final(w).nodes@ == old(w).nodes@.update(i as int, final(w).nodes@[i as int]),
         old(w).next_question <= final(w).next_question,
         (retirement::node_rules(*old(w), old(w).nodes@[i as int])
@@ -356,6 +357,9 @@ pub(super) fn answer_command(w: &mut World, i: usize, id: u64, question: u64, an
             w.nodes@[i as int]);
         apply_command_safety::answered_parts(before_rules_world@.nodes@[i as int],
             before_rules_world@.next_question, id, question, answer);
+        apply_command_safety::answered_held_parts(before_rules_world@.nodes@[i as int],
+            before_rules_world@.next_question, id, question, answer, before_rules_world@.dependencies@,
+            NodeId(i as u64));
         apply_command_safety::answer_world(before_rules_world@, *w, i, id, question, answer,
             before_out@, *out);
     }
