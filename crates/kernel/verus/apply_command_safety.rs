@@ -654,18 +654,32 @@ pub(super) proof fn held_same(b: Node, nq: u64, id: u64, question: u64, answer: 
     handler_safety::unwithheld_same(x);
 }
 
-/// L1 re-stack: answer_pair ignores last_cmd, and a fresh id keeps the guard.
-pub(super) proof fn answer_pair_last_cmd(b: Node, id: u64, n: Node, question: u64, answer: Answer,
+/// L1 re-stack (fix 1): the answer_pair row when the guard withholds; plain node parameters.
+pub(super) proof fn pair_withheld(b: Node, x: Node, w: bool, id: u64, question: u64, answer: Answer,
     table: Seq<Dependency>, node: NodeId)
-    requires handler_safety::answer_pair(Node { last_cmd: id, ..b }, n, true, question, answer, table, node),
-        id > b.last_cmd,
-    ensures handler_safety::answer_pair(b, n, id > b.last_cmd, question, answer, table, node),
+    requires handler_safety::command_step(Node { last_cmd: id, ..b }, x),
+        handler_safety::answer_withholds(b, question, answer), id > b.last_cmd,
+        w == dependencies::withheld_after(x.credit.withheld, x.planning_started, x.phase, x.credit.ready,
+            table, node),
+    ensures handler_safety::answer_pair(b, handler_safety::unwithheld(x, w), id > b.last_cmd, question,
+        answer, table, node),
 {
     reveal(handler_safety::answer_pair);
     reveal(handler_safety::command_step);
 }
 
-/// L1 re-stack: the answer_pair row of the held node (L1's answer_pair_intro, then the rebase).
+/// L1 re-stack (fix 1): the answer_pair row when the guard does not withhold.
+pub(super) proof fn pair_plain(b: Node, x: Node, id: u64, question: u64, answer: Answer,
+    table: Seq<Dependency>, node: NodeId)
+    requires handler_safety::command_step(Node { last_cmd: id, ..b }, x),
+        !handler_safety::answer_withholds(b, question, answer), id > b.last_cmd,
+    ensures handler_safety::answer_pair(b, x, id > b.last_cmd, question, answer, table, node),
+{
+    reveal(handler_safety::answer_pair);
+    reveal(handler_safety::command_step);
+}
+
+/// L1 re-stack: the answer_pair row of the held node, one tiny lemma per guard outcome.
 pub(super) proof fn answer_pair_held(b: Node, nq: u64, id: u64, question: u64, answer: Answer,
     table: Seq<Dependency>, node: NodeId)
     requires node_headroom(b), arithmetic_consistent(b), nq < u64::MAX, id > b.last_cmd,
@@ -676,11 +690,12 @@ pub(super) proof fn answer_pair_held(b: Node, nq: u64, id: u64, question: u64, a
     let x = apply_answer_values::answered(a, nq, question, answer).0;
     reveal(answered_held);
     apply_answer_safety::answer_step(a, nq, question, answer);
-    handler_safety::step_withheld(a, x);
-    handler_safety::answer_pair_intro(a, x, held_answer(a, nq, question, answer, table, node),
-        question, answer, table, node);
-    answer_pair_last_cmd(b, id, held_answer(a, nq, question, answer, table, node), question, answer,
-        table, node);
+    if handler_safety::answer_withholds(b, question, answer) {
+        pair_withheld(b, x, dependencies::withheld_after(x.credit.withheld, x.planning_started, x.phase,
+            x.credit.ready, table, node), id, question, answer, table, node);
+    } else {
+        pair_plain(b, x, id, question, answer, table, node);
+    }
 }
 
 /// L1 re-stack: withholding keeps the node rules (it sets the flag only in an early, ready,
