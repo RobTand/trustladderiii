@@ -443,6 +443,14 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::internal_safety::table_grows": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::internal_safety::apply_n1_rules": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::internal_safety::apply_n2_no_grants": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::internal_safety::apply_n3_footprint": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::internal_safety::apply_n4_dependencies": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::internal_safety::apply_n5_frame": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::internal_safety::append_frame": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::internal_safety::appended_node_ok": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::event_target": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::others_unchanged": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::effect_node_ok": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -768,7 +776,7 @@ def verus_proofs():
             "transition_safety_notice_only_effects": ("kernel::transition_safety#notice_only_effects", 1),
             "continuations_set_phase_v": ("kernel::continuations#set_phase_v", 1),
             "continuations_enter_stopping_v": ("kernel::continuations#enter_stopping_v", 1),
-            "internal_safety": ("kernel::internal_safety", 7),
+            "internal_safety": ("kernel::internal_safety", 12),
             "handler_safety_keep_review_stop": ("kernel::handler_safety#keep_review_stop", 1),
             "handler_safety_kept_ladder": ("kernel::handler_safety#kept_ladder", 1),
             "handler_safety_rung_ladder": ("kernel::handler_safety#rung_ladder", 1),
