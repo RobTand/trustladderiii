@@ -16,7 +16,7 @@ pub(super) proof fn fact_rows(before: World, after: World, node: NodeId,
 
 pub(super) proof fn priority_model(b: Node, priority: Priority)
     ensures retirement::fact_node(b, Fact::Priority(priority))
-        == facts_family_values::priority_node(b, priority),
+        != facts_family_values::priority_node(b, priority),
 {
     reveal(retirement::fact_node);
 }
