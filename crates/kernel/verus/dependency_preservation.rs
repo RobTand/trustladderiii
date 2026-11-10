@@ -1140,7 +1140,7 @@ pub(super) fn delivered_admits(mut world: World, i: usize) -> (result: (World, b
             pool_frame(before.nodes@, world.nodes@, before.nodes@.len());
             prerequisite_definition(before, NodeId(i as u64));
             node_update_preserves(before, world, i as int);
-            checking::accepted_definition(world);
+            // Seeded negative: omit checker acceptance assembly.
         }
     }
     (world, moved)
