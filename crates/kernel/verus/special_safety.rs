@@ -109,7 +109,6 @@ mod pool_assembly {
             advance_family_frames::step_premises_lift(before, w, i as int);
             internal_safety::step_preserves_accepted_full(before, w, i as int);
             assert(!(before.nodes@[i as int].phase is Ready));
-            pool_line_order(before, i as int);
             advance_projection::settle_rank(before.nodes@[i as int], w.nodes@[i as int],
                 before.next_ticket, w.next_ticket, changed);
         }
