@@ -7786,3 +7786,108 @@ fn cleanup_maintenance_elapsed_readonly_failure_backs_off_after_pass() {
     );
     assert_eq!(fs::read(dir.join("state.json")).unwrap(), b"{truncated");
 }
+
+#[test]
+#[ignore = "run on BuildBuddy as UID 1000; temp paths and isolated Postgres only"]
+fn cleanup_maintenance_unreadable_locked_identity_keeps_prior_incident() {
+    struct PriorIncident {
+        backend: CleanupMaintenanceExecutor,
+        prior: Option<String>,
+    }
+    impl tl3_controller::executor::Executor for PriorIncident {
+        fn execute(
+            &mut self,
+            _: &tl3_controller::executor::Delivery,
+        ) -> tl3_controller::Result<tl3_controller::executor::Completion> {
+            unreachable!()
+        }
+        fn reconcile(
+            &mut self,
+            _: &tl3_controller::executor::Delivery,
+        ) -> tl3_controller::Result<tl3_controller::executor::Reconciliation> {
+            unreachable!()
+        }
+        fn cleanup_maintenance(
+            &mut self,
+            now: u64,
+        ) -> tl3_controller::Result<api::MaintenanceReport<String>> {
+            if let Some(owner) = self.prior.take() {
+                // Seed the real incident from the preceding known-owner pass.
+                return Ok(api::MaintenanceReport {
+                    pending: vec![owner],
+                    skipped_busy: false,
+                    unobserved: vec![],
+                });
+            }
+            self.backend.cleanup_maintenance(now)
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let backend = maintenance_temp_backend(root.path());
+    let journal = root.path().join("journal");
+    let key = "identity-lost-owner";
+    let owner = "prior-owner";
+    let intent = SubmissionIntent {
+        backend: BackendTag::Flux,
+        instance: "fixture".into(),
+        uri: "local:///fixture".into(),
+        owner: owner.into(),
+        correlation: key.into(),
+        request_digest: "a".repeat(64),
+        output_dir: root.path().join("unused-output"),
+    };
+    let debt_dir = journal.join("cleanup-debt").join("a".repeat(64));
+    fs::create_dir_all(&debt_dir).unwrap();
+    let debt = debt_dir.join(format!("{key}.scratch"));
+    let retained = serde_json::to_vec(&intent).unwrap();
+    fs::write(&debt, &retained).unwrap();
+    let dir = journal.join(key);
+    fs::create_dir(&dir).unwrap();
+    fs::write(dir.join("state.json"), b"{truncated").unwrap();
+    let lock = fs::OpenOptions::new()
+        .create_new(true)
+        .read(true)
+        .write(true)
+        .open(dir.join("lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let mut database = maintenance_store_support::Database::start();
+    let mut registry = tl3_controller::adapters::simulation(root.path()).unwrap();
+    registry.register(
+        tl3_controller::executor::Upstream::PrismaBuild,
+        PriorIncident {
+            backend: CleanupMaintenanceExecutor(backend.clone()),
+            prior: Some(format!("{owner}:{key}")),
+        },
+    );
+    let mut controller = tl3_controller::Controller::open(
+        tl3_store::Store::open(&database.create("maintenance_identity_lost")).unwrap(),
+        registry,
+        tl3_controller::Bootstrap {
+            repos: vec![],
+            rob: 42,
+            slots: 1,
+            pool: 1,
+            fail_fast: false,
+            operations: None,
+        },
+    )
+    .unwrap();
+    let id = format!(
+        "runtime-cleanup:{}",
+        digest(format!("PrismaBuild:{owner}:{key}").as_bytes())
+    );
+    controller.look_now().unwrap();
+    assert!(controller.snapshot().unwrap().rows.iter().any(|row| {
+        row.table == "incidents" && row.value["id"] == id && row.value["open"] == true
+    }), "prior real incident must be open before the unreadable-owner pass");
+    for _ in 0..3 {
+        controller.look_now().unwrap();
+        assert!(controller.snapshot().unwrap().rows.iter().any(|row| {
+            row.table == "incidents" && row.value["id"] == id && row.value["open"] == true
+        }), "unreadable locked identity must keep the prior real incident open");
+    }
+    assert_eq!(fs::read(&debt).unwrap(), retained, "identity recovery cannot change debt");
+    drop(controller);
+    database.stop();
+}
