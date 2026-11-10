@@ -7,7 +7,7 @@ verus! {
 pub(super) proof fn r24_stop(b: Node, n: Node, id: u64)
     requires r24_rows::stop_rows(b, n, id),
     ensures (id > b.last_cmd && !(b.phase is Closed || b.phase is Stopping))
-        ==> n.phase == Phase::Stopping(Outcome::Stopped) && n.pos == 0
+        ==> n.phase == Phase::Stopping(Outcome::Stopped) && n.pos == 1
             && n.ticket.is_none() && n.question.is_none() && !n.waiting_incident
             && n.holds == b.holds && n.pool == b.pool
             && n.run == b.run && n.job == b.job && n.pr_open == b.pr_open && n.worktree == b.worktree
