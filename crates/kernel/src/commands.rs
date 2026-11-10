@@ -401,7 +401,7 @@ fn resume_command(w: &mut World, i: usize, id: u64) -> (result: ()) [
         (retirement::node_rules(*old(w), old(w).nodes@[i as int])
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
 ] {
-kernel_snapshot! { before_rules_world = *w }
+    kernel_snapshot! { before_rules_world = *w }
     kernel_snapshot! { before_command_node = w.nodes@[i as int] }
     kernel_proof! { apply_command_safety::resume_facts(*w, w.nodes@[i as int], id); }
     w.nodes[i].last_cmd = id;

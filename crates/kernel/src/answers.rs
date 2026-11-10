@@ -233,7 +233,7 @@ fn retry_answer_node(n: Node, q: Question) -> (result: (Node, Option<Notice>)) [
         result.0.credit.withheld == n.credit.withheld,
         (handler_safety::node_rules_v(n, u64::MAX) && n.phase == Phase::AwaitingRob && n.question == Some(q) && q.kind == QKind::CantMeet ==> handler_safety::node_rules_v(result.0, u64::MAX)),
 ] {
-let r = retry_answer_exact(n, q);
+    let r = retry_answer_exact(n, q);
     kernel_proof! {
         apply_answer_safety::retry_frame(n, q);
         apply_answer_safety::retry_progress(n, q);
@@ -259,7 +259,7 @@ fn retry_answer_exact(n: Node, q: Question) -> (result: (Node, Option<Notice>)) 
         n.credit.spent < u64::MAX,
     ensures result == apply_answer_values::retried_answer(n, q),
 ] {
-let mut m = n;
+    let mut m = n;
     m.attempt = 1;
     m.review_restarted = false;
     m.round = 0;
@@ -296,7 +296,7 @@ pub(super) fn answer_value(n: Node, nq: u64, id: u64, answer: Answer)
         nq < u64::MAX,
     ensures result == apply_answer_values::answered(n, nq, id, answer),
 ] {
-let m = n;
+    let m = n;
     let nq = nq;
     let note: Option<Notice> = None;
     let Some(q) = m.question else {

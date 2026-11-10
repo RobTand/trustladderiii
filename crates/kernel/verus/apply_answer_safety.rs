@@ -1,4 +1,7 @@
 //! Derived properties over the exact Apply answer result.
+//! Design 3 audit check_design3.py sha256 097e007110bbed57828bb0d06e23d75865ff4c58d9ae378221ecdad6eb4137b2
+//! Design 3 audit k5_exec_compare.py sha256 407c83dc0a2df8cf3f102d3e6ee9d81b687adc481a15029c8d2ad770337120d1
+//! Design 3 audit k5_post_check.py sha256 d538b7df6aeacfb8c0584dc3e7e0178d4d24c8835af1f9628624e3c10b10f43a
 use super::*;
 use super::apply_answer_values::*;
 verus! {
@@ -424,7 +427,7 @@ pub(super) proof fn answer_rules(n: Node, nq: u64, id: u64, answer: Answer)
         nq < u64::MAX,
     ensures (handler_safety::node_rules_v(n, nq) ==> handler_safety::node_rules_v(answered(n, nq, id, answer).0, answered(n, nq, id, answer).1)),
 {
-if !handler_safety::node_rules_v(n, nq) { return; }
+    if !handler_safety::node_rules_v(n, nq) { return; }
     reveal(answered);
     match n.question {
         None => {},

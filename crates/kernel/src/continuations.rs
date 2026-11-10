@@ -223,7 +223,7 @@ pub(super) fn continue_exact(n: Node, q: Question, deposit: u8) -> (result: Node
         n.credit.spent < u64::MAX,
     ensures result == handler_safety::continued_node(n, q, deposit),
 ] {
-let mut m = n;
+    let mut m = n;
     m.credit = fund_and_pay_v(m.credit, deposit, q.cost);
     m.question = None;
     match q.cont {
