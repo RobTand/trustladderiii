@@ -259,7 +259,7 @@ fn confirmed_agenda(m: &mut Node, kind: EffectKind) -> (result: ()) [
         final(m).last_cmd == old(m).last_cmd,
         *final(m) == agenda_spec(*old(m), kind),
 ] {
-    *m = confirmed_agenda_value(*m, kind);
+    *m = confirmed_agenda_value(*m, kind); m.head = None;
 }
 }
 
