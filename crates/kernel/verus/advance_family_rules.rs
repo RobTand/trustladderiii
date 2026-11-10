@@ -125,4 +125,14 @@ pub(super) proof fn slot_resume_from_grant(b: Node, a: Node, c: AdvanceContext, 
 }
 
 
+
+/// E5.6 consumer elimination, outside the predicate's producer module.
+pub(super) proof fn retained_holds(b: Node, a: Node)
+    requires advance_family_post::retains_holds(b, a),
+    ensures b.holds && !b.paused && (b.phase == Phase::Making || b.phase == Phase::Rebasing)
+        ==> a.holds,
+{
+    reveal(advance_family_post::retains_holds);
+}
+
 }

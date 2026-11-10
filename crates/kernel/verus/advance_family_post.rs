@@ -366,4 +366,48 @@ pub(super) proof fn holds_frame_intro(b: Node, a: Node)
     reveal(holds_frame);
 }
 
+
+/// E5.6's internal carrier; product clause stays plain on scheduler::advance.
+#[verifier::opaque]
+pub(super) open spec fn retains_holds(b: Node, a: Node) -> bool {
+    b.holds && !b.paused && (b.phase == Phase::Making || b.phase == Phase::Rebasing)
+        ==> a.holds
+}
+
+pub(super) proof fn retains_holds_intro(b: Node, a: Node)
+    requires b.holds && !b.paused && (b.phase == Phase::Making || b.phase == Phase::Rebasing)
+        ==> a.holds,
+    ensures retains_holds(b, a),
+{
+    reveal(retains_holds);
+}
+
+/// Only these agenda arms can occur while Making or Rebasing.
+pub(super) proof fn holds_phase_items(n: Node)
+    requires n.phase == Phase::Making || n.phase == Phase::Rebasing,
+    ensures match current_item(n) {
+        Some(item) => matches!(item, Item::Do(_) | Item::Start(_) | Item::StartRebase | Item::Await),
+        None => true,
+    },
+{
+    reveal(current_item);
+    reveal(items);
+    match n.phase {
+        Phase::Making => {
+            if n.pos < 3 {
+                if n.pos == 0 { assert(current_item(n) == Some(Item::Do(EffectKind::PrepareWorktree))); }
+                else if n.pos == 1 { assert(current_item(n) == Some(Item::Start(Role::Make))); }
+                else { assert(n.pos == 2); assert(current_item(n) == Some(Item::Await)); }
+            }
+        },
+        Phase::Rebasing => {
+            if n.pos < 2 {
+                if n.pos == 0 { assert(current_item(n) == Some(Item::StartRebase)); }
+                else { assert(n.pos == 1); assert(current_item(n) == Some(Item::Await)); }
+            }
+        },
+        _ => {},
+    }
+}
+
 }

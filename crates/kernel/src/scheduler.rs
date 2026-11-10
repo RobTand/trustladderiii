@@ -141,6 +141,11 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
             && old(w).nodes@[older].ticket.is_some()
             && old(w).nodes@[older].ticket.unwrap() < old(w).nodes@[i as int].ticket.unwrap()
             ==> footprint::disjoint(*old(w), old(w).nodes@[older].footprint, old(w).nodes@[i as int].footprint),
+        old(w).nodes@[i as int].holds
+            && !old(w).nodes@[i as int].paused
+            && (old(w).nodes@[i as int].phase == Phase::Making
+                || old(w).nodes@[i as int].phase == Phase::Rebasing)
+            ==> final(w).nodes@[i as int].holds,
 ] {
     kernel_snapshot! { before_advance = *w }
     kernel_proof! { dependencies::prerequisite_definition(*w, NodeId(i as u64)); }
@@ -177,6 +182,10 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
     }
     let changed = advance_node(&mut w.nodes[i], &mut w.next_ticket, context, out, report);
     kernel_proof! {
+        if before_advance@.nodes@[i as int].phase == Phase::Making
+            || before_advance@.nodes@[i as int].phase == Phase::Rebasing {
+            advance_family_rules::retained_holds(before_advance@.nodes@[i as int], w.nodes@[i as int]);
+        }
         reveal(advance_family_post::grant_facts);
         reveal(advance_family_post::pool_grant);
         reveal(advance_family_post::slot_grant);
