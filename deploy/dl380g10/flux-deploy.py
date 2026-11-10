@@ -202,7 +202,7 @@ def plan(head, tree, stage, lane, release, manifest, backup, out):
         environment.update(CARGO_BUILD_JOBS='2', CARGO_TARGET_DIR=f'/home/rob/tmp/tl3-build/deploy-cargo-target-{head}')
     else:
         environment['TL3_DEPLOY_NONCE'] = out.parent.name
-    return {'schema': 'tl3.deploy.intent.v1', 
+    return {'schema': 'tl3.deploy.intent.v1',
             'head': head, 'tree': tree, 'source': str(SOURCE), 'stage': stage, 'lane': lane,
             'release': str(release), 'manifest': str(manifest) if stage != 'build' else None,
             'backup': str(backup) if stage != 'build' else None,
@@ -233,7 +233,7 @@ def jobspec(intent, request_digest):
     if (system['environment'] != intent['environment'] or system['cwd'] != str(SOURCE)
             or system['duration'] != WALLTIME_S or spec['tasks'][0]['command'] != command):
         raise RuntimeError('native environment/command/cwd/walltime mismatch')
-    spec['attributes']['user'] = {'tl3_deploy_intent': request_digest, 
+    spec['attributes']['user'] = {'tl3_deploy_intent': request_digest,
                                    'source_head': intent['head'], 'source_tree': intent['tree']}
     validate_spec(intent, request_digest, spec)
     return spec
@@ -274,7 +274,7 @@ def validate_spec(intent, request_digest, spec):
             or tasks[0]['count'] != {'per_slot': 1} or tasks[0]['slot'] != resources[0]['label']
             or system['environment'] != intent['environment'] or system['cwd'] != str(SOURCE)
             or system['duration'] != intent['walltime_s']
-            or spec['attributes']['user'] != {'tl3_deploy_intent': request_digest, 
+            or spec['attributes']['user'] != {'tl3_deploy_intent': request_digest,
                                              'source_head': intent['head'], 'source_tree': intent['tree']}):
         raise RuntimeError('persisted jobspec admission/intent mismatch')
 
