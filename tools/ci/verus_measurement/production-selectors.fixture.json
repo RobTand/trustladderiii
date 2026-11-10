@@ -1,18 +1,113 @@
 {
-  "source_head": "3d3e4365e54d3b94cae14bc72e2079bb0929e7ef",
+  "source_head": "efb705813c9f1ca4b1694adce6a49fb1c9f2811e",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "53032d71e132452e62ed51859741c23f05cede01adab820c35b098f0a36a893f",
-  "groups": 521,
-  "obligations": 719,
+  "source_sha256": "00db8406eb3bda5730f0372dde4a9b326d66c230589577f1d57188019bea92a9",
+  "groups": 540,
+  "obligations": 738,
   "selections": [
     {
-      "target": "//crates/kernel:verus_command_helpers_handled_node_value",
-      "selector": "kernel::command_helpers#handled_node_value",
+      "target": "//crates/kernel:verus_apply_answer_safety_stopped_frame",
+      "selector": "kernel::apply_answer_safety#stopped_frame",
       "expected": 1
     },
     {
-      "target": "//crates/kernel:verus_command_helpers_handled_resources_value",
-      "selector": "kernel::command_helpers#handled_resources_value",
+      "target": "//crates/kernel:verus_apply_answer_safety_stopped_progress",
+      "selector": "kernel::apply_answer_safety#stopped_progress",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_answer_safety_continued_frame",
+      "selector": "kernel::apply_answer_safety#continued_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_answer_safety_continued_resources",
+      "selector": "kernel::apply_answer_safety#continued_resources",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_answer_safety_continued_progress",
+      "selector": "kernel::apply_answer_safety#continued_progress",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_answer_safety_continued_step",
+      "selector": "kernel::apply_answer_safety#continued_step",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_answer_safety_retry_frame",
+      "selector": "kernel::apply_answer_safety#retry_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_answer_safety_retry_resources",
+      "selector": "kernel::apply_answer_safety#retry_resources",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_answer_safety_retry_progress",
+      "selector": "kernel::apply_answer_safety#retry_progress",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_answer_safety_retry_step",
+      "selector": "kernel::apply_answer_safety#retry_step",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_answer_safety_answer_progress",
+      "selector": "kernel::apply_answer_safety#answer_progress",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_answer_safety_answer_frame",
+      "selector": "kernel::apply_answer_safety#answer_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_answer_safety_answer_step",
+      "selector": "kernel::apply_answer_safety#answer_step",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_answer_safety_answer_consumed",
+      "selector": "kernel::apply_answer_safety#answer_consumed",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_answer_safety_answer_resources",
+      "selector": "kernel::apply_answer_safety#answer_resources",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_answer_safety_answer_question_order",
+      "selector": "kernel::apply_answer_safety#answer_question_order",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_answer_safety_answer_rules",
+      "selector": "kernel::apply_answer_safety#answer_rules",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answers_answer_value",
+      "selector": "kernel::answers#answer_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answers_retry_answer_exact",
+      "selector": "kernel::answers#retry_answer_exact",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_continuations_continue_exact",
+      "selector": "kernel::continuations#continue_exact",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_continuations_go_on_exact",
+      "selector": "kernel::continuations#go_on_exact",
       "expected": 1
     },
     {
