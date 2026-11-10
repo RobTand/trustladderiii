@@ -1,6 +1,16 @@
 load("@rules_python//python:defs.bzl", "py_binary")
 load("//tools/bazel:python.bzl", "py_library", "tl3_py_test")
 
+tl3_py_test(
+    name = "test_reply_check",
+    srcs = ["test_reply_check.py"],
+    deps = [
+        ":conftest",
+        "//workers/src",
+        "@tl3_pip//pytest",
+    ],
+)
+
 # gazelle:exclude p5
 
 py_library(

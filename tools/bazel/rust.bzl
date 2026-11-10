@@ -102,6 +102,7 @@ _CONTROLLER_WORKERS = [
     "test_test_p5_checker",
 ]
 _CONTROLLER_BINARIES = {
+    "test_test_reply_violations": [":tl3"],
     "test_test_run_backend_cli": [":tl3-run-backend"],
     "test_test_worker_supervisor": [":tl3-worker-supervisor"],
     "test_test_workers": [":tl3"],
