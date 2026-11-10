@@ -1,10 +1,140 @@
 {
-  "source_head": "e6f21b416bb54f419dc2750fe1ac09394cee26e7",
+  "source_head": "c1766fd011511fb02ad1df093e8dfd7ad48d19d3",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "3a387302369bf9171f736fcd29b7fe767460ba591a5dfeb796706dca0f8915d8",
-  "groups": 510,
-  "obligations": 708,
+  "source_sha256": "4f7859d5ce620ee51b12a12337aa58e4224c37224221496dd5306ec0cea52425",
+  "groups": 536,
+  "obligations": 734,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_footprint_disjoint_under_table_growth",
+      "selector": "kernel::footprint#disjoint_under_table_growth",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_node_rules_grow",
+      "selector": "kernel::footprint#node_rules_grow",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_append_preserves",
+      "selector": "kernel::dependencies#append_preserves",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_append_preserves",
+      "selector": "kernel::dependencies::preservation#append_preserves",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_append_cover",
+      "selector": "kernel::dependencies::preservation#append_cover",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_pending_rank_definition",
+      "selector": "kernel::ranks#pending_rank_definition",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_slot_paused_v",
+      "selector": "kernel::ranks#slot_paused_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_slot_issue_v",
+      "selector": "kernel::ranks#slot_issue_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_slot_grant_v",
+      "selector": "kernel::ranks#slot_grant_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_slot_value",
+      "selector": "kernel::ranks#advance_slot_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_slot_paused",
+      "selector": "kernel::advance_family_post#slot_paused",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_slot_ticket_issued",
+      "selector": "kernel::advance_family_post#slot_ticket_issued",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_slot_granted",
+      "selector": "kernel::advance_family_post#slot_granted",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_slot_unchanged",
+      "selector": "kernel::advance_family_post#slot_unchanged",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_slot_item_ready",
+      "selector": "kernel::advance_family_post#slot_item_ready",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_slot_bounds",
+      "selector": "kernel::advance_family_post#slot_bounds",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_slot_facts_paused",
+      "selector": "kernel::advance_family_post#slot_facts_paused",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_slot_facts_issue",
+      "selector": "kernel::advance_family_post#slot_facts_issue",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_slot_facts_grant",
+      "selector": "kernel::advance_family_post#slot_facts_grant",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_slot_facts_wait",
+      "selector": "kernel::advance_family_post#slot_facts_wait",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_slot_bridge",
+      "selector": "kernel::advance_family_post#slot_bridge",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_rules_slot",
+      "selector": "kernel::advance_family_rules#rules_slot",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_kernel_pause_node_value",
+      "selector": "kernel#pause_node_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_incident_node",
+      "selector": "kernel::allocation#incident_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_incident_notes",
+      "selector": "kernel::allocation#incident_notes",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_allocation_incident_value",
+      "selector": "kernel::allocation#incident_value",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_handler_safety_step_rows_carry",
       "selector": "kernel::handler_safety#step_rows_carry",
