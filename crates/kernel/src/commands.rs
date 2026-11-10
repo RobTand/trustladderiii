@@ -66,11 +66,11 @@ pub(super) fn stop_command(w: &mut World, i: usize, id: u64) -> (result: ()) [
                 Some(e) => final(w).nodes@[i as int].effect.is_some() && final(w).nodes@[i as int].effect.unwrap().seq == e.seq
                     && final(w).nodes@[i as int].effect.unwrap().kind == e.kind && final(w).nodes@[i as int].effect.unwrap().cancelling,
             })
-            && apply_command_safety::stop_live_frame(old(w).nodes@[i as int], final(w).nodes@[i as int])),
+            && stop_frames::stop_live_frame(old(w).nodes@[i as int], final(w).nodes@[i as int])),
         // E11.1b framing (item already stopping), behind stop_stopping_frame (form rule 2).
-        (old(w).nodes@[i as int].phase is Stopping ==> apply_command_safety::stop_stopping_frame(old(w).nodes@[i as int], final(w).nodes@[i as int])),
+        (old(w).nodes@[i as int].phase is Stopping ==> stop_frames::stop_stopping_frame(old(w).nodes@[i as int], final(w).nodes@[i as int])),
         // E11.1 forwarding atom (opaque; on_command reveals it through stop_frame_reveal).
-        apply_command_safety::stop_post(old(w).nodes@[i as int], final(w).nodes@[i as int], id),
+        stop_frames::stop_post(old(w).nodes@[i as int], final(w).nodes@[i as int], id),
 ] {
     kernel_snapshot! { before_rules_world = *w }
     let mut m = w.nodes[i];
