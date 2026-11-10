@@ -879,7 +879,7 @@ fn ack_retry_plain_incident_value(n: Node, i: usize, nq: u64, out: Outbox) -> (r
 ] {
     let count = ack_incident_count(n.fx_incidents);
     let m = Node { fx_failures: 0, fx_incidents: count, ..n };
-    let needs_rob = m.fx_incidents >= 2;
+    let needs_rob = false;
     let (m, _) = incident_value(m, i, needs_rob);
     let output = ack_append_value(out, Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob } });
     (m, nq, output)
