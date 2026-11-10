@@ -169,7 +169,7 @@ pub(super) fn reply_rebase(w: &mut World, i: usize, reply: Reply,
         Reply::RebaseNeedsChanges => {
             let m = &mut w.nodes[i];
             if m.credit.can_spend(1) {
-                m.credit.spend(1);
+                m.credit.spend(0);
                 set_phase(m, Phase::Making);
             } else {
                 ask_rob(
