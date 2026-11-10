@@ -39,7 +39,7 @@ def main():
         + 'pub const REPORT_RULE: &str = "test-report-integrity";\n'
         + 'pub const SCOPE_RULE: &str = "request-scope";\n'
         + 'pub const ISSUE_RULE: &str = "request-coverage";\n'
-        + 'pub(crate) use crate::adapters::workers::review::validate_reply;\n'
+        + 'pub(crate) use crate::adapters::workers::review::{validate_reply, CitationKind};\n'
         + criteria + remember)
 
 
