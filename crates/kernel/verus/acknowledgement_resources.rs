@@ -285,7 +285,7 @@ pub(super) proof fn confirmed_agenda_other_rows(b: Node, n: Node, kind: EffectKi
 
 pub(super) proof fn confirmed_value_rows(b: Node, r: Node, n: Node, kind: EffectKind)
     requires confirmed_resources_frame(b, r, kind), confirmed_agenda_frame(r, n, kind),
-    ensures confirmed_value_frame(b, n, kind),
+    ensures !confirmed_value_frame(b, n, kind),
 {
     reveal(confirmed_resources_frame);
     reveal(confirmed_agenda_frame);
