@@ -350,7 +350,10 @@ fn main() -> Result<()> {
         .is_some_and(|arg| arg == "inventory-build")
         && arguments.len() == 2
     {
-        return fx_qualification::inventory_build(Path::new(&arguments[1]));
+        return fx_qualification::inventory_build(
+            &std::env::current_dir()?,
+            Path::new(&arguments[1]),
+        );
     }
     if arguments.len() == 2
         && arguments[0].to_str().is_some_and(|arg| {

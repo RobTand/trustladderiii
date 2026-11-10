@@ -755,8 +755,7 @@ print(bb.clean(client.key, json.dumps(source).encode()).decode())
     Ok(serde_json::from_slice(&output.stdout)?)
 }
 
-pub fn inventory_build(out: &Path) -> Result<()> {
-    let repo = std::env::current_dir()?;
+pub fn inventory_build(repo: &Path, out: &Path) -> Result<()> {
     let mut artifacts = Vec::new();
     for name in [
         "tl3-run-backend",
@@ -834,6 +833,61 @@ mod staged_transport_tests {
         ]);
         fs::create_dir_all(root.join("qualified-production")).unwrap();
         (inputs, overlay)
+    }
+
+    #[test]
+    fn inventory_build_replaces_read_only_artifacts_and_refreshes_inventory() {
+        let root = tempfile::tempdir().unwrap();
+        let (inputs, _) = fixture(root.path());
+        let source = inputs.repo.join("bazel-bin/crates/controller");
+        let out = root.path().join("inventory");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir(&out).unwrap();
+        let names = [
+            "tl3-run-backend",
+            "tl3",
+            "tl3d",
+            "tl3-worker-supervisor",
+            "example_fx-stage-packet",
+            "example_generate-fx-qualification",
+            "example_tl3-deploy",
+            "lib_test_tl3_controller_binary",
+            "example_test_fx-stage-packet_binary",
+        ];
+        for name in &names[..7] {
+            let path = source.join(name);
+            fs::write(&path, b"first build").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o555)).unwrap();
+        }
+        inventory_build(&inputs.repo, &out).unwrap();
+        let first: Value = read_json(&out.join("runtime-build.json")).unwrap();
+        assert_eq!(first["artifacts"].as_array().unwrap().len(), 7);
+        for name in names {
+            let path = source.join(name);
+            if path.exists() {
+                assert_eq!(
+                    fs::metadata(out.join(name)).unwrap().permissions().mode() & 0o777,
+                    0o555
+                );
+                fs::remove_file(&path).unwrap();
+            }
+            fs::write(&path, b"second build").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o555)).unwrap();
+        }
+        inventory_build(&inputs.repo, &out)
+            .expect("second inventory must replace read-only artifacts");
+        let second: Value = read_json(&out.join("runtime-build.json")).unwrap();
+        let artifacts = second["artifacts"].as_array().unwrap();
+        assert_eq!(artifacts.len(), names.len());
+        assert_eq!(second["base_head"], inputs.head);
+        assert_eq!(second["tree"], git(&inputs.repo, &["write-tree"]).unwrap());
+        for (artifact, name) in artifacts.iter().zip(names) {
+            assert_eq!(artifact["name"], name);
+            assert_eq!(artifact["sha256"], durable::digest(b"second build"));
+            assert_eq!(artifact["bytes"], b"second build".len());
+            assert_eq!(artifact["mode"], 0o555);
+            assert_eq!(fs::read(out.join(name)).unwrap(), b"second build");
+        }
     }
 
     #[test]
