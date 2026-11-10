@@ -467,8 +467,8 @@ Existing configuration protection still refuses changes to `pyproject.toml` and
 touch another protected file. Dependency files alone add no new refusal.
 
 The harness and controller protect all filenames in the configuration constant
-in `crates/config/src/lib.rs`, including `pytest.toml` and `.pytest.toml`, at the
-root and in subdirectories. A parity test checks the harness's Python copy.
+in `crates/config/src/lib.rs`. This includes `pytest.toml` and `.pytest.toml` at
+the root and in subdirectories. A parity test checks the harness's Python copy.
 
 Bubblewrap's presence does not grant user namespaces or privileges to tests.
 Use a distinct tag for a candidate so preparation preserves the current image.

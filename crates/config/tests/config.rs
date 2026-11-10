@@ -19,9 +19,8 @@ fn c6_default_pytest_configuration_is_protected() {
 #[test]
 fn c6_every_configuration_constant_entry_reaches_the_defaults() {
     let paths = tl3_config::Planning::default().protected_paths;
-    for name in tl3_config::TEST_CONFIGURATION_NAMES {
-        assert!(paths.contains(&name.to_string()));
-        assert!(paths.contains(&format!("**/{name}")));
+    for pattern in tl3_config::TEST_CONFIGURATION_PATHS {
+        assert!(paths.contains(&pattern.to_string()));
     }
 }
 

@@ -197,12 +197,14 @@ fn evidence_tools() -> Vec<ToolCapability> {
     }]
 }
 
-/// Canonical filenames whose contents can change test execution.
+/// Canonical paths whose contents can change test execution.
 /// The harness copy is checked against this declaration by its parity test.
-pub const TEST_CONFIGURATION_NAMES: &[&str] = &[
-    "conftest.py",
+pub const TEST_CONFIGURATION_PATHS: &[&str] = &[
+    "**/conftest.py",
     "pytest.toml",
     ".pytest.toml",
+    "**/pytest.toml",
+    "**/.pytest.toml",
     "pytest.ini",
     ".pytest.ini",
     "pyproject.toml",
@@ -228,9 +230,7 @@ impl Default for Planning {
             ]
             .into_iter()
             .map(String::from)
-            .chain(TEST_CONFIGURATION_NAMES.iter().flat_map(|name| {
-                [(*name).to_owned(), format!("**/{name}")]
-            }))
+            .chain(TEST_CONFIGURATION_PATHS.iter().map(|path| (*path).to_owned()))
             .collect(),
         }
     }

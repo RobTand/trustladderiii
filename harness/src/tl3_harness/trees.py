@@ -121,12 +121,14 @@ def added_names(base: Path, head: Path, patterns: list[str]) -> frozenset[tuple[
     return frozenset(names(head) - names(base))
 
 
-# Copy of crates/config/src/lib.rs::TEST_CONFIGURATION_NAMES. The parity test
+# Copy of crates/config/src/lib.rs::TEST_CONFIGURATION_PATHS. The parity test
 # reads that constant, so changing only one side fails the suite.
-TEST_CONFIGURATION_NAMES = (
-    "conftest.py",
+TEST_CONFIGURATION_PATHS = (
+    "**/conftest.py",
     "pytest.toml",
     ".pytest.toml",
+    "**/pytest.toml",
+    "**/.pytest.toml",
     "pytest.ini",
     ".pytest.ini",
     "pyproject.toml",
@@ -152,8 +154,9 @@ def dependency_files(names: list[str]) -> list[str]:
 def changed_configuration(base: Path, head: Path) -> list[str]:
     """Protected test configuration files that differ between two trees."""
     protected = {path.relative_to(tree).as_posix() for tree in (base, head)
-                 for name in TEST_CONFIGURATION_NAMES for path in tree.rglob(name)
-                 if path.is_file()}
+                 for path in tree.rglob("*") if path.is_file()
+                 and any(path.relative_to(tree).full_match(pattern)
+                         for pattern in TEST_CONFIGURATION_PATHS)}
     return sorted(name for name in protected
                   if ((base / name).read_bytes() if (base / name).exists() else None)
                   != ((head / name).read_bytes() if (head / name).exists() else None))

@@ -175,27 +175,27 @@ def test_c6_configuration_lists_agree_and_are_complete():
     import ast
     from pathlib import Path
     import re
-    from tl3_harness.trees import TEST_CONFIGURATION_NAMES
+    from tl3_harness.trees import TEST_CONFIGURATION_PATHS
 
     source = (Path(__file__).resolve().parents[2] / 'crates/config/src/lib.rs').read_text()
-    declaration = re.search(r'pub const TEST_CONFIGURATION_NAMES: &\[&str\] = &(\[.*?\]);',
+    declaration = re.search(r'pub const TEST_CONFIGURATION_PATHS: &\[&str\] = &(\[.*?\]);',
                             source, re.S)
     assert declaration, 'the Rust defaults must expose the authoritative filename constant'
-    assert tuple(ast.literal_eval(declaration[1])) == TEST_CONFIGURATION_NAMES
-    assert {'pytest.toml', '.pytest.toml'} <= set(TEST_CONFIGURATION_NAMES)
+    assert tuple(ast.literal_eval(declaration[1])) == TEST_CONFIGURATION_PATHS
+    assert {'pytest.toml', '.pytest.toml', '**/pytest.toml', '**/.pytest.toml'} <= set(TEST_CONFIGURATION_PATHS)
 
 
-@pytest.mark.parametrize('directory', ['', 'nested/tests/'])
-def test_c6_every_configuration_name_is_protected_at_every_depth(tmp_path, directory):
-    from tl3_harness.trees import TEST_CONFIGURATION_NAMES, changed_configuration
+def test_c6_every_configuration_pattern_is_exercised(tmp_path):
+    from tl3_harness.trees import TEST_CONFIGURATION_PATHS, changed_configuration
     base, head = tmp_path / 'base', tmp_path / 'head'
     base.mkdir()
     head.mkdir()
-    for filename in TEST_CONFIGURATION_NAMES:
-        name = directory + filename
-        write(head, {name: ''})
-        assert changed_configuration(base, head) == [name]
-        (head / name).unlink()
+    for pattern in TEST_CONFIGURATION_PATHS:
+        for directory in ['', 'nested/tests/'] if pattern.startswith('**/') else ['']:
+            name = directory + pattern.removeprefix('**/')
+            write(head, {name: ''})
+            assert changed_configuration(base, head) == [name]
+            (head / name).unlink()
 
 
 @pytest.mark.parametrize('operation', ['modify', 'delete', 'rename_in', 'rename_out'])
