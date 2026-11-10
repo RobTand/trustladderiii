@@ -711,7 +711,7 @@ Closed is final. It accepts only two kinds of event: a late merge, covered under
 
 | Event | Facts | Then |
 |---|---|---|
-| PR merged | Record the merged head and tree | From any phase except Stopping and Closed, go to Stopping(Merged). In Stopping, the outcome becomes Merged. If the merged head wasn't approved, or the required checks didn't pass on the merged tree, also raise an incident and tell Rob. |
+| PR merged | Retain the PR head, landed commit and tree, parents, available pre-merge base, comparisons, and the three assurance facts described under Merge above | From any phase except Stopping and Closed, go to Stopping(Merged). In Stopping, the outcome becomes Merged. The kernel raises an incident if the PR head lacks its exact-head TL3 checks and approval. Direct delivery separately posts non-blocking notices for tree or parent differences, no required GitHub checks, or an outside merge whose required checks have not passed. |
 | Push by someone other than TL3 | Record the new head | In Publishing or AwaitingDelivery: retire delivery authority, release any slot and files, and go to Ready(Checking), so the new head is tested and reviewed. This counts against the leaf's free rechecks, and Rob gets a note. |
 | PR closed by a person | Record it | Stopping(Stopped), from any phase except Stopping and Closed. Rob gets a note saying how to start the request again. |
 | Effect permanently failed | Raise an incident | Outside Stopping: release any slot and files, and go to AwaitingRob(effect failed). The continuation retries the failed effect and carries on. A leaf that held a slot carries on through Ready; any other node returns to the same phase. For Stopping, see Stopping. |

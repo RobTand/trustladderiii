@@ -355,6 +355,7 @@ fn already_merged_405_reconciles_without_failure() {
     let mut database = support::Database::start();
     let settings = database.create("direct_405");
     let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
     fixture.direct.lock().unwrap().reject_as_merged = true;
     let (mut controller, _) = fixture.start(&settings);
     drain(&mut controller);
