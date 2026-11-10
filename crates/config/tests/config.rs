@@ -2138,7 +2138,7 @@ fn initial_intake_defaults_empty_and_accepts_only_explicit_issue_fields() {
 #[test]
 fn x7_refuses_aggregate_test_demand_before_runtime() {
     let mut document = flux_document();
-    document["github"]["repos"][0]["test_demand"] = toml::toml! { cpus = 2 mem_gb = 8 }.into();
+    document["github"]["repos"][0].as_table_mut().unwrap().insert("test_demand".into(), toml::toml! { cpus = 2 mem_gb = 8 }.into());
     let error = Config::parse(&toml::to_string(&document).unwrap()).unwrap_err().to_string();
     assert!(error.contains("RobTand/trustladderiii") && error.contains("24 GiB"), "{error}");
 }
@@ -2146,7 +2146,7 @@ fn x7_refuses_aggregate_test_demand_before_runtime() {
 #[test]
 fn x7_flux_uri_repository_opt_in_is_validated() {
     let mut document = flux_document();
-    document["github"]["repos"][0]["pass_flux_uri"] = true.into();
+    document["github"]["repos"][0].as_table_mut().unwrap().insert("pass_flux_uri".into(), true.into());
     document["github"]["repos"][0]["name"] = "prismaquant".into();
     Config::parse(&toml::to_string(&document).unwrap()).unwrap();
     document["github"]["repos"][0]["pass_flux_uri"] = "yes".into();
