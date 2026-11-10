@@ -415,6 +415,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn x7_instance_file_is_resolved_for_each_native_operation() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let instance = root.path().join("INSTANCE");
+        let cli = root.path().join("flux");
+        std::fs::write(&cli, "#!/bin/sh\nprintf '%s' \"$FLUX_URI\"\n").unwrap();
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let options: Options = serde_json::from_value(serde_json::json!({
+            "executable":cli,"arguments":[],"environment":{"PATH":"/usr/bin:/bin"},
+            "instance_generation":"old","uri":"local:///old",
+            "instance_file":instance,"journal_root":root.path().join("journal"),
+            "bootstrap":{"cli":"/bin/true","config":root.path().join("options.json")}
+        })).unwrap();
+        let backend = Flux::new(options).unwrap();
+        for run in ["before", "after"] {
+            std::fs::write(&instance, format!("{} {run}\n", root.path().display())).unwrap();
+            let reply = backend.capture(&["getattr", "broker.starttime"]).unwrap();
+            assert!(reply.success);
+            let uri = String::from_utf8(reply.stdout).unwrap();
+            assert!(uri.contains(&format!("/runs/{run}/run/local-")));
+        }
+    }
+
+    #[test]
     fn generation_guard_process_stops_and_reaps_while_silent() {
         use std::os::unix::fs::PermissionsExt;
         use std::time::{Duration, Instant};
