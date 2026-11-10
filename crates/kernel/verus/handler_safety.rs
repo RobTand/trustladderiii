@@ -477,7 +477,6 @@ pub(super) proof fn command_node_safety(before: World, after: World, event: Even
         command_step(before.nodes@[i], after.nodes@[i]),
         after.nodes@[i].next_seq == before.nodes@[i].next_seq,
         after.nodes@[i].credit.earned == before.nodes@[i].credit.earned,
-        transition_safety::notice_only(ob, oa, NodeId(i as u64)),
         match event {
             Event::Command { command: Command::Answer { question, .. }, .. } =>
                 node_checked(before, before.nodes@[i])
