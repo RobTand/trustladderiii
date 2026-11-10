@@ -443,6 +443,13 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::reply_family_values::room_fast": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::reply_family_values::room_paid": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::reply_family_values::room_ask": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::reply_family_values::failed_prefix": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::reply_family_values::failed_incident": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::reply_family_values::failed_restart": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::reply_family_values::failed_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::reply_family_values::files_paid": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::reply_family_values::files_ask": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::reply_family_values::prepared": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -771,6 +778,13 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "reply_family_out_of_room_fast": ("kernel::retries#out_of_room_fast", 1),
+            "reply_family_out_of_room_paid": ("kernel::retries#out_of_room_paid", 1),
+            "reply_family_out_of_room_ask": ("kernel::retries#out_of_room_ask", 1),
+            "reply_family_run_failed_incident": ("kernel::retries#run_failed_incident", 1),
+            "reply_family_run_failed_restart": ("kernel::retries#run_failed_restart", 1),
+            "reply_family_room_arms": ("kernel::reply_family_posts#room_arms", 1),
+            "reply_family_failed_arms": ("kernel::reply_family_posts#failed_arms", 1),
             "reply_family_files_paid": ("kernel::reply_admission#reply_files_paid", 1),
             "reply_family_files_ask": ("kernel::reply_admission#reply_files_ask", 1),
             "reply_family_files_arms": ("kernel::reply_family_posts#files_arms", 1),
