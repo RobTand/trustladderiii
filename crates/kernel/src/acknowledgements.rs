@@ -729,7 +729,7 @@ fn ack_phase_value(n: Node, phase: Phase) -> (result: Node) [
     requires n.generation < u64::MAX,
     ensures result == retirement::phased(n, phase),
 ] {
-    Node { generation: n.generation + 1, phase, pos: 0, ticket: None,
+    Node { generation: n.generation, phase, pos: 0, ticket: None,
         effect: match n.effect { Some(e) => Some(InFlight { cancelling: true, ..e }), None => None }, ..n }
 }
 }
