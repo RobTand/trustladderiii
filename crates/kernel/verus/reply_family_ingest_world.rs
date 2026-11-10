@@ -63,7 +63,7 @@ pub(super) proof fn ingest_pair_progress(b: Node, z: Node, c: ReplyCtx, delivere
         z.waiting_incident == final_node(b, c.reply, delivered).waiting_incident,
         z.effect == final_node(b, c.reply, delivered).effect,
         z.question == final_node(b, c.reply, delivered).question,
-    ensures successful_reply_input(b, c.reply) ==> distance(z) < distance(b),
+    ensures !successful_reply_input(b, c.reply) ==> distance(z) < distance(b),
 {
     reply_family_dispatch::ingest_progress(b, c);
     ingest_done(b, c.reply);
