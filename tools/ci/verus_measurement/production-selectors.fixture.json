@@ -1,18 +1,18 @@
 {
-  "source_head": "8602b8ef6e94e290315df09db7f9b4b87b688997",
+  "source_head": "5e9523bedaa1487d1f6dcd2ec247097ab61f6769",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "342e4a5fce0d570a0b80d8b8e02fb8c5e9b20c30325793029762db345b35748f",
+  "source_sha256": "3f18ecdcf08ec8693a20aabed96e1b818b64c8c20de3fbedb42afad6d751dd06",
   "groups": 629,
   "obligations": 827,
   "selections": [
     {
-      "target": "//crates/kernel:verus_apply_command_safety_stop_e11_frames",
-      "selector": "kernel::apply_command_safety#stop_e11_frames",
+      "target": "//crates/kernel:verus_stop_frames_stop_e11_frames",
+      "selector": "kernel::stop_frames#stop_e11_frames",
       "expected": 1
     },
     {
-      "target": "//crates/kernel:verus_apply_command_safety_stop_post_intro",
-      "selector": "kernel::apply_command_safety#stop_post_intro",
+      "target": "//crates/kernel:verus_stop_frames_stop_post_intro",
+      "selector": "kernel::stop_frames#stop_post_intro",
       "expected": 1
     },
     {
