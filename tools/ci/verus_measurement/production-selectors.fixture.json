@@ -1,10 +1,30 @@
 {
-  "source_head": "335f1bcaf8f94a3d30c6ea8e36d1ee6a620cf731",
+  "source_head": "9dde4f03f27b54ee14f4daec034a07618908cb1e",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "3e85e2b277ace89115d09eb6853a307a5e0b6591c3971e2575ef29388d685156",
-  "groups": 932,
-  "obligations": 1140,
+  "source_sha256": "f37007dff0535d7c72acce21973035d709fa87214f6e09d08fc9359bbd21a964",
+  "groups": 936,
+  "obligations": 1144,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_reply_relation_early_ingested_rules",
+      "selector": "kernel::reply_relation_early#ingested_rules",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_relation_early_disagreed_rules",
+      "selector": "kernel::reply_relation_early#disagreed_rules",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_relation_early_plan_check_rules",
+      "selector": "kernel::reply_relation_early#plan_check_rules",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_relation_early_ingest_safety",
+      "selector": "kernel::reply_relation_early#ingest_safety",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_reply_relation_ingest_protected_rules",
       "selector": "kernel::reply_relation_ingest#protected_rules",
