@@ -149,7 +149,10 @@ fn cycle_decision_is_exact_on_both_traversal_branches() {
             target(1001, Some(NodeId(0))),
             DependencyStatus::Pending,
         );
-        assert!(!row(&world, last, 1001).rejected, "acyclic rejected at {count}");
+        assert!(
+            !row(&world, last, 1001).rejected,
+            "acyclic rejected at {count}"
+        );
         assert!(world.dependency_graph_acyclic());
     }
 }
@@ -208,7 +211,11 @@ fn registration_appends_only_before_planning() {
         DependencyStatus::Abandoned,
     ] {
         declare(&mut world, NodeId(1), target(2763, None), status);
-        assert_eq!(world.dependencies().len(), 1, "started root gained {status:?}");
+        assert_eq!(
+            world.dependencies().len(),
+            1,
+            "started root gained {status:?}"
+        );
     }
 }
 
@@ -217,11 +224,36 @@ fn registration_appends_only_before_planning() {
 #[test]
 fn removal_is_a_stable_filter_only_while_ingesting() {
     let mut world = roots(2);
-    declare(&mut world, NodeId(0), target(1, None), DependencyStatus::Pending);
-    declare(&mut world, NodeId(1), target(2, None), DependencyStatus::Pending);
-    declare(&mut world, NodeId(0), target(3, None), DependencyStatus::Pending);
-    declare(&mut world, NodeId(0), target(3, None), DependencyStatus::Abandoned);
-    declare(&mut world, NodeId(0), target(4, None), DependencyStatus::Delivered);
+    declare(
+        &mut world,
+        NodeId(0),
+        target(1, None),
+        DependencyStatus::Pending,
+    );
+    declare(
+        &mut world,
+        NodeId(1),
+        target(2, None),
+        DependencyStatus::Pending,
+    );
+    declare(
+        &mut world,
+        NodeId(0),
+        target(3, None),
+        DependencyStatus::Pending,
+    );
+    declare(
+        &mut world,
+        NodeId(0),
+        target(3, None),
+        DependencyStatus::Abandoned,
+    );
+    declare(
+        &mut world,
+        NodeId(0),
+        target(4, None),
+        DependencyStatus::Delivered,
+    );
     let before: Vec<Dependency> = world.dependencies().to_vec();
     remove(&mut world, NodeId(0), 1);
     let kept: Vec<Dependency> = before
@@ -264,13 +296,23 @@ fn waiting_owner_in_a_larger_world_holds_nothing() {
 fn delivery_releases_one_waiter_among_others() {
     let mut world = roots(3);
     let prerequisite = target(2750, Some(NodeId(0)));
-    declare(&mut world, NodeId(2), prerequisite, DependencyStatus::Pending);
+    declare(
+        &mut world,
+        NodeId(2),
+        prerequisite,
+        DependencyStatus::Pending,
+    );
     for node in 0..3 {
         audit(&mut world, NodeId(node));
     }
     assert_eq!(world.nodes[2].phase, Phase::Unplanned);
     let other = world.nodes[1];
-    declare(&mut world, NodeId(2), prerequisite, DependencyStatus::Delivered);
+    declare(
+        &mut world,
+        NodeId(2),
+        prerequisite,
+        DependencyStatus::Delivered,
+    );
     assert_eq!(world.nodes[2].phase, Phase::Planning { must_split: false });
     assert!(world.nodes[2].planning_started);
     assert_eq!(world.nodes[2].credit.balance(), 4);
