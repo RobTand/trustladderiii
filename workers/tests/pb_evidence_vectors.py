@@ -480,7 +480,7 @@ def evaluate(kind, data, root):
             ledger = object.__new__(rehearsal.ForcingRehearsals)
             ledger.failure = data.get('failure')
             ledger.receipts = [rehearsal.identity(r['base_sha'], r['selectors'], Forcing.parse(r['forcing']), r.get('declared_symptom')) for r in data['receipts']]
-            result['violations'] = ledger.violations(candidate['base_sha'], [{'node_ids': candidate['selectors'], 'forcing': candidate['forcing']}])
+            result['violations'] = ledger.violations(candidate['base_sha'], [{'tests': candidate['selectors'], 'forcing': candidate['forcing']}])
         return result
     if kind == 'evidence-ledger':
         if data.get('operation') == 'selectors':
