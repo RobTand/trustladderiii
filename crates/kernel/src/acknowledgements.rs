@@ -723,7 +723,6 @@ pub(super) open spec fn on_ack_post(before: World, after: World, i: int, seq: u6
 }
 }
 
-
 kernel_fn! {
 #[allow(clippy::manual_map)] // Debt R2 lint: preserve the qualified executable shape
 fn ack_phase_value(n: Node, phase: Phase) -> (result: Node) [
