@@ -473,7 +473,8 @@ fn absent_interpreter_failure(events: &[Value]) -> bool {
         && events.iter().any(|e| {
             e["event"] == "launcher_exit"
                 && e["exit_code"] == 1
-                && e["stderr_tail"] == "ERROR (catatonit:2): failed to exec pid1: No such file or directory\n"
+                && e["stderr_tail"]
+                    == "ERROR (catatonit:2): failed to exec pid1: No such file or directory\n"
         })
 }
 
@@ -583,11 +584,17 @@ mod tests {
         wrong["tests"][0]["head"] = "assertion".into();
         assert!(!success_results(&[wrong], 2));
         let absent = json!({"interpreter":"/opt/tl3/bin/python-canary2-absent","absent":true});
-        assert!(absent_interpreter_binding(Path::new("/opt/tl3/bin/python-canary2-absent"), &absent));
+        assert!(absent_interpreter_binding(
+            Path::new("/opt/tl3/bin/python-canary2-absent"),
+            &absent
+        ));
         for path in ["/opt/tl3/bin/python", "/different/absent"] {
             assert!(!absent_interpreter_binding(Path::new(path), &absent));
         }
-        assert!(!absent_interpreter_binding(Path::new("/opt/tl3/bin/python-canary2-absent"), &json!({"interpreter":"/opt/tl3/bin/python-canary2-absent","absent":false})));
+        assert!(!absent_interpreter_binding(
+            Path::new("/opt/tl3/bin/python-canary2-absent"),
+            &json!({"interpreter":"/opt/tl3/bin/python-canary2-absent","absent":false})
+        ));
         let historical: Value = serde_json::from_str(include_str!(
             "../../qualification/fx-exact42b/canary2-acceptance.json"
         ))
@@ -606,9 +613,18 @@ mod tests {
             for (code, message) in [
                 (0, exit["stderr_tail"].as_str().unwrap()),
                 (127, exit["stderr_tail"].as_str().unwrap()),
-                (1, "ERROR (catatonit:2): failed to exec pid1: Permission denied\n"),
-                (1, "prefix ERROR (catatonit:2): failed to exec pid1: No such file or directory\n"),
-                (127, "crun: /opt/tl3/bin/python-canary2-absent: No such file or directory"),
+                (
+                    1,
+                    "ERROR (catatonit:2): failed to exec pid1: Permission denied\n",
+                ),
+                (
+                    1,
+                    "prefix ERROR (catatonit:2): failed to exec pid1: No such file or directory\n",
+                ),
+                (
+                    127,
+                    "crun: /opt/tl3/bin/python-canary2-absent: No such file or directory",
+                ),
             ] {
                 let mut wrong = exit.clone();
                 wrong["exit_code"] = code.into();
