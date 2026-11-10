@@ -753,6 +753,16 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "continuations_fund_and_pay_v": ("kernel::continuations#fund_and_pay_v", 1),
+            "continuations_stopped_v": ("kernel::continuations#stopped_v", 1),
+            "answers_retry_cost": ("kernel::answers#retry_cost", 1),
+            "answers_cleanup_handled_v": ("kernel::answers#cleanup_handled_v", 1),
+            "answers_cleanup_answer_v": ("kernel::answers#cleanup_answer_v", 1),
+            "answers_awaiting_answer_v": ("kernel::answers#awaiting_answer_v", 1),
+            "apply_answer_safety_continued_answer_rules": ("kernel::apply_answer_safety#continued_answer_rules", 1),
+            "apply_answer_safety_retried_answer_rules": ("kernel::apply_answer_safety#retried_answer_rules", 1),
+            "handler_safety_handled_cleanup_step": ("kernel::handler_safety#handled_cleanup_step", 1),
+            "apply_command_safety_resume_facts": ("kernel::apply_command_safety#resume_facts", 1),
             "apply_answer_safety_stopped_frame": ("kernel::apply_answer_safety#stopped_frame", 1),
             "apply_answer_safety_stopped_progress": ("kernel::apply_answer_safety#stopped_progress", 1),
             "apply_answer_safety_continued_frame": ("kernel::apply_answer_safety#continued_frame", 1),
