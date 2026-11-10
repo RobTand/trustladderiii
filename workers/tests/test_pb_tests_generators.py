@@ -781,3 +781,19 @@ def test_typed_failed_generator_preparation_admission_stays_failed(
     assert supported_fake_runtime.submitted == [KEY], "fail_fast must not retry work"
     assert (generator_repo / "tests/BUILD.bazel").read_bytes() == before
     validate("maker-reply", reply)
+
+
+def test_pq_generator_reserves_its_own_demand_not_the_test_demand(
+        generator_repo, generator_backend, tmp_path):
+    tree, generate = configured_generator(generator_repo, tmp_path)
+    tree.test_settings = flux_settings(cpus=2, mem_gb=3)
+    tree.generator_demand = {"cpus": 1, "mem_gb": 4}
+    with tree:
+        result = generate()
+    assert result["status"] == "completed", result
+    [prepared] = generator_backend[0]
+    assert prepared["document"]["cpus"] == 1
+    assert prepared["document"]["mem_gb"] == 4
+    assert result["budget"]["cpus"] == 1
+    assert result["budget"]["mem_gb"] == 4
+    assert (tree.test_settings.cpus, tree.test_settings.mem_gb) == (2, 3)

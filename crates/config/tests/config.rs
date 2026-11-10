@@ -2170,3 +2170,16 @@ fn x7_legacy_flux_config_fields_are_refused() {
         assert!(error.contains(field), "{error}");
     }
 }
+
+#[test]
+fn repository_generator_demand_is_independent_and_bounded() {
+    let profile = EXAMPLE.replace(
+        "installation_id = 1",
+        "installation_id = 1\ntest_demand = { cpus = 2, mem_gb = 3 }\ngenerator_demand = { cpus = 1, mem_gb = 4 }",
+    );
+    assert!(Config::parse(&profile).is_ok(), "independent generator demand must parse");
+    for demand in ["{ cpus = 0, mem_gb = 4 }", "{ cpus = 1, mem_gb = 25 }", "{ cpus = 1 }", "{ cpus = 1, mem_gb = 4, gpu = true }"] {
+        let invalid = EXAMPLE.replace("installation_id = 1", &format!("installation_id = 1\ngenerator_demand = {demand}"));
+        assert!(Config::parse(&invalid).is_err(), "accepted {demand}");
+    }
+}

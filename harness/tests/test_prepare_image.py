@@ -146,3 +146,57 @@ def test_flux_registry_verification_rejects_wrong_config(monkeypatch):
     monkeypatch.setattr(builder, 'registry_read', lambda suffix: manifest if suffix.startswith('manifests/') else b'{}')
     with pytest.raises(ValueError, match='registry config digest mismatch'):
         builder.verify_registry(digest, config_digest)
+
+
+def pq_builder():
+    spec = importlib.util.spec_from_file_location('flux_prismaquant_image', Path(__file__).parents[1] / 'tools/flux_prismaquant_image.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_pq_image_uses_the_p8_hashed_cpu_lock():
+    images = Path(__file__).parents[1] / 'tools/images'
+    pins = (images / 'prismaquant.txt').read_text()
+    assert 'torch==2.15.0+cpu' in pins
+    assert 'pytest==9.1.1' in pins
+    assert 'prismabuild' not in pins.lower()
+    assert '--hash=sha256:' in pins
+
+
+def test_pq_builder_requires_an_immutable_python312_base():
+    builder = pq_builder()
+    for base in ['python:3.12-slim-bookworm', 'python:3.14@sha256:' + '1' * 64]:
+        with pytest.raises(ValueError, match='Python 3.12 base'):
+            builder.base_reference(base)
+    assert builder.base_reference('docker.io/library/python:3.12-slim-bookworm@sha256:' + '1' * 64)
+
+
+def test_pq_install_keeps_the_subject_in_the_runtime_checkout():
+    script = pq_builder().install_script()
+    assert '--require-hashes --no-deps' in script
+    assert '-r /input/requirements_linux_x86_64.txt' in script
+    assert 'sys.version_info[:2] == (3, 12)' in script
+    assert 'pip check' in script
+    assert 'pip install -e' not in script
+    assert 'prismabuild' in script
+    assert 'affinity changed' in script
+
+
+def test_pq_plan_consumer_keeps_node_deselections_and_refuses_empty_selection(tmp_path):
+    builder = pq_builder()
+    plan = {'schema': 'prismaquant.gate_plan.v1', 'base_sha': '1' * 40, 'head_sha': '2' * 40,
+            'selected': [{'path': 'tests/test_flux_jobs.py'}],
+            'deselect': ['tests/test_flux_jobs.py::test_deferred'],
+            'deferred': [{'path': 'tests/test_cuda.py', 'lane': 'cuda'}]}
+    argv = builder.pytest_argv(plan, base='1' * 40, head='2' * 40)
+    assert argv[:5] == ['python', '-B', '-m', 'pytest', 'tests/test_flux_jobs.py']
+    assert argv[argv.index('-n') + 1] == '2'
+    assert '--timeout=600' in argv and '--dist=worksteal' in argv
+    assert '--deselect=tests/test_flux_jobs.py::test_deferred' in argv
+    assert '--junitxml=/output/junit.xml' in argv
+    assert 'cache_dir=/scratch/pytest-cache' in argv
+    assert plan['deferred'], 'caller must retain and report deferred lanes'
+    plan['selected'] = []
+    with pytest.raises(ValueError, match='empty selection'):
+        builder.pytest_argv(plan, base='1' * 40, head='2' * 40)
