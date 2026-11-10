@@ -443,9 +443,9 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
-            "kernel::apply_command_safety::stop_live_frame": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
-            "kernel::apply_command_safety::stop_stopping_frame": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
-            "kernel::apply_command_safety::stop_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::stop_frames::stop_live_frame": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::stop_frames::stop_stopping_frame": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::stop_frames::stop_post": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::apply_command_safety::held_answer": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::apply_command_safety::answered_held": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::apply_command_safety::answered_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -774,8 +774,8 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
-            "apply_command_safety_stop_e11_frames": ("kernel::apply_command_safety#stop_e11_frames", 1),
-            "apply_command_safety_stop_post_intro": ("kernel::apply_command_safety#stop_post_intro", 1),
+            "stop_frames_stop_e11_frames": ("kernel::stop_frames#stop_e11_frames", 1),
+            "stop_frames_stop_post_intro": ("kernel::stop_frames#stop_post_intro", 1),
             "stop_frame_reveal_stop_frames_reveal": ("kernel::stop_frame_reveal#stop_frames_reveal", 1),
             "stop_frame_reveal_stop_post_rows": ("kernel::stop_frame_reveal#stop_post_rows", 1),
             "answer_rules_rules_incident": ("kernel::answer_rules#rules_incident", 1),
