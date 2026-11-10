@@ -204,7 +204,7 @@ pub(super) proof fn ordinary_distance(b: Node, n: Node, fact: Fact)
 
 pub(super) proof fn empty_merge_notices(n: Node, notes: Outbox, i: usize,
     head: HeadId, checks_passed: bool)
-    requires empty_outbox(notes),
+    requires true,
         !(n.had_pr && n.merged.is_none() && (!(n.phase is Closed)
             || matches!(n.phase, Phase::Closed(Outcome::Stopped) | Phase::Closed(Outcome::Replaced)))),
     ensures merge_notices(n, notes, i, head, checks_passed),
