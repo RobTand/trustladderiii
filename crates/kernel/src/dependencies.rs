@@ -1765,7 +1765,6 @@ pub(super) proof fn node_update_preserves(before: World, after: World, i: int)
 /// no withheld credit keeps the complete dependency acceptance.
 pub(super) proof fn append_preserves(before: World, after: World)
     requires rules_ok(before),
-        after.dependencies@ == before.dependencies@,
         after.nodes@.len() >= before.nodes@.len(),
         forall|j: int| 0 <= j < before.nodes@.len()
             ==> same_endpoint(#[trigger] before.nodes@[j], after.nodes@[j]),
