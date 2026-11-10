@@ -1141,7 +1141,7 @@ kernel_fn! {
     ] {
         kernel_proof! {
             if advance_family_post::ready_unobstructed(*node) {
-                advance_family_post::ready_item(*node);
+
             }
         }
         let n = *node;
