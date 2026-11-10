@@ -790,7 +790,7 @@ fn recheck_free(n: Node, target: Phase) -> (result: ReplyChange) [
 ] proof [reveal(reply_family_values::recheck_free);] {
     let mut node = n;
     let mut note: Option<Notice> = None;
-    node = held_v(node, target);
+    node = node;
     node = set_phase_v(node, target);
     ReplyChange::Done { node, note }
 }
