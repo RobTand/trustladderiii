@@ -189,14 +189,14 @@ match reply {
                 m.plan_retries = 0;
                 set_phase(m, Phase::Ready(Resume::Making));
             } else {
-                { let value = plan_retry_node(node, c.fast, c.next_question, false); kernel_proof! {
+                { let value = plan_retry_node(node, c.fast, c.next_question, false); kernel_proof! { reply_family_posts::plan_retry_value_posts(node, c.fast, c.next_question, false); } kernel_proof! {
                     reveal(reply_family_values::plan_retry);
                     reply_family_safety::plan_rows(n, c, value);
                 } return value; }
             }
         }
         Reply::PlanSplit => { let value = ReplyChange::Ask { node, kind: QKind::NeedsSplitting, cont: Cont::Nowhere, cost: 0 }; kernel_proof! { reply_family_safety::plan_rows(n, c, value); } return value; },
-        Reply::PlanCantMeet => { let value = plan_retry_node(node, c.fast, c.next_question, true); kernel_proof! { reply_family_safety::plan_rows(n, c, value); } return value; },
+        Reply::PlanCantMeet => { let value = plan_retry_node(node, c.fast, c.next_question, true); kernel_proof! { reply_family_posts::plan_retry_value_posts(node, c.fast, c.next_question, true); } kernel_proof! { reply_family_safety::plan_rows(n, c, value); } return value; },
         _ => {}
     }
     { let value = ReplyChange::Done { node, note }; kernel_proof! { reply_family_safety::plan_rows(n, c, value); } return value; }
@@ -232,7 +232,7 @@ match reply {
             set_phase(m, Phase::Checking);
         }
         Reply::MakerCantMeet => {
-            { let value = next_rung_node(node, i, c.fast, c.next_question, ReviewStop::MakerCantMeet, report); kernel_proof! { report::lemmas::work_kind(reply);
+            { let value = next_rung_node(node, i, c.fast, c.next_question, ReviewStop::MakerCantMeet, report); kernel_proof! { reply_family_posts::rung_value_posts(node, c.fast, c.next_question, ReviewStop::MakerCantMeet); } kernel_proof! { report::lemmas::work_kind(reply);
             report::lemmas::round_delta(before_report@, report.entries@, NodeId(i as u64), Some(FailedRoundCause::MakerCantMeet));
             report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply));
             reply_family_safety::work_rows(n, c, value); } return value; }
@@ -250,7 +250,7 @@ match reply {
                 set_phase(m, Phase::Reviewing);
 
             } else {
-                { let value = failed_round_node(node, i, c.fast, c.next_question, ReviewStop::ChecksFailed, report); kernel_proof! { report::lemmas::work_kind(reply);
+                { let value = failed_round_node(node, i, c.fast, c.next_question, ReviewStop::ChecksFailed, report); kernel_proof! { reply_family_posts::failed_round_value_posts(node, c.fast, c.next_question, ReviewStop::ChecksFailed); } kernel_proof! { report::lemmas::work_kind(reply);
             report::lemmas::failure_kind(ReviewStop::ChecksFailed);
             report::lemmas::read_failed_round(before_report@, report.entries@, NodeId(i as u64), FailedRoundCause::ChecksFailed);
             report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply));
@@ -264,7 +264,7 @@ match reply {
             set_phase(m, Phase::Publishing);
         }
         Reply::ChangesRequested => {
-            { let value = failed_round_node(node, i, c.fast, c.next_question, ReviewStop::ChangesRequested, report); kernel_proof! { report::lemmas::work_kind(reply);
+            { let value = failed_round_node(node, i, c.fast, c.next_question, ReviewStop::ChangesRequested, report); kernel_proof! { reply_family_posts::failed_round_value_posts(node, c.fast, c.next_question, ReviewStop::ChangesRequested); } kernel_proof! { report::lemmas::work_kind(reply);
             report::lemmas::failure_kind(ReviewStop::ChangesRequested);
             report::lemmas::read_failed_round(before_report@, report.entries@, NodeId(i as u64), FailedRoundCause::ChangesRequested);
             report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply));
@@ -279,7 +279,7 @@ match reply {
             } else {
                 node.review_restarted = true;
 
-                { let value = recheck_node(node, c.next_question, Phase::Reviewing); kernel_proof! { report::lemmas::work_kind(reply);
+                { let value = recheck_node(node, c.next_question, Phase::Reviewing); kernel_proof! { reply_family_posts::recheck_value_posts(node, c.next_question, Phase::Reviewing); } kernel_proof! { report::lemmas::work_kind(reply);
             report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply));
             reply_family_safety::work_rows(n, c, value); } return value; }
 
@@ -313,7 +313,7 @@ pub(super) fn reply_rebase_node(n: Node, c: ReplyCtx) -> (result: ReplyChange) [
 match reply {
         Reply::RebaseClean { head } => {
             update_recheck_head(&mut node, head);
-            { let value = recheck_node(node, c.next_question, Phase::Checking); kernel_proof! { reply_family_safety::work_rows(n, c, value); } return value; }
+            { let value = recheck_node(node, c.next_question, Phase::Checking); kernel_proof! { reply_family_posts::recheck_value_posts(node, c.next_question, Phase::Checking); } kernel_proof! { reply_family_safety::work_rows(n, c, value); } return value; }
         }
         Reply::RebaseNeedsChanges => {
             let m = &mut node;

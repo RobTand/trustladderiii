@@ -311,4 +311,53 @@ pub(super) proof fn room_bridge(n: Node, fast: bool, step: ReviewStop)
 {
     reveal(reply_family_values::room); reveal(reply_family_values::unheld);
 }
+
+pub(super) proof fn rung_value_posts(n: Node, fast: bool, nq: u64, step: ReviewStop)
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+    ensures
+        reply_family_values::retry_bound(n, nq, reply_family_values::rung(n, fast, step)),
+        !(n.phase is Closed) ==> transition_safety::node_step(n, reply_family_values::finish(nq, reply_family_values::rung(n, fast, step))),
+{
+    reveal(reply_family_values::rung);
+    if fast { reply_family_facts::stopped_review(n, step); }
+    else if n.attempt < 3 {} else if !n.replanned {} else {}
+}
+
+pub(super) proof fn failed_round_value_posts(n: Node, fast: bool, nq: u64, step: ReviewStop)
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+    ensures
+        reply_family_values::retry_bound(n, nq, reply_family_values::failed_round(n, fast, step)),
+        !(n.phase is Closed) ==> transition_safety::node_step(n, reply_family_values::finish(nq, reply_family_values::failed_round(n, fast, step))),
+{
+    reveal(reply_family_values::failed_round);
+    if n.round != 0 { rung_value_posts(n, fast, nq, step); }
+}
+
+pub(super) proof fn plan_retry_value_posts(n: Node, fast: bool, nq: u64, cant_meet: bool)
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+    ensures
+        reply_family_values::retry_bound(n, nq, reply_family_values::plan_retry(n, fast, cant_meet)),
+        fast && cant_meet && n.phase is Planning ==>
+            reply_family_values::finish(nq, reply_family_values::plan_retry(n, fast, cant_meet)).phase == Phase::Stopping(Outcome::Stopped)
+                && reply_family_values::finish(nq, reply_family_values::plan_retry(n, fast, cant_meet)).review_stop == Some(ReviewStop::PlanCantMeet),
+        !(n.phase is Closed) ==> transition_safety::node_step(n, reply_family_values::finish(nq, reply_family_values::plan_retry(n, fast, cant_meet))),
+{
+    reveal(reply_family_values::plan_retry);
+    if fast && cant_meet {
+        let m = Node { plan_retries: if n.plan_retries < 255 { (n.plan_retries + 1) as u8 } else { 255u8 }, ..n };
+        reply_family_facts::stopped_review(m, ReviewStop::PlanCantMeet);
+    }
+}
+
+pub(super) proof fn recheck_value_posts(n: Node, nq: u64, target: Phase)
+    requires !(target is Closed), node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+    ensures
+        reply_family_values::retry_bound(n, nq, reply_family_values::recheck(n, target)),
+        (ordinary_await(n) && n.phase == Phase::Rebasing && target == Phase::Checking
+            ==> distance(reply_family_values::finish(nq, reply_family_values::recheck(n, target))) < distance(n)),
+        !(n.phase is Closed) ==> transition_safety::node_step(n, reply_family_values::finish(nq, reply_family_values::recheck(n, target))),
+{
+    reveal(reply_family_values::recheck);
+    reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);
+}
 }
