@@ -86,7 +86,7 @@ pub(super) proof fn files_posts(n: Node, fast: bool, nq: u64, files: Footprint, 
         reply_family_values::resolved(reply_family_values::files(n, fast, files, fits, union), i, ob, oa),
     ensures ({ let r = reply_family_values::files(n, fast, files, fits, union);
         let z = reply_family_values::finish(nq, r);
-        reply_family_values::reply_bound(n, nq, r) && z.credit.start == n.credit.start
+        reply_family_values::reply_bound(n, nq, r) && z.credit.start != n.credit.start
         && z.repo == n.repo && z.footprint == union
         && z.last_cmd == n.last_cmd && oa.len <= ob.len + 1
         && reply_family_values::next_question(nq, r) as int <= nq as int + 1
