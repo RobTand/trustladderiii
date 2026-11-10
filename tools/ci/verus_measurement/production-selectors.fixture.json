@@ -1,10 +1,165 @@
 {
-  "source_head": "e6f21b416bb54f419dc2750fe1ac09394cee26e7",
+  "source_head": "107eddf55a2c80c2e12978823dba2aa7fda7f590",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "3a387302369bf9171f736fcd29b7fe767460ba591a5dfeb796706dca0f8915d8",
-  "groups": 510,
-  "obligations": 708,
+  "source_sha256": "b8b4eaa27f7d8f81e9da2938ac74277771bf21fe0e46b4aa0ad1d1db9da486c2",
+  "groups": 541,
+  "obligations": 740,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_facts_family_infrastructure_incident_count",
+      "selector": "kernel::facts_family_values#infrastructure_incident_count",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_infrastructure_retry_arm",
+      "selector": "kernel::facts_family_values#infrastructure_retry_arm",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_infrastructure_incident_arm",
+      "selector": "kernel::facts_family_values#infrastructure_incident_arm",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_infrastructure_retry_value",
+      "selector": "kernel::facts_family_values#infrastructure_retry_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_infrastructure_retry_bridge",
+      "selector": "kernel::facts_family_values#infrastructure_retry_bridge",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_priority_fact_arm",
+      "selector": "kernel::facts_family_values#priority_fact_arm",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_closed_pr_fact_arm",
+      "selector": "kernel::facts_family_values#closed_pr_fact_arm",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_conflict_fact_arm",
+      "selector": "kernel::facts_family_values#conflict_fact_arm",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_cleared_fact_arm",
+      "selector": "kernel::facts_family_values#cleared_fact_arm",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_merge_credit_value",
+      "selector": "kernel::facts_family_values#merge_credit_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_merged_fact_arm",
+      "selector": "kernel::facts_family_values#merged_fact_arm",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_fact_value_bridge",
+      "selector": "kernel::facts_family_values#fact_value_bridge",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_ordinary_outputs",
+      "selector": "kernel::facts_family_values#ordinary_outputs",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_merge_frame",
+      "selector": "kernel::facts_family_values#merge_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_merge_distance",
+      "selector": "kernel::facts_family_values#merge_distance",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_merge_outputs",
+      "selector": "kernel::facts_family_values#merge_outputs",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_ordinary_frame",
+      "selector": "kernel::facts_family_values#ordinary_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_value_node_step",
+      "selector": "kernel::facts_family_values#value_node_step",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_value_fail_fast",
+      "selector": "kernel::facts_family_values#value_fail_fast",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_value_event_rules",
+      "selector": "kernel::facts_family_values#value_event_rules",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_ordinary_distance",
+      "selector": "kernel::facts_family_values#ordinary_distance",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_empty_merge_notices",
+      "selector": "kernel::facts_family_values#empty_merge_notices",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_value_node_rows",
+      "selector": "kernel::facts_family_values#value_node_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_ordinary_fact_value",
+      "selector": "kernel::facts_family_values#ordinary_fact_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_merge_fact_value",
+      "selector": "kernel::facts_family_values#merge_fact_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_append_fact_notices",
+      "selector": "kernel::facts_family_values#append_fact_notices",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_ordinary_fact_entry",
+      "selector": "kernel::facts_family_values#ordinary_fact_entry",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_dependency_entry",
+      "selector": "kernel::facts_family_values#fact_dependency_entry",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_on_fact_rows",
+      "selector": "kernel::facts_family_lemmas#on_fact_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_notices_outputs",
+      "selector": "kernel::facts_family_lemmas#notices_outputs",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_selected_apply_rows",
+      "selector": "kernel::facts_family_lemmas#selected_apply_rows",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_handler_safety_step_rows_carry",
       "selector": "kernel::handler_safety#step_rows_carry",
