@@ -262,7 +262,7 @@ mod stop_assembly {
                 proof {
                     checking::accepted_parts(before);
                     if !dependencies::prerequisites_delivered(before, NodeId(i as u64)) {
-                        dependency_owner_exports::waiting_owner_ok(before, i as int);
+
                     }
                 }
                 on_command(&mut w, i, id, Command::Stop, &mut out);
