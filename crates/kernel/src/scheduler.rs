@@ -148,7 +148,7 @@ pub(super) fn advance_proved(w: &mut World, i: usize, out: &mut Outbox, report: 
 
 kernel_fn! {
 /// K5 DEV ONLY (fv-k5-int-dev-1110), CONTRACTS.md E5: TRUSTED export wrapper. Contract =
-/// `advance_proved`'s, verbatim, plus one frozen opaque export bundle. The body only calls the
+/// `advance_proved`'s, verbatim, plus the frozen v2 export clauses (direct). The body only calls the
 /// verified `advance_proved`: no new executable behaviour. Never lands; escape_audit FAILS here.
 #[cfg_attr(verus_keep_ghost, verifier::external_body)]
 pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Report) -> (result: bool) [
@@ -208,7 +208,27 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
                 && slot_spec(*old(w), older)
                 && !overlapped_by_older(*old(w), older, old(w).nodes@[older].ticket.unwrap())
                 ==> !result && final(w).nodes@[i as int] == old(w).nodes@[i as int],
-    advance_family_post::advance_exports(*old(w), *final(w), i, result, *old(out), *final(out)),
+    checking::accepted(*old(w)) ==> advance_family_post::step_rows(*old(w), *final(w), i as int),
+    transition_safety::transition_safety(*old(w), *final(w),
+        transition_safety::Transition::Advance { node: i, moved: result },
+        transition_safety::emitted(*old(out), *final(out))),
+    !old(w).nodes@[i as int].pool && final(w).nodes@[i as int].pool
+        ==> pool_users(old(w).nodes@, old(w).nodes@.len()) < old(w).pool_capacity && oldest_waiter(*old(w), i as int),
+    (match current_item(old(w).nodes@[i as int]) { Some(Item::Start(_)) => true, _ => false })
+        && !(old(w).nodes@[i as int].phase is Closed) && !old(w).nodes@[i as int].waiting_incident
+        && old(w).nodes@[i as int].effect.is_none() && !old(w).nodes@[i as int].paused
+        && old(w).nodes@[i as int].ticket.is_some()
+        && pool_users(old(w).nodes@, old(w).nodes@.len()) < old(w).pool_capacity && oldest_waiter(*old(w), i as int)
+        ==> result && final(w).nodes@[i as int].pool && final(w).nodes@[i as int].ticket.is_none(),
+    !old(w).nodes@[i as int].holds && final(w).nodes@[i as int].holds
+        ==> !old(w).nodes@[i as int].paused && slot_spec(*old(w), i as int)
+            && final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo
+            && final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint
+            && final(w).nodes@[i as int].ticket.is_none()
+            && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool
+            && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run,
+    old(w).nodes@[i as int].holds && (old(w).nodes@[i as int].phase == Phase::Making
+        || old(w).nodes@[i as int].phase == Phase::Rebasing) ==> final(w).nodes@[i as int].holds,
 ] {
     advance_proved(w, i, out, report)
 }

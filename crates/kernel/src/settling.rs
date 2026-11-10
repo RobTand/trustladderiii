@@ -106,7 +106,7 @@ pub(super) fn settle_proved(w: &mut World, out: &mut Vec<Out>, mut trace: Option
 
 kernel_fn! {
 /// K5 DEV ONLY (fv-k5-int-dev-1110), CONTRACTS.md E6: TRUSTED export wrapper. Contract =
-/// `settle_proved`'s, verbatim, plus one frozen opaque export bundle. The body only calls the
+/// `settle_proved`'s, verbatim, plus the frozen v2 export clauses (direct). The body only calls the
 /// verified `settle_proved`: no new executable behaviour. Never lands; escape_audit FAILS here.
 #[cfg_attr(verus_keep_ghost, verifier::external_body)]
 pub(super) fn settle(w: &mut World, out: &mut Vec<Out>, trace: Option<&mut Vec<World>>, report: &mut Report)
@@ -116,7 +116,16 @@ pub(super) fn settle(w: &mut World, out: &mut Vec<Out>, trace: Option<&mut Vec<W
         settle_ready(*final(w)), settle_chain(*old(w), *final(w)),
         forall|i: int| 0 <= i < final(w).nodes@.len() ==> !movable(*final(w), i),
         result as int <= potential_prefix(old(w).nodes@, old(w).nodes@.len(), |n: Node| internal_height(n)),
-    settle_exports::settle_exports(*old(w), *final(w)),
+    (checking::accepted(*old(w)) && old(w).gates@.len() <= u64::MAX) ==> checking::accepted(*final(w)),
+    forall|i: int| 0 <= i < final(w).nodes@.len()
+        && advance_family_post::ready_unobstructed(#[trigger] final(w).nodes@[i]) && oldest_waiter(*final(w), i)
+        ==> !scheduler::slot_spec(*final(w), i),
+    forall|i: int| 0 <= i < old(w).nodes@.len()
+        && advance_family_post::ready_unobstructed(#[trigger] old(w).nodes@[i])
+        && old(w).nodes@[i].phase == Phase::Ready(Resume::Making)
+        ==> (final(w).nodes@[i].phase == old(w).nodes@[i].phase
+                && final(w).nodes@[i].ticket == old(w).nodes@[i].ticket)
+            || (final(w).nodes@[i].holds && final(w).nodes@[i].ticket.is_none()),
 ] {
     settle_proved(w, out, trace, report)
 }

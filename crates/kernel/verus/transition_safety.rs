@@ -804,30 +804,4 @@ pub(super) proof fn lift_apply_none(before: World, after: World, event: Event, o
     intro(before, after, Transition::Apply(event), emitted(ob, oa));
 }
 
-/// K5 frozen export E1 (CONTRACTS.md; owner Apply; consumers assembly G6/G16/G19). TRUSTED at
-/// fv-k5-int-dev-1110: `events::apply` ensures it through a trusted wrapper. One opaque bundle so that
-/// apply's many proof callers see a single atom; consumers `reveal(apply_exports)`.
-#[verifier::opaque]
-pub(super) open spec fn apply_exports(before: World, after: World, event: Event, ob: Outbox, oa: Outbox) -> bool {
-    // E1.1 Reply/Ack/Fact forward the Apply relation (internal).
-    ((checking::accepted(before) && (match event {
-        Event::Reply { node, .. } | Event::Ack { node, .. } | Event::Fact { node, .. } => node.0 < before.nodes@.len(),
-        _ => false,
-    })) ==> transition_safety(before, after, Transition::Apply(event), emitted(ob, oa)))
-    // E1.2 An event changes only its own node (REQUIREMENT R1).
-    && (match event_target(event) {
-        Some(i) => 0 <= i < before.nodes@.len() ==> others_unchanged(before, after, i),
-        None => true,
-    })
-    // E1.3 Fail-fast rows (REQUIREMENTS R2, R3, R4).
-    && (match event {
-        Event::Reply { node, .. } | Event::Fact { node, .. } => (checking::accepted(before)
-            && node.0 < before.nodes@.len() && fail_fast_event(event))
-            ==> fail_fast_rows(before, after, event, node.0 as int, emitted(ob, oa)),
-        _ => true,
-    })
-    // E1.4 Every non-command event keeps the world one the checker accepts (REQUIREMENT R5).
-    && ((checking::accepted(before) && !(event is Command)) ==> checking::accepted(after))
-}
-
 }
