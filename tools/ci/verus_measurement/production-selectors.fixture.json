@@ -1,10 +1,65 @@
 {
-  "source_head": "8340a4dd23c1d106a7ab566d8d4f2f14e54f7819",
+  "source_head": "3070214c8c7726ecf82a27bed927f0221b40a5cd",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "e3d66fe392d77e674590c41266abfc07041a83de2fb9ff14d44d0b7654fbdfd2",
-  "groups": 517,
-  "obligations": 716,
+  "source_sha256": "2f1a2bab48aa5b2121a6f64d9ac00dfa38b754d014500b1f634a9910f19acd59",
+  "groups": 528,
+  "obligations": 727,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_facts_family_priority_fact_arm",
+      "selector": "kernel::facts_family_values#priority_fact_arm",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_closed_pr_fact_arm",
+      "selector": "kernel::facts_family_values#closed_pr_fact_arm",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_conflict_fact_arm",
+      "selector": "kernel::facts_family_values#conflict_fact_arm",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_cleared_fact_arm",
+      "selector": "kernel::facts_family_values#cleared_fact_arm",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_merge_credit_value",
+      "selector": "kernel::facts_family_values#merge_credit_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_merged_fact_arm",
+      "selector": "kernel::facts_family_values#merged_fact_arm",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_fact_value_bridge",
+      "selector": "kernel::facts_family_values#fact_value_bridge",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_ordinary_outputs",
+      "selector": "kernel::facts_family_values#ordinary_outputs",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_merge_frame",
+      "selector": "kernel::facts_family_values#merge_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_merge_distance",
+      "selector": "kernel::facts_family_values#merge_distance",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_merge_outputs",
+      "selector": "kernel::facts_family_values#merge_outputs",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_facts_family_ordinary_frame",
       "selector": "kernel::facts_family_values#ordinary_frame",
