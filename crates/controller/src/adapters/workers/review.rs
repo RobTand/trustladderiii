@@ -586,13 +586,13 @@ mod hostile_tests {
                 for round in [0, 1] {
                     delivery.round = round;
                     let value = inputs(&delivery, &mut store, &snapshot, None).unwrap();
-                    assert_eq!(value["issue"]["title"], "Request 🦀\u{0000}");
-                    assert_eq!(value["issue"]["body"], "é".repeat(16_000));
-                    assert_eq!(value["issue_truncated"], length > 16_000);
                     let additions = value["footprint_additions"]
                         .as_array()
                         .expect("review always lists additions");
                     assert_eq!(additions.len(), added.len());
+                    assert_eq!(value["issue"]["title"], "Request 🦀\u{0000}");
+                    assert_eq!(value["issue"]["body"], "é".repeat(16_000));
+                    assert_eq!(value["issue_truncated"], length > 16_000);
                     for (entry, path) in additions.iter().zip(&added) {
                         assert_eq!(entry["path"], *path);
                         if *path == "extra.py" {
