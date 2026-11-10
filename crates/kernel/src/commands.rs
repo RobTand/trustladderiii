@@ -359,3 +359,157 @@ pub(super) fn answer_command(w: &mut World, i: usize, id: u64, question: u64, an
     }
 }
 }
+
+kernel_fn! {
+/// Answer rows / #771: on_command's Answer arm as one world entry (K5 design 3).
+pub(super) fn answer_command_x5(w: &mut World, i: usize, id: u64, question: u64, answer: Answer,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+        id > old(w).nodes@[i as int].last_cmd,
+    ensures (node_checked(*old(w), old(w).nodes@[i as int])
+            && id > old(w).nodes@[i as int].last_cmd
+            && command_progress_input(old(w).nodes@[i as int], (Command::Answer { question, answer }))
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
+        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
+        final(w).nodes@[i as int].credit.start == old(w).nodes@[i as int].credit.start,
+        final(w).nodes@[i as int].credit.earned == old(w).nodes@[i as int].credit.earned,
+        final(w).nodes@[i as int].credit.added as int <= old(w).nodes@[i as int].credit.added as int + 255,
+        final(w).nodes@[i as int].credit.spent as int <= old(w).nodes@[i as int].credit.spent as int + 1,
+        final(w).nodes@[i as int].last_cmd == if id > old(w).nodes@[i as int].last_cmd {
+            id
+        } else { old(w).nodes@[i as int].last_cmd },
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question as int <= old(w).next_question as int + 1,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len <= old(out).len + 1,
+        (Command::Answer { question, answer }) == Command::Resume ==> final(w).next_question == old(w).next_question,
+        progress_gate_apply::resume_post(old(w).nodes@[i as int], final(w).nodes@[i as int], id, (Command::Answer { question, answer })),
+        final(w).nodes@[i as int].proposed == old(w).nodes@[i as int].proposed,
+        final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
+        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase),
+        handler_safety::answer_pair(old(w).nodes@[i as int], final(w).nodes@[i as int],
+            id > old(w).nodes@[i as int].last_cmd, question, answer, final(w).dependencies@,
+            NodeId(i as u64)),
+        transition_safety::notice_only(*old(out), *final(out), NodeId(i as u64)),
+        (match (Command::Answer { question, answer }) {
+            Command::Answer { question, .. } => node_checked(*old(w), old(w).nodes@[i as int])
+                && final(w).nodes@[i as int] != (Node { last_cmd: final(w).nodes@[i as int].last_cmd, ..old(w).nodes@[i as int] })
+                ==> (match old(w).nodes@[i as int].question {
+                    Some(q) => q.id == question,
+                    None => false,
+                }) && (match final(w).nodes@[i as int].question {
+                    Some(q) => q.id != question,
+                    None => true,
+                }),
+            _ => true,
+        }),
+] {
+    kernel_snapshot! { before_command_world = *w }
+    on_answer(w, i, question, answer, out);
+    kernel_snapshot! { after_answer = *w }
+    let mut m = w.nodes[i];
+    m.last_cmd = id;
+    w.nodes[i] = m;
+    kernel_proof! {
+        apply_command_safety::other_resume_post(before_command_world@.nodes@[i as int], w.nodes@[i as int],
+            id, Command::Answer { question, answer });
+        handler_safety::distance_last_cmd(after_answer@.nodes@[i as int], id);
+        apply_command_safety::answer_pair_after(before_command_world@.nodes@[i as int],
+            after_answer@.nodes@[i as int], id, question, answer, w.dependencies@, NodeId(i as u64));
+    }
+}
+}
+
+kernel_fn! {
+/// Answer rows / #771: on_command's Answer arm as one world entry (K5 design 3).
+pub(super) fn answer_command_x1(w: &mut World, i: usize, id: u64, question: u64, answer: Answer,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+        id > old(w).nodes@[i as int].last_cmd,
+    ensures (node_checked(*old(w), old(w).nodes@[i as int])
+            && id > old(w).nodes@[i as int].last_cmd
+            && command_progress_input(old(w).nodes@[i as int], (Command::Answer { question, answer }))
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
+        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
+        final(w).nodes@[i as int].credit.start == old(w).nodes@[i as int].credit.start,
+        final(w).nodes@[i as int].credit.earned == old(w).nodes@[i as int].credit.earned,
+        final(w).nodes@[i as int].credit.added as int <= old(w).nodes@[i as int].credit.added as int + 255,
+        final(w).nodes@[i as int].credit.spent as int <= old(w).nodes@[i as int].credit.spent as int + 1,
+        final(w).nodes@[i as int].last_cmd == if id > old(w).nodes@[i as int].last_cmd {
+            id
+        } else { old(w).nodes@[i as int].last_cmd },
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question as int <= old(w).next_question as int + 1,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len <= old(out).len + 1,
+        (Command::Answer { question, answer }) == Command::Resume ==> final(w).next_question == old(w).next_question,
+        progress_gate_apply::resume_post(old(w).nodes@[i as int], final(w).nodes@[i as int], id, (Command::Answer { question, answer })),
+        final(w).nodes@[i as int].proposed == old(w).nodes@[i as int].proposed,
+        final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
+        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase),
+        handler_safety::answer_pair(old(w).nodes@[i as int], final(w).nodes@[i as int],
+            id > old(w).nodes@[i as int].last_cmd, question, answer, final(w).dependencies@,
+            NodeId(i as u64)),
+        transition_safety::notice_only(*old(out), *final(out), NodeId(i as u64)),
+        (match (Command::Answer { question, answer }) {
+            Command::Answer { question, .. } => node_checked(*old(w), old(w).nodes@[i as int])
+                && final(w).nodes@[i as int] != (Node { last_cmd: final(w).nodes@[i as int].last_cmd, ..old(w).nodes@[i as int] })
+                ==> (match old(w).nodes@[i as int].question {
+                    Some(q) => q.id == question,
+                    None => false,
+                }) && (match final(w).nodes@[i as int].question {
+                    Some(q) => q.id != question,
+                    None => true,
+                }),
+            _ => true,
+        }),
+        (final(w).nodes@[i as int].holds ==> old(w).nodes@[i as int].holds),
+        (final(w).nodes@[i as int].pool ==> old(w).nodes@[i as int].pool),
+        final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket || final(w).nodes@[i as int].ticket.is_none(),
+        old(w).next_question <= final(w).next_question,
+] {
+    kernel_snapshot! { before_command_world = *w }
+    on_answer(w, i, question, answer, out);
+    kernel_snapshot! { after_answer = *w }
+    let mut m = w.nodes[i];
+    m.last_cmd = id;
+    w.nodes[i] = m;
+    kernel_proof! {
+        apply_command_safety::other_resume_post(before_command_world@.nodes@[i as int], w.nodes@[i as int],
+            id, Command::Answer { question, answer });
+        handler_safety::distance_last_cmd(after_answer@.nodes@[i as int], id);
+        apply_command_safety::answer_pair_after(before_command_world@.nodes@[i as int],
+            after_answer@.nodes@[i as int], id, question, answer, w.dependencies@, NodeId(i as u64));
+    }
+}
+}
