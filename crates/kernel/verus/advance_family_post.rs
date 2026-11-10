@@ -294,4 +294,40 @@ pub(super) proof fn start_item(n: Node)
     reveal(items);
 }
 
+
+/// G5/G20: permission and resource frames for every production advance arm.
+#[verifier::opaque]
+pub(super) open spec fn grant_facts(b: Node, a: Node, c: AdvanceContext) -> bool {
+    (a.holds && !b.holds ==> c.slot && !b.paused && b.phase is Ready && b.ticket.is_some()
+        && a.ticket.is_none() && a.repo == b.repo && a.footprint == b.footprint && a.pool == b.pool)
+    && (a.pool && !b.pool ==> c.pool && !b.paused && b.ticket.is_some() && a.ticket.is_none())
+}
+
+pub(super) proof fn grant_no_new(b: Node, a: Node, c: AdvanceContext)
+    requires a.holds ==> b.holds, a.pool ==> b.pool,
+    ensures grant_facts(b, a, c), a.holds && !b.holds ==> a.run == b.run,
+{
+    reveal(grant_facts);
+}
+
+pub(super) proof fn grant_from_fields(b: Node, a: Node, c: AdvanceContext)
+    requires a.holds ==> b.holds,
+        a.pool && !b.pool ==> c.pool && !b.paused && b.ticket.is_some() && a.ticket.is_none(),
+    ensures grant_facts(b, a, c), a.holds && !b.holds ==> a.run == b.run,
+{
+    reveal(grant_facts);
+}
+
+pub(super) proof fn slot_grant_facts(b: Node, t: u64, c: AdvanceContext, v: (Node, u64, bool))
+    requires advance_pre(b, t, 0),
+        !(b.phase is Closed) && !b.waiting_incident && b.effect.is_none()
+            && current_item(b) == Some(Item::Slot),
+        v == slot_value(b, t, c),
+    ensures grant_facts(b, v.0, c), v.0.holds && !b.holds ==> v.0.run == b.run,
+{
+    reveal(grant_facts);
+    reveal(slot_value);
+    slot_item_ready(b);
+}
+
 }

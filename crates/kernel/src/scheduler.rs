@@ -108,6 +108,18 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
         advance_family_post::start_unobstructed(old(w).nodes@[i as int]) && result
             ==> pool_users(old(w).nodes@, old(w).nodes@.len()) < old(w).pool_capacity
                 && oldest_waiter(*old(w), i as int),
+        !old(w).nodes@[i as int].holds && final(w).nodes@[i as int].holds
+            ==> !old(w).nodes@[i as int].paused && slot_spec(*old(w), i as int)
+                && final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo
+                && final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint
+                && final(w).nodes@[i as int].ticket.is_none()
+                && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool
+                && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run,
+        !old(w).nodes@[i as int].pool && final(w).nodes@[i as int].pool
+            ==> pool_users(old(w).nodes@, old(w).nodes@.len()) < old(w).pool_capacity
+                && oldest_waiter(*old(w), i as int)
+                && !old(w).nodes@[i as int].paused && old(w).nodes@[i as int].ticket.is_some()
+                && final(w).nodes@[i as int].ticket.is_none(),
 ] {
     kernel_snapshot! { before_advance = *w }
     kernel_proof! { dependencies::prerequisite_definition(*w, NodeId(i as u64)); }
@@ -144,6 +156,7 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
     }
     let changed = advance_node(&mut w.nodes[i], &mut w.next_ticket, context, out, report);
     kernel_proof! {
+        reveal(advance_family_post::grant_facts);
         reveal(advance_family_post::pool_grant);
         reveal(advance_family_post::slot_grant);
         reveal(advance_post);
