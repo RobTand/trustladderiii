@@ -651,3 +651,147 @@ mod invalid_command_assembly {
     }
     }
 }
+
+
+mod answer_frontier {
+    use super::*;
+
+    verus! {
+    /// The proven Answer inputs to C1, without the absent final waiting-owner row.
+    #[verifier::opaque]
+    pub(super) open spec fn rows(before: World, after: World, node: NodeId) -> bool {
+        checking::accepted(before)
+            && node.0 < before.nodes@.len()
+            && retirement::node_rules(before, before.nodes@[node.0 as int])
+            && internal_safety::apply_n1_rules(after, node.0 as int)
+            && internal_safety::apply_n2_no_grants(before.nodes@[node.0 as int], after.nodes@[node.0 as int])
+            && internal_safety::apply_n3_footprint(after, before.nodes@[node.0 as int], node.0 as int)
+            && internal_safety::apply_n5_frame(before, after, node.0 as int)
+            && progress_gate_apply::accepted(after)
+            && after.dependencies@ == before.dependencies@
+            && before.nodes@.len() <= u64::MAX
+            && (before.nodes@[node.0 as int].phase is Closed ==> after.nodes@[node.0 as int].phase is Closed)
+            && (after.nodes@[node.0 as int].credit.withheld ==> before.nodes@[node.0 as int].credit.withheld
+                || !dependencies::prerequisites_delivered(before, node))
+            && (!dependencies::prerequisites_delivered(before, node)
+                ==> dependencies::owner_waiting_ok(before.nodes@[node.0 as int]))
+    }
+
+    /// Rule 7: E1.5 and apply's per-field posts are taken verbatim.
+    pub(super) proof fn rows_intro(before: World, after: World, node: NodeId, id: u64,
+        question: u64, answer: Answer)
+        requires checking::accepted(before), node.0 < before.nodes@.len(),
+            after.nodes@.len() == before.nodes@.len(),
+            after.dependencies@ == before.dependencies@,
+            before.next_question <= after.next_question,
+            before.nodes@.len() <= u64::MAX,
+            retirement::node_rules(before, before.nodes@[node.0 as int])
+                ==> retirement::node_rules(after, after.nodes@[node.0 as int]),
+            after.nodes@[node.0 as int].holds ==> before.nodes@[node.0 as int].holds,
+            after.nodes@[node.0 as int].pool ==> before.nodes@[node.0 as int].pool,
+            after.nodes@[node.0 as int].ticket == before.nodes@[node.0 as int].ticket
+                || after.nodes@[node.0 as int].ticket.is_none(),
+            after.nodes@[node.0 as int].repo == before.nodes@[node.0 as int].repo,
+            after.nodes@[node.0 as int].footprint == before.nodes@[node.0 as int].footprint,
+            after.nodes@ == before.nodes@.update(node.0 as int, after.nodes@[node.0 as int]),
+            handler_safety::answer_pair(before.nodes@[node.0 as int], after.nodes@[node.0 as int],
+                id > before.nodes@[node.0 as int].last_cmd, question, answer, after.dependencies@, node),
+            after.gates@ == before.gates@,
+            after.pool_capacity == before.pool_capacity,
+            after.next_ticket == before.next_ticket,
+            after.file_sets@.len() >= before.file_sets@.len(),
+            forall|j: int| 0 <= j < before.file_sets@.len()
+                ==> after.file_sets@[j] == before.file_sets@[j],
+            forall|j: int| 0 <= j < before.nodes@.len() ==>
+                (before.nodes@[j].phase is Closed ==> after.nodes@[j].phase is Closed)
+                    && after.nodes@[j].repo == before.nodes@[j].repo
+                    && after.nodes@[j].last_cmd >= before.nodes@[j].last_cmd,
+        ensures rows(before, after, node),
+    {
+        let i = node.0 as int;
+        checking::accepted_node(before, i);
+        checking::accepted_parts(before);
+        if !dependencies::prerequisites_delivered(before, node) {
+            dependency_owner_exports::waiting_owner_ok(before, i);
+        }
+        handler_safety::answer_pair_withheld(before.nodes@[i], after.nodes@[i],
+            id > before.nodes@[i].last_cmd, question, answer, after.dependencies@, node);
+        dependencies::prerequisite_definition(before, node);
+        internal_safety::apply_preserves_gate_rules(before, after, i);
+        reveal(rows);
+    }
+    }
+}
+
+mod answer_frontier_reveal {
+    use super::*;
+
+    verus! {
+    pub(super) proof fn project(before: World, after: World, node: NodeId)
+        requires answer_frontier::rows(before, after, node),
+        ensures
+            checking::accepted(before),
+            node.0 < before.nodes@.len(),
+            retirement::node_rules(before, before.nodes@[node.0 as int]),
+            internal_safety::apply_n1_rules(after, node.0 as int),
+            internal_safety::apply_n2_no_grants(before.nodes@[node.0 as int], after.nodes@[node.0 as int]),
+            internal_safety::apply_n3_footprint(after, before.nodes@[node.0 as int], node.0 as int),
+            internal_safety::apply_n5_frame(before, after, node.0 as int),
+            progress_gate_apply::accepted(after),
+            after.dependencies@ == before.dependencies@,
+            before.nodes@.len() <= u64::MAX,
+            (before.nodes@[node.0 as int].phase is Closed ==> after.nodes@[node.0 as int].phase is Closed),
+            (after.nodes@[node.0 as int].credit.withheld ==> before.nodes@[node.0 as int].credit.withheld
+                || !dependencies::prerequisites_delivered(before, node)),
+            (!dependencies::prerequisites_delivered(before, node)
+                ==> dependencies::owner_waiting_ok(before.nodes@[node.0 as int])),
+    {
+        reveal(answer_frontier::rows);
+    }
+    }
+}
+
+mod answer_apply_assembly {
+    use super::*;
+
+    verus! {
+    /// H36-H43/S2 preparation over every Answer and fresh/stale command id.
+    /// This prefix is not the complete R28 theorem while N4c is unavailable.
+    fn apply_answer_prefix(mut w: World, event: Event, mut out: Outbox, mut report: Report)
+        -> (result: (World, Outbox, Report))
+        requires checking::accepted(w),
+            world_headroom(w), footprint::ordered_table(w), dependencies::edges_indexable(w),
+            out.len + 4 <= OUTBOX,
+            forall|j: int| 0 <= j < w.nodes@.len() ==>
+                arithmetic_consistent(w.nodes@[j]) && settle_shape(w.nodes@[j])
+                    && stopping_effect_fits(w.nodes@[j])
+                    && (w.nodes@[j].phase is Closed ==> w.nodes@[j].effect.is_none())
+                    && footprint::valid_footprint(w, w.nodes@[j].footprint),
+            match event {
+                Event::Command { node, command: Command::Answer { .. }, .. } => node.0 < w.nodes@.len(),
+                _ => false,
+            },
+        ensures match event {
+            Event::Command { node, .. } => answer_frontier::rows(w, result.0, node),
+            _ => true,
+        },
+    {
+        let ghost before = w;
+        events::apply(&mut w, event, &mut out, &mut report);
+        proof {
+            match event {
+                Event::Command { node, id, command: Command::Answer { question, answer } } => {
+                    command_frames_reveal::command_rows_project(before, w, node, id,
+                        Command::Answer { question, answer });
+                    answer_frontier::rows_intro(before, w, node, id, question, answer);
+                    answer_frontier_reveal::project(before, w, node);
+                    // N4c boundary: the next C1-full call needs prerequisites_delivered(before, node)
+                    // || owner_waiting_ok(w.nodes@[node.0 as int]); no producer export supplies it yet.
+                },
+                _ => {},
+            }
+        }
+        (w, out, report)
+    }
+    }
+}
