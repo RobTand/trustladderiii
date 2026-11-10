@@ -90,7 +90,7 @@ pub(super) open spec fn confirmed_resources_frame(b: Node, n: Node, kind: Effect
 
 #[verifier::opaque]
 pub(super) open spec fn confirmed_step_frame(b: Node, n: Node) -> bool {
-    (n.pos == b.pos + 1)
+    (n.pos == b.pos)
         && (n.effect == b.effect)
         && (n.phase == b.phase)
         && (n.holds == b.holds)
