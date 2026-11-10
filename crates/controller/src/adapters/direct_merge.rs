@@ -747,6 +747,7 @@ impl Adapter {
             let github = self.client(d)?.clone();
             let repo = full_name(&d.repository);
             let sha = format!("{:032x}{:08x}", plan.sha.upper, plan.sha.lower);
+            let mut merge_base = None;
             for step in [plan.first, plan.second, plan.third] {
                 match step {
                     Step::None => {}
@@ -772,6 +773,12 @@ impl Adapter {
                                 .checked_add(1)
                                 .ok_or(Error::Invalid("direct intent counter exhausted"))
                         })?;
+                        let base_before_merge = if plan.third == Step::Merge {
+                            live_merge_base(&self.runtime, &github, &repo, &read.pull)?
+                        } else {
+                            read.pull.base.sha.clone()
+                        };
+                        merge_base = Some(base_before_merge.clone());
                         self.write(
                             Write::Intent,
                             &path,
@@ -780,7 +787,7 @@ impl Adapter {
                                 attempt,
                                 action: format!("{:?}", plan.third),
                                 consumed_through,
-                                base_before_merge: read.pull.base.sha.clone(),
+                                base_before_merge,
                                 method: read
                                     .method
                                     .ok_or(Error::Invalid("missing merge method"))?,
@@ -831,7 +838,9 @@ impl Adapter {
                                             result.sha.as_deref().ok_or(Error::Invalid(
                                                 "successful merge lacks landed commit",
                                             ))?,
-                                            Some(read.pull.base.sha.clone()),
+                                            Some(merge_base.clone().ok_or(Error::Invalid(
+                                                "merge base was not read before merge",
+                                            ))?),
                                             crate::outcome::RequiredChecks {
                                                 passed: true,
                                                 count: read.required_count,
@@ -1332,6 +1341,35 @@ fn read_checks(
         count,
     })
 }
+fn live_merge_base(
+    runtime: &tokio::runtime::Runtime,
+    github: &GitHub,
+    repo: &str,
+    pull: &PullRequest,
+) -> Result<String> {
+    let branch = runtime
+        .block_on(github.branch(repo, &pull.base.branch))?
+        .ok_or(Error::Invalid("merge base branch is missing"))?;
+    head(&branch.commit.sha)?;
+    Ok(branch.commit.sha)
+}
+fn passing_check_base<'a>(
+    snapshot: &'a Snapshot,
+    node: tl3_kernel::NodeId,
+    approved: &str,
+) -> Option<&'a str> {
+    snapshot
+        .rows
+        .iter()
+        .find(|row| {
+            row.table == "check_reports"
+                && row.id == format!("{}:{approved}", node.0)
+                && row.value["head_sha"].as_str() == Some(approved)
+                && row.value["pass"] == true
+        })
+        .and_then(|row| row.value["base_sha"].as_str())
+        .filter(|base| head(base).is_ok())
+}
 fn merge_evidence(
     runtime: &tokio::runtime::Runtime,
     github: &GitHub,
@@ -1352,20 +1390,15 @@ fn merge_evidence(
         .get(node.0 as usize)
         .ok_or(Error::Invalid("merge evidence node missing"))?;
     let checked_base = crate::commit_sha(snapshot, n.approved)
-        .and_then(|approved| {
-            snapshot.rows.iter().find(|row| {
-                row.table == "check_reports"
-                    && row.id == format!("{}:{approved}", node.0)
-                    && row.value["head_sha"].as_str() == Some(approved)
-                    && row.value["pass"] == true
-                    && row.value["report"] == true
-            })
-        })
-        .and_then(|row| row.value["base_sha"].as_str())
+        .and_then(|approved| passing_check_base(snapshot, node, approved))
         .map(str::to_owned);
-    let merge_base = base_before_merge
-        .clone()
-        .unwrap_or_else(|| pull.base.sha.clone());
+    let merge_base = if observed {
+        live_merge_base(runtime, github, repo, pull)?
+    } else {
+        base_before_merge
+            .clone()
+            .ok_or(Error::Invalid("merge lacks its pre-call live base"))?
+    };
     let base_moved = checked_base.as_ref().map(|base| base != &merge_base);
     let parents: Vec<_> = commit
         .parents
@@ -1380,9 +1413,13 @@ fn merge_evidence(
         observed,
         landed: crate::outcome::Landed {
             commit: commit.sha,
-            checked_base,
             merge_base,
+            pr_base_sha: pull.base.sha.clone(),
             base_moved,
+            checked_parent_matches: checked_base
+                .as_ref()
+                .map(|base| parents.first() == Some(base)),
+            checked_base,
             tree_matches: commit.tree.sha == head_commit.tree.sha,
             tree: commit.tree.sha,
             head_tree: head_commit.tree.sha,
