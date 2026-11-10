@@ -15,6 +15,10 @@ fn regression_properties(input: Input)
         assert(!out.pre_existing);
     }
     if matches!(input.kind, Kind::Regression) && out.passed {
+        if !matches!(input.head, Outcome::Passed) {
+            assert(input.same_failure);
+            assert(input.base == input.head);
+        }
         assert(matches!(input.base,
             Outcome::Passed | Outcome::Assertion | Outcome::AddedName | Outcome::Error));
     }
@@ -53,19 +57,19 @@ fn demonstration_properties(input: Input)
 /// #822/#749: reachable pass, rejection, pre-existing failure and forced success witnesses.
 fn judge_witnesses() {
     let added = judge(Input { kind: Kind::Regression, base: Outcome::AddedName,
-        head: Outcome::Passed, forced: None, reason: Reason::Undeclared });
+        head: Outcome::Passed, forced: None, reason: Reason::Undeclared, same_failure: false });
     assert(added.passed && !added.pre_existing && !added.infrastructure);
     let pre = judge(Input { kind: Kind::Regression, base: Outcome::Error,
-        head: Outcome::Assertion, forced: None, reason: Reason::Undeclared });
+        head: Outcome::Error, forced: None, reason: Reason::Undeclared, same_failure: true });
     assert(pre.passed && pre.pre_existing);
     let forced = judge(Input { kind: Kind::Demonstrating, base: Outcome::Assertion,
-        head: Outcome::Passed, forced: Some(Outcome::Passed), reason: Reason::Matched });
+        head: Outcome::Passed, forced: Some(Outcome::Passed), reason: Reason::Matched, same_failure: false });
     assert(forced.passed);
     let no_reason = judge(Input { kind: Kind::Demonstrating, base: Outcome::Assertion,
-        head: Outcome::Passed, forced: Some(Outcome::Passed), reason: Reason::Undeclared });
+        head: Outcome::Passed, forced: Some(Outcome::Passed), reason: Reason::Undeclared, same_failure: false });
     assert(!no_reason.passed);
     let missing = judge(Input { kind: Kind::Regression, base: Outcome::NoReport,
-        head: Outcome::Passed, forced: None, reason: Reason::Undeclared });
+        head: Outcome::Passed, forced: None, reason: Reason::Undeclared, same_failure: false });
     assert(missing.infrastructure && !missing.passed);
 }
 }

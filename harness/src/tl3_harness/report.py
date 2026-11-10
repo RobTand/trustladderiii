@@ -55,7 +55,11 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
         reason = record.get('reason', '')
         if not isinstance(reason, str) or len(reason) > 1000:
             raise InvalidReport('invalid assertion reason')
-        ignored = ('message', 'exception', 'exception_type', 'reason') if record.get('event') == 'phase' else ('message', 'exception')
+        ignored = ('message', 'exception')
+        if record.get('event') == 'phase':
+            ignored += ('exception_type', 'reason')
+        elif record.get('event') == 'collection-error':
+            ignored += ('exception_type',)
         record = {key: value for key, value in record.items() if key not in ignored}
         red_message_match = None
         if record.get('event') == 'phase':
@@ -94,11 +98,11 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
                     raise InvalidReport("invalid test population")
                 selected = names
             case {"event": "collection-error"} if len(record) == 1:
-                collection_errors[""] = (Outcome.ERROR, message, exception)
+                collection_errors[""] = (Outcome.ERROR, message, exception, exception_type)
             case {"event": "collection-error", "test": str(file), "missing": name} if len(record) == 3:
                 if file in collection_errors or not any(test.split("::")[0] == file for test in tests):
                     raise InvalidReport("invalid collection error file")
-                collection_errors[file] = (Outcome.ADDED_NAME if added(name) else Outcome.ERROR, message, exception)
+                collection_errors[file] = (Outcome.ADDED_NAME if added(name) else Outcome.ERROR, message, exception, exception_type)
             case {"event": "phase", "test": str(test), "when": str(when),
                   "outcome": str(outcome), "assertion": bool(assertion), "missing": name} if len(record) == 6:
                 if (selected is None or test not in selected or when not in ("setup", "call", "teardown")
@@ -147,6 +151,9 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
                 messages[test] = error[1]
             if details is not None:
                 details[test] = Failure("collection", error[2], error[1])
+            if hasattr(messages, 'failures'):
+                messages.failures[test] = [{'test': test.split('::')[0], 'phase': 'collection',
+                                            'exception': error[3], 'assertion': False}]
         elif selected is None:
             raise InvalidReport("missing collection report")
         else:
@@ -160,6 +167,12 @@ def parse(records: list[dict], tests: tuple[str, ...], missing: set[str], exit_c
                 details[test] = details[failing]
             if hasattr(messages, 'phases') and matches:
                 messages.phases[test] = facts[failing or matches[0]]
+            if hasattr(messages, 'failures'):
+                messages.failures[test] = [
+                    {'test': name, 'phase': phase, 'exception': fact['exception'],
+                     'assertion': fact['assertion']}
+                    for name in matches for phase, fact in facts[name].items()
+                    if phase != 'test' and fact['outcome'] == 'failed']
     if exit_code != 0 and all(value == Outcome.PASSED for value in outcomes.values()):
         raise InvalidReport("pytest failed outside the named tests")
     if exit_code == 0 and any(value in (Outcome.ASSERTION, Outcome.ADDED_NAME, Outcome.ERROR) for value in outcomes.values()):

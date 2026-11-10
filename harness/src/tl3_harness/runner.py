@@ -517,6 +517,10 @@ class Reporter:
     def pytest_exception_interact(self, node, call, report):
         report.tl3_missing = missing_name(call.excinfo.value)
         report.tl3_exception = describe(call.excinfo.value)
+        error = call.excinfo.value
+        if isinstance(error, pytest.Collector.CollectError) and error.__cause__ is not None:
+            error = error.__cause__
+        report.tl3_exception_type = type(error).__module__ + '.' + type(error).__qualname__
 
     def pytest_collectreport(self, report):
         if report.failed:
@@ -537,6 +541,7 @@ class Reporter:
             self.emit(event="collection-error", test=report.nodeid,
                       missing=getattr(report, "tl3_missing", None),
                       exception=getattr(report, "tl3_exception", ""),
+                      exception_type=getattr(report, "tl3_exception_type", "")[:200],
                       message=str(report.longrepr)[:1000])
         self.collection_errors.clear()
 

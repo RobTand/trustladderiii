@@ -114,8 +114,8 @@ collection order. No collected cases in an existing file means uncollected.
 Named functions still select only their own cases. Planner-written checks
 continue to require exact node IDs.
 
-These entries use the existing regression rules. An assertion or error on both
-the base and head is pre-existing. A new failure returns the selector and the
+These entries use the regression rules below. A failure on both trees is
+excused only when its class, exception type, phase and concrete case IDs match. A new failure returns the selector and the
 assertion to the maker. An entry missing on both the base and head is stale and
 is dropped from execution. Its passing result retains the missing or
 uncollected outcomes and a note naming the stale entry in `message`. The
@@ -244,9 +244,25 @@ errors apply only to tests in that file. Setup errors and unrelated import
 failures cannot demonstrate a change.
 
 Regression checks run against the original base and the head. A base failure
-is recorded as pre-existing. It can excuse a head failure, but cannot excuse
-a skipped, missing, or uncollected test. A passing head also cannot excuse an
-unavailable base test. Behavior-preserving checks require passes on both trees.
+is recorded as pre-existing. It excuses a head failure only when both outcomes
+have the same class, assertion or error, and every failed concrete case has the
+same qualified exception type and phase. Phases are collection, setup, call and
+teardown. Exception messages may differ. A missing failure detail cannot excuse
+a head failure. File and parametrized selectors compare all failed cases,
+including extra head failures beyond the first one. Refusals name both failures.
+
+The optional `regression_failures` test field carries those signatures for
+controller replay and review. A passing result with unchanged failures carries
+`base_failures_not_checked`, the number of named selectors that failed on the
+base and the same way on the head. Each retains the note "failed on base, not
+checked". This pass establishes no regression for those failures; it does not
+establish that the affected behavior works. The reviewer receives the count
+in each check result. A passing head is checked and does not add to the count.
+
+A pre-existing failure cannot excuse a skipped, missing, or uncollected test.
+A missing report remains an infrastructure failure. A passing head also cannot
+excuse an unavailable base test. Behavior-preserving checks require passes on
+both trees.
 
 Reproducing checks use `Kind.REPRODUCING` and require the `reviewed` commit
 argument to `run_checks`. They run the fix round's named observers against that

@@ -78,6 +78,7 @@ class FailureNotes(dict):
         self.details: dict[str, Failure] = {}
         self.delay_budget: dict[str, dict] = {}
         self.phases: dict[str, dict] = {}
+        self.failures: dict[str, list[dict]] = {}
 
 
 FORCING_LIMIT = 8
@@ -312,6 +313,7 @@ class TestResult:
     # A forced check's head run under the forcing; `base` is then the base under it (#393).
     head_forced: Outcome | None = None
     phases: dict | None = None
+    regression_failures: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -399,6 +401,22 @@ def forced_base_refusal(test: str, before: Outcome, notes: FailureNotes | None) 
                     "so it does not reproduce the flake.")
 
 
+def regression_failures(test: str, notes) -> list[dict]:
+    return sorted(getattr(notes, 'failures', {}).get(test, ()),
+                  key=lambda failure: (failure['test'], failure['phase']))
+
+
+def regression_failure_description(outcome: Outcome, failures: list[dict], other: list[dict]) -> str:
+    if not failures:
+        return f'{outcome} (no failure detail)'
+    def identity(failure):
+        return tuple(failure[key] for key in ('test', 'phase', 'exception', 'assertion'))
+    other_failures = {identity(failure) for failure in other}
+    first = next((failure for failure in failures if identity(failure) not in other_failures), failures[0])
+    suffix = f"; {len(failures) - 1} more failures" if len(failures) > 1 else ''
+    return f"{outcome} {first['phase']} `{first['exception'] or 'unknown exception'}` in `{first['test'][:120]}`{suffix}"
+
+
 def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome], *,
           messages: dict[str, str] | None = None, base_notes: FailureNotes | None = None,
           forced: dict[str, Outcome] | None = None, forced_messages: dict[str, str] | None = None) -> Result:
@@ -412,6 +430,14 @@ def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome], *,
         infrastructure |= Outcome.NO_REPORT in (before, after, during)
         pre_existing = (check.kind == Kind.REGRESSION
                         and before in (Outcome.ASSERTION, Outcome.ERROR))
+        failures = None
+        same_failure = False
+        if pre_existing and after in (Outcome.ASSERTION, Outcome.ERROR):
+            failures = {'base': regression_failures(test, base_notes),
+                        'head': regression_failures(test, messages)}
+            same_failure = (before == after and bool(failures['base'])
+                            and all(failure['exception'] for failure in failures['base'])
+                            and failures['base'] == failures['head'])
         match check.kind:
             case Kind.DEMONSTRATING if check.forcing is not None:
                 passed = before == Outcome.ASSERTION and during == after == Outcome.PASSED
@@ -420,7 +446,7 @@ def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome], *,
             case Kind.REGRESSION:
                 available = before not in (Outcome.SKIPPED, Outcome.MISSING, Outcome.UNCOLLECTED, Outcome.NO_REPORT)
                 passed = available and (after == Outcome.PASSED or
-                                         pre_existing and after in (Outcome.ASSERTION, Outcome.ERROR))
+                                         same_failure)
             case Kind.BEHAVIOR_PRESERVING:
                 passed = before == after == Outcome.PASSED
         wrong_reason = False
@@ -434,6 +460,13 @@ def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome], *,
                             or failure.red_message_match not in (RedMessageMatch.MESSAGE, RedMessageMatch.SOURCE_ASSERTION))
             passed = not wrong_reason
         message = "" if passed else (messages or {}).get(test, "")
+        if failures is not None:
+            if passed:
+                message = 'This test failed on base, not checked: the head has the same failure type and phase.'
+            else:
+                message = ('Regression failure changed: base '
+                           + regression_failure_description(before, failures['base'], failures['head']) + '; head '
+                           + regression_failure_description(after, failures['head'], failures['base']) + '.')
         if not passed and check.forcing is not None:
             if refusal := forced_base_refusal(test, before, base_notes):
                 message = refusal
@@ -463,7 +496,7 @@ def judge(check: Check, base: dict[str, Outcome], head: dict[str, Outcome], *,
             if fact := getattr(notes, 'phases', {}).get(test):
                 phases[side] = fact
         tests.append(TestResult(test, before, after, pre_existing, passed, message[:MESSAGE_LIMIT], during,
-                                phases or None))
+                                phases or None, failures))
     verdict = (Verdict.INFRASTRUCTURE_FAILURE if infrastructure else
                Verdict.PASS if all(test.passed for test in tests) else Verdict.FAIL)
     return Result(check.name, check.kind, verdict, tuple(tests), forcing=check.forcing, declared_symptom=check.declared_symptom)

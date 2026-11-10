@@ -44,6 +44,7 @@ pub struct Input {
     pub head: Outcome,
     pub forced: Option<Outcome>,
     pub reason: Reason,
+    pub same_failure: bool,
 }
 
 #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
@@ -78,8 +79,9 @@ pub struct Decision {
             Kind::Regression => matches!(input.base,
                 Outcome::Passed | Outcome::Assertion | Outcome::AddedName | Outcome::Error)
                 && (matches!(input.head, Outcome::Passed)
-                    || matches!(input.base, Outcome::Assertion | Outcome::Error)
-                        && matches!(input.head, Outcome::Assertion | Outcome::Error)),
+                    || input.same_failure
+                        && (matches!(input.base, Outcome::Assertion) && matches!(input.head, Outcome::Assertion)
+                            || matches!(input.base, Outcome::Error) && matches!(input.head, Outcome::Error))),
             Kind::BehaviorPreserving => matches!(input.base, Outcome::Passed)
                 && matches!(input.head, Outcome::Passed),
         })
@@ -111,7 +113,9 @@ pub fn judge(input: Input) -> Decision {
             );
             available
                 && (matches!(input.head, Outcome::Passed)
-                    || pre_existing && matches!(input.head, Outcome::Assertion | Outcome::Error))
+                    || input.same_failure
+                        && (matches!(input.base, Outcome::Assertion) && matches!(input.head, Outcome::Assertion)
+                            || matches!(input.base, Outcome::Error) && matches!(input.head, Outcome::Error)))
         }
         Kind::BehaviorPreserving => {
             matches!(input.base, Outcome::Passed) && matches!(input.head, Outcome::Passed)
@@ -313,8 +317,13 @@ pub fn message(
     phases: &[FailurePhase<'_>],
     declaration: &str,
 ) -> String {
-    if judge(input).passed {
+    let decision = judge(input);
+    if decision.passed {
         return String::new();
+    }
+    if decision.pre_existing && matches!(input.head, Outcome::Assertion | Outcome::Error) {
+        return format!("Regression failure changed: base {} (no failure detail); head {} (no failure detail).",
+            input.base.as_str(), input.head.as_str());
     }
     let mut result = head_message.to_owned();
     if let Some(during) = input.forced {

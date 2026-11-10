@@ -164,6 +164,23 @@ def commit(repo, files, message):
 
 
 # #899: the complete shared rows use the additive v3 proof_refusal field.
+for name, head_source in {
+    'regression-same-failure': 'def value(): raise ValueError("head message")\n',
+    'regression-changed-failure': 'def value(): raise TypeError("head message")\n',
+}.items():
+    SCENARIOS[name] = dict(
+        base={'product.py': 'def value(): raise ValueError("base message")\n',
+              'tests/test_value.py': 'import product\ndef test_value(): product.value()\n'},
+        head={'product.py': head_source},
+        plan=[plan_check('existing failure', 'regression', ['tests/test_value.py::test_value'])])
+
+SCENARIOS['regression-collection-failure'] = dict(
+    base={'product.py': 'raise ValueError("base import")\n',
+          'tests/test_value.py': 'import product\ndef test_value(): pass\n'},
+    head={'product.py': 'raise ValueError("head import")\n'},
+    plan=[plan_check('existing collection failure', 'regression', ['tests/test_value.py::test_value'])])
+
+
 SCENARIOS['proof-refusal'] = dict(
     base={'product.py': PRODUCT.format(value=0), 'tests/test_value.py': 'def test_value(): assert True\n'},
     head={'product.py': PRODUCT.format(value=1), 'tests/test_value.py':

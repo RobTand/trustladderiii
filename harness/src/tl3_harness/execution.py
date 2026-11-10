@@ -744,7 +744,13 @@ def result_json(results: tuple[Result, ...]) -> str:
             del report['forcing']
         else:
             report['forcing'] = result.forcing.as_json()
+        unchecked = sum(test.pre_existing and test.passed
+                        and test.head in (Outcome.ASSERTION, Outcome.ERROR) for test in result.tests)
+        if unchecked:
+            report['base_failures_not_checked'] = unchecked
         for test in report['tests']:
+            if test['regression_failures'] is None:
+                del test['regression_failures']
             if test['phases'] is None:
                 del test['phases']
             if test['head_forced'] is None:

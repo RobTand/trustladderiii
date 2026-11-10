@@ -158,8 +158,9 @@ def test_real_pytest_verdicts(trees, kind, name, expected):
     additions = added_names(base, head, ["tests/*.py"])
     notes = FailureNotes('old product value')
     tests, before = run(demo if kind == Kind.DEMONSTRATING else base, [name], additions, notes=notes)
-    _, after = run(head, [name])
-    result = judge(Check(name, kind, tests, proof=Proof((), (), "old product value") if kind in (Kind.DEMONSTRATING, Kind.REPRODUCING) else None), before, after, base_notes=notes)
+    head_notes = FailureNotes()
+    _, after = run(head, [name], notes=head_notes)
+    result = judge(Check(name, kind, tests, proof=Proof((), (), "old product value") if kind in (Kind.DEMONSTRATING, Kind.REPRODUCING) else None), before, after, base_notes=notes, messages=head_notes)
     assert result.verdict == expected, asdict(result)
     assert result.custody == Custody.IN_PROCESS
     assert result.tests[0].pre_existing == (name == "test_pre_existing")

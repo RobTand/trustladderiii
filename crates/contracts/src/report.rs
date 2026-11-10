@@ -72,6 +72,13 @@ pub struct CheckResult {
     pub verdict: Verdict,
     pub custody: Custody,
     pub tests: List<TestResult, 1, UNBOUNDED>,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "Count")]
+    pub base_failures_not_checked: Option<Count>,
     // Complete-unit admission and the unchecked suffix, retained for review (#591).
     #[serde(
         default,
@@ -161,6 +168,38 @@ pub struct TestResult {
     )]
     #[schemars(with = "PhaseEvidence")]
     pub phases: Option<PhaseEvidence>,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "RegressionFailures")]
+    pub regression_failures: Option<RegressionFailures>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RegressionFailures {
+    pub base: List<RegressionFailure, 0, UNBOUNDED>,
+    pub head: List<RegressionFailure, 0, UNBOUNDED>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RegressionFailure {
+    pub test: Text<1, UNBOUNDED>,
+    pub phase: FailurePhase,
+    pub exception: Text<0, 200>,
+    pub assertion: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum FailurePhase {
+    Collection,
+    Setup,
+    Call,
+    Teardown,
 }
 
 impl TestResult {
@@ -646,6 +685,13 @@ pub enum SymptomRecord {
         )]
         #[schemars(with = "Text<0, 300>")]
         exception: Option<Text<0, 300>>,
+        #[serde(
+            default,
+            deserialize_with = "present",
+            skip_serializing_if = "Option::is_none"
+        )]
+        #[schemars(with = "Text<0, 200>")]
+        exception_type: Option<Text<0, 200>>,
         #[serde(
             default,
             deserialize_with = "present",

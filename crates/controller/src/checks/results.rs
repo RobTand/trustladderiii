@@ -4,14 +4,15 @@ use crate::findings::MAX_MESSAGE_CHARS;
 use crate::{
     Error, Result,
     contracts::report::{
-        CheckReport as Report, CheckResult, Custody, Outcome, PhaseEvidence, PhaseOutcome,
-        RedClass, RedMessageMatch, RunOutcome, SymptomSide, Verdict,
+        CheckReport as Report, CheckResult, Custody, FailurePhase, Outcome, PhaseEvidence, PhaseOutcome,
+        PhaseRun, RedClass, RedMessageMatch, RegressionFailure, RunOutcome, SymptomSide, TestResult, Verdict,
     },
     executor::{Completion, Observation},
     findings::{FailedTest, MAX_FAILED_TESTS, clipped},
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 use tl3_harness_core::{judge as core_judge, phase as core_phase};
 
 pub(super) const MAX_RESULT_BYTES: usize = 8 * 1024 * 1024;
@@ -182,6 +183,10 @@ pub(crate) fn judge_payload(
 // Preserve that consumer behavior while the shared wire type retains omission.
 fn stored_result(result: &CheckResult) -> serde_json::Result<serde_json::Value> {
     let mut value = serde_json::to_value(result)?;
+    let unchecked = base_failures_not_checked(result);
+    if unchecked > 0 && result.base_failures_not_checked.is_none() {
+        value["base_failures_not_checked"] = serde_json::json!(unchecked);
+    }
     for (encoded, test) in value["tests"]
         .as_array_mut()
         .expect("typed test array")
@@ -485,11 +490,83 @@ fn phase_agrees(run: &crate::contracts::report::PhaseRun, outcome: Outcome) -> b
     }
 }
 
+fn base_failures_not_checked(result: &CheckResult) -> usize {
+    result.tests.iter().filter(|test| test.pre_existing && test.passed
+        && matches!(test.head, Outcome::Assertion | Outcome::Error)).count()
+}
+
+type FailureKey<'a> = (&'a str, FailurePhase, &'a str, bool);
+
+fn failure_key(failure: &RegressionFailure) -> FailureKey<'_> {
+    (failure.test.as_str(), failure.phase, failure.exception.as_str(), failure.assertion)
+}
+
+fn phase_failures(run: &PhaseRun) -> BTreeSet<FailureKey<'_>> {
+    [(FailurePhase::Setup, Some(&run.setup)), (FailurePhase::Call, run.call.as_ref()),
+        (FailurePhase::Teardown, Some(&run.teardown))].into_iter().filter_map(|(phase, fact)| {
+        let fact = fact?;
+        matches!(fact.outcome, PhaseOutcome::Failed).then_some(
+            (run.test.as_str(), phase, fact.exception.as_str(), fact.assertion))
+    }).collect()
+}
+
+fn same_regression_failure(test: &TestResult) -> bool {
+    if test.base != test.head {
+        return false;
+    }
+    let Some(failures) = &test.regression_failures else {
+        let Some(phases) = &test.phases else { return false };
+        let (Some(base), Some(head)) = (phases.base(), phases.head()) else { return false };
+        // Older reports retain only one case. That is complete only for an exact case selector.
+        if base.test != test.test || head.test != test.test {
+            return false;
+        }
+        let base = phase_failures(base);
+        let head = phase_failures(head);
+        return !base.is_empty() && base.iter().all(|(_, _, exception, _)| !exception.is_empty())
+            && base == head;
+    };
+    let requested = test.test.as_str();
+    for failure in failures.base.iter().chain(failures.head.iter()) {
+        let node = failure.test.as_str();
+        let selected = if failure.phase == FailurePhase::Collection {
+            node == requested.split("::").next().unwrap_or("")
+        } else {
+            node == requested
+                || (!requested.contains("::") && node.starts_with(&format!("{requested}::")))
+                || (!requested.contains('[') && node.starts_with(&format!("{requested}[")) && node.ends_with(']'))
+        };
+        if !selected || failure.exception.as_str().is_empty()
+            || failure.assertion && failure.phase != FailurePhase::Call {
+            return false;
+        }
+    }
+    if let Some(phases) = &test.phases {
+        for (facts, run) in [(&failures.base, phases.base()), (&failures.head, phases.head())] {
+            if let Some(run) = run {
+                let represented: BTreeSet<_> = facts.iter()
+                    .filter(|failure| failure.test == run.test).map(failure_key).collect();
+                if represented != phase_failures(run) {
+                    return false;
+                }
+            }
+        }
+    }
+    let base: BTreeSet<_> = failures.base.iter().map(failure_key).collect();
+    let head: BTreeSet<_> = failures.head.iter().map(failure_key).collect();
+    !base.is_empty() && base.len() == failures.base.len() && head.len() == failures.head.len()
+        && base == head
+}
+
 /// #822: replay only represented facts. Shell overrides and symptom campaigns are separate.
 fn rejudged(report: &Report, job: &impl ReportJob) -> bool {
     let job = job.report_context();
     for (index, result) in report.results.iter().enumerate() {
         let check = job.run.plan.get(index);
+        if result.base_failures_not_checked.as_ref().is_some_and(|count|
+            usize::try_from(count.get()).ok() != Some(base_failures_not_checked(result))) {
+            return false;
+        }
         // These report invariants also apply to campaigns and shell overrides.
         if matches!(result.verdict, Verdict::Pass) != result.tests.iter().all(|test| test.passed)
             || result.forcing.is_some()
@@ -544,6 +621,7 @@ fn rejudged(report: &Report, job: &impl ReportJob) -> bool {
                     head: judge_outcome(test.head),
                     forced: test.head_forced.map(judge_outcome),
                     reason: core_judge::Reason::Undeclared,
+                    same_failure: false,
                 })
                 .pre_existing
                     != test.pre_existing
@@ -552,6 +630,11 @@ fn rejudged(report: &Report, job: &impl ReportJob) -> bool {
         }
         if check.is_none() {
             // Always/selected results include stale-entry, retry and group overrides.
+            if result.tests.iter().any(|test| test.passed && test.pre_existing
+                && matches!(test.head, Outcome::Assertion | Outcome::Error)
+                && !same_regression_failure(test)) {
+                return false;
+            }
             continue;
         }
         let mut infrastructure = false;
@@ -599,6 +682,7 @@ fn rejudged(report: &Report, job: &impl ReportJob) -> bool {
                 head: judge_outcome(test.head),
                 forced: test.head_forced.map(judge_outcome),
                 reason,
+                same_failure: same_regression_failure(test),
             };
             let decision = core_judge::judge(input);
             infrastructure |= decision.infrastructure;

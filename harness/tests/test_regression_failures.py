@@ -100,3 +100,23 @@ def test_parametrized_failures_compare_case_ids(tmp_path, selector):
     result = judge(Check(ALWAYS_CHECK, Kind.REGRESSION, (selector,)), before, after,
                    base_notes=base_notes, messages=head_notes)
     assert result.verdict == (Verdict.PASS if '[' in selector else Verdict.FAIL), result
+
+
+def test_same_failure_does_not_require_the_same_message(tmp_path):
+    before, base_notes = observe(tmp_path / 'base', source('call', 'ValueError'))
+    after, head_notes = observe(tmp_path / 'head',
+        source('call', 'ValueError').replace('existing failure', 'a different message'))
+    result = judge(Check('messages', Kind.REGRESSION, (NODE,)), before, after,
+                   base_notes=base_notes, messages=head_notes)
+    assert result.verdict == Verdict.PASS
+
+
+@pytest.mark.parametrize('base_type', [None, 'ValueError'])
+def test_passing_head_does_not_count_as_unchecked(tmp_path, base_type):
+    before, base_notes = observe(tmp_path / 'base', source('call', base_type))
+    after, head_notes = observe(tmp_path / 'head', source('call', None))
+    result = judge(Check('passing head', Kind.REGRESSION, (NODE,)), before, after,
+                   base_notes=base_notes, messages=head_notes)
+    report, = json.loads(result_json((result,)))
+    assert result.verdict == Verdict.PASS
+    assert report.get('base_failures_not_checked', 0) == 0

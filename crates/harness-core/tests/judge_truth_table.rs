@@ -35,6 +35,7 @@ fn all_780_python_judge_vectors_match_the_real_rust_decision_and_refusals() {
         let proof = data["proof"].as_str().unwrap();
         let input = Input {
             kind,
+            same_failure: false,
             base: outcome(&data["base"]),
             head: outcome(&data["head"]),
             forced: data.get("forced").map(outcome),
@@ -56,6 +57,9 @@ fn all_780_python_judge_vectors_match_the_real_rust_decision_and_refusals() {
             "tests": [{"test": "tests/test_value.py::test_value", "base": input.base.as_str(),
                 "head": input.head.as_str(), "head_forced": input.forced.map(Outcome::as_str),
                 "pre_existing": decision.pre_existing, "passed": decision.passed, "phases": null,
+                "regression_failures": if decision.pre_existing && matches!(input.head, Outcome::Assertion | Outcome::Error) {
+                    json!({"base":[], "head":[]})
+                } else { Value::Null },
                 "message": message(input, "", "", failure.as_ref(), &[], "expected")}],
             "forcing": input.forced.map(|_| json!({"symptom": "forced", "environment": [["REPRODUCE", "1"]], "patches": []})),
             "proof": null, "selection": null, "declared_symptom": null, "symptom_evidence": null,
@@ -72,6 +76,7 @@ fn all_780_python_judge_vectors_match_the_real_rust_decision_and_refusals() {
 fn declared_assertion_requires_both_head_runs_and_exact_red() {
     let input = Input {
         kind: Kind::Demonstrating,
+        same_failure: false,
         base: Outcome::Assertion,
         head: Outcome::Passed,
         forced: Some(Outcome::Passed),
@@ -112,13 +117,16 @@ fn declared_assertion_requires_both_head_runs_and_exact_red() {
 fn regression_preserves_base_failures_but_requires_available_base() {
     let input = Input {
         kind: Kind::Regression,
+        same_failure: true,
         base: Outcome::Error,
-        head: Outcome::Assertion,
+        head: Outcome::Error,
         forced: None,
         reason: Reason::Undeclared,
     };
     let decision = judge(input);
     assert!(decision.passed && decision.pre_existing && !decision.infrastructure);
+    assert!(!judge(Input { same_failure: false, ..input }).passed);
+    assert!(!judge(Input { head: Outcome::Assertion, ..input }).passed);
     assert!(
         !judge(Input {
             base: Outcome::Skipped,
@@ -135,6 +143,7 @@ fn regression_added_name_base_and_passing_head_preserve_current_parity() {
     assert!(
         judge(Input {
             kind: Kind::Regression,
+            same_failure: false,
             base: Outcome::AddedName,
             head: Outcome::Passed,
             forced: None,
