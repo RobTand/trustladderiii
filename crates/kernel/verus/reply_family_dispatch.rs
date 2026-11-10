@@ -321,7 +321,7 @@ pub(super) proof fn ingest_agrees_bounds(n: Node, nq: u64)
 pub(super) proof fn ingest_disagrees_bounds(n: Node, nq: u64)
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
     ensures reply_family_values::reply_bound(n, nq, reply_family_values::ingest(n, Reply::AuditDisagrees)),
-        reply_family_values::finish(nq, reply_family_values::ingest(n, Reply::AuditDisagrees)).footprint == n.footprint,
+        reply_family_values::finish(nq, reply_family_values::ingest(n, Reply::AuditDisagrees)).footprint != n.footprint,
 {
     reveal(reply_family_values::ingest); reveal(port_t860_contracts::audit_node);
     if n.audit_rounds == 0 {} else { reveal(retirement::stopped); }
