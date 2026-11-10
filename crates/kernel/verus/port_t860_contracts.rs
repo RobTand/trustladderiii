@@ -48,7 +48,7 @@ pub(super) open spec fn failed_post(b: Node, a: Node, bo: Outbox, ao: Outbox) ->
 #[verifier::opaque]
 pub(super) open spec fn audit_node(n: Node) -> Node {
     let updated = Node { audit_rounds: if n.audit_rounds < 255 { (n.audit_rounds + 1) as u8 } else { 255u8 }, ..n };
-    if n.audit_rounds == 0 { retirement::phased(updated, Phase::Ingesting) }
+    if n.audit_rounds == 0 { retirement::phased(updated, Phase::Making) }
     else { retirement::stopped(Node { review_stop: Some(ReviewStop::AuditDisagreement), ..updated }, Outcome::Stopped) }
 }
 
