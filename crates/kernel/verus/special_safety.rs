@@ -783,7 +783,6 @@ mod answer_apply_assembly {
                 Event::Command { node, id, command: Command::Answer { question, answer } } => {
                     command_frames_reveal::command_rows_project(before, w, node, id,
                         Command::Answer { question, answer });
-                    answer_frontier::rows_intro(before, w, node, id, question, answer);
                     answer_frontier_reveal::project(before, w, node);
                     // N4c boundary: the next C1-full call needs prerequisites_delivered(before, node)
                     // || owner_waiting_ok(w.nodes@[node.0 as int]); no producer export supplies it yet.
