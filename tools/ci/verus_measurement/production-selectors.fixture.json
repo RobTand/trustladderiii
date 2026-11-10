@@ -1,10 +1,60 @@
 {
-  "source_head": "e941ff8f5e0a324894e53ab11abaca7122a3c4cf",
+  "source_head": "629009d2eafef4548b9a1c6dfb0ca57df1e03c34",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "be084ac991178efeea33af18d14cb48d432ea002df011d0d7ed5c76dde4e1cf0",
-  "groups": 633,
-  "obligations": 831,
+  "source_sha256": "cf7039f15c42cc20955092a612f986e66558c4b553f91952df6c6d10769a1296",
+  "groups": 643,
+  "obligations": 841,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_answer_owner_owner_same",
+      "selector": "kernel::answer_owner#owner_same",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answer_owner_owner_unclear",
+      "selector": "kernel::answer_owner#owner_unclear",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answer_owner_owner_continue",
+      "selector": "kernel::answer_owner#owner_continue",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answer_owner_owner_no_retry",
+      "selector": "kernel::answer_owner#owner_no_retry",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answer_owner_owner_no_credit",
+      "selector": "kernel::answer_owner#owner_no_credit",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answer_owner_owner_stopped",
+      "selector": "kernel::answer_owner#owner_stopped",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answer_owner_owner_cleanup",
+      "selector": "kernel::answer_owner#owner_cleanup",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answer_owner_awaiting_owner",
+      "selector": "kernel::answer_owner#awaiting_owner",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answer_owner_owner_rows_withheld",
+      "selector": "kernel::answer_owner#owner_rows_withheld",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_answer_owner_n4c_after_last_cmd",
+      "selector": "kernel::answer_owner#n4c_after_last_cmd",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_stop_frames_stop_owner_waiting_frame",
       "selector": "kernel::stop_frames#stop_owner_waiting_frame",
