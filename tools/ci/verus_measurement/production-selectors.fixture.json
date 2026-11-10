@@ -1,10 +1,40 @@
 {
-  "source_head": "036c1c3afceeea82ee2dd31191ba0751d5497035",
+  "source_head": "3b01e1f4027b3ef825e6b9db262b6c0b21693aff",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "d0d5a28b5a44f864bf1e03bb4f441b92f06f0d3bd125789f3d6b6fa0b98565a6",
-  "groups": 536,
-  "obligations": 740,
+  "source_sha256": "45099831fa87300e70911677ea29ef7397f3fea37ebee19ea316cca38b666d66",
+  "groups": 542,
+  "obligations": 746,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_node_frame_ops_same_reveal",
+      "selector": "kernel::node_frame_groups_reveal#ops_same_reveal",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_node_frame_ledger_same_reveal",
+      "selector": "kernel::node_frame_groups_reveal#ledger_same_reveal",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_node_frame_counters_same_reveal",
+      "selector": "kernel::node_frame_groups_reveal#counters_same_reveal",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_node_frame_pr_same_reveal",
+      "selector": "kernel::node_frame_groups_reveal#pr_same_reveal",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_node_frame_frame_intro",
+      "selector": "kernel::node_frame_groups_reveal#frame_intro",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_node_frame_mark_handled_resources_rows",
+      "selector": "kernel::node_frame_groups_reveal#mark_handled_resources_rows",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_ranks_pending_rank_definition",
       "selector": "kernel::ranks#pending_rank_definition",
