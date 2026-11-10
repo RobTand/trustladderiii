@@ -380,7 +380,7 @@ fn rebase_ask_v(n: Node) -> (result: ReplyChange) [
     requires n.generation < u64::MAX,
     ensures result == reply_family_values::rebase_ask(n), reply_family_values::callable(result),
 ] {
-    ReplyChange::Ask { node: n, kind: QKind::OutOfCredit, cont: Cont::Ready(Resume::Making), cost: 1 }
+    ReplyChange::Ask { node: n, kind: QKind::OutOfCredit, cont: Cont::Ready(Resume::Making), cost: 0 }
 }
 }
 
