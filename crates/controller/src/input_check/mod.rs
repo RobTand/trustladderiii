@@ -29,13 +29,6 @@ struct Maker {
 }
 
 pub fn maker(inputs: &Value) -> crate::Result<Vec<String>> {
-    // The pre-extraction oracle records the first diagnostic. The CLI reports all.
-    let mut violations = maker_violations(inputs)?;
-    violations.truncate(1);
-    Ok(violations)
-}
-
-fn maker_violations(inputs: &Value) -> crate::Result<Vec<String>> {
     let inputs: Maker = serde_json::from_value(inputs.clone())?;
     let goals: BTreeSet<_> = inputs.goals.iter().map(|goal| goal.id.as_str()).collect();
     let mut violations = Vec::new();
@@ -105,7 +98,7 @@ pub fn check(role: Option<&str>) -> crate::Result<()> {
     std::io::stdin().read_to_end(&mut bytes)?;
     let value = crate::adapters::workers::json::parse(&bytes)?;
     let violations = match role {
-        Some("maker") => maker_violations(&value)?,
+        Some("maker") => maker(&value)?,
         Some("request") => request(&value)?,
         _ => {
             return Err(crate::Error::Invalid(
