@@ -86,6 +86,10 @@ mod apply_answer_safety;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/apply_command_safety.rs"]
 mod apply_command_safety;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/answer_rules.rs"]
+mod answer_rules;
 #[cfg(verus_keep_ghost)]
 verus! {
 /// #806: domain of the retired two-node Kani consistency checks.

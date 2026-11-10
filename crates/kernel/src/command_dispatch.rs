@@ -91,7 +91,7 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
                 Command::Answer { question, answer } => {
                     handler_safety::answer_pair_same(
                         w.nodes@[i as int], question, answer, w.dependencies@, NodeId(i as u64));
-                    apply_command_safety::rules_incident(*w, w.nodes@[i as int]);
+                    answer_rules::rules_incident(*w, w.nodes@[i as int]);
                 }
                 _ => {}
             }

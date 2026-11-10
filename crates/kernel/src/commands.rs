@@ -427,8 +427,8 @@ pub(super) fn answer_command(w: &mut World, i: usize, id: u64, question: u64, an
             NodeId(i as u64));
         apply_command_safety::r19_bridge(before_command_world@.nodes@[i as int],
             after_answer@.nodes@[i as int], w.nodes@[i as int]);
-        apply_command_safety::rules_incident(after_answer@, after_answer@.nodes@[i as int]);
-        apply_command_safety::rules_after_last_cmd(after_answer@, *w, after_answer@.nodes@[i as int],
+        answer_rules::rules_incident(after_answer@, after_answer@.nodes@[i as int]);
+        answer_rules::rules_after_last_cmd(after_answer@, *w, after_answer@.nodes@[i as int],
             w.nodes@[i as int]);
     }
 }
