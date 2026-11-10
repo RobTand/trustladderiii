@@ -476,7 +476,28 @@ impl Executor for Adapter {
             .backend
             .next_cleanup_maintenance_ms()
             .is_ok_and(|due| due.is_some_and(|due| due <= now_ms));
-        let mut pending = match self.shared.backend.cleanup_maintenance(now_ms) {
+        let authorize = |owner: &backend::Owner| {
+            self.shared
+                .transaction(|| {
+                    let job = self
+                        .shared
+                        .load(&owner.correlation)?
+                        .ok_or(Error::Invalid("held dispatch has no controller delivery"))?;
+                    if job.owner() != *owner || job.terminal.is_some() {
+                        return Err(Error::Invalid(
+                            "held dispatch does not match an active controller intent",
+                        ));
+                    }
+                    // Same upstream boundary and retained delivery epoch as execute().
+                    self.shared.fence(job.delivery.epoch)
+                })
+                .map_err(|error| backend::BackendError::unknown(&error.to_string()))
+        };
+        let mut pending = match self
+            .shared
+            .backend
+            .cleanup_maintenance_fenced(now_ms, &authorize)
+        {
             Ok(owners) => {
                 durable::clear_maintenance_failure(&self.shared.root, "backend")
                     .map_err(adapter_error)?;

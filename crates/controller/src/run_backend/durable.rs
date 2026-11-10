@@ -119,21 +119,27 @@ impl Journal {
     /// Retain each entry's identity even when that owner's state cannot be read.
     pub fn records(&self) -> Result<Vec<(String, Result<Record>)>> {
         let mut records = Vec::new();
-        for entry in fs::read_dir(&self.root)? {
-            let entry = entry?;
+        for (index, entry) in fs::read_dir(&self.root)?.enumerate() {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    records.push((format!("unreadable-entry-{index}"), Err(error.into())));
+                    continue;
+                }
+            };
             let key = entry.file_name().to_string_lossy().into_owned();
             if key == "cleanup-debt" || key == "maintenance-errors" {
                 continue;
             }
-            let kind = entry.file_type()?;
-            if !kind.is_dir() && !kind.is_symlink() {
-                continue;
-            }
-            let path = entry.path().join("state.json");
-            if !kind.is_symlink() && !path.try_exists()? {
-                continue;
-            }
             let record = (|| {
+                let kind = entry.file_type()?;
+                if !kind.is_dir() && !kind.is_symlink() {
+                    return Ok(None);
+                }
+                let path = entry.path().join("state.json");
+                if !kind.is_symlink() && !path.try_exists()? {
+                    return Ok(None);
+                }
                 if kind.is_symlink() || !token(&key) {
                     return Err(BackendError::invalid("unsafe journal owner directory"));
                 }
@@ -147,7 +153,9 @@ impl Journal {
                     .read(true)
                     .write(true)
                     .open(lock_path)?;
-                lock.lock()?;
+                lock.try_lock().map_err(|_| {
+                    BackendError::unknown("journal owner is busy or its lock is unavailable")
+                })?;
                 let record: Record = serde_json::from_slice(&read(&path)?)?;
                 if record.intent.correlation != key
                     || !token(&record.intent.owner)
@@ -157,9 +165,13 @@ impl Journal {
                         "journal owner does not match directory",
                     ));
                 }
-                Ok(record)
+                Ok(Some(record))
             })();
-            records.push((key, record));
+            match record {
+                Ok(Some(record)) => records.push((key, Ok(record))),
+                Ok(None) => {}
+                Err(error) => records.push((key, Err(error))),
+            }
         }
         records.sort_by(|a, b| a.0.cmp(&b.0));
         Ok(records)

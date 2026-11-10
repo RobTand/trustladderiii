@@ -580,7 +580,11 @@ pub trait RunBackend {
         Ok(vec![])
     }
     /// Upstream authorization is checked immediately before resuming a held request.
-    fn cleanup_maintenance_fenced(&self, now_ms: u64, _authorize: &dyn Fn(&Owner) -> Result<()>) -> Result<Vec<Owner>> {
+    fn cleanup_maintenance_fenced(
+        &self,
+        now_ms: u64,
+        _authorize: &dyn Fn(&Owner) -> Result<()>,
+    ) -> Result<Vec<Owner>> {
         self.cleanup_maintenance(now_ms)
     }
     fn next_cleanup_maintenance_ms(&self) -> Result<Option<u64>> {

@@ -573,7 +573,10 @@ impl Controller {
     pub fn next_look_in(&mut self) -> Result<Option<Duration>> {
         let now = self.now_ms();
         let maintenance = self.adapters.next_cleanup_maintenance_ms(now);
-        self.record_cleanup_maintenance(self.adapters.cleanup_maintenance_errors())?;
+        let errors = self.adapters.cleanup_maintenance_errors();
+        if let Err(error) = self.record_cleanup_maintenance(errors) {
+            eprintln!("cannot persist cleanup maintenance timer incidents: {error}");
+        }
         let snapshot = self.store.load()?;
         // Same-second priority rereads share the timer (Q39).
         let reread = crate::priority::next_reread_ms(&snapshot)?;

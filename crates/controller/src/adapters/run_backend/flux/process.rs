@@ -78,8 +78,14 @@ impl Flux {
         use std::io::Write;
         use std::os::unix::process::CommandExt;
         use std::time::{Duration, Instant};
-        if self.stop.is_stopped() {
-            return Err(BackendError::unknown("local observation stopped"));
+        if self.stop.is_stopped()
+            || self
+                .native_deadline
+                .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            return Err(BackendError::unknown(
+                "local observation stopped or maintenance budget exhausted",
+            ));
         }
         let child = command
             .process_group(0)
@@ -111,7 +117,10 @@ impl Flux {
             .ok_or_else(|| BackendError::unknown("native stderr unavailable"))?;
         let stdout = std::thread::spawn(move || bounded(stdout));
         let stderr = std::thread::spawn(move || bounded(stderr));
-        let deadline = Instant::now() + Duration::from_secs(NATIVE_COMMAND_TIMEOUT_SECONDS);
+        let command_deadline = Instant::now() + Duration::from_secs(NATIVE_COMMAND_TIMEOUT_SECONDS);
+        let deadline = self
+            .native_deadline
+            .map_or(command_deadline, |deadline| deadline.min(command_deadline));
         let status = loop {
             if self.stop.is_stopped() || Instant::now() >= deadline {
                 break None;

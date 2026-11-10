@@ -27,11 +27,21 @@ pub struct Flux {
     options: Options,
     journal: Journal,
     stop: WatchStop,
+    maintenance_owners: usize,
+    maintenance_budget: std::time::Duration,
+    native_deadline: Option<std::time::Instant>,
+    maintenance_now_ms: Option<u64>,
 }
 
 impl Flux {
     /// Bound owner work and native I/O on the controller's maintenance pass.
-    pub fn with_cleanup_maintenance_limits(self, _owners: usize, _budget: std::time::Duration) -> Self {
+    pub fn with_cleanup_maintenance_limits(
+        mut self,
+        owners: usize,
+        budget: std::time::Duration,
+    ) -> Self {
+        self.maintenance_owners = owners.max(1);
+        self.maintenance_budget = budget.max(std::time::Duration::from_millis(1));
         self
     }
 
@@ -42,6 +52,10 @@ impl Flux {
             options,
             journal,
             stop: WatchStop::default(),
+            maintenance_owners: 4,
+            maintenance_budget: std::time::Duration::from_secs(5),
+            native_deadline: None,
+            maintenance_now_ms: None,
         })
     }
 
@@ -307,7 +321,14 @@ impl RunBackend for Flux {
         self.bind_launch(owner, observed)
     }
     fn cleanup_maintenance(&self, now_ms: u64) -> Result<Vec<Owner>> {
-        self.maintain_cleanup(now_ms)
+        self.maintain_cleanup(now_ms, &|_| Ok(()))
+    }
+    fn cleanup_maintenance_fenced(
+        &self,
+        now_ms: u64,
+        authorize: &dyn Fn(&Owner) -> Result<()>,
+    ) -> Result<Vec<Owner>> {
+        self.maintain_cleanup(now_ms, authorize)
     }
     fn next_cleanup_maintenance_ms(&self) -> Result<Option<u64>> {
         self.cleanup_deadline()
@@ -319,7 +340,15 @@ impl RunBackend for Flux {
             correlation: intent.correlation.clone(),
         };
         let submission_lock = self.journal.operation_lock(&owner, "submission-lock")?;
-        submission_lock.lock()?;
+        if self.native_deadline.is_some() {
+            submission_lock.try_lock().map_err(|_| {
+                BackendError::unknown(
+                    "held submission is already in flight or its lock is unavailable",
+                )
+            })?;
+        } else {
+            submission_lock.lock()?;
+        }
         let (record, fresh) = self.journal.transaction(&owner, |dir, existing| {
             if let Some(record) = existing {
                 if record.request != request || record.intent != intent {
@@ -367,7 +396,7 @@ impl RunBackend for Flux {
                 .clone()
                 .ok_or_else(|| BackendError::unknown("held submission lacks prepared jobspec"))?;
             // The staged tree and runtime may have changed while dispatch was held.
-            validate::preflight(&record.request)?;
+            validate::preflight_bounded(&record.request, Some(self))?;
             checked_blob(&spec, &record.intent.output_dir)?;
             return self.dispatch_prepared(&owner, &record, spec);
         }

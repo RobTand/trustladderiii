@@ -1,5 +1,7 @@
-//! Retry eligibility belongs to attempted cleanup, never to launch-time debt.
+//! Retry eligibility belongs to requested cleanup, never to launch-time debt.
 use super::*;
+use std::collections::{BTreeMap, BTreeSet};
+use std::time::Instant;
 
 pub(super) const CADENCE_MS: u64 = 300_000;
 
@@ -11,7 +13,7 @@ pub(super) fn now_ms() -> u64 {
         .min(u64::MAX as u128) as u64
 }
 
-fn owner(record: &Record) -> Owner {
+fn record_owner(record: &Record) -> Owner {
     Owner {
         owner: record.intent.owner.clone(),
         correlation: record.intent.correlation.clone(),
@@ -19,73 +21,121 @@ fn owner(record: &Record) -> Owner {
 }
 
 impl Flux {
+    fn maintenance_error(&self, key: &str, error: &str, now: u64) {
+        if let Err(error) = maintenance_failure(
+            &self.options.journal_root,
+            key,
+            error,
+            now.saturating_add(CADENCE_MS),
+        ) {
+            // A broken error directory must not stop attempts for other owners.
+            eprintln!("cannot retain maintenance failure for {key}: {error}");
+        }
+    }
+
     pub(super) fn cleanup_deadline(&self) -> Result<Option<u64>> {
         let now = now_ms();
-        let mut due = None;
-        let failures = maintenance_failures(&self.options.journal_root)?;
+        let failures: BTreeMap<_, _> = maintenance_failures(&self.options.journal_root)?
+            .into_iter()
+            .map(|failure| (failure.key.clone(), failure))
+            .collect();
+        let mut deadlines = Vec::new();
         for (key, entry) in self.journal.records()? {
             match entry {
                 Ok(record) => {
-                    let retry = failures
-                        .iter()
-                        .find(|failure| failure.key == key)
-                        .map(|failure| failure.next_attempt_ms);
+                    // Committed terminals are immutable. Report unresolved debt but
+                    // do not wake the Look thread for a cleanup that cannot run.
+                    if record.terminal.is_some() {
+                        continue;
+                    }
+                    let retry = failures.get(&key).map(|failure| failure.next_attempt_ms);
                     for deadline in [record.cleanup_retry_ms, record.held_submission_ms]
                         .into_iter()
                         .flatten()
                     {
-                        let deadline = retry.map_or(deadline, |retry| retry.max(deadline));
-                        due = Some(due.map_or(deadline, |current: u64| current.min(deadline)));
+                        deadlines.push(retry.map_or(deadline, |retry| retry.max(deadline)));
                     }
                 }
                 Err(error) => {
-                    let deadline =
-                        if let Some(failure) = failures.iter().find(|failure| failure.key == key) {
-                            failure.next_attempt_ms
-                        } else {
-                            let deadline = now.saturating_add(CADENCE_MS);
-                            maintenance_failure(
-                                &self.options.journal_root,
-                                &key,
-                                &error.to_string(),
-                                deadline,
-                            )?;
-                            deadline
-                        };
-                    due = Some(due.map_or(deadline, |current: u64| current.min(deadline)));
+                    let deadline = failures
+                        .get(&key)
+                        .map(|failure| failure.next_attempt_ms)
+                        .unwrap_or_else(|| {
+                            self.maintenance_error(&key, &error.to_string(), now);
+                            now.saturating_add(CADENCE_MS)
+                        });
+                    deadlines.push(deadline);
                 }
             }
         }
-        Ok(due)
+        Ok(deadlines.into_iter().min())
     }
 
-    pub(super) fn maintain_cleanup(&self, now: u64) -> Result<Vec<Owner>> {
-        let mut pending = Vec::new();
-        // One scan per pass, retaining failures alongside readable owner records.
-        let records = self.journal.records()?;
-        for (key, entry) in records {
-            let record = match entry {
-                Ok(record) => record,
-                Err(error) => {
-                    maintenance_failure(
-                        &self.options.journal_root,
-                        &key,
-                        &error.to_string(),
-                        now.saturating_add(CADENCE_MS),
-                    )?;
-                    pending.push(Owner {
-                        owner: "maintenance-error".into(),
-                        correlation: key,
-                    });
-                    continue;
+    pub(super) fn maintain_cleanup(
+        &self,
+        now: u64,
+        authorize: &dyn Fn(&Owner) -> Result<()>,
+    ) -> Result<Vec<Owner>> {
+        let mut pass = self.clone();
+        let deadline = Instant::now() + self.maintenance_budget;
+        pass.native_deadline = Some(deadline);
+        pass.maintenance_now_ms = Some(now);
+        let failures: BTreeMap<_, _> = maintenance_failures(&self.options.journal_root)?
+            .into_iter()
+            .map(|failure| (failure.key.clone(), failure))
+            .collect();
+        let mut records = BTreeMap::new();
+        let mut pending = BTreeMap::new();
+        // One snapshot, reused by both phases. Reload only owners we actually touch.
+        for (key, entry) in self.journal.records()? {
+            match entry {
+                Ok(record) => {
+                    records.insert(key, record);
                 }
-            };
-            let owner = owner(&record);
-            let attempt = (|| {
+                Err(error) => {
+                    if failures
+                        .get(&key)
+                        .is_none_or(|failure| failure.next_attempt_ms <= now)
+                    {
+                        self.maintenance_error(&key, &error.to_string(), now);
+                    }
+                    pending.insert(
+                        key.clone(),
+                        Owner {
+                            owner: "maintenance-error".into(),
+                            correlation: key,
+                        },
+                    );
+                }
+            }
+        }
+        let mut attempted = BTreeSet::new();
+        let mut failed = BTreeSet::new();
+        // Cleanup first, so a released gate can resume held requests in this pass.
+        for (key, record) in &mut records {
+            if record.terminal.is_some() {
+                if record.cleanup_retry_ms.is_some() {
+                    self.maintenance_error(key, "terminal cleanup is immutable; unresolved debt requires operator investigation", now);
+                }
+                continue;
+            }
+            if !record.cleanup_retry_ms.is_some_and(|due| due <= now)
+                || failures
+                    .get(key)
+                    .is_some_and(|failure| failure.next_attempt_ms > now)
+                || attempted.len() >= self.maintenance_owners
+                || Instant::now() >= deadline
+            {
+                continue;
+            }
+            let owner = record_owner(record);
+            let result = (|| {
                 let claimed = self.journal.transaction(&owner, |dir, current| {
                     let mut current =
                         current.ok_or_else(|| BackendError::unknown("intent disappeared"))?;
-                    if !current.cleanup_retry_ms.is_some_and(|due| due <= now) {
+                    if current.terminal.is_some()
+                        || !current.cleanup_retry_ms.is_some_and(|due| due <= now)
+                    {
                         return Ok(false);
                     }
                     current.cleanup_retry_ms = Some(now.saturating_add(CADENCE_MS));
@@ -93,8 +143,47 @@ impl Flux {
                     Ok(true)
                 })?;
                 if claimed {
-                    self.run_cleanup(&owner)?;
+                    attempted.insert(key.clone());
+                    let result = pass.run_cleanup(&owner)?;
+                    if !result.stopped {
+                        return Err(BackendError::unknown(&result.reason));
+                    }
                 }
+                self.journal.load(&owner)
+            })();
+            match result {
+                Ok(current) => {
+                    *record = current;
+                    if let Err(error) = clear_maintenance_failure(&self.options.journal_root, key) {
+                        self.maintenance_error(key, &error.to_string(), now);
+                    }
+                }
+                Err(error) => {
+                    self.maintenance_error(key, &error.to_string(), now);
+                    failed.insert(key.clone());
+                    pending.insert(key.clone(), owner);
+                    if let Ok(current) = self.journal.load(&record_owner(record)) {
+                        *record = current;
+                    }
+                }
+            }
+        }
+        for (key, record) in &mut records {
+            if record.terminal.is_some() || record.held_submission_ms.is_none() {
+                continue;
+            }
+            if !record.held_submission_ms.is_some_and(|due| due <= now)
+                || failures
+                    .get(key)
+                    .is_some_and(|failure| failure.next_attempt_ms > now)
+                || failed.contains(key)
+                || Instant::now() >= deadline
+                || (!attempted.contains(key) && attempted.len() >= self.maintenance_owners)
+            {
+                continue;
+            }
+            let owner = record_owner(record);
+            let result = (|| {
                 let held = self.journal.transaction(&owner, |dir, current| {
                     let mut current =
                         current.ok_or_else(|| BackendError::unknown("intent disappeared"))?;
@@ -115,28 +204,41 @@ impl Flux {
                     Ok(Some(current))
                 })?;
                 if let Some(held) = held {
-                    self.submit(held.request, held.intent)?;
+                    attempted.insert(key.clone());
+                    authorize(&owner)?;
+                    match pass.submit(held.request, held.intent)? {
+                        Submission::Accepted { .. } => {}
+                        Submission::Refused { terminal } => {
+                            return Err(BackendError::unknown(&terminal.reason));
+                        }
+                        Submission::Unknown { reason } => {
+                            return Err(BackendError::unknown(&reason));
+                        }
+                    }
                 }
                 self.journal.load(&owner)
             })();
-            match attempt {
+            match result {
                 Ok(current) => {
-                    clear_maintenance_failure(&self.options.journal_root, &key)?;
-                    if current.cleanup_retry_ms.is_some() {
-                        pending.push(owner);
+                    *record = current;
+                    if let Err(error) = clear_maintenance_failure(&self.options.journal_root, key) {
+                        self.maintenance_error(key, &error.to_string(), now);
                     }
                 }
                 Err(error) => {
-                    maintenance_failure(
-                        &self.options.journal_root,
-                        &key,
-                        &error.to_string(),
-                        now.saturating_add(CADENCE_MS),
-                    )?;
-                    pending.push(owner);
+                    self.maintenance_error(key, &error.to_string(), now);
+                    pending.insert(key.clone(), owner);
+                    if let Ok(current) = self.journal.load(&record_owner(record)) {
+                        *record = current;
+                    }
                 }
             }
         }
-        Ok(pending)
+        for (key, record) in records {
+            if record.cleanup_retry_ms.is_some() || record.held_submission_ms.is_some() {
+                pending.insert(key, record_owner(&record));
+            }
+        }
+        Ok(pending.into_values().collect())
     }
 }
