@@ -2109,6 +2109,7 @@ struct AdvanceContext {
 
 kernel_fn! {
     /// #806: the existing pause transition, returning its node and changed flag.
+    #[allow(clippy::collapsible_if)]
     fn pause_node_value(n: Node) -> (result: (Node, bool)) [
         requires holding(n.phase) ==> n.generation < u64::MAX,
         ensures if holding(n.phase) {
