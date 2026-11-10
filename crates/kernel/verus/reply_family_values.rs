@@ -237,14 +237,22 @@ pub(super) open spec fn plan_check(n: Node) -> ReplyChange {
         Node { review_stop: Some(ReviewStop::PlanCantMeet), ..n }, Outcome::Stopped), note: None }
 }
 
+pub(super) open spec fn files_paid(n: Node, union: Footprint) -> Node {
+    retirement::phased(Node { footprint: union, holds: false, ..spent(n) },
+        Phase::Ready(Resume::Making))
+}
+
+pub(super) open spec fn files_ask(n: Node, union: Footprint) -> Node {
+    Node { footprint: union, ..n }
+}
+
 #[verifier::opaque]
 pub(super) open spec fn files(n: Node, fast: bool, files: Footprint, fits: bool,
     union: Footprint) -> ReplyChange {
     if fits && !footprint::footprint_empty(files) && transition_safety::can_spend_one(n) {
-        ReplyChange::Done { node: retirement::phased(Node {
-            footprint: union, holds: false, ..spent(n) }, Phase::Ready(Resume::Making)), note: None }
+        ReplyChange::Done { node: files_paid(n, union), note: None }
     } else if fits && !footprint::footprint_empty(files) && fast {
-        ReplyChange::Ask { node: Node { footprint: union, ..n }, kind: QKind::OutOfCredit,
+        ReplyChange::Ask { node: files_ask(n, union), kind: QKind::OutOfCredit,
             cont: Cont::Ready(Resume::Making), cost: 1 }
     } else { room(n, fast, ReviewStop::MakerNeedsFiles) }
 }

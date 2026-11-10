@@ -30,6 +30,19 @@ pub(super) proof fn room_posts(n: Node, fast: bool, nq: u64, step: ReviewStop, i
     }
 }
 
+pub(super) proof fn files_arms(n: Node, fast: bool, files: Footprint, fits: bool,
+    union: Footprint)
+    requires fits, !footprint::footprint_empty(files),
+    ensures
+        (transition_safety::can_spend_one(n) ==> reply_family_values::files(n, fast, files, fits, union)
+            == (ReplyChange::Done { node: reply_family_values::files_paid(n, union), note: None })),
+        (!transition_safety::can_spend_one(n) && fast ==> reply_family_values::files(n, fast, files, fits, union)
+            == (ReplyChange::Ask { node: reply_family_values::files_ask(n, union),
+                kind: QKind::OutOfCredit, cont: Cont::Ready(Resume::Making), cost: 1 })),
+{
+    reveal(reply_family_values::files);
+}
+
 pub(super) proof fn files_posts(n: Node, fast: bool, nq: u64, files: Footprint, fits: bool,
     union: Footprint, i: int, ob: Outbox, oa: Outbox)
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,

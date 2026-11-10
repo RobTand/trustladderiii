@@ -424,8 +424,10 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
         let c = ReplyCtx { node: i, generation: w.nodes[i].generation,
             reply: Reply::MakerNeedsFiles { files, fits }, fast: w.fail_fast,
             next_question: w.next_question };
-        let change = reply_files_node(w.nodes[i], w.fail_fast, files, fits, footprint, true);
-        kernel_proof! { reply_family_safety::files_rows(before_files@.nodes@[i as int], c,
+        let change = reply_files_paid(w.nodes[i], footprint);
+        kernel_proof! {
+            reply_family_posts::files_arms(before_files@.nodes@[i as int], c.fast, files, fits, footprint);
+            reply_family_safety::files_rows(before_files@.nodes@[i as int], c,
             files, fits, footprint, change); }
         resolve_reply_change(w, i, change, out);
         kernel_proof! {
@@ -442,8 +444,10 @@ pub(super) fn reply_files(w: &mut World, i: usize, files: Footprint, fits: bool,
         let c = ReplyCtx { node: i, generation: w.nodes[i].generation,
             reply: Reply::MakerNeedsFiles { files, fits }, fast: w.fail_fast,
             next_question: w.next_question };
-        let change = reply_files_node(w.nodes[i], w.fail_fast, files, fits, footprint, false);
-        kernel_proof! { reply_family_safety::files_rows(before_files@.nodes@[i as int], c,
+        let change = reply_files_ask(w.nodes[i], footprint);
+        kernel_proof! {
+            reply_family_posts::files_arms(before_files@.nodes@[i as int], c.fast, files, fits, footprint);
+            reply_family_safety::files_rows(before_files@.nodes@[i as int], c,
             files, fits, footprint, change); }
         resolve_reply_change(w, i, change, out);
         kernel_proof! {
@@ -492,24 +496,46 @@ pub(super) fn reply_files_node(n: Node, fast: bool, files: Footprint, fits: bool
     ensures result == reply_family_values::files(n, fast, files, fits, union),
         reply_family_values::callable(result),
 ] {
-    let mut node = n;
     if funded {
-        let footprint = union;
-        node.credit = spend_v(node.credit, 1);
-        node.footprint = footprint;
-        node.holds = false;
-        node = set_phase_v(node, Phase::Ready(Resume::Making));
-        let result = ReplyChange::Done { node, note: None };
-        kernel_proof! { reveal(reply_family_values::files); }
+        let result = reply_files_paid(n, union);
+        kernel_proof! { reply_family_posts::files_arms(n, fast, files, fits, union); }
         result
     } else {
-        let footprint = union;
-        node.footprint = footprint;
-        let result = ReplyChange::Ask { node, kind: QKind::OutOfCredit,
-            cont: Cont::Ready(Resume::Making), cost: 1, };
-        kernel_proof! { reveal(reply_family_values::files); }
+        let result = reply_files_ask(n, union);
+        kernel_proof! { reply_family_posts::files_arms(n, fast, files, fits, union); }
         result
     }
+}
+}
+
+kernel_fn! {
+pub(super) fn reply_files_paid(n: Node, union: Footprint) -> (result: ReplyChange) [
+    requires node_headroom(n),
+    ensures result == (ReplyChange::Done {
+        node: reply_family_values::files_paid(n, union), note: None }),
+] {
+    let mut node = n;
+    let footprint = union;
+    node.credit = spend_v(node.credit, 1);
+    node.footprint = footprint;
+    node.holds = false;
+    node = set_phase_v(node, Phase::Ready(Resume::Making));
+    let result = ReplyChange::Done { node, note: None };
+    result
+}
+}
+
+kernel_fn! {
+pub(super) fn reply_files_ask(n: Node, union: Footprint) -> (result: ReplyChange) [
+    ensures result == (ReplyChange::Ask { node: reply_family_values::files_ask(n, union),
+        kind: QKind::OutOfCredit, cont: Cont::Ready(Resume::Making), cost: 1 }),
+] {
+    let mut node = n;
+    let footprint = union;
+    node.footprint = footprint;
+    let result = ReplyChange::Ask { node, kind: QKind::OutOfCredit,
+        cont: Cont::Ready(Resume::Making), cost: 1, };
+    result
 }
 }
 
