@@ -218,3 +218,20 @@ def test_broker_metadata_changes_do_not_change_scratch_ownership(scratch, monkey
     assert result['observation']['kind'] == 'absent'
     assert result['attribution'] == request['reclamation']
     assert not root.exists()
+
+
+@pytest.mark.parametrize('changed_at', [0, 1, 2])
+def test_x7_broker_observations_are_receipts_at_every_cleanup_phase(scratch, monkeypatch, changed_at):
+    request, root, output, _ = scratch
+    calls = []
+
+    def observation(*args):
+        index = len(calls)
+        calls.append(index)
+        return {'exit_code': 0, 'stdout': 'after-reboot' if index == changed_at else 'a' * 32,
+                'stderr': ''}
+
+    monkeypatch.setattr(runtime, '_external_generation', observation)
+    result = observe(request, output)
+    assert result['observation']['kind'] == 'absent'
+    assert not root.exists()
