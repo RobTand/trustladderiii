@@ -844,4 +844,552 @@ pub(super) proof fn command_stutter(before: World, after: World, i: usize, id: u
     assert(before.nodes@ =~= before.nodes@.update(i as int, before.nodes@[i as int]));
 }
 
+/// Opus 1110 rung 6: on_command's Command::Stop arm. The premise is stop_command's ensures word for
+/// word; the post is on_command's ensures word for word with command fixed to Command::Stop.
+pub(super) proof fn dispatch_stop(before: World, after: World, i: usize, id: u64, command: Command,
+    ob: Outbox, oa: Outbox)
+    requires command == Command::Stop,
+        oa == ob,
+        (node_checked(before, before.nodes@[i as int])
+            && id > before.nodes@[i as int].last_cmd
+            && command_progress_input(before.nodes@[i as int], (Command::Stop))
+            ==> distance(after.nodes@[i as int]) < distance(before.nodes@[i as int])),
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase is Closed),
+        after.nodes@[i as int].repo == before.nodes@[i as int].repo,
+        after.nodes@[i as int].footprint == before.nodes@[i as int].footprint,
+        (settle_shape(before.nodes@[i as int]) ==> settle_shape(after.nodes@[i as int])),
+        after.nodes@.len() == before.nodes@.len(),
+        forall|j: int| 0 <= j < before.nodes@.len() && j != i
+            ==> after.nodes@[j] == before.nodes@[j],
+        after.nodes@[i as int].generation as int <= before.nodes@[i as int].generation as int + 1,
+        after.nodes@[i as int].next_seq == before.nodes@[i as int].next_seq,
+        after.nodes@[i as int].credit.start == before.nodes@[i as int].credit.start,
+        after.nodes@[i as int].credit.earned == before.nodes@[i as int].credit.earned,
+        after.nodes@[i as int].credit.added as int <= before.nodes@[i as int].credit.added as int + 255,
+        after.nodes@[i as int].credit.spent as int <= before.nodes@[i as int].credit.spent as int + 1,
+        after.nodes@[i as int].last_cmd == if id > before.nodes@[i as int].last_cmd {
+            id
+        } else { before.nodes@[i as int].last_cmd },
+        after.next_ticket == before.next_ticket,
+        after.next_question as int <= before.next_question as int + 1,
+        after.gates@ == before.gates@,
+        after.pool_capacity == before.pool_capacity,
+        after.fail_fast == before.fail_fast,
+        after.file_sets@ == before.file_sets@,
+        after.dependencies@ == before.dependencies@,
+        (Command::Stop) == Command::Resume ==> after.next_question == before.next_question,
+        progress_gate_apply::resume_post(before.nodes@[i as int], after.nodes@[i as int], id, (Command::Stop)),
+        after.nodes@[i as int].proposed == before.nodes@[i as int].proposed,
+        after.nodes@[i as int].adopted == before.nodes@[i as int].adopted,
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase == before.nodes@[i as int].phase),
+        handler_safety::command_step(before.nodes@[i as int], after.nodes@[i as int]),
+
+        (after.nodes@[i as int].holds ==> before.nodes@[i as int].holds),
+        (after.nodes@[i as int].pool ==> before.nodes@[i as int].pool),
+        after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
+        after.nodes@[i as int].credit.withheld == before.nodes@[i as int].credit.withheld,
+        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        before.next_question <= after.next_question,
+        (retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(after, after.nodes@[i as int])),
+    ensures (node_checked(before, before.nodes@[i as int])
+            && id > before.nodes@[i as int].last_cmd
+            && command_progress_input(before.nodes@[i as int], command)
+            ==> distance(after.nodes@[i as int]) < distance(before.nodes@[i as int])),
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase is Closed),
+        after.nodes@[i as int].repo == before.nodes@[i as int].repo,
+        after.nodes@[i as int].footprint == before.nodes@[i as int].footprint,
+        (settle_shape(before.nodes@[i as int]) ==> settle_shape(after.nodes@[i as int])),
+        after.nodes@.len() == before.nodes@.len(),
+        forall|j: int| 0 <= j < before.nodes@.len() && j != i
+            ==> after.nodes@[j] == before.nodes@[j],
+        after.nodes@[i as int].generation as int <= before.nodes@[i as int].generation as int + 1,
+        after.nodes@[i as int].next_seq == before.nodes@[i as int].next_seq,
+        after.nodes@[i as int].credit.start == before.nodes@[i as int].credit.start,
+        after.nodes@[i as int].credit.earned == before.nodes@[i as int].credit.earned,
+        after.nodes@[i as int].credit.added as int <= before.nodes@[i as int].credit.added as int + 255,
+        after.nodes@[i as int].credit.spent as int <= before.nodes@[i as int].credit.spent as int + 1,
+        after.nodes@[i as int].last_cmd == if id > before.nodes@[i as int].last_cmd {
+            id
+        } else { before.nodes@[i as int].last_cmd },
+        after.next_ticket == before.next_ticket,
+        after.next_question as int <= before.next_question as int + 1,
+        after.gates@ == before.gates@,
+        after.pool_capacity == before.pool_capacity,
+        after.fail_fast == before.fail_fast,
+        after.file_sets@ == before.file_sets@,
+        after.dependencies@ == before.dependencies@,
+        oa.len <= ob.len + 1,
+        command == Command::Resume ==> after.next_question == before.next_question,
+        progress_gate_apply::resume_post(before.nodes@[i as int], after.nodes@[i as int], id, command),
+        after.nodes@[i as int].proposed == before.nodes@[i as int].proposed,
+        after.nodes@[i as int].adopted == before.nodes@[i as int].adopted,
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase == before.nodes@[i as int].phase),
+        handler_safety::command_step(before.nodes@[i as int], after.nodes@[i as int]),
+        transition_safety::notice_only(ob, oa, NodeId(i as u64)),
+        (match command {
+            Command::Answer { question, .. } => node_checked(before, before.nodes@[i as int])
+                && after.nodes@[i as int] != (Node { last_cmd: after.nodes@[i as int].last_cmd, ..before.nodes@[i as int] })
+                ==> (match before.nodes@[i as int].question {
+                    Some(q) => q.id == question,
+                    None => false,
+                }) && (match after.nodes@[i as int].question {
+                    Some(q) => q.id != question,
+                    None => true,
+                }),
+            _ => true,
+        }),
+
+        (after.nodes@[i as int].holds ==> before.nodes@[i as int].holds),
+        (after.nodes@[i as int].pool ==> before.nodes@[i as int].pool),
+        after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
+        after.nodes@[i as int].credit.withheld == before.nodes@[i as int].credit.withheld,
+        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        before.next_question <= after.next_question,
+        (retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(after, after.nodes@[i as int])),
+{
+}
+
+/// Opus 1110 rung 6: on_command's Command::ChangeRequest arm. The premise is change_request_command's ensures word for
+/// word; the post is on_command's ensures word for word with command fixed to Command::ChangeRequest.
+pub(super) proof fn dispatch_change_request(before: World, after: World, i: usize, id: u64, command: Command,
+    ob: Outbox, oa: Outbox)
+    requires command == Command::ChangeRequest,
+        oa == ob,
+        (node_checked(before, before.nodes@[i as int])
+            && id > before.nodes@[i as int].last_cmd
+            && command_progress_input(before.nodes@[i as int], (Command::ChangeRequest))
+            ==> distance(after.nodes@[i as int]) < distance(before.nodes@[i as int])),
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase is Closed),
+        after.nodes@[i as int].repo == before.nodes@[i as int].repo,
+        after.nodes@[i as int].footprint == before.nodes@[i as int].footprint,
+        (settle_shape(before.nodes@[i as int]) ==> settle_shape(after.nodes@[i as int])),
+        after.nodes@.len() == before.nodes@.len(),
+        forall|j: int| 0 <= j < before.nodes@.len() && j != i
+            ==> after.nodes@[j] == before.nodes@[j],
+        after.nodes@[i as int].generation as int <= before.nodes@[i as int].generation as int + 1,
+        after.nodes@[i as int].next_seq == before.nodes@[i as int].next_seq,
+        after.nodes@[i as int].credit.start == before.nodes@[i as int].credit.start,
+        after.nodes@[i as int].credit.earned == before.nodes@[i as int].credit.earned,
+        after.nodes@[i as int].credit.added as int <= before.nodes@[i as int].credit.added as int + 255,
+        after.nodes@[i as int].credit.spent as int <= before.nodes@[i as int].credit.spent as int + 1,
+        after.nodes@[i as int].last_cmd == if id > before.nodes@[i as int].last_cmd {
+            id
+        } else { before.nodes@[i as int].last_cmd },
+        after.next_ticket == before.next_ticket,
+        after.next_question as int <= before.next_question as int + 1,
+        after.gates@ == before.gates@,
+        after.pool_capacity == before.pool_capacity,
+        after.fail_fast == before.fail_fast,
+        after.file_sets@ == before.file_sets@,
+        after.dependencies@ == before.dependencies@,
+        (Command::ChangeRequest) == Command::Resume ==> after.next_question == before.next_question,
+        progress_gate_apply::resume_post(before.nodes@[i as int], after.nodes@[i as int], id, (Command::ChangeRequest)),
+        after.nodes@[i as int].proposed == before.nodes@[i as int].proposed,
+        after.nodes@[i as int].adopted == before.nodes@[i as int].adopted,
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase == before.nodes@[i as int].phase),
+        handler_safety::command_step(before.nodes@[i as int], after.nodes@[i as int]),
+
+        (after.nodes@[i as int].holds ==> before.nodes@[i as int].holds),
+        (after.nodes@[i as int].pool ==> before.nodes@[i as int].pool),
+        after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
+        after.nodes@[i as int].credit.withheld == before.nodes@[i as int].credit.withheld,
+        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        before.next_question <= after.next_question,
+        (retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(after, after.nodes@[i as int])),
+    ensures (node_checked(before, before.nodes@[i as int])
+            && id > before.nodes@[i as int].last_cmd
+            && command_progress_input(before.nodes@[i as int], command)
+            ==> distance(after.nodes@[i as int]) < distance(before.nodes@[i as int])),
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase is Closed),
+        after.nodes@[i as int].repo == before.nodes@[i as int].repo,
+        after.nodes@[i as int].footprint == before.nodes@[i as int].footprint,
+        (settle_shape(before.nodes@[i as int]) ==> settle_shape(after.nodes@[i as int])),
+        after.nodes@.len() == before.nodes@.len(),
+        forall|j: int| 0 <= j < before.nodes@.len() && j != i
+            ==> after.nodes@[j] == before.nodes@[j],
+        after.nodes@[i as int].generation as int <= before.nodes@[i as int].generation as int + 1,
+        after.nodes@[i as int].next_seq == before.nodes@[i as int].next_seq,
+        after.nodes@[i as int].credit.start == before.nodes@[i as int].credit.start,
+        after.nodes@[i as int].credit.earned == before.nodes@[i as int].credit.earned,
+        after.nodes@[i as int].credit.added as int <= before.nodes@[i as int].credit.added as int + 255,
+        after.nodes@[i as int].credit.spent as int <= before.nodes@[i as int].credit.spent as int + 1,
+        after.nodes@[i as int].last_cmd == if id > before.nodes@[i as int].last_cmd {
+            id
+        } else { before.nodes@[i as int].last_cmd },
+        after.next_ticket == before.next_ticket,
+        after.next_question as int <= before.next_question as int + 1,
+        after.gates@ == before.gates@,
+        after.pool_capacity == before.pool_capacity,
+        after.fail_fast == before.fail_fast,
+        after.file_sets@ == before.file_sets@,
+        after.dependencies@ == before.dependencies@,
+        oa.len <= ob.len + 1,
+        command == Command::Resume ==> after.next_question == before.next_question,
+        progress_gate_apply::resume_post(before.nodes@[i as int], after.nodes@[i as int], id, command),
+        after.nodes@[i as int].proposed == before.nodes@[i as int].proposed,
+        after.nodes@[i as int].adopted == before.nodes@[i as int].adopted,
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase == before.nodes@[i as int].phase),
+        handler_safety::command_step(before.nodes@[i as int], after.nodes@[i as int]),
+        transition_safety::notice_only(ob, oa, NodeId(i as u64)),
+        (match command {
+            Command::Answer { question, .. } => node_checked(before, before.nodes@[i as int])
+                && after.nodes@[i as int] != (Node { last_cmd: after.nodes@[i as int].last_cmd, ..before.nodes@[i as int] })
+                ==> (match before.nodes@[i as int].question {
+                    Some(q) => q.id == question,
+                    None => false,
+                }) && (match after.nodes@[i as int].question {
+                    Some(q) => q.id != question,
+                    None => true,
+                }),
+            _ => true,
+        }),
+
+        (after.nodes@[i as int].holds ==> before.nodes@[i as int].holds),
+        (after.nodes@[i as int].pool ==> before.nodes@[i as int].pool),
+        after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
+        after.nodes@[i as int].credit.withheld == before.nodes@[i as int].credit.withheld,
+        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        before.next_question <= after.next_question,
+        (retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(after, after.nodes@[i as int])),
+{
+}
+
+/// Opus 1110 rung 6: on_command's Command::Pause arm. The premise is pause_command's ensures word for
+/// word; the post is on_command's ensures word for word with command fixed to Command::Pause.
+pub(super) proof fn dispatch_pause(before: World, after: World, i: usize, id: u64, command: Command,
+    ob: Outbox, oa: Outbox)
+    requires command == Command::Pause,
+        oa == ob,
+        (node_checked(before, before.nodes@[i as int])
+            && id > before.nodes@[i as int].last_cmd
+            && command_progress_input(before.nodes@[i as int], (Command::Pause))
+            ==> distance(after.nodes@[i as int]) < distance(before.nodes@[i as int])),
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase is Closed),
+        after.nodes@[i as int].repo == before.nodes@[i as int].repo,
+        after.nodes@[i as int].footprint == before.nodes@[i as int].footprint,
+        (settle_shape(before.nodes@[i as int]) ==> settle_shape(after.nodes@[i as int])),
+        after.nodes@.len() == before.nodes@.len(),
+        forall|j: int| 0 <= j < before.nodes@.len() && j != i
+            ==> after.nodes@[j] == before.nodes@[j],
+        after.nodes@[i as int].generation as int <= before.nodes@[i as int].generation as int + 1,
+        after.nodes@[i as int].next_seq == before.nodes@[i as int].next_seq,
+        after.nodes@[i as int].credit.start == before.nodes@[i as int].credit.start,
+        after.nodes@[i as int].credit.earned == before.nodes@[i as int].credit.earned,
+        after.nodes@[i as int].credit.added as int <= before.nodes@[i as int].credit.added as int + 255,
+        after.nodes@[i as int].credit.spent as int <= before.nodes@[i as int].credit.spent as int + 1,
+        after.nodes@[i as int].last_cmd == if id > before.nodes@[i as int].last_cmd {
+            id
+        } else { before.nodes@[i as int].last_cmd },
+        after.next_ticket == before.next_ticket,
+        after.next_question as int <= before.next_question as int + 1,
+        after.gates@ == before.gates@,
+        after.pool_capacity == before.pool_capacity,
+        after.fail_fast == before.fail_fast,
+        after.file_sets@ == before.file_sets@,
+        after.dependencies@ == before.dependencies@,
+        (Command::Pause) == Command::Resume ==> after.next_question == before.next_question,
+        progress_gate_apply::resume_post(before.nodes@[i as int], after.nodes@[i as int], id, (Command::Pause)),
+        after.nodes@[i as int].proposed == before.nodes@[i as int].proposed,
+        after.nodes@[i as int].adopted == before.nodes@[i as int].adopted,
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase == before.nodes@[i as int].phase),
+        handler_safety::command_step(before.nodes@[i as int], after.nodes@[i as int]),
+
+        (after.nodes@[i as int].holds ==> before.nodes@[i as int].holds),
+        (after.nodes@[i as int].pool ==> before.nodes@[i as int].pool),
+        after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
+        after.nodes@[i as int].credit.withheld == before.nodes@[i as int].credit.withheld,
+        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        before.next_question <= after.next_question,
+        (retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(after, after.nodes@[i as int])),
+    ensures (node_checked(before, before.nodes@[i as int])
+            && id > before.nodes@[i as int].last_cmd
+            && command_progress_input(before.nodes@[i as int], command)
+            ==> distance(after.nodes@[i as int]) < distance(before.nodes@[i as int])),
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase is Closed),
+        after.nodes@[i as int].repo == before.nodes@[i as int].repo,
+        after.nodes@[i as int].footprint == before.nodes@[i as int].footprint,
+        (settle_shape(before.nodes@[i as int]) ==> settle_shape(after.nodes@[i as int])),
+        after.nodes@.len() == before.nodes@.len(),
+        forall|j: int| 0 <= j < before.nodes@.len() && j != i
+            ==> after.nodes@[j] == before.nodes@[j],
+        after.nodes@[i as int].generation as int <= before.nodes@[i as int].generation as int + 1,
+        after.nodes@[i as int].next_seq == before.nodes@[i as int].next_seq,
+        after.nodes@[i as int].credit.start == before.nodes@[i as int].credit.start,
+        after.nodes@[i as int].credit.earned == before.nodes@[i as int].credit.earned,
+        after.nodes@[i as int].credit.added as int <= before.nodes@[i as int].credit.added as int + 255,
+        after.nodes@[i as int].credit.spent as int <= before.nodes@[i as int].credit.spent as int + 1,
+        after.nodes@[i as int].last_cmd == if id > before.nodes@[i as int].last_cmd {
+            id
+        } else { before.nodes@[i as int].last_cmd },
+        after.next_ticket == before.next_ticket,
+        after.next_question as int <= before.next_question as int + 1,
+        after.gates@ == before.gates@,
+        after.pool_capacity == before.pool_capacity,
+        after.fail_fast == before.fail_fast,
+        after.file_sets@ == before.file_sets@,
+        after.dependencies@ == before.dependencies@,
+        oa.len <= ob.len + 1,
+        command == Command::Resume ==> after.next_question == before.next_question,
+        progress_gate_apply::resume_post(before.nodes@[i as int], after.nodes@[i as int], id, command),
+        after.nodes@[i as int].proposed == before.nodes@[i as int].proposed,
+        after.nodes@[i as int].adopted == before.nodes@[i as int].adopted,
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase == before.nodes@[i as int].phase),
+        handler_safety::command_step(before.nodes@[i as int], after.nodes@[i as int]),
+        transition_safety::notice_only(ob, oa, NodeId(i as u64)),
+        (match command {
+            Command::Answer { question, .. } => node_checked(before, before.nodes@[i as int])
+                && after.nodes@[i as int] != (Node { last_cmd: after.nodes@[i as int].last_cmd, ..before.nodes@[i as int] })
+                ==> (match before.nodes@[i as int].question {
+                    Some(q) => q.id == question,
+                    None => false,
+                }) && (match after.nodes@[i as int].question {
+                    Some(q) => q.id != question,
+                    None => true,
+                }),
+            _ => true,
+        }),
+
+        (after.nodes@[i as int].holds ==> before.nodes@[i as int].holds),
+        (after.nodes@[i as int].pool ==> before.nodes@[i as int].pool),
+        after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
+        after.nodes@[i as int].credit.withheld == before.nodes@[i as int].credit.withheld,
+        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        before.next_question <= after.next_question,
+        (retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(after, after.nodes@[i as int])),
+{
+}
+
+/// Opus 1110 rung 6: on_command's Command::Resume arm. The premise is resume_command's ensures word for
+/// word; the post is on_command's ensures word for word with command fixed to Command::Resume.
+pub(super) proof fn dispatch_resume(before: World, after: World, i: usize, id: u64, command: Command,
+    ob: Outbox, oa: Outbox)
+    requires command == Command::Resume,
+        oa == ob,
+        (node_checked(before, before.nodes@[i as int])
+            && id > before.nodes@[i as int].last_cmd
+            && command_progress_input(before.nodes@[i as int], (Command::Resume))
+            ==> distance(after.nodes@[i as int]) < distance(before.nodes@[i as int])),
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase is Closed),
+        after.nodes@[i as int].repo == before.nodes@[i as int].repo,
+        after.nodes@[i as int].footprint == before.nodes@[i as int].footprint,
+        (settle_shape(before.nodes@[i as int]) ==> settle_shape(after.nodes@[i as int])),
+        after.nodes@.len() == before.nodes@.len(),
+        forall|j: int| 0 <= j < before.nodes@.len() && j != i
+            ==> after.nodes@[j] == before.nodes@[j],
+        after.nodes@[i as int].generation as int <= before.nodes@[i as int].generation as int + 1,
+        after.nodes@[i as int].next_seq == before.nodes@[i as int].next_seq,
+        after.nodes@[i as int].credit.start == before.nodes@[i as int].credit.start,
+        after.nodes@[i as int].credit.earned == before.nodes@[i as int].credit.earned,
+        after.nodes@[i as int].credit.added as int <= before.nodes@[i as int].credit.added as int + 255,
+        after.nodes@[i as int].credit.spent as int <= before.nodes@[i as int].credit.spent as int + 1,
+        after.nodes@[i as int].last_cmd == if id > before.nodes@[i as int].last_cmd {
+            id
+        } else { before.nodes@[i as int].last_cmd },
+        after.next_ticket == before.next_ticket,
+        after.next_question as int <= before.next_question as int + 1,
+        after.gates@ == before.gates@,
+        after.pool_capacity == before.pool_capacity,
+        after.fail_fast == before.fail_fast,
+        after.file_sets@ == before.file_sets@,
+        after.dependencies@ == before.dependencies@,
+        (Command::Resume) == Command::Resume ==> after.next_question == before.next_question,
+        progress_gate_apply::resume_post(before.nodes@[i as int], after.nodes@[i as int], id, (Command::Resume)),
+        after.nodes@[i as int].proposed == before.nodes@[i as int].proposed,
+        after.nodes@[i as int].adopted == before.nodes@[i as int].adopted,
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase == before.nodes@[i as int].phase),
+        handler_safety::command_step(before.nodes@[i as int], after.nodes@[i as int]),
+
+        (after.nodes@[i as int].holds ==> before.nodes@[i as int].holds),
+        (after.nodes@[i as int].pool ==> before.nodes@[i as int].pool),
+        after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
+        after.nodes@[i as int].credit.withheld == before.nodes@[i as int].credit.withheld,
+        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        before.next_question <= after.next_question,
+        (retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(after, after.nodes@[i as int])),
+    ensures (node_checked(before, before.nodes@[i as int])
+            && id > before.nodes@[i as int].last_cmd
+            && command_progress_input(before.nodes@[i as int], command)
+            ==> distance(after.nodes@[i as int]) < distance(before.nodes@[i as int])),
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase is Closed),
+        after.nodes@[i as int].repo == before.nodes@[i as int].repo,
+        after.nodes@[i as int].footprint == before.nodes@[i as int].footprint,
+        (settle_shape(before.nodes@[i as int]) ==> settle_shape(after.nodes@[i as int])),
+        after.nodes@.len() == before.nodes@.len(),
+        forall|j: int| 0 <= j < before.nodes@.len() && j != i
+            ==> after.nodes@[j] == before.nodes@[j],
+        after.nodes@[i as int].generation as int <= before.nodes@[i as int].generation as int + 1,
+        after.nodes@[i as int].next_seq == before.nodes@[i as int].next_seq,
+        after.nodes@[i as int].credit.start == before.nodes@[i as int].credit.start,
+        after.nodes@[i as int].credit.earned == before.nodes@[i as int].credit.earned,
+        after.nodes@[i as int].credit.added as int <= before.nodes@[i as int].credit.added as int + 255,
+        after.nodes@[i as int].credit.spent as int <= before.nodes@[i as int].credit.spent as int + 1,
+        after.nodes@[i as int].last_cmd == if id > before.nodes@[i as int].last_cmd {
+            id
+        } else { before.nodes@[i as int].last_cmd },
+        after.next_ticket == before.next_ticket,
+        after.next_question as int <= before.next_question as int + 1,
+        after.gates@ == before.gates@,
+        after.pool_capacity == before.pool_capacity,
+        after.fail_fast == before.fail_fast,
+        after.file_sets@ == before.file_sets@,
+        after.dependencies@ == before.dependencies@,
+        oa.len <= ob.len + 1,
+        command == Command::Resume ==> after.next_question == before.next_question,
+        progress_gate_apply::resume_post(before.nodes@[i as int], after.nodes@[i as int], id, command),
+        after.nodes@[i as int].proposed == before.nodes@[i as int].proposed,
+        after.nodes@[i as int].adopted == before.nodes@[i as int].adopted,
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase == before.nodes@[i as int].phase),
+        handler_safety::command_step(before.nodes@[i as int], after.nodes@[i as int]),
+        transition_safety::notice_only(ob, oa, NodeId(i as u64)),
+        (match command {
+            Command::Answer { question, .. } => node_checked(before, before.nodes@[i as int])
+                && after.nodes@[i as int] != (Node { last_cmd: after.nodes@[i as int].last_cmd, ..before.nodes@[i as int] })
+                ==> (match before.nodes@[i as int].question {
+                    Some(q) => q.id == question,
+                    None => false,
+                }) && (match after.nodes@[i as int].question {
+                    Some(q) => q.id != question,
+                    None => true,
+                }),
+            _ => true,
+        }),
+
+        (after.nodes@[i as int].holds ==> before.nodes@[i as int].holds),
+        (after.nodes@[i as int].pool ==> before.nodes@[i as int].pool),
+        after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
+        after.nodes@[i as int].credit.withheld == before.nodes@[i as int].credit.withheld,
+        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        before.next_question <= after.next_question,
+        (retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(after, after.nodes@[i as int])),
+{
+}
+
+/// Opus 1110 rung 6: on_command's Command::Answer { question, answer } arm. The premise is answer_command's ensures word for
+/// word; the post is on_command's ensures word for word with command fixed to Command::Answer { question, answer }.
+pub(super) proof fn dispatch_answer(before: World, after: World, i: usize, id: u64, command: Command, question: u64, answer: Answer,
+    ob: Outbox, oa: Outbox)
+    requires command == Command::Answer { question, answer },
+        (node_checked(before, before.nodes@[i as int])
+            && id > before.nodes@[i as int].last_cmd
+            && command_progress_input(before.nodes@[i as int], (Command::Answer { question, answer }))
+            ==> distance(after.nodes@[i as int]) < distance(before.nodes@[i as int])),
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase is Closed),
+        after.nodes@[i as int].repo == before.nodes@[i as int].repo,
+        after.nodes@[i as int].footprint == before.nodes@[i as int].footprint,
+        (settle_shape(before.nodes@[i as int]) ==> settle_shape(after.nodes@[i as int])),
+        after.nodes@.len() == before.nodes@.len(),
+        forall|j: int| 0 <= j < before.nodes@.len() && j != i
+            ==> after.nodes@[j] == before.nodes@[j],
+        after.nodes@[i as int].generation as int <= before.nodes@[i as int].generation as int + 1,
+        after.nodes@[i as int].next_seq == before.nodes@[i as int].next_seq,
+        after.nodes@[i as int].credit.start == before.nodes@[i as int].credit.start,
+        after.nodes@[i as int].credit.earned == before.nodes@[i as int].credit.earned,
+        after.nodes@[i as int].credit.added as int <= before.nodes@[i as int].credit.added as int + 255,
+        after.nodes@[i as int].credit.spent as int <= before.nodes@[i as int].credit.spent as int + 1,
+        after.nodes@[i as int].last_cmd == if id > before.nodes@[i as int].last_cmd {
+            id
+        } else { before.nodes@[i as int].last_cmd },
+        after.next_ticket == before.next_ticket,
+        after.next_question as int <= before.next_question as int + 1,
+        after.gates@ == before.gates@,
+        after.pool_capacity == before.pool_capacity,
+        after.fail_fast == before.fail_fast,
+        after.file_sets@ == before.file_sets@,
+        after.dependencies@ == before.dependencies@,
+        oa.len <= ob.len + 1,
+        (Command::Answer { question, answer }) == Command::Resume ==> after.next_question == before.next_question,
+        progress_gate_apply::resume_post(before.nodes@[i as int], after.nodes@[i as int], id, (Command::Answer { question, answer })),
+        after.nodes@[i as int].proposed == before.nodes@[i as int].proposed,
+        after.nodes@[i as int].adopted == before.nodes@[i as int].adopted,
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase == before.nodes@[i as int].phase),
+        handler_safety::command_step(before.nodes@[i as int], after.nodes@[i as int]),
+        transition_safety::notice_only(ob, oa, NodeId(i as u64)),
+        (match (Command::Answer { question, answer }) {
+            Command::Answer { question, .. } => node_checked(before, before.nodes@[i as int])
+                && after.nodes@[i as int] != (Node { last_cmd: after.nodes@[i as int].last_cmd, ..before.nodes@[i as int] })
+                ==> (match before.nodes@[i as int].question {
+                    Some(q) => q.id == question,
+                    None => false,
+                }) && (match after.nodes@[i as int].question {
+                    Some(q) => q.id != question,
+                    None => true,
+                }),
+            _ => true,
+        }),
+
+        (after.nodes@[i as int].holds ==> before.nodes@[i as int].holds),
+        (after.nodes@[i as int].pool ==> before.nodes@[i as int].pool),
+        after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
+        after.nodes@[i as int].credit.withheld == before.nodes@[i as int].credit.withheld,
+        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        before.next_question <= after.next_question,
+        (retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(after, after.nodes@[i as int])),
+    ensures (node_checked(before, before.nodes@[i as int])
+            && id > before.nodes@[i as int].last_cmd
+            && command_progress_input(before.nodes@[i as int], command)
+            ==> distance(after.nodes@[i as int]) < distance(before.nodes@[i as int])),
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase is Closed),
+        after.nodes@[i as int].repo == before.nodes@[i as int].repo,
+        after.nodes@[i as int].footprint == before.nodes@[i as int].footprint,
+        (settle_shape(before.nodes@[i as int]) ==> settle_shape(after.nodes@[i as int])),
+        after.nodes@.len() == before.nodes@.len(),
+        forall|j: int| 0 <= j < before.nodes@.len() && j != i
+            ==> after.nodes@[j] == before.nodes@[j],
+        after.nodes@[i as int].generation as int <= before.nodes@[i as int].generation as int + 1,
+        after.nodes@[i as int].next_seq == before.nodes@[i as int].next_seq,
+        after.nodes@[i as int].credit.start == before.nodes@[i as int].credit.start,
+        after.nodes@[i as int].credit.earned == before.nodes@[i as int].credit.earned,
+        after.nodes@[i as int].credit.added as int <= before.nodes@[i as int].credit.added as int + 255,
+        after.nodes@[i as int].credit.spent as int <= before.nodes@[i as int].credit.spent as int + 1,
+        after.nodes@[i as int].last_cmd == if id > before.nodes@[i as int].last_cmd {
+            id
+        } else { before.nodes@[i as int].last_cmd },
+        after.next_ticket == before.next_ticket,
+        after.next_question as int <= before.next_question as int + 1,
+        after.gates@ == before.gates@,
+        after.pool_capacity == before.pool_capacity,
+        after.fail_fast == before.fail_fast,
+        after.file_sets@ == before.file_sets@,
+        after.dependencies@ == before.dependencies@,
+        oa.len <= ob.len + 1,
+        command == Command::Resume ==> after.next_question == before.next_question,
+        progress_gate_apply::resume_post(before.nodes@[i as int], after.nodes@[i as int], id, command),
+        after.nodes@[i as int].proposed == before.nodes@[i as int].proposed,
+        after.nodes@[i as int].adopted == before.nodes@[i as int].adopted,
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase == before.nodes@[i as int].phase),
+        handler_safety::command_step(before.nodes@[i as int], after.nodes@[i as int]),
+        transition_safety::notice_only(ob, oa, NodeId(i as u64)),
+        (match command {
+            Command::Answer { question, .. } => node_checked(before, before.nodes@[i as int])
+                && after.nodes@[i as int] != (Node { last_cmd: after.nodes@[i as int].last_cmd, ..before.nodes@[i as int] })
+                ==> (match before.nodes@[i as int].question {
+                    Some(q) => q.id == question,
+                    None => false,
+                }) && (match after.nodes@[i as int].question {
+                    Some(q) => q.id != question,
+                    None => true,
+                }),
+            _ => true,
+        }),
+
+        (after.nodes@[i as int].holds ==> before.nodes@[i as int].holds),
+        (after.nodes@[i as int].pool ==> before.nodes@[i as int].pool),
+        after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
+        after.nodes@[i as int].credit.withheld == before.nodes@[i as int].credit.withheld,
+        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        before.next_question <= after.next_question,
+        (retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(after, after.nodes@[i as int])),
+{
+}
+
 }

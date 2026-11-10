@@ -80,11 +80,41 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         return; // a repeated command
     }
     match command {
-        Command::Stop => stop_command(w, i, id),
-        Command::ChangeRequest => change_request_command(w, i, id),
-        Command::Pause => pause_command(w, i, id),
-        Command::Resume => resume_command(w, i, id),
-        Command::Answer { question, answer } => answer_command(w, i, id, question, answer, out),
+        Command::Stop => {
+            stop_command(w, i, id);
+            kernel_proof! {
+                apply_command_safety::dispatch_stop(before_rules_world@, *w, i, id, command,
+                    before_out@, *out);
+            }
+        }
+        Command::ChangeRequest => {
+            change_request_command(w, i, id);
+            kernel_proof! {
+                apply_command_safety::dispatch_change_request(before_rules_world@, *w, i, id, command,
+                    before_out@, *out);
+            }
+        }
+        Command::Pause => {
+            pause_command(w, i, id);
+            kernel_proof! {
+                apply_command_safety::dispatch_pause(before_rules_world@, *w, i, id, command,
+                    before_out@, *out);
+            }
+        }
+        Command::Resume => {
+            resume_command(w, i, id);
+            kernel_proof! {
+                apply_command_safety::dispatch_resume(before_rules_world@, *w, i, id, command,
+                    before_out@, *out);
+            }
+        }
+        Command::Answer { question, answer } => {
+            answer_command(w, i, id, question, answer, out);
+            kernel_proof! {
+                apply_command_safety::dispatch_answer(before_rules_world@, *w, i, id, command, question, answer,
+                    before_out@, *out);
+            }
+        }
     }
 }
 }
