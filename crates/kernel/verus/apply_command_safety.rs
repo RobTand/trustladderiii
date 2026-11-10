@@ -1018,4 +1018,20 @@ pub(super) proof fn frame_to_update(s: Seq<Node>, t: Seq<Node>, i: int)
     assert(t =~= s.update(i, t[i]));
 }
 
+
+pub(super) proof fn answer_mid_rgl(before: World, mid: World, r: Node, id: u64)
+    requires
+        mid.next_question == before.next_question,
+        mid.next_ticket == before.next_ticket,
+        mid.gates@ == before.gates@,
+        mid.file_sets@ == before.file_sets@,
+    ensures retirement::node_rules(before, r) ==> retirement::node_rules(mid, Node { last_cmd: id, ..r }),
+{
+    if retirement::node_rules(before, r) {
+        handler_safety::rules_to_v(before, r);
+        handler_safety::last_cmd_rules_v(r, before.next_question, id);
+        handler_safety::rules_world_update(before, mid, r, Node { last_cmd: id, ..r });
+    }
+}
+
 }
