@@ -219,7 +219,11 @@ kernel_fn! {
 /// Pause rows (opus 1110): pause_command's node statements as one value step whose only
 /// post is the exact node, so the world entry holds no branch.
 fn pause_v(n: Node, id: u64) -> (result: Node) [
-    ensures result == apply_command_safety::pause_node(n, id),
+    ensures result == (if n.phase is Stopping || n.phase is Closed {
+            Node { last_cmd: id, ..n }
+        } else {
+            Node { paused: true, ..Node { last_cmd: id, ..n } }
+        }),
 ] {
     let mut m = n;
     m.last_cmd = id;

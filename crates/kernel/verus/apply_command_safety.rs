@@ -329,7 +329,7 @@ pub(super) proof fn answer_rows_imp(b: Node, n: Node, nq: u64, id: u64, question
         node_headroom(b), arithmetic_consistent(b), nq < u64::MAX,
     ensures (b.phase is Closed ==> n.phase is Closed),
         (settle_shape(b) ==> settle_shape(n)),
-        progress_gate_apply::resume_post(b, n, id, (Command::Answer {{ question, answer }})),
+        progress_gate_apply::resume_post(b, n, id, (Command::Answer { question, answer })),
         n.proposed == b.proposed,
         n.adopted == b.adopted,
         (b.phase is Closed ==> n.phase == b.phase),
@@ -348,7 +348,7 @@ pub(super) proof fn answer_dist(w: World, b: Node, n: Node, id: u64, question: u
         node_headroom(b), arithmetic_consistent(b), w.next_question < u64::MAX,
     ensures (node_checked(w, b)
             && id > b.last_cmd
-            && command_progress_input(b, (Command::Answer {{ question, answer }}))
+            && command_progress_input(b, (Command::Answer { question, answer }))
             ==> distance(n) < distance(b)),
         (match (Command::Answer { question, answer }) {
             Command::Answer { question, .. } => node_checked(w, b)
