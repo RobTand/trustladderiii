@@ -53,7 +53,7 @@ pub(super) proof fn slot_frame(b: World, n: World, i: int)
 pub(super) fn second_visit(w: &mut World, i: usize, Ghost(k): Ghost<int>, Ghost(t): Ghost<u64>)
     requires context(*old(w), k), 0 <= k <= 600, 2 <= i < 4,
         advance_family_post::ready_unobstructed(old(w).nodes@[0]), old(w).nodes@[0].ticket == Some(t),
-        slot_spec(*old(w), 0), oldest_waiter(*old(w), 0), !overlapped_by_older(*old(w), 0, t),
+        slot_spec(*old(w), 0), oldest_waiter(*old(w), 0),
         reserved(*old(w), i as int, t),
     ensures context(*final(w), k + 2),
         final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds,
