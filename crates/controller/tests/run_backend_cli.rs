@@ -6586,3 +6586,37 @@ fn cleanup_maintenance_never_sweeps_healthy_begin_launch_debt() {
     assert_eq!(cleanup_debts(&f), before);
     assert!(!f.intent.output_dir.join(format!("helper-called-{}", owned.execution)).exists());
 }
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_held_request_dispatches_exactly_once() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.cleanup_execution("held-debtor", 'd');
+    f.cleanup_facts(&owned, false);
+    f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
+    fs::copy(f.intent.output_dir.join("original-jobspec.json"), f.root.path().join("jobspec-fABC.json")).unwrap();
+    let mut intent = f.intent.clone();
+    intent.owner = "maintenance-held-owner".into();
+    intent.correlation = format!("{}-maintenance-held", f.intent.correlation);
+    intent.output_dir = Path::new("/mnt/shared/flux-out/tl3").join(&intent.correlation);
+    let backend = maintenance_backend(&f);
+    assert!(backend.submit(f.request.clone(), intent.clone()).is_err());
+    let state_path = f.options.journal_root.join(&intent.correlation).join("state.json");
+    let state: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    assert_eq!(state["dispatched"], false);
+    assert!(state["held_submission_ms"].is_u64(), "gate-held intent must be explicitly resumable: {state}");
+    let due = maintenance_due(&f).max(state["held_submission_ms"].as_u64().unwrap());
+    f.cleanup_facts(&owned, true);
+    fs::write(f.root.path().join("submit-id"), "fDEF\n").unwrap();
+    assert!(backend.cleanup_maintenance(due).unwrap().is_empty());
+    backend.cleanup_maintenance(due + 300_000).unwrap();
+    assert!(matches!(backend.submit(f.request.clone(), intent.clone()).unwrap(), Submission::Accepted { .. }));
+    let state: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    assert_eq!(state["dispatched"], true);
+    assert!(state["held_submission_ms"].is_null());
+    let calls = fs::read_to_string(f.root.path().join("calls")).unwrap();
+    assert_eq!(calls.lines().filter(|line| line.starts_with("job submit ")).count(), 2, "one original, one resumed: {calls}");
+    fs::remove_dir_all(&intent.output_dir).unwrap();
+}
