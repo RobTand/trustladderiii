@@ -102,8 +102,12 @@ if args[:1] == ['run']:
     executable = {{'python3': sys.executable}}.get(argv[0], argv[0])
     os.execve(executable, [executable, *argv[1:]], {{'PATH': '/usr/bin:/bin', **env}})
 if args[:2] == ['container', 'inspect']:
-    print((root / (args[-1] + '.container.json')).read_text())
-    sys.exit(0)
+    for path in root.glob('*.container.json'):
+        metadata = json.loads(path.read_text())
+        if args[-1] in (metadata['Name'], metadata['Id']):
+            print(json.dumps(metadata))
+            sys.exit(0)
+    sys.exit(1)
 if args[:2] == ['container', 'exists']:
     sys.exit(1)
 sys.exit(0)
