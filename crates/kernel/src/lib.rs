@@ -114,6 +114,12 @@ mod reply_family_facts;
 #[path = "../verus/apply_new_safety.rs"]
 mod apply_new_safety;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/new_acceptance.rs"]
+mod new_acceptance;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/new_acceptance_reveal.rs"]
+mod new_acceptance_reveal;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/apply_answer_values.rs"]
 mod apply_answer_values;
 #[cfg(verus_keep_ghost)]
