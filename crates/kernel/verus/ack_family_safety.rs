@@ -54,7 +54,7 @@ pub(super) proof fn adoption_facts(w: World, b: Node, n: Node)
 /// exactly the Permanent result: same node, same appended outputs, same question id.
 pub(super) proof fn bpr_equiv(b: Node, e: InFlight, nq: u64, i: int, ob: Outbox,
     n1: Node, nqa1: u64, oa1: Outbox, n2: Node, nqa2: u64, oa2: Outbox)
-    requires !e.cancelling, e.kind != EffectKind::OpenPr,
+    requires !e.cancelling, true,
         acknowledgements::ack_live_post(b, n1, e, Ack::BodyPolicyRefused, nq, nqa1, i, ob, oa1),
         acknowledgements::ack_live_post(b, n2, e, Ack::Permanent, nq, nqa2, i, ob, oa2),
     ensures n1 == n2, nqa1 == nqa2, oa1.len == oa2.len, oa1.items@ == oa2.items@,
