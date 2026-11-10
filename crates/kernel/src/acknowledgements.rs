@@ -665,7 +665,7 @@ pub(super) open spec fn ack_live_post(b: Node, n: Node, e: InFlight, ack: Ack, n
     })
 }
 
-open spec fn ack_case_common(b: Node, n: Node, e: InFlight, i: int, ob: Outbox, oa: Outbox) -> bool {
+pub(super) open spec fn ack_case_common(b: Node, n: Node, e: InFlight, i: int, ob: Outbox, oa: Outbox) -> bool {
     n.proposed == b.proposed && (b.adopted ==> n.adopted) && n.credit == b.credit
         && n.next_seq >= b.next_seq && n.attempt == b.attempt && n.replanned == b.replanned
         && (n.phase is Planning ==> b.phase is Planning)
