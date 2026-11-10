@@ -11,7 +11,7 @@ pub(super) open spec fn initial_young(w: World, i: int, t: u64) -> bool {
         && ((n.phase == Phase::Ready(Resume::Making)
                 && advance_family_post::ready_unobstructed(n) && n.ticket.unwrap() > t)
             || (n.phase == Phase::Rebasing && current_item(n) == Some(Item::Await)
-                && holder(n) && footprint::disjoint(w, n.footprint, w.nodes@[0].footprint)))
+                && holder(n)))
 }
 
 #[verifier::opaque]
