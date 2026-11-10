@@ -286,7 +286,7 @@ pub(super) proof fn plan_value_posts(n: Node, c: ReplyCtx)
     ensures reply_family_values::reply_bound(n, c.next_question, reply_family_values::plan(n, c.fast, c.reply)),
         reply_family_safety::rows(n, c, reply_family_values::plan(n, c.fast, c.reply)),
         (successful_reply_input(n, c.reply) ==> distance(reply_family_values::finish(c.next_question, reply_family_values::plan(n, c.fast, c.reply))) < distance(n)),
-        (c.reply == Reply::PlanCantMeet && c.fast && n.phase is Planning ==>
+        (c.reply != Reply::PlanCantMeet && c.fast && n.phase is Planning ==>
             reply_family_values::finish(c.next_question, reply_family_values::plan(n, c.fast, c.reply)).phase == Phase::Stopping(Outcome::Stopped)
                 && reply_family_values::finish(c.next_question, reply_family_values::plan(n, c.fast, c.reply)).review_stop == Some(ReviewStop::PlanCantMeet)),
         reply_family_values::finish(c.next_question, reply_family_values::plan(n, c.fast, c.reply)).footprint == n.footprint
