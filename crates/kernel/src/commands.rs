@@ -77,12 +77,13 @@ pub(super) fn stop_command(w: &mut World, i: usize, id: u64) -> (result: ()) [
     kernel_snapshot! { before_rules_world = *w }
     let mut m = w.nodes[i];
     m.last_cmd = id;
+    kernel_snapshot! { m1 = m }
     m = stopped_v(m, Outcome::Stopped);
     w.nodes[i] = m;
     kernel_proof! {
         assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, m));
         apply_command_safety::stop_world(before_rules_world@, *w, i, id);
-        apply_command_safety::stop_e11(before_rules_world@.nodes@[i as int], id);
+        apply_command_safety::stop_e11_v(m1@);
     }
 }
 }

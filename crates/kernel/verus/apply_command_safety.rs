@@ -1043,26 +1043,28 @@ pub(super) proof fn r19_bridge(b: Node, a: Node, n: Node)
 }
 
 
-/// E11.1 (CONTRACTS.md v2.7, rule 6): the Stop rows over the literal stopped node, own group.
-pub(super) proof fn stop_e11(b: Node, id: u64)
-    requires node_headroom(b),
-    ensures ({ let n = retirement::stopped(Node { last_cmd: id, ..b }, Outcome::Stopped);
-        (!(b.phase is Closed || b.phase is Stopping) ==> n.phase == Phase::Stopping(Outcome::Stopped) && n.pos == 0
-            && n.ticket.is_none() && n.question.is_none() && !n.waiting_incident
-            && n.holds == b.holds && n.pool == b.pool
-            && n.run == b.run && n.job == b.job && n.pr_open == b.pr_open && n.worktree == b.worktree
-            && n.next_seq == b.next_seq && n.last_cmd == id
-            && n.run_failures == b.run_failures && n.run_incidents == b.run_incidents
-            && n.fx_failures == b.fx_failures && n.fx_incidents == b.fx_incidents
-            && n.credit == b.credit && n.generation as int == b.generation as int + 1
-            && (match b.effect {
-                None => n.effect.is_none(),
-                Some(e) => n.effect.is_some() && n.effect.unwrap().seq == e.seq
-                    && n.effect.unwrap().kind == e.kind && n.effect.unwrap().cancelling,
+/// E11.1 (CONTRACTS.md v2.7, rule 6): stopped_v's value contract, per field, over its own result term
+/// retirement::stopped(n, Stopped) and its input n. Own group.
+pub(super) proof fn stop_e11_v(n: Node)
+    requires !(n.phase is Closed || n.phase is Stopping) ==> n.generation < u64::MAX,
+    ensures ({ let v = retirement::stopped(n, Outcome::Stopped);
+        (!(n.phase is Closed || n.phase is Stopping) ==> v.phase == Phase::Stopping(Outcome::Stopped) && v.pos == 0
+            && v.ticket.is_none() && v.question.is_none() && !v.waiting_incident
+            && v.holds == n.holds && v.pool == n.pool
+            && v.run == n.run && v.job == n.job && v.pr_open == n.pr_open && v.worktree == n.worktree
+            && v.next_seq == n.next_seq && v.last_cmd == n.last_cmd
+            && v.run_failures == n.run_failures && v.run_incidents == n.run_incidents
+            && v.fx_failures == n.fx_failures && v.fx_incidents == n.fx_incidents
+            && v.credit == n.credit && v.generation as int == n.generation as int + 1
+            && (match n.effect {
+                None => v.effect.is_none(),
+                Some(e) => v.effect.is_some() && v.effect.unwrap().seq == e.seq
+                    && v.effect.unwrap().kind == e.kind && v.effect.unwrap().cancelling,
             }))
-        && (b.phase is Stopping ==> n.phase == b.phase && n.pos == b.pos && n.holds == b.holds && n.pool == b.pool
-            && n.run == b.run && n.job == b.job && n.pr_open == b.pr_open && n.worktree == b.worktree
-            && n.effect == b.effect && n.next_seq == b.next_seq && n.question == b.question) }),
+        && (n.phase is Stopping ==> v.phase == n.phase && v.pos == n.pos && v.holds == n.holds
+            && v.pool == n.pool && v.run == n.run && v.job == n.job && v.pr_open == n.pr_open
+            && v.worktree == n.worktree && v.effect == n.effect && v.next_seq == n.next_seq
+            && v.question == n.question && v.last_cmd == n.last_cmd) }),
 {
     reveal(retirement::stopped);
 }
