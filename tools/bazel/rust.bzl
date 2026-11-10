@@ -212,7 +212,7 @@ _CONTROLLER_TEST_SOURCES["tests/approval_race.rs"] += ["tests/delivery_conforman
 _CONTROLLER_TEST_SOURCES["tests/publication_io.rs"] = _CONTROLLER_TEST_SOURCES.get("tests/publication_io.rs", []) + ["tests/delivery_schedule/**"]
 _CONTROLLER_TEST_SOURCES["tests/replay_check.rs"] = _CONTROLLER_TEST_SOURCES.get("tests/replay_check.rs", []) + ["tests/delivery_machine/**"]
 # One approval schedule per shard, including the eight controller and two fence cases.
-_LIBTEST_SHARDS["tl3-controller/approval_race"] = 37
+_LIBTEST_SHARDS["tl3-controller/approval_race"] = 33
 
 def tl3_rust_test(name, binary_id, gate_args, **kwargs):
     package = native.package_name()
