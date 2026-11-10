@@ -1,10 +1,35 @@
 {
-  "source_head": "37c09c8851a111f67012f7b29d37e60c25f143a6",
+  "source_head": "41958aefa847107b47e89c34431070d735f681df",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "ec5f798ff92a5ee09c4366ff1980c8b1140bf93ea8a210a47877790c495d1506",
-  "groups": 820,
-  "obligations": 1025,
+  "source_sha256": "0d2374cc56f2461d831afe2365128716ba0e0a0662cc26303a713de223d27181",
+  "groups": 825,
+  "obligations": 1030,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_liveness_release_stop",
+      "selector": "kernel::liveness_release#stop",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_liveness_release_finish",
+      "selector": "kernel::liveness_release#finish",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_liveness_release_release",
+      "selector": "kernel::liveness_release#release",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_liveness_reservation_await_stutters",
+      "selector": "kernel::liveness_reservation#await_stutters",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_liveness_reservation_first_visit",
+      "selector": "kernel::liveness_reservation#first_visit",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_liveness_bounds_reserves",
       "selector": "kernel::liveness_bounds#reserves",
