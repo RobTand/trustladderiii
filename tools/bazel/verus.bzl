@@ -443,6 +443,7 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::apply_command_safety::pause_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::apply_answer_values::continue_ingesting": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::apply_answer_values::continue_auditing": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::apply_answer_values::continue_unplanned": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -763,6 +764,9 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "apply_command_safety_stop_world": ("kernel::apply_command_safety#stop_world", 1),
+            "apply_command_safety_change_request_world": ("kernel::apply_command_safety#change_request_world", 1),
+            "apply_command_safety_pause_world": ("kernel::apply_command_safety#pause_world", 1),
             "answers_on_answer_exact": ("kernel::answers#on_answer_exact", 1),
             "apply_command_safety_last_cmd_shift": ("kernel::apply_command_safety#last_cmd_shift", 1),
             "apply_command_safety_pause_facts": ("kernel::apply_command_safety#pause_facts", 1),
