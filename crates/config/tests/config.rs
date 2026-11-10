@@ -2138,7 +2138,7 @@ fn x7_refuses_aggregate_test_demand_before_runtime() {
         .unwrap_err()
         .to_string();
     assert!(
-        error.contains("RobTand/trustladderiii") && error.contains("24 GiB"),
+        error.contains("RobTand/tl3-sandbox") && error.contains("24 GiB"),
         "{error}"
     );
 }

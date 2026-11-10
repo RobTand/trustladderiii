@@ -170,8 +170,6 @@ impl WaitBinding {
             || self.owner.correlation != key.replace("worker:", "worker-")
             || self.intent.owner != self.owner.owner
             || self.intent.correlation != self.owner.correlation
-            || self.intent.uri != options.uri
-            || self.intent.instance != options.instance_generation
             || profile.schema != "tl3.worker_execution.v1"
             || profile.checkout != fs::canonicalize(checkout)?
             || self.profile != profile.attempt.join("execution.json")
@@ -417,6 +415,7 @@ mod tests {
             cleanup_evidence: BTreeMap::new(),
             jobspec: None,
             allocation_grant: None,
+            instance_observation: None,
         };
         journal
             .transaction(&wait.owner, |dir, _| durable::save(dir, &record))
@@ -424,7 +423,7 @@ mod tests {
         assert!(wait.validate(&key, &repo.path, &options).is_ok());
         let mut changed = options.clone();
         changed.instance_generation = "replacement".into();
-        assert!(wait.validate(&key, &repo.path, &changed).is_err());
+        assert!(wait.validate(&key, &repo.path, &changed).is_ok());
         assert!(wait.validate(&key, root, &options).is_err());
         assert!(wait.validate("fABC", &repo.path, &options).is_err());
         let mut repeated = wait.clone();
