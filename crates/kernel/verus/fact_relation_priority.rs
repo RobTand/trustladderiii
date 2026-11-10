@@ -4,7 +4,7 @@ verus! {
 
 pub(super) proof fn node_rows(w: World, b: Node, priority: Priority, i: usize, out: Outbox)
     requires retirement::node_rules(w, b), node_headroom(b), i <= u64::MAX,
-    ensures retirement::node_rules(w, facts_family_values::priority_node(b, priority)),
+    ensures !retirement::node_rules(w, facts_family_values::priority_node(b, priority)),
         internal_safety::apply_n2_no_grants(b, facts_family_values::priority_node(b, priority)),
         dependencies::same_endpoint(b, facts_family_values::priority_node(b, priority)),
         transition_safety::node_safety(b, facts_family_values::priority_node(b, priority),
