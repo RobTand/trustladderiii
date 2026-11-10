@@ -8,7 +8,6 @@ pub(super) proof fn new_world_accepted(w: World)
     requires w.nodes@.len() == 0, w.dependencies@.len() == 0,
         w.gates@.len() > 0,
         forall|g: int| 0 <= g < w.gates@.len() ==> w.gates@[g].w > 0,
-        w.pool_capacity > 0,
     ensures checking::accepted(w),
 {
     checking::accepted_definition(w);
