@@ -1,10 +1,25 @@
 {
-  "source_head": "3cc93b4784c91d4f317a2e59f313460ccc14ca03",
+  "source_head": "95ac58f60065a65a1579c997a3f1144c18fb2d58",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "fb59e3e6426904e1961499a2b25a27ed285d6be33749e97634f4e299be98217a",
-  "groups": 584,
-  "obligations": 782,
+  "source_sha256": "cb8fd0fd22c25ed380a7b1ecdfc905ad670d32f90eecb8366c80362ad00594eb",
+  "groups": 587,
+  "obligations": 785,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_reply_family_recheck_free_arm",
+      "selector": "kernel::reply_family_posts#recheck_free_arm",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_recheck_paid_arm",
+      "selector": "kernel::reply_family_posts#recheck_paid_arm",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_recheck_ask_arm",
+      "selector": "kernel::reply_family_posts#recheck_ask_arm",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_reply_family_spent_v",
       "selector": "kernel::retries#spent_v",
