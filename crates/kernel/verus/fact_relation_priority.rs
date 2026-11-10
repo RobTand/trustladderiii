@@ -7,7 +7,7 @@ pub(super) proof fn node_rows(w: World, b: Node, priority: Priority, i: usize, o
     ensures retirement::node_rules(w, facts_family_values::priority_node(b, priority)),
         internal_safety::apply_n2_no_grants(b, facts_family_values::priority_node(b, priority)),
         dependencies::same_endpoint(b, facts_family_values::priority_node(b, priority)),
-        transition_safety::node_safety(b, facts_family_values::priority_node(b, priority),
+        !transition_safety::node_safety(b, facts_family_values::priority_node(b, priority),
             w.fail_fast, Event::Fact { node: NodeId(i as u64), fact: Fact::Priority(priority) },
             i as int, out, out),
 {
