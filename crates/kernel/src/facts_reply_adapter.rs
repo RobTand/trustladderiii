@@ -38,7 +38,7 @@ pub(super) fn resolve_reply_value(change: ReplyChange, nq: u64, i: usize)
             (node, nq, notes)
         },
         ReplyChange::Ask { node, kind, cont, cost } => {
-            ask_value(node, nq, i, kind, cont, cost)
+            (node, nq, Outbox::new())
         },
         ReplyChange::Incident { node, needs_rob } => {
             let (node, notes) = incident_value(node, i, needs_rob);
