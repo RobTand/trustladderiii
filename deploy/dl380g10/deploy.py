@@ -395,6 +395,121 @@ CLIENT_UNITS = ("tl3d.service", *DEPENDENT_UNITS)
 EVIDENCE_ROOT = Path("/home/rob/tmp/tl3-build/rust-fv/captain/evidence")
 
 
+def recorded_worker_alive(identity):
+    """Check only a recorded PID, failing closed on unreadable identities."""
+    if isinstance(identity, dict) and set(identity) == {"cancelled"} and identity["cancelled"] is True:
+        return False
+    if (not isinstance(identity, dict)
+            or any(type(identity.get(key)) is not int or identity[key] <= 0 for key in ("pid", "start"))
+            or any(not isinstance(identity.get(key), str) or not identity[key] for key in ("machine", "boot"))):
+        raise RuntimeError("malformed TL3 worker identity")
+    if identity["pid"] > 2**31 - 1 or identity["start"] > 2**64 - 1:
+        raise RuntimeError("malformed TL3 worker identity range")
+    machine = Path("/etc/machine-id").read_text().strip()
+    boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    if not machine or not boot:
+        raise RuntimeError("unreadable TL3 worker machine or boot identity")
+    if machine != identity["machine"]:
+        raise RuntimeError("TL3 worker identity belongs to another machine")
+    if boot != identity["boot"]:
+        return False
+    try:
+        text = Path(f"/proc/{identity['pid']}/stat").read_text()
+    except FileNotFoundError:
+        return False
+    try:
+        fields = text.rsplit(")", 1)[1].split()
+        start = int(fields[19])
+        if fields[0] not in ("R", "S", "D", "Z", "T", "t", "X", "x", "K", "W", "P", "I") or start <= 0:
+            raise ValueError()
+    except (IndexError, ValueError):
+        raise RuntimeError("malformed recorded TL3 worker process state") from None
+    return fields[0] not in ("Z", "X", "x") and start == identity["start"]
+
+
+def require_workers_stopped(home):
+    """A slice state and exact TL3 records must both prove quiescence."""
+    try:
+        config = tomllib.loads((paths(home)[1] / "tl3.toml").read_text())["workers"]
+        # This lane can freeze descendants only through the owned worker slice.
+        if config["launcher"] != LAUNCHER:
+            raise RuntimeError("fresh-init requires the TL3 worker slice launcher")
+        runs = Path(config["runs"])
+        owned_directory(runs)
+        if unit_state(WORKER_SLICE) != "inactive":
+            raise RuntimeError("TL3 worker slice must be exactly stopped (inactive)")
+        for run_root in runs.iterdir():
+            if run_root.name.startswith("."):
+                continue
+            owned_directory(run_root)
+            for attempt in run_root.iterdir():
+                if not attempt.name.startswith("attempt-"):
+                    continue
+                owned_directory(attempt)
+                for name in ("claim.json", "process.json"):
+                    record = attempt / name
+                    try:
+                        info = record.lstat()
+                    except FileNotFoundError:
+                        continue
+                    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+                        raise RuntimeError("invalid TL3 worker record ownership")
+                    if recorded_worker_alive(json.loads(record.read_text())):
+                        raise RuntimeError("recorded TL3 worker or supervisor is still active")
+        # Detect admission during the record inventory as well.
+        if unit_state(WORKER_SLICE) != "inactive":
+            raise RuntimeError("TL3 worker slice changed during quiescence check")
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise RuntimeError("cannot prove TL3 workers stopped: identity/config/query failure") from error
+
+
+def freeze_fresh_attempt(home):
+    """Prevent admission, stop clients and owned workers, then stop Postgres."""
+    errors = []
+
+    def verify(unit):
+        try:
+            allowed = ("inactive", "failed") if unit.endswith(".service") else ("inactive",)
+            if unit_state(unit) not in allowed:
+                raise RuntimeError(f"{unit} must be stopped ({', '.join(allowed)})")
+            return True
+        except Exception as error:
+            errors.append(f"{unit}: {error}")
+            return False
+
+    def stop(unit):
+        try:
+            run(["systemctl", "--user", "stop", unit], timeout=150)
+        except Exception as error:
+            errors.append(f"{unit}: {error}")
+        # A failed stop response need not mean the unit is still running.
+        return verify(unit)
+
+    def quiescent(phase):
+        clients_stopped = [verify(unit) for unit in CLIENT_UNITS]
+        try:
+            require_workers_stopped(home)
+            workers_stopped = True
+        except Exception as error:
+            errors.append(f"{phase}: {error}")
+            workers_stopped = False
+        return all(clients_stopped) and workers_stopped
+
+    admission_stopped = stop("tl3d.service")
+    for unit in reversed(DEPENDENT_UNITS):
+        stop(unit)
+    # Never tear down workers while admission might continue.
+    if admission_stopped:
+        stop(WORKER_SLICE)
+    if quiescent("quiescence"):
+        stop("tl3-postgres.service")
+    # Verify every boundary even when an earlier step reported an error.
+    quiescent("final quiescence")
+    verify("tl3-postgres.service")
+    if errors:
+        raise RuntimeError("frozen state NOT established; " + "; ".join(errors))
+
+
 def validate_backup_destination(backup):
     if not backup.is_absolute() or backup.exists() or backup.is_symlink():
         raise RuntimeError("backup destination must be a new absolute private directory")
@@ -743,6 +858,7 @@ def fresh_init(args):
     for binary in RELEASE_BINARIES:
         if not (args.binaries / binary).is_file():
             raise RuntimeError("selected release is incomplete")
+    require_workers_stopped(args.home)
     run(["systemctl", "--user", "stop", "tl3d.service"], timeout=150)
     require_stopped("tl3d.service")
     for unit in DEPENDENT_UNITS:
@@ -750,10 +866,12 @@ def fresh_init(args):
     require_stopped(*CLIENT_UNITS)
     run(["systemctl", "--user", "stop", "tl3-postgres.service"], timeout=150)
     require_stopped(*CLIENT_UNITS, "tl3-postgres.service")
+    require_workers_stopped(args.home)
     cold_backup(sources, args.backup)
     saved_scope = args.backup / "state-scope.json"
     write_file(saved_scope, args.state_manifest.read_bytes())
     args.state_manifest = saved_scope
+    require_workers_stopped(args.home)
     reset_file_state(sources, args.backup, reset)
     context = args.backup / "reset-context.json"
     # A token exists only in this orchestrator and private child pipes. An old
@@ -769,34 +887,44 @@ def fresh_init(args):
     install_selected_binaries(args.binaries, root)
     write_file(root / "deploy/deploy.py", (HERE / "deploy.py").read_bytes())
     # Never auto-start an old release or restore old state after a failure.
-    run(["systemctl", "--user", "start", "tl3-postgres.service"], timeout=150)
-    if unit_state("tl3-postgres.service") != "active":
-        raise RuntimeError("Postgres did not become active")
-    wait_for_postgres(helper, config)
-    require_stopped(*CLIENT_UNITS)
-    run([root / "bin/tl3-deploy", "fresh-database", config, context], cwd=SOURCE, timeout=3400,
-        input=capability + b"\n")
-    run([root / "bin/tl3-deploy", "store-check", config], timeout=30)
-    for unit in CLIENT_UNITS:
-        run(["systemctl", "--user", "reset-failed", unit], timeout=15)
-    run(["systemctl", "--user", "start", "tl3d.service"], timeout=150)
-    deadline = time.monotonic() + 120
-    address = tomllib.loads(config.read_text())["github"]["webhook_listen"]
-    while True:
-        if unit_state("tl3d.service") != "active":
-            raise RuntimeError("selected tl3d failed startup")
-        if listener_ready(address):
-            break
-        if time.monotonic() >= deadline:
-            raise RuntimeError("tl3d listener did not become ready")
-        time.sleep(1)
-    run([root / "bin/tl3-deploy", "store-check", config], timeout=30)
-    for unit in DEPENDENT_UNITS:
-        run(["systemctl", "--user", "start", unit], timeout=150)
-        if unit_state(unit) != "active":
-            raise RuntimeError(f"{unit} failed startup")
-    verify_stability(address)
-    print("Fresh TL3 schema and listener ready; MLflow, status and console explicitly started")
+    try:
+        run(["systemctl", "--user", "start", "tl3-postgres.service"], timeout=150)
+        if unit_state("tl3-postgres.service") != "active":
+            raise RuntimeError("Postgres did not become active")
+        wait_for_postgres(helper, config)
+        require_stopped(*CLIENT_UNITS)
+        require_workers_stopped(args.home)
+        run([root / "bin/tl3-deploy", "fresh-database", config, context], cwd=SOURCE, timeout=3400,
+            input=capability + b"\n")
+        run([root / "bin/tl3-deploy", "store-check", config], timeout=30)
+        for unit in CLIENT_UNITS:
+            run(["systemctl", "--user", "reset-failed", unit], timeout=15)
+        run(["systemctl", "--user", "start", "tl3d.service"], timeout=150)
+        deadline = time.monotonic() + 120
+        address = tomllib.loads(config.read_text())["github"]["webhook_listen"]
+        while True:
+            if unit_state("tl3d.service") != "active":
+                raise RuntimeError("selected tl3d failed startup")
+            if listener_ready(address):
+                break
+            if time.monotonic() >= deadline:
+                raise RuntimeError("tl3d listener did not become ready")
+            time.sleep(1)
+        run([root / "bin/tl3-deploy", "store-check", config], timeout=30)
+        for unit in DEPENDENT_UNITS:
+            run(["systemctl", "--user", "start", unit], timeout=150)
+            if unit_state(unit) != "active":
+                raise RuntimeError(f"{unit} failed startup")
+        verify_stability(address)
+        print("Fresh TL3 schema and listener ready; MLflow, status and console explicitly started")
+    except BaseException as error:
+        try:
+            freeze_fresh_attempt(args.home)
+        except Exception as cleanup:
+            error.add_note(f"fresh-init cleanup failed: {cleanup}")
+        else:
+            error.add_note("fresh-init cleanup verified frozen services and TL3 workers; no state restored")
+        raise
 
 
 def verify_stability(address):
@@ -864,6 +992,7 @@ def authorize_fresh_database(context, database_config, capability=b""):
 
     sources, reset, config = fresh_scope(args)
     require_stopped(*CLIENT_UNITS)
+    require_workers_stopped(args.home)
     if unit_state("tl3-postgres.service") != "active":
         raise RuntimeError("database reset requires active, ready Postgres")
     verify_cold_backup(sources, args.backup, compare_sources=False)

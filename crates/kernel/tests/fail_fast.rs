@@ -426,3 +426,205 @@ fn without_fail_fast_out_of_room_still_splits() {
     assert_eq!(run.phase(), Phase::Planning { must_split: true });
     assert_eq!(run.node().review_stop, None);
 }
+
+/// Kani `fail_fast_*` relational pairs, as concrete executable covers: the
+/// same settled world steps once with the flag on and once with it off. A
+/// diverted pair (the worlds differ beyond the flag) must be a stop for TL3
+/// review, or the funding split, where the flag-off side retried; a
+/// non-diverted pair shows the flag leaves that step unchanged. The
+/// arbitrary-world statement is a Verus relational lemma (K4c).
+fn fail_fast_pair(run: &Run, event: Event) -> bool {
+    let mut base = run.w.clone();
+    base.fail_fast = false;
+    let b = base.nodes[0];
+    let mut on_world = base.clone();
+    on_world.fail_fast = true;
+    let off = step(base, event);
+    let on = step(on_world, event);
+    let mut on_cleared = on.world.clone();
+    on_cleared.fail_fast = false;
+    let diverted = on_cleared != off.world;
+    if diverted {
+        let n = on.world.nodes[0];
+        let r = off.world.nodes[0];
+        assert_eq!(n.credit, b.credit, "a diverted step spends nothing");
+        let funding = n
+            .question
+            .is_some_and(|q| q.kind == QKind::OutOfCredit && q.cont == Cont::Ready(Resume::Making));
+        if funding {
+            assert!(
+                r.question.is_some_and(|q| q.kind == QKind::OutOfCredit
+                    && q.cont == Cont::Planning { must_split: true })
+            );
+            assert!(n.review_stop.is_none());
+        } else {
+            assert!(matches!(
+                n.phase,
+                Phase::Stopping(Outcome::Stopped) | Phase::Closed(Outcome::Stopped)
+            ));
+            assert!(n.review_stop.is_some() && b.review_stop.is_none());
+            assert!(n.question.is_none());
+            assert!(!on.outputs.iter().any(|o| matches!(
+                o,
+                Out::Notice {
+                    notice: Notice::Ask { .. } | Notice::Incident { .. },
+                    ..
+                }
+            )));
+        }
+        let retried = r.attempt > b.attempt
+            || matches!(r.phase, Phase::Planning { .. })
+            || r.question
+                .is_some_and(|q| matches!(q.kind, QKind::CantMeet | QKind::OutOfCredit));
+        assert!(retried, "fail_fast diverts only a retry");
+    }
+    diverted
+}
+
+impl Run {
+    fn reply_now(&self, reply: Reply) -> Event {
+        Event::Reply {
+            node: NodeId(0),
+            generation: self.node().generation,
+            reply,
+        }
+    }
+
+    fn stale(&self, reply: Reply) -> Event {
+        Event::Reply {
+            node: NodeId(0),
+            generation: self.node().generation.wrapping_add(7),
+            reply,
+        }
+    }
+
+    /// Approved in round 1, with the delivery handoff (Enqueue) still in flight.
+    fn publishing_at_enqueue(&mut self) {
+        self.reviewed();
+        self.reply_unconfirmed(Reply::Approved {
+            head: HeadId(self.head),
+        });
+        for _ in 0..8 {
+            let e = self.node().effect.expect("a publication effect");
+            if e.kind == EffectKind::Enqueue {
+                return;
+            }
+            self.send(Event::Ack {
+                node: NodeId(0),
+                seq: e.seq,
+                ack: Ack::Confirmed,
+            });
+        }
+        panic!("never reached the delivery handoff");
+    }
+
+    fn reply_unconfirmed(&mut self, reply: Reply) {
+        self.confirm();
+        let generation = self.node().generation;
+        self.send(Event::Reply {
+            node: NodeId(0),
+            generation,
+            reply,
+        });
+    }
+}
+
+fn ci() -> Event {
+    Event::Fact {
+        node: NodeId(0),
+        fact: Fact::CiFailed { infra: false },
+    }
+}
+
+#[test]
+fn fail_fast_pairs_divert_only_retries() {
+    // fail_fast_plan_cant_meet
+    let mut run = Run::new(false);
+    run.start_planning();
+    assert!(fail_fast_pair(&run, run.reply_now(Reply::PlanCantMeet)));
+    assert!(!fail_fast_pair(&run, run.stale(Reply::PlanCantMeet)));
+
+    // fail_fast_maker_cant_meet / maker_out_of_room / maker_needs_files
+    let mut run = Run::new(false);
+    run.start_making();
+    assert!(fail_fast_pair(&run, run.reply_now(Reply::MakerCantMeet)));
+    assert!(fail_fast_pair(&run, run.reply_now(Reply::MakerOutOfRoom)));
+    assert!(!fail_fast_pair(&run, run.stale(Reply::MakerOutOfRoom)));
+    let files = run.w.intern_footprint([FileId(1)]);
+    assert!(fail_fast_pair(
+        &run,
+        run.reply_now(Reply::MakerNeedsFiles { files, fits: false })
+    ));
+    assert!(!fail_fast_pair(
+        &run,
+        run.reply_now(Reply::MakerNeedsFiles { files, fits: true })
+    ));
+    let mut broke = Run::new(false);
+    broke.start_making();
+    broke.w.nodes[0].credit.spent = broke.w.nodes[0].credit.start;
+    let files = broke.w.intern_footprint([FileId(1)]);
+    assert!(
+        fail_fast_pair(
+            &broke,
+            broke.reply_now(Reply::MakerNeedsFiles { files, fits: true })
+        ),
+        "the funding split diverts"
+    );
+
+    // fail_fast_checks_done: round 0 keeps its free fix round, round 1 diverts.
+    let mut run = Run::new(false);
+    run.start_making();
+    run.made();
+    assert!(!fail_fast_pair(&run, run.reply_now(CHECKS_FAIL)));
+    let mut run = Run::new(false);
+    run.start_making();
+    run.fix_round();
+    run.made();
+    assert!(fail_fast_pair(&run, run.reply_now(CHECKS_FAIL)));
+
+    // fail_fast_changes_requested
+    let mut run = Run::new(false);
+    run.start_making();
+    run.reviewed();
+    assert!(!fail_fast_pair(
+        &run,
+        run.reply_now(Reply::ChangesRequested)
+    ));
+    let mut run = Run::new(false);
+    run.start_making();
+    run.fix_round();
+    run.reviewed();
+    assert!(fail_fast_pair(&run, run.reply_now(Reply::ChangesRequested)));
+
+    // fail_fast_reviewer_out_of_room: the first exhaustion keeps a fresh review.
+    let mut run = Run::new(false);
+    run.start_making();
+    run.reviewed();
+    assert!(!fail_fast_pair(
+        &run,
+        run.reply_now(Reply::ReviewerOutOfRoom)
+    ));
+    run.reply(Reply::ReviewerOutOfRoom);
+    assert!(fail_fast_pair(
+        &run,
+        run.reply_now(Reply::ReviewerOutOfRoom)
+    ));
+
+    // fail_fast_ci_failed_awaiting_delivery
+    let mut run = Run::new(false);
+    run.start_making();
+    run.queued();
+    assert!(!fail_fast_pair(&run, ci()));
+    run.fact(Fact::CiFailed { infra: false });
+    run.queued();
+    assert!(fail_fast_pair(&run, ci()));
+
+    // fail_fast_ci_failed_publishing
+    let mut run = Run::new(false);
+    run.start_making();
+    run.publishing_at_enqueue();
+    assert!(!fail_fast_pair(&run, ci()));
+    run.fact(Fact::CiFailed { infra: false });
+    run.publishing_at_enqueue();
+    assert!(fail_fast_pair(&run, ci()));
+}
