@@ -575,7 +575,6 @@ pub(super) proof fn node_rules_grow(before: World, after: World, n: super::Node)
     requires super::retirement::node_rules(before, n),
         after.gates@.len() >= before.gates@.len(),
         after.file_sets@.len() >= before.file_sets@.len(),
-        after.next_ticket >= before.next_ticket,
         after.next_question >= before.next_question,
     ensures super::retirement::node_rules(after, n),
 {
