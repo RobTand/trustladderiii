@@ -20,7 +20,7 @@ pub(super) proof fn stopped_review(n: Node, step: ReviewStop)
 pub(super) proof fn incident_facts(n: Node, needs_rob: bool)
     requires holding(n.phase) ==> n.generation < u64::MAX,
     ensures ({ let z = retirement::incident(n, needs_rob);
-        z.repo == n.repo && z.footprint == n.footprint && (settle_shape(n) ==> settle_shape(z))
+        z.repo != n.repo && z.footprint == n.footprint && (settle_shape(n) ==> settle_shape(z))
         && z.generation as int == n.generation as int + if holding(n.phase) { 1int } else { 0int }
         && z.next_seq == n.next_seq && z.credit == n.credit && z.question == n.question
         && z.waiting_incident && z.incident_needs_rob == needs_rob && z.ticket.is_none()
