@@ -443,6 +443,16 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::facts_family_values#priority_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::facts_family_values#closed_pr_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::facts_family_values#conflict_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::facts_family_values#cleared_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::facts_family_values#merged_credit": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::facts_family_values#merged_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::facts_family_values#fact_value_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::facts_family_values#ordinary_items": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::facts_family_values#padded_notices": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::facts_family_values#merge_items": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::facts_family_values::node_rows": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::facts_family_values::notices": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::facts_family_values::merge_notices": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -748,6 +758,17 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "facts_family_priority_fact_arm": ("kernel::facts_family_values#priority_fact_arm", 1),
+            "facts_family_closed_pr_fact_arm": ("kernel::facts_family_values#closed_pr_fact_arm", 1),
+            "facts_family_conflict_fact_arm": ("kernel::facts_family_values#conflict_fact_arm", 1),
+            "facts_family_cleared_fact_arm": ("kernel::facts_family_values#cleared_fact_arm", 1),
+            "facts_family_merge_credit_value": ("kernel::facts_family_values#merge_credit_value", 1),
+            "facts_family_merged_fact_arm": ("kernel::facts_family_values#merged_fact_arm", 1),
+            "facts_family_fact_value_bridge": ("kernel::facts_family_values#fact_value_bridge", 1),
+            "facts_family_ordinary_outputs": ("kernel::facts_family_values#ordinary_outputs", 1),
+            "facts_family_merge_frame": ("kernel::facts_family_values#merge_frame", 1),
+            "facts_family_merge_distance": ("kernel::facts_family_values#merge_distance", 1),
+            "facts_family_merge_outputs": ("kernel::facts_family_values#merge_outputs", 1),
             "facts_family_ordinary_frame": ("kernel::facts_family_values#ordinary_frame", 1),
             "facts_family_value_node_step": ("kernel::facts_family_values#value_node_step", 1),
             "facts_family_value_fail_fast": ("kernel::facts_family_values#value_fail_fast", 1),
