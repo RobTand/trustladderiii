@@ -81,7 +81,7 @@ pub(super) proof fn context_frame(b: World, n: World, i: int, k: int, extra: int
         n.nodes@ == b.nodes@.update(i, n.nodes@[i]), n.gates@ == b.gates@,
         n.file_sets@ == b.file_sets@, n.dependencies@ == b.dependencies@,
         n.next_ticket <= k + extra, n.next_question <= k + extra,
-        small(n.nodes@[i], k + extra),
+        true,
     ensures context(n, k + extra),
 {
     reveal(context); reveal(footprint::ordered_table);
