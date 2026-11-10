@@ -161,7 +161,7 @@ macro_rules! controller {
                 for a in [
                     &mut allowances.agent_worker,
                     &mut allowances.github_delivery,
-                    &mut allowances.prismabuild,
+                    &mut allowances.checks,
                     &mut allowances.worktrees,
                 ] {
                     a.silence_secs = 1;
@@ -184,7 +184,7 @@ macro_rules! controller {
             fn allowance(&self, d: &Delivery) -> &tl3_config::Allowance {
                 match upstream(d.output) {
                     Upstream::Workers => &self.allowances.agent_worker,
-                    Upstream::PrismaBuild => &self.allowances.prismabuild,
+                    Upstream::PrismaBuild => &self.allowances.checks,
                     Upstream::GitHub | Upstream::Delivery => &self.allowances.github_delivery,
                     Upstream::Worktrees => &self.allowances.worktrees,
                 }

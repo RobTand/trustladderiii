@@ -477,8 +477,7 @@ fn qualified_binding_passes_real_controller_capacity_and_startup_activation() {
     fixture.seal_record();
     let mut config =
         tl3_config::Config::parse(include_str!("../../../../../config/example.toml")).unwrap();
-    config.execution_backend = tl3_config::ExecutionBackend::Flux;
-    config.flux = Some(fixture.flux.clone());
+    config.flux = fixture.flux.clone();
     for repo in &mut config.github.repos {
         repo.container_image = None;
     }
@@ -517,7 +516,7 @@ fn canary_qualification_gate_never_marks_an_activated_stager_and_refuses_records
     let mut config =
         tl3_config::Config::parse(include_str!("../../../../../config/example.toml")).unwrap();
     config.execution_backend = tl3_config::ExecutionBackend::Flux;
-    config.flux = Some(fixture.flux.clone());
+    config.flux = fixture.flux.clone();
     for repo in &mut config.github.repos {
         repo.container_image = None;
     }
@@ -527,7 +526,7 @@ fn canary_qualification_gate_never_marks_an_activated_stager_and_refuses_records
         Stager::for_canary_qualification(&config),
         "flux.activation.canary_qualification",
     );
-    config.flux.as_mut().unwrap().activation = None;
+    config.flux.activation = None;
     let canary = Stager::for_canary_qualification(&config).unwrap();
     assert_eq!(
         canary.canary_qualification_marker(),

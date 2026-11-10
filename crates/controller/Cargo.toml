@@ -71,11 +71,6 @@ name = "simulation"
 path = "tests/simulation.rs"
 harness = false
 
-[[test]]
-name = "prismabuild"
-path = "tests/prismabuild.rs"
-harness = false
-
 
 [[test]]
 name = "worktrees"

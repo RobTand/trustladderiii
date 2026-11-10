@@ -89,11 +89,7 @@ impl Stager {
         config: &tl3_config::Config,
         gate: impl FnOnce(&tl3_config::Flux) -> Result<Gate>,
     ) -> Result<Self> {
-        let tl3_config::SelectedExecution::Flux(flux) = config.selected_execution()? else {
-            return Err(Error::Invalid(
-                "Flux preparation requires explicit Flux selection",
-            ));
-        };
+        let flux = &config.flux;
         Ok(Self {
             config: flux.clone(),
             gate: gate(flux)?,
@@ -102,7 +98,7 @@ impl Stager {
             global_protected: config.planning.protected_paths.clone(),
             no_progress: config
                 .allowances
-                .prismabuild
+                .checks
                 .no_progress_secs
                 .try_into()
                 .map_err(|_| Error::Invalid("positive check no-progress allowance required"))?,

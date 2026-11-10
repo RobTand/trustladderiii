@@ -557,8 +557,8 @@ fn flux_checks_controller_incident_clearance_allows_fresh_dispatch() {
     )
     .unwrap();
     let mut allowances = tl3_config::Allowances::default();
-    allowances.prismabuild.silence_secs = 1;
-    allowances.prismabuild.no_progress_secs = 3;
+    allowances.checks.silence_secs = 1;
+    allowances.checks.no_progress_secs = 3;
     c.set_allowances(allowances);
     c.intake(LabelledIssue {
         delivery: "flux-incident-intake".into(),
