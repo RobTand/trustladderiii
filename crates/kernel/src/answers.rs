@@ -50,7 +50,22 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
                 Some(q) => q.id != id,
                 None => true,
             })),
+
+        (final(w).nodes@[i as int].holds ==> old(w).nodes@[i as int].holds),
+        (final(w).nodes@[i as int].pool ==> old(w).nodes@[i as int].pool),
+        final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket || final(w).nodes@[i as int].ticket.is_none(),
+        final(w).nodes@[i as int].credit.withheld == old(w).nodes@[i as int].credit.withheld,
+        old(w).next_question <= final(w).next_question,
+        (retirement::node_rules(*old(w), old(w).nodes@[i as int])
+            ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
 ] {
+    kernel_snapshot! { before_answer_rules = *w }
+    kernel_proof! {
+        if retirement::node_rules(*w, w.nodes@[i as int]) {
+            handler_safety::rules_to_v(*w, w.nodes@[i as int]);
+        }
+    }
+
     kernel_proof! {
         if node_checked(*w, w.nodes@[i as int]) { handler_safety::checked_node_ok(*w, w.nodes@[i as int]); }
     }
@@ -60,6 +75,13 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
     match note {
         Some(x) => notice(out, i, x),
         None => {}
+    }
+
+    kernel_proof! {
+        if retirement::node_rules(before_answer_rules@, before_answer_rules@.nodes@[i as int]) {
+            handler_safety::rules_world_update(before_answer_rules@, *w,
+                before_answer_rules@.nodes@[i as int], w.nodes@[i as int]);
+        }
     }
 }
 }
@@ -99,7 +121,18 @@ pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
             Some(q) => q.id != id,
             None => true,
         })),
+
+        (result.0.holds ==> n.holds),
+        (result.0.pool ==> n.pool),
+        result.0.ticket == n.ticket || result.0.ticket.is_none(),
+        result.0.credit.withheld == n.credit.withheld,
+        nq <= result.1,
+        (handler_safety::node_rules_v(n, nq) ==> handler_safety::node_rules_v(result.0, result.1)),
 ] proof [reveal(distance);] {
+    kernel_proof! {
+        if handler_safety::node_rules_v(n, nq) { handler_safety::rules_v_nq_grow(n, nq, u64::MAX); }
+    }
+
     let mut m = n;
     let mut nq = nq;
     let mut note: Option<Notice> = None;
@@ -115,10 +148,18 @@ pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
         Phase::Stopping(_) => match answer {
             Answer::Retry => {
                 m.question = None;
-                kernel_proof! { handler_safety::field_step(n, m); }
+                kernel_proof! {
+                    if handler_safety::node_rules_v(n, nq) { handler_safety::clear_cleanup_rules_v(n, nq); }
+                    handler_safety::field_step(n, m);
+                }
             }
             Answer::MarkHandled => {
                 m.question = None;
+                kernel_proof! {
+                    if handler_safety::node_rules_v(n, nq) {
+                        handler_safety::cleanup_handled_rules_v(n, nq);
+                    }
+                }
                 mark_handled(&mut m);
                 kernel_proof! { handler_safety::field_step(n, m); }
             }
@@ -145,16 +186,31 @@ pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
                     let (m1, x) = go_on(m, q, 0);
                     m = m1;
                     note = x;
+                    kernel_proof! {
+                        if handler_safety::node_rules_v(n, nq) {
+                            handler_safety::rules_v_without_question(m, u64::MAX, nq);
+                        }
+                    }
                 }
                 Answer::TryAgain => {
                     let (m1, x) = retry_answer_node(m, q);
                     m = m1;
                     note = x;
+                    kernel_proof! {
+                        if handler_safety::node_rules_v(n, nq) {
+                            handler_safety::rules_v_without_question(m, u64::MAX, nq);
+                        }
+                    }
                 }
                 Answer::AddCredit(k) => {
                     let (m1, x) = go_on(m, q, k);
                     m = m1;
                     note = x;
+                    kernel_proof! {
+                        if handler_safety::node_rules_v(n, nq) {
+                            handler_safety::rules_v_without_question(m, u64::MAX, nq);
+                        }
+                    }
                 }
                 Answer::ChangeRequest => {
                     kernel_snapshot! { before_replace = m }
@@ -163,6 +219,9 @@ pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
                         assert(m.proposed == before_replace@.proposed && m.adopted == before_replace@.adopted)
                             by { reveal(retirement::stopped); }
                         handler_safety::stop_step(before_replace@, Outcome::Replaced);
+                        if handler_safety::node_rules_v(n, nq) {
+                            handler_safety::stopped_rules_v(before_replace@, Outcome::Replaced, nq);
+                        }
                     }
                 }
                 Answer::Stop => {
@@ -172,6 +231,9 @@ pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
                         assert(m.proposed == before_stop@.proposed && m.adopted == before_stop@.adopted)
                             by { reveal(retirement::stopped); }
                         handler_safety::stop_step(before_stop@, Outcome::Stopped);
+                        if handler_safety::node_rules_v(n, nq) {
+                            handler_safety::stopped_rules_v(before_stop@, Outcome::Stopped, nq);
+                        }
                     }
                 }
                 _ => { kernel_proof! { handler_safety::same_step(n); } }
@@ -203,6 +265,13 @@ fn clarify_node(n: Node, nq: u64, q: Question) -> (result: (Node, u64, Notice)) 
         result.2 == (Notice::Ask { question: nq }),
         n.phase == Phase::AwaitingRob && n.question == Some(q) && !q.clarified
             ==> handler_safety::command_step(n, result.0),
+
+        (result.0.holds ==> n.holds),
+        (result.0.pool ==> n.pool),
+        result.0.ticket == n.ticket || result.0.ticket.is_none(),
+        result.0.credit.withheld == n.credit.withheld,
+        (handler_safety::node_rules_v(n, nq) && n.phase == Phase::AwaitingRob && n.question == Some(q)
+            ==> handler_safety::node_rules_v(result.0, result.1)),
 ] {
     let mut m = n;
     let next = nq;
@@ -216,6 +285,12 @@ fn clarify_node(n: Node, nq: u64, q: Question) -> (result: (Node, u64, Notice)) 
             handler_safety::clarify_step(n, q, next);
         }
     }
+    kernel_proof! {
+        if handler_safety::node_rules_v(n, nq) && n.phase == Phase::AwaitingRob && n.question == Some(q) {
+            handler_safety::clarified_rules_v(n, nq, q);
+        }
+    }
+
     (m, next + 1, Notice::Ask { question: next })
 }
 }
@@ -253,12 +328,25 @@ fn retry_answer_node(n: Node, q: Question) -> (result: (Node, Option<Notice>)) [
         }),
         n.phase == Phase::AwaitingRob ==> handler_safety::command_step(n, result.0),
         result.1.is_none(),
+
+        (result.0.holds ==> n.holds),
+        (result.0.pool ==> n.pool),
+        result.0.ticket == n.ticket || result.0.ticket.is_none(),
+        result.0.credit.withheld == n.credit.withheld,
+        (handler_safety::node_rules_v(n, u64::MAX) && n.phase == Phase::AwaitingRob && n.question == Some(q) && q.kind == QKind::CantMeet ==> handler_safety::node_rules_v(result.0, u64::MAX)),
 ] {
     let mut m = n;
     m.attempt = 1;
     m.review_restarted = false;
     m.round = 0;
     m.replanned = false;
+    kernel_proof! {
+        if handler_safety::node_rules_v(n, u64::MAX) && n.phase == Phase::AwaitingRob && n.question == Some(q) && q.kind == QKind::CantMeet {
+            handler_safety::retry_rules_v(n, q, u64::MAX);
+            assert(m == try_again_node(n));
+            assert((Question { cost: q.cost.max(1), ..q }) == q);
+        }
+    }
     m = continue_node(
         m,
         Question {

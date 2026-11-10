@@ -33,6 +33,12 @@ pub(super) fn go_on(n: Node, q: Question, deposit: u8) -> (result: (Node, Option
             && n.replanned && q.kind == QKind::OutOfCredit {
             Some(Notice::Note(NoteKind::Replanned))
         } else { None }),
+
+        (result.0.holds ==> n.holds),
+        (result.0.pool ==> n.pool),
+        result.0.ticket == n.ticket || result.0.ticket.is_none(),
+        result.0.credit.withheld == n.credit.withheld,
+        (n.phase == Phase::AwaitingRob && n.question == Some(q) && (deposit == 0 || q.kind == QKind::OutOfCredit) && handler_safety::node_rules_v(n, u64::MAX) ==> handler_safety::node_rules_v(result.0, u64::MAX)),
 ] {
     let m = continue_node(n, q, deposit);
     let mut note: Option<Notice> = None;
@@ -83,6 +89,12 @@ pub(super) fn continue_node(n: Node, q: Question, deposit: u8) -> (result: Node)
         result.replanned == n.replanned,
         result.credit.merge_credited == n.credit.merge_credited,
         result.credit.withheld == n.credit.withheld,
+
+        (result.holds ==> n.holds),
+        (result.pool ==> n.pool),
+        result.ticket == n.ticket || result.ticket.is_none(),
+        result.credit.withheld == n.credit.withheld,
+        (n.phase == Phase::AwaitingRob && n.question == Some(q) && (deposit == 0 || q.kind == QKind::OutOfCredit) && handler_safety::node_rules_v(n, u64::MAX) ==> handler_safety::node_rules_v(result, u64::MAX)),
 ] proof [reveal(distance);] {
     let mut m = n;
     m.credit.fund_and_pay(deposit, q.cost);
@@ -115,6 +127,13 @@ pub(super) fn continue_node(n: Node, q: Question, deposit: u8) -> (result: Node)
             }
         }
     }
+    kernel_proof! {
+        if n.phase == Phase::AwaitingRob && n.question == Some(q) && (deposit == 0 || q.kind == QKind::OutOfCredit) && handler_safety::node_rules_v(n, u64::MAX) {
+            handler_safety::continued_rules_v(n, q, deposit, u64::MAX);
+            assert(m == handler_safety::continued_node(n, q, deposit));
+        }
+    }
+
     m
 }
 }
@@ -179,9 +198,15 @@ pub(super) fn enter_stopping_v(n: Node, outcome: Outcome) -> (result: Node) [
         !(n.phase is Closed || n.phase is Stopping) ==>
         result.pos == 0 && result.ticket.is_none() && result.question.is_none()
         && !result.waiting_incident && !result.incident_needs_rob,
+
+        (result.holds ==> n.holds),
+        (result.pool ==> n.pool),
+        result.ticket == n.ticket || result.ticket.is_none(),
+        result.credit.withheld == n.credit.withheld,
 ] {
     let mut m = n;
     enter_stopping(&mut m, outcome);
+    kernel_proof! { handler_safety::stopped_no_grants(n, outcome); }
     m
 }
 }

@@ -150,6 +150,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
                 node.proposed = Some(head);
                 node.priority = priority;
                 w.nodes.push(node);
+                kernel_proof! { apply_new_safety::adoption_c2(before_apply@, *w, repo); }
             }
             kernel_proof! {
                 transition_safety::lift_apply_none(before_apply@, *w, event, before_apply_out@, *out);
@@ -343,6 +344,14 @@ fn apply_new_request(w: &mut World, repo: RepoId, priority: Priority,
         forall|j: int| old(w).nodes@.len() <= j < final(w).nodes@.len()
             ==> !(final(w).nodes@[j].phase is Stopping || final(w).nodes@[j].phase is Closed),
         *final(_out) == *old(_out),
+
+        final(w).dependencies@ == old(w).dependencies@,
+        old(w).next_question <= final(w).next_question,
+        (repo.0 < old(w).gates@.len() ==> {
+            let n = final(w).nodes@[old(w).nodes@.len() as int];
+            retirement::node_rules(*final(w), n) && !n.holds && !n.pool
+                && n.ticket.is_none() && !n.credit.withheld
+        }),
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
     kernel_snapshot! { before_apply = *w }
     kernel_snapshot! { before_apply_out = *_out }
@@ -351,6 +360,9 @@ fn apply_new_request(w: &mut World, repo: RepoId, priority: Priority,
             let mut node = Node::new(repo);
             node.priority = priority;
             w.nodes.push(node);
+            kernel_proof! {
+                handler_safety::initial_rules(*w, w.nodes@[before_apply@.nodes@.len() as int], repo);
+            }
         }
         kernel_proof! {
             transition_safety::lift_apply_none(before_apply@, *w, (Event::NewRequest { repo, priority }), before_apply_out@, *_out);
@@ -882,6 +894,20 @@ fn apply_command(w: &mut World, node: NodeId, id: u64, command: Command,
         final(w).nodes@.len() == old(w).nodes@.len(),
         node.0 < old(w).nodes@.len() ==> transition_safety::others_unchanged(*old(w), *final(w), node.0 as int),
         node.0 >= old(w).nodes@.len() ==> final(w).nodes@ == old(w).nodes@,
+
+        final(w).dependencies@ == old(w).dependencies@,
+        old(w).next_question <= final(w).next_question,
+        old(w).nodes@.len() <= u64::MAX,
+        (node.0 < old(w).nodes@.len() ==> {
+            let b = old(w).nodes@[node.0 as int];
+            let n = final(w).nodes@[node.0 as int];
+            (retirement::node_rules(*old(w), b) ==> retirement::node_rules(*final(w), n))
+                && (n.holds ==> b.holds) && (n.pool ==> b.pool)
+                && (n.ticket == b.ticket || n.ticket.is_none())
+                && n.credit.withheld == b.credit.withheld
+                && n.repo == b.repo && n.footprint == b.footprint
+                && final(w).nodes@ == old(w).nodes@.update(node.0 as int, n)
+        }),
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
     kernel_snapshot! { before_apply = *w }
     kernel_snapshot! { before_apply_out = *out }

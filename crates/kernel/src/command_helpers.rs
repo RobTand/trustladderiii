@@ -44,6 +44,11 @@ pub(super) fn mark_handled(m: &mut Node) -> (result: ()) [
         final(m).proposed == old(m).proposed, final(m).adopted == old(m).adopted,
         final(m).review_stop == old(m).review_stop, final(m).attempt == old(m).attempt,
         final(m).replanned == old(m).replanned,
+
+        (final(m).holds ==> old(m).holds),
+        (final(m).pool ==> old(m).pool),
+        final(m).ticket == old(m).ticket || final(m).ticket.is_none(),
+        final(m).credit.withheld == old(m).credit.withheld,
 ] {
     kernel_snapshot! { before_handled = *m }
     if let Some(Item::Teardown(kind)) = m.current() {
