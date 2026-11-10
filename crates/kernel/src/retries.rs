@@ -57,6 +57,9 @@ fn raise_failed_run_incident(w: &mut World, i: usize, needs_rob: bool,
             old(w).nodes@[i as int].generation < u64::MAX,
     ensures retries_facts::incident_write(old(w).nodes@, final(w).nodes@, i as int, needs_rob),
         final(w).nodes@[i as int] == retirement::incident(old(w).nodes@[i as int], needs_rob),
+        final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> #[trigger] final(w).nodes@[j] == old(w).nodes@[j],
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
@@ -123,15 +126,7 @@ pub(super) fn resolve_reply_change(w: &mut World, i: usize, change: ReplyChange,
         },
         ReplyChange::Incident { node, needs_rob } => {
             w.nodes[i] = node;
-            kernel_snapshot! { incident_nodes = w.nodes@ }
             raise_failed_run_incident(w, i, needs_rob, out);
-            kernel_proof! {
-                reveal(retries_facts::incident_write);
-                node_writes::write_length(incident_nodes@, i as int,
-                    retirement::incident(incident_nodes@[i as int], needs_rob));
-                node_writes::write_other(incident_nodes@, i as int,
-                    retirement::incident(incident_nodes@[i as int], needs_rob));
-            }
         },
     }
 }
