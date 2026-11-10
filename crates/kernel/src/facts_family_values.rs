@@ -234,7 +234,7 @@ pub(super) proof fn ordinary_outputs(n: Node, notes: Outbox, i: usize, fact: Fac
 }
 
 pub(super) proof fn merge_frame(n: Node, value: Node, head: HeadId, checks_passed: bool)
-    requires node_headroom(n), value == retirement::fact_node(n, Fact::PrMerged { head, checks_passed }),
+    requires node_headroom(n),
     ensures value.repo == n.repo, value.footprint == n.footprint,
         settle_shape(n) ==> settle_shape(value),
         n.phase is Closed ==> value.phase is Closed,
