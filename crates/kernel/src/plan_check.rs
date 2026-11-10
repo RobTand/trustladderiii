@@ -27,14 +27,23 @@ pub(super) fn reply_plan_check(w: &mut World, i: usize, reply: Reply,
                     && final(w).next_question == old(w).next_question
                     && *final(_out) == *old(_out)
             }),
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds);] {
+] {
+    kernel_snapshot! { before_dispatch = *w }
+    kernel_snapshot! { before_dispatch_len = _out.len }
+    kernel_proof! { reveal(reply_family_values::plan_check); }
     let c = ReplyCtx { node: i, generation: w.nodes[i].generation,
         reply: reply, fast: w.fail_fast, next_question: w.next_question };
     let change = reply_plan_check_node(w.nodes[i], c);
+    kernel_proof! { reply_family_dispatch::plan_check_value_posts(w.nodes@[i as int], c); }
     resolve_reply_change(w, i, change, _out);
     kernel_proof! {
         reveal(retirement::stopped); reveal(handler_safety::ladder);
         reveal(port_t860_contracts::transition_post); reveal(progress_gate_contracts::maker_transition);
+    }
+
+    kernel_proof! {
+        reveal(reply_family_dispatch::other_rows);
+        reply_family_dispatch::reply_lift(before_dispatch@, *w, i as int, before_dispatch_len@, _out.len);
     }
 }
 }
@@ -45,24 +54,23 @@ pub(super) fn reply_plan_check_node(n: Node, c: ReplyCtx) -> (result: ReplyChang
     requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
         matches!(c.reply, Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit),
     ensures result == reply_family_values::plan_check(n),
-        reply_family_values::reply_bound(n, c.next_question, result),
-        reply_family_safety::rows(n, c, result),
-        (successful_reply_input(n, c.reply) ==> distance(reply_family_values::finish(c.next_question, result)) < distance(n)),
-        reply_family_values::finish(c.next_question, result).footprint == n.footprint,
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(retirement::stopped);] {
+        reply_family_values::callable(result),
+] proof [reveal(reply_family_values::plan_check);] {
     let mut node = n;
     let mut note: Option<Notice> = None;
     let i = c.node;
     let reply = c.reply;
-match reply {
+    match reply {
         Reply::PlanCheckRejected => {
-            stop_for_review(&mut node, ReviewStop::PlanCantMeet);
+            node = stop_for_review_v(node, ReviewStop::PlanCantMeet);
+            return ReplyChange::Done { node, note };
         }
         Reply::PlanCheckNeedsSplit => {
-            stop_for_review(&mut node, ReviewStop::PlanCantMeet);
+            node = stop_for_review_v(node, ReviewStop::PlanCantMeet);
+            return ReplyChange::Done { node, note };
         }
         _ => {}
     }
-    { let value = ReplyChange::Done { node, note }; kernel_proof! { reply_family_safety::check_rows(n, c, value); } return value; }
+    ReplyChange::Done { node, note }
 }
 }

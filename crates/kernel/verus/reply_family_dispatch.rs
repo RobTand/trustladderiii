@@ -216,4 +216,235 @@ pub(super) proof fn rebase_value_posts(n: Node, c: ReplyCtx)
     reply_family_posts::rebase_value_posts(n, c.next_question, c.reply);
     rebase_rows(n, c);
 }
+pub(super) proof fn plan_bounds(n: Node, c: ReplyCtx)
+    requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
+        matches!(c.reply, Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet),
+    ensures reply_family_values::reply_bound(n, c.next_question, reply_family_values::plan(n, c.fast, c.reply)),
+        c.reply == Reply::PlanCantMeet && c.fast && n.phase is Planning ==>
+            reply_family_values::finish(c.next_question, reply_family_values::plan(n, c.fast, c.reply)).phase == Phase::Stopping(Outcome::Stopped)
+                && reply_family_values::finish(c.next_question, reply_family_values::plan(n, c.fast, c.reply)).review_stop == Some(ReviewStop::PlanCantMeet),
+
+{
+    reveal(reply_family_values::plan);
+    match c.reply {
+        Reply::PlanCantMeet => reply_family_posts::plan_retry_value_posts(n, c.fast, c.next_question, true),
+        Reply::PlanLeaf { footprint, fits } => {
+            if !(fits && !footprint::footprint_empty(footprint) && !matches!(n.phase, Phase::Planning { must_split: true })) {
+                reply_family_posts::plan_retry_value_posts(n, c.fast, c.next_question, false);
+            }
+        },
+        _ => {},
+    }
+}
+
+pub(super) proof fn plan_progress(n: Node, c: ReplyCtx)
+    requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
+        matches!(c.reply, Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet),
+    ensures successful_reply_input(n, c.reply) ==>
+        distance(reply_family_values::finish(c.next_question, reply_family_values::plan(n, c.fast, c.reply))) < distance(n),
+{
+    reveal(reply_family_values::plan);
+    reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);
+    footprint::inline_is_valid(vstd::pervasive::arbitrary(), 1);
+}
+
+pub(super) proof fn plan_completion(n: Node, c: ReplyCtx)
+    requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
+        matches!(c.reply, Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet),
+    ensures reply_family_safety::rows(n, c, reply_family_values::plan(n, c.fast, c.reply)),
+{
+    plan_bounds(n, c);
+    reveal(reply_family_safety::completed);
+    assert forall|before: World|
+        #[trigger] retirement::node_rules(before, before.nodes@[c.node as int])
+            && reply_family_safety::stage(before, n, c) implies {
+                let b = before.nodes@[c.node as int];
+                let z = reply_family_values::finish(c.next_question, reply_family_values::plan(n, c.fast, c.reply));
+                transition_safety::node_step(b, z) && z.next_seq == b.next_seq
+                    && transition_safety::fail_fast_node(b, z, c.fast,
+                        Event::Reply { node: NodeId(c.node as u64), generation: c.generation, reply: c.reply }, c.node as int)
+                    && transition_safety::reply_rules(b, z, c.fast, c.generation, c.reply)
+            } by {
+        reveal(retirement::node_rules); reveal(port_t860_contracts::admissible);
+        reveal(port_t860_contracts::ended);
+        let b = before.nodes@[c.node as int];
+        let z = reply_family_values::finish(c.next_question, reply_family_values::plan(n, c.fast, c.reply));
+        pair_rows(b, z);
+        reveal(reply_family_values::plan);
+        reveal(reply_family_values::plan_retry);
+        reveal(retirement::stopped); reveal(port_t860_contracts::audit_node);
+        reveal(distance);
+    }
+}
+
+pub(super) proof fn plan_value_posts(n: Node, c: ReplyCtx)
+    requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
+        matches!(c.reply, Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet),
+    ensures reply_family_values::reply_bound(n, c.next_question, reply_family_values::plan(n, c.fast, c.reply)),
+        reply_family_safety::rows(n, c, reply_family_values::plan(n, c.fast, c.reply)),
+        (successful_reply_input(n, c.reply) ==> distance(reply_family_values::finish(c.next_question, reply_family_values::plan(n, c.fast, c.reply))) < distance(n)),
+        (c.reply == Reply::PlanCantMeet && c.fast && n.phase is Planning ==>
+            reply_family_values::finish(c.next_question, reply_family_values::plan(n, c.fast, c.reply)).phase == Phase::Stopping(Outcome::Stopped)
+                && reply_family_values::finish(c.next_question, reply_family_values::plan(n, c.fast, c.reply)).review_stop == Some(ReviewStop::PlanCantMeet)),
+{
+    plan_bounds(n, c); plan_progress(n, c); plan_completion(n, c);
+}
+
+pub(super) proof fn ingest_bounds(n: Node, c: ReplyCtx)
+    requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
+        matches!(c.reply, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees | Reply::AuditDisagrees | Reply::ProtectedPaths),
+    ensures reply_family_values::reply_bound(n, c.next_question, reply_family_values::ingest(n, c.reply)),
+        reply_family_values::finish(c.next_question, reply_family_values::ingest(n, c.reply)).footprint == n.footprint,
+{
+    reveal(reply_family_values::ingest);
+    reveal(port_t860_contracts::audit_node); reveal(retirement::stopped);
+    match c.reply {
+        Reply::IngestDone { size } => timing3_lemmas::ingest_deposit_bound(size),
+        Reply::IngestEarlyEnd(_) => timing3_lemmas::ingest_deposit_bound(1),
+        _ => {},
+    }
+}
+
+pub(super) proof fn ingest_progress(n: Node, c: ReplyCtx)
+    requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
+        matches!(c.reply, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees | Reply::AuditDisagrees | Reply::ProtectedPaths),
+    ensures successful_reply_input(n, c.reply) ==>
+        distance(reply_family_values::finish(c.next_question, reply_family_values::ingest(n, c.reply))) < distance(n),
+{
+    reveal(reply_family_values::ingest);
+    reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);
+    reveal(retirement::stopped); reveal(port_t860_contracts::audit_node);
+}
+
+pub(super) proof fn ingest_completion(n: Node, c: ReplyCtx)
+    requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
+        matches!(c.reply, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees | Reply::AuditDisagrees | Reply::ProtectedPaths),
+    ensures reply_family_safety::rows(n, c, reply_family_values::ingest(n, c.reply)),
+{
+    ingest_bounds(n, c);
+    reveal(reply_family_safety::completed);
+    assert forall|before: World|
+        #[trigger] retirement::node_rules(before, before.nodes@[c.node as int])
+            && reply_family_safety::stage(before, n, c) implies {
+                let b = before.nodes@[c.node as int];
+                let z = reply_family_values::finish(c.next_question, reply_family_values::ingest(n, c.reply));
+                transition_safety::node_step(b, z) && z.next_seq == b.next_seq
+                    && transition_safety::fail_fast_node(b, z, c.fast,
+                        Event::Reply { node: NodeId(c.node as u64), generation: c.generation, reply: c.reply }, c.node as int)
+                    && transition_safety::reply_rules(b, z, c.fast, c.generation, c.reply)
+            } by {
+        reveal(retirement::node_rules); reveal(port_t860_contracts::admissible);
+        reveal(port_t860_contracts::ended);
+        let b = before.nodes@[c.node as int];
+        let z = reply_family_values::finish(c.next_question, reply_family_values::ingest(n, c.reply));
+        pair_rows(b, z);
+        reveal(reply_family_values::ingest);
+        reveal(reply_family_values::plan_retry);
+        reveal(retirement::stopped); reveal(port_t860_contracts::audit_node);
+        reveal(distance);
+    }
+}
+
+pub(super) proof fn ingest_value_posts(n: Node, c: ReplyCtx)
+    requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
+        matches!(c.reply, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees | Reply::AuditDisagrees | Reply::ProtectedPaths),
+    ensures reply_family_values::reply_bound(n, c.next_question, reply_family_values::ingest(n, c.reply)),
+        reply_family_values::finish(c.next_question, reply_family_values::ingest(n, c.reply)).footprint == n.footprint,
+        reply_family_safety::rows(n, c, reply_family_values::ingest(n, c.reply)),
+        (successful_reply_input(n, c.reply) ==> distance(reply_family_values::finish(c.next_question, reply_family_values::ingest(n, c.reply))) < distance(n)),
+{
+    ingest_bounds(n, c); ingest_progress(n, c); ingest_completion(n, c);
+}
+
+pub(super) proof fn plan_check_bounds(n: Node, c: ReplyCtx)
+    requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
+        matches!(c.reply, Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit),
+    ensures reply_family_values::reply_bound(n, c.next_question, reply_family_values::plan_check(n)),
+        reply_family_values::finish(c.next_question, reply_family_values::plan_check(n)).footprint == n.footprint,
+{
+    reveal(reply_family_values::plan_check);
+    reply_family_facts::stopped_review(n, ReviewStop::PlanCantMeet);
+}
+
+pub(super) proof fn plan_check_progress(n: Node, c: ReplyCtx)
+    requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
+        matches!(c.reply, Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit),
+    ensures successful_reply_input(n, c.reply) ==>
+        distance(reply_family_values::finish(c.next_question, reply_family_values::plan_check(n))) < distance(n),
+{
+    reveal(reply_family_values::plan_check);
+    reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);
+    reveal(retirement::stopped); reveal(port_t860_contracts::audit_node);
+}
+
+pub(super) proof fn plan_check_completion(n: Node, c: ReplyCtx)
+    requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
+        matches!(c.reply, Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit),
+    ensures reply_family_safety::rows(n, c, reply_family_values::plan_check(n)),
+{
+    plan_check_bounds(n, c);
+    reveal(reply_family_safety::completed);
+    assert forall|before: World|
+        #[trigger] retirement::node_rules(before, before.nodes@[c.node as int])
+            && reply_family_safety::stage(before, n, c) implies {
+                let b = before.nodes@[c.node as int];
+                let z = reply_family_values::finish(c.next_question, reply_family_values::plan_check(n));
+                transition_safety::node_step(b, z) && z.next_seq == b.next_seq
+                    && transition_safety::fail_fast_node(b, z, c.fast,
+                        Event::Reply { node: NodeId(c.node as u64), generation: c.generation, reply: c.reply }, c.node as int)
+                    && transition_safety::reply_rules(b, z, c.fast, c.generation, c.reply)
+            } by {
+        reveal(retirement::node_rules); reveal(port_t860_contracts::admissible);
+        reveal(port_t860_contracts::ended);
+        let b = before.nodes@[c.node as int];
+        let z = reply_family_values::finish(c.next_question, reply_family_values::plan_check(n));
+        pair_rows(b, z);
+        reveal(reply_family_values::plan_check);
+        reveal(reply_family_values::plan_retry);
+        reveal(retirement::stopped); reveal(port_t860_contracts::audit_node);
+        reveal(distance);
+    }
+}
+
+pub(super) proof fn plan_check_value_posts(n: Node, c: ReplyCtx)
+    requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
+        matches!(c.reply, Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit),
+    ensures reply_family_values::reply_bound(n, c.next_question, reply_family_values::plan_check(n)),
+        reply_family_safety::rows(n, c, reply_family_values::plan_check(n)),
+        (successful_reply_input(n, c.reply) ==> distance(reply_family_values::finish(c.next_question, reply_family_values::plan_check(n))) < distance(n)),
+        reply_family_values::finish(c.next_question, reply_family_values::plan_check(n)).footprint == n.footprint,
+{
+    plan_check_bounds(n, c); plan_check_progress(n, c); plan_check_completion(n, c);
+}
+
+/// Off-index storage and world counters, separate from the handled node's fields.
+#[verifier::opaque]
+pub(super) open spec fn other_rows(b: World, z: World, i: int) -> bool {
+    z.nodes@.len() == b.nodes@.len()
+        && (forall|j: int| 0 <= j < b.nodes@.len() && j != i
+            ==> #[trigger] z.nodes@[j] == b.nodes@[j])
+        && z.next_ticket == b.next_ticket && z.gates@ == b.gates@
+        && z.pool_capacity == b.pool_capacity && z.fail_fast == b.fail_fast
+        && z.file_sets@ == b.file_sets@ && z.dependencies@ == b.dependencies@
+}
+
+/// World bounds from literal handled-node goals; no target Node equation premise.
+pub(super) proof fn reply_lift(b: World, z: World, i: int, ob: usize, oa: usize)
+    requires 0 <= i < b.nodes@.len(), other_rows(b, z, i),
+        (settle_shape(b.nodes@[i]) ==> settle_shape(z.nodes@[i])),
+        z.nodes@[i].repo == b.nodes@[i].repo,
+        z.nodes@[i].generation as int <= b.nodes@[i].generation as int + 1,
+        z.nodes@[i].next_seq == b.nodes@[i].next_seq,
+        z.nodes@[i].last_cmd == b.nodes@[i].last_cmd,
+        z.nodes@[i].credit.start as int <= b.nodes@[i].credit.start as int + CREDIT_START_STEP_BUDGET,
+        z.nodes@[i].credit.earned == b.nodes@[i].credit.earned,
+        z.nodes@[i].credit.added == b.nodes@[i].credit.added,
+        z.nodes@[i].credit.spent as int <= b.nodes@[i].credit.spent as int + 1,
+        z.next_question as int <= b.next_question as int + 1,
+        oa as int <= ob as int + 1,
+    ensures reply_bounds(b, z, i, ob, oa),
+{
+    reveal(other_rows); reveal(reply_bounds);
+}
+
 }

@@ -20,12 +20,16 @@ pub(super) fn reply_plan(w: &mut World, i: usize, reply: Reply,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
         reply == Reply::PlanCantMeet && old(w).nodes@[i as int].phase is Planning ==> handler_safety::ladder(old(w).fail_fast,
             true, old(w).nodes@[i as int], final(w).nodes@[i as int], *old(out), *final(out)),
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds);] {
+] {
+    kernel_snapshot! { before_dispatch = *w }
+    kernel_snapshot! { before_dispatch_len = out.len }
+    kernel_proof! { reveal(reply_family_values::plan); }
     kernel_snapshot! { before_plan_node = w.nodes@[i as int] }
     kernel_snapshot! { before_plan_out = *out }
     let c = ReplyCtx { node: i, generation: w.nodes[i].generation,
         reply: reply, fast: w.fail_fast, next_question: w.next_question };
     let change = reply_plan_node(w.nodes[i], c);
+    kernel_proof! { reply_family_dispatch::plan_value_posts(w.nodes@[i as int], c); }
     resolve_reply_change(w, i, change, out);
     kernel_proof! {
         if reply == Reply::PlanCantMeet && before_plan_node@.phase is Planning {
@@ -36,6 +40,11 @@ pub(super) fn reply_plan(w: &mut World, i: usize, reply: Reply,
     kernel_proof! {
         reveal(retirement::stopped); reveal(handler_safety::ladder);
         reveal(port_t860_contracts::transition_post); reveal(progress_gate_contracts::maker_transition);
+    }
+
+    kernel_proof! {
+        reveal(reply_family_dispatch::other_rows);
+        reply_family_dispatch::reply_lift(before_dispatch@, *w, i as int, before_dispatch_len@, out.len);
     }
 }
 }
@@ -66,7 +75,9 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
         handler_safety::fail_fast_reply(reply) && !(old(w).nodes@[i as int].phase is Closed || old(w).nodes@[i as int].phase is Stopping) ==> handler_safety::ladder(old(w).fail_fast,
             handler_safety::work_retry(old(w).nodes@[i as int], reply), old(w).nodes@[i as int], final(w).nodes@[i as int], *old(out), *final(out)),
-] proof [reveal(progress_gate_contracts::maker_transition); reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds);] {
+] proof [reveal(progress_gate_contracts::maker_transition);     ] {
+    kernel_snapshot! { before_dispatch = *w }
+    kernel_snapshot! { before_dispatch_len = out.len }
     kernel_proof! { reveal(reply_family_values::work); reveal(reply_family_values::rebase); }
     kernel_snapshot! { before_work_node = w.nodes@[i as int] }
     kernel_snapshot! { before_work_out = *out }
@@ -104,6 +115,11 @@ pub(super) fn reply_work(w: &mut World, i: usize, reply: Reply,
         reveal(retirement::stopped); reveal(handler_safety::ladder);
         reveal(port_t860_contracts::transition_post); reveal(progress_gate_contracts::maker_transition);
     }
+
+    kernel_proof! {
+        reveal(reply_family_dispatch::other_rows);
+        reply_family_dispatch::reply_lift(before_dispatch@, *w, i as int, before_dispatch_len@, out.len);
+    }
 }
 }
 
@@ -123,7 +139,9 @@ pub(super) fn reply_rebase(w: &mut World, i: usize, reply: Reply,
         final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
         reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds); reveal(retry_bounds);] {
+] {
+    kernel_snapshot! { before_dispatch = *w }
+    kernel_snapshot! { before_dispatch_len = out.len }
     kernel_proof! { reveal(reply_family_values::work); reveal(reply_family_values::rebase); }
     let c = ReplyCtx { node: i, generation: w.nodes[i].generation,
         reply: reply, fast: w.fail_fast, next_question: w.next_question };
@@ -133,6 +151,11 @@ pub(super) fn reply_rebase(w: &mut World, i: usize, reply: Reply,
     kernel_proof! {
         reveal(retirement::stopped); reveal(handler_safety::ladder);
         reveal(port_t860_contracts::transition_post); reveal(progress_gate_contracts::maker_transition);
+    }
+
+    kernel_proof! {
+        reveal(reply_family_dispatch::other_rows);
+        reply_family_dispatch::reply_lift(before_dispatch@, *w, i as int, before_dispatch_len@, out.len);
     }
 }
 }
@@ -169,13 +192,8 @@ pub(super) fn reply_plan_node(n: Node, c: ReplyCtx) -> (result: ReplyChange) [
     requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
         matches!(c.reply, Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet),
     ensures result == reply_family_values::plan(n, c.fast, c.reply),
-        reply_family_values::reply_bound(n, c.next_question, result),
-        reply_family_safety::rows(n, c, result),
-        (successful_reply_input(n, c.reply) ==> distance(reply_family_values::finish(c.next_question, result)) < distance(n)),
-        (c.reply == Reply::PlanCantMeet && c.fast && n.phase is Planning ==>
-            reply_family_values::finish(c.next_question, result).phase == Phase::Stopping(Outcome::Stopped)
-                && reply_family_values::finish(c.next_question, result).review_stop == Some(ReviewStop::PlanCantMeet)),
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(retirement::stopped);] {
+        reply_family_values::callable(result),
+] proof [reveal(reply_family_values::plan);] {
     kernel_proof! { footprint::inline_is_valid(vstd::pervasive::arbitrary(), 1); }
     let mut node = n;
     let mut note: Option<Notice> = None;
@@ -186,24 +204,16 @@ match reply {
             let m = &mut node;
             let must_split = matches!(m.phase, Phase::Planning { must_split: true });
             if fits && !footprint.is_empty() && !must_split {
-                m.footprint = footprint;
-                m.attempt = 1;
-                m.review_restarted = false;
-                m.round = 0;
-                m.plan_retries = 0;
-                set_phase(m, Phase::Ready(Resume::Making));
+                return plan_leaf_v(node, footprint);
             } else {
-                { let value = plan_retry_node(node, c.fast, c.next_question, false); kernel_proof! { reply_family_posts::plan_retry_value_posts(node, c.fast, c.next_question, false); } kernel_proof! {
-                    reveal(reply_family_values::plan_retry);
-                    reply_family_safety::plan_rows(n, c, value);
-                } return value; }
+                { let value = plan_retry_node(node, c.fast, c.next_question, false); kernel_proof! { reply_family_posts::plan_retry_value_posts(node, c.fast, c.next_question, false); }  return value; }
             }
         }
-        Reply::PlanSplit => { let value = ReplyChange::Ask { node, kind: QKind::NeedsSplitting, cont: Cont::Nowhere, cost: 0 }; kernel_proof! { reply_family_safety::plan_rows(n, c, value); } return value; },
-        Reply::PlanCantMeet => { let value = plan_retry_node(node, c.fast, c.next_question, true); kernel_proof! { reply_family_posts::plan_retry_value_posts(node, c.fast, c.next_question, true); } kernel_proof! { reply_family_safety::plan_rows(n, c, value); } return value; },
+        Reply::PlanSplit => { let value = ReplyChange::Ask { node, kind: QKind::NeedsSplitting, cont: Cont::Nowhere, cost: 0 };  return value; },
+        Reply::PlanCantMeet => { let value = plan_retry_node(node, c.fast, c.next_question, true); kernel_proof! { reply_family_posts::plan_retry_value_posts(node, c.fast, c.next_question, true); }  return value; },
         _ => {}
     }
-    { let value = ReplyChange::Done { node, note }; kernel_proof! { reply_family_safety::plan_rows(n, c, value); } return value; }
+    { let value = ReplyChange::Done { node, note };  return value; }
 }
 }
 
@@ -404,5 +414,23 @@ fn review_restart_v(n: Node) -> (result: Node) [
     let mut m = n;
     m.review_restarted = true;
     m
+}
+}
+
+
+kernel_fn! {
+fn plan_leaf_v(n: Node, footprint: Footprint) -> (result: ReplyChange) [
+    requires node_headroom(n),
+    ensures result == reply_family_values::plan_leaf(n, footprint),
+        reply_family_values::callable(result),
+] {
+    let mut m = n;
+    m.footprint = footprint;
+    m.attempt = 1;
+    m.review_restarted = false;
+    m.round = 0;
+    m.plan_retries = 0;
+    m = set_phase_v(m, Phase::Ready(Resume::Making));
+    ReplyChange::Done { node: m, note: None }
 }
 }

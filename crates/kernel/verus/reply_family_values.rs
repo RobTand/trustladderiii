@@ -187,14 +187,13 @@ pub(super) open spec fn recheck(n: Node, target: Phase) -> ReplyChange {
             else { Resume::Checking }), cost: 1 } }
 }
 
+#[verifier::opaque]
 pub(super) open spec fn plan(n: Node, fast: bool, reply: Reply) -> ReplyChange {
     match reply {
         Reply::PlanLeaf { footprint, fits } => {
             let must_split = matches!(n.phase, Phase::Planning { must_split: true });
             if fits && !footprint::footprint_empty(footprint) && !must_split {
-                ReplyChange::Done { node: retirement::phased(Node {
-                    footprint, attempt: 1, review_restarted: false, round: 0, plan_retries: 0, ..n
-                }, Phase::Ready(Resume::Making)), note: None }
+                plan_leaf(n, footprint)
             } else { plan_retry(n, fast, false) }
         },
         Reply::PlanSplit => ReplyChange::Ask { node: n, kind: QKind::NeedsSplitting,
@@ -245,6 +244,7 @@ pub(super) open spec fn ingested(n: Node, size: u8, early_end: Option<EarlyEnd>)
     }, Phase::Auditing)
 }
 
+#[verifier::opaque]
 pub(super) open spec fn ingest(n: Node, reply: Reply) -> ReplyChange {
     match reply {
         Reply::IngestDone { size } => ReplyChange::Done { node: ingested(n, size, None), note: None },
@@ -264,6 +264,7 @@ pub(super) open spec fn ingest(n: Node, reply: Reply) -> ReplyChange {
     }
 }
 
+#[verifier::opaque]
 pub(super) open spec fn plan_check(n: Node) -> ReplyChange {
     ReplyChange::Done { node: retirement::stopped(
         Node { review_stop: Some(ReviewStop::PlanCantMeet), ..n }, Outcome::Stopped), note: None }
@@ -370,6 +371,12 @@ pub(super) open spec fn rebase_paid(n: Node) -> ReplyChange {
 }
 pub(super) open spec fn rebase_ask(n: Node) -> ReplyChange {
     ReplyChange::Ask { node: n, kind: QKind::OutOfCredit, cont: Cont::Ready(Resume::Making), cost: 1 }
+}
+
+pub(super) open spec fn plan_leaf(n: Node, footprint: Footprint) -> ReplyChange {
+    ReplyChange::Done { node: retirement::phased(Node {
+        footprint, attempt: 1, review_restarted: false, round: 0, plan_retries: 0, ..n
+    }, Phase::Ready(Resume::Making)), note: None }
 }
 
 }
