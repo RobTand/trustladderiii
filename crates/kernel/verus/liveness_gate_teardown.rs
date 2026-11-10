@@ -182,7 +182,7 @@ pub(super) proof fn close_step(b: World, a: World, r: bool)
 }
 
 /// R22 for the harness's blocker: Stop, five rounds and a final advance close node 1 and
-/// release its slot, changing no other node. No end state is assumed.
+/// release its slot, changing no other node. No end state is a premise.
 pub(super) proof fn blocker_torn_down(w: World, s: World,
     m0: World, a0: World, m1: World, a1: World, m2: World, a2: World,
     m3: World, a3: World, m4: World, a4: World, c: World,
