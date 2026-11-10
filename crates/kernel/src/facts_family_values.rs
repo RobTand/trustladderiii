@@ -887,7 +887,7 @@ pub(in super::super) fn failed_round_unreported_value(n: Node, nq: u64, fast: bo
         result.1 as int <= nq as int + 1,
 ] {
     let mut unused_report = Report::new();
-    let change = failed_round_node(n, i, fast, nq, step, &mut unused_report);
+    let change = failed_round_node(n, i, !fast, nq, step, &mut unused_report);
     let result = facts_reply_adapter::resolve_reply_value(change, nq, i);
     kernel_proof! {
         facts_family_tail::failed_round_frame(n, nq, fast, step);
