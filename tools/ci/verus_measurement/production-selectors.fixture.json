@@ -1,10 +1,15 @@
 {
-  "source_head": "19d308be8a0ffad9a26cbf9f39e93d64a824d44f",
+  "source_head": "6d1a51299d13e28843bd1e562d938db0be4b1fd6",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "e5e4633cb65bf014594d8b973069a3f9d317d33131382e1cb774dd603d6ceee6",
-  "groups": 522,
-  "obligations": 720,
+  "source_sha256": "9e51e493aee940f8cd8a2d7c16faba13a398e52786faab88b01acfcca8a8ae9e",
+  "groups": 523,
+  "obligations": 721,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_ranks_pending_rank_definition",
+      "selector": "kernel::ranks#pending_rank_definition",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_ranks_slot_paused_v",
       "selector": "kernel::ranks#slot_paused_v",
