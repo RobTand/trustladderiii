@@ -377,7 +377,12 @@ mod tests {
 
     #[test]
     fn ending_must_be_the_producers_typed_canonical_value() {
-        for ending in [json!(Ending::Passed), json!("infra_lost"), Value::Null, json!("unknown")] {
+        for ending in [
+            json!(Ending::Passed),
+            json!("infra_lost"),
+            Value::Null,
+            json!("unknown"),
+        ] {
             let (directory, mut index) = fixture();
             let path = directory.path().join("current.json");
             let name = "launch_failure-acceptance.json";
@@ -389,7 +394,10 @@ mod tests {
             index.inputs.get_mut(name).unwrap().sha256 = sha256(&raw);
             index.inputs.get_mut(name).unwrap().bytes = raw.len() as u64;
             fs::write(&path, serde_json::to_vec(&index).unwrap()).unwrap();
-            assert_eq!(generate(&path).unwrap_err(), "qualification.accepted_provenance");
+            assert_eq!(
+                generate(&path).unwrap_err(),
+                "qualification.accepted_provenance"
+            );
         }
     }
 

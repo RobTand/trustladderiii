@@ -326,7 +326,7 @@ pub fn build(
     Ok(build)
 }
 
-const REMOTE_BUILD: &str = r#"import base64, gzip, json, os, pathlib, subprocess, sys
+const REMOTE_BUILD: &str = r#"import base64, gzip, hashlib, json, os, pathlib, subprocess, sys
 head, qualified = sys.argv[1:3]
 payload = json.loads(gzip.decompress(base64.b64decode(''.join(sys.argv[3:]))))
 def run(argv):
@@ -337,7 +337,9 @@ for name in payload['obsolete']:
 for entry in payload['files']:
     path = pathlib.Path(entry['path'])
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(base64.b64decode(entry['data']))
+    data = pathlib.Path(entry['source']).read_bytes() if 'source' in entry else base64.b64decode(entry['data'])
+    assert hashlib.sha256(data).hexdigest() == entry['sha256']
+    path.write_bytes(data)
     path.chmod(entry['mode'])
 if qualified == 'true':
     run(['git', 'add', '--', 'crates/controller/qualification/fx-current', 'crates/controller/qualification/current.json', 'crates/controller/src/adapters/flux_checks/activation/qualification.json'])
@@ -380,10 +382,19 @@ fn build_argv(inputs: &Inputs, overlay: Option<&BTreeMap<String, Vec<u8>>>) -> R
         policy::publication_order(&overlay.keys().cloned().collect::<Vec<_>>())?;
         removed = obsolete(inputs, overlay)?;
         for (path, bytes) in overlay {
-            files.push(
-                json!({"path":path,"mode":source_mode(overlay,path)? & 0o777,
-                "data":base64::engine::general_purpose::STANDARD.encode(bytes)}),
-            );
+            let mut entry = json!({"path":path,"mode":source_mode(overlay,path)? & 0o777,"sha256":durable::digest(bytes)});
+            let source = path.strip_prefix(&format!("{}fixtures/lib/tl3_harness/", policy::INPUTS))
+                .filter(|name| name.ends_with(".py"))
+                .map(|name| format!("harness/src/tl3_harness/{name}"))
+                .filter(|source| fs::read(inputs.repo.join(source)).is_ok_and(|raw| raw == *bytes));
+            if let Some(source) = source {
+                // The exact H checkout already carries these bytes. The remote
+                // hash check binds the copy without uploading the code twice.
+                entry["source"] = source.into();
+            } else {
+                entry["data"] = base64::engine::general_purpose::STANDARD.encode(bytes).into();
+            }
+            files.push(entry);
         }
     }
     let payload = base64::engine::general_purpose::STANDARD.encode(gzip(
@@ -431,11 +442,18 @@ mod tests {
             )]),
         };
         let name = format!("{}fixtures/helper $(literal).py", policy::INPUTS);
-        let overlay = BTreeMap::from([
+        let mut overlay = BTreeMap::from([
             (policy::INDEX.into(), serde_json::to_vec(&index).unwrap()),
             (policy::PIN.into(), b"pin".to_vec()),
             (name.clone(), b"\0\xff'".to_vec()),
         ]);
+        for entry in fs::read_dir(inputs.repo.join("harness/src/tl3_harness")).unwrap() {
+            let entry = entry.unwrap();
+            if entry.path().extension().is_some_and(|extension| extension == "py") {
+                overlay.insert(format!("{}fixtures/lib/tl3_harness/{}", policy::INPUTS, entry.file_name().to_str().unwrap()), fs::read(entry.path()).unwrap());
+            }
+        }
+        assert!(overlay.values().map(Vec::len).sum::<usize>() > 128 * 1024);
         let argv = build_argv(&inputs, Some(&overlay)).unwrap();
         assert_eq!(&argv[..2], ["/usr/bin/python3", "-c"]);
         assert_eq!(argv[3], inputs.head);
@@ -455,12 +473,14 @@ mod tests {
         assert_eq!(files.len(), overlay.len());
         for file in files {
             let path = file["path"].as_str().unwrap();
-            assert_eq!(
-                base64::engine::general_purpose::STANDARD
-                    .decode(file["data"].as_str().unwrap())
-                    .unwrap(),
-                overlay[path]
-            );
+            let bytes = if let Some(source) = file["source"].as_str() {
+                assert!(file.get("data").is_none());
+                fs::read(inputs.repo.join(source)).unwrap()
+            } else {
+                base64::engine::general_purpose::STANDARD.decode(file["data"].as_str().unwrap()).unwrap()
+            };
+            assert_eq!(bytes, overlay[path]);
+            assert_eq!(file["sha256"], durable::digest(&bytes));
             assert_eq!(file["mode"], if path == name { 0o755 } else { 0o644 });
         }
         assert_eq!(build_argv(&inputs, None).unwrap()[4], "false");

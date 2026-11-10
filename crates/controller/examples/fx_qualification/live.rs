@@ -448,7 +448,8 @@ fn absent_interpreter_failure(events: &[Value]) -> bool {
 }
 
 fn scratch_observed(status: &Value, observed: &Value) -> bool {
-    status["code"] == 0 && status.get("signal") == Some(&Value::Null)
+    status["code"] == 0
+        && status.get("signal") == Some(&Value::Null)
         && observed["schema"] == "tl3.scratch_cleanup.v1"
         && observed["observation"] == json!({"kind":"absent","errno":2})
 }
@@ -462,9 +463,14 @@ fn success_results(results: &[Value], executions: usize) -> bool {
                 && r["tests"].as_array().is_some_and(|tests| {
                     !tests.is_empty()
                         && tests.iter().all(|t| {
-                            t["base"] == "assertion" && t["head"] == "passed" && t["passed"] == true
+                            t["base"] == "assertion"
+                                && t["head"] == "passed"
+                                && t["passed"] == true
                                 && t["test"].as_str().is_some_and(|test| {
-                                    matches!(r["proof"]["red_message_matches"][test].as_str(), Some("message" | "source-assertion"))
+                                    matches!(
+                                        r["proof"]["red_message_matches"][test].as_str(),
+                                        Some("message" | "source-assertion")
+                                    )
                                 })
                         })
                 })
@@ -564,11 +570,18 @@ mod tests {
     #[test]
     fn scratch_absence_requires_successful_status_and_absence_contents() {
         let status = json!({"code":0,"signal":null});
-        let observed = json!({"schema":"tl3.scratch_cleanup.v1","observation":{"kind":"absent","errno":2}});
+        let observed =
+            json!({"schema":"tl3.scratch_cleanup.v1","observation":{"kind":"absent","errno":2}});
         assert!(scratch_observed(&status, &observed));
-        assert!(!scratch_observed(&json!({"code":1,"signal":null}), &observed));
+        assert!(!scratch_observed(
+            &json!({"code":1,"signal":null}),
+            &observed
+        ));
         assert!(!scratch_observed(&json!({"code":0,"signal":9}), &observed));
-        assert!(!scratch_observed(&status, &json!({"schema":"tl3.scratch_cleanup.v1","observation":{"kind":"present"}})));
+        assert!(!scratch_observed(
+            &status,
+            &json!({"schema":"tl3.scratch_cleanup.v1","observation":{"kind":"present"}})
+        ));
         assert!(!scratch_observed(&status, &json!({})));
     }
 
