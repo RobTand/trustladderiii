@@ -179,7 +179,7 @@ pub(super) proof fn work_completion(n: Node, c: ReplyCtx)
             | Reply::IngestEarlyEnd(_) | Reply::AuditAgrees | Reply::AuditDisagrees
             | Reply::ProtectedPaths | Reply::PlanLeaf { .. } | Reply::PlanSplit | Reply::PlanCantMeet
             | Reply::PlanCheckRejected | Reply::PlanCheckNeedsSplit),
-    ensures reply_family_safety::rows(n, c, reply_family_values::work(n, c.fast, c.reply)),
+    ensures !reply_family_safety::rows(n, c, reply_family_values::work(n, c.fast, c.reply)),
 {
     match c.reply {
         Reply::MakerDone { .. } | Reply::MakerCantMeet | Reply::MakerOutOfRoom => work_maker_rows(n, c),
