@@ -16,6 +16,22 @@ load("//tools/bazel:python.bzl", "tl3_py_test")
 load("//tools/bazel:test_sizing.bzl", "test_size")
 load("//tools/bazel:verus.bzl", "verus_proofs")
 
+# Record the files in the actual Verus rules, rather than maintaining another
+# list of controller inputs in the inventory test.
+def _trusted_marker_inputs_impl(ctx):
+    files = [f for f in ctx.files.srcs if f.extension == "rs"]
+    manifest = ctx.actions.declare_file("trusted-marker-inputs.txt")
+    ctx.actions.write(manifest, "\n".join(sorted([f.short_path for f in files])) + "\n")
+    return [DefaultInfo(
+        files = depset([manifest]),
+        runfiles = ctx.runfiles(files = files + [manifest]),
+    )]
+
+_trusted_marker_inputs = rule(
+    implementation = _trusted_marker_inputs_impl,
+    attrs = {"srcs": attr.label_list(allow_files = True)},
+)
+
 # Cargo tests read env!("CARGO_MANIFEST_DIR") and some require it absolute.
 # rust_runner.py points this fixed path at the test's runfiles. Each test needs
 # a private /tmp, which remote containers and Bazel's sandbox both provide.
@@ -458,11 +474,15 @@ def _crate_test(kind, package, name, source, harness, options):
     if source in ["tests/proof_map.rs", "tests/obligation_map.rs"] and native.package_name() == "crates/kernel":
         compile_data = compile_data + ["//tools/bazel:verus.bzl"]
     if source == "tests/proof_map.rs" and native.package_name() == "crates/kernel":
-        compile_data = compile_data + native.glob(["verus/**/*.rs"]) + [
-            "//crates/controller:src/kernel_boundary.rs",
-            "//crates/controller:src/dispatch_liveness/decision.rs",
-            "//crates/controller:src/dispatch_liveness/model.rs",
-        ]
+        proof_inputs = [":library_sources", "src/proofs.rs"]
+        for attributes in native.existing_rules().values():
+            if attributes["kind"] == "verus_test":
+                proof_inputs += [attributes["src"]] + list(attributes["srcs"]) + list(attributes.get("specs", []))
+        _trusted_marker_inputs(
+            name = "trusted_marker_inputs",
+            srcs = depset(proof_inputs).to_list(),
+        )
+        compile_data = compile_data + [":trusted_marker_inputs"]
     if native.package_name() == "crates/store":
         compile_data = compile_data + native.glob(["tests/fixtures/**"], allow_empty = True)
     if native.package_name() == "crates/controller":

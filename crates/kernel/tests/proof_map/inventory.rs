@@ -1217,31 +1217,72 @@ fn trusted_marker_files(directory: &Path, result: &mut BTreeMap<PathBuf, String>
     }
 }
 
-const CONTROLLER_PROOF_INPUTS: [&str; 3] = [
-    "src/kernel_boundary.rs",
-    "src/dispatch_liveness/decision.rs",
-    "src/dispatch_liveness/model.rs",
-];
+// Bazel supplies this manifest from the actual verus_test src/srcs/specs
+// attributes. Its runfiles stage the same files. Cargo falls back to the literal
+// external labels in the kernel branch of verus.bzl; local kernel Rust sources
+// are collected independently above, and every mount is resolved below.
+fn trusted_compile_inputs(root: &Path) -> Vec<PathBuf> {
+    let workspace = root.parent().unwrap().parent().unwrap();
+    let manifest = root.join("trusted-marker-inputs.txt");
+    if manifest.is_file() {
+        return std::fs::read_to_string(&manifest).unwrap().lines().map(|line| {
+            let path = normalized(&workspace.join(line));
+            assert!(path.starts_with(workspace) && path.extension().is_some_and(|ext| ext == "rs"),
+                "invalid trusted-marker manifest input: {line}");
+            path
+        }).collect();
+    }
+    assert!(!root.starts_with("/tmp/tl3-workspace"), "trusted-marker manifest not staged");
+    let bzl = std::fs::read_to_string(workspace.join("tools/bazel/verus.bzl")).unwrap();
+    let start = bzl.find("    if native.package_name() == \"crates/kernel\":").unwrap();
+    let branch = &bzl[start + 1..];
+    let end = branch.find("\n    if native.package_name()").unwrap_or(branch.len());
+    tokens(&branch[..end]).into_iter().filter_map(|token| match token {
+        Token::Text(label) if label.starts_with("//") => {
+            assert!(label.ends_with(".rs") && !label.contains('*'),
+                "Cargo inventory cannot resolve proof label {label}; use the Bazel manifest");
+            let (package, file) = label[2..].split_once(':').expect("proof source label");
+            Some(normalized(&workspace.join(package).join(file)))
+        }
+        _ => None,
+    }).collect()
+}
 
-// Resolve all mounts, including cfg(kani) and cfg(verus_keep_ghost), before
-// excluding Kani-only files. A missing staged source must never shrink the scan.
-fn require_trusted_mounts(sources: &BTreeMap<PathBuf, String>, root: &Path) {
-    let controller = root.parent().unwrap().join("controller");
-    let outside: BTreeSet<_> = CONTROLLER_PROOF_INPUTS.iter()
-        .map(|path| controller.join(path)).collect();
+fn load_trusted_input(sources: &mut BTreeMap<PathBuf, String>, file: PathBuf) {
+    assert!(file.extension().is_some_and(|ext| ext == "rs"), "non-Rust trusted input: {}", file.display());
+    sources.entry(file.clone()).or_insert_with(|| std::fs::read_to_string(&file)
+        .unwrap_or_else(|error| panic!("trusted-marker input not staged: {}: {error}", file.display())));
+}
+
+// Follow mounts from the independently collected kernel sources and the actual
+// proof-input manifest. A newly mounted file is required, loaded and scanned,
+// including external crates and further mounts from those files.
+fn load_trusted_mounts(sources: &mut BTreeMap<PathBuf, String>, root: &Path) {
+    let workspace = root.parent().unwrap().parent().unwrap();
+    let mut pending: Vec<_> = sources.keys().cloned().collect();
+    let mut seen = BTreeSet::new();
+    while let Some(file) = pending.pop() {
+        if !seen.insert(file.clone()) { continue; }
+        let source = sources[&file].clone();
+        for mount in all_mounts(&source, "kernel", true) {
+            let candidates = mount_candidates(&file, &mount);
+            let found: Vec<_> = candidates.iter().filter(|path| path.is_file()).collect();
+            assert_eq!(found.len(), 1,
+                "trusted-marker input not staged or ambiguous: {} mounts {:?}", file.display(), candidates);
+            let target = (*found[0]).clone();
+            assert!(target.starts_with(workspace), "proof mount outside workspace: {}", target.display());
+            load_trusted_input(sources, target.clone());
+            pending.push(target);
+        }
+    }
+}
+
+fn require_trusted_mounts(sources: &BTreeMap<PathBuf, String>, _root: &Path) {
     for (file, source) in sources {
         for mount in all_mounts(source, "kernel", true) {
             let candidates = mount_candidates(file, &mount);
-            // This is the sole test-only mount in lib.rs, compiled out of Verus.
-            if candidates == [root.join("tests/mark_handled_equivalence/cases.rs")] {
-                continue;
-            }
-            assert!(candidates.iter().all(|path|
-                path.starts_with(root.join("src")) || path.starts_with(root.join("verus"))
-                    || outside.contains(path)),
-                "unlisted external proof mount from {}: {:?}", file.display(), candidates);
-            assert!(candidates.iter().any(|path| sources.contains_key(path)),
-                "trusted-marker input not staged: {} mounts {:?}", file.display(), candidates);
+            assert_eq!(candidates.iter().filter(|path| sources.contains_key(*path)).count(), 1,
+                "trusted-marker input not staged or ambiguous: {} mounts {:?}", file.display(), candidates);
         }
     }
 }
@@ -1275,7 +1316,9 @@ fn kani_only_files(sources: &BTreeMap<PathBuf, String>, root: &Path) -> BTreeSet
     }
     let mut all = BTreeSet::new();
     let mut active = BTreeSet::new();
-    for entry in [root.join("src/lib.rs"), root.join("verus/progress.rs")] {
+    let entries = std::iter::once(root.join("src/lib.rs")).chain(
+        sources.keys().filter(|file| file.starts_with(root.join("verus"))).cloned());
+    for entry in entries {
         all.extend(reachable(sources, &entry, true));
         active.extend(reachable(sources, &entry, false));
     }
@@ -1292,18 +1335,19 @@ fn no_trusted_markers() {
         sources.contains_key(&root.join("verus/progress.rs")),
         "Verus root missing from test inputs"
     );
-    for path in CONTROLLER_PROOF_INPUTS {
-        let file = root.parent().unwrap().join("controller").join(path);
-        sources.insert(file.clone(), std::fs::read_to_string(&file)
-            .unwrap_or_else(|error| panic!("trusted-marker input not staged: {}: {error}", file.display())));
-    }
+    let compiled = trusted_compile_inputs(root);
+    assert!(!compiled.is_empty(), "empty trusted-marker proof-input manifest");
+    for file in &compiled { load_trusted_input(&mut sources, file.clone()); }
+    load_trusted_mounts(&mut sources, root);
     require_trusted_mounts(&sources, root);
     let kani = kani_only_files(&sources, root);
     let mut errors = Vec::new();
+    let mut scanned = BTreeSet::new();
     for (path, source) in &sources {
         if kani.contains(path) {
             continue;
         }
+        scanned.insert(path.clone());
         for (line, marker) in trusted_markers(source) {
             errors.push(format!(
                 "crates/{}:{line}: trusted marker {marker}",
@@ -1311,6 +1355,10 @@ fn no_trusted_markers() {
             ));
         }
     }
+    assert!(sources.keys().all(|file| scanned.contains(file) || kani.contains(file)),
+        "derived trusted-marker input was not scanned");
+    assert!(compiled.iter().all(|file| sources.contains_key(file)
+        && (scanned.contains(file) || kani.contains(file))), "compiled trusted-marker input missing from scan");
     assert!(errors.is_empty(), "{}", errors.join("\n"));
     println!(
         "Trusted-marker inventory: {} files, {} Kani-only files excluded",
@@ -1409,7 +1457,7 @@ fn trusted_marker_missing_mounted_source_fails_closed() {
 #[test]
 fn trusted_marker_controller_inputs_are_scanned() {
     let root = Path::new("/trusted-fixture/kernel");
-    for path in CONTROLLER_PROOF_INPUTS {
+    for path in ["src/kernel_boundary.rs", "src/dispatch_liveness/decision.rs", "src/dispatch_liveness/model.rs", "src/new_proof_input.rs"] {
         let file = root.parent().unwrap().join("controller").join(path);
         let sources = BTreeMap::from([
             (root.join("verus/progress.rs"), format!("#[path = \"../../controller/{path}\"] mod proof;")),
@@ -1430,4 +1478,26 @@ fn kani_attribute_does_not_leak_past_other_item_kinds() {
         ]);
         assert!(kani_only_files(&sources, root).is_empty(), "{item}");
     }
+}
+
+#[test]
+#[should_panic(expected = "trusted-marker input not staged")]
+fn trusted_marker_missing_compile_input_fails_closed() {
+    load_trusted_input(&mut BTreeMap::new(), PathBuf::from("/missing-trusted-input/controller/listed_only.rs"));
+}
+
+#[test]
+fn trusted_marker_nested_external_mounts_are_required() {
+    let root = Path::new("/trusted-fixture/crates/kernel");
+    let controller = root.parent().unwrap().join("controller/src");
+    let helper = controller.join("new_helper.rs");
+    let mut sources = BTreeMap::from([
+        (root.join("verus/progress.rs"), "#[path = \"../../controller/src/new_root.rs\"] mod proof;".into()),
+        (controller.join("new_root.rs"), "#[path = \"new_helper.rs\"] mod helper;".into()),
+        (helper.clone(), "admit();".into()),
+    ]);
+    require_trusted_mounts(&sources, root);
+    assert_eq!(trusted_markers(&sources[&helper]), [(1, "admit")]);
+    sources.remove(&helper);
+    assert!(std::panic::catch_unwind(|| require_trusted_mounts(&sources, root)).is_err());
 }
