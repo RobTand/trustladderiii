@@ -1,10 +1,75 @@
 {
-  "source_head": "6a10dd7e62b8cbabf80b3ea305c61638700cdecc",
+  "source_head": "532827c5cab9a1bca867bb694dc94021227af207",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "e9483976fe7926892cd6abc8f2d3f5eea69ba7f597efe06420ebccdade3e8341",
-  "groups": 510,
-  "obligations": 708,
+  "source_sha256": "c5f1f89eedaf2bca3fb72c7f6ee80118698adcfd50dbe551caaef24b90a81f19",
+  "groups": 523,
+  "obligations": 721,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_acknowledgements_confirmed_agenda_adopt",
+      "selector": "kernel::acknowledgements#confirmed_agenda_adopt",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_confirmed_agenda_step",
+      "selector": "kernel::acknowledgements#confirmed_agenda_step",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_confirmed_agenda_idle",
+      "selector": "kernel::acknowledgements#confirmed_agenda_idle",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_confirmed_agenda_value",
+      "selector": "kernel::acknowledgements#confirmed_agenda_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_agenda_result_properties",
+      "selector": "kernel::acknowledgements#agenda_result_properties",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_cancel_post",
+      "selector": "kernel::acknowledgements#ack_cancel_post",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_confirmed_post",
+      "selector": "kernel::acknowledgements#ack_confirmed_post",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_delivery_post",
+      "selector": "kernel::acknowledgements#ack_delivery_post",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_retry_post",
+      "selector": "kernel::acknowledgements#ack_retry_post",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_permanent_post",
+      "selector": "kernel::acknowledgements#ack_permanent_post",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_acknowledgements_ack_review_post",
+      "selector": "kernel::acknowledgements#ack_review_post",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ack_family_adoption_ack_result",
+      "selector": "kernel::ack_family_safety#adoption_ack_result",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ack_family_bpr_ack_result_equiv",
+      "selector": "kernel::ack_family_safety#bpr_ack_result_equiv",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_acknowledgements_ack_live",
       "selector": "kernel::acknowledgements#ack_live",
