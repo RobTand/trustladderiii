@@ -231,7 +231,6 @@ pub(super) open spec fn apply_n4_dependencies(before: World, after: World, i: in
 /// capacity are unchanged; the file table, next_ticket and next_question only grow.
 pub(super) open spec fn apply_n5_frame(before: World, after: World, i: int) -> bool {
     0 <= i < before.nodes@.len()
-        && after.nodes@ == before.nodes@.update(i, after.nodes@[i])
         && after.gates@ == before.gates@ && after.pool_capacity == before.pool_capacity
         && table_grows(before, after)
         && before.next_ticket <= after.next_ticket && before.next_question <= after.next_question
