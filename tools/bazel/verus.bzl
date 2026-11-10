@@ -763,6 +763,11 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "answers_on_answer_exact": ("kernel::answers#on_answer_exact", 1),
+            "apply_command_safety_last_cmd_shift": ("kernel::apply_command_safety#last_cmd_shift", 1),
+            "apply_command_safety_pause_facts": ("kernel::apply_command_safety#pause_facts", 1),
+            "apply_command_safety_answer_command_facts": ("kernel::apply_command_safety#answer_command_facts", 1),
+            "apply_command_safety_nodes_rewrite_frame": ("kernel::apply_command_safety#nodes_rewrite_frame", 1),
             "apply_answer_safety_cleanup_step": ("kernel::apply_answer_safety#cleanup_step", 1),
             "apply_answer_safety_awaiting_step": ("kernel::apply_answer_safety#awaiting_step", 1),
             "apply_answer_safety_cleanup_rules": ("kernel::apply_answer_safety#cleanup_rules", 1),
