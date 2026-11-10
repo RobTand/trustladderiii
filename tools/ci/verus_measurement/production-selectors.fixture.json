@@ -1,10 +1,150 @@
 {
-  "source_head": "de6f6c042eb9117d99670e336c3053ce0c5a4355",
+  "source_head": "9333affa34e3f2b26b2badd06c49ffa6c0b8cb41",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "76a950da3de379cbe98d461cf8f699b9d25eae70c01bc05b2ebd9245de10dd9f",
-  "groups": 495,
-  "obligations": 687,
+  "source_sha256": "124ee8c5920ba2c49d5e3558ddd6adbee009e72ebaade27cec5b5b207c5ab674",
+  "groups": 521,
+  "obligations": 713,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_reply_family_reply_end_node",
+      "selector": "kernel::reply_admission#reply_end_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_reply_stopping_node",
+      "selector": "kernel::reply_admission#reply_stopping_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_reply_files_node",
+      "selector": "kernel::reply_admission#reply_files_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_run_failed_node",
+      "selector": "kernel::retries#run_failed_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_failed_round_node",
+      "selector": "kernel::retries#failed_round_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_next_rung_node",
+      "selector": "kernel::retries#next_rung_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_out_of_room_node",
+      "selector": "kernel::retries#out_of_room_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_plan_retry_node",
+      "selector": "kernel::retries#plan_retry_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_recheck_node",
+      "selector": "kernel::retries#recheck_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_resolve_reply_change",
+      "selector": "kernel::retries#resolve_reply_change",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_reply_plan_node",
+      "selector": "kernel::work_replies#reply_plan_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_reply_work_node",
+      "selector": "kernel::work_replies#reply_work_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_reply_rebase_node",
+      "selector": "kernel::work_replies#reply_rebase_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_reply_plan_check_node",
+      "selector": "kernel::plan_check#reply_plan_check_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_reply_ingest_node",
+      "selector": "kernel::ingest#reply_ingest_node",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_admitted_stage",
+      "selector": "kernel::reply_family_safety#admitted_stage",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_plan_retry_ladder",
+      "selector": "kernel::reply_family_safety#plan_retry_ladder",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_plan_rows",
+      "selector": "kernel::reply_family_safety#plan_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_work_maker_rows",
+      "selector": "kernel::reply_family_safety#work_maker_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_work_checks_rows",
+      "selector": "kernel::reply_family_safety#work_checks_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_work_review_rows",
+      "selector": "kernel::reply_family_safety#work_review_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_work_rebase_rows",
+      "selector": "kernel::reply_family_safety#work_rebase_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_work_rows",
+      "selector": "kernel::reply_family_safety#work_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_ingest_rows",
+      "selector": "kernel::reply_family_safety#ingest_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_check_rows",
+      "selector": "kernel::reply_family_safety#check_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_files_rows",
+      "selector": "kernel::reply_family_safety#files_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_withhold_rows",
+      "selector": "kernel::reply_family_safety#withhold_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_done_outputs",
+      "selector": "kernel::reply_family_safety#done_outputs",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_transition_safety_unchanged_node",
       "selector": "kernel::transition_safety#unchanged_node",
@@ -1306,16 +1446,6 @@
       "expected": 1
     },
     {
-      "target": "//crates/kernel:verus_ingest_reply_audit_agrees",
-      "selector": "kernel::ingest#reply_audit_agrees",
-      "expected": 1
-    },
-    {
-      "target": "//crates/kernel:verus_ingest_reply_audit_disagrees",
-      "selector": "kernel::ingest#reply_audit_disagrees",
-      "expected": 1
-    },
-    {
       "target": "//crates/kernel:verus_ingest_audit_disagreement_node",
       "selector": "kernel::ingest#audit_disagreement_node",
       "expected": 1
@@ -2282,7 +2412,7 @@
     },
     {
       "target": "//crates/kernel:verus_plan_check",
-      "selector": "kernel::plan_check",
+      "selector": "kernel::plan_check#reply_plan_check",
       "expected": 1
     },
     {
