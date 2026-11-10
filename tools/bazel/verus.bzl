@@ -443,6 +443,8 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::reply_family_ingest_world::withheld": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::reply_family_ingest_world::final_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::reply_family_values::plan_leaf": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::reply_family_dispatch::other_rows": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::reply_family_values::work_made": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -805,6 +807,14 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "reply_ingest_world_ingest_done": ("kernel::reply_family_ingest_world#ingest_done", 1),
+            "reply_ingest_world_ingest_pair_bounds": ("kernel::reply_family_ingest_world#ingest_pair_bounds", 1),
+            "reply_ingest_world_ingest_pair_progress": ("kernel::reply_family_ingest_world#ingest_pair_progress", 1),
+            "reply_ingest_world_ingest_pair_completed": ("kernel::reply_family_ingest_world#ingest_pair_completed", 1),
+            "reply_ingest_world_ingest_audit_rows": ("kernel::reply_family_ingest_world#ingest_audit_rows", 1),
+            "reply_ingest_world_ingest_world": ("kernel::reply_family_ingest_world#ingest_world", 1),
+            "reply_ingest_parts": ("kernel::ingest#reply_ingest_parts", 1),
+            "withhold_ingest_v": ("kernel::ingest#withhold_ingest_v", 1),
             "reply_dispatch_ingest_deposit_bounds": ("kernel::reply_family_dispatch#ingest_deposit_bounds", 1),
             "reply_dispatch_ingest_agrees_bounds": ("kernel::reply_family_dispatch#ingest_agrees_bounds", 1),
             "reply_dispatch_ingest_disagrees_bounds": ("kernel::reply_family_dispatch#ingest_disagrees_bounds", 1),
