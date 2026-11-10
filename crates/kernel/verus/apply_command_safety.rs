@@ -75,52 +75,6 @@ pub(super) proof fn nodes_rewrite_frame(s: Seq<Node>, i: int, a: Node, x: Node)
 }
 
 
-/// Opus 1110 rung 7: the seven N-cut exports of a command entry at node i (N1 node rules,
-/// N2 grants, withheld, N5 table frame and question order), opaque so on_command forwards
-/// one fact from each arm instead of unfolding five bundles. Clause text is the entries'
-/// N-cut clauses with old(w)/final(w) renamed before/after and `i as int` as i.
-#[verifier::opaque]
-pub(super) open spec fn ncut_post(before: World, after: World, i: int) -> bool {
-    (after.nodes@[i].holds ==> before.nodes@[i].holds)
-    && (after.nodes@[i].pool ==> before.nodes@[i].pool)
-    && (after.nodes@[i].ticket == before.nodes@[i].ticket || after.nodes@[i].ticket.is_none())
-    && after.nodes@[i].credit.withheld == before.nodes@[i].credit.withheld
-    && after.nodes@ == before.nodes@.update(i, after.nodes@[i])
-    && before.next_question <= after.next_question
-    && (retirement::node_rules(before, before.nodes@[i])
-        ==> retirement::node_rules(after, after.nodes@[i]))
-}
-
-/// Opus 1110 rung 7: establish ncut_post from its seven clauses.
-pub(super) proof fn ncut_intro(before: World, after: World, i: int)
-    requires (after.nodes@[i].holds ==> before.nodes@[i].holds),
-        (after.nodes@[i].pool ==> before.nodes@[i].pool),
-        after.nodes@[i].ticket == before.nodes@[i].ticket || after.nodes@[i].ticket.is_none(),
-        after.nodes@[i].credit.withheld == before.nodes@[i].credit.withheld,
-        after.nodes@ == before.nodes@.update(i, after.nodes@[i]),
-        before.next_question <= after.next_question,
-        (retirement::node_rules(before, before.nodes@[i])
-            ==> retirement::node_rules(after, after.nodes@[i])),
-    ensures ncut_post(before, after, i),
-{
-    reveal(ncut_post);
-}
-
-/// Opus 1110 rung 7: the seven clauses of ncut_post, for callers that need its content.
-pub(super) proof fn ncut_open(before: World, after: World, i: int)
-    requires ncut_post(before, after, i),
-    ensures (after.nodes@[i].holds ==> before.nodes@[i].holds),
-        (after.nodes@[i].pool ==> before.nodes@[i].pool),
-        after.nodes@[i].ticket == before.nodes@[i].ticket || after.nodes@[i].ticket.is_none(),
-        after.nodes@[i].credit.withheld == before.nodes@[i].credit.withheld,
-        after.nodes@ == before.nodes@.update(i, after.nodes@[i]),
-        before.next_question <= after.next_question,
-        (retirement::node_rules(before, before.nodes@[i])
-            ==> retirement::node_rules(after, after.nodes@[i])),
-{
-    reveal(ncut_post);
-}
-
 /// Opus 1110: command_step ignores last_cmd. The premise names the written node directly,
 /// so no whole-Node equation enters the caller's query (last_cmd_step's premise does).
 pub(super) proof fn last_cmd_rebase(b: Node, id: u64, n: Node)
@@ -553,7 +507,14 @@ pub(super) proof fn stop_world(before: World, after: World, i: usize, id: u64)
         (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase == before.nodes@[i as int].phase),
         handler_safety::command_step(before.nodes@[i as int], after.nodes@[i as int]),
 
-        apply_command_safety::ncut_post(before, after, i as int),
+        (after.nodes@[i as int].holds ==> before.nodes@[i as int].holds),
+        (after.nodes@[i as int].pool ==> before.nodes@[i as int].pool),
+        after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
+        after.nodes@[i as int].credit.withheld == before.nodes@[i as int].credit.withheld,
+        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        before.next_question <= after.next_question,
+        (retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(after, after.nodes@[i as int])),
 {
     let b = before.nodes@[i as int];
     world_rewrite(before, after, i, retirement::stopped(Node { last_cmd: id, ..b }, Outcome::Stopped));
@@ -565,7 +526,6 @@ pub(super) proof fn stop_world(before: World, after: World, i: usize, id: u64)
     if retirement::node_rules(before, b) {
         handler_safety::rules_world_update(before, after, b, n);
     }
-    ncut_intro(before, after, i as int);
 }
 
 /// Opus 1110: change_request_command's ensures verbatim over (before, after). Every clause is a literal
@@ -617,7 +577,14 @@ pub(super) proof fn change_request_world(before: World, after: World, i: usize, 
         (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase == before.nodes@[i as int].phase),
         handler_safety::command_step(before.nodes@[i as int], after.nodes@[i as int]),
 
-        apply_command_safety::ncut_post(before, after, i as int),
+        (after.nodes@[i as int].holds ==> before.nodes@[i as int].holds),
+        (after.nodes@[i as int].pool ==> before.nodes@[i as int].pool),
+        after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
+        after.nodes@[i as int].credit.withheld == before.nodes@[i as int].credit.withheld,
+        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        before.next_question <= after.next_question,
+        (retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(after, after.nodes@[i as int])),
 {
     let b = before.nodes@[i as int];
     world_rewrite(before, after, i, retirement::stopped(Node { last_cmd: id, ..b }, Outcome::Replaced));
@@ -629,7 +596,6 @@ pub(super) proof fn change_request_world(before: World, after: World, i: usize, 
     if retirement::node_rules(before, b) {
         handler_safety::rules_world_update(before, after, b, n);
     }
-    ncut_intro(before, after, i as int);
 }
 
 /// Pause: the exact node pause_command's unchanged statements leave at index i.
@@ -688,7 +654,14 @@ pub(super) proof fn pause_world(before: World, after: World, i: usize, id: u64)
         (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase == before.nodes@[i as int].phase),
         handler_safety::command_step(before.nodes@[i as int], after.nodes@[i as int]),
 
-        apply_command_safety::ncut_post(before, after, i as int),
+        (after.nodes@[i as int].holds ==> before.nodes@[i as int].holds),
+        (after.nodes@[i as int].pool ==> before.nodes@[i as int].pool),
+        after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
+        after.nodes@[i as int].credit.withheld == before.nodes@[i as int].credit.withheld,
+        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        before.next_question <= after.next_question,
+        (retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(after, after.nodes@[i as int])),
 {
     let b = before.nodes@[i as int];
     let a = Node { last_cmd: id, ..b };
@@ -708,7 +681,6 @@ pub(super) proof fn pause_world(before: World, after: World, i: usize, id: u64)
             handler_safety::rules_world_update(before, after, b, p);
         }
     }
-    ncut_intro(before, after, i as int);
 }
 
 /// Opus 1110: answer_command's ensures verbatim over (before, after, ob, oa) from the exact
@@ -780,7 +752,14 @@ pub(super) proof fn answer_world(before: World, after: World, i: usize, id: u64,
             _ => true,
         }),
 
-        apply_command_safety::ncut_post(before, after, i as int),
+        (after.nodes@[i as int].holds ==> before.nodes@[i as int].holds),
+        (after.nodes@[i as int].pool ==> before.nodes@[i as int].pool),
+        after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
+        after.nodes@[i as int].credit.withheld == before.nodes@[i as int].credit.withheld,
+        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        before.next_question <= after.next_question,
+        (retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(after, after.nodes@[i as int])),
 {
     let b = before.nodes@[i as int];
     world_rewrite(before, after, i, answered_node(b, before.next_question, id, question, answer));
@@ -793,7 +772,6 @@ pub(super) proof fn answer_world(before: World, after: World, i: usize, id: u64,
     if retirement::node_rules(before, b) {
         handler_safety::rules_world_update(before, after, b, n);
     }
-    ncut_intro(before, after, i as int);
 }
 
 /// Opus 1110: on_command's ensures verbatim for a repeated command id, which changes nothing.
@@ -850,14 +828,20 @@ pub(super) proof fn command_stutter(before: World, after: World, i: usize, id: u
             _ => true,
         }),
 
-        apply_command_safety::ncut_post(before, after, i as int),
+        (after.nodes@[i as int].holds ==> before.nodes@[i as int].holds),
+        (after.nodes@[i as int].pool ==> before.nodes@[i as int].pool),
+        after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
+        after.nodes@[i as int].credit.withheld == before.nodes@[i as int].credit.withheld,
+        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        before.next_question <= after.next_question,
+        (retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(after, after.nodes@[i as int])),
 {
     reveal(progress_gate_apply::resume_post);
     reveal(progress_gate_apply::resumed);
     handler_safety::same_step(before.nodes@[i as int]);
     handler_safety::step_identity(before.nodes@[i as int], before.nodes@[i as int]);
     assert(before.nodes@ =~= before.nodes@.update(i as int, before.nodes@[i as int]));
-    ncut_intro(before, after, i as int);
 }
 
 }
