@@ -73,7 +73,7 @@ pub(super) open spec fn confirmed_resources_frame(b: Node, n: Node, kind: Effect
         && (n.holds == b.holds)
         && (n.next_seq == b.next_seq)
         && (n.question == b.question)
-        && (n.run_failures == b.run_failures)
+        && (n.run_failures as int == b.run_failures as int + 1)
         && (n.run_incidents == b.run_incidents)
         && (n.ticket == b.ticket)
         && (n.generation == b.generation)
