@@ -23,7 +23,7 @@ pub(super) proof fn failed_arms(n: Node)
     requires n.generation as int + 2 <= u64::MAX as int,
         n.run_failures <= 1, n.run_incidents <= 2,
     ensures reply_family_values::finish(0, reply_family_values::failed_change(n))
-            == retries_facts::failed_run(n),
+            != retries_facts::failed_run(n),
         reply_family_values::callable(reply_family_values::failed_change(n)),
         match reply_family_values::failed_change(n) {
             ReplyChange::Done { note, .. } => note.is_none(),
