@@ -44,9 +44,11 @@ fn large_world(actor: Node, index: usize) -> World {
     w.next_question = 1024;
     w.nodes.push(actor);
     for i in 1..count { w.nodes.push(cold_node((i % 3) as u64)); }
+    let mut rng = Prng(BIG_SEED ^ index as u64);
     for i in 0..count {
         let offset = if i < 2 { 0 } else { 512 * i as u64 };
-        let files = (0..(65 + index % 16)).map(|j| FileId(offset + j as u64));
+        let mut files: Vec<_> = (0..(65 + index % 16)).map(|j| FileId(offset + j as u64)).collect();
+        for j in (1..files.len()).rev() { let k = rng.next() as usize % (j+1); files.swap(j, k); }
         let footprint = w.intern_footprint(files);
         w.nodes[i].footprint = footprint;
     }
@@ -113,6 +115,10 @@ pub fn dependencies(kind: usize) {
                         request: Some(NodeId(i as u64+1))}, status: DependencyStatus::Pending, rejected: false});
             }
         }
+        if kind == 2 && index % 2 != 0 {
+            let last = w.nodes.len() as u64 - 1;
+            w.dependencies.push(Dependency {node: NodeId(last), target: DependencyTarget {kind: PrerequisiteKind::Issue, number: last, request: Some(NodeId(0))}, status: DependencyStatus::Pending, rejected: false});
+        }
         stats.case(index, BIG_SEED, Some(w), vec![], || {
             if kind == 3 { check_dependency_waiting(); return; }
             if kind == 4 { check_dependency_delivery(); return; }
@@ -169,6 +175,7 @@ pub fn gate(planning: bool) {
         for i in 1..w.nodes.len() {
             if i % 3 == 0 { let files = w.nodes[i].footprint; w.nodes[i] = ready(i); w.nodes[i].footprint = files; }
         }
+        for row in &mut w.dependencies { if row.node.0 % 3 == 0 {row.status = DependencyStatus::Delivered; row.rejected = false;} }
         let width = w.gates[0].w;
         stats.case(index, BIG_SEED, Some(w), vec![], || {
             if planning {check_gate_planning(width);} else {check_gate_grant(width);}
@@ -230,6 +237,7 @@ pub fn gate_leaf() {
         blocker.footprint = w.nodes[0].footprint;
         w.nodes[1] = blocker;
         for i in 2..4 { let files = w.nodes[i].footprint; w.nodes[i] = ready(i); w.nodes[i].footprint = files; }
+        for row in &mut w.dependencies { if row.node.0 < 4 {row.status = DependencyStatus::Delivered; row.rejected = false;} }
         let width = w.gates[0].w;
         stats.case(index, BIG_SEED, Some(w), vec![], || {check_gate_leaf_progress(width);});
     });
