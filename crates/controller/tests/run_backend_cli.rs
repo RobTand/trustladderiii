@@ -6789,6 +6789,48 @@ fn cleanup_maintenance_restart_recovers_durable_attempt_and_serializes_owner() {
     );
 }
 
+struct CleanupMaintenanceExecutor(tl3_controller::adapters::run_backend::flux::Flux);
+impl tl3_controller::executor::Executor for CleanupMaintenanceExecutor {
+    fn execute(
+        &mut self,
+        _: &tl3_controller::executor::Delivery,
+    ) -> tl3_controller::Result<tl3_controller::executor::Completion> {
+        unreachable!()
+    }
+    fn reconcile(
+        &mut self,
+        _: &tl3_controller::executor::Delivery,
+    ) -> tl3_controller::Result<tl3_controller::executor::Reconciliation> {
+        unreachable!()
+    }
+    fn cleanup_maintenance(
+        &mut self,
+        now: u64,
+    ) -> tl3_controller::Result<tl3_controller::run_backend::MaintenanceReport<String>> {
+        self.0
+            .cleanup_maintenance(now)
+            .map(|owners| tl3_controller::run_backend::MaintenanceReport {
+                pending: owners
+                    .pending
+                    .into_iter()
+                    .map(|owner| format!("{}:{}", owner.owner, owner.correlation))
+                    .collect(),
+                skipped_busy: owners.skipped_busy,
+                unobserved: owners
+                    .unobserved
+                    .into_iter()
+                    .map(|owner| format!("{}:{}", owner.owner, owner.correlation))
+                    .collect(),
+            })
+            .map_err(|error| tl3_controller::Error::Adapter(Box::new(error)))
+    }
+    fn next_cleanup_maintenance_ms(&mut self) -> tl3_controller::Result<Option<u64>> {
+        self.0
+            .next_cleanup_maintenance_ms()
+            .map_err(|error| tl3_controller::Error::Adapter(Box::new(error)))
+    }
+}
+
 #[test]
 #[ignore = "requires /mnt/shared; run through admitted fleet compute"]
 fn cleanup_maintenance_corrupt_owner_does_not_block_healthy_owner_or_spin() {
@@ -6813,52 +6855,10 @@ fn cleanup_maintenance_corrupt_owner_does_not_block_healthy_owner_or_spin() {
             std::time::UNIX_EPOCH + Duration::from_millis(self.0)
         }
     }
-    struct Maintenance(tl3_controller::adapters::run_backend::flux::Flux);
-    impl tl3_controller::executor::Executor for Maintenance {
-        fn execute(
-            &mut self,
-            _: &tl3_controller::executor::Delivery,
-        ) -> tl3_controller::Result<tl3_controller::executor::Completion> {
-            unreachable!()
-        }
-        fn reconcile(
-            &mut self,
-            _: &tl3_controller::executor::Delivery,
-        ) -> tl3_controller::Result<tl3_controller::executor::Reconciliation> {
-            unreachable!()
-        }
-        fn cleanup_maintenance(
-            &mut self,
-            now: u64,
-        ) -> tl3_controller::Result<tl3_controller::run_backend::MaintenanceReport<String>>
-        {
-            self.0
-                .cleanup_maintenance(now)
-                .map(|owners| tl3_controller::run_backend::MaintenanceReport {
-                    pending: owners
-                        .pending
-                        .into_iter()
-                        .map(|owner| format!("{}:{}", owner.owner, owner.correlation))
-                        .collect(),
-                    skipped_busy: owners.skipped_busy,
-                    unobserved: owners
-                        .unobserved
-                        .into_iter()
-                        .map(|owner| format!("{}:{}", owner.owner, owner.correlation))
-                        .collect(),
-                })
-                .map_err(|error| tl3_controller::Error::Adapter(Box::new(error)))
-        }
-        fn next_cleanup_maintenance_ms(&mut self) -> tl3_controller::Result<Option<u64>> {
-            self.0
-                .next_cleanup_maintenance_ms()
-                .map_err(|error| tl3_controller::Error::Adapter(Box::new(error)))
-        }
-    }
     let mut registry = tl3_controller::adapters::simulation(f.root.path()).unwrap();
     registry.register(
         tl3_controller::executor::Upstream::PrismaBuild,
-        Maintenance(backend.clone()),
+        CleanupMaintenanceExecutor(backend.clone()),
     );
     let mut controller = tl3_controller::Controller::open_with_clock(
         tl3_store::Store::open(&database.create("maintenance_corrupt_owner")).unwrap(),
@@ -6922,6 +6922,243 @@ fn cleanup_maintenance_corrupt_owner_does_not_block_healthy_owner_or_spin() {
             .unwrap()
             .is_some_and(|next| next > due)
     );
+}
+
+struct MaintenancePermissions(PathBuf);
+impl Drop for MaintenancePermissions {
+    fn drop(&mut self) {
+        let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o700));
+    }
+}
+
+#[derive(Clone, Copy)]
+enum TimerOwnerFault {
+    BusyDirectory,
+    AcquiredBusyDirectory,
+    CorruptLockedRecord,
+}
+
+fn cleanup_timer_owner_error_isolation(fault: TimerOwnerFault) {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.cleanup_execution("timer-healthy-owner", 'd');
+    f.cleanup_facts(&owned, false);
+    f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
+    let backend = maintenance_backend(&f);
+    let clock = std::rc::Rc::new(std::cell::Cell::new(
+        maintenance_due(&f).saturating_sub(300_000),
+    ));
+    struct Clock(std::rc::Rc<std::cell::Cell<u64>>);
+    impl tl3_controller::clock::Clock for Clock {
+        fn now(&self) -> std::time::SystemTime {
+            std::time::UNIX_EPOCH + Duration::from_millis(self.0.get())
+        }
+    }
+    let mut database = maintenance_store_support::Database::start();
+    let mut registry = tl3_controller::adapters::simulation(f.root.path()).unwrap();
+    registry.register(
+        tl3_controller::executor::Upstream::PrismaBuild,
+        CleanupMaintenanceExecutor(backend.clone()),
+    );
+    let mut controller = tl3_controller::Controller::open_with_clock(
+        tl3_store::Store::open(&database.create("maintenance_timer_owner_error")).unwrap(),
+        registry,
+        tl3_controller::Bootstrap {
+            repos: vec![],
+            rob: 42,
+            slots: 1,
+            pool: 1,
+            fail_fast: false,
+            operations: None,
+        },
+        Clock(clock.clone()),
+    )
+    .unwrap();
+    controller.look_now().unwrap();
+    let healthy_id = format!(
+        "runtime-cleanup:{}",
+        digest(
+            format!(
+                "PrismaBuild:{}:{}",
+                owned.owner.owner, owned.owner.correlation
+            )
+            .as_bytes()
+        )
+    );
+    assert!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "incidents"
+                && row.value["id"] == healthy_id
+                && row.value["open"] == true)
+    );
+    let due = maintenance_due(&f);
+    clock.set(due);
+
+    let key = "timer-broken-owner";
+    let dir = f.options.journal_root.join(key);
+    fs::create_dir(&dir).unwrap();
+    let mut record = f.state();
+    record.intent.correlation = key.into();
+    api::durable::save(&dir, &record).unwrap();
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(dir.join("lock"))
+        .unwrap();
+    let busy_dir = f.options.journal_root.join("maintenance-busy");
+    fs::create_dir_all(&busy_dir).unwrap();
+    let _permissions = MaintenancePermissions(busy_dir.clone());
+    match fault {
+        TimerOwnerFault::BusyDirectory => {
+            lock.lock().unwrap();
+            fs::set_permissions(&busy_dir, fs::Permissions::from_mode(0o555)).unwrap();
+            assert!(
+                fs::OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .open(busy_dir.join("permission-probe"))
+                    .is_err(),
+                "fixture must run as an unprivileged user"
+            );
+        }
+        TimerOwnerFault::AcquiredBusyDirectory => {
+            api::durable::maintenance_busy_since(&f.options.journal_root, key, 0).unwrap();
+            fs::set_permissions(&busy_dir, fs::Permissions::from_mode(0o555)).unwrap();
+            assert!(
+                fs::remove_file(busy_dir.join(format!("{}.json", digest(key.as_bytes())))).is_err(),
+                "fixture must run as an unprivileged user"
+            );
+        }
+        TimerOwnerFault::CorruptLockedRecord => {
+            lock.lock().unwrap();
+            fs::write(dir.join("state.json"), b"{truncated").unwrap();
+        }
+    }
+    assert_eq!(
+        backend
+            .next_cleanup_maintenance_ms()
+            .expect("one owner's timer metadata error must not fail the adapter"),
+        Some(due),
+        "healthy owner's cleanup deadline must remain exact"
+    );
+    let failures = api::durable::maintenance_failures(&f.options.journal_root).unwrap();
+    assert!(
+        failures
+            .iter()
+            .any(|failure| failure.key == key && failure.next_attempt_ms >= due),
+        "timer must retain the owner's failure with a backoff"
+    );
+    // Exercise Registry's timer before the Look: an adapter error here would cache
+    // a 300-second suppression and prevent healthy maintenance and incident closure.
+    controller.next_look_in().unwrap();
+    f.cleanup_facts(&owned, true);
+    controller.look_now().unwrap();
+    assert!(
+        cleanup_debts(&f).is_empty(),
+        "healthy owner must still be maintained"
+    );
+    assert!(!f.state().cleanup_evidence.is_empty());
+    assert!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "incidents"
+                && row.value["id"] == healthy_id
+                && row.value["open"] == false),
+        "healthy owner's incident must close despite another owner's timer error"
+    );
+    assert!(
+        !backend.cleanup_maintenance(due).unwrap().pending.is_empty(),
+        "bad owner must remain pending"
+    );
+    drop(controller);
+    database.stop();
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_timer_unwritable_busy_directory_isolates_owner() {
+    cleanup_timer_owner_error_isolation(TimerOwnerFault::BusyDirectory);
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_timer_acquired_busy_state_error_isolates_owner() {
+    cleanup_timer_owner_error_isolation(TimerOwnerFault::AcquiredBusyDirectory);
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_timer_corrupt_locked_owner_isolates_owner() {
+    cleanup_timer_owner_error_isolation(TimerOwnerFault::CorruptLockedRecord);
+}
+
+fn cleanup_timer_expired_busy_failure_log_backoff(unwritable: bool) {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.cleanup_execution("timer-expired-busy", 'd');
+    f.cleanup_facts(&owned, false);
+    f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(
+            f.options
+                .journal_root
+                .join(&f.intent.correlation)
+                .join("lock"),
+        )
+        .unwrap();
+    lock.lock().unwrap();
+    api::durable::maintenance_busy_since(&f.options.journal_root, &f.intent.correlation, 0)
+        .unwrap();
+    let errors = f.options.journal_root.join("maintenance-errors");
+    if unwritable {
+        fs::write(&errors, b"not a directory").unwrap();
+    } else {
+        fs::create_dir(&errors).unwrap();
+        fs::write(errors.join("unreadable.json"), b"{truncated").unwrap();
+    }
+    let backend = maintenance_backend(&f);
+    for _ in 0..3 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        assert!(!backend.cleanup_maintenance(now).unwrap().pending.is_empty());
+        let next = backend.next_cleanup_maintenance_ms().unwrap().unwrap();
+        assert!(
+            next >= now.saturating_add(300_000),
+            "expired busy owner without a retained failure must back off a full cadence"
+        );
+    }
+    assert!(
+        !cleanup_debts(&f).is_empty(),
+        "timer failures cannot clear debt"
+    );
+    assert!(f.state().cleanup_evidence.is_empty());
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_timer_expired_busy_unwritable_failure_log_backs_off() {
+    cleanup_timer_expired_busy_failure_log_backoff(true);
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_timer_expired_busy_unreadable_failure_log_backs_off() {
+    cleanup_timer_expired_busy_failure_log_backoff(false);
 }
 
 #[test]
