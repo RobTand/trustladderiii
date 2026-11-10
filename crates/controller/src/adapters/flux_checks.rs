@@ -527,6 +527,11 @@ impl Executor for Adapter {
                         .map(|owner| format!("{}:{}", owner.owner, owner.correlation))
                         .collect(),
                     skipped_busy: owners.skipped_busy,
+                    unobserved: owners
+                        .unobserved
+                        .into_iter()
+                        .map(|owner| format!("{}:{}", owner.owner, owner.correlation))
+                        .collect(),
                 }
             }
             Err(error) => {
@@ -540,6 +545,7 @@ impl Executor for Adapter {
                 backend::MaintenanceReport {
                     pending: vec!["backend-maintenance".into()],
                     skipped_busy: false,
+                    unobserved: vec![],
                 }
             }
         };

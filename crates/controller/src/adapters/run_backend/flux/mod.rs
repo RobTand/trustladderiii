@@ -29,6 +29,7 @@ pub struct Flux {
     stop: WatchStop,
     maintenance_owners: usize,
     maintenance_budget: std::time::Duration,
+    maintenance_busy_bound_ms: u64,
     native_deadline: Option<std::time::Instant>,
     maintenance_now_ms: Option<u64>,
 }
@@ -45,6 +46,12 @@ impl Flux {
         self
     }
 
+    /// Grace period for owner transaction contention, persisted outside the owner lock.
+    pub fn with_cleanup_maintenance_busy_bound(mut self, bound: std::time::Duration) -> Self {
+        self.maintenance_busy_bound_ms = bound.as_millis().clamp(1, u64::MAX as u128) as u64;
+        self
+    }
+
     pub fn new(options: Options) -> Result<Self> {
         validate::options(&options)?;
         let journal = Journal::new(options.journal_root.clone())?;
@@ -54,6 +61,7 @@ impl Flux {
             stop: WatchStop::default(),
             maintenance_owners: 4,
             maintenance_budget: std::time::Duration::from_secs(5),
+            maintenance_busy_bound_ms: maintenance::CADENCE_MS,
             native_deadline: None,
             maintenance_now_ms: None,
         })

@@ -181,6 +181,7 @@ impl RunBackend for Backend {
             Err(_) => Ok(api::MaintenanceReport {
                 pending: vec![owner],
                 skipped_busy: false,
+                unobserved: vec![],
             }),
         }
     }

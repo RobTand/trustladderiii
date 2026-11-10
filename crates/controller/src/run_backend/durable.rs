@@ -133,6 +133,24 @@ impl Journal {
         f(dir, record)
     }
 
+    /// Identity only: an unlocked read must never establish cleanup or stop evidence.
+    pub fn owner_identity(&self, key: &str) -> Result<Owner> {
+        if !token(key) || self.root.join(key).is_symlink() {
+            return Err(BackendError::invalid("unsafe journal owner directory"));
+        }
+        let record: Record =
+            serde_json::from_slice(&read(&self.root.join(key).join("state.json"))?)?;
+        if record.intent.correlation != key || !token(&record.intent.owner) {
+            return Err(BackendError::invalid(
+                "journal owner does not match directory",
+            ));
+        }
+        Ok(Owner {
+            owner: record.intent.owner,
+            correlation: record.intent.correlation,
+        })
+    }
+
     pub fn runtime_gate<T>(&self, f: impl FnOnce(&Path) -> Result<T>) -> Result<T> {
         let lock = OpenOptions::new()
             .create(true)
@@ -158,7 +176,7 @@ impl Journal {
                 }
             };
             let key = entry.file_name().to_string_lossy().into_owned();
-            if key == "cleanup-debt" || key == "maintenance-errors" {
+            if key == "cleanup-debt" || key == "maintenance-errors" || key == "maintenance-busy" {
                 continue;
             }
             let record = (|| {
@@ -402,6 +420,61 @@ pub fn clear_maintenance_failure(root: &Path, key: &str) -> Result<()> {
     match fs::remove_file(path) {
         Ok(()) => {
             File::open(dir)?.sync_all()?;
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+// This lock is independent of the owner transaction lock. Concurrent timer and
+// maintenance scans must agree on the first observation, including after restart.
+fn busy_state(root: &Path, key: &str) -> Result<(std::path::PathBuf, File)> {
+    let dir = root.join("maintenance-busy");
+    fs::create_dir_all(&dir)?;
+    if dir.is_symlink() {
+        return Err(BackendError::invalid(
+            "maintenance busy directory cannot be a symlink",
+        ));
+    }
+    let name = digest(key.as_bytes());
+    let lock_path = dir.join(format!("{name}.lock"));
+    if lock_path.is_symlink() {
+        return Err(BackendError::invalid(
+            "maintenance busy lock cannot be a symlink",
+        ));
+    }
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(lock_path)?;
+    lock.lock()?;
+    Ok((dir.join(format!("{name}.json")), lock))
+}
+
+pub fn maintenance_busy_since(root: &Path, key: &str, now: u64) -> Result<u64> {
+    let (path, _lock) = busy_state(root, key)?;
+    if path.try_exists()? {
+        return Ok(serde_json::from_slice(&read(&path)?)?);
+    }
+    atomic(&path, &serde_json::to_vec(&now)?)?;
+    Ok(now)
+}
+
+pub fn clear_maintenance_busy(root: &Path, key: &str) -> Result<()> {
+    if !root
+        .join("maintenance-busy")
+        .join(format!("{}.json", digest(key.as_bytes())))
+        .try_exists()?
+    {
+        return Ok(());
+    }
+    let (path, _lock) = busy_state(root, key)?;
+    match fs::remove_file(&path) {
+        Ok(()) => {
+            File::open(root.join("maintenance-busy"))?.sync_all()?;
             Ok(())
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),

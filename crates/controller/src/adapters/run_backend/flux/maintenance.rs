@@ -33,6 +33,73 @@ impl Flux {
         }
     }
 
+    fn busy_owner(&self, key: &str, now: u64) -> Result<(Owner, bool)> {
+        let first = maintenance_busy_since(&self.options.journal_root, key, now)?;
+        let owner = self.journal.owner_identity(key)?;
+        Ok((
+            owner,
+            now.saturating_sub(first) >= self.maintenance_busy_bound_ms,
+        ))
+    }
+
+    fn acquired_owner(
+        &self,
+        key: &str,
+        failures: &mut BTreeMap<String, MaintenanceFailure>,
+    ) -> Result<()> {
+        clear_maintenance_busy(&self.options.journal_root, key)?;
+        if failures
+            .get(key)
+            .is_some_and(|failure| failure.message.starts_with("persistently held owner lock"))
+        {
+            clear_maintenance_failure(&self.options.journal_root, key)?;
+            failures.remove(key);
+        }
+        Ok(())
+    }
+
+    fn report_busy(
+        &self,
+        key: &str,
+        now: u64,
+        failures: &BTreeMap<String, MaintenanceFailure>,
+        pending: &mut BTreeMap<String, Owner>,
+        unobserved: &mut BTreeMap<String, Owner>,
+    ) {
+        match self.busy_owner(key, now) {
+            Ok((owner, expired)) => {
+                unobserved.insert(key.into(), owner.clone());
+                if expired
+                    || failures.get(key).is_some_and(|failure| {
+                        failure.message.starts_with("persistently held owner lock")
+                    })
+                {
+                    if failures
+                        .get(key)
+                        .is_none_or(|failure| failure.next_attempt_ms <= now)
+                    {
+                        self.maintenance_error(
+                            key,
+                            "persistently held owner lock; cleanup is unproven",
+                            now,
+                        );
+                    }
+                    pending.insert(key.into(), owner);
+                }
+            }
+            Err(error) => {
+                self.maintenance_error(key, &error.to_string(), now);
+                pending.insert(
+                    key.into(),
+                    Owner {
+                        owner: "maintenance-error".into(),
+                        correlation: key.into(),
+                    },
+                );
+            }
+        }
+    }
+
     fn maintenance_failures_snapshot(
         &self,
         now: u64,
@@ -54,7 +121,7 @@ impl Flux {
 
     pub(super) fn cleanup_deadline(&self) -> Result<Option<u64>> {
         let now = now_ms();
-        let (failures, error_log_failed) = self.maintenance_failures_snapshot(now);
+        let (mut failures, error_log_failed) = self.maintenance_failures_snapshot(now);
         let mut deadlines = Vec::new();
         if error_log_failed {
             deadlines.push(now.saturating_add(CADENCE_MS));
@@ -62,6 +129,7 @@ impl Flux {
         for (key, entry) in self.journal.records()? {
             match entry {
                 Ok(Some(record)) => {
+                    self.acquired_owner(&key, &mut failures)?;
                     // Committed terminals are immutable. Report unresolved debt but
                     // do not wake the Look thread for a cleanup that cannot run.
                     if record.terminal.is_some() {
@@ -75,8 +143,24 @@ impl Flux {
                         deadlines.push(retry.map_or(deadline, |retry| retry.max(deadline)));
                     }
                 }
-                // A short retry wakes a busy owner without writing a failure or cadence.
-                Ok(None) => deadlines.push(now.saturating_add(1_000)),
+                Ok(None) => {
+                    let (_, expired) = self.busy_owner(&key, now)?;
+                    if expired
+                        || failures.get(&key).is_some_and(|failure| {
+                            failure.message.starts_with("persistently held owner lock")
+                        })
+                    {
+                        // Leave an elapsed deadline due. Advancing it here would let
+                        // timer scans postpone the incident-producing pass forever.
+                        deadlines.push(
+                            failures
+                                .get(&key)
+                                .map_or(now, |failure| failure.next_attempt_ms),
+                        );
+                    } else {
+                        deadlines.push(now.saturating_add(1_000));
+                    }
+                }
                 Err(error) => {
                     let deadline = failures
                         .get(&key)
@@ -101,10 +185,11 @@ impl Flux {
         let deadline = Instant::now() + self.maintenance_budget;
         pass.native_deadline = Some(deadline);
         pass.maintenance_now_ms = Some(now);
-        let (failures, error_log_failed) = self.maintenance_failures_snapshot(now);
+        let (mut failures, error_log_failed) = self.maintenance_failures_snapshot(now);
         let mut records = BTreeMap::new();
         let mut pending = BTreeMap::new();
         let mut skipped_busy = false;
+        let mut unobserved = BTreeMap::new();
         if error_log_failed {
             pending.insert(
                 "maintenance-error-log".into(),
@@ -118,9 +203,16 @@ impl Flux {
         for (key, entry) in self.journal.records()? {
             match entry {
                 Ok(Some(record)) => {
+                    if let Err(error) = self.acquired_owner(&key, &mut failures) {
+                        self.maintenance_error(&key, &error.to_string(), now);
+                        pending.insert(key.clone(), record_owner(&record));
+                    }
                     records.insert(key, record);
                 }
-                Ok(None) => skipped_busy = true,
+                Ok(None) => {
+                    skipped_busy = true;
+                    self.report_busy(&key, now, &failures, &mut pending, &mut unobserved);
+                }
                 Err(error) => {
                     if failures
                         .get(&key)
@@ -188,6 +280,7 @@ impl Flux {
                 Ok(None) => {
                     skipped_busy = true;
                     busy_claims.insert(key.clone());
+                    self.report_busy(key, now, &failures, &mut pending, &mut unobserved);
                 }
                 Ok(Some(current)) => {
                     *record = current;
@@ -263,6 +356,7 @@ impl Flux {
                 Ok(None) => {
                     skipped_busy = true;
                     busy_claims.insert(key.clone());
+                    self.report_busy(key, now, &failures, &mut pending, &mut unobserved);
                 }
                 Ok(Some(current)) => {
                     *record = current;
@@ -289,6 +383,7 @@ impl Flux {
         Ok(MaintenanceReport {
             pending: pending.into_values().collect(),
             skipped_busy,
+            unobserved: unobserved.into_values().collect(),
         })
     }
 }

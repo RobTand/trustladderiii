@@ -3034,6 +3034,11 @@ fn cleanup_maintenance_incident_without_delivery(settings: &tl3_config::Store) {
                     vec![]
                 },
                 skipped_busy: self.2.get(),
+                unobserved: if self.2.get() {
+                    vec!["owner-correlation".into()]
+                } else {
+                    vec![]
+                },
             })
         }
     }
@@ -3120,10 +3125,17 @@ fn cleanup_maintenance_incident_without_delivery(settings: &tl3_config::Store) {
 fn cleanup_maintenance_busy_owner_does_not_hold_other_incidents(settings: &tl3_config::Store) {
     struct Maintenance(Rc<Cell<bool>>);
     impl Executor for Maintenance {
-        fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> { unreachable!() }
-        fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> { unreachable!() }
-        fn cleanup_maintenance(&mut self, _: u64)
-            -> tl3_controller::Result<tl3_controller::run_backend::MaintenanceReport<String>> {
+        fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
+            unreachable!()
+        }
+        fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
+            unreachable!()
+        }
+        fn cleanup_maintenance(
+            &mut self,
+            _: u64,
+        ) -> tl3_controller::Result<tl3_controller::run_backend::MaintenanceReport<String>>
+        {
             Ok(tl3_controller::run_backend::MaintenanceReport {
                 pending: if self.0.get() {
                     vec!["persistently-busy-owner".into()]
@@ -3131,6 +3143,11 @@ fn cleanup_maintenance_busy_owner_does_not_hold_other_incidents(settings: &tl3_c
                     vec!["persistently-busy-owner".into(), "resolved-owner".into()]
                 },
                 skipped_busy: self.0.get(),
+                unobserved: if self.0.get() {
+                    vec!["persistently-busy-owner".into()]
+                } else {
+                    vec![]
+                },
             })
         }
     }
@@ -3138,16 +3155,41 @@ fn cleanup_maintenance_busy_owner_does_not_hold_other_incidents(settings: &tl3_c
     let root = tempfile::tempdir().unwrap();
     let mut registry = adapters::simulation(root.path()).unwrap();
     registry.register(Upstream::PrismaBuild, Maintenance(busy.clone()));
-    let mut c = Controller::open_with_clock(Store::open(settings).unwrap(), registry,
-        bootstrap(), FakeClock::new()).unwrap();
+    let mut c = Controller::open_with_clock(
+        Store::open(settings).unwrap(),
+        registry,
+        bootstrap(),
+        FakeClock::new(),
+    )
+    .unwrap();
     c.look_now().unwrap();
-    let open_count = |c: &mut Controller| c.snapshot().unwrap().rows.iter().filter(|r|
-        r.table == "incidents" && r.value["signature"]["class"] == "runtime_cleanup"
-            && r.value["open"] == true).count();
+    let open_count = |c: &mut Controller| {
+        c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .filter(|r| {
+                r.table == "incidents"
+                    && r.value["signature"]["class"] == "runtime_cleanup"
+                    && r.value["open"] == true
+            })
+            .count()
+    };
     assert_eq!(open_count(&mut c), 2);
     busy.set(true);
     c.look_now().unwrap();
-    assert_eq!(open_count(&mut c), 1, "one busy owner must not hold another owner's resolved incident open");
+    assert_eq!(
+        open_count(&mut c),
+        1,
+        "one busy owner must not hold another owner's resolved incident open"
+    );
+    assert!(c.snapshot().unwrap().rows.iter().any(|r| {
+        r.table == "incidents"
+            && r.value["open"] == true
+            && r.value["summary"]
+                .as_str()
+                .is_some_and(|summary| summary.contains("persistently held owner lock"))
+    }));
 }
 
 fn cleanup_maintenance_adapter_errors_do_not_block_looks(settings: &tl3_config::Store) {

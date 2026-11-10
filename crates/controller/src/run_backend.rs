@@ -572,11 +572,12 @@ pub struct Probe {
     pub memory_guarantee: MemoryGuarantee,
 }
 
-/// Busy owners were not observed. Preserve existing incidents until a complete pass.
+/// Unobserved owners preserve only their own incidents; pending owners need attention.
 #[derive(Clone, Debug)]
 pub struct MaintenanceReport<T> {
     pub pending: Vec<T>,
     pub skipped_busy: bool,
+    pub unobserved: Vec<T>,
 }
 
 impl<T> Default for MaintenanceReport<T> {
@@ -584,6 +585,7 @@ impl<T> Default for MaintenanceReport<T> {
         Self {
             pending: Vec::new(),
             skipped_busy: false,
+            unobserved: Vec::new(),
         }
     }
 }

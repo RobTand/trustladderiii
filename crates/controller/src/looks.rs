@@ -616,10 +616,12 @@ impl Controller {
             let report = report.unwrap_or_else(|_| crate::run_backend::MaintenanceReport {
                 pending: vec!["adapter-maintenance".into()],
                 skipped_busy: false,
+                unobserved: vec![],
             });
             let owners = report.pending;
             let outstanding: std::collections::BTreeSet<_> = owners
                 .iter()
+                .chain(report.unobserved.iter())
                 .map(|owner| {
                     format!(
                         "runtime-cleanup:{}",
@@ -635,7 +637,6 @@ impl Controller {
                     && incident.signature.class == "runtime_cleanup"
                     && incident.open
                     && error.is_none()
-                    && !report.skipped_busy
                     && !outstanding.contains(&incident.id)
                 {
                     incident.open = false;
@@ -659,6 +660,9 @@ impl Controller {
                     summary: match &error {
                         Some(error) => format!(
                             "Maintenance for {upstream:?} failed: {error}. Other Looks continue; retry in 300 seconds."
+                        ),
+                        None if report.unobserved.contains(&owner) => format!(
+                            "Runtime maintenance for {owner} is blocked by a persistently held owner lock. Cleanup remains unproven; retry in 300 seconds."
                         ),
                         None => format!(
                             "Runtime maintenance for {owner} needs attention. Cleanup debt remains until positive stop evidence; inspect the durable maintenance-errors journal for failed cleanup or held dispatch."
