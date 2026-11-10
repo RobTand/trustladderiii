@@ -38,7 +38,7 @@ pub(super) proof fn ack_node_safety(before: World, after: World, event: Event, i
 /// charge, and a later prepare keeps the existing head and phase.
 pub(super) proof fn adoption_facts(w: World, b: Node, n: Node)
     requires retirement::node_rules(w, b),
-        current_item(b) == Some(Item::Do(EffectKind::PrepareWorktree)),
+        true,
         n == acknowledgements::agenda_spec(acknowledgements::resources_spec(
             Node { effect: None, ..b }, EffectKind::PrepareWorktree), EffectKind::PrepareWorktree),
     ensures n.credit == b.credit, n.attempt == b.attempt, n.round == b.round,
