@@ -650,6 +650,59 @@ pub(super) open spec fn advance_post(before: Node, after: Node,
 
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
+    fn advance_blocked_value(b: Node, _next_ticket: &mut u64,
+        _context: AdvanceContext, _out: &mut Outbox, _report: &mut Report) -> (result: (Node, bool)) [
+        requires advance_pre(b, *old(_next_ticket), old(_out).len),
+            b.phase is Closed || b.waiting_incident || b.effect.is_some(),
+        ensures report::no_new_stop(b.phase, result.0.phase,
+                old(_report).entries@, final(_report).entries@),
+            (!result.1 ==> final(_out).len == old(_out).len),
+            advance_post(b, result.0,
+            *old(_next_ticket), *final(_next_ticket), result.1),
+            result.1 == advance_enabled(b, _context),
+        *final(_next_ticket) == *old(_next_ticket),
+        advance_family_post::grant_facts(b, result.0, _context),
+        result.0.holds && !b.holds ==> result.0.run == b.run,
+        advance_family_post::holds_frame(b, result.0),
+    ] proof [reveal(advance_post); reveal(distance);] {
+        let mut node = b;
+        kernel_snapshot! { before_grant = node }
+        kernel_snapshot! { before_phase = node.phase }
+        let n = node;
+        if n.phase.is_closed() {
+            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+            kernel_proof! { advance_family_post::grant_no_new(before_grant@, node, _context); }
+            kernel_proof! { advance_family_post::holds_frame_intro(b, node); }
+            return (node, false);
+        }
+        if n.waiting_incident {
+            if n.ticket.is_some() {
+                node.ticket = None;
+                kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+                kernel_proof! { advance_family_post::grant_no_new(before_grant@, node, _context); }
+                kernel_proof! { advance_family_post::holds_frame_intro(b, node); }
+                return (node, true);
+            }
+            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+            kernel_proof! { advance_family_post::grant_no_new(before_grant@, node, _context); }
+            kernel_proof! { advance_family_post::holds_frame_intro(b, node); }
+            return (node, false);
+        }
+        if n.effect.is_some() {
+            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+            kernel_proof! { advance_family_post::grant_no_new(before_grant@, node, _context); }
+            kernel_proof! { advance_family_post::holds_frame_intro(b, node); }
+            return (node, false); // one effect in flight at a time
+        }
+        kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+        kernel_proof! { advance_family_post::grant_no_new(before_grant@, node, _context); }
+        kernel_proof! { advance_family_post::holds_frame_intro(b, node); }
+        (node, false)
+    }
+}
+
+kernel_fn! {
+    /// #771: same executable transition, partitioned for bounded solver queries.
     fn advance_blocked(node: &mut Node, _next_ticket: &mut u64,
         _context: AdvanceContext, _out: &mut Outbox, _report: &mut Report) -> (result: bool) [
         requires advance_pre(*old(node), *old(_next_ticket), old(_out).len),
@@ -661,28 +714,13 @@ kernel_fn! {
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), _context),
         *final(_next_ticket) == *old(_next_ticket),
-    ] proof [reveal(advance_post); reveal(distance);] {
-        kernel_snapshot! { before_phase = node.phase }
-        let n = *node;
-        if n.phase.is_closed() {
-            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
-            return false;
-        }
-        if n.waiting_incident {
-            if n.ticket.is_some() {
-                node.ticket = None;
-                kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
-                return true;
-            }
-            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
-            return false;
-        }
-        if n.effect.is_some() {
-            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
-            return false; // one effect in flight at a time
-        }
-        kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
-        false
+        advance_family_post::grant_facts(*old(node), *final(node), _context),
+        final(node).holds && !old(node).holds ==> final(node).run == old(node).run,
+        advance_family_post::holds_frame(*old(node), *final(node)),
+    ] {
+        let v = advance_blocked_value(*node, _next_ticket, _context, _out, _report);
+        *node = v.0;
+        v.1
     }
 }
 
@@ -699,20 +737,61 @@ kernel_fn! {
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
         *final(_next_ticket) == *old(_next_ticket),
+        advance_family_post::grant_facts(*old(node), *final(node), context),
+        final(node).holds && !old(node).holds ==> final(node).run == old(node).run,
     ] proof [reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { before_grant = *node }
         kernel_snapshot! { before_phase = node.phase }
         let n = *node;
         match n.phase {
             Phase::Stopping(outcome) if n.question.is_none() => {
                 close_node(node, context.node, outcome, out);
                 kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+                kernel_proof! { advance_family_post::grant_no_new(before_grant@, *node, context); }
                 true
             }
             _ => {
                 kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+                kernel_proof! { advance_family_post::grant_no_new(before_grant@, *node, context); }
                 false
             },
         }
+    }
+}
+
+kernel_fn! {
+    /// #771: same executable transition, partitioned for bounded solver queries.
+    fn advance_do_value(b: Node, _next_ticket: &mut u64,
+        context: AdvanceContext, out: &mut Outbox, _report: &mut Report, kind: EffectKind) -> (result: (Node, bool)) [
+        requires advance_pre(b, *old(_next_ticket), old(out).len),
+            !(b.phase is Closed) && !b.waiting_incident && b.effect.is_none() && current_item(b) == Some(Item::Do(kind)),
+        ensures report::no_new_stop(b.phase, result.0.phase,
+                old(_report).entries@, final(_report).entries@),
+            (!result.1 ==> final(out).len == old(out).len),
+            advance_post(b, result.0,
+            *old(_next_ticket), *final(_next_ticket), result.1),
+            result.1 == advance_enabled(b, context),
+        *final(_next_ticket) == *old(_next_ticket),
+        advance_family_post::grant_facts(b, result.0, context),
+        result.0.holds && !b.holds ==> result.0.run == b.run,
+        advance_family_post::holds_frame(b, result.0),
+    ] proof [reveal(advance_post); reveal(distance);] {
+        let mut node = b;
+        kernel_snapshot! { before_grant = node }
+        kernel_snapshot! { before_phase = node.phase }
+        let n = node;
+        if n.paused {
+            let paused = pause_node(&mut node);
+            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+            kernel_proof! { advance_family_post::grant_no_new(before_grant@, node, context); }
+            kernel_proof! { advance_family_post::holds_frame_intro(b, node); }
+            return (node, paused);
+        }
+        emit_node(&mut node, context.node, kind, out);
+        kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+        kernel_proof! { advance_family_post::grant_no_new(before_grant@, node, context); }
+        kernel_proof! { advance_family_post::holds_frame_intro(b, node); }
+        (node, true)
     }
 }
 
@@ -729,17 +808,92 @@ kernel_fn! {
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
         *final(_next_ticket) == *old(_next_ticket),
+        advance_family_post::grant_facts(*old(node), *final(node), context),
+        final(node).holds && !old(node).holds ==> final(node).run == old(node).run,
+        advance_family_post::holds_frame(*old(node), *final(node)),
+    ] {
+        let v = advance_do_value(*node, _next_ticket, context, out, _report, kind);
+        *node = v.0;
+        v.1
+    }
+}
+
+kernel_fn! {
+    /// #806: Start's granting arm; each result field is the same value term.
+    fn start_grant_value(n: Node, _next_ticket: u64, context: AdvanceContext, role: Role, out: &mut Outbox)
+        -> (result: Node) [
+        requires advance_pre(n, _next_ticket, old(out).len),
+            !(n.phase is Closed) && !n.waiting_incident && n.effect.is_none()
+                && current_item(n) == Some(Item::Start(role)),
+            context.pool, !n.paused, n.ticket.is_some(),
+        ensures result == (Node {
+            ticket: None, pool: true, run: Some(n.generation), pos: (n.pos + 1) as u8,
+            next_seq: (n.next_seq + 1) as u64,
+            effect: Some(InFlight { seq: n.next_seq, kind: EffectKind::StartRun(role), cancelling: false }),
+            ..n
+        }),
+            final(out).len == old(out).len + 1,
+            final(out).items@ == old(out).items@.update(old(out).len as int,
+                Some(Out::Effect { node: NodeId(context.node as u64), seq: n.next_seq,
+                    kind: EffectKind::StartRun(role), head: None })),
+            advance_post(n, result, _next_ticket, _next_ticket, true),
+            advance_enabled(n, context),
+            advance_family_post::grant_facts(n, result, context),
+            result.holds && !n.holds ==> result.run == n.run,
     ] proof [reveal(advance_post); reveal(distance);] {
+        let mut m = n;
+        m.ticket = None;
+        m.pool = true;
+        m.run = Some(m.generation);
+        m.pos += 1;
+        emit_node(&mut m, context.node, EffectKind::StartRun(role), out);
+        kernel_proof! { advance_family_post::grant_from_fields(n, m, context); }
+        m
+    }
+}
+
+kernel_fn! {
+    /// #806: the original Start transition over a copied node, with one write-back.
+    fn advance_start_value(n: Node, next_ticket: u64,
+        context: AdvanceContext, out: &mut Outbox, _report: &mut Report, role: Role)
+        -> (result: (Node, u64, bool)) [
+        requires advance_pre(n, next_ticket, old(out).len),
+            !(n.phase is Closed) && !n.waiting_incident && n.effect.is_none()
+                && current_item(n) == Some(Item::Start(role)),
+        ensures report::no_new_stop(n.phase, result.0.phase,
+                old(_report).entries@, final(_report).entries@),
+            (!result.2 ==> final(out).len == old(out).len),
+            advance_post(n, result.0, next_ticket, result.1, result.2),
+            result.2 == advance_enabled(n, context),
+            next_ticket <= result.1,
+            advance_family_post::start_unobstructed(n)
+                ==> advance_family_post::pool_grant(n, result.0, context, result.2),
+        advance_family_post::grant_facts(n, result.0, context),
+        result.0.holds && !n.holds ==> result.0.run == n.run,
+    ] proof [reveal(advance_post); reveal(distance); reveal(advance_family_post::pool_grant);] {
+        let mut node = n;
+        let mut ticket = next_ticket;
         kernel_snapshot! { before_phase = node.phase }
-        let n = *node;
         if n.paused {
-            let paused = pause_node(node);
+            let paused = pause_node(&mut node);
             kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
-            return paused;
+            kernel_proof! { advance_family_post::grant_from_fields(n, node, context); }
+            return (node, ticket, paused);
         }
-        emit_node(node, context.node, kind, out);
+        if n.ticket.is_none() {
+            take_ticket_node(&mut node, &mut ticket);
+            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+            kernel_proof! { advance_family_post::grant_from_fields(n, node, context); }
+            return (node, ticket, true);
+        }
+        if context.pool {
+            node = start_grant_value(n, next_ticket, context, role, out);
+            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+            return (node, ticket, true);
+        }
         kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
-        true
+        kernel_proof! { advance_family_post::grant_from_fields(n, node, context); }
+        (node, ticket, false)
     }
 }
 
@@ -756,31 +910,15 @@ kernel_fn! {
             *old(next_ticket), *final(next_ticket), result),
             result == advance_enabled(*old(node), context),
         *old(next_ticket) <= *final(next_ticket),
-    ] proof [reveal(advance_post); reveal(distance);] {
-        kernel_snapshot! { before_phase = node.phase }
-        let n = *node;
-        if n.paused {
-            let paused = pause_node(node);
-            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
-            return paused;
-        }
-        if n.ticket.is_none() {
-            take_ticket_node(node, next_ticket);
-            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
-            return true;
-        }
-        if context.pool {
-            let m = &mut *node;
-            m.ticket = None;
-            m.pool = true;
-            m.run = Some(m.generation);
-            m.pos += 1;
-            emit_node(node, context.node, EffectKind::StartRun(role), out);
-            kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
-            return true;
-        }
-        kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
-        false
+        advance_family_post::start_unobstructed(*old(node))
+            ==> advance_family_post::pool_grant(*old(node), *final(node), context, result),
+        advance_family_post::grant_facts(*old(node), *final(node), context),
+        final(node).holds && !old(node).holds ==> final(node).run == old(node).run,
+    ] {
+        let v = advance_start_value(*node, *next_ticket, context, out, _report, role);
+        *node = v.0;
+        *next_ticket = v.1;
+        v.2
     }
 }
 
@@ -797,12 +935,16 @@ kernel_fn! {
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
         *final(_next_ticket) == *old(_next_ticket),
+        advance_family_post::grant_facts(*old(node), *final(node), context),
+        final(node).holds && !old(node).holds ==> final(node).run == old(node).run,
     ] proof [reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { before_grant = *node }
         kernel_snapshot! { before_phase = node.phase }
         let n = *node;
         if n.paused {
             let paused = pause_node(node);
             kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+            kernel_proof! { advance_family_post::grant_no_new(before_grant@, *node, context); }
             return paused;
         }
         let m = &mut *node;
@@ -810,6 +952,7 @@ kernel_fn! {
         m.pos += 1;
         emit_node(node, context.node, EffectKind::SubmitChecks, out);
         kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+        kernel_proof! { advance_family_post::grant_no_new(before_grant@, *node, context); }
         true
     }
 }
@@ -827,12 +970,16 @@ kernel_fn! {
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
         *final(_next_ticket) == *old(_next_ticket),
+        advance_family_post::grant_facts(*old(node), *final(node), context),
+        final(node).holds && !old(node).holds ==> final(node).run == old(node).run,
     ] proof [reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { before_grant = *node }
         kernel_snapshot! { before_phase = node.phase }
         let n = *node;
         if n.paused {
             let paused = pause_node(node);
             kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+            kernel_proof! { advance_family_post::grant_no_new(before_grant@, *node, context); }
             return paused;
         }
         let m = &mut *node;
@@ -840,6 +987,7 @@ kernel_fn! {
         m.pos += 1;
         emit_node(node, context.node, EffectKind::StartRebase, out);
         kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+        kernel_proof! { advance_family_post::grant_no_new(before_grant@, *node, context); }
         true
     }
 }
@@ -858,11 +1006,15 @@ kernel_fn! {
             result == advance_enabled(*old(node), context),
             result ==> final(node).phase == (Phase::Planning { must_split: false }),
         *final(_next_ticket) == *old(_next_ticket),
+        advance_family_post::grant_facts(*old(node), *final(node), context),
+        final(node).holds && !old(node).holds ==> final(node).run == old(node).run,
     ] proof [reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { before_grant = *node }
         kernel_snapshot! { before_phase = node.phase }
         let n = *node;
         if n.paused || !context.admit {
             kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+            kernel_proof! { advance_family_post::grant_no_new(before_grant@, *node, context); }
             return false;
         }
         let m = &mut *node;
@@ -870,6 +1022,7 @@ kernel_fn! {
         m.planning_started = true;
         set_phase(m, Phase::Planning { must_split: false });
         kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+        kernel_proof! { advance_family_post::grant_no_new(before_grant@, *node, context); }
         true
     }
 }
@@ -955,9 +1108,12 @@ kernel_fn! {
         *old(next_ticket) <= *final(next_ticket),
         advance_family_post::ready_unobstructed(*old(node))
             ==> advance_family_post::slot_grant(*old(node), *final(node), context, result),
+        advance_family_post::grant_facts(*old(node), *final(node), context),
+        final(node).holds && !old(node).holds ==> final(node).run == old(node).run,
     ] {
         kernel_proof! { advance_family_post::slot_bounds(*node, *next_ticket, _out.len); }
         let v = advance_slot_value(*node, *next_ticket, context);
+        kernel_proof! { advance_family_post::slot_grant_facts(*node, *next_ticket, context, v); }
         kernel_proof! {
             if advance_family_post::ready_unobstructed(*node) {
                 advance_family_post::slot_grant_from_value(*node, *next_ticket, context, v);
@@ -985,12 +1141,16 @@ kernel_fn! {
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), _context),
         *final(_next_ticket) == *old(_next_ticket),
+        advance_family_post::grant_facts(*old(node), *final(node), _context),
+        final(node).holds && !old(node).holds ==> final(node).run == old(node).run,
     ] proof [reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { before_grant = *node }
         kernel_snapshot! { before_phase = node.phase }
         let m = &mut *node;
         m.holds = false;
         m.pos += 1;
         kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+        kernel_proof! { advance_family_post::grant_no_new(before_grant@, *node, _context); }
         true
     }
 }
@@ -1017,6 +1177,8 @@ kernel_fn! {
                 *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), _context),
         *final(_next_ticket) == *old(_next_ticket),
+        advance_family_post::grant_facts(*old(node), *final(node), _context),
+        final(node).holds && !old(node).holds ==> final(node).run == old(node).run,
 ] proof [
         let n = *node;
         let after = Node { pool: n.pool && kind != EffectKind::StopRun,
@@ -1025,6 +1187,7 @@ kernel_fn! {
         assert(pending_rank(n) == 0 && pending_rank(after) == 0);
         teardown_facts::absent(n, *_next_ticket, _context, kind);
     ] {
+        kernel_snapshot! { before_grant = *node }
         kernel_snapshot! { before_phase = node.phase }
         let m = &mut *node;
         if kind == EffectKind::StopRun {
@@ -1032,6 +1195,7 @@ kernel_fn! {
         }
         m.pos += 1;
         kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+        kernel_proof! { advance_family_post::grant_no_new(before_grant@, *node, _context); }
         return true;
     }
 }
@@ -1057,10 +1221,14 @@ kernel_fn! {
                 *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
         *final(_next_ticket) == *old(_next_ticket),
+        advance_family_post::grant_facts(*old(node), *final(node), context),
+        final(node).holds && !old(node).holds ==> final(node).run == old(node).run,
 ] proof [reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { before_grant = *node }
         kernel_snapshot! { before_phase = node.phase }
         emit_node(node, context.node, kind, out);
         kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+        kernel_proof! { advance_family_post::grant_no_new(before_grant@, *node, context); }
         true
     }
 }
@@ -1080,11 +1248,15 @@ kernel_fn! {
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(node), context),
         *final(_next_ticket) == *old(_next_ticket),
+        advance_family_post::grant_facts(*old(node), *final(node), context),
+        final(node).holds && !old(node).holds ==> final(node).run == old(node).run,
     ] proof [reveal(advance_post); reveal(distance);] {
+        kernel_snapshot! { before_grant = *node }
         kernel_snapshot! { before_phase = node.phase }
         let n = *node;
         if n.question.is_some() {
             kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+            kernel_proof! { advance_family_post::grant_no_new(before_grant@, *node, context); }
             return false; // waiting for Rob
         }
         kernel_proof! { assert(n.phase is Stopping); }
@@ -1104,6 +1276,33 @@ kernel_fn! {
 
 kernel_fn! {
     /// #771: same executable transition, partitioned for bounded solver queries.
+    fn advance_idle_value(b: Node, _next_ticket: &mut u64,
+        _context: AdvanceContext, _out: &mut Outbox, _report: &mut Report) -> (result: (Node, bool)) [
+        requires advance_pre(b, *old(_next_ticket), old(_out).len),
+            !(b.phase is Closed) && !b.waiting_incident && b.effect.is_none() && matches!(current_item(b), Some(Item::Await | Item::Delivery | Item::Answer)),
+        ensures report::no_new_stop(b.phase, result.0.phase,
+                old(_report).entries@, final(_report).entries@),
+            (!result.1 ==> final(_out).len == old(_out).len),
+            advance_post(b, result.0,
+            *old(_next_ticket), *final(_next_ticket), result.1),
+            result.1 == advance_enabled(b, _context),
+        *final(_next_ticket) == *old(_next_ticket),
+        advance_family_post::grant_facts(b, result.0, _context),
+        result.0.holds && !b.holds ==> result.0.run == b.run,
+        advance_family_post::holds_frame(b, result.0),
+    ] proof [reveal(advance_post); reveal(distance);] {
+        let mut _node = b;
+        kernel_snapshot! { before_grant = _node }
+        kernel_snapshot! { before_phase = _node.phase }
+        kernel_proof! { report::lemmas::quiet(before_phase@, _node.phase, _report.entries@); }
+        kernel_proof! { advance_family_post::grant_no_new(before_grant@, _node, _context); }
+        kernel_proof! { advance_family_post::holds_frame_intro(b, _node); }
+        (_node, false)
+    }
+}
+
+kernel_fn! {
+    /// #771: same executable transition, partitioned for bounded solver queries.
     fn advance_idle(_node: &mut Node, _next_ticket: &mut u64,
         _context: AdvanceContext, _out: &mut Outbox, _report: &mut Report) -> (result: bool) [
         requires advance_pre(*old(_node), *old(_next_ticket), old(_out).len),
@@ -1115,10 +1314,13 @@ kernel_fn! {
             *old(_next_ticket), *final(_next_ticket), result),
             result == advance_enabled(*old(_node), _context),
         *final(_next_ticket) == *old(_next_ticket),
-    ] proof [reveal(advance_post); reveal(distance);] {
-        kernel_snapshot! { before_phase = _node.phase }
-        kernel_proof! { report::lemmas::quiet(before_phase@, _node.phase, _report.entries@); }
-        false
+        advance_family_post::grant_facts(*old(_node), *final(_node), _context),
+        final(_node).holds && !old(_node).holds ==> final(_node).run == old(_node).run,
+        advance_family_post::holds_frame(*old(_node), *final(_node)),
+    ] {
+        let v = advance_idle_value(*_node, _next_ticket, _context, _out, _report);
+        *_node = v.0;
+        v.1
     }
 }
 
@@ -1138,10 +1340,21 @@ kernel_fn! {
         *old(next_ticket) <= *final(next_ticket),
         advance_family_post::ready_unobstructed(*old(node))
             ==> advance_family_post::slot_grant(*old(node), *final(node), context, result),
+        advance_family_post::start_unobstructed(*old(node))
+            ==> advance_family_post::pool_grant(*old(node), *final(node), context, result),
+        advance_family_post::grant_facts(*old(node), *final(node), context),
+        final(node).holds && !old(node).holds ==> final(node).run == old(node).run,
+        advance_family_post::holds_item(*old(node))
+            ==> advance_family_post::holds_frame(*old(node), *final(node)),
     ] {
         kernel_proof! {
             if advance_family_post::ready_unobstructed(*node) {
                 advance_family_post::ready_item(*node);
+            }
+        }
+        kernel_proof! {
+            if advance_family_post::start_unobstructed(*node) {
+                advance_family_post::start_item(*node);
             }
         }
         let n = *node;

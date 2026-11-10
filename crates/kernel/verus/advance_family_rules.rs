@@ -102,4 +102,15 @@ pub(super) proof fn rules_slot(w0: World, w1: World,
     assert(o1.len == o0.len && o1.items@ == o0.items@);
     assert(local_outputs(b, n, c, o0, o1));
 }
+
+/// Consumer elimination lives outside the predicate's producer module.
+pub(super) proof fn holds_from_frame(b: Node, a: Node)
+    requires advance_family_post::holds_frame(b, a),
+    ensures !b.paused && matches!(current_item(b), Some(Item::Do(_))) ==> a.holds == b.holds,
+        matches!(current_item(b), Some(Item::Await | Item::Delivery | Item::Answer))
+            ==> a.holds == b.holds,
+{
+    reveal(advance_family_post::holds_frame);
+}
+
 }

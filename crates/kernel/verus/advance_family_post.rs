@@ -271,6 +271,87 @@ pub(super) proof fn ready_item(n: Node)
     reveal(items);
 }
 
+
+/// G5/G20: a ticketed Start without a local obstruction.
+pub(super) open spec fn start_unobstructed(n: Node) -> bool {
+    !(n.phase is Closed) && !n.waiting_incident && n.effect.is_none()
+        && !n.paused && n.ticket.is_some()
+        && matches!(current_item(n), Some(Item::Start(_)))
+}
+
+#[verifier::opaque]
+pub(super) open spec fn pool_grant(n: Node, a: Node, c: AdvanceContext, changed: bool) -> bool {
+    changed == c.pool
+        && (c.pool ==> a.pool && a.ticket.is_none() && a.run == Some(n.generation))
+        && (!c.pool ==> a == n)
+}
+
+pub(super) proof fn start_item(n: Node)
+    requires start_unobstructed(n),
+    ensures !(n.phase is Ready),
+{
+    reveal(current_item);
+    reveal(items);
+}
+
+
+/// G5/G20: permission and resource frames for every production advance arm.
+#[verifier::opaque]
+pub(super) open spec fn grant_facts(b: Node, a: Node, c: AdvanceContext) -> bool {
+    (a.holds && !b.holds ==> c.slot && !b.paused && b.phase is Ready && b.ticket.is_some()
+        && a.ticket.is_none() && a.repo == b.repo && a.footprint == b.footprint && a.pool == b.pool)
+    && (a.pool && !b.pool ==> c.pool && !b.paused && b.ticket.is_some() && a.ticket.is_none())
+}
+
+pub(super) proof fn grant_no_new(b: Node, a: Node, c: AdvanceContext)
+    requires a.holds ==> b.holds, a.pool ==> b.pool,
+    ensures grant_facts(b, a, c), a.holds && !b.holds ==> a.run == b.run,
+{
+    reveal(grant_facts);
+}
+
+pub(super) proof fn grant_from_fields(b: Node, a: Node, c: AdvanceContext)
+    requires a.holds ==> b.holds,
+        a.pool && !b.pool ==> c.pool && !b.paused && b.ticket.is_some() && a.ticket.is_none(),
+    ensures grant_facts(b, a, c), a.holds && !b.holds ==> a.run == b.run,
+{
+    reveal(grant_facts);
+}
+
+pub(super) proof fn slot_grant_facts(b: Node, t: u64, c: AdvanceContext, v: (Node, u64, bool))
+    requires advance_pre(b, t, 0),
+        !(b.phase is Closed) && !b.waiting_incident && b.effect.is_none()
+            && current_item(b) == Some(Item::Slot),
+        v == slot_value(b, t, c),
+    ensures grant_facts(b, v.0, c), v.0.holds && !b.holds ==> v.0.run == b.run,
+{
+    reveal(grant_facts);
+    reveal(slot_value);
+    slot_item_ready(b);
+}
+
+
+pub(super) open spec fn holds_item(b: Node) -> bool {
+    matches!(current_item(b), Some(Item::Do(_) | Item::Await | Item::Delivery | Item::Answer))
+}
+
+/// Original G5-H item frames only. Phase-wide R11 is deferred pending ruling.
+#[verifier::opaque]
+pub(super) open spec fn holds_frame(b: Node, a: Node) -> bool {
+    (!b.paused && matches!(current_item(b), Some(Item::Do(_))) ==> a.holds == b.holds)
+    && (matches!(current_item(b), Some(Item::Await | Item::Delivery | Item::Answer))
+        ==> a.holds == b.holds)
+}
+
+pub(super) proof fn holds_frame_intro(b: Node, a: Node)
+    requires !b.paused && matches!(current_item(b), Some(Item::Do(_))) ==> a.holds == b.holds,
+        matches!(current_item(b), Some(Item::Await | Item::Delivery | Item::Answer))
+            ==> a.holds == b.holds,
+    ensures holds_frame(b, a),
+{
+    reveal(holds_frame);
+}
+
 /// K5 frozen export E5.1 (CONTRACTS.md v2; owner Advance): framing for one internal step of node k,
 /// node-level rows only; `advance_family_frames::step_premises_lift` rebuilds internal_safety::step_premises.
 #[verifier::opaque]

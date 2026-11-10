@@ -97,9 +97,39 @@ pub(super) fn advance_proved(w: &mut World, i: usize, out: &mut Outbox, report: 
                 && slot_spec(*old(w), older)
                 && !overlapped_by_older(*old(w), older, old(w).nodes@[older].ticket.unwrap())
                 ==> !result && final(w).nodes@[i as int] == old(w).nodes@[i as int],
+        advance_family_post::start_unobstructed(old(w).nodes@[i as int])
+            && pool_users(old(w).nodes@, old(w).nodes@.len()) < old(w).pool_capacity
+            && oldest_waiter(*old(w), i as int)
+            ==> result && final(w).nodes@[i as int].pool
+                && final(w).nodes@[i as int].ticket.is_none()
+                && final(w).nodes@[i as int].run == Some(old(w).nodes@[i as int].generation),
+        advance_family_post::start_unobstructed(old(w).nodes@[i as int]) && !result
+            ==> final(w).nodes@[i as int] == old(w).nodes@[i as int],
+        advance_family_post::start_unobstructed(old(w).nodes@[i as int]) && result
+            ==> pool_users(old(w).nodes@, old(w).nodes@.len()) < old(w).pool_capacity
+                && oldest_waiter(*old(w), i as int),
+        !old(w).nodes@[i as int].holds && final(w).nodes@[i as int].holds
+            ==> !old(w).nodes@[i as int].paused && slot_spec(*old(w), i as int)
+                && final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo
+                && final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint
+                && final(w).nodes@[i as int].ticket.is_none()
+                && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool
+                && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run,
+        !old(w).nodes@[i as int].pool && final(w).nodes@[i as int].pool
+            ==> pool_users(old(w).nodes@, old(w).nodes@.len()) < old(w).pool_capacity
+                && oldest_waiter(*old(w), i as int)
+                && !old(w).nodes@[i as int].paused && old(w).nodes@[i as int].ticket.is_some()
+                && final(w).nodes@[i as int].ticket.is_none(),
+        advance_family_post::holds_item(old(w).nodes@[i as int])
+            ==> advance_family_post::holds_frame(old(w).nodes@[i as int], final(w).nodes@[i as int]),
 ] {
     kernel_snapshot! { before_advance = *w }
     kernel_proof! { dependencies::prerequisite_definition(*w, NodeId(i as u64)); }
+    kernel_proof! {
+        if advance_family_post::start_unobstructed(w.nodes@[i as int]) {
+            advance_family_post::start_item(w.nodes@[i as int]);
+        }
+    }
     let n = &w.nodes[i];
     let mut context = AdvanceContext {
         node: i,
@@ -128,6 +158,8 @@ pub(super) fn advance_proved(w: &mut World, i: usize, out: &mut Outbox, report: 
     }
     let changed = advance_node(&mut w.nodes[i], &mut w.next_ticket, context, out, report);
     kernel_proof! {
+        reveal(advance_family_post::grant_facts);
+        reveal(advance_family_post::pool_grant);
         reveal(advance_family_post::slot_grant);
         reveal(advance_post);
         advance_sum_bounds(before_advance@.nodes@, w.nodes@, i as int,
