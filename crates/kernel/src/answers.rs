@@ -282,8 +282,7 @@ fn retry_answer_exact(n: Node, q: Question) -> (result: (Node, Option<Notice>)) 
         n.credit.spent < u64::MAX,
     ensures result == apply_answer_values::retried_answer(n, q),
 ] {
-
-    let mut m = n;
+let mut m = n;
     m.attempt = 1;
     m.review_restarted = false;
     m.round = 0;
@@ -292,7 +291,7 @@ fn retry_answer_exact(n: Node, q: Question) -> (result: (Node, Option<Notice>)) 
     m = continue_exact(
         m,
         Question {
-            cost: q.cost.max(1),
+            cost: retry_cost(q.cost),
             ..q
         },
         0,
@@ -309,7 +308,6 @@ fn retry_answer_exact(n: Node, q: Question) -> (result: (Node, Option<Notice>)) 
 
     kernel_proof! { reveal(apply_answer_values::retried_answer); reveal(apply_answer_values::continued_answer); }
     (m, note)
-
 }
 }
 

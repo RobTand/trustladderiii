@@ -223,9 +223,8 @@ pub(super) fn continue_exact(n: Node, q: Question, deposit: u8) -> (result: Node
         n.credit.spent < u64::MAX,
     ensures result == handler_safety::continued_node(n, q, deposit),
 ] {
-
-    let mut m = n;
-    m.credit.fund_and_pay(deposit, q.cost);
+let mut m = n;
+    m.credit = fund_and_pay_v(m.credit, deposit, q.cost);
     m.question = None;
     match q.cont {
         Cont::Ingesting => m = set_phase_v(m, Phase::Ingesting),
@@ -237,20 +236,14 @@ pub(super) fn continue_exact(n: Node, q: Question, deposit: u8) -> (result: Node
         }
         Cont::Ready(r) => m = set_phase_v(m, Phase::Ready(r)),
         Cont::Stop(o) => {
-
-            m = enter_stopping_v(m, o);
-
+            m = stopped_v(m, o);
         }
         Cont::Nowhere => {
-
-            m = enter_stopping_v(m, Outcome::Stopped);
-
+            m = stopped_v(m, Outcome::Stopped);
         }
     }
-
     kernel_proof! { reveal(handler_safety::continued_node); }
     m
-
 }
 }
 
