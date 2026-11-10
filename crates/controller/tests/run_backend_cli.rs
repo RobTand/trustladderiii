@@ -4301,6 +4301,7 @@ fn cleanup_transport_silence_is_bounded_and_incomplete_evidence_preserves_debt()
         &receive,
         transport_idle_deadline(),
     );
+    assert_eq!(progress["kind"], "cleanup_progress", "{progress:?}");
     let initial_elapsed = start.elapsed();
     let silence_start = Instant::now();
     let result = recv_within(
@@ -4312,7 +4313,7 @@ fn cleanup_transport_silence_is_bounded_and_incomplete_evidence_preserves_debt()
     assert!(child.wait().unwrap().success());
     reader.join().unwrap();
     assert!(receive.try_recv().is_err(), "only one final frame");
-    let frames = vec![progress, result];
+    let frames = [progress, result];
     println!(
         "{}",
         json!({"cleanup_transport_timing": {
@@ -4323,9 +4324,11 @@ fn cleanup_transport_silence_is_bounded_and_incomplete_evidence_preserves_debt()
             "startup_delay_seconds": startup_delay
         }})
     );
-    assert!(start.elapsed() < Duration::from_secs(cleanup_limits().idle_timeout_seconds));
-    assert_eq!(frames.len(), 2, "{frames:?}");
-    assert_eq!(frames[0]["kind"], "cleanup_progress");
+    // Progress renews the idle allowance; total duration may exceed one allowance.
+    assert!(
+        start.elapsed() > transport_idle_deadline(),
+        "delayed startup must exercise the difference between idle and total duration"
+    );
     assert_eq!(frames[1]["result"]["cleanup"]["stopped"], false);
     assert!(f.state().cleanup_evidence.is_empty());
     f.cleanup_control(&owned.execution, 0);
