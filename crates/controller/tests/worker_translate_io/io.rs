@@ -360,14 +360,14 @@ fn execute(schedule: &Schedule, current: bool, cut: Option<Cut>) -> Run {
 }
 pub(super) fn compare(s: &Schedule) -> Run {
     let old = execute(s, false, None);
-    let new = execute(s, true, None);
+    let new = project_c4(execute(s, true, None));
     assert_eq!(old, new, "observation route mismatch");
     for write in 0..old.writes {
         for after in [false, true] {
             let cut = Some(Cut { write, after });
             assert_eq!(
                 execute(s, false, cut),
-                execute(s, true, cut),
+                project_c4(execute(s, true, cut)),
                 "write {write}, after {after}, schedule {s:?}"
             );
         }
@@ -442,4 +442,15 @@ pub(super) fn schedule(role: &str, reply: Value) -> Schedule {
         prerequisites: vec![],
         intern_failures: vec![],
     }
+}
+
+
+// C-4 adds only a buffered reason row. Keep the frozen extraction comparison
+// for every other row, call, crash boundary and world transition.
+fn project_c4(mut run: Run) -> Run {
+    let added = |row: &Value| row["Put"]["table"] == "footprint_addition_requests";
+    run.rows.retain(|r|!added(r));
+    run.committed.retain(|r|!added(r));
+    run.calls.retain(|c|c["op"]!="row.push" || !added(&c["args"]));
+    run
 }

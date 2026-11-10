@@ -110,7 +110,7 @@ fn frozen_and_current_sources() {
     ))
     .unwrap();
     let current = include_str!("current.rs");
-    assert_eq!(current, format!("use super::*;\n{}", part(&production)));
+    assert_eq!(current, format!("use super::*;\nuse super::criteria_current::criteria;\n{}", part(&production)));
     assert!(
         base.contains(
             include_str!("criteria.rs")
@@ -120,7 +120,7 @@ fn frozen_and_current_sources() {
     );
     assert!(
         production.contains(
-            include_str!("criteria.rs")
+            include_str!("criteria-current.rs")
                 .strip_prefix("use super::*;\n")
                 .unwrap()
         )
@@ -1000,5 +1000,30 @@ fn mandatory_schema_errors_keep_variant_message_and_boundary() {
         assert_eq!(ops(&r), BASIC);
         assert_eq!(r.result, Err(format!("worker inputs break role schema: role=reviewer pointer={pointer} rule={keyword}")));
         assert_eq!(r.error_variant, Some(format!("{:?}", std::mem::discriminant(&protocol::validate_real("reviewer", &r.trace.last().unwrap()["args"][1]).unwrap_err()))));
+    }
+}
+
+
+#[test]
+fn current_request_plan_snapshot_and_read_failures() {
+    let mut s = fixture();
+    s.delivery.paths = tl3_contracts::footprint::Footprint::new(vec!["planned.py".into(),"extra.py".into()]).unwrap();
+    s.tapes.insert("plan_document".into(), vec![Read::Value(json!({"files":["planned.py"]}))]);
+    s.tapes.get_mut("worker_materials").unwrap()[1] = Read::Value(json!({"issue":{"title":"Original request","body":"Keep the behavior"}}));
+    s.snapshot.rows.push(tl3_store::Row { table:"footprint_addition_requests".into(), id:"0".into(), value:json!([{"path":"extra.py","why":"Needed"},{"path":"ungranted.py","why":"Not granted"}]) });
+    let r = io::run(&s, true);
+    let v = value(&r);
+    assert_eq!(v["issue"],json!({"title":"Original request","body":"Keep the behavior"}));
+    assert_eq!(v["issue_truncated"],false);
+    assert_eq!(v["footprint_additions"],json!([{"path":"extra.py","why":"Needed"}]));
+    assert!(v["standing_rules"].as_array().unwrap().iter().any(|r| r["id"]==ISSUE_RULE));
+    let plan = r.trace.iter().find(|c|c["op"]=="plan_document").unwrap();
+    assert_eq!(plan["args"],json!(["0","plans"]));
+    for (op,error) in [("plan_document",Read::Store),("issue_materials",Read::Io)] {
+        let mut bad=s.clone(); bad.tapes.insert(op.into(),vec![error]);
+        let run=io::run(&bad,true);
+        assert!(run.result.is_err());
+        assert_eq!(run.trace.last().unwrap()["op"],op);
+        assert!(!run.trace.iter().any(|c|c["op"]=="validate_inputs"));
     }
 }

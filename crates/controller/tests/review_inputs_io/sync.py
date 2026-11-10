@@ -10,7 +10,7 @@ SOURCE = ROOT / 'crates/controller/src/adapters/workers/review.rs'
 text = SOURCE.read_text()
 start = text.index('pub(super) fn inputs(')
 end = text.index('pub(crate) fn criteria(')
-(HERE / 'current.rs').write_text('use super::*;\n' + text[start:end].rstrip() + '\n')
+(HERE / 'current.rs').write_text('use super::*;\nuse super::criteria_current::criteria;\n' + text[start:end].rstrip() + '\n')
 
 # Compile the unchanged production validator and diagnostic capture, too.
 protocol = (ROOT / 'crates/controller/src/adapters/workers/protocol.rs').read_text()
@@ -29,3 +29,8 @@ failure = (ROOT / 'crates/controller/src/worker_inputs.rs').read_text()
     + '    fn from(failure: Failure) -> Self {\n'
     + '        Self::WorkerInputs(serde_json::from_value(serde_json::to_value(failure).unwrap()).unwrap())\n'
     + '    }\n}\n')
+
+# C-4 changes criteria; keep the frozen reference leaf independent.
+start = text.index('pub(crate) fn criteria(')
+end = text.index('pub(super) fn checkout(', start)
+(HERE / 'criteria-current.rs').write_text('use super::*;\n' + text[start:end].rstrip() + '\n')

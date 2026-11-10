@@ -70,3 +70,14 @@ which is now forbidden in production. Its exact bytes and SHA256 are pinned sepa
 legacy-quota-clear.rs.txt and pins.json. R2 removed the remaining arm comparison against production. Original differential schedules, I/O assertions and references stay
 unchanged. The real-store quota_hold upgrade regression proves that an older or
 other-family success preserves unknown legacy quota after restart.
+
+C-4 refreshes the NeedsFiles arm and adds `review-current.rs` for the changed
+criteria and reason recorder. `sync.py` preserves the historical feedback and
+quota code described above instead of copying unrelated modern feedback code
+into this extraction seam. A source assertion now pins the complete NeedsFiles
+arm to production. The differential comparison projects away only the new
+buffered footprint_addition_requests row; every other call, row, intern-write
+crash boundary and world transition remains compared. The real controller
+regression needs_files_reply_records_reasons_through_controller asserts the new
+row and effective footprint through lib.rs, rather than only calling its helper.
+Frozen references and pins stay unchanged.

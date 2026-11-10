@@ -45,3 +45,17 @@ TestResult.message. Memories and memory_note are added by the caller after
 inputs returns, not by this shell. Their present and recall-unavailable wires
 have separate real-schema and typed round-trip checks. There is no field named
 memories_unavailable in the contract.
+
+C-4 changes the reviewer input contract. `criteria-current.rs` is generated
+from production; `criteria.rs` stays frozen for the reference. The current
+builder always reads issue materials and reads the stored plan. Its new plan
+read has an independent `plan_document` tape. Ordinary reviews use a separate
+`issue_materials` tape, defaulting to the second materials response. Both new
+read failures have explicit current-only tests. Snapshot request rows and the
+plan's effective footprint difference are asserted on the complete current wire.
+The extraction comparison projects only the documented C-4 fields, rule and
+additional reads away. It retains every legacy response, error and byte check.
+A failure at an additional read checks the reference trace prefix; it cannot
+compare the unexecuted legacy tail. Malformed issue fields now omit the issue;
+the legacy projection preserves the old empty-string behavior for that case.
+No frozen source, pin or expected wire is regenerated.

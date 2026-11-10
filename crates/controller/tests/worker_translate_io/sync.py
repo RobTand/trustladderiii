@@ -7,28 +7,16 @@ SOURCE = HERE.parent.parent / 'src'
 
 def main():
     source = (SOURCE / 'lib.rs').read_text()
-    start = source.index('            Observation::WorkerFailed {')
-    end = source.index('            Observation::Plan {', start)
-    quota_comment = (
-        '                // Q53 / #828: unknown legacy identity/order is not success evidence.\n'
-        '                // Only model_success_evidence can clear ordered quota; reset and\n'
-        '                // operator clear remain available for pre-upgrade holds.\n'
-    )
-    arm = source[start:end]
-    assert arm.count(quota_comment) == 1
-    # Keep #828's separately pinned historical clear in this extraction comparison.
-    arm = arm.replace(quota_comment, (HERE / 'legacy-quota-clear.rs.txt').read_text())
+    # R2 deliberately retains historical feedback and quota behavior in this
+    # seam. Refresh the C-4 NeedsFiles arm, not unrelated moved feedback code.
     current = (HERE / 'current.rs').read_text()
-    helper = source[source.index('    fn footprint('):source.index('    fn operations_comment(')]
-    if '    fn footprint(' in current:
-        first = current.index('    fn footprint(')
-        last = current.index('    fn translate(', first)
-        current = current[:first] + helper + current[last:]
-    else:
-        current = current.replace('impl Shell<\'_> {\n', 'impl Shell<\'_> {\n' + helper, 1)
-    first = current.index('            Observation::WorkerFailed {')
-    last = current.index('        };\n        *detail', first)
-    (HERE / 'current.rs').write_text(current[:first] + arm + current[last:])
+    marker = '                    adapters::workers::protocol::MappedReply::NeedsFiles { paths, fits } => {'
+    terminator = '                };\n                if mapped'
+    first = current.index(marker)
+    last = current.index(terminator, first)
+    start = source.index(marker)
+    end = source.index(terminator, start)
+    (HERE / 'current.rs').write_text(current[:first] + source[start:end] + current[last:])
 
     production = (SOURCE / 'adapters/workers/protocol.rs').read_text()
     frozen = (HERE / 'protocol.rs').read_text()
@@ -43,6 +31,17 @@ def main():
     end = production.index('\n#[cfg(test)]', start)
     current = current[:first] + production[start:end] + '\n' + current[last:]
     (HERE / 'protocol-current.rs').write_text(current)
+
+    review = (SOURCE / 'adapters/workers/review.rs').read_text()
+    criteria = review[review.index('pub(crate) fn criteria('):review.index('pub(super) fn checkout(')]
+    remember = review[review.index('pub(crate) fn remember_addition_requests('):review.index('pub(super) fn fit_issue(')]
+    (HERE / 'review-current.rs').write_text('use crate::*;\nuse crate::io::Store;\n'
+        + 'pub const REPORT_RULE: &str = "test-report-integrity";\n'
+        + 'pub const SCOPE_RULE: &str = "request-scope";\n'
+        + 'pub const ISSUE_RULE: &str = "request-coverage";\n'
+        + 'pub(crate) use crate::adapters::workers::review::validate_reply;\n'
+        + criteria + remember)
+
 
 
 if __name__ == '__main__':

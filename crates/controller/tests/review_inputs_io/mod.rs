@@ -12,8 +12,12 @@ use tl3_kernel::{EffectKind, NodeId};
 use tl3_store::Snapshot;
 use tl3_worktrees::CommitId;
 const SCOPE_RULE: &str = "request-scope";
+const ISSUE_RULE: &str = "request-coverage";
 const REPORT_RULE: &str = "test-report-integrity";
 mod criteria;
+#[path = "criteria-current.rs"]
+mod criteria_current;
+mod run_backend { pub mod durable { pub const MAX_BYTES: usize = 8 * 1024 * 1024; } }
 mod current;
 mod goals;
 mod io;

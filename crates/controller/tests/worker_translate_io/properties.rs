@@ -71,7 +71,15 @@ fn production_and_reference_sources_are_pinned() {
         let changed = current.exists();
         if changed {
             let copy = std::fs::read_to_string(&current).unwrap();
-            if name == "protocol" {
+            if name == "review" {
+                for (start, end) in [
+                    ("pub(crate) fn criteria(", "pub(super) fn checkout("),
+                    ("pub(crate) fn remember_addition_requests(", "pub(super) fn fit_issue("),
+                ] {
+                    let fragment = &production[production.find(start).unwrap()..production.find(end).unwrap()];
+                    assert!(copy.contains(fragment), "current review leaf drift: {start}");
+                }
+            } else if name == "protocol" {
                 let mapping = |source: &str| {
                     let a = source.find("pub(crate) fn map_reply(").unwrap();
                     let b = source[a..].find("pub(crate) fn relative_file(").unwrap() + a;
@@ -118,6 +126,9 @@ fn production_and_reference_sources_are_pinned() {
                 changed || (name == "helpers" && part.contains("fn footprint(")) || production.contains(part),
                 "production leaf drift: {name}"
             );
+            if name == "review" && part.starts_with("pub(crate) fn validate_reply(") {
+                assert!(production.contains(part), "unchanged reviewer validator drift");
+            }
             let normalized = compiled.replace("pub(super) fn", "fn");
             assert!(
                 compiled.contains(part) || normalized.contains(part),
@@ -131,6 +142,13 @@ fn production_and_reference_sources_are_pinned() {
         source[start..end].to_owned()
     };
     assert_eq!(footprint(historical_current), footprint(source), "current footprint intern drift");
+    let needs_files = |s: &str| {
+        let start=s.find("                    adapters::workers::protocol::MappedReply::NeedsFiles { paths, fits } => {").unwrap();
+        let end=s[start..].find("                };\n                if mapped").unwrap()+start;
+        s[start..end].to_owned()
+    };
+    assert_eq!(needs_files(historical_current), needs_files(source), "current needs_files recording drift");
+
 }
 fn forecast() -> Value {
     json!({"tokenizer":"o200k_base","brief_tokens":1,"file_tokens":{"safe.rs":0},"overhead_tokens":0,"tokens":1,"fit_tokens":100,"context_tokens":150,"fits":true})

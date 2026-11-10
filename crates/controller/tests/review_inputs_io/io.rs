@@ -23,6 +23,8 @@ pub struct Run {
     pub result: std::result::Result<Vec<u8>, String>,
 }
 struct Recording {
+    current: bool,
+    forced: bool,
     tapes: BTreeMap<String, Vec<Read>>,
     counts: BTreeMap<String, usize>,
     trace: Vec<Value>,
@@ -79,10 +81,11 @@ pub fn read(op: &str, args: Value) -> Result<Value> {
 pub struct Store;
 impl Store {
     pub fn worker_materials(&mut self, node: &str) -> Result<Option<Value>> {
-        read("worker_materials", json!([node])).map(|v| if v.is_null() { None } else { Some(v) })
+        let extra = ACTIVE.with(|r| { let r=r.borrow(); let r=r.as_ref().unwrap(); r.current && !r.forced && r.counts.get("worker_materials").copied().unwrap_or(0)>0 });
+        read(if extra {"issue_materials"} else {"worker_materials"}, json!([node])).map(|v| if v.is_null() { None } else { Some(v) })
     }
     pub fn worker_document(&mut self, node: &str, kind: &str) -> Result<Option<Value>> {
-        read("worker_document", json!([node, kind]))
+        read(if kind == "plans" {"plan_document"} else {"worker_document"}, json!([node, kind]))
             .map(|v| if v.is_null() { None } else { Some(v) })
     }
 }
@@ -117,7 +120,14 @@ impl Worktrees {
 pub fn run(s: &Schedule, current: bool) -> Run {
     ACTIVE.with(|r| {
         *r.borrow_mut() = Some(Recording {
-            tapes: s.tapes.clone(),
+            current,
+            forced: forced(s),
+            tapes: {
+                let mut tapes=s.tapes.clone();
+                let issue=tapes.get("worker_materials").and_then(|t|t.get(1)).cloned().unwrap_or(Read::Value(Value::Null));
+                tapes.entry("issue_materials".into()).or_insert(vec![issue]);
+                tapes
+            },
             counts: BTreeMap::new(),
             trace: vec![],
         })
@@ -151,7 +161,16 @@ pub fn run(s: &Schedule, current: bool) -> Run {
 }
 pub fn compare(s: &Schedule) -> Run {
     let old = run(s, false);
-    let new = run(s, true);
+    let raw = run(s, true);
+    if raw.result.is_err() && raw.trace.last().is_some_and(|c| c["op"]=="issue_materials" || c["op"]=="plan_document") {
+        // A new read can fail where the legacy builder did not read at all.
+        // Its exact preceding trace must still match the reference prefix.
+        let prefix=&raw.trace[..raw.trace.len()-1];
+        assert_eq!(prefix, &old.trace[..prefix.len()]);
+        assert!(raw.error_variant.is_some());
+        return old;
+    }
+    let new = project_legacy(s, raw);
     if old != new {
         let dir = std::env::var("TEST_UNDECLARED_OUTPUTS_DIR")
             .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned());
@@ -163,4 +182,33 @@ pub fn compare(s: &Schedule) -> Run {
         panic!("review inputs or I/O differ; full schedule persisted to writable test output");
     }
     old
+}
+
+
+fn forced(s: &Schedule) -> bool {
+    s.snapshot.rows.iter().find(|r|r.table=="check_reports")
+        .and_then(|r|r.value["results"].as_array()).into_iter().flatten()
+        .any(|r|["forcing","proof","declared_symptom"].iter().any(|k|r.get(*k).is_some()))
+}
+
+// Compare the unchanged extraction behavior. C-4-only reads and fields have
+// their own mandatory assertions, including injected errors, above this projection.
+fn project_legacy(s: &Schedule, mut run: Run) -> Run {
+    let scrub = |v: &mut Value| {
+        v.as_object_mut().unwrap().remove("issue_truncated");
+        v.as_object_mut().unwrap().remove("footprint_additions");
+        if let Some(rules)=v["standing_rules"].as_array_mut() { rules.retain(|r|r["id"]!=ISSUE_RULE); }
+        if !forced(s) { v.as_object_mut().unwrap().remove("issue"); }
+        else if v.get("issue").is_none()
+            && let Some(Read::Value(materials))=s.tapes.get("worker_materials").and_then(|t|t.get(1))
+            && let Some(issue)=materials.get("issue")
+            && (!issue["title"].is_string() || !issue["body"].is_string()) {
+            // The old implementation turned malformed fields into empty strings.
+            v["issue"]=json!({"title":issue["title"].as_str().unwrap_or("").chars().take(1000).collect::<String>(),"body":issue["body"].as_str().unwrap_or("").chars().take(16000).collect::<String>()});
+        }
+    };
+    run.trace.retain(|c|c["op"]!="issue_materials" && c["op"]!="plan_document");
+    for c in &mut run.trace { if c["op"]=="validate_inputs" { scrub(&mut c["args"][1]); } }
+    if let Ok(bytes)=&mut run.result { let mut v:Value=serde_json::from_slice(bytes).unwrap(); scrub(&mut v); *bytes=serde_json::to_vec(&v).unwrap(); }
+    run
 }

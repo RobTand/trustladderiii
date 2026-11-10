@@ -554,7 +554,7 @@ mod checks {
 mod adapters {
     pub use super::super::adapters::results;
     pub mod workers {
-        pub use super::super::super::adapters::workers::review;
+        pub mod review { include!("review-current.rs"); }
         pub mod protocol {
             include!("protocol-current.rs");
         }
