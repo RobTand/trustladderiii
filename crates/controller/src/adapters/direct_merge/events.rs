@@ -89,56 +89,72 @@ impl Translator {
                 for delivery in deliveries.values_mut() {
                     delivery.pull_request = Some(pull.number);
                 }
-                let mut record = crate::outcome::MergeEvidence::empty(pull.head.sha.clone());
-                let mut intent = None;
+                let mut collect = journal.is_none() || deliveries.is_empty();
                 if let Some(journal) = &journal {
                     for delivery in deliveries.values() {
-                        // Preserve the known merge before any optional REST audit read.
-                        journal.remember_merged(delivery, &merged, |_, _| {})?;
-                        match read_file::<Intent>(
-                            &Records::new(&journal.records_root)
-                                .path(&delivery.key)
-                                .with_extension("intent"),
-                        ) {
-                            Ok(Some(saved))
-                                if saved.action == "Merge" && saved.head == pull.head.sha =>
-                            {
-                                intent = Some(saved);
+                        // Reuse richer or interrupted receipts without a pending overwrite.
+                        collect |= journal.begin_merge(delivery, &mut merged, |_, _| {})?;
+                    }
+                }
+                if collect {
+                    let mut record = crate::outcome::MergeEvidence::empty(pull.head.sha.clone());
+                    record.evidence_errors = std::mem::take(&mut merged.evidence.evidence_errors);
+                    record
+                        .evidence_errors
+                        .retain(|error| error.read != "collection");
+                    let mut intent = None;
+                    if let Some(journal) = &journal {
+                        for delivery in deliveries.values() {
+                            match read_file::<Intent>(
+                                &Records::new(&journal.records_root)
+                                    .path(&delivery.key)
+                                    .with_extension("intent"),
+                            ) {
+                                Ok(Some(saved))
+                                    if saved.action == "Merge" && saved.head == pull.head.sha =>
+                                {
+                                    intent = Some(saved);
+                                }
+                                Ok(_) => {}
+                                Err(error) => {
+                                    record.error("merge_intent", evidence_error_class(&error));
+                                }
                             }
-                            Ok(_) => {}
-                            Err(error) => record.error("merge_intent", evidence_error_class(&error)),
                         }
                     }
-                }
-                let request = MergeRead::new(
-                    pull,
-                    None,
-                    intent.as_ref(),
-                    record.evidence_errors.is_empty(),
-                );
-                match (
-                    self.clients.get(&repo.installation),
-                    crate::executor::runtime(),
-                ) {
-                    (Some(client), Ok(runtime)) => {
-                        collect_merge_evidence(runtime, client, snapshot, node, request, &mut record);
-                    }
-                    (client, runtime) => {
-                        if client.is_none() {
-                            record.error("client", "missing");
+                    let request = MergeRead::new(
+                        pull,
+                        None,
+                        intent.as_ref(),
+                        journal.is_some() && record.evidence_errors.is_empty(),
+                    );
+                    match (
+                        self.clients.get(&repo.installation),
+                        crate::executor::runtime(),
+                    ) {
+                        (Some(client), Ok(runtime)) => {
+                            collect_merge_evidence(
+                                runtime,
+                                client,
+                                snapshot,
+                                node,
+                                request,
+                                &mut record,
+                            );
                         }
-                        if let Err(error) = runtime {
-                            record.error("runtime", evidence_error_class(&error));
+                        (client, runtime) => {
+                            if client.is_none() {
+                                record.error("client", "missing");
+                            }
+                            if let Err(error) = runtime {
+                                record.error("runtime", evidence_error_class(&error));
+                            }
                         }
                     }
-                }
-                merged.evidence = Box::new(record);
-                if let Some(journal) = &journal {
-                    for delivery in deliveries.values() {
-                        if let Err(error) = journal.remember_merged(delivery, &merged, |_, _| {}) {
-                            merged
-                                .evidence
-                                .error("evidence_receipt", evidence_error_class(&error));
+                    merged.evidence = Box::new(record);
+                    if let Some(journal) = &journal {
+                        for delivery in deliveries.values() {
+                            journal.enrich_merge(delivery, &mut merged, |_, _| {})?;
                         }
                     }
                 }

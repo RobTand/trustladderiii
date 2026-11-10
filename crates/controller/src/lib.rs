@@ -3044,7 +3044,7 @@ impl Controller {
                 if let Outcome::Merged {
                     evidence: Some(evidence),
                     ..
-                } = &outcome
+                } = &mut outcome
                 {
                     self.record_merge(snapshot, node, evidence, commit)?;
                 }

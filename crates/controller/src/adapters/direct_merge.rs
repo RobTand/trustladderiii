@@ -176,33 +176,95 @@ impl Journal {
             .path(&key)
             .with_extension("merged"))
     }
+    fn validate(&self, d: &Delivery) -> Result<()> {
+        let snapshot = Store::open(&self.store)?.load()?;
+        if snapshot.epoch.get() != self.epoch || d.epoch > self.epoch {
+            return Err(Error::Invalid("direct history epoch is fenced"));
+        }
+        Records::new(&self.records_root).fence(self.epoch)
+    }
+    /// Returns false when a receipt already owns this head, including an
+    /// interrupted collection. Recovery preserves that receipt without retrying audits.
+    fn begin_merge(
+        &self,
+        d: &Delivery,
+        merged: &mut Merged,
+        boundary: impl Fn(Write, bool),
+    ) -> Result<bool> {
+        if let Some(saved) = read_file::<Merged>(&self.receipt_path(d)?)?
+            && saved.head == merged.head
+        {
+            self.validate(d)?;
+            *merged = saved;
+            return Ok(false);
+        }
+        self.remember_merged(d, merged, boundary)?;
+        Ok(true)
+    }
+    fn prepare_merged(
+        &self,
+        d: &Delivery,
+        merged: &mut Merged,
+        boundary: &impl Fn(Write, bool),
+    ) -> Result<(PathBuf, Vec<u8>)> {
+        self.validate(d)?;
+        self.remember_delivery(d, merged, |after| boundary(Write::History, after))?;
+        Ok((self.receipt_path(d)?, serde_json::to_vec(merged)?))
+    }
     fn remember_merged(
         &self,
         d: &Delivery,
-        merged: &Merged,
+        merged: &mut Merged,
         boundary: impl Fn(Write, bool),
     ) -> Result<()> {
-        self.remember_delivery(d, merged, |after| boundary(Write::History, after))?;
-        let path = self.receipt_path(d)?;
-        let bytes = serde_json::to_vec(merged)?;
-        let records = Records::new(&self.records_root);
-        records.fence(self.epoch)?;
+        let (path, bytes) = self.prepare_merged(d, merged, &boundary)?;
         boundary(Write::Receipt, false);
-        records.write(&path, &bytes)?;
+        Records::new(&self.records_root).write(&path, &bytes)?;
         boundary(Write::Receipt, true);
+        Ok(())
+    }
+    /// Only the write of enriched evidence is best-effort. Validation and
+    /// history failures propagate, and a first durable receipt is required.
+    fn enrich_merge(
+        &self,
+        d: &Delivery,
+        merged: &mut Merged,
+        boundary: impl Fn(Write, bool),
+    ) -> Result<()> {
+        let (path, bytes) = self.prepare_merged(d, merged, &boundary)?;
+        let saved: Merged = read_file(&path)?.ok_or(Error::Invalid(
+            "merge evidence update lacks its first receipt",
+        ))?;
+        if saved.head != merged.head {
+            return Err(Error::Invalid(
+                "merge evidence update head differs from receipt",
+            ));
+        }
+        boundary(Write::Receipt, false);
+        match Records::new(&self.records_root).write(&path, &bytes) {
+            Ok(()) => boundary(Write::Receipt, true),
+            Err(error) => merged
+                .evidence
+                .error("evidence_receipt", evidence_error_class(&error)),
+        }
         Ok(())
     }
     fn remember_delivery(
         &self,
         d: &Delivery,
-        merged: &Merged,
+        merged: &mut Merged,
         boundary: impl Fn(bool),
     ) -> Result<()> {
         let records = Records::new(&self.records_root);
         // Intent metadata may be unreadable; that must not suppress the merged receipt.
         let intent: Option<Intent> = match read_file(&records.path(&d.key).with_extension("intent")) {
             Ok(intent) => intent,
-            Err(_) => return Ok(()),
+            Err(error) => {
+                merged
+                    .evidence
+                    .error("delivery_history_intent", evidence_error_class(&error));
+                return Ok(());
+            }
         };
         if !intent.is_some_and(|intent| intent.action == "Merge" && intent.head == merged.head) {
             return Ok(());
@@ -576,9 +638,17 @@ impl Adapter {
         submitted: Option<SubmittedMerge>,
     ) -> Result<Completion> {
         let mut merged = Merged::pending(head, checks_passed);
-        self.journal()
-            .remember_merged(d, &merged, |write, after| self.boundary(write, after))?;
+        if !self
+            .journal()
+            .begin_merge(d, &mut merged, |write, after| self.boundary(write, after))?
+        {
+            return self.merged(d, merged);
+        }
         let mut evidence = crate::outcome::MergeEvidence::empty(merged.head.clone());
+        evidence.evidence_errors = std::mem::take(&mut merged.evidence.evidence_errors);
+        evidence
+            .evidence_errors
+            .retain(|error| error.read != "collection");
         let intent = match read_file::<Intent>(&self.records.path(&d.key).with_extension("intent")) {
             Ok(intent) => {
                 intent.filter(|intent| intent.action == "Merge" && intent.head == merged.head)
@@ -613,17 +683,13 @@ impl Adapter {
             }
         }
         merged.evidence = Box::new(evidence);
+        self.journal()
+            .enrich_merge(d, &mut merged, |write, after| self.boundary(write, after))?;
         self.merged(d, merged)
     }
-    fn merged(&self, d: &Delivery, mut merged: Merged) -> Result<Completion> {
-        if let Err(error) = self
-            .journal()
-            .remember_merged(d, &merged, |write, after| self.boundary(write, after))
-        {
-            merged
-                .evidence
-                .error("evidence_receipt", evidence_error_class(&error));
-        }
+    fn merged(&self, d: &Delivery, merged: Merged) -> Result<Completion> {
+        // Recovered receipts still need the epoch guard, but no evidence rewrite.
+        self.journal().validate(d)?;
         self.fact(
             d,
             DeliveryOutcome::Merged {
