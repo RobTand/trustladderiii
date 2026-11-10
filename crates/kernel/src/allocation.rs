@@ -318,7 +318,7 @@ pub(super) fn ask_value(n: Node, nq: u64, i: usize, kind: QKind, cont: Cont,
         clarified: false,
     });
     set_phase(&mut m, Phase::AwaitingRob);
-    notice(&mut notes, i, Notice::Ask { question: id });
+    let _ = id;
     kernel_proof! { reveal(retirement::phased); }
     (m, next_question, notes)
 }
