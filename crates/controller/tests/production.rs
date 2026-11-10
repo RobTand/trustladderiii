@@ -72,6 +72,7 @@ fn flux_activation_refusal_preserves_legacy_pb_evidence() {
             let mut config = config(root.path());
             config.execution_backend = tl3_config::ExecutionBackend::Flux;
             config.flux = Some(tl3_config::Flux {
+                instance_file: None,
                 activation: None,
                 instance_generation: "disposable-generation".into(),
                 executable: "/opt/flux/bin/flux".into(),
