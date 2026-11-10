@@ -120,3 +120,30 @@ def test_passing_head_does_not_count_as_unchecked(tmp_path, base_type):
     report, = json.loads(result_json((result,)))
     assert result.verdict == Verdict.PASS
     assert report.get('base_failures_not_checked', 0) == 0
+
+
+@pytest.mark.parametrize('base_phase,head_phase', [
+    (before, after) for before in ('collection', 'setup', 'call', 'teardown')
+    for after in ('collection', 'setup', 'call', 'teardown') if before != after
+])
+def test_same_type_in_every_different_phase_fails(tmp_path, base_phase, head_phase):
+    before, base_notes = observe(tmp_path / 'base', source(base_phase, 'ValueError'))
+    after, head_notes = observe(tmp_path / 'head', source(head_phase, 'ValueError'))
+    result = judge(Check('phase transition', Kind.REGRESSION, (NODE,)), before, after,
+                   base_notes=base_notes, messages=head_notes)
+    assert result.verdict == Verdict.FAIL
+    assert base_phase in result.tests[0].message
+    assert head_phase in result.tests[0].message
+
+
+def test_long_exception_types_cannot_match_by_a_clipped_prefix(tmp_path):
+    observations = []
+    for side in ('base', 'head'):
+        name = 'Deadline' + 'X' * 210 + side
+        code = f'class {name}(ValueError): pass\ndef test_existing(): raise {name}("failure")\n'
+        observations.append(observe(tmp_path / side, code))
+    (before, base_notes), (after, head_notes) = observations
+    result = judge(Check('long types', Kind.REGRESSION, (NODE,)), before, after,
+                   base_notes=base_notes, messages=head_notes)
+    assert result.verdict == Verdict.FAIL
+    assert not result.tests[0].passed

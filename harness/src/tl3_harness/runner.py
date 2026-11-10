@@ -354,6 +354,11 @@ def describe(error):
     return (f"{type(error).__name__}: {line}" if line else type(error).__name__).replace("`", "'")[:200]
 
 
+def qualified_exception_type(error):
+    name = type(error).__module__ + '.' + type(error).__qualname__
+    return name if len(name) <= 200 else ''
+
+
 class Reporter:
     def __init__(self, tests, descriptor, summary=False, parallel=False, patches=(), selection=None,
                  declared_symptom=None, worker=False, expected_red_message=None, proof_subjects=None):
@@ -520,7 +525,7 @@ class Reporter:
         error = call.excinfo.value
         if isinstance(error, pytest.Collector.CollectError) and error.__cause__ is not None:
             error = error.__cause__
-        report.tl3_exception_type = type(error).__module__ + '.' + type(error).__qualname__
+        report.tl3_exception_type = qualified_exception_type(error)
 
     def pytest_collectreport(self, report):
         if report.failed:
@@ -541,7 +546,7 @@ class Reporter:
             self.emit(event="collection-error", test=report.nodeid,
                       missing=getattr(report, "tl3_missing", None),
                       exception=getattr(report, "tl3_exception", ""),
-                      exception_type=getattr(report, "tl3_exception_type", "")[:200],
+                      exception_type=getattr(report, "tl3_exception_type", ""),
                       message=str(report.longrepr)[:1000])
         self.collection_errors.clear()
 
@@ -592,7 +597,7 @@ class Reporter:
                   outcome=outcome, assertion=bool(assertion and outcome == "failed"), missing=missing,
                   reason=reason[:1000], **extra,
                   exception=describe(call.excinfo.value) if report.failed and call.excinfo else "",
-                  exception_type=(type(call.excinfo.value).__module__ + '.' + type(call.excinfo.value).__qualname__)[:200]
+                  exception_type=qualified_exception_type(call.excinfo.value)
                   if report.failed and call.excinfo else "",
                   message=message[:1000])
         return report

@@ -248,7 +248,9 @@ is recorded as pre-existing. It excuses a head failure only when both outcomes
 have the same class, assertion or error, and every failed concrete case has the
 same qualified exception type and phase. Phases are collection, setup, call and
 teardown. Exception messages may differ. A missing failure detail cannot excuse
-a head failure. File and parametrized selectors compare all failed cases,
+a head failure. An exception type longer than 200 characters has no retained
+type detail and cannot excuse a head failure. File and parametrized selectors
+compare all failed cases,
 including extra head failures beyond the first one. Refusals name both failures.
 
 The optional `regression_failures` test field carries those signatures for

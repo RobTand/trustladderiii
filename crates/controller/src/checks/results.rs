@@ -553,7 +553,7 @@ fn same_regression_failure(test: &TestResult) -> bool {
         return !base.is_empty()
             && base
                 .iter()
-                .all(|(_, _, exception, _)| !exception.is_empty())
+                .all(|(_, _, exception, _)| !exception.is_empty() && exception.chars().count() < 200)
             && base == head;
     };
     let requested = test.test.as_str();
