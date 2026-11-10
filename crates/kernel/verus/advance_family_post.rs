@@ -131,6 +131,7 @@ pub(super) proof fn slot_facts_paused(b: Node, t0: u64, c: AdvanceContext, o0: O
 {
     reveal(advance_post);
     reveal(distance);
+    reveal(pending_rank);
     let v = slot_paused_value(b, t0);
     assert(v.0 == (Node { ticket: None, ..b }));
     slot_paused(b, v.0, t0, v.1, c, o0, o0, v.2);
@@ -153,6 +154,7 @@ pub(super) proof fn slot_facts_grant(b: Node, t0: u64, c: AdvanceContext, o0: Ou
 {
     reveal(advance_post);
     reveal(distance);
+    reveal(pending_rank);
     let v = slot_grant_value(b, t0, r);
     slot_item_ready(b);
     // One resume target per case keeps items/current_item of the new phase ground.
@@ -179,6 +181,7 @@ pub(super) proof fn slot_facts_issue(b: Node, t0: u64, c: AdvanceContext, o0: Ou
 {
     reveal(advance_post);
     reveal(distance);
+    reveal(pending_rank);
     let v = slot_issue_value(b, t0);
     slot_item_ready(b);
     slot_bounds(b, t0, o0.len);
