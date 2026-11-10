@@ -871,7 +871,7 @@ mod assembly_witness_world {
             w.nodes@[0].ticket == if kind == 0 { None } else { Some(0) },
     {
         let mut n = Node::new(RepoId(0));
-        n.credit.ready = true;
+        n.credit.ready = false;
         n.credit.start = 4;
         n.attempt = 1;
         n.footprint = Footprint::inline(1);
