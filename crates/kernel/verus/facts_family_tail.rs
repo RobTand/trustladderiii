@@ -37,7 +37,7 @@ pub(super) proof fn ci_infrastructure_exact(n: Node, nq: u64, fast: bool)
 }
 
 pub(super) proof fn ci_scalar_posts(n: Node, nq: u64, fast: bool, infra: bool)
-    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+    requires node_headroom(n), arithmetic_consistent(n), true,
     ensures reply_family_values::retry_bound(n, nq, ci_change(n, fast, infra)),
         reply_family_values::next_question(nq, ci_change(n, fast, infra)) as int
             <= nq as int + 1,
