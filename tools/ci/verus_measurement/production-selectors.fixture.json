@@ -1,10 +1,25 @@
 {
-  "source_head": "2998254b0e9c6061082fddffc62a4ecb3a51fc79",
+  "source_head": "2c03eecea0753fb28a5269bc79024892f1f008cd",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "0dbf40cafcf2cd030140bce0a669060c9e0f899094162434dba941a21c83f2a6",
-  "groups": 635,
-  "obligations": 833,
+  "source_sha256": "0c5a9b9b19800710133d6cc002aad67651922be2bccc5160a9f03790194cc600",
+  "groups": 638,
+  "obligations": 836,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_command_frame_producers_stop_live_value",
+      "selector": "kernel::command_frame_producers#stop_live_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_command_frame_producers_stop_stopping_value",
+      "selector": "kernel::command_frame_producers#stop_stopping_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_command_frame_producers_stop_owner_value",
+      "selector": "kernel::command_frame_producers#stop_owner_value",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_r24_rows_stop_rows_intro",
       "selector": "kernel::r24_rows#stop_rows_intro",
