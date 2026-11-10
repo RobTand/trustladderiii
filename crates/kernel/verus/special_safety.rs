@@ -41,4 +41,23 @@ pub(super) proof fn pool_line_order(w: World, i: int)
         assert(!(w.nodes@[j].phase is Ready) && w.nodes@[j].ticket.is_some());
     }
 }
+
+/// Replaces the residual assertion of Kani `gate_planning_w2/w3` (proofs.rs:1355
+/// `assert!(!after.nodes[0].holds && !after.nodes[0].pool)`) for arbitrary
+/// accepted worlds: an Unplanned request holds no slot and no pool run, and
+/// its internal step (admission to Planning, or none) keeps both released.
+/// The harness's other assertions are scheduler::advance's Unplanned ensures
+/// (changed == waiters < W) and advance_post (rank decrease). Only the real
+/// step's advance_post is needed, not its enabling condition (mutant e3d4ff4e).
+pub(super) proof fn gate_planning_holds_nothing(w: World, i: int, after: Node,
+    ticket_before: u64, ticket_after: u64, changed: bool)
+    requires checking::accepted(w), 0 <= i < w.nodes@.len(),
+        w.nodes@[i].phase == Phase::Unplanned,
+        advance_post(w.nodes@[i], after, ticket_before, ticket_after, changed),
+    ensures !w.nodes@[i].holds && !w.nodes@[i].pool,
+        !after.holds && !after.pool,
+{
+    checking::accepted_node(w, i);
+    reveal(advance_post);
+}
 }
