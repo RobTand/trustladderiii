@@ -105,7 +105,7 @@ pub(super) proof fn c1_healthy(b: World, a: World)
     assert(a.nodes@.len() == b.nodes@.len());
     assert(checking::accepted(a));
     assert(footprint::ordered_table(a)) by {
-        assert(footprint::ordered_table(b));
+        reveal(footprint::ordered_table);
         assert forall|k: int| 0 <= k < a.file_sets@.len()
             implies footprint::ordered(a.file_sets@[k]@) by {
             assert(footprint::ordered(b.file_sets@[k]@));
