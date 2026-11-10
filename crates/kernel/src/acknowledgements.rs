@@ -456,35 +456,11 @@ pub(super) fn effect_failed(w: &mut World, i: usize, kind: EffectKind,
             .update(old(out).len as int + 1,
                 Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Ask { question: old(w).next_question } })),
 ] {
-    notice(out, i, Notice::Incident { needs_rob: true });
-    if w.nodes[i].phase.is_stopping() {
-        // Cleanup stays put, keeping what it holds, until Rob retries or marks the step handled.
-        let id = w.next_question;
-        w.next_question += 1;
-        w.nodes[i].question = Some(Question {
-            id,
-            kind: QKind::CleanupFailed,
-            cont: Cont::Nowhere,
-            cost: 0,
-            clarified: false,
-        });
-        notice(out, i, Notice::Ask { question: id });
-        return;
-    }
-    let m = &mut w.nodes[i];
-    if kind.starts_operation() {
-        abandon_operation(m);
-    }
-    let cont = match m.phase {
-        Phase::Ingesting => Cont::Ingesting,
-        Phase::Auditing => Cont::Auditing,
-        Phase::Planning { must_split } => Cont::Planning { must_split },
-        phase => match phase.resume() {
-            Some(r) => Cont::Ready(r),
-            None => Cont::Unplanned,
-        },
-    };
-    ask_rob(w, i, QKind::EffectFailed, cont, 0, out);
+    let (node, next_question, output) = ack_permanent_value(w.nodes[i], i, kind, w.next_question, *out);
+    kernel_proof! { ack_permanent_rows(w.nodes@[i as int], i as int, kind, w.next_question, *out); }
+    w.nodes[i] = node;
+    w.next_question = next_question;
+    *out = output;
 }
 }
 
@@ -1096,6 +1072,27 @@ pub(super) open spec fn ack_value_spec(b: Node, i: int, e: InFlight, ack: Ack, n
         Ack::Permanent => ack_permanent_spec(n, i, e.kind, nq, out),
         Ack::BodyPolicyRefused => ack_body_policy_spec(n, i, e.kind, nq, out),
     } }
+}
+
+// Exact result bridge for the legacy permanent-failure caller.
+proof fn ack_permanent_rows(n: Node, i: int, kind: EffectKind, nq: u64, out: Outbox)
+    requires n.generation < u64::MAX, nq < u64::MAX,
+    ensures ack_permanent_spec(n, i, kind, nq, out).0.repo == n.repo,
+        ack_permanent_spec(n, i, kind, nq, out).0.footprint == n.footprint,
+        (settle_shape(n) ==> settle_shape(ack_permanent_spec(n, i, kind, nq, out).0)),
+        ack_permanent_spec(n, i, kind, nq, out).0.generation as int <= n.generation as int + 1,
+        ack_permanent_spec(n, i, kind, nq, out).0.next_seq == n.next_seq,
+        ack_permanent_spec(n, i, kind, nq, out).0.credit == n.credit,
+        ack_permanent_spec(n, i, kind, nq, out).0.last_cmd == n.last_cmd,
+        ack_permanent_spec(n, i, kind, nq, out).0 == failed_spec(n, kind, nq),
+        ack_permanent_spec(n, i, kind, nq, out).1 as int == nq as int + 1,
+        ack_permanent_spec(n, i, kind, nq, out).2 == out.items@.update(out.len as int,
+            Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob: true } }))
+            .update(out.len as int + 1,
+                Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Ask { question: nq } })),
+        ack_permanent_spec(n, i, kind, nq, out).3 == out.len as int + 2,
+{
+    reveal(ack_permanent_spec);
 }
 
 proof fn ack_result_properties(w: World, i: int, e: InFlight, ack: Ack, ob: Outbox,
