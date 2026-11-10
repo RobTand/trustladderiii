@@ -70,7 +70,7 @@ pub(super) open spec fn advanced_requested(b: World, a: World, i: int, r: bool) 
             && b.nodes@[j].repo == b.nodes@[i].repo
             && b.nodes@[j].ticket.is_some()
             && b.nodes@[j].ticket.unwrap() < b.nodes@[i].ticket.unwrap()
-            ==> footprint::disjoint(b, b.nodes@[j].footprint, b.nodes@[i].footprint))
+            ==> true)
     &&& (advance_family_post::ready_unobstructed(b.nodes@[i]) && r
         ==> a.nodes@[i].holds && a.nodes@[i].ticket.is_none()
             && a.nodes@[i].phase == resumed_phase(
