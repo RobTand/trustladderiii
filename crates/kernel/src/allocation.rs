@@ -502,7 +502,7 @@ kernel_fn! {
             _ => {}
         }
         let head = match kind {
-            EffectKind::Push | EffectKind::PostApproval | EffectKind::OpenPr | EffectKind::Enqueue => {
+            EffectKind::Push | EffectKind::PostApproval | EffectKind::OpenPr => {
                 m.head
             }
             _ => None,
