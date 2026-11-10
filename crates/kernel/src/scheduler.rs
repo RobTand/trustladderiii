@@ -341,6 +341,10 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
             && old(w).nodes@[older].ticket.is_some()
             && old(w).nodes@[older].ticket.unwrap() < old(w).nodes@[i as int].ticket.unwrap()
             ==> footprint::disjoint(*old(w), old(w).nodes@[older].footprint, old(w).nodes@[i as int].footprint),
+    // E5.8 / G20 framing (v2.32, owner advance; TRUSTED-FROZEN): a new slot goes only to a Ready node with a
+    // ticket. Node-level source PROVEN: ranks::advance_node ensures grant_facts (ranks.rs:1345).
+    !old(w).nodes@[i as int].holds && final(w).nodes@[i as int].holds
+        ==> old(w).nodes@[i as int].phase is Ready && old(w).nodes@[i as int].ticket.is_some(),
 ] {
     advance_proved(w, i, out, report)
 }
