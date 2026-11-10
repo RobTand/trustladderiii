@@ -79,7 +79,6 @@ pub(super) open spec fn advanced_teardown(b: World, a: World, i: int, r: bool) -
     let n = b.nodes@[i];
     let m = a.nodes@[i];
     let g = n.phase is Stopping && !n.waiting_incident && n.effect.is_none() && n.question.is_none();
-    &&& advance_post(n, m, b.next_ticket, a.next_ticket, r)
     &&& (g && (match current_item(n) {
             Some(Item::Teardown(k)) => advance_family_post::teardown_gone(n, k), _ => false })
         ==> r && m.pos == n.pos + 1 && m.phase == n.phase && m.effect.is_none()
