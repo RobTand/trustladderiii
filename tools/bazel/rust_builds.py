@@ -1,8 +1,8 @@
 """Write crates/*/BUILD.bazel from `cargo metadata`. Cargo stays the source of truth.
 
 Each BUILD file holds only Cargo facts: local dependencies, unified features,
-binaries, examples and the [[test]] entries that Cargo's auto-discovery would
-not find. tools/bazel/rust.bzl turns them into targets.
+binaries, examples, examples' required-features and the [[test]] entries that
+Cargo's auto-discovery would not find. tools/bazel/rust.bzl turns them into targets.
 """
 import argparse
 import json
@@ -64,17 +64,24 @@ def render(package, directory, features):
     local = sorted(
         f'//{Path(dependency["path"]).relative_to(ROOT)}:{dependency["name"].replace("-", "_")}'
         for dependency in package['dependencies'] if dependency.get('path'))
-    bins, examples, declared = [], {}, {}
+    bins, examples, example_features, declared = [], {}, {}, {}
     build_script = False
     for target in package['targets']:
         kind = target['kind'][0]
         source = label(directory, target['src_path'])
+        required = target.get('required-features') or []
+        if required and kind != 'example':
+            # Deployed binaries and gate tests build with the crate's features only.
+            raise SystemExit(f'{directory}: required-features are supported on examples only, '
+                             f'not {kind} {target["name"]}')
         if kind == 'bin':
             if source != f'src/bin/{target["name"]}.rs':
                 raise SystemExit(f'{directory}: binary {target["name"]} must live in src/bin')
             bins.append(target['name'])
         elif kind == 'example':
             examples[target['name']] = source
+            if required:
+                example_features[target['name']] = sorted(required)
         elif kind == 'test':
             name = target['name']
             if not auto_discovered(name, source) or not harness.get(name, True):
@@ -86,6 +93,7 @@ def render(package, directory, features):
     fields = [('package', package['name']), ('crate', crate), ('build_script', build_script),
               ('local_deps', local), ('features', sorted(features)), ('bins', sorted(bins)),
               ('examples', dict(sorted(examples.items()))),
+              ('example_features', dict(sorted(example_features.items()))),
               ('declared_tests', dict(sorted(declared.items())))]
     body = ''.join(f'    {key} = {block(value)},\n' for key, value in fields
                    if value or key in ('package', 'crate'))

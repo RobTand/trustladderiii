@@ -40,7 +40,7 @@ if [ "${FX_SCRATCH_FINAL:-0}" = 1 ] || [ "${FX_SCRATCH_REVIEW:-0}" = 1 ]; then
  check rust-cli /home/rob/.cargo/bin/cargo test -p tl3-controller --test run_backend_cli --locked -- --test-threads=1
  export FX_FIXTURE_PYTHON=/home/rob/venvs/pb-cpu/bin/python
  export FX_FIXTURE_EVIDENCE="$fx_out/stage-fixture"
- check fixture /home/rob/.cargo/bin/cargo test -p tl3-controller --example fx-stage-packet --locked -- --nocapture --include-ignored --test-threads=1
+ check fixture /home/rob/.cargo/bin/cargo test -p tl3-controller --example fx-stage-packet --features activation-qualification --locked -- --nocapture --include-ignored --test-threads=1
  check clippy /home/rob/.cargo/bin/cargo clippy -p tl3-controller --all-targets --locked -- -D warnings
  fx_lint=$(mktemp -d)
  check lint-venv /home/rob/venvs/pb-cpu/bin/python -m venv "$fx_lint"
