@@ -145,7 +145,7 @@ pub(super) proof fn outside_prefix_frame(n: Node, head: HeadId)
 }
 
 pub(super) proof fn outside_scalar_posts(n: Node, nq: u64, head: HeadId)
-    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+    requires node_headroom(n), arithmetic_consistent(n), true,
     ensures reply_family_values::retry_bound(n, nq, outside_change(n, head)),
         reply_family_values::next_question(nq, outside_change(n, head)) as int
             <= nq as int + 1,
