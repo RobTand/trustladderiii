@@ -81,6 +81,15 @@ mod retirement_witness;
 #[path = "../verus/facts_family_lemmas.rs"]
 mod facts_family_lemmas;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/fact_relation_priority.rs"]
+mod fact_relation_priority;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/fact_relation_reveal.rs"]
+mod fact_relation_reveal;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/fact_relation_exports.rs"]
+mod fact_relation_exports;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/transition_safety.rs"]
 mod transition_safety;
 #[cfg(verus_keep_ghost)]
