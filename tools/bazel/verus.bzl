@@ -793,7 +793,7 @@ def verus_proofs():
             "handler_safety_continue_step": ("kernel::handler_safety#continue_step", 1),
             "handler_safety_last_cmd_step": ("kernel::handler_safety#last_cmd_step", 1),
             "pool_key": ("kernel#pool_key", 1),
-            "special_safety": ("kernel::special_safety", 2),
+            "special_safety": ("kernel::special_safety", 3),
             "transition_composition": ("kernel::transition_composition", 8),
             "kernel_outbox_occupied": ("kernel#occupied", 1),
             "transition_safety_intro": ("kernel::transition_safety#intro", 1),
