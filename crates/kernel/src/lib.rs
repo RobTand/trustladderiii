@@ -2321,6 +2321,9 @@ mod progress_unplanned_witness;
 #[path = "../verus/special_safety.rs"]
 mod special_safety;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/liveness_gate_reservation.rs"]
+mod liveness_gate_reservation;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/transition_composition.rs"]
 mod transition_composition;
 #[cfg(verus_keep_ghost)]
