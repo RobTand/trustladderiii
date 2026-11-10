@@ -122,6 +122,19 @@ mod apply_answer_safety;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/apply_command_safety.rs"]
 mod apply_command_safety;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/answer_rules.rs"]
+mod answer_rules;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/stop_frames.rs"]
+mod stop_frames;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/stop_frame_reveal.rs"]
+mod stop_frame_reveal;
+
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/advance_family_frames.rs"]
 mod advance_family_frames;
