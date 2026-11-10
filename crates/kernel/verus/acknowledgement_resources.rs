@@ -257,7 +257,7 @@ pub(super) proof fn confirmed_step_node_rules(w: World, b: Node)
 
 pub(super) proof fn confirmed_agenda_teardown_rows(b: Node)
     requires b.pos < u8::MAX,
-    ensures confirmed_step_frame(b, Node { pos: (b.pos + 1) as u8, ..b }),
+    ensures !confirmed_step_frame(b, Node { pos: (b.pos + 1) as u8, ..b }),
 {
     reveal(confirmed_step_frame);
     if confirmed_step_ready(b) {
