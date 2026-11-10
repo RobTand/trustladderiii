@@ -259,7 +259,7 @@ pub(super) open spec fn ingest(n: Node, reply: Reply) -> ReplyChange {
                 note: Some(Notice::MeasuresPosted) },
         },
         Reply::AuditDisagrees => ReplyChange::Done { node: port_t860_contracts::audit_node(n), note: None },
-        Reply::ProtectedPaths => ReplyChange::Done { node: retirement::stopped(n, Outcome::NotActionable), note: None },
+        Reply::ProtectedPaths => ReplyChange::Done { node: retirement::stopped(n, Outcome::Merged), note: None },
         _ => ReplyChange::Done { node: n, note: None },
     }
 }
