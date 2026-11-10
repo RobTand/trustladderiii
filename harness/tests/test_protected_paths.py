@@ -240,3 +240,13 @@ def test_c6_unrelated_files_do_not_carry_a_coverage_note(repo):
     results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER)
     assert all(r.verdict == Verdict.PASS and r.coverage_note is None for r in results)
     assert all('coverage_note' not in r for r in json.loads(execution.result_json(results)))
+
+
+@pytest.mark.parametrize('name', ['pytest.toml', '.pytest.toml',
+                                  'nested/tests/pytest.toml', 'nested/tests/.pytest.toml'])
+def test_c6_default_configuration_patterns_match_committed_paths(repo, name):
+    from tl3_harness.trees import TEST_CONFIGURATION_PATHS, changed_protected
+    repo, base, ran = repo
+    write(repo, {name: ''})
+    head = save(repo, 'pytest configuration')
+    assert changed_protected(repo, base, head, TEST_CONFIGURATION_PATHS) == [name]
