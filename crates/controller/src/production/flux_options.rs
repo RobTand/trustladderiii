@@ -11,7 +11,7 @@ pub fn flux_job_environment() -> std::collections::BTreeMap<String, String> {
     .into()
 }
 
-/// Shared controller/worker conversion. The configured URI wins once at this boundary.
+/// Shared controller/worker policy; native operations resolve the current INSTANCE locator.
 pub fn flux_options(config: &tl3_config::Flux) -> Options {
     let environment = config.environment.clone();
     Options {

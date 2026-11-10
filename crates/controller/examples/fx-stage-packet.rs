@@ -142,7 +142,7 @@ fn prepare(
     bundle: &Path,
     context: &Path,
     source: &Path,
-    expected_generation: &str,
+    _expected_generation: &str,
     kind: FixtureKind,
 ) -> Result<()> {
     if !api::absolute(root) || !root.starts_with("/mnt/shared/flux-out/tl3") || root.exists() {
@@ -153,13 +153,6 @@ fn prepare(
         return Err("a fresh disjoint staging destination is required".into());
     }
     let mut options: Options = serde_json::from_slice(&fs::read(context)?)?;
-    // An explicit supplied generation is required. Never discover or refresh it.
-    if !api::generation(expected_generation) || options.instance_generation != expected_generation {
-        return Err(
-            "context differs from explicitly supplied generation; re-preparation is required"
-                .into(),
-        );
-    }
     fs::create_dir(root)?;
     fs::set_permissions(root, fs::Permissions::from_mode(0o700))?;
     let reservation = Reservation {
@@ -209,6 +202,7 @@ fn prepare(
     config.flux = Some(tl3_config::Flux {
         // Canary packets precede the pin they qualify; Stager refuses a record here.
         activation: None,
+        instance_file: options.instance_file.clone(),
         instance_generation: options.instance_generation.clone(),
         uri: options.uri.clone(),
         executable: "/no-native-execution/flux".into(),
@@ -301,7 +295,7 @@ fn prepare(
         &root.join("packet.json"),
         &json!({
             "status":"HELD_NOT_RELEASED_NOT_EXECUTED", "runtime_qualified":false, "activation":activation,
-            "release_requires":["PB lead DONE and passing checks/receipt", "explicit NEW generation and context verification", "parent inspection and sole FXR execution"],
+            "release_requires":["PB lead DONE and passing checks/receipt", "runtime INSTANCE resolution and context verification", "parent inspection and sole FXR execution"],
             "source_snapshot":git(source, &["rev-parse", "HEAD"])?,
             "example_source":identity(&source.join("crates/controller/examples/fx-stage-packet.rs"))?,
             "executable":identity(&std::env::current_exe()?)?, "canonical_bundle":identity(bundle)?,
@@ -555,6 +549,7 @@ mod tests {
         let generation = format!("fixture/{}", "0".repeat(32));
         let flux = tl3_config::Flux {
             activation: None,
+            instance_file: None,
             instance_generation: generation.clone(),
             uri: "local:///fixture-endpoint".into(),
             executable: "/no-native-execution/flux".into(),
@@ -619,6 +614,7 @@ mod tests {
         config.execution_backend = tl3_config::ExecutionBackend::Flux;
         config.flux = Some(tl3_config::Flux {
             activation,
+            instance_file: None,
             instance_generation: format!("fixture/{}", "0".repeat(32)),
             uri: "local:///fixture-endpoint".into(),
             executable: "/no-native-execution/flux".into(),
