@@ -1593,7 +1593,8 @@ shell_options={'output':{'stdout':{'path':option('--output=')},'stderr':{'path':
 # Model the Flux CLI: it propagates the submitter's soft rlimits unless --rlimit=-* is given.
 if '--rlimit=-*' not in args: shell_options['rlimit']={'nofile':resource.getrlimit(resource.RLIMIT_NOFILE)[0],'core':resource.getrlimit(resource.RLIMIT_CORE)[0]}
 runner=next(i for i,item in enumerate(args) if not item.startswith('-') and item.startswith('/mnt/shared/'))
-spec={'tasks':[{'command':args[runner:]}], 'resources':[{'type':'node','count':1,'with':[{'type':'slot','count':1,'label':'task','with':[{'type':'core','count':int(args[args.index('-c')+1])}]}]}], 'attributes':{'user':user,'system':{'duration':option('-t') if any(item.startswith('-t=') for item in args) else args[args.index('-t')+1], 'constraints':option('--requires='), 'cwd':option('--cwd='),'environment':environment,'job':{'name':option('--job-name=')}, 'shell':{'options':shell_options}}}}
+leaves=[{'type':key,'count':int(value)} for key,value in (item.split('=') for item in option('--resources-shape=').removeprefix('slot/[').removesuffix(']').split(';'))]
+spec={'tasks':[{'command':args[runner:]}], 'resources':[{'type':'slot','count':1,'label':'task','with':leaves}], 'attributes':{'user':user,'system':{'duration':option('-t') if any(item.startswith('-t=') for item in args) else args[args.index('-t')+1], 'constraints':option('--requires='), 'cwd':option('--cwd='),'environment':environment,'job':{'name':option('--job-name=')}, 'shell':{'options':shell_options}}}}
 text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
 "#).unwrap();
         fs::set_permissions(&native, fs::Permissions::from_mode(0o555)).unwrap();
@@ -2050,9 +2051,9 @@ fn jobspec_admits_declared_memory_as_rounded_gib_leaves_and_preserves_original()
             &fs::read(f.intent.output_dir.join("original-jobspec.json")).unwrap(),
         )
         .unwrap();
-        assert_eq!(spec["resources"][0]["type"], "node");
+        assert_eq!(spec["resources"][0]["type"], "slot");
         assert_eq!(
-            spec["resources"][0]["with"][0]["with"],
+            spec["resources"][0]["with"],
             json!([
                 {"type":"core","count":2}, {"type":"memory","count":leaves}
             ])
@@ -2079,7 +2080,7 @@ fn jobspec_admits_declared_memory_as_rounded_gib_leaves_and_preserves_original()
         let frames = f.attach();
         assert_ne!(frames.last().unwrap()["kind"], "error", "{frames:?}");
         let mut altered = spec;
-        altered["resources"][0]["with"][0]["with"][1]["count"] = json!(leaves + 1);
+        altered["resources"][0]["with"][1]["count"] = json!(leaves + 1);
         fs::write(f.root.path().join("jobspec.json"), altered.to_string()).unwrap();
         assert_eq!(
             f.attach().last().unwrap()["result"]["observation"]["kind"],
@@ -2094,8 +2095,8 @@ fn malformed_memory_jobspec_shape_never_dispatches() {
     for replacement in [
         "spec['resources'][0]['count']=2",
         "spec['resources'][0]['with'][0]['count']=2",
-        "spec['resources'][0]['with'][0]['with'].append({'type':'memory','count':1})",
-        "spec['resources'][0]['with'][0]['with'][0]['count']=3",
+        "spec['resources'][0]['with'].append({'type':'memory','count':1})",
+        "spec['resources'][0]['with'][0]['count']=3",
     ] {
         let f = Fixture::new();
         let path = f.root.path().join("jobspec.py");

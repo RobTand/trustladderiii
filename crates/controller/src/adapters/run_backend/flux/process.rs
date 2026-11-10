@@ -237,10 +237,12 @@ impl Flux {
             format!("--cwd={}", request.tree.root.display()),
             "-n".into(),
             "1".into(),
-            "-N".into(),
-            "1".into(),
-            "-c".into(),
-            request.reservation.cpus.to_string(),
+            format!(
+                "--resources-shape=slot/[core={};memory={}{}]",
+                request.reservation.cpus,
+                request.reservation.memory_bytes.get().div_ceil(1_u64 << 30),
+                if request.reservation.gpus == 0 { String::new() } else { format!(";gpu={}", request.reservation.gpus) },
+            ),
             "-t".into(),
             format!("{}s", request.walltime_seconds),
             "--env=-*".into(),
@@ -267,9 +269,6 @@ impl Flux {
                 request.reservation.memory_bytes
             ),
         ];
-        if request.reservation.gpus > 0 {
-            args.extend(["-g".into(), request.reservation.gpus.to_string()]);
-        }
         if let Some(dependency) = &request.runtime.host_dependency {
             args.push(format!("--requires=host:{}", dependency.host));
         }
@@ -325,41 +324,35 @@ fn native_job_id<'de, D: serde::Deserializer<'de>>(
 pub(super) struct Jobspec(serde_json::Value);
 
 impl Jobspec {
-    /// Fluxion's standing graph accounts in GiB leaves under a single node's slot.
-    /// This requests admission; sdexec's fixed caps do not follow this count.
-    pub(super) fn with_memory(mut self, reservation: &Reservation) -> Result<Self> {
+    /// Check the plain slot produced by the native shape option before dispatch.
+    pub(super) fn with_memory(self, reservation: &Reservation) -> Result<Self> {
         let invalid = || {
             BackendError::invalid(
-                "native jobspec must have one node and one task slot with the requested cores",
+                "native jobspec must have one plain task slot with the requested cores and memory",
             )
         };
         let resources = self
             .0
-            .get_mut("resources")
-            .and_then(serde_json::Value::as_array_mut)
+            .get("resources")
+            .and_then(serde_json::Value::as_array)
             .ok_or_else(invalid)?;
-        if resources.len() != 1 || resources[0]["type"] != "node" || resources[0]["count"] != 1 {
+        if resources.len() != 1 || resources[0]["type"] != "slot" || resources[0]["count"] != 1 {
             return Err(invalid());
         }
-        let slots = resources[0]
-            .get_mut("with")
-            .and_then(serde_json::Value::as_array_mut)
+        let leaves = resources[0]
+            .get("with")
+            .and_then(serde_json::Value::as_array)
             .ok_or_else(invalid)?;
-        if slots.len() != 1 || slots[0]["type"] != "slot" || slots[0]["count"] != 1 {
+        let mut expected = vec![
+            serde_json::json!({"type":"core","count":reservation.cpus.get()}),
+            serde_json::json!({"type":"memory","count":reservation.memory_bytes.get().div_ceil(1_u64 << 30)}),
+        ];
+        if reservation.gpus > 0 {
+            expected.push(serde_json::json!({"type":"gpu","count":reservation.gpus}));
+        }
+        if *leaves != expected {
             return Err(invalid());
         }
-        let leaves = slots[0]
-            .get_mut("with")
-            .and_then(serde_json::Value::as_array_mut)
-            .ok_or_else(invalid)?;
-        if leaves.len() != 1
-            || leaves[0]["type"] != "core"
-            || leaves[0]["count"] != reservation.cpus.get()
-            || reservation.gpus != 0
-        {
-            return Err(invalid());
-        }
-        leaves.push(serde_json::json!({"type": "memory", "count": reservation.memory_bytes.get().div_ceil(1_u64 << 30)}));
         Ok(self)
     }
 }
