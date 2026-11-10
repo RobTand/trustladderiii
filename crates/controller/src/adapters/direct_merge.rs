@@ -1351,6 +1351,20 @@ fn merge_evidence(
         .nodes
         .get(node.0 as usize)
         .ok_or(Error::Invalid("merge evidence node missing"))?;
+    let checked_base = crate::commit_sha(snapshot, n.approved)
+        .and_then(|approved| {
+            snapshot.rows.iter().find(|row| {
+                row.table == "check_reports"
+                    && row.id == format!("{}:{approved}", node.0)
+                    && row.value["head_sha"].as_str() == Some(approved)
+                    && row.value["pass"] == true
+                    && row.value["report"] == true
+            })
+        })
+        .and_then(|row| row.value["base_sha"].as_str())
+        .map(str::to_owned);
+    let merge_base = pull.base.sha.clone();
+    let base_moved = checked_base.as_ref().map(|base| base != &merge_base);
     let parents: Vec<_> = commit
         .parents
         .into_iter()
@@ -1364,6 +1378,9 @@ fn merge_evidence(
         observed,
         landed: crate::outcome::Landed {
             commit: commit.sha,
+            checked_base,
+            merge_base,
+            base_moved,
             tree_matches: commit.tree.sha == head_commit.tree.sha,
             tree: commit.tree.sha,
             head_tree: head_commit.tree.sha,

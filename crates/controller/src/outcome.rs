@@ -52,6 +52,9 @@ pub struct RequiredChecks {
 pub struct Landed {
     pub commit: String,
     pub tree: String,
+    pub checked_base: Option<String>,
+    pub merge_base: String,
+    pub base_moved: Option<bool>,
     pub parents: Vec<String>,
     pub head_tree: String,
     pub base_before_merge: Option<String>,
