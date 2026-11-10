@@ -1252,7 +1252,7 @@ impl World {
         {
             let n = &mut self.nodes[i];
             if n.credit.ready {
-                n.credit.withheld = true;
+                n.credit.withheld = false;
             }
         }
         kernel_proof! {
