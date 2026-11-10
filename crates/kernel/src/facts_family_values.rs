@@ -264,7 +264,7 @@ pub(super) proof fn merge_distance(n: Node, value: Node, head: HeadId, checks_pa
 
 pub(super) proof fn merge_outputs(n: Node, notes: Outbox, i: usize,
     head: HeadId, checks_passed: bool)
-    requires notes.len == merge_items(n, i, head, checks_passed).len(),
+    requires true,
         notes.items@ =~= padded_notices(merge_items(n, i, head, checks_passed)),
     ensures merge_notices(n, notes, i, head, checks_passed),
         notices(notes, i, 4), retirement::notices_only(notes),
