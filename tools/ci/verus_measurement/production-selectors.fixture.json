@@ -1,10 +1,35 @@
 {
-  "source_head": "e6f21b416bb54f419dc2750fe1ac09394cee26e7",
+  "source_head": "0a04c72440cee3d0392541e92524069732d9764b",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "3a387302369bf9171f736fcd29b7fe767460ba591a5dfeb796706dca0f8915d8",
-  "groups": 510,
-  "obligations": 708,
+  "source_sha256": "16691eafb222d857155b9f7aaaa8c7debcae0004b7a0201ee683566f00cffa84",
+  "groups": 515,
+  "obligations": 719,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_footprint_disjoint_under_table_growth",
+      "selector": "kernel::footprint#disjoint_under_table_growth",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_footprint_node_rules_grow",
+      "selector": "kernel::footprint#node_rules_grow",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependencies_append_preserves",
+      "selector": "kernel::dependencies#append_preserves",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_append_preserves",
+      "selector": "kernel::dependencies::preservation#append_preserves",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_dependency_preservation_append_cover",
+      "selector": "kernel::dependencies::preservation#append_cover",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_handler_safety_step_rows_carry",
       "selector": "kernel::handler_safety#step_rows_carry",
@@ -148,7 +173,7 @@
     {
       "target": "//crates/kernel:verus_internal_safety",
       "selector": "kernel::internal_safety",
-      "expected": 7
+      "expected": 12
     },
     {
       "target": "//crates/kernel:verus_handler_safety_keep_review_stop",
@@ -303,7 +328,7 @@
     {
       "target": "//crates/kernel:verus_special_safety",
       "selector": "kernel::special_safety",
-      "expected": 2
+      "expected": 3
     },
     {
       "target": "//crates/kernel:verus_transition_composition",
