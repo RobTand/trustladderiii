@@ -715,7 +715,7 @@ pub(super) fn infrastructure_retry_arm(n: Node) -> (result: (Node, Option<bool>)
 ] {
     let mut value = n;
     value.run_failures += 1;
-    set_phase(&mut value, Phase::Publishing); // enqueue again
+    set_phase(&mut value, Phase::Rebasing); // enqueue again
     (value, None)
 }
 }
