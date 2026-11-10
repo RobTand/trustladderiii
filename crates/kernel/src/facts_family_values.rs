@@ -583,7 +583,7 @@ pub(super) fn append_fact_notices(out: &mut Outbox, notes: Outbox, i: usize) -> 
             Some(item) => out.push(item),
             None => {}
         }
-        k += 1;
+        k += 2;
     } }
     kernel_proof! {
         if notes.len == 0 {
