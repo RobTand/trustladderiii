@@ -913,53 +913,88 @@ pub(super) proof fn answer_world(before: World, after: World, i: usize, id: u64,
 
 
 
-/// Reorder design (kernel master 11-10): the consumers' frame lemma for answer_command. Premises are
-/// answer_command's own clauses over (before, after); conclusions are the table frame and the
-/// world-level node rules (lifted from answer_command's node_rules_v post).
+
+/// SPLIT: the consumers' frame lemma for answer_command (table frame from length + other-node frame).
 pub(super) proof fn answer_frame(before: World, after: World, i: usize)
     requires i < before.nodes@.len(),
         after.nodes@.len() == before.nodes@.len(),
         forall|j: int| 0 <= j < before.nodes@.len() && j != i ==> after.nodes@[j] == before.nodes@[j],
-        after.gates@ == before.gates@,
-        after.file_sets@ == before.file_sets@,
-        after.next_ticket == before.next_ticket,
-        after.nodes@[i as int].repo == before.nodes@[i as int].repo,
-        after.nodes@[i as int].footprint == before.nodes@[i as int].footprint,
-        after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
-        retirement::node_rules(before, before.nodes@[i as int])
-            ==> handler_safety::node_rules_v(after.nodes@[i as int], after.next_question),
     ensures after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
-        retirement::node_rules(before, before.nodes@[i as int])
-            ==> retirement::node_rules(after, after.nodes@[i as int]),
 {
     assert(after.nodes@ =~= before.nodes@.update(i as int, after.nodes@[i as int]));
-    if retirement::node_rules(before, before.nodes@[i as int]) {
-        handler_safety::rules_world_update(before, after, before.nodes@[i as int], after.nodes@[i as int]);
-    }
 }
 
-/// Reorder design: answer_pair survives the last_cmd write after on_answer (command_step and the
-/// withheld rule do not read last_cmd). Conclusion over the literal written node; no node premise.
-pub(super) proof fn answer_pair_after(b: Node, a: Node, id: u64, question: u64, answer: Answer,
+/// SPLIT: answer_pair carries across record_last_cmd. Premises are record_last_cmd's per-field posts
+/// (n written, a its input), verbatim; no node equation.
+pub(super) proof fn answer_pair_fields(b: Node, a: Node, n: Node, id: u64, question: u64, answer: Answer,
     table: Seq<Dependency>, node: NodeId)
     requires handler_safety::answer_pair(b, a, true, question, answer, table, node),
         id > b.last_cmd,
-    ensures handler_safety::answer_pair(b, (Node { last_cmd: id, ..a }), id > b.last_cmd, question, answer,
-        table, node),
+        n.proposed == a.proposed,
+        n.adopted == a.adopted,
+        n.phase == a.phase,
+        n.review_stop == a.review_stop,
+        n.attempt == a.attempt,
+        n.replanned == a.replanned,
+        n.question == a.question,
+        n.credit == a.credit,
+        n.planning_started == a.planning_started,
+    ensures handler_safety::answer_pair(b, n, id > b.last_cmd, question, answer, table, node),
 {
     reveal(handler_safety::answer_pair);
     reveal(handler_safety::command_step);
 }
 
-/// Reorder design: the node rules by value survive the last_cmd write (literal form, no node premise).
-pub(super) proof fn answer_after_rules(before: World, after: World, a: Node, id: u64)
-    requires after.next_question == before.next_question,
-    ensures retirement::node_rules(before, a)
-        ==> handler_safety::node_rules_v((Node { last_cmd: id, ..a }), after.next_question),
+/// SPLIT: L1's question clause across record_last_cmd. Premises are record_last_cmd's per-field posts
+/// (every field but last_cmd), verbatim.
+pub(super) proof fn r19_bridge(b: Node, a: Node, n: Node)
+    requires
+        n.phase == a.phase,
+        n.pos == a.pos,
+        n.repo == a.repo,
+        n.footprint == a.footprint,
+        n.generation == a.generation,
+        n.next_seq == a.next_seq,
+        n.effect == a.effect,
+        n.run == a.run,
+        n.job == a.job,
+        n.pool == a.pool,
+        n.ticket == a.ticket,
+        n.holds == a.holds,
+        n.paused == a.paused,
+        n.question == a.question,
+        n.attempt == a.attempt,
+        n.round == a.round,
+        n.replanned == a.replanned,
+        n.plan_retries == a.plan_retries,
+        n.audit_rounds == a.audit_rounds,
+        n.early_end == a.early_end,
+        n.run_failures == a.run_failures,
+        n.run_incidents == a.run_incidents,
+        n.fx_failures == a.fx_failures,
+        n.fx_incidents == a.fx_incidents,
+        n.waiting_incident == a.waiting_incident,
+        n.incident_needs_rob == a.incident_needs_rob,
+        n.proposed == a.proposed,
+        n.adopted == a.adopted,
+        n.head == a.head,
+        n.checked == a.checked,
+        n.approved == a.approved,
+        n.merged == a.merged,
+        n.pr_open == a.pr_open,
+        n.had_pr == a.had_pr,
+        n.worktree == a.worktree,
+        n.rechecks == a.rechecks,
+        n.review_restarted == a.review_restarted,
+        n.credit == a.credit,
+        n.priority == a.priority,
+        n.review_stop == a.review_stop,
+        n.planning_started == a.planning_started,
+        n.waiting_prerequisite == a.waiting_prerequisite,
+    ensures n != (Node { last_cmd: n.last_cmd, ..b }) ==> a != b,
 {
-    if retirement::node_rules(before, a) {
-        handler_safety::rules_to_v(before, a);
-        handler_safety::last_cmd_rules_v(a, before.next_question, id);
+    if a == b {
+        assert(n == (Node { last_cmd: n.last_cmd, ..b }));
     }
 }
 
