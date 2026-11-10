@@ -443,6 +443,9 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::handler_safety::node_rules_v": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::handler_safety::paid_credit": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::handler_safety::continued_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::handler_safety::handled_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::handler_safety::handled_resources_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::transition_safety::event_target": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -745,6 +748,23 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "handler_safety_clarified_rules_v": ("kernel::handler_safety#clarified_rules_v", 1),
+            "handler_safety_cleanup_handled_rules_v": ("kernel::handler_safety#cleanup_handled_rules_v", 1),
+            "handler_safety_clear_cleanup_rules_v": ("kernel::handler_safety#clear_cleanup_rules_v", 1),
+            "handler_safety_continued_rules_v": ("kernel::handler_safety#continued_rules_v", 1),
+            "handler_safety_field_rules_v": ("kernel::handler_safety#field_rules_v", 1),
+            "handler_safety_handled_rules_v": ("kernel::handler_safety#handled_rules_v", 1),
+            "handler_safety_initial_rules": ("kernel::handler_safety#initial_rules", 1),
+            "handler_safety_last_cmd_rules_v": ("kernel::handler_safety#last_cmd_rules_v", 1),
+            "handler_safety_retry_rules_v": ("kernel::handler_safety#retry_rules_v", 1),
+            "handler_safety_rules_from_v": ("kernel::handler_safety#rules_from_v", 1),
+            "handler_safety_rules_to_v": ("kernel::handler_safety#rules_to_v", 1),
+            "handler_safety_rules_v_nq_grow": ("kernel::handler_safety#rules_v_nq_grow", 1),
+            "handler_safety_rules_v_without_question": ("kernel::handler_safety#rules_v_without_question", 1),
+            "handler_safety_rules_world_update": ("kernel::handler_safety#rules_world_update", 1),
+            "handler_safety_stopped_no_grants": ("kernel::handler_safety#stopped_no_grants", 1),
+            "handler_safety_stopped_rules_v": ("kernel::handler_safety#stopped_rules_v", 1),
+            "apply_new_safety_adoption_c2": ("kernel::apply_new_safety#adoption_c2", 1),
             "events_apply_new_request": ("kernel::events#apply_new_request", 1),
             "events_apply_reply": ("kernel::events#apply_reply", 1),
             "events_apply_ack": ("kernel::events#apply_ack", 1),
