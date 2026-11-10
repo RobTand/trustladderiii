@@ -267,7 +267,7 @@ pub(super) proof fn failed_round_arms(n: Node, fast: bool, step: ReviewStop)
 pub(super) proof fn plan_retry_arms(n: Node, fast: bool, cant_meet: bool)
     ensures ({ let m = reply_family_values::plan_counted(n);
         (fast && cant_meet ==> reply_family_values::plan_retry(n, fast, cant_meet)
-            == reply_family_values::room_fast(m, ReviewStop::PlanCantMeet))
+            == reply_family_values::room_fast(m, ReviewStop::MakerCantMeet))
         && (!(fast && cant_meet) && m.plan_retries < 2 ==>
             reply_family_values::plan_retry(n, fast, cant_meet) == reply_family_values::plan_again(m))
         && (!(fast && cant_meet) && !(m.plan_retries < 2) ==>
@@ -381,7 +381,7 @@ pub(super) proof fn plan_retry_value_posts(n: Node, fast: bool, nq: u64, cant_me
     reveal(reply_family_values::plan_retry);
     if fast && cant_meet {
         let m = Node { plan_retries: if n.plan_retries < 255 { (n.plan_retries + 1) as u8 } else { 255u8 }, ..n };
-        reply_family_facts::stopped_review(m, ReviewStop::PlanCantMeet);
+        reply_family_facts::stopped_review(m, ReviewStop::MakerCantMeet);
     }
 }
 

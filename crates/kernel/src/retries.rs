@@ -581,7 +581,7 @@ pub(super) fn plan_retry_node(n: Node, fast: bool, nq: u64, cant_meet: bool) -> 
     let phase = node.phase;
     kernel_proof! { reply_family_posts::plan_retry_arms(n, fast, cant_meet); }
     if fail_fast && cant_meet {
-        let result = out_of_room_fast(node, ReviewStop::PlanCantMeet);
+        let result = out_of_room_fast(node, ReviewStop::MakerCantMeet);
         kernel_proof! {
             assert(result == reply_family_values::plan_retry(n, fast, cant_meet));
         }
