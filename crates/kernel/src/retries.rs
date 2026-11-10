@@ -482,7 +482,7 @@ pub(super) fn out_of_room_node(n: Node, fast: bool, nq: u64, step: ReviewStop) -
     }
     node.holds = false;
     if node.credit.can_spend(1) {
-        node.credit.spend(1);
+        node.credit = spend_v(node.credit, 1);
         node.plan_retries = 0;
         node = set_phase_v(node, Phase::Planning { must_split: true });
     } else {
@@ -573,6 +573,18 @@ pub(super) fn stop_for_review_v(n: Node, step: ReviewStop) -> (result: Node) [
 ] {
     let mut m = n;
     stop_for_review(&mut m, step);
+    m
+}
+}
+
+kernel_fn! {
+/// Return the unchanged credit spend as a whole value for exact node equations.
+pub(super) fn spend_v(c: Credit, cost: u64) -> (result: Credit) [
+    requires c.spent as int + cost as int <= u64::MAX as int,
+    ensures result == (Credit { spent: (c.spent + cost) as u64, ..c }),
+] {
+    let mut m = c;
+    m.spend(cost);
     m
 }
 }

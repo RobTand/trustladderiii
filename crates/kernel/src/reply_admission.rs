@@ -495,7 +495,7 @@ pub(super) fn reply_files_node(n: Node, fast: bool, files: Footprint, fits: bool
     let mut node = n;
     if funded {
         let footprint = union;
-        node.credit.spend(1);
+        node.credit = spend_v(node.credit, 1);
         node.footprint = footprint;
         node.holds = false;
         node = set_phase_v(node, Phase::Ready(Resume::Making));
