@@ -28,6 +28,13 @@ impl Spy {
     }
 }
 impl Executor for Spy {
+    fn cleanup_maintenance(&mut self, now_ms: u64) -> Result<Vec<String>> {
+        self.hit("cleanup_maintenance", now_ms.to_string())
+    }
+    fn next_cleanup_maintenance_ms(&mut self) -> Result<Option<u64>> {
+        self.hit("next_cleanup_maintenance_ms", String::new())
+    }
+
     fn quota_model_eligible(&mut self, delivery: &Delivery, model: &str) -> Result<bool> {
         self.hit("quota_model_eligible", format!("{}:{model}", delivery.key))
     }
