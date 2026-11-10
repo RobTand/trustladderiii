@@ -343,6 +343,7 @@ impl Phase {
         }
     }
 
+    #[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify(external_body))]
     pub fn name(self) -> &'static str {
         match self {
             Phase::Ingesting => "Ingesting",
