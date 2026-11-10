@@ -873,7 +873,7 @@ fn plan_count_v(n: Node) -> (result: Node) [
         result.next_seq == n.next_seq,
 ] proof [reveal(reply_family_values::plan_counted);] {
     let mut m = n;
-    m.plan_retries = retry_count(m.plan_retries);
+    m.plan_retries = m.plan_retries;
     m
 }
 }
