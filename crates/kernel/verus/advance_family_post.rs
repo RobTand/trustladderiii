@@ -124,8 +124,6 @@ pub(super) proof fn slot_facts_paused(b: Node, t0: u64, c: AdvanceContext, o0: O
         b.phase is Ready, b.paused,
     ensures ({
         let v = slot_paused_value(b, t0);
-    ranks::pending_rank_definition(b);
-    ranks::pending_rank_definition(v.0);
         advance_post(b, v.0, t0, v.1, v.2) && v.2 == advance_enabled(b, c)
             && slot(b, v.0, t0, v.1, c, o0, o0, v.2)
             && report::no_new_stop(b.phase, v.0.phase, e, e) && t0 <= v.1
@@ -134,6 +132,8 @@ pub(super) proof fn slot_facts_paused(b: Node, t0: u64, c: AdvanceContext, o0: O
     reveal(advance_post);
     reveal(distance);
     let v = slot_paused_value(b, t0);
+    ranks::pending_rank_definition(b);
+    ranks::pending_rank_definition(v.0);
     assert(v.0 == (Node { ticket: None, ..b }));
     slot_paused(b, v.0, t0, v.1, c, o0, o0, v.2);
     report::lemmas::quiet(b.phase, v.0.phase, e);
@@ -148,8 +148,6 @@ pub(super) proof fn slot_facts_grant(b: Node, t0: u64, c: AdvanceContext, o0: Ou
         b.phase == Phase::Ready(r), !b.paused, b.ticket.is_some(), c.slot,
     ensures ({
         let v = slot_grant_value(b, t0, r);
-    ranks::pending_rank_definition(b);
-    ranks::pending_rank_definition(v.0);
         advance_post(b, v.0, t0, v.1, v.2) && v.2 == advance_enabled(b, c)
             && slot(b, v.0, t0, v.1, c, o0, o0, v.2)
             && report::no_new_stop(b.phase, v.0.phase, e, e) && t0 <= v.1
@@ -158,6 +156,8 @@ pub(super) proof fn slot_facts_grant(b: Node, t0: u64, c: AdvanceContext, o0: Ou
     reveal(advance_post);
     reveal(distance);
     let v = slot_grant_value(b, t0, r);
+    ranks::pending_rank_definition(b);
+    ranks::pending_rank_definition(v.0);
     slot_item_ready(b);
     // One resume target per case keeps items/current_item of the new phase ground.
     match r {
@@ -176,8 +176,6 @@ pub(super) proof fn slot_facts_issue(b: Node, t0: u64, c: AdvanceContext, o0: Ou
         b.phase is Ready, !b.paused, b.ticket.is_none(),
     ensures ({
         let v = slot_issue_value(b, t0);
-    ranks::pending_rank_definition(b);
-    ranks::pending_rank_definition(v.0);
         advance_post(b, v.0, t0, v.1, v.2) && v.2 == advance_enabled(b, c)
             && slot(b, v.0, t0, v.1, c, o0, o0, v.2)
             && report::no_new_stop(b.phase, v.0.phase, e, e) && t0 <= v.1
@@ -186,6 +184,8 @@ pub(super) proof fn slot_facts_issue(b: Node, t0: u64, c: AdvanceContext, o0: Ou
     reveal(advance_post);
     reveal(distance);
     let v = slot_issue_value(b, t0);
+    ranks::pending_rank_definition(b);
+    ranks::pending_rank_definition(v.0);
     slot_item_ready(b);
     slot_bounds(b, t0, o0.len);
     slot_ticket_issued(b, v.0, t0, v.1, c, o0, o0, v.2);
