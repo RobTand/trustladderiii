@@ -1,0 +1,27 @@
+{
+  "base_config_digest": "sha256:f3496f551e4891a2d6b0471dab16b847ad83ee5916cc51cc1c3ca155d940f779",
+  "base_image": "dl380g10:5000/tl3/tessera@sha256:64e9fb7973298b138867e591557a2695b3b98db762ece171473ad3902c14bb43",
+  "files": {
+    "tessera-gate/gate_prismaquant_requirements.txt": "dca78d4593d12d0883d93e1b292906b379e61872d3abc4086bc2c3fcd7fe7e18",
+    "tessera-gate/gate_requirements.txt": "84f00a47af11673dfd08ce37a52de814e60d76dd2dacaba73f0b8fcd8d5c33f7",
+    "tessera-gate/gate_torch_requirements.txt": "586408b1bf87ea9f2491192f40d075824bf060a24848b8ef19ba359f1b6a5d02",
+    "tessera-gate/resolved-requirements.txt": "01dff889938c24214d97bd532e4663750b486d713d6d06fafa11dd46522a3026",
+    "tessera.txt": "f82a0543999d81a7a6eed6c6bedc6080c170113c778ac30542d6a522972ecba4"
+  },
+  "image_tooling_pins": [
+    "pip==25.1.1",
+    "wheel==0.48.0"
+  ],
+  "pip": "25.1.1",
+  "platform": "linux/amd64",
+  "requirements_sha256": "f82a0543999d81a7a6eed6c6bedc6080c170113c778ac30542d6a522972ecba4",
+  "schema": "tl3.tessera-image-inputs.v1",
+  "tessera_commit": "3f707db1fdf7ee6bc05f4d181c8b1cabbd162a59",
+  "tessera_repository": "https://github.com/RobTand/tessera",
+  "upstream_paths": {
+    "tessera-gate/gate_prismaquant_requirements.txt": "tools/ci/gate_prismaquant_requirements.txt",
+    "tessera-gate/gate_requirements.txt": "tools/ci/gate_requirements.txt",
+    "tessera-gate/gate_torch_requirements.txt": "tools/ci/gate_torch_requirements.txt",
+    "tessera-gate/resolved-requirements.txt": "tools/bazel/requirements.txt"
+  }
+}
