@@ -2406,6 +2406,27 @@ mod special_safety;
 #[path = "../verus/command_frames.rs"]
 mod command_frames;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/liveness_witness.rs"]
+mod liveness_witness;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/liveness_trace.rs"]
+mod liveness_trace;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/liveness_finish.rs"]
+mod liveness_finish;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/liveness_reservation.rs"]
+mod liveness_reservation;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/liveness_release.rs"]
+mod liveness_release;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/liveness_teardown.rs"]
+mod liveness_teardown;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/liveness_bounds.rs"]
+mod liveness_bounds;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/transition_composition.rs"]
 mod transition_composition;
 #[cfg(verus_keep_ghost)]
