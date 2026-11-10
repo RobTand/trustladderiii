@@ -1,10 +1,35 @@
 {
-  "source_head": "119686ee624e2e5db5e32c5623c057e3beae7706",
+  "source_head": "fdfb3a09d515c727c81cccb8e49d3f9a04973758",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "445d1ffbc94838155995a5c96060b92e47d4c00d3d2a52f86d06a94ec09b5ccd",
-  "groups": 528,
-  "obligations": 727,
+  "source_sha256": "f20c559fc8ce78010e55964d34b593a9863501c4c9db17c3f9be81d151166e2c",
+  "groups": 533,
+  "obligations": 732,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_facts_family_infrastructure_incident_count",
+      "selector": "kernel::facts_family_values#infrastructure_incident_count",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_infrastructure_retry_arm",
+      "selector": "kernel::facts_family_values#infrastructure_retry_arm",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_infrastructure_incident_arm",
+      "selector": "kernel::facts_family_values#infrastructure_incident_arm",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_infrastructure_retry_value",
+      "selector": "kernel::facts_family_values#infrastructure_retry_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_infrastructure_retry_bridge",
+      "selector": "kernel::facts_family_values#infrastructure_retry_bridge",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_facts_family_priority_fact_arm",
       "selector": "kernel::facts_family_values#priority_fact_arm",
