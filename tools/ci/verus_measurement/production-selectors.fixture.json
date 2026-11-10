@@ -1,10 +1,90 @@
 {
-  "source_head": "7b26f04dc65f217802dd58ead92d1bd89a4f703e",
+  "source_head": "e111adecab9f4f1515a27ff2f20689a9e751c8df",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "750b0ddaa7f54608efadd7b9c3d78b471a8092eeb2f8be56eca8eadfa6d5db15",
-  "groups": 555,
-  "obligations": 753,
+  "source_sha256": "e231b00fce5a47f5413c86e9d8c92d80dd5c0814568cae330a63b6eff066dbed",
+  "groups": 571,
+  "obligations": 769,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_reply_family_next_rung_paid",
+      "selector": "kernel::retries#next_rung_paid",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_next_rung_ask",
+      "selector": "kernel::retries#next_rung_ask",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_next_rung_replan_paid",
+      "selector": "kernel::retries#next_rung_replan_paid",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_next_rung_replan_ask",
+      "selector": "kernel::retries#next_rung_replan_ask",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_next_rung_cant_meet",
+      "selector": "kernel::retries#next_rung_cant_meet",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_failed_round_free",
+      "selector": "kernel::retries#failed_round_free",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_plan_retry_again",
+      "selector": "kernel::retries#plan_retry_again",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_plan_retry_ask",
+      "selector": "kernel::retries#plan_retry_ask",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_recheck_free",
+      "selector": "kernel::retries#recheck_free",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_recheck_paid",
+      "selector": "kernel::retries#recheck_paid",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_recheck_ask",
+      "selector": "kernel::retries#recheck_ask",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_retry_count",
+      "selector": "kernel::retries#retry_count",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_rung_arms",
+      "selector": "kernel::reply_family_posts#rung_arms",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_failed_round_arms",
+      "selector": "kernel::reply_family_posts#failed_round_arms",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_plan_retry_arms",
+      "selector": "kernel::reply_family_posts#plan_retry_arms",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_recheck_arms",
+      "selector": "kernel::reply_family_posts#recheck_arms",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_reply_family_rung_posts",
       "selector": "kernel::reply_family_posts#rung_posts",
