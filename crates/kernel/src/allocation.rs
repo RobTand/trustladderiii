@@ -381,7 +381,7 @@ fn incident_node(n: Node, needs_rob: bool) -> (result: Node) [
     let mut m = n;
     m.waiting_incident = true;
     m.incident_needs_rob = needs_rob;
-    m.ticket = None;
+    // mutant: retain the incident ticket
     // A leaf waiting on an incident gives back its slot and files.
     if let Some(r) = m.phase.resume() {
         m.holds = false;
