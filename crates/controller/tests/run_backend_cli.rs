@@ -6620,3 +6620,18 @@ fn cleanup_maintenance_held_request_dispatches_exactly_once() {
     assert_eq!(calls.lines().filter(|line| line.starts_with("job submit ")).count(), 2, "one original, one resumed: {calls}");
     fs::remove_dir_all(&intent.output_dir).unwrap();
 }
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_never_resubmits_possible_native_acceptance() {
+    let f = Fixture::new();
+    fs::write(f.root.path().join("mode"), "unknown").unwrap();
+    assert_eq!(f.submit()["kind"], "unknown");
+    assert!(f.state().dispatched);
+    let backend = maintenance_backend(&f);
+    assert!(backend.next_cleanup_maintenance_ms().unwrap().is_none());
+    backend.cleanup_maintenance(u64::MAX - 300_000).unwrap();
+    assert!(matches!(backend.submit(f.request.clone(), f.intent.clone()).unwrap(), Submission::Unknown { .. }));
+    let calls = fs::read_to_string(f.root.path().join("calls")).unwrap();
+    assert_eq!(calls.lines().filter(|line| line.starts_with("job submit ")).count(), 1, "{calls}");
+}
