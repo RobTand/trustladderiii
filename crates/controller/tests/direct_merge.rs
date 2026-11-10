@@ -83,6 +83,7 @@ impl State {
         pull["merged"] = json!(false);
         pull["merged_at"] = Value::Null;
         pull["merge_commit_sha"] = json!("dddddddddddddddddddddddddddddddddddddddd");
+        pull["base"]["sha"] = json!("e".repeat(40));
         Self {
             pull,
             live_base: None,
