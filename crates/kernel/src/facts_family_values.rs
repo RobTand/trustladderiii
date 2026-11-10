@@ -134,7 +134,7 @@ pub(super) proof fn value_node_step(b: Node, n: Node, fast: bool, i: usize, fact
 }
 
 pub(super) proof fn value_fail_fast(b: Node, n: Node, fast: bool, i: usize, fact: Fact)
-    requires node_headroom(b), n == retirement::fact_node(b, fact),
+    requires node_headroom(b),
         matches!(fact, Fact::Priority(_) | Fact::PrClosedByPerson | Fact::Conflict
             | Fact::IncidentCleared { .. } | Fact::PrMerged { .. }),
     ensures transition_safety::fail_fast_node(b, n, fast,
