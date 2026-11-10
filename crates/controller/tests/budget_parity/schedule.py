@@ -177,7 +177,7 @@ class Filesystem(IO):
                 "buffered": {h.path: h.buffer for h in self.handles.values()}}
 
 
-def loop(modules, schedule, crash, *, chunk_crash=0):
+def loop(modules, schedule, crash, *, chunk_crash=0, reference=False):
     """Run the real maker.run closure and session.save, rather than simulating it."""
     from tl3_workers import runtime
     from tl3_workers.tests_tool import TestSettings
@@ -191,7 +191,9 @@ def loop(modules, schedule, crash, *, chunk_crash=0):
                    "brief": "Preserve the recorded evidence.", "context_size": 100_000,
                    "goals": [{"id": "g", "description": "Preserve behavior."}],
                    "tests": {"image": "sha256:" + "a" * 64, "execution": {"backend": "flux", "profile": "/unused/execution.json"}},
-                   "plan": {"files": ["f"], "checks": [{"name": "check", "goal_ids": [0],
+                   "plan": {"files": ["f"], "checks": [{"name": "check",
+                                                            # Frozen pre-S1 maker cites goal ids; S1 cites goal indices.
+                                                            "goal_ids": ["g"] if reference else [0],
                                                             "tests": ["test.py"]}]}}}
     evidence = SimpleNamespace(state=lambda: {"sample": io.read("evidence")},
                                restore=lambda value: io.calls.append(["restore_evidence", value]))
@@ -339,19 +341,19 @@ def compare(old, schedules):
         for schedule in schedules:
             reference = (old["maker"], old["exploration"], old["session"])
             current = (maker, exploration, session)
-            expected = loop(reference, schedule, 0)
+            expected = loop(reference, schedule, 0, reference=True)
             actual = loop(current, schedule, 0)
             assert isinstance(expected[2], dict) and expected[2]["kind"] == "cant_meet", expected[2]
             migration = CheckpointMigration(expected)
             migration.compare(expected, actual)
             assert {kind for kind, _ in expected[3]} == {"partial_write", "write", "flush", "fsync", "rename", "directory_fsync"}
             for crash in range(1, len(expected[3]) + 1):
-                expected_crash = loop(reference, schedule, crash)
+                expected_crash = loop(reference, schedule, crash, reference=True)
                 actual_crash = loop(current, schedule, crash)
                 migration.compare(expected_crash, actual_crash)
                 assert expected_crash[2] == "crash"
             for old_chunk, new_chunk in migration.extra_prefixes:
-                expected_crash = loop(reference, schedule, 0, chunk_crash=old_chunk)
+                expected_crash = loop(reference, schedule, 0, chunk_crash=old_chunk, reference=True)
                 actual_crash = loop(current, schedule, 0, chunk_crash=new_chunk)
                 migration.compare(expected_crash, actual_crash, inserted_prefix=True)
                 assert expected_crash[2] == "crash"

@@ -42,7 +42,7 @@ fn fix_round_rebases_reviewed_tree_with_upstream_configuration() {
     rebase.head_sha = Some(fixed);
     let mut run = serde_json::json!({"repository": f.repo, "base_sha": base,
         "reviewed_sha": reviewed, "plan": [{"name": "reproduces", "kind": "reproducing",
-        "tests": ["test_value.py::test_value"]}]});
+        "tests": ["test_value.py::test_value"], "goal_ids": []}]});
     rebase.checks = Some(serde_json::from_value::<CheckRun>(run.take()).unwrap());
     let result = adapter.execute(&rebase).unwrap();
     let (head, run) = result
@@ -152,8 +152,8 @@ fn unreplayable_reviewed_tree_drops_reproducers_with_a_reason() {
     rebase.head_sha = Some(git(&checkout, &["rev-parse", "HEAD"]));
     rebase.checks = Some(serde_json::from_value(serde_json::json!({
         "repository": f.repo, "base_sha": base, "reviewed_sha": reviewed,
-        "plan": [{"name":"ordinary", "kind":"regression", "tests":["test_value.py::test_value"]},
-                 {"name":"reproducer", "kind":"reproducing", "tests":["test_value.py::test_value"]}]
+        "plan": [{"name":"ordinary", "kind":"regression", "tests":["test_value.py::test_value"], "goal_ids":[]},
+                 {"name":"reproducer", "kind":"reproducing", "tests":["test_value.py::test_value"], "goal_ids":[]}]
     })).unwrap());
     let result = adapter.execute(&rebase).unwrap();
     let run = result
@@ -202,8 +202,8 @@ fn failed_review_pin_reaches_the_next_review_reason() {
     rebase.head_sha = Some(fixed);
     rebase.checks = Some(serde_json::from_value(serde_json::json!({
         "repository": f.repo, "base_sha": base, "reviewed_sha": reviewed,
-        "plan": [{"name":"ordinary", "kind":"regression", "tests":["test_value.py::test_value"]},
-                 {"name":"reproducer", "kind":"reproducing", "tests":["test_value.py::test_value"]}]
+        "plan": [{"name":"ordinary", "kind":"regression", "tests":["test_value.py::test_value"], "goal_ids":[]},
+                 {"name":"reproducer", "kind":"reproducing", "tests":["test_value.py::test_value"], "goal_ids":[]}]
     })).unwrap());
     let result = adapter.execute(&rebase).unwrap();
     let run = result

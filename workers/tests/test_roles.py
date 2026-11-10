@@ -31,7 +31,10 @@ def test_discovered_roles_have_prompts_and_schemas_without_orphans():
                         # #832-K worker event contract, outside every model prompt.
                         "plan-check-provenance.json",
                         # #826 operator diagnostic contract, outside every model prompt.
-                        "execution-failure.json", "worker-execution.json"}
+                        "execution-failure.json", "worker-execution.json",
+                        # S1 Rust action policy/request and plugin contracts, outside every model prompt.
+                        "action-policy-request.json", "action-policy-response.json", "action-request.json",
+                        "plugin-fact.json", "plugin-response.json"}
     Draft202012Validator.check_schema(schema("check-report"))
     Draft202012Validator.check_schema(schema("decision-context"))
     Draft202012Validator.check_schema(schema("budget-wire"))

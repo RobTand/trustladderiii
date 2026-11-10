@@ -574,7 +574,7 @@ fn flux_checks_controller_incident_clearance_allows_fresh_dispatch() {
     let running = source.spawn(sender);
     let mut plan = delivery().checks.unwrap();
     plan.plan = serde_json::from_value(
-        json!([{"name":"regression", "kind":"regression", "tests":["test_value.py::test_value"]}]),
+        json!([{"name":"regression", "kind":"regression", "tests":["test_value.py::test_value"], "goal_ids":[]}]),
     )
     .unwrap();
     for round in 1..=2 {

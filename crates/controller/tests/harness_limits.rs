@@ -241,7 +241,7 @@ fn check(
         "behavior-preserving",
     ][kind as usize % 4];
     let node = format!("tests/test_x.py::test_x[{text}]");
-    let mut value = json!({"name":name,"kind":kind,"tests":vec![node.clone();count]});
+    let mut value = json!({"name":name,"kind":kind,"tests":vec![node.clone();count],"goal_ids":[]});
     if proof && matches!(kind, "demonstrating" | "reproducing") {
         value["proof"] = json!({"subjects":[],"observer_support":[],"red_message":"expected"});
     }

@@ -748,6 +748,13 @@ fn stop_with(source: Source, operations: bool) -> Stopped {
                             "preserved_work": {"head": "a".repeat(40), "tree": "b".repeat(40)},
                             "unfinished_obligations": ["CHANGELOG.md update", "final regression checks"]
                         }})),
+                    // S1 planner admission reads the accepted brief; the simulation's
+                    // Fake ingest emits only a kernel IngestDone and stores none.
+                    (Source::Planner, Role::Ingest) => ("ingest", json!({"kind": "brief",
+                        "brief": "Keep the total correct.", "memory_ids": [], "files": [],
+                        "goals": [{"description": "Keep the total correct.", "verification": "test"}],
+                        "forecast": {"tokenizer": "o200k_base", "brief_tokens": 1, "file_tokens": {},
+                            "overhead_tokens": 0, "tokens": 1, "fit_tokens": 100, "context_tokens": 150, "fits": true}})),
                     (Source::Planner, Role::Plan) => ("planner", json!({"kind": "leaf",
                         "files": ["value.py"],
                         "checks": [{"name": "total-is-correct", "kind": "regression", "tests": ["test_value.py::test_total"], "goal_ids": [0]}],
