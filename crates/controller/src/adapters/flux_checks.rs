@@ -191,6 +191,8 @@ impl Shared {
     fn maintenance_jobs(&self, now: u64) -> Result<(Vec<Job>, Vec<String>)> {
         let mut jobs = Vec::new();
         let mut failed = Vec::new();
+        let previous = durable::maintenance_failures(&self.root).map_err(adapter_error)?;
+        let mut seen = std::collections::BTreeSet::new();
         for entry in fs::read_dir(&self.root)? {
             let path = entry?.path();
             if !path.extension().is_some_and(|extension| extension == "job") {
@@ -200,6 +202,7 @@ impl Shared {
                 .file_stem()
                 .and_then(|key| key.to_str())
                 .unwrap_or("invalid-name");
+            seen.insert(key.to_owned());
             let result = self
                 .load(key)
                 .and_then(|job| job.ok_or(Error::Invalid("check journal disappeared")));
@@ -218,6 +221,23 @@ impl Shared {
                     .map_err(adapter_error)?;
                     failed.push(format!("check-journal:{key}"));
                 }
+            }
+        }
+        let active_watches: std::collections::BTreeSet<_> = jobs
+            .iter()
+            .filter(|job| job.terminal.is_none())
+            .map(|job| format!("watch:{}", job.intent.correlation))
+            .collect();
+        for failure in previous {
+            if failure.key.starts_with("watch:") && !active_watches.contains(&failure.key) {
+                durable::clear_maintenance_failure(&self.root, &failure.key)
+                    .map_err(adapter_error)?;
+            } else if failure.key != "backend"
+                && !failure.key.starts_with("watch:")
+                && !seen.contains(&failure.key)
+            {
+                durable::clear_maintenance_failure(&self.root, &failure.key)
+                    .map_err(adapter_error)?;
             }
         }
         Ok((jobs, failed))
@@ -522,10 +542,22 @@ impl Executor for Adapter {
             .shared
             .transaction(|| self.shared.maintenance_jobs(now_ms))?;
         pending.extend(errors);
-        if was_due {
+        let watch_failures =
+            durable::maintenance_failures(&self.shared.root).map_err(adapter_error)?;
+        let watch_due: std::collections::BTreeSet<_> = watch_failures
+            .iter()
+            .filter(|failure| {
+                failure.key.starts_with("watch:") && failure.next_attempt_ms <= now_ms
+            })
+            .map(|failure| failure.key.clone())
+            .collect();
+        if was_due || !watch_due.is_empty() {
             for job in jobs.into_iter().filter(|job| job.terminal.is_none()) {
+                let key = format!("watch:{}", job.intent.correlation);
+                if !was_due && !watch_due.contains(&key) {
+                    continue;
+                }
                 if let Err(error) = self.handle.watch(job.owner()) {
-                    let key = format!("watch:{}", job.intent.correlation);
                     durable::maintenance_failure(
                         &self.shared.root,
                         &key,
@@ -533,10 +565,19 @@ impl Executor for Adapter {
                         now_ms.saturating_add(300_000),
                     )
                     .map_err(adapter_error)?;
-                    pending.push(key);
+                } else {
+                    durable::clear_maintenance_failure(&self.shared.root, &key)
+                        .map_err(adapter_error)?;
                 }
             }
         }
+        pending.extend(
+            durable::maintenance_failures(&self.shared.root)
+                .map_err(adapter_error)?
+                .into_iter()
+                .filter(|failure| failure.key.starts_with("watch:"))
+                .map(|failure| failure.key),
+        );
         Ok(pending)
     }
 
