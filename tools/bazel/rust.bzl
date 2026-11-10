@@ -471,6 +471,7 @@ def _crate_test(kind, package, name, source, harness, options):
     if kind == "bin" and name == "verus-runner" and native.package_name() == "crates/verus-runner":
         sources = [source]
     compile_data = options["compile_data"]
+    runtime_data = []
     if source in ["tests/proof_map.rs", "tests/obligation_map.rs"] and native.package_name() == "crates/kernel":
         compile_data = compile_data + ["//tools/bazel:verus.bzl"]
     if source == "tests/proof_map.rs" and native.package_name() == "crates/kernel":
@@ -482,7 +483,7 @@ def _crate_test(kind, package, name, source, harness, options):
             name = "trusted_marker_inputs",
             srcs = depset(proof_inputs).to_list(),
         )
-        compile_data = compile_data + [":trusted_marker_inputs"]
+        runtime_data = [":trusted_marker_inputs"]
     if native.package_name() == "crates/store":
         compile_data = compile_data + native.glob(["tests/fixtures/**"], allow_empty = True)
     if native.package_name() == "crates/controller":
@@ -509,6 +510,7 @@ def _crate_test(kind, package, name, source, harness, options):
             crate_name = name.replace("-", "_"),
             crate_root = source,
             srcs = sources,
+            data = runtime_data,
             compile_data = compile_data + [
                 label
                 for label in _EXAMPLE_DATA.get(source, [])
