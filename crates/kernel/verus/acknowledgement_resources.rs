@@ -270,7 +270,7 @@ pub(super) proof fn confirmed_agenda_teardown_rows(b: Node)
 
 pub(super) proof fn confirmed_agenda_step_rows(b: Node, n: Node, kind: EffectKind)
     requires confirmed_teardown_input(b, kind), confirmed_step_frame(b, n),
-    ensures confirmed_agenda_frame(b, n, kind),
+    ensures !confirmed_agenda_frame(b, n, kind),
 {
     reveal(confirmed_step_frame);
     reveal(confirmed_agenda_frame);
