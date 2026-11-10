@@ -942,7 +942,7 @@ mod assembly_entry_witnesses {
     }
 
     fn planning() {
-        let w = assembly_witness_world::world(0);
+        let w = assembly_witness_world::world(1);
         let _ = gate_planning_step(w, 0, Outbox::new(), Report::new());
     }
 
