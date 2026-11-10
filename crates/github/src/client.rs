@@ -479,6 +479,14 @@ impl GitHub {
         serde_json::from_value(result?).map_err(|_| Error::Response)
     }
 
+    /// Read immutable commit metadata, including its tree and ordered parents.
+    pub async fn git_commit(&self, repo: &str, sha: &str) -> Result<GitCommit, Error> {
+        if sha.len() != 40 || !sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(Error::Config("commit read needs an exact commit SHA"));
+        }
+        self.request(Method::GET, format!("{}/git/commits/{sha}", repo_path(repo)?), vec![], None).await
+    }
+
     pub async fn merge_settings(&self, repo: &str) -> Result<MergeSettings, Error> {
         self.request(Method::GET, repo_path(repo)?, vec![], None)
             .await

@@ -1382,3 +1382,24 @@ async fn publication_token_quota_keeps_its_existing_recovery_class() {
         matches!(github.installation_token().await,Err(Error::RateLimited {retry_after}) if retry_after==Duration::from_secs(60))
     );
 }
+
+#[tokio::test]
+async fn reads_git_commit_tree_and_ordered_parents() {
+    let server = MockServer::start().await;
+    let github = client(&server).await;
+    let sha = "d".repeat(40);
+    get(&server, &format!("/repos/owner/sandbox/git/commits/{sha}"), json!({
+        "sha":sha,"tree":{"sha":"1".repeat(40)},"parents":[{"sha":"a".repeat(40)},{"sha":"b".repeat(40)}]
+    })).await;
+    let commit = github.git_commit("owner/sandbox", &sha).await.unwrap();
+    assert_eq!(commit.sha, sha);
+    assert_eq!(commit.tree.sha, "1".repeat(40));
+    assert_eq!(commit.parents.iter().map(|parent| parent.sha.as_str()).collect::<Vec<_>>(), vec!["a".repeat(40), "b".repeat(40)]);
+}
+#[tokio::test]
+async fn git_commit_requires_an_exact_sha_before_network_io() {
+    let server = MockServer::start().await;
+    let github = GitHub::new(config(), 3, options(&server)).unwrap();
+    assert!(matches!(github.git_commit("owner/sandbox", "main").await, Err(Error::Config("commit read needs an exact commit SHA"))));
+    assert!(server.received_requests().await.unwrap().is_empty());
+}

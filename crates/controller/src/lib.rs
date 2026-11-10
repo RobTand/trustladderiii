@@ -2828,6 +2828,7 @@ impl Controller {
                 outcome: outcome::Outcome::Merged {
                     head: sha,
                     checks_passed,
+                    evidence: None,
                 },
                 receipt: None,
             },
@@ -3040,11 +3041,15 @@ impl Controller {
                     }
                     return Ok(None);
                 }
+                if let Outcome::Merged { evidence: Some(evidence), .. } = &outcome {
+                    self.record_merge(snapshot, node, evidence, commit)?;
+                }
                 let recorded = json!({"node": node, "outcome": &outcome});
                 let fact = match outcome {
                     Outcome::Merged {
                         head,
                         checks_passed,
+                        ..
                     } => Fact::PrMerged {
                         head: self.head(node, &head)?,
                         checks_passed,

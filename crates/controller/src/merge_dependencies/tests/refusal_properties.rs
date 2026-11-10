@@ -125,6 +125,7 @@ fn queue_merge_refusal() {
             outcome: crate::outcome::Outcome::Merged {
                 head: repo.head,
                 checks_passed: true,
+                evidence: None,
             },
         },
     )
@@ -651,6 +652,7 @@ fn observation_inventory(
             outcome: crate::outcome::Outcome::Merged {
                 head: sha.clone(),
                 checks_passed: true,
+                evidence: None,
             },
         },
         comment(repository, 42, c.bootstrap.rob, &format!("pause {payload}")),

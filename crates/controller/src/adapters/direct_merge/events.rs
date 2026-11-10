@@ -53,6 +53,14 @@ impl Translator {
                 .ok_or(Error::Invalid("missing direct PR node"))?;
             let evidence = if pull.merged_at.is_some() {
                 Some(DeliveryOutcome::Merged {
+                    evidence: {
+                        let client = self.clients.get(&repo.installation).ok_or(Error::Invalid("missing direct event client"))?;
+                        let runtime = crate::executor::runtime()?;
+                        let checks = read_checks(&runtime, client, &full_name(repo), pull)?;
+                        Some(merge_evidence(&runtime, client, &full_name(repo), snapshot, node, pull,
+                            pull.merge_commit_sha.as_deref().ok_or(Error::Invalid("merged PR lacks landed commit"))?, None,
+                            crate::outcome::RequiredChecks { passed: checks.checks == Checks::Passed, count: checks.count }, true)?)
+                    },
                     head: pull.head.sha.clone(),
                     checks_passed: crate::commit_sha(snapshot, n.approved)
                         == Some(pull.head.sha.as_str())
@@ -68,11 +76,12 @@ impl Translator {
             } else {
                 None
             };
-            if let Some(evidence) = evidence {
+            if let Some(mut evidence) = evidence {
                 if let DeliveryOutcome::Merged {
                     head,
                     checks_passed,
-                } = &evidence
+                    evidence: merge_record,
+                } = &mut evidence
                     && let Some(journal) = self.wakes.journal()
                 {
                     let mut deliveries: Vec<Delivery> = snapshot
@@ -98,11 +107,19 @@ impl Translator {
                             )
                         {
                             delivery.pull_request = Some(pull.number);
+                            let intent: Option<Intent> = read_file(&Records::new(&journal.records_root).path(&delivery.key).with_extension("intent"))?;
+                            if let Some(intent) = intent.filter(|intent| intent.action == "Merge" && intent.head == *head)
+                                && let Some(record) = merge_record.as_mut()
+                            {
+                                record.landed.parent_matches = Some(record.landed.parents.first() == Some(&intent.base_before_merge));
+                                record.landed.base_before_merge = Some(intent.base_before_merge);
+                            }
                             journal.remember_merged(
                                 &delivery,
                                 &Merged {
                                     head: head.clone(),
                                     checks_passed: *checks_passed,
+                                    evidence: merge_record.clone().ok_or(Error::Invalid("merged event lacks evidence"))?,
                                 },
                                 |_, _| {},
                             )?;

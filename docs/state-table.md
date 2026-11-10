@@ -154,7 +154,7 @@ Workers report liveness, as a heartbeat, and progress, such as new tool results,
 - **Escalations:** the frozen batch, and the queue behind it.
 - **PR:** every PR number the node has used, the base commit, the current head, and every head that passed checks and review, with its tree.
 - **Adoption:** the proposed head supplied with the request, and the adopted bit, which never resets (Q45).
-- **Merge:** once observed, the merged head and tree.
+- **Merge:** direct delivery retains a `merge_records` row after the request closes. It records the PR head, whether TL3 checks passed for that head, whether the reviewer approved that head, and whether the required GitHub checks passed, with their count. The landed record contains GitHub's merge commit, its tree and ordered parents, the PR head's tree, and the base commit TL3 read before its merge call. Tree and first-parent comparisons are recorded. An outside merge without a saved TL3 merge intent has no known pre-merge base or parent comparison. Required checks for an outside merge are read when it is observed. Tree or parent differences, zero required checks, and outside merges with required checks not passed produce informational incidents and incident notices. These incidents are closed and non-blocking. The kernel's `PrMerged { head, checks_passed }` fact retains its existing meaning.
 - **Operation:** the generation, attempt and round, and whether the leaf has been re-planned. It also records the failure count and the incidents across the operation's whole lineage of generations.
 - **Effect sequence:** the phase's remaining effects, and which one is in flight.
 - **Question:** while the node waits on Rob, the question's id, kind and continuation.

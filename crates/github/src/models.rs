@@ -361,3 +361,14 @@ pub struct IssueActivity {
     pub created_at: DateTime<Utc>,
     pub label: Option<Label>,
 }
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GitObject {
+    pub sha: String,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GitCommit {
+    pub sha: String,
+    pub tree: GitObject,
+    pub parents: Vec<GitObject>,
+}
