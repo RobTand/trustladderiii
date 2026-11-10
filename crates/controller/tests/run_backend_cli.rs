@@ -66,7 +66,13 @@ fn backend_session_survives_pending_and_repeated_term_but_not_kill() {
         if request_id > 1 {
             assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGTERM) }, 0);
         }
-        if writeln!(input, "{}", json!({"request_id":request_id,"command":{"op":"cleanup_limits"}})).is_err() {
+        if writeln!(
+            input,
+            "{}",
+            json!({"request_id":request_id,"command":{"op":"cleanup_limits"}})
+        )
+        .is_err()
+        {
             break;
         }
         match receive.recv_timeout(Duration::from_secs(5)) {
@@ -78,7 +84,11 @@ fn backend_session_survives_pending_and_repeated_term_but_not_kill() {
     let status = child.wait().unwrap();
     reader.join().unwrap();
     assert_eq!(status.signal(), Some(libc::SIGKILL));
-    assert_eq!(replies.len(), 3, "pending or repeated TERM killed the cleanup session: {replies:?}");
+    assert_eq!(
+        replies.len(),
+        3,
+        "pending or repeated TERM killed the cleanup session: {replies:?}"
+    );
     for (index, reply) in replies.iter().enumerate() {
         assert_eq!(reply["request_id"], index + 1);
         assert_eq!(reply["kind"], "result");
@@ -89,7 +99,10 @@ fn backend_session_survives_pending_and_repeated_term_but_not_kill() {
 #[test]
 fn backend_session_unblocked_at_spawn_keeps_default_term() {
     let output = Command::new("/usr/bin/python3")
-        .args([PYTHON_NO_BYTECODE, "-c", r#"
+        .args([
+            PYTHON_NO_BYTECODE,
+            "-c",
+            r#"
 import json, os, select, signal, subprocess, sys
 def unblocked():
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
@@ -108,11 +121,16 @@ try:
 finally:
     if child.poll() is None: child.kill()
     child.communicate(timeout=5)
-"#])
+"#,
+        ])
         .arg(env!("CARGO_BIN_EXE_tl3-run-backend"))
         .output()
         .unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
@@ -160,7 +178,11 @@ finally:
         .arg(root.path())
         .output()
         .unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 /// Every suite Python that may import from a source checkout runs with `-B`. The flag is
