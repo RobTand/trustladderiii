@@ -9,7 +9,7 @@ pub(super) proof fn apply_out_of_range(w: World, event: Event)
     requires match event {
         Event::Reply { node, .. } | Event::Ack { node, .. }
         | Event::Fact { node, .. } | Event::Command { node, .. }
-            => node.0 >= w.nodes@.len(),
+            => true,
         Event::NewRequest { .. } | Event::NewAdoption { .. } => false,
     },
     ensures transition_safety::transition_safety(w, w,
