@@ -1235,7 +1235,7 @@ kernel_fn! {
         result.0.next_seq == b.next_seq,
         result.0.run_failures == b.run_failures,
         result.0.run_incidents == b.run_incidents,
-        result.0.fx_failures == b.fx_failures,
+        result.0.fx_failures != b.fx_failures,
         result.0.fx_incidents == b.fx_incidents,
         result.0.question == b.question,
         result.0.credit == b.credit,
