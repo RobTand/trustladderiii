@@ -17,6 +17,51 @@ fn execution_backend_never_falls_back_from_missing_flux_settings() {
     }
 }
 
+/// PB-REMOVAL (D2): Flux is the only executor, so a config that could start PrismaBuild is
+/// refused when it is parsed, before anything starts. Nothing defaults to a backend.
+#[test]
+fn startup_refuses_any_prismabuild_selection_or_table() {
+    fn clean() -> Value {
+        let mut document = flux_document();
+        let table = document.as_table_mut().unwrap();
+        table.remove("prismabuild");
+        table["allowances"]
+            .as_table_mut()
+            .unwrap()
+            .remove("prismabuild");
+        document
+    }
+    let parse = |document: &Value| Config::parse(&toml::to_string(document).unwrap());
+    parse(&clean()).unwrap();
+    let mut missing = clean();
+    missing.as_table_mut().unwrap().remove("execution_backend");
+    assert!(
+        parse(&missing).is_err(),
+        "a missing backend must not default"
+    );
+    let mut retired = clean();
+    retired["execution_backend"] = "prismabuild".into();
+    assert!(parse(&retired).is_err(), "the retired backend is refused");
+    let mut table = clean();
+    table.as_table_mut().unwrap().insert(
+        "prismabuild".into(),
+        toml::toml! { tools_dir = "/opt/pb/tools" container_image = "sha256:0000000000000000000000000000000000000000000000000000000000000000" }.into(),
+    );
+    assert!(parse(&table).is_err(), "a [prismabuild] table is refused");
+    let mut allowance = clean();
+    allowance["allowances"].as_table_mut().unwrap().insert(
+        "prismabuild".into(),
+        toml::toml! { silence_secs = 300 no_progress_secs = 900 }.into(),
+    );
+    assert!(
+        parse(&allowance).is_err(),
+        "an [allowances.prismabuild] table is refused"
+    );
+    let mut no_flux = clean();
+    no_flux.as_table_mut().unwrap().remove("flux");
+    assert!(parse(&no_flux).is_err(), "Flux settings are required");
+}
+
 fn flux_document() -> Value {
     let mut document: Value = EXAMPLE.parse().unwrap();
     document
