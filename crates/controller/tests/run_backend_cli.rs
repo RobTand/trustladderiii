@@ -28,7 +28,10 @@ fn cli(request: &Value) -> Vec<Value> {
 const PYTHON_NO_BYTECODE: &str = "-B";
 
 fn fixture_scratch() -> tempfile::TempDir {
-    tempfile::tempdir().unwrap()
+    tempfile::Builder::new()
+        .prefix("tl3-fixture-")
+        .tempdir_in("/tmp")
+        .unwrap()
 }
 
 #[test]

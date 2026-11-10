@@ -164,6 +164,7 @@ impl Flux {
             env.insert(name.into(), threads.clone());
         }
         for (name, value) in [
+            ("FLUX_F58_FORCE_ASCII", "1".into()),
             (
                 "OUT",
                 record.intent.output_dir.to_string_lossy().into_owned(),
