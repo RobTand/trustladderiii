@@ -1,10 +1,50 @@
 {
-  "source_head": "f39487ccb967034b7407e7e17487da78664a71aa",
+  "source_head": "8f8a41e07ac23d21d1e36f623760d5d873e4d641",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "5d8470badc1e7418c1ef2cc59fee2d8b04152647adee253db9a81977b3334104",
-  "groups": 627,
-  "obligations": 825,
+  "source_sha256": "74e7eb01fab503f5e468ac897a95299862f14eaa921f238bc3f3c6c4295a4e7b",
+  "groups": 635,
+  "obligations": 833,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_reply_ingest_world_ingest_done",
+      "selector": "kernel::reply_family_ingest_world#ingest_done",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_ingest_world_ingest_pair_bounds",
+      "selector": "kernel::reply_family_ingest_world#ingest_pair_bounds",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_ingest_world_ingest_pair_progress",
+      "selector": "kernel::reply_family_ingest_world#ingest_pair_progress",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_ingest_world_ingest_pair_completed",
+      "selector": "kernel::reply_family_ingest_world#ingest_pair_completed",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_ingest_world_ingest_audit_rows",
+      "selector": "kernel::reply_family_ingest_world#ingest_audit_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_ingest_world_ingest_world",
+      "selector": "kernel::reply_family_ingest_world#ingest_world",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_ingest_parts",
+      "selector": "kernel::ingest#reply_ingest_parts",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_withhold_ingest_v",
+      "selector": "kernel::ingest#withhold_ingest_v",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_reply_dispatch_ingest_deposit_bounds",
       "selector": "kernel::reply_family_dispatch#ingest_deposit_bounds",
