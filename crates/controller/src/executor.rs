@@ -626,6 +626,26 @@ pub fn upstream(output: Output) -> Upstream {
 pub struct Registry(std::collections::BTreeMap<Upstream, Box<dyn Executor>>);
 
 impl Registry {
+    pub(crate) fn next_cleanup_maintenance_ms(&mut self) -> Result<Option<u64>> {
+        let mut due = None;
+        for adapter in self.0.values_mut() {
+            if let Some(deadline) = adapter.next_cleanup_maintenance_ms()? {
+                due = Some(due.map_or(deadline, |current: u64| current.min(deadline)));
+            }
+        }
+        Ok(due)
+    }
+
+    pub(crate) fn cleanup_maintenance(
+        &mut self,
+        now_ms: u64,
+    ) -> Result<Vec<(Upstream, Vec<String>)>> {
+        self.0
+            .iter_mut()
+            .map(|(upstream, adapter)| Ok((*upstream, adapter.cleanup_maintenance(now_ms)?)))
+            .collect()
+    }
+
     pub fn registered_types(&self) -> std::collections::BTreeMap<Upstream, &'static str> {
         self.0
             .iter()

@@ -585,8 +585,81 @@ impl Controller {
             .filter_map(|s| s.due_ms)
             .chain(reread)
             .chain(crate::memory::next_probe_ms(&snapshot)?)
+            .chain(self.adapters.next_cleanup_maintenance_ms()?)
             .min()
             .map(|due| Duration::from_millis(due.saturating_sub(now))))
+    }
+
+    fn look_cleanup_maintenance(&mut self) -> Result<()> {
+        let now = self.now_ms();
+        let pending = self.adapters.cleanup_maintenance(now)?;
+        let snapshot = self.store.load()?;
+        let mut commit = Commit::new(
+            format!("cleanup-maintenance:{}", snapshot.revision.get()),
+            json!({"cleanup_maintenance":true}),
+            &snapshot,
+        );
+        for (upstream, owners) in pending {
+            let outstanding: std::collections::BTreeSet<_> = owners
+                .iter()
+                .map(|owner| {
+                    format!(
+                        "runtime-cleanup:{}",
+                        crate::run_backend::durable::digest(
+                            format!("{upstream:?}:{owner}").as_bytes()
+                        )
+                    )
+                })
+                .collect();
+            for row in snapshot.rows.iter().filter(|row| row.table == "incidents") {
+                let mut incident: Incident = crate::decode_stored(row.value.clone())?;
+                if incident.signature.upstream == upstream
+                    && incident.signature.class == "runtime_cleanup"
+                    && incident.open
+                    && !outstanding.contains(&incident.id)
+                {
+                    incident.open = false;
+                    commit
+                        .rows
+                        .push(put("incidents", incident.id.clone(), json!(incident)));
+                }
+            }
+            for owner in owners {
+                let id = format!(
+                    "runtime-cleanup:{}",
+                    crate::run_backend::durable::digest(format!("{upstream:?}:{owner}").as_bytes())
+                );
+                let incident = json!(Incident {
+                    id: id.clone(),
+                    node: None,
+                    input_failure: None,
+                    open: true,
+                    needs_rob: false,
+                    blocking: false,
+                    summary: format!(
+                        "Runtime cleanup for {owner} remains unproven. Dispatch stays held; bounded cleanup will retry in 300 seconds."
+                    ),
+                    signature: IncidentSignature {
+                        upstream,
+                        class: "runtime_cleanup".into()
+                    },
+                    effect: None,
+                    post_key: None,
+                    cause: Some(Cause::Upstream),
+                });
+                if !snapshot
+                    .rows
+                    .iter()
+                    .any(|row| row.table == "incidents" && row.id == id && row.value == incident)
+                {
+                    commit.rows.push(put("incidents", id, incident));
+                }
+            }
+        }
+        if !commit.rows.is_empty() {
+            self.store.commit(&commit)?;
+        }
+        Ok(())
     }
 
     pub fn look_due(&mut self) -> Result<()> {
@@ -603,6 +676,7 @@ impl Controller {
     }
 
     fn looks(&mut self, force: bool, key: Option<&str>) -> Result<()> {
+        self.look_cleanup_maintenance()?;
         self.look_memory_probe(force, key)?;
         self.retry_input_incident_posts()?;
         let mut snapshot = self.store.load()?;

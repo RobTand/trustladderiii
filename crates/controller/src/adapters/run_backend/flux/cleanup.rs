@@ -425,6 +425,40 @@ impl Flux {
         owner: &Owner,
         emit: &mut dyn FnMut(&CleanupProgress) -> Result<()>,
     ) -> Result<CleanupResult> {
+        let lock = self.journal.operation_lock(owner, "cleanup-attempt-lock")?;
+        if lock.try_lock().is_err() {
+            return Ok(result(
+                &self.journal.load(owner)?,
+                None,
+                "cleanup attempt already in flight or lock unavailable",
+            ));
+        }
+        let mut attempted = false;
+        let outcome = self.attempt_cleanup(owner, emit, &mut attempted);
+        if attempted || outcome.as_ref().is_ok_and(|result| result.stopped) {
+            self.journal.transaction(owner, |dir, current| {
+                let mut current =
+                    current.ok_or_else(|| BackendError::unknown("intent disappeared"))?;
+                current.cleanup_retry_ms = if outcome.as_ref().is_ok_and(|result| result.stopped) {
+                    None
+                } else {
+                    // Do not shorten a deadline already claimed by maintenance.
+                    Some(current.cleanup_retry_ms.unwrap_or(0).max(
+                        super::maintenance::now_ms().saturating_add(super::maintenance::CADENCE_MS),
+                    ))
+                };
+                save(dir, &current)
+            })?;
+        }
+        outcome
+    }
+
+    fn attempt_cleanup(
+        &self,
+        owner: &Owner,
+        emit: &mut dyn FnMut(&CleanupProgress) -> Result<()>,
+        attempted: &mut bool,
+    ) -> Result<CleanupResult> {
         let record = self.journal.load(owner)?;
         if all_stopped(&record) {
             self.journal.runtime_gate(|debts| {
@@ -497,6 +531,7 @@ impl Flux {
                     .args(&program.arguments)
                     .env_clear()
                     .envs(&record.request.environment);
+                *attempted = true;
                 let reply = self.capture_command(command, Some(input))?;
                 blob(
                     &record

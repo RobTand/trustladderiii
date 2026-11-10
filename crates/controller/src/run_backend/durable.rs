@@ -11,6 +11,12 @@ pub struct Record {
     pub request: Request,
     pub intent: SubmissionIntent,
     pub dispatched: bool,
+    /// Failed cleanup eligibility, never inferred from launch debt.
+    #[serde(default)]
+    pub cleanup_retry_ms: Option<u64>,
+    /// Proven undispatched intent refused by the runtime debt gate.
+    #[serde(default)]
+    pub held_submission_ms: Option<u64>,
     pub binding: Option<RunBinding>,
     pub cancel_requested: bool,
     pub events: Vec<Event>,
@@ -108,6 +114,49 @@ impl Journal {
         let debts = self.root.join("cleanup-debt");
         fs::create_dir_all(&debts)?;
         f(&debts)
+    }
+
+    pub fn records(&self) -> Result<Vec<Record>> {
+        let mut records = std::collections::BTreeMap::new();
+        for entry in fs::read_dir(&self.root)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() || entry.file_name() == "cleanup-debt" {
+                continue;
+            }
+            let path = entry.path().join("state.json");
+            if !path.exists() {
+                continue;
+            }
+            let record: Record = serde_json::from_slice(&read(&path)?)?;
+            let owner = Owner {
+                owner: record.intent.owner,
+                correlation: record.intent.correlation,
+            };
+            records.insert(
+                (owner.owner.clone(), owner.correlation.clone()),
+                self.load(&owner)?,
+            );
+        }
+        Ok(records.into_values().collect())
+    }
+
+    /// A native operation lock is separate from the journal transaction lock.
+    pub fn operation_lock(&self, owner: &Owner, name: &str) -> Result<File> {
+        if !token(name) {
+            return Err(BackendError::invalid("invalid operation lock"));
+        }
+        self.transaction(owner, |dir, _| {
+            let path = dir.join(name);
+            if path.exists() && fs::symlink_metadata(&path)?.file_type().is_symlink() {
+                return Err(BackendError::invalid("operation lock cannot be a symlink"));
+            }
+            Ok(OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .read(true)
+                .write(true)
+                .open(path)?)
+        })
     }
 
     pub fn load(&self, owner: &Owner) -> Result<Record> {

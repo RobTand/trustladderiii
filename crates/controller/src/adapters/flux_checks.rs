@@ -411,6 +411,31 @@ impl Adapter {
     }
 }
 impl Executor for Adapter {
+    fn next_cleanup_maintenance_ms(&mut self) -> Result<Option<u64>> {
+        self.shared
+            .backend
+            .next_cleanup_maintenance_ms()
+            .map_err(adapter_error)
+    }
+
+    fn cleanup_maintenance(&mut self, now_ms: u64) -> Result<Vec<String>> {
+        let pending = self
+            .shared
+            .backend
+            .cleanup_maintenance(now_ms)
+            .map_err(adapter_error)?;
+        // Reattach after cleanup or held submission recovery for terminal and
+        // scratch reconciliation. No shared journal lock covers backend I/O.
+        let jobs = self.shared.transaction(|| self.shared.jobs())?;
+        for job in jobs.into_iter().filter(|job| job.terminal.is_none()) {
+            self.handle.watch(job.owner())?;
+        }
+        Ok(pending
+            .into_iter()
+            .map(|owner| format!("{}:{}", owner.owner, owner.correlation))
+            .collect())
+    }
+
     fn watch_wait(
         &mut self,
         delivery: &Delivery,
