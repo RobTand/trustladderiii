@@ -7,7 +7,7 @@ pub(super) const CADENCE_MS: u64 = 300_000;
 
 #[derive(Default)]
 pub(super) struct MaintenanceState {
-    last_pass_ms: Option<u64>,
+    failed_rewrites: BTreeMap<String, u64>,
     last_error_print_ms: Option<u64>,
 }
 
@@ -28,17 +28,19 @@ fn record_owner(record: &Record) -> Owner {
 
 impl Flux {
     fn maintenance_error(&self, key: &str, error: &str, now: u64) {
-        if let Err(error) = maintenance_failure(
+        let result = maintenance_failure(
             &self.options.journal_root,
             key,
             error,
             now.saturating_add(CADENCE_MS),
-        ) {
+        );
+        let mut state = self
+            .maintenance_state
+            .lock()
+            .expect("maintenance state mutex");
+        if let Err(error) = result {
+            state.failed_rewrites.insert(key.into(), now);
             // A broken error directory must not stop attempts for other owners.
-            let mut state = self
-                .maintenance_state
-                .lock()
-                .expect("maintenance state mutex");
             if state
                 .last_error_print_ms
                 .is_none_or(|last| now.saturating_sub(last) >= CADENCE_MS)
@@ -47,7 +49,19 @@ impl Flux {
                 drop(state);
                 eprintln!("cannot retain maintenance failure for {key}: {error}");
             }
+        } else {
+            state.failed_rewrites.remove(key);
         }
+    }
+
+    fn clear_failure(&self, key: &str) -> Result<()> {
+        clear_maintenance_failure(&self.options.journal_root, key)?;
+        self.maintenance_state
+            .lock()
+            .expect("maintenance state mutex")
+            .failed_rewrites
+            .remove(key);
+        Ok(())
     }
 
     fn busy_owner(&self, key: &str, now: u64) -> Result<(Owner, bool)> {
@@ -69,13 +83,25 @@ impl Flux {
             .get(key)
             .is_some_and(|failure| failure.message.starts_with("persistently held owner lock"))
         {
-            clear_maintenance_failure(&self.options.journal_root, key)?;
+            self.clear_failure(key)?;
             failures.remove(key);
         }
         Ok(())
     }
 
     fn report_unreadable_owner(&self, key: &str, pending: &mut BTreeMap<String, Owner>) {
+        // Identity recovery is independent of busy metadata and the owner lock.
+        let identity = self.journal.owner_identity(key).ok().or_else(|| {
+            maintenance_failures(&self.options.journal_root)
+                .ok()?
+                .into_iter()
+                .find(|failure| failure.key == key)?
+                .owner
+                .filter(|owner| owner.correlation == key && token(&owner.owner))
+        });
+        if let Some(owner) = identity {
+            pending.insert(format!("{key}:{}", owner.owner), owner);
+        }
         // Debt retains the last-known identity independently of state.json. This
         // read preserves incidents only; it cannot establish stop evidence.
         let debts = self.options.journal_root.join("cleanup-debt");
@@ -178,14 +204,15 @@ impl Flux {
         }
     }
 
-    fn failure_deadline(&self, due: u64, now: u64) -> u64 {
+    fn failure_deadline(&self, key: &str, due: u64, now: u64) -> u64 {
         if due > now {
             return due;
         }
         self.maintenance_state
             .lock()
             .expect("maintenance state mutex")
-            .last_pass_ms
+            .failed_rewrites
+            .get(key)
             .map_or(due, |last| due.max(last.saturating_add(CADENCE_MS)))
     }
 
@@ -198,7 +225,7 @@ impl Flux {
     ) -> u64 {
         failures
             .get(key)
-            .map(|failure| self.failure_deadline(failure.next_attempt_ms, now))
+            .map(|failure| self.failure_deadline(key, failure.next_attempt_ms, now))
             .unwrap_or_else(|| {
                 self.maintenance_error(key, &error.to_string(), now);
                 now.saturating_add(CADENCE_MS)
@@ -226,7 +253,7 @@ impl Flux {
                     }
                     let retry = failures
                         .get(&key)
-                        .map(|failure| self.failure_deadline(failure.next_attempt_ms, now));
+                        .map(|failure| self.failure_deadline(&key, failure.next_attempt_ms, now));
                     for deadline in [record.cleanup_retry_ms, record.held_submission_ms]
                         .into_iter()
                         .flatten()
@@ -253,7 +280,7 @@ impl Flux {
                             failures
                                 .get(&key)
                                 .map_or(now.saturating_add(CADENCE_MS), |failure| {
-                                    self.failure_deadline(failure.next_attempt_ms, now)
+                                    self.failure_deadline(&key, failure.next_attempt_ms, now)
                                 }),
                         );
                     } else {
@@ -316,6 +343,44 @@ impl Flux {
                 }
             }
         }
+        let mut records: Vec<_> = records.into_iter().collect();
+        records.sort_by_key(|(key, record)| {
+            let due = [record.cleanup_retry_ms, record.held_submission_ms]
+                .into_iter()
+                .flatten()
+                .min()
+                .unwrap_or(u64::MAX);
+            let due = failures.get(key).map_or(due, |failure| {
+                due.max(self.failure_deadline(key, failure.next_attempt_ms, now))
+            });
+            (due, key.clone())
+        });
+        // Admit oldest deadlines first. End the cleanup prefix when held-only
+        // work is next, so later cleanup cannot consume that owner's budget.
+        let mut admitted = BTreeSet::new();
+        let mut held_only = false;
+        for (key, record) in &records {
+            if record.terminal.is_some()
+                || failures.get(key).is_some_and(|failure| {
+                    self.failure_deadline(key, failure.next_attempt_ms, now) > now
+                })
+            {
+                continue;
+            }
+            let cleanup_due = record.cleanup_retry_ms.is_some_and(|due| due <= now);
+            let held_due = record.held_submission_ms.is_some_and(|due| due <= now);
+            if !cleanup_due && !held_due {
+                continue;
+            }
+            if cleanup_due && held_only {
+                break;
+            }
+            held_only |= !cleanup_due;
+            admitted.insert(key.clone());
+            if admitted.len() >= self.maintenance_owners {
+                break;
+            }
+        }
         let mut attempted = BTreeSet::new();
         let mut failed = BTreeSet::new();
         let mut busy_claims = BTreeSet::new();
@@ -327,7 +392,8 @@ impl Flux {
                 }
                 continue;
             }
-            if !record.cleanup_retry_ms.is_some_and(|due| due <= now)
+            if !admitted.contains(key)
+                || !record.cleanup_retry_ms.is_some_and(|due| due <= now)
                 || failures
                     .get(key)
                     .is_some_and(|failure| failure.next_attempt_ms > now)
@@ -370,7 +436,7 @@ impl Flux {
                 }
                 Ok(Some(current)) => {
                     *record = current;
-                    if let Err(error) = clear_maintenance_failure(&self.options.journal_root, key) {
+                    if let Err(error) = self.clear_failure(key) {
                         self.maintenance_error(key, &error.to_string(), now);
                     }
                 }
@@ -388,7 +454,8 @@ impl Flux {
             if record.terminal.is_some() || record.held_submission_ms.is_none() {
                 continue;
             }
-            if !record.held_submission_ms.is_some_and(|due| due <= now)
+            if !admitted.contains(key)
+                || !record.held_submission_ms.is_some_and(|due| due <= now)
                 || failures
                     .get(key)
                     .is_some_and(|failure| failure.next_attempt_ms > now)
@@ -446,7 +513,7 @@ impl Flux {
                 }
                 Ok(Some(current)) => {
                     *record = current;
-                    if let Err(error) = clear_maintenance_failure(&self.options.journal_root, key) {
+                    if let Err(error) = self.clear_failure(key) {
                         self.maintenance_error(key, &error.to_string(), now);
                     }
                 }
@@ -466,10 +533,6 @@ impl Flux {
                 pending.insert(key, record_owner(&record));
             }
         }
-        self.maintenance_state
-            .lock()
-            .expect("maintenance state mutex")
-            .last_pass_ms = Some(now);
         Ok(MaintenanceReport {
             pending: pending.into_values().collect(),
             skipped_busy,

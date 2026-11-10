@@ -363,6 +363,9 @@ fn safe_limit(text: &str, chars: usize, bytes: usize) -> Result<String> {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct MaintenanceFailure {
     pub key: String,
+    /// Identity only; never cleanup evidence. Older failures have no identity.
+    #[serde(default)]
+    pub owner: Option<Owner>,
     pub message: String,
     pub next_attempt_ms: u64,
 }
@@ -380,15 +383,24 @@ pub fn maintenance_failure(
             "maintenance error directory cannot be a symlink",
         ));
     }
+    let path = dir.join(format!("{}.json", digest(key.as_bytes())));
+    let journal = Journal { root: root.into() };
+    let owner = journal.owner_identity(key).ok().or_else(|| {
+        let failure = serde_json::from_slice::<MaintenanceFailure>(&read(&path).ok()?).ok()?;
+        if failure.key != key {
+            return None;
+        }
+        failure
+            .owner
+            .filter(|owner| owner.correlation == key && token(&owner.owner))
+    });
     let failure = MaintenanceFailure {
         key: key.into(),
+        owner,
         message: safe(message)?,
         next_attempt_ms,
     };
-    atomic(
-        &dir.join(format!("{}.json", digest(key.as_bytes()))),
-        &serde_json::to_vec(&failure)?,
-    )
+    atomic(&path, &serde_json::to_vec(&failure)?)
 }
 
 pub fn maintenance_failures(root: &Path) -> Result<Vec<MaintenanceFailure>> {

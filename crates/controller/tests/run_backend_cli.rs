@@ -7841,13 +7841,19 @@ fn cleanup_maintenance_elapsed_failure_fairness(check_timer: bool) {
         api::durable::maintenance_failure(&journal, key, "persistent cleanup failure", 0).unwrap();
     }
     let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
     assert_eq!(backend.cleanup_maintenance(now).unwrap().pending.len(), 2);
     let failures = api::durable::maintenance_failures(&journal).unwrap();
-    assert_eq!(failures.iter().find(|f| f.key == "b-owner").unwrap().next_attempt_ms, 0);
+    assert_eq!(
+        failures.iter().find(|f| f.key == "b-owner").unwrap().next_attempt_ms,
+        0
+    );
     if check_timer {
         assert_eq!(
-            backend.next_cleanup_maintenance_ms().unwrap(), Some(0),
+            backend.next_cleanup_maintenance_ms().unwrap(),
+            Some(0),
             "skipped retained failure must remain immediately due"
         );
     }
@@ -7855,14 +7861,20 @@ fn cleanup_maintenance_elapsed_failure_fairness(check_timer: bool) {
     backend.cleanup_maintenance(now + 300_000).unwrap();
     let journal = api::durable::Journal::new(journal).unwrap();
     for (key, due) in [("a-owner", now + 300_000), ("b-owner", now + 600_000)] {
-        let owner = Owner { owner: "prior-owner".into(), correlation: key.into() };
+        let owner = Owner {
+            owner: "prior-owner".into(),
+            correlation: key.into(),
+        };
         assert_eq!(
-            journal.load(&owner).unwrap().cleanup_retry_ms, Some(due),
+            journal.load(&owner).unwrap().cleanup_retry_ms,
+            Some(due),
             "oldest due owner must be attempted within two capped passes"
         );
     }
     for failure in api::durable::maintenance_failures(&root.path().join("journal")).unwrap() {
-        assert!(failure.message.contains("independent trusted runtime cleanup entry unavailable"));
+        assert!(failure.message.contains(
+            "independent trusted runtime cleanup entry unavailable"
+        ));
     }
 }
 
@@ -7891,14 +7903,24 @@ fn cleanup_maintenance_budget_exhaustion_keeps_skipped_failure_due() {
         Err(BackendError::invalid("fixture held authorization refused"))
     };
     let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
     backend.cleanup_maintenance_fenced(now, &authorize).unwrap();
     assert_eq!(*calls.borrow(), vec!["a-owner"]);
-    assert_eq!(backend.next_cleanup_maintenance_ms().unwrap(), Some(0),
-        "budget-skipped retained failure must remain immediately due");
-    backend.cleanup_maintenance_fenced(now + 300_000, &authorize).unwrap();
-    assert_eq!(*calls.borrow(), vec!["a-owner", "b-owner"],
-        "budget-limited passes must attempt the oldest owner within two passes");
+    assert_eq!(
+        backend.next_cleanup_maintenance_ms().unwrap(),
+        Some(0),
+        "budget-skipped retained failure must remain immediately due"
+    );
+    backend
+        .cleanup_maintenance_fenced(now + 300_000, &authorize)
+        .unwrap();
+    assert_eq!(
+        *calls.borrow(),
+        vec!["a-owner", "b-owner"],
+        "budget-limited passes must attempt the oldest owner within two passes"
+    );
 }
 
 #[test]
@@ -7912,13 +7934,21 @@ fn cleanup_maintenance_failure_identity_must_match_recorded_key() {
     fs::create_dir(&dir).unwrap();
     fs::write(dir.join("state.json"), b"{truncated").unwrap();
     api::durable::maintenance_failure(&journal, key, "retained failure", 0).unwrap();
-    let failure = journal.join("maintenance-errors").join(format!("{}.json", digest(key.as_bytes())));
+    let failure = journal
+        .join("maintenance-errors")
+        .join(format!("{}.json", digest(key.as_bytes())));
     let mut bytes: Value = serde_json::from_slice(&fs::read(&failure).unwrap()).unwrap();
     bytes["owner"] = json!({"owner":"different-owner", "correlation":"different-key"});
     fs::write(&failure, serde_json::to_vec(&bytes).unwrap()).unwrap();
     let report = backend.cleanup_maintenance(1).unwrap();
-    assert_eq!(report.pending, vec![Owner { owner: "maintenance-error".into(), correlation: key.into() }],
-        "a mismatched retained identity must not keep another owner's incident open");
+    assert_eq!(
+        report.pending,
+        vec![Owner {
+            owner: "maintenance-error".into(),
+            correlation: key.into(),
+        }],
+        "a mismatched retained identity must not keep another owner's incident open"
+    );
 }
 
 #[test]
@@ -8039,7 +8069,10 @@ fn cleanup_maintenance_prior_incident(source: u8) {
     };
     let dir = journal.join(key);
     fs::create_dir(&dir).unwrap();
-    let debt = journal.join("cleanup-debt").join("a".repeat(64)).join(format!("{key}.scratch"));
+    let debt = journal
+        .join("cleanup-debt")
+        .join("a".repeat(64))
+        .join(format!("{key}.scratch"));
     let retained = serde_json::to_vec(&intent).unwrap();
     if source == 0 {
         fs::create_dir_all(debt.parent().unwrap()).unwrap();
@@ -8056,7 +8089,8 @@ fn cleanup_maintenance_prior_incident(source: u8) {
             fs::write(journal.join("maintenance-busy"), b"not a directory").unwrap();
         } else {
             // Retain identity while state is readable, then lose state entirely.
-            api::durable::maintenance_failure(&journal, key, "held authorization refused", 0).unwrap();
+            api::durable::maintenance_failure(&journal, key, "held authorization refused", 0)
+                .unwrap();
             fs::write(dir.join("state.json"), b"{truncated").unwrap();
         }
         assert!(!journal.join("cleanup-debt").exists());
@@ -8104,13 +8138,23 @@ fn cleanup_maintenance_prior_incident(source: u8) {
             }),
             "unreadable locked identity must keep the prior real incident open"
         );
-        assert!(snapshot.rows.iter().filter(|row| row.table == "incidents" && row.value["open"] == true)
-            .all(|row| row.value["id"] == id ||
-                row.value["id"] == format!("runtime-cleanup:{}", digest(format!("PrismaBuild:maintenance-error:{key}").as_bytes()))),
-            "identity recovery must not keep an incident for a different owner");
+        let diagnostic = format!(
+            "runtime-cleanup:{}",
+            digest(format!("PrismaBuild:maintenance-error:{key}").as_bytes())
+        );
+        assert!(
+            snapshot.rows.iter()
+                .filter(|row| row.table == "incidents" && row.value["open"] == true)
+                .all(|row| row.value["id"] == id || row.value["id"] == diagnostic),
+            "identity recovery must not keep an incident for a different owner"
+        );
     }
     if source == 0 {
-        assert_eq!(fs::read(&debt).unwrap(), retained, "identity recovery cannot change debt");
+        assert_eq!(
+            fs::read(&debt).unwrap(),
+            retained,
+            "identity recovery cannot change debt"
+        );
     } else {
         assert!(!journal.join("cleanup-debt").exists());
     }
