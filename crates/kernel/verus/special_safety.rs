@@ -226,7 +226,6 @@ mod pause_assembly {
                 let i = node.0 as usize;
                 on_command(&mut w, i, id, Command::Pause, &mut out);
                 proof {
-                    checking::accepted_node(before, i as int);
                     command_frames_reveal::command_frame_rows_reveal(
                         before.nodes@[i as int], w.nodes@[i as int], id, Command::Pause);
                     pause_projection::pause_dependencies(before, w, i as int);
