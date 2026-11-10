@@ -64,7 +64,8 @@ pub(super) fn reply_ingest(w: &mut World, i: usize, reply: Reply,
         old(w).next_question < u64::MAX,
         matches!(reply, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_)
             | Reply::AuditAgrees | Reply::AuditDisagrees | Reply::ProtectedPaths),
-    ensures port_t860_contracts::transition_post(*old(w), *final(w), i as int, reply, *old(out), *final(out)),
+    ensures reply_family_safety::entry_rows(*old(w), *final(w), i as int, reply),
+        port_t860_contracts::transition_post(*old(w), *final(w), i as int, reply, *old(out), *final(out)),
         (successful_reply_input(old(w).nodes@[i as int], reply)
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
         final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
@@ -81,86 +82,34 @@ pub(super) fn reply_ingest(w: &mut World, i: usize, reply: Reply,
                     && *final(out) == *old(out)
             }),
 ] {
-    kernel_snapshot! { ingest_before = *w }
-    kernel_snapshot! { ingest_out = *out }
+    kernel_snapshot! { before_dispatch = *w }
+    kernel_snapshot! { before_dispatch_len = out.len }
+    kernel_proof! { reveal(reply_family_values::ingest); }
+    kernel_snapshot! { before_value = w.nodes@[i as int] }
+    let c = ReplyCtx { node: i, generation: w.nodes[i].generation,
+        reply: reply, fast: w.fail_fast, next_question: w.next_question };
+    let change = reply_ingest_node(w.nodes[i], c);
+    kernel_proof! { reply_family_dispatch::ingest_value_posts(w.nodes@[i as int], c); }
+    resolve_reply_change(w, i, change, out);
     match reply {
-        Reply::IngestDone { size } => {
-            finish_ingest(w, i, size, None);
-            kernel_proof! { ingest_facts::output_bound(ingest_before@, *w, i as int, ingest_out@.len, out.len); }
-            kernel_proof! { reveal(port_t860_contracts::transition_post); }
-        }
-        Reply::IngestEarlyEnd(e) => {
-            finish_ingest(w, i, 1, Some(e));
-            kernel_proof! { ingest_facts::output_bound(ingest_before@, *w, i as int, ingest_out@.len, out.len); }
-            kernel_proof! { reveal(port_t860_contracts::transition_post); }
-        }
-        Reply::AuditAgrees => {
-            reply_audit_agrees(w, i, out);
-            kernel_proof! { reveal(port_t860_contracts::transition_post); }
-        },
-        Reply::AuditDisagrees => {
-            reply_audit_disagrees(w, i, out);
+        Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) => {
+            kernel_snapshot! { before_withhold = w.nodes@[i as int] }
+            w.withhold_dependency_credit(i);
             kernel_proof! {
-                ingest_facts::audit_result(ingest_before@.nodes@[i as int], w.nodes@[i as int]);
-                reveal(port_t860_contracts::transition_post);
+                reply_family_dispatch::withheld_distance(before_withhold@, w.nodes@[i as int].credit.withheld);
+                reply_family_safety::withhold_rows(before_value@, c, change, w.nodes@[i as int]);
             }
-        },
-        Reply::ProtectedPaths => {
-            kernel_proof! { reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); }
-            enter_stopping(&mut w.nodes[i], Outcome::NotActionable);
-            kernel_proof! { reveal(port_t860_contracts::transition_post); reveal(reply_bounds); }
         },
         _ => {}
     }
-}
-}
-
-kernel_fn! {
-/// Auditing: private verbatim agreement branch.
-fn reply_audit_agrees(w: &mut World, i: usize, out: &mut Outbox) -> (result: ()) [
-    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
-        node_headroom(old(w).nodes@[i as int]),
-        arithmetic_consistent(old(w).nodes@[i as int]),
-        old(w).next_question < u64::MAX,
-    ensures (successful_reply_input(old(w).nodes@[i as int], Reply::AuditAgrees)
-            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
-        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
-        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
-        reply_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
-        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(reply_bounds);] {
-    match w.nodes[i].early_end {
-        Some(e) => enter_stopping(&mut w.nodes[i], e.outcome()),
-        None => {
-            notice(out, i, Notice::MeasuresPosted);
-            set_phase(&mut w.nodes[i], Phase::Unplanned);
-        }
-    }
-}
-}
-
-kernel_fn! {
-/// Auditing: private verbatim disagreement branch and isolated counter update.
-fn reply_audit_disagrees(w: &mut World, i: usize, _out: &mut Outbox) -> (result: ()) [
-    requires i < old(w).nodes@.len(), old(_out).len < OUTBOX,
-        node_headroom(old(w).nodes@[i as int]),
-        arithmetic_consistent(old(w).nodes@[i as int]),
-        old(w).next_question < u64::MAX,
-    ensures final(w).nodes@.len() == old(w).nodes@.len(),
-        final(w).next_question == old(w).next_question,
-        final(w).file_sets@ == old(w).file_sets@,
-        *final(_out) == *old(_out),
-        ingest_facts::audit_post(old(w).nodes@[i as int], final(w).nodes@[i as int]),
-        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
-        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
-        reply_bounds(*old(w), *final(w), i as int, old(_out).len, final(_out).len),
-        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
-] {
-    kernel_snapshot! { before_node = w.nodes@[i as int] }
-    audit_disagreement_node(&mut w.nodes[i]);
     kernel_proof! {
-        ingest_facts::audit_result(before_node@, w.nodes@[i as int]);
-        reveal(reply_bounds);
+        reveal(port_t860_contracts::transition_post); reveal(port_t860_contracts::audit_node);
+        reveal(retirement::stopped);
+    }
+
+    kernel_proof! {
+        reveal(reply_family_dispatch::other_rows);
+        reply_family_dispatch::reply_lift(before_dispatch@, *w, i as int, before_dispatch_len@, out.len);
     }
 }
 }
@@ -207,3 +156,74 @@ fn increment_audit(m: &mut Node) -> (result: ()) [
 #[cfg(test)]
 #[path = "ingest_equivalence/mod.rs"]
 mod reply_ingest_equivalence;
+
+kernel_fn! {
+/// Reply node work, with completed-stage rows separate from world mutation.
+pub(super) fn reply_ingest_node(n: Node, c: ReplyCtx) -> (result: ReplyChange) [
+    requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
+        matches!(c.reply, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_)
+            | Reply::AuditAgrees | Reply::AuditDisagrees | Reply::ProtectedPaths),
+    ensures result == reply_family_values::ingest(n, c.reply),
+        reply_family_values::callable(result),
+] proof [reveal(reply_family_values::ingest);] {
+    let mut node = n;
+    let mut note: Option<Notice> = None;
+    let i = c.node;
+    let reply = c.reply;
+    match reply {
+        Reply::IngestDone { size } => {
+            node = finish_ingest_v(node, size, None);
+            return ReplyChange::Done { node, note };
+        },
+        Reply::IngestEarlyEnd(e) => {
+            node = finish_ingest_v(node, 1, Some(e));
+            return ReplyChange::Done { node, note };
+        },
+        Reply::AuditAgrees => match node.early_end {
+            Some(e) => {
+                node = enter_stopping_v(node, e.outcome());
+                return ReplyChange::Done { node, note };
+            },
+            None => {
+                note = Some(Notice::MeasuresPosted);
+                node = set_phase_v(node, Phase::Unplanned);
+                return ReplyChange::Done { node, note };
+            }
+        },
+        Reply::AuditDisagrees => {
+            node = audit_disagreement_v(node);
+            return ReplyChange::Done { node, note };
+        },
+        Reply::ProtectedPaths => {
+            node = enter_stopping_v(node, Outcome::NotActionable);
+            return ReplyChange::Done { node, note };
+        },
+        _ => {}
+    }
+    ReplyChange::Done { node, note }
+}
+}
+
+
+kernel_fn! {
+fn finish_ingest_v(n: Node, size: u8, early_end: Option<EarlyEnd>) -> (result: Node) [
+    requires n.generation < u64::MAX,
+    ensures result == reply_family_values::ingested(n, size, early_end),
+] {
+    let mut m = n;
+    finish_ingest_node(&mut m, size, early_end);
+    m
+}
+}
+
+kernel_fn! {
+fn audit_disagreement_v(n: Node) -> (result: Node) [
+    requires n.generation < u64::MAX,
+    ensures result == port_t860_contracts::audit_node(n),
+] {
+    let mut m = n;
+    audit_disagreement_node(&mut m);
+    kernel_proof! { ingest_facts::audit_result(n, m); }
+    m
+}
+}
