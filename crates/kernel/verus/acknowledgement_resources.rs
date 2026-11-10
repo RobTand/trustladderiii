@@ -278,7 +278,7 @@ pub(super) proof fn confirmed_agenda_step_rows(b: Node, n: Node, kind: EffectKin
 
 pub(super) proof fn confirmed_agenda_other_rows(b: Node, n: Node, kind: EffectKind)
     requires !confirmed_teardown_input(b, kind),
-    ensures confirmed_agenda_frame(b, n, kind),
+    ensures !confirmed_agenda_frame(b, n, kind),
 {
     reveal(confirmed_agenda_frame);
 }
