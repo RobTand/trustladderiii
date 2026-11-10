@@ -612,7 +612,6 @@ def verus_proofs():
             "kernel::Outbox::get": "Read-only outbox inspection used by tests and adapters.",
             "kernel::Outbox::is_empty": "Read-only outbox inspection used by tests and adapters.",
             "kernel::Outbox::contains": "Read-only outbox inspection used by tests and adapters.",
-            "kernel::World::new": "Container constructor; the verified constructors operate on typed nodes.",
             "kernel::World::valid": "Diagnostic consistency query; the production checker itself is verified.",
             "kernel::proof_of_event": "Exhaustive proof-map metadata; compiled and checked by proof_map.",
             "kernel::proofs_of_phase": "Exhaustive proof-map metadata; compiled and checked by proof_map.",
@@ -764,7 +763,6 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
-            "checker_world_intern_footprint": ("kernel::footprint#World::intern_footprint", 1),
             "checker_world_new": ("kernel#World::new", 1),
             "checker_new_world_accepted": ("kernel::dependency_start_exports#new_world_accepted", 1),
             "checker_intern_footprint_accepted": ("kernel::dependency_start_exports#intern_footprint_preserves_accepted", 1),
