@@ -98,7 +98,15 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         // This is answer_node's branch condition at its two go_on calls.
         assert(withhold == (if before_answer@.phase == Phase::AwaitingRob {
             match before_answer@.question {
-                Some(q) => if q.id == id && allowed(q.kind, answer) {
+                Some(q) => if q.id == id && (match (q.kind, answer) {
+                    (QKind::CleanupFailed, Answer::Retry | Answer::MarkHandled) => true,
+                    (QKind::CleanupFailed, _) => false,
+                    (_, Answer::ChangeRequest | Answer::Stop) => true,
+                    (QKind::AuditDisagreement | QKind::EffectFailed, Answer::Continue) => true,
+                    (QKind::CantMeet, Answer::TryAgain) => true,
+                    (QKind::OutOfCredit, Answer::AddCredit(_)) => true,
+                    _ => false,
+                }) {
                     match answer {
                         Answer::Continue | Answer::AddCredit(_) => true,
                         _ => false,
