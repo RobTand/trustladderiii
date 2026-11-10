@@ -231,8 +231,143 @@ pub(super) proof fn answer_rules_row(w: World, b: Node, id: u64, question: u64, 
     }
 }
 
-/// Opus 1110: stop_command's ensures verbatim over (before, after) from the exact node-table
-/// equation; node rows come from the small stop_* lemmas, never from a Node equation.
+/// Opus 1110: one node written in the table; the four table clauses of every command entry.
+pub(super) proof fn world_rewrite(before: World, after: World, i: usize, v: Node)
+    requires i < before.nodes@.len(),
+        after.nodes@ == before.nodes@.update(i as int, v),
+    ensures after.nodes@[i as int] == v,
+        after.nodes@.len() == before.nodes@.len(),
+        forall|j: int| 0 <= j < before.nodes@.len() && j != i
+            ==> after.nodes@[j] == before.nodes@[j],
+        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+{
+}
+
+/// Stop, ChangeRequest: the entry's equality and bound rows, verbatim over (b, n).
+pub(super) proof fn stop_rows_eq(b: Node, n: Node, id: u64, o: Outcome)
+    requires n == retirement::stopped(Node { last_cmd: id, ..b }, o),
+        node_headroom(b),
+    ensures n.repo == b.repo,
+        n.footprint == b.footprint,
+        n.generation as int <= b.generation as int + 1,
+        n.next_seq == b.next_seq,
+        n.credit.start == b.credit.start,
+        n.credit.earned == b.credit.earned,
+        n.credit.added as int <= b.credit.added as int + 255,
+        n.credit.spent as int <= b.credit.spent as int + 1,
+        n.last_cmd == if id > b.last_cmd {
+            id
+        } else { b.last_cmd },
+        n.credit.withheld == b.credit.withheld,
+{
+    stop_rows(b, id, o);
+}
+
+/// Stop, ChangeRequest: the entry's implication and opaque rows, verbatim over (b, n).
+pub(super) proof fn stop_rows_imp(b: Node, n: Node, id: u64, o: Outcome, command: Command)
+    requires n == retirement::stopped(Node { last_cmd: id, ..b }, o),
+        node_headroom(b),
+        command != Command::Resume,
+    ensures (b.phase is Closed ==> n.phase is Closed),
+        (settle_shape(b) ==> settle_shape(n)),
+        progress_gate_apply::resume_post(b, n, id, command),
+        n.proposed == b.proposed,
+        n.adopted == b.adopted,
+        (b.phase is Closed ==> n.phase == b.phase),
+        handler_safety::command_step(b, n),
+        (n.holds ==> b.holds),
+        (n.pool ==> b.pool),
+        n.ticket == b.ticket || n.ticket.is_none(),
+{
+    stop_rows(b, id, o);
+    stop_step_rows(b, id, o, command);
+}
+
+/// Stop: the progress row is vacuous (Stop is never a progress input).
+pub(super) proof fn stop_dist(w: World, b: Node, n: Node, id: u64)
+    ensures (node_checked(w, b)
+            && id > b.last_cmd
+            && command_progress_input(b, (Command::Stop))
+            ==> distance(n) < distance(b)),
+{
+}
+
+/// ChangeRequest: the progress row, verbatim over (w, b, n).
+pub(super) proof fn change_request_dist(w: World, b: Node, n: Node, id: u64)
+    requires n == retirement::stopped(Node { last_cmd: id, ..b }, Outcome::Replaced),
+    ensures (node_checked(w, b)
+            && id > b.last_cmd
+            && command_progress_input(b, (Command::ChangeRequest))
+            ==> distance(n) < distance(b)),
+{
+    change_request_progress(w, b, id);
+}
+
+/// Answer: the entry's equality and bound rows, verbatim over (b, n).
+pub(super) proof fn answer_rows_eq(b: Node, n: Node, nq: u64, id: u64, question: u64, answer: Answer)
+    requires n == apply_answer_values::answered(Node { last_cmd: id, ..b }, nq, question, answer).0,
+        node_headroom(b), arithmetic_consistent(b), nq < u64::MAX,
+    ensures n.repo == b.repo,
+        n.footprint == b.footprint,
+        n.generation as int <= b.generation as int + 1,
+        n.next_seq == b.next_seq,
+        n.credit.start == b.credit.start,
+        n.credit.earned == b.credit.earned,
+        n.credit.added as int <= b.credit.added as int + 255,
+        n.credit.spent as int <= b.credit.spent as int + 1,
+        n.last_cmd == if id > b.last_cmd {
+            id
+        } else { b.last_cmd },
+        n.credit.withheld == b.credit.withheld,
+{
+    answer_rows(b, nq, id, question, answer);
+}
+
+/// Answer: the entry's implication and opaque rows, verbatim over (b, n).
+pub(super) proof fn answer_rows_imp(b: Node, n: Node, nq: u64, id: u64, question: u64, answer: Answer)
+    requires n == apply_answer_values::answered(Node { last_cmd: id, ..b }, nq, question, answer).0,
+        node_headroom(b), arithmetic_consistent(b), nq < u64::MAX,
+    ensures (b.phase is Closed ==> n.phase is Closed),
+        (settle_shape(b) ==> settle_shape(n)),
+        progress_gate_apply::resume_post(b, n, id, (Command::Answer {{ question, answer }})),
+        n.proposed == b.proposed,
+        n.adopted == b.adopted,
+        (b.phase is Closed ==> n.phase == b.phase),
+        handler_safety::command_step(b, n),
+        (n.holds ==> b.holds),
+        (n.pool ==> b.pool),
+        n.ticket == b.ticket || n.ticket.is_none(),
+{
+    answer_rows(b, nq, id, question, answer);
+    answer_step_rows(b, nq, id, question, answer);
+}
+
+/// Answer: the progress and consumed-question rows, verbatim over (w, b, n).
+pub(super) proof fn answer_dist(w: World, b: Node, n: Node, id: u64, question: u64, answer: Answer)
+    requires n == apply_answer_values::answered(Node { last_cmd: id, ..b }, w.next_question, question, answer).0,
+        node_headroom(b), arithmetic_consistent(b), w.next_question < u64::MAX,
+    ensures (node_checked(w, b)
+            && id > b.last_cmd
+            && command_progress_input(b, (Command::Answer {{ question, answer }}))
+            ==> distance(n) < distance(b)),
+        (match (Command::Answer { question, answer }) {
+            Command::Answer { question, .. } => node_checked(w, b)
+                && n != (Node { last_cmd: n.last_cmd, ..b })
+                ==> (match b.question {
+                    Some(q) => q.id == question,
+                    None => false,
+                }) && (match n.question {
+                    Some(q) => q.id != question,
+                    None => true,
+                }),
+            _ => true,
+        }),
+{
+    answer_checked_rows(w, b, id, question, answer);
+}
+
+/// Opus 1110: stop_command's ensures verbatim over (before, after). Every clause is a literal
+/// post of world_rewrite, stop_rows_eq, stop_rows_imp, stop_dist or rules_world_update.
 pub(super) proof fn stop_world(before: World, after: World, i: usize, id: u64)
     requires i < before.nodes@.len(),
         node_headroom(before.nodes@[i as int]),
@@ -290,18 +425,19 @@ pub(super) proof fn stop_world(before: World, after: World, i: usize, id: u64)
             ==> retirement::node_rules(after, after.nodes@[i as int])),
 {
     let b = before.nodes@[i as int];
-    let v = retirement::stopped(Node { last_cmd: id, ..b }, Outcome::Stopped);
-    stop_rows(b, id, Outcome::Stopped);
-    stop_step_rows(b, id, Outcome::Stopped, Command::Stop);
+    world_rewrite(before, after, i, retirement::stopped(Node { last_cmd: id, ..b }, Outcome::Stopped));
+    let n = after.nodes@[i as int];
+    stop_rows_eq(b, n, id, Outcome::Stopped);
+    stop_rows_imp(b, n, id, Outcome::Stopped, Command::Stop);
+    stop_dist(before, b, n, id);
     stop_rules(before, b, id, Outcome::Stopped);
-    assert(after.nodes@[i as int] == v);
     if retirement::node_rules(before, b) {
-        handler_safety::rules_world_update(before, after, b, v);
+        handler_safety::rules_world_update(before, after, b, n);
     }
 }
 
-/// Opus 1110: change_request_command's ensures verbatim over (before, after) from the exact node-table
-/// equation; node rows come from the small stop_* lemmas, never from a Node equation.
+/// Opus 1110: change_request_command's ensures verbatim over (before, after). Every clause is a literal
+/// post of world_rewrite, stop_rows_eq, stop_rows_imp, change_request_dist or rules_world_update.
 pub(super) proof fn change_request_world(before: World, after: World, i: usize, id: u64)
     requires i < before.nodes@.len(),
         node_headroom(before.nodes@[i as int]),
@@ -359,14 +495,14 @@ pub(super) proof fn change_request_world(before: World, after: World, i: usize, 
             ==> retirement::node_rules(after, after.nodes@[i as int])),
 {
     let b = before.nodes@[i as int];
-    let v = retirement::stopped(Node { last_cmd: id, ..b }, Outcome::Replaced);
-    stop_rows(b, id, Outcome::Replaced);
-    stop_step_rows(b, id, Outcome::Replaced, Command::ChangeRequest);
+    world_rewrite(before, after, i, retirement::stopped(Node { last_cmd: id, ..b }, Outcome::Replaced));
+    let n = after.nodes@[i as int];
+    stop_rows_eq(b, n, id, Outcome::Replaced);
+    stop_rows_imp(b, n, id, Outcome::Replaced, Command::ChangeRequest);
+    change_request_dist(before, b, n, id);
     stop_rules(before, b, id, Outcome::Replaced);
-    change_request_progress(before, b, id);
-    assert(after.nodes@[i as int] == v);
     if retirement::node_rules(before, b) {
-        handler_safety::rules_world_update(before, after, b, v);
+        handler_safety::rules_world_update(before, after, b, n);
     }
 }
 
@@ -535,14 +671,86 @@ pub(super) proof fn answer_world(before: World, after: World, i: usize, id: u64,
 {
     let b = before.nodes@[i as int];
     let r = apply_answer_values::answered(Node { last_cmd: id, ..b }, before.next_question, question, answer);
+    world_rewrite(before, after, i, r.0);
+    let n = after.nodes@[i as int];
     answer_rows(b, before.next_question, id, question, answer);
-    answer_step_rows(b, before.next_question, id, question, answer);
-    answer_checked_rows(before, b, id, question, answer);
+    answer_rows_eq(b, n, before.next_question, id, question, answer);
+    answer_rows_imp(b, n, before.next_question, id, question, answer);
+    answer_dist(before, b, n, id, question, answer);
     answer_rules_row(before, b, id, question, answer);
-    assert(after.nodes@[i as int] == r.0);
     if retirement::node_rules(before, b) {
-        handler_safety::rules_world_update(before, after, b, r.0);
+        handler_safety::rules_world_update(before, after, b, n);
     }
+}
+
+/// Opus 1110: on_command's ensures verbatim for a repeated command id, which changes nothing.
+pub(super) proof fn command_stutter(before: World, after: World, i: usize, id: u64, command: Command,
+    ob: Outbox, oa: Outbox)
+    requires after == before, oa == ob,
+        i < before.nodes@.len(),
+        id <= before.nodes@[i as int].last_cmd,
+    ensures (node_checked(before, before.nodes@[i as int])
+            && id > before.nodes@[i as int].last_cmd
+            && command_progress_input(before.nodes@[i as int], command)
+            ==> distance(after.nodes@[i as int]) < distance(before.nodes@[i as int])),
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase is Closed),
+        after.nodes@[i as int].repo == before.nodes@[i as int].repo,
+        after.nodes@[i as int].footprint == before.nodes@[i as int].footprint,
+        (settle_shape(before.nodes@[i as int]) ==> settle_shape(after.nodes@[i as int])),
+        after.nodes@.len() == before.nodes@.len(),
+        forall|j: int| 0 <= j < before.nodes@.len() && j != i
+            ==> after.nodes@[j] == before.nodes@[j],
+        after.nodes@[i as int].generation as int <= before.nodes@[i as int].generation as int + 1,
+        after.nodes@[i as int].next_seq == before.nodes@[i as int].next_seq,
+        after.nodes@[i as int].credit.start == before.nodes@[i as int].credit.start,
+        after.nodes@[i as int].credit.earned == before.nodes@[i as int].credit.earned,
+        after.nodes@[i as int].credit.added as int <= before.nodes@[i as int].credit.added as int + 255,
+        after.nodes@[i as int].credit.spent as int <= before.nodes@[i as int].credit.spent as int + 1,
+        after.nodes@[i as int].last_cmd == if id > before.nodes@[i as int].last_cmd {
+            id
+        } else { before.nodes@[i as int].last_cmd },
+        after.next_ticket == before.next_ticket,
+        after.next_question as int <= before.next_question as int + 1,
+        after.gates@ == before.gates@,
+        after.pool_capacity == before.pool_capacity,
+        after.fail_fast == before.fail_fast,
+        after.file_sets@ == before.file_sets@,
+        after.dependencies@ == before.dependencies@,
+        oa.len <= ob.len + 1,
+        command == Command::Resume ==> after.next_question == before.next_question,
+        progress_gate_apply::resume_post(before.nodes@[i as int], after.nodes@[i as int], id, command),
+        after.nodes@[i as int].proposed == before.nodes@[i as int].proposed,
+        after.nodes@[i as int].adopted == before.nodes@[i as int].adopted,
+        (before.nodes@[i as int].phase is Closed ==> after.nodes@[i as int].phase == before.nodes@[i as int].phase),
+        handler_safety::command_step(before.nodes@[i as int], after.nodes@[i as int]),
+        transition_safety::notice_only(ob, oa, NodeId(i as u64)),
+        (match command {
+            Command::Answer { question, .. } => node_checked(before, before.nodes@[i as int])
+                && after.nodes@[i as int] != (Node { last_cmd: after.nodes@[i as int].last_cmd, ..before.nodes@[i as int] })
+                ==> (match before.nodes@[i as int].question {
+                    Some(q) => q.id == question,
+                    None => false,
+                }) && (match after.nodes@[i as int].question {
+                    Some(q) => q.id != question,
+                    None => true,
+                }),
+            _ => true,
+        }),
+
+        (after.nodes@[i as int].holds ==> before.nodes@[i as int].holds),
+        (after.nodes@[i as int].pool ==> before.nodes@[i as int].pool),
+        after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
+        after.nodes@[i as int].credit.withheld == before.nodes@[i as int].credit.withheld,
+        after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
+        before.next_question <= after.next_question,
+        (retirement::node_rules(before, before.nodes@[i as int])
+            ==> retirement::node_rules(after, after.nodes@[i as int])),
+{
+    reveal(progress_gate_apply::resume_post);
+    reveal(progress_gate_apply::resumed);
+    handler_safety::same_step(before.nodes@[i as int]);
+    handler_safety::step_identity(before.nodes@[i as int], before.nodes@[i as int]);
+    assert(before.nodes@ =~= before.nodes@.update(i as int, before.nodes@[i as int]));
 }
 
 }

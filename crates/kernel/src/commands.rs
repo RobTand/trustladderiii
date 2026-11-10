@@ -70,14 +70,13 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
 ] {
     kernel_snapshot! { before_rules_world = *w }
+    kernel_snapshot! { before_out = *out }
 
     if id <= w.nodes[i].last_cmd {
-        kernel_proof! { reveal(progress_gate_apply::resume_post); reveal(progress_gate_apply::resumed); }
         kernel_proof! {
-            handler_safety::same_step(w.nodes@[i as int]);
-            handler_safety::step_identity(w.nodes@[i as int], w.nodes@[i as int]);
+            apply_command_safety::command_stutter(before_rules_world@, *w, i, id, command,
+                before_out@, *out);
         }
-        kernel_proof! { assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, w.nodes@[i as int])); }
         return; // a repeated command
     }
     match command {
@@ -87,8 +86,6 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         Command::Resume => resume_command(w, i, id),
         Command::Answer { question, answer } => answer_command(w, i, id, question, answer, out),
     }
-
-    kernel_proof! { assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, w.nodes@[i as int])); }
 }
 }
 
@@ -219,6 +216,21 @@ fn change_request_command(w: &mut World, i: usize, id: u64) -> (result: ()) [
 }
 
 kernel_fn! {
+/// Pause rows (opus 1110): pause_command's node statements as one value step whose only
+/// post is the exact node, so the world entry holds no branch.
+fn pause_v(n: Node, id: u64) -> (result: Node) [
+    ensures result == apply_command_safety::pause_node(n, id),
+] {
+    let mut m = n;
+    m.last_cmd = id;
+    if !m.phase.is_stopping() && !m.phase.is_closed() {
+        m.paused = true;
+    }
+    m
+}
+}
+
+kernel_fn! {
 /// Pause rows / #771: on_command's Pause arm as one world entry (K5 design 3).
 fn pause_command(w: &mut World, i: usize, id: u64) -> (result: ()) [
     requires i < old(w).nodes@.len(),
@@ -271,13 +283,9 @@ fn pause_command(w: &mut World, i: usize, id: u64) -> (result: ()) [
 ] {
     kernel_snapshot! { before_rules_world = *w }
     let mut m = w.nodes[i];
-    m.last_cmd = id;
-    if !m.phase.is_stopping() && !m.phase.is_closed() {
-        m.paused = true;
-    }
+    m = pause_v(m, id);
     w.nodes[i] = m;
     kernel_proof! {
-        assert(m == apply_command_safety::pause_node(before_rules_world@.nodes@[i as int], id));
         assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, m));
         apply_command_safety::pause_world(before_rules_world@, *w, i, id);
     }
