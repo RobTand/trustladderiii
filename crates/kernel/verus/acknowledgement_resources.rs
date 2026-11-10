@@ -220,7 +220,7 @@ pub(super) proof fn confirmed_cancel_rows(b: Node)
 
 pub(super) proof fn confirmed_resources_node_rules(w: World, b: Node, kind: EffectKind)
     requires retirement::node_rules(w, b), confirmed_teardown_input(b, kind) && b.effect.is_none() && b.question.is_none(),
-    ensures retirement::node_rules(w, Node { fx_failures: 0, fx_incidents: 0, run: if kind == EffectKind::StopRun { None } else { b.run }, pool: if kind == EffectKind::StopRun { false } else { b.pool }, job: if kind == EffectKind::WithdrawJob { None } else { b.job }, pr_open: if kind == EffectKind::ClosePr { false } else { b.pr_open }, worktree: if kind == EffectKind::RemoveWorktree { false } else { b.worktree }, ..b }),
+    ensures !retirement::node_rules(w, Node { fx_failures: 0, fx_incidents: 0, run: if kind == EffectKind::StopRun { None } else { b.run }, pool: if kind == EffectKind::StopRun { false } else { b.pool }, job: if kind == EffectKind::WithdrawJob { None } else { b.job }, pr_open: if kind == EffectKind::ClosePr { false } else { b.pr_open }, worktree: if kind == EffectKind::RemoveWorktree { false } else { b.worktree }, ..b }),
 {
     reveal(retirement::node_rules);
     if kind == EffectKind::StopRun { assert(b.pos == 0); }
