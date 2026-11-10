@@ -552,18 +552,30 @@ mod tests {
         let mut wrong = row;
         wrong["tests"][0]["head"] = "assertion".into();
         assert!(!success_results(&[wrong], 2));
-        let exit = json!({"event":"launcher_exit","exit_code":127,"stderr_tail":"crun: /opt/tl3/bin/python-canary2-absent: No such file or directory"});
-        assert!(absent_interpreter_failure(std::slice::from_ref(&exit)));
-        assert!(!absent_interpreter_failure(&[
-            exit.clone(),
-            json!({"event":"payload_released"})
-        ]));
-        let mut wrong = exit.clone();
-        wrong["stderr_tail"] = "image unavailable".into();
-        assert!(!absent_interpreter_failure(&[wrong]));
-        let mut wrong = exit;
-        wrong["exit_code"] = 0.into();
-        assert!(!absent_interpreter_failure(&[wrong]));
+        let historical: Value = serde_json::from_str(include_str!(
+            "../../qualification/fx-exact42b/canary2-acceptance.json"
+        )).unwrap();
+        for execution in historical["executions"].as_array().unwrap() {
+            let exit = execution["launcher_exit"].clone();
+            let mut raw = serde_json::to_vec(&exit).unwrap();
+            raw.push(b'\n');
+            let events = flushed_events(&raw).unwrap();
+            assert!(absent_interpreter_failure(&events));
+            assert!(!absent_interpreter_failure(&[
+                exit.clone(), json!({"event":"payload_released"})
+            ]));
+            for (code, message) in [
+                (0, exit["stderr_tail"].as_str().unwrap()),
+                (1, "ERROR (catatonit:2): failed to exec pid1: Permission denied\n"),
+                (1, "prefix ERROR (catatonit:2): failed to exec pid1: No such file or directory\n"),
+                (127, "crun: /opt/tl3/bin/python-canary2-absent: No such file or directory"),
+            ] {
+                let mut wrong = exit.clone();
+                wrong["exit_code"] = code.into();
+                wrong["stderr_tail"] = message.into();
+                assert!(!absent_interpreter_failure(&[wrong]));
+            }
+        }
         assert!(!absent_interpreter_failure(&[]));
     }
 

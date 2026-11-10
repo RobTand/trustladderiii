@@ -500,6 +500,18 @@ mod tests {
             assert_eq!(file["mode"], if path == name { 0o755 } else { 0o644 });
         }
         assert_eq!(build_argv(&inputs, None).unwrap()[4], "false");
+        // Incompressible evidence can fit the old 80 KiB payload guard while
+        // exceeding the client's total JSON budget once wrappers are included.
+        let mut state = 0x1234_5678_u32;
+        let bytes: Vec<u8> = (0..48 * 1024).map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state as u8
+        }).collect();
+        overlay.insert(name, bytes);
+        assert!(build_argv(&inputs, Some(&overlay)).is_err());
+
     }
 }
 
