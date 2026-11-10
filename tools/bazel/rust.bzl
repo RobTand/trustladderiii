@@ -443,7 +443,7 @@ def _crate_test(kind, package, name, source, harness, options):
     if native.package_name() in ["crates/kernel", "crates/store"]:
         sources = [":library_sources", source] + native.glob([source.removesuffix(".rs") + "/**"], allow_empty = True)
         if native.package_name() == "crates/kernel" and (kind == "lib" or source == "tests/proof_map.rs"):
-            sources = sources + native.glob(["tests/mark_handled_equivalence/*.rs"])
+            sources = sources + native.glob(["tests/mark_handled_equivalence/*.rs", "tests/answer_reorder_equivalence/*.rs"])
         if source == "tests/proof_map.rs":
             sources = sources + ["src/proofs.rs"] + native.glob(["verus/*.rs"], exclude = ["verus/progress.rs"])
         if native.package_name() == "crates/kernel" and source == "tests/random_walks.rs":

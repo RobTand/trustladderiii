@@ -2410,3 +2410,8 @@ mod retries_facts;
 #[cfg(all(test, not(verus_keep_ghost)))]
 #[path = "../tests/mark_handled_equivalence/cases.rs"]
 mod mark_handled_equivalence;
+
+// Never merge: differential check of the answer_command reorder (lead condition, 11-10).
+#[cfg(all(test, not(verus_keep_ghost)))]
+#[path = "../tests/answer_reorder_equivalence/cases.rs"]
+mod answer_reorder_equivalence;
