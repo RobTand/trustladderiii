@@ -851,7 +851,7 @@ pub(in super::super) open spec fn outside_prepared(n: Node, head: HeadId) -> Nod
 #[verifier::opaque]
 pub(in super::super) open spec fn outside_change(n: Node, head: HeadId) -> ReplyChange {
     if outside_active(n) {
-        reply_family_values::recheck(outside_prepared(n, head), Phase::Ready(Resume::Checking))
+        reply_family_values::recheck(outside_prepared(n, head), Phase::Planning { must_split: false })
     } else { ReplyChange::Done { node: n, note: None } }
 }
 
