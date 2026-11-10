@@ -71,7 +71,7 @@ impl Respond for DirectApi {
             }
             return response;
         }
-        if method == "GET" && path.starts_with("/repos/owner/sandbox/branches/") {
+        if method == "GET" && path == "/repos/owner/sandbox/branches/main" {
             let mut direct = self.direct.lock().unwrap();
             if direct.checks_read {
                 direct.checks_read = false;
@@ -302,6 +302,8 @@ fn m3_live_base_read_failure_keeps_existing_error_path() {
     let (mut controller, delivery) = fixture.start(&settings);
     drain(&mut controller);
     fixture.check(Some("success"));
+    fixture.check_event(&settings);
+    ingress::drain(&mut controller).unwrap();
     fixture.direct.lock().unwrap().branch_status_after_checks = Some(503);
     let error = fixture.adapter(&settings).execute(&delivery).expect_err("a failed live tip read must remain a read error");
     assert!(matches!(&error, tl3_controller::Error::Adapter(source) if matches!(source.downcast_ref::<tl3_github::Error>(), Some(tl3_github::Error::Http { status: 503 }))), "the existing GitHub error must propagate: {error}");
