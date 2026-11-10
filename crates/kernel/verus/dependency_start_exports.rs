@@ -30,7 +30,6 @@ pub(super) proof fn intern_footprint_preserves_accepted(before: World, after: Wo
         after.gates@ == before.gates@,
         after.next_ticket == before.next_ticket,
         after.next_question == before.next_question,
-        after.pool_capacity == before.pool_capacity,
         after.fail_fast == before.fail_fast,
         after.dependencies@ == before.dependencies@,
     ensures checking::accepted(after),
