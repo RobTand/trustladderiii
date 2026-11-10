@@ -4150,13 +4150,28 @@ impl Fixture {
     fn spawn_operation(
         &self,
         op: &str,
+        startup_delay_seconds: u64,
     ) -> (
         std::process::Child,
         std::sync::mpsc::Receiver<Value>,
         std::thread::JoinHandle<()>,
     ) {
         use std::io::{BufRead, BufReader};
-        let mut child = Command::new(env!("CARGO_BIN_EXE_tl3-run-backend"))
+        let mut command = if startup_delay_seconds == 0 {
+            Command::new(env!("CARGO_BIN_EXE_tl3-run-backend"))
+        } else {
+            let mut command = Command::new("/bin/sh");
+            command
+                .args([
+                    "-c",
+                    r#"/bin/sleep "$1"; shift; exec "$@""#,
+                    "cleanup-startup-delay",
+                ])
+                .arg(startup_delay_seconds.to_string())
+                .arg(env!("CARGO_BIN_EXE_tl3-run-backend"));
+            command
+        };
+        let mut child = command
             .args(["--config", self.config.to_str().unwrap()])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -4197,7 +4212,7 @@ fn cleanup_transport_progress_spans_old_total_deadline_for_cleanup_and_cancel() 
             f.cleanup_control(&owned.execution, 16);
         }
         let start = Instant::now();
-        let (mut child, receive, reader) = f.spawn_operation(op);
+        let (mut child, receive, reader) = f.spawn_operation(op, 0);
         let limits = cleanup_limits();
         let mut frames = vec![];
         loop {
@@ -4277,13 +4292,43 @@ fn cleanup_transport_silence_is_bounded_and_incomplete_evidence_preserves_debt()
         &owned.execution,
         cleanup_limits().native_timeout_seconds + 60,
     );
+    let limits = cleanup_limits();
+    let startup_delay = limits.idle_timeout_seconds - limits.native_timeout_seconds + 1;
     let start = Instant::now();
-    let frames = f.call(
-        json!({"op":"cleanup_runtime","owner":f.intent.owner,"correlation":f.intent.correlation}),
+    let (mut child, receive, reader) = f.spawn_operation("cleanup_runtime", startup_delay);
+    let progress = recv_within(
+        "silent cleanup initial progress",
+        &receive,
+        transport_idle_deadline(),
     );
-    assert!(start.elapsed() < Duration::from_secs(cleanup_limits().idle_timeout_seconds));
-    assert_eq!(frames.len(), 2, "{frames:?}");
-    assert_eq!(frames[0]["kind"], "cleanup_progress");
+    assert_eq!(progress["kind"], "cleanup_progress", "{progress:?}");
+    let initial_elapsed = start.elapsed();
+    let silence_start = Instant::now();
+    let result = recv_within(
+        "silent cleanup final result",
+        &receive,
+        transport_idle_deadline(),
+    );
+    let silence_elapsed = silence_start.elapsed();
+    assert!(child.wait().unwrap().success());
+    reader.join().unwrap();
+    assert!(receive.try_recv().is_err(), "only one final frame");
+    let frames = [progress, result];
+    println!(
+        "{}",
+        json!({"cleanup_transport_timing": {
+            "initial_seconds": initial_elapsed.as_secs_f64(),
+            "silence_seconds": silence_elapsed.as_secs_f64(),
+            "total_seconds": start.elapsed().as_secs_f64(),
+            "idle_limit_seconds": limits.idle_timeout_seconds,
+            "startup_delay_seconds": startup_delay
+        }})
+    );
+    // Progress renews the idle allowance; total duration may exceed one allowance.
+    assert!(
+        start.elapsed() > transport_idle_deadline(),
+        "delayed startup must exercise the difference between idle and total duration"
+    );
     assert_eq!(frames[1]["result"]["cleanup"]["stopped"], false);
     assert!(f.state().cleanup_evidence.is_empty());
     f.cleanup_control(&owned.execution, 0);
@@ -4355,7 +4400,7 @@ fn cleanup_transport_separate_cancel_late_writes_preserve_binding_debt_and_termi
     let second = f.cleanup_execution("second", 'e');
     f.cleanup_facts(&second, false);
     f.cleanup_control(&first.execution, 2);
-    let (mut child, receive, reader) = f.spawn_operation("cleanup_runtime");
+    let (mut child, receive, reader) = f.spawn_operation("cleanup_runtime", 0);
     let progress = recv_within(
         "first cleanup progress frame",
         &receive,
