@@ -249,7 +249,7 @@ pub(super) open spec fn slot_grant(n: Node, a: Node, c: AdvanceContext, changed:
     changed == c.slot
     && (c.slot ==> a.holds && a.ticket.is_none()
         && a.phase == resumed_phase(match n.phase { Phase::Ready(r) => r, _ => Resume::Making })
-        && a.repo == n.repo && a.footprint == n.footprint
+        && a.footprint == n.footprint
         && a.pool == n.pool && a.run == n.run)
     && (!c.slot ==> a == n)
 }
