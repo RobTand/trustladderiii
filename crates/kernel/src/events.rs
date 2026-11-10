@@ -127,6 +127,9 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
                     transition_safety::Transition::Apply(event), transition_safety::emitted(*old(out), *final(out))),
             Event::Reply { .. } | Event::Ack { .. } | Event::Fact { .. } => true,
         }),
+        // E1.5 (CONTRACTS.md v2.35 / v2.61, owner apply): the Command rows, opaque (form rule 2); consumers use
+        // command_frames_reveal::command_rows_project.
+        command_frames::command_rows(*old(w), *final(w), event),
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
     kernel_snapshot! { report_before = report.entries@ }
     kernel_proof! { report_projection(*w, event); report::lemmas::entries_for_event(event, report_input(*w, event)); }
@@ -227,6 +230,9 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
         }
         if event is NewAdoption {
             events_lemmas::footprints_after(before_apply@, *w);
+        }
+        if !(event is Command) {
+            command_frames::command_rows_intro(before_apply@, *w, event);
         }
     }
 }
@@ -919,6 +925,8 @@ fn apply_command(w: &mut World, node: NodeId, id: u64, command: Command,
                 && n.repo == b.repo && n.footprint == b.footprint
                 && final(w).nodes@ == old(w).nodes@.update(node.0 as int, n)
         }),
+        // E1.5 (CONTRACTS.md v2.35 / v2.61, owner apply): proven here, forwarded by `apply` as one atom.
+        command_frames::command_rows(*old(w), *final(w), (Event::Command { node, id, command })),
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
     kernel_snapshot! { before_apply = *w }
     kernel_snapshot! { before_apply_out = *out }
@@ -940,8 +948,14 @@ fn apply_command(w: &mut World, node: NodeId, id: u64, command: Command,
                     progress::lift_node_progress(before_apply@, *w, i as int);
                     dependencies::indexability_frame(before_apply@, *w);
                 }
+                command_frames::command_rows_intro(before_apply@, *w, (Event::Command { node, id, command }));
             }
         }
+    kernel_proof! {
+        if node.0 >= before_apply@.nodes@.len() {
+            command_frames::command_rows_intro(before_apply@, *w, (Event::Command { node, id, command }));
+        }
+    }
     kernel_proof! { events_lemmas::footprints_after(before_apply@, *w); if !progress_gate_apply::resume_selected(before_apply@, (Event::Command { node, id, command })) { reveal(progress_gate_apply::resume_apply_post); } if before_apply@.nodes@.len() > 0 && before_apply@.nodes@[0].phase == Phase::Unplanned && progress_unplanned::obstructed(before_apply@.nodes@[0]) && (Event::Command { node, id, command }) == progress_unplanned::outside_event(before_apply@.nodes@[0]) { assert(w.nodes@.len() == before_apply@.nodes@.len()); assert forall|j: int| 1 <= j < before_apply@.nodes@.len() implies w.nodes@[j] == before_apply@.nodes@[j] by {} } }
 }
 }

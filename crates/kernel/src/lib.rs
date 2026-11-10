@@ -100,6 +100,14 @@ mod stop_frames;
 mod stop_frame_reveal;
 
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/command_frames.rs"]
+mod command_frames;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/command_frames_reveal.rs"]
+mod command_frames_reveal;
+
+#[cfg(verus_keep_ghost)]
 verus! {
 /// #806: domain of the retired two-node Kani consistency checks.
 pub closed spec fn retirement_domain(w: World) -> bool { retirement::domain(w) }
