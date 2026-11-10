@@ -1002,3 +1002,65 @@ fn mandatory_schema_errors_keep_variant_message_and_boundary() {
         assert_eq!(r.error_variant, Some(format!("{:?}", std::mem::discriminant(&protocol::validate_real("reviewer", &r.trace.last().unwrap()["args"][1]).unwrap_err()))));
     }
 }
+
+
+fn c6_review_with_paths(paths: &[&str], refused: bool) -> Value {
+    let mut s = fixture();
+    s.tapes.insert("changed_paths".into(), vec![Read::Value(json!(paths))]);
+    s.snapshot.rows[1].value["results"] = json!([{
+        "name":"regression", "kind":"regression", "verdict":if refused {"fail"} else {"pass"},
+        "custody":"in-process", "tests":[{"test":"test_value.py", "base":"passed",
+        "head":"passed", "passed":true, "pre_existing":false}]
+    }]);
+    value(&io::run(&s, true))
+}
+
+#[test]
+fn c6_controller_flags_each_dependency_form_at_every_depth() {
+    for name in ["requirements.txt", "requirements-dev.txt", "gate_requirements.txt",
+        "resolved-requirements.txt", "requirements.in", "constraints.txt", "constraints-ci.txt",
+        "constraints.in", "uv.lock", "setup.py", "setup.cfg", "poetry.lock", "Pipfile",
+        "Pipfile.lock", "MANIFEST.in", "pyproject.toml"] {
+        for directory in ["", "nested/pkg/"] {
+            let path = format!("{directory}{name}");
+            let input = c6_review_with_paths(&[&path], false);
+            assert_eq!(input["coverage_note"], json!(format!(
+                "not covered by checks: dependency or packaging file changed: {path}"
+            )), "missing dependency flag for {path}");
+            assert_eq!(input["checks"][0]["verdict"], "pass");
+        }
+    }
+}
+
+#[test]
+fn c6_controller_keeps_refusal_and_sorted_unique_dependency_flag() {
+    let input = c6_review_with_paths(&["uv.lock", "pytest.toml", "requirements.txt", "uv.lock"], true);
+    assert_eq!(input["checks"][0]["verdict"], "fail");
+    assert_eq!(input["coverage_note"],
+        "not covered by checks: dependency or packaging file changed: requirements.txt, uv.lock");
+}
+
+#[test]
+fn c6_controller_omits_note_for_unrelated_or_different_case_paths() {
+    let input = c6_review_with_paths(&["README.md", "Requirements.txt", "nested/UV.LOCK", "requirements.py"], false);
+    assert!(input.get("coverage_note").is_none());
+}
+
+#[test]
+fn c6_controller_uses_check_base_even_on_a_reproducing_review_round() {
+    let mut s = reviewed();
+    s.tapes.insert("changed_paths".into(), vec![Read::Value(json!(["requirements.txt"]))]);
+    let run = io::run(&s, true);
+    assert_eq!(value(&run)["coverage_note"],
+        "not covered by checks: dependency or packaging file changed: requirements.txt");
+    assert!(run.trace.iter().any(|call| call["op"] == "changed_paths"
+        && call["args"] == json!([BASE, HEAD])), "must use the frozen check base");
+}
+
+#[test]
+fn c6_controller_fails_closed_if_changed_paths_cannot_be_read() {
+    let mut s = fixture();
+    s.tapes.insert("changed_paths".into(), vec![Read::Git]);
+    let run = io::run(&s, true);
+    assert!(run.result.is_err(), "missing changed paths must not hide uncovered dependency changes");
+}
