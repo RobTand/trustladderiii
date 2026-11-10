@@ -966,7 +966,7 @@ fn ack_value(n: Node, i: usize, e: InFlight, ack: Ack, nq: u64, out: Outbox) -> 
         ack_quiet(e, ack) ==> result.2 == out,
 ] {
     let mut n = n;
-    n.effect = None;
+    n.effect = Some(e);
     if e.cancelling { return ack_cancel_value(n, nq, out); }
     match ack {
         Ack::Confirmed => ack_confirmed_value(n, e.kind, nq, out),
