@@ -507,6 +507,7 @@ kernel_fn! {
             }
             _ => None,
         };
+        let head = if kind == EffectKind::Enqueue { Some(HeadId(7)) } else { head };
         out.push(Out::Effect {
             node: NodeId(i as u64),
             seq,
