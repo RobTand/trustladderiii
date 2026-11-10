@@ -83,8 +83,22 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
                 final(w).nodes@.len() == old(w).nodes@.len() + 1
                 && final(w).nodes@[old(w).nodes@.len() as int].proposed == Some(head)
                 && !final(w).nodes@[old(w).nodes@.len() as int].adopted,
-            Event::Command { node, .. } => node.0 < old(w).nodes@.len() ==>
-                handler_safety::command_step(old(w).nodes@[node.0 as int], final(w).nodes@[node.0 as int]),
+            Event::Command { node, command, .. } => node.0 < old(w).nodes@.len() ==>
+                handler_safety::command_step(old(w).nodes@[node.0 as int], final(w).nodes@[node.0 as int])
+                && transition_safety::notice_only(*old(out), *final(out), node)
+                && (match command {
+                    Command::Answer { question, .. } => node_checked(*old(w), old(w).nodes@[node.0 as int])
+                        && final(w).nodes@[node.0 as int]
+                            != (Node { last_cmd: final(w).nodes@[node.0 as int].last_cmd, ..old(w).nodes@[node.0 as int] })
+                        ==> (match old(w).nodes@[node.0 as int].question {
+                            Some(q) => q.id == question,
+                            None => false,
+                        }) && (match final(w).nodes@[node.0 as int].question {
+                            Some(q) => q.id != question,
+                            None => true,
+                        }),
+                    _ => true,
+                }),
             Event::Reply { node, generation, reply } => node.0 < old(w).nodes@.len()
                 && transition_safety::fail_fast_event(event) ==> handler_safety::reply_rows(old(w).fail_fast,
                     transition_safety::retry_due(*old(w), event), transition_safety::funding_due(*old(w), event),
