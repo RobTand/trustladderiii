@@ -35,7 +35,8 @@ pub fn decisions(canaries: &[CanaryEvidence]) -> Result<Vec<(policy::Canary, pol
                     _ => return Err("unknown canary kind".into()),
                 },
                 match canary.status.as_str() {
-                    "PASS" => policy::Status::Pass,
+                    "PASS" if canary.checks.iter().any(|check| !check.pass) => policy::Status::Fail,
+                    "PASS" if accepted(canary) => policy::Status::Pass,
                     "FAIL" => policy::Status::Fail,
                     "NOT_RUN" => policy::Status::NotRun,
                     _ => policy::Status::Unknown,
@@ -43,6 +44,124 @@ pub fn decisions(canaries: &[CanaryEvidence]) -> Result<Vec<(policy::Canary, pol
             ))
         })
         .collect()
+}
+
+fn accepted(canary: &CanaryEvidence) -> bool {
+    let expected = match canary.kind.as_str() {
+        "launch_failure" => api::Ending::InfraLost,
+        "cancel" => api::Ending::Cancelled,
+        _ => api::Ending::Passed,
+    };
+    let mut required = vec![
+        "typed_ending",
+        "clean_event",
+        "verified_cleanup",
+        "scratch_absence",
+        "shape_allocation",
+        "job_cgroup_absent",
+        "instance_receipts_complete",
+    ];
+    match canary.kind.as_str() {
+        "launch_failure" => required.push("post_begin_launch_failure"),
+        "cancel" => required.push("owned_cancel_after_readiness"),
+        "success" => required.push("real_pytest_base_red_head_green"),
+        "generator" => required.extend([
+            "bounded_generator_artifact",
+            "target_flux_uri_broker_and_containment_probes",
+            "actual_image_and_read_only_socket_mount",
+        ]),
+        _ => return false,
+    }
+    canary
+        .job
+        .as_ref()
+        .and_then(|job| job["id"].as_str())
+        .is_some_and(|id| !id.is_empty())
+        && canary.ending.as_ref() == Some(&expected)
+        && canary.terminal_receipt.is_some()
+        && canary
+            .cleanup
+            .as_ref()
+            .is_some_and(|cleanup| cleanup.stopped && cleanup.pending_executions.is_empty())
+        && required.iter().all(|name| {
+            canary
+                .checks
+                .iter()
+                .filter(|check| check.name == *name && check.pass)
+                .count()
+                == 1
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn verdict_assembly_refuses_pass_claim_without_receipts_or_checks() {
+        let mut canary = CanaryEvidence {
+            kind: "success".into(),
+            job: None,
+            status: "PASS".into(),
+            ending: Some(api::Ending::Passed),
+            terminal_receipt: None,
+            cleanup: None,
+            executions: vec![],
+            artifacts: vec![],
+            checks: vec![],
+        };
+        assert_eq!(
+            decisions(&[canary.clone()]).unwrap()[0].1,
+            policy::Status::Unknown
+        );
+        canary.checks.push(Check {
+            name: "typed_ending".into(),
+            pass: false,
+            evidence: vec![],
+        });
+        assert_eq!(decisions(&[canary]).unwrap()[0].1, policy::Status::Fail);
+    }
+
+    #[test]
+    fn carry_compares_git_blobs_and_modes_across_the_two_heads() {
+        let root = tempfile::tempdir().unwrap();
+        git(
+            root.path(),
+            &["init", "--quiet", "--template=", "-b", "main"],
+        )
+        .unwrap();
+        for (name, bytes) in [
+            ("Cargo.toml", "workspace"),
+            ("crates/kernel/src/lib.rs", "proof"),
+            ("harness/host-collector", "helper"),
+        ] {
+            let path = root.path().join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, bytes).unwrap();
+        }
+        git(root.path(), &["add", "--all"]).unwrap();
+        git(root.path(), &["commit", "--quiet", "-m", "qualified"]).unwrap();
+        let qualified = git(root.path(), &["rev-parse", "HEAD"]).unwrap();
+        fs::write(root.path().join("crates/kernel/src/lib.rs"), "new proof").unwrap();
+        git(root.path(), &["add", "--all"]).unwrap();
+        git(root.path(), &["commit", "--quiet", "-m", "kernel"]).unwrap();
+        let kernel = git(root.path(), &["rev-parse", "HEAD"]).unwrap();
+        assert_eq!(
+            pathset(root.path(), &qualified).unwrap(),
+            pathset(root.path(), &kernel).unwrap()
+        );
+        fs::set_permissions(
+            root.path().join("harness/host-collector"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        git(root.path(), &["add", "--all"]).unwrap();
+        git(root.path(), &["commit", "--quiet", "-m", "helper mode"]).unwrap();
+        let changed = git(root.path(), &["rev-parse", "HEAD"]).unwrap();
+        assert_ne!(
+            pathset(root.path(), &qualified).unwrap(),
+            pathset(root.path(), &changed).unwrap()
+        );
+    }
 }
 
 pub fn verify_references(value: &Value) -> Result<()> {
@@ -189,9 +308,11 @@ pub fn carry(args: &[std::ffi::OsString]) -> Result<()> {
             .collect::<std::result::Result<_, _>>()?;
         let index: d8::current::Index =
             serde_json::from_slice(&durable::read(&repo.join(policy::INDEX))?)?;
-        let mut observed: std::collections::BTreeSet<String> = d8::current::installed_paths(&index)
-            .iter()
-            .map(|p| format!("crates/controller/{}", p.display()))
+        let mut observed: std::collections::BTreeSet<String> = index
+            .inputs
+            .keys()
+            .chain(index.fixtures.keys())
+            .map(|name| format!("{}{}", policy::INPUTS, name))
             .collect();
         observed.extend([policy::PIN.into(), policy::INDEX.into()]);
         if expected != observed {

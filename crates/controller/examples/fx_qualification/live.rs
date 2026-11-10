@@ -167,7 +167,9 @@ fn collect_inner(
     if retained.exists() {
         let result: evidence::CanaryEvidence = serde_json::from_slice(&durable::read(&retained)?)?;
         evidence::verify_references(&serde_json::to_value(&result)?)?;
-        return Ok(result);
+        if result.status != "UNKNOWN" {
+            return Ok(result);
+        }
     }
     let owner = Owner {
         owner: "x3-qualification".into(),

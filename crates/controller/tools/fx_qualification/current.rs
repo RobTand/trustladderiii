@@ -6,7 +6,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     os::unix::fs::PermissionsExt,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -243,15 +243,6 @@ pub fn generate(path: &Path) -> Result<Vec<u8>, String> {
         .map_err(|e| e.to_string())?;
     raw.push(b'\n');
     Ok(raw)
-}
-
-pub fn installed_paths(index: &Index) -> Vec<PathBuf> {
-    index
-        .inputs
-        .keys()
-        .chain(index.fixtures.keys())
-        .map(|p| Path::new("qualification/fx-current").join(p))
-        .collect()
 }
 
 #[cfg(test)]

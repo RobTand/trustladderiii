@@ -352,12 +352,11 @@ pub fn run(
         ],
         &native,
     )?;
-    let container = inputs.out.join("prepared/pq-preflight.cid");
-    let container_absent = if name == "preparation-job" && container.exists() {
-        let cid = fs::read_to_string(&container)?.trim().to_owned();
-        if !api::hex(&cid, 64) {
-            return Err("invalid preflight container ID".into());
-        }
+    let container_absent = if name == "preparation-job" {
+        let container = format!(
+            "x3-preflight-{}",
+            &durable::digest(inputs.out.as_os_str().as_encoded_bytes())[..20]
+        );
         let (exit, _) = capture(
             options,
             &[
@@ -366,13 +365,13 @@ pub fn run(
                 "/usr/bin/podman".into(),
                 "container".into(),
                 "exists".into(),
-                cid,
+                container,
             ],
             &native,
         )?;
         exit == 1
     } else {
-        name != "preparation-job"
+        true
     };
     let cleanup_verified = clean && absence.0 && scratch_exit == 0 && container_absent;
     let mut logs = vec![];

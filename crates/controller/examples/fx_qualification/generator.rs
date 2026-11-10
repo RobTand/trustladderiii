@@ -112,9 +112,6 @@ pub fn admitted(inputs: &Inputs) -> Result<()> {
         &staging,
         &options,
     )?;
-    if raw.is_empty() {
-        return Err("empty activation record".into());
-    }
     let mut delivery =
         super::super::fixture(&root.join("served"), super::super::FixtureKind::Success)?;
     delivery.repository.name = "prismaquant".into();

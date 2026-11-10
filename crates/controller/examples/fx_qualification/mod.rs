@@ -271,10 +271,20 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
         if inputs.out.join("verdict.json").exists() {
             let retained: Value =
                 serde_json::from_slice(&durable::read(&inputs.out.join("verdict.json"))?)?;
-            evidence::verify_references(&retained)?;
-            return Ok(retained);
+            if retained["complete"] == true || retained["status"] == "FAIL" {
+                evidence::verify_references(&retained)?;
+                return Ok(retained);
+            }
         }
         let build = bb::build(&inputs, "production", None)?;
+        let rebuilt = inputs.out.join("production/example_fx-stage-packet");
+        if identity(&std::env::current_exe()?)?["sha256"] != identity(&rebuilt)?["sha256"] {
+            use std::os::unix::process::CommandExt;
+            return Err(std::process::Command::new(rebuilt)
+                .args(std::env::args_os().skip(1))
+                .exec()
+                .into());
+        }
         state.builds = vec![build];
         save(&inputs.out, &state)?;
         let planned = plan(&inputs);
@@ -323,9 +333,8 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
             let options: api::Options =
                 serde_json::from_slice(&durable::read(&packet.join("held-options.json"))?)?;
             let result = live::collect(&inputs, request, options, kind)?;
-            if !state.canaries.iter().any(|c| c.kind == kind) {
-                state.canaries.push(result.clone());
-            }
+            state.canaries.retain(|canary| canary.kind != kind);
+            state.canaries.push(result.clone());
             save(&inputs.out, &state)?;
             if result.status != "PASS" {
                 return Err(
@@ -357,9 +366,8 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
         )?)?;
         let mut result = live::collect(&inputs, request, gen_options, "generator")?;
         generator::check(&inputs, &mut result)?;
-        if state.canaries.len() == 3 {
-            state.canaries.push(result.clone());
-        }
+        state.canaries.retain(|canary| canary.kind != "generator");
+        state.canaries.push(result.clone());
         save(&inputs.out, &state)?;
         if result.status != "PASS" {
             return Err("generator canary did not pass; checkout pin not published".into());

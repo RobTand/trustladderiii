@@ -113,10 +113,11 @@ pub fn admitted(inputs: &Inputs) -> Result<()> {
             .args([
                 "run",
                 "--rm",
-                "--cidfile",
-                root.join("pq-preflight.cid")
-                    .to_str()
-                    .ok_or("preflight cidfile")?,
+                "--name",
+                &format!(
+                    "x3-preflight-{}",
+                    &durable::digest(inputs.out.as_os_str().as_encoded_bytes())[..20]
+                ),
                 "--pull=never",
                 "--cgroups=disabled",
                 "--network=none",
