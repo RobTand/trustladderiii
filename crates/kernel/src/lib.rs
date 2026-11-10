@@ -41,6 +41,9 @@ mod cleanup_lemmas;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/dependency_retirement.rs"]
 mod dependency_retirement;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/dependency_owner_exports.rs"]
+mod dependency_owner_exports;
 mod events;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/events_lemmas.rs"]
