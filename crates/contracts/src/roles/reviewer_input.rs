@@ -714,6 +714,7 @@ pub fn generated() -> Result<crate::Generated, render::RenderError> {
                     "/properties/edited_selected_tests",
                     &["type", "items", "minItems"],
                 ),
+                ("/properties/issue_truncated", &["type", "description"]),
                 ("/properties/footprint_additions", &["type", "items", "description"]),
                 ("/properties/footprint_additions/items", &["type", "properties", "required", "additionalProperties"]),
                 ("/properties/footprint_additions/items/properties", &["path", "why"]),
