@@ -1361,3 +1361,37 @@ def test_x7_podman_mount_values_refuse_option_delimiters(tmp_path, field):
     with pytest.raises(ValueError):
         runtime.podman_command(values['tree'], 'sha256:' + '1' * 64, values['scratch'], 1,
                                mode='in_job', harness=values['harness'])
+
+
+@pytest.mark.parametrize('opt_in', [False, True])
+@pytest.mark.parametrize('generator', [False, True])
+def test_x7_container_entrypoint_strips_image_flux_names_before_target_and_child(tmp_path, monkeypatch, opt_in, generator):
+    import os
+    import runpy
+    import subprocess
+    from tl3_harness import runtime_evidence
+
+    uri = 'local:///job-owned/run/local-1'
+    for name in ('FLUX_URI', 'FLUX_JOB_ID', 'FLUX_KVS_NAMESPACE', 'FLUX_JOB_TMPDIR', 'FLUX_IMAGE_DEFAULT'):
+        monkeypatch.setenv(name, uri if name == 'FLUX_URI' else 'injected')
+    monkeypatch.setattr(os, 'read', lambda fd, count: b'\x01')
+    argv = [str(Path(runtime_evidence.__file__)), *(['--pass-flux-uri'] if opt_in else []),
+            *(['--exec', '--', sys.executable, '-c', 'pass'] if generator else ['-'])]
+    monkeypatch.setattr(sys, 'argv', argv)
+    captured = []
+
+    def execute(executable, arguments, environment):
+        captured.append(environment)
+
+    monkeypatch.setattr(os, 'execve', execute)
+    # execv is the pre-fix boundary. Capture its inherited environment too.
+    monkeypatch.setattr(os, 'execv', lambda executable, arguments: captured.append(dict(os.environ)))
+    runpy.run_path(str(Path(runtime_evidence.__file__)), run_name='__main__')
+    expected = {'FLUX_URI': uri} if opt_in else {}
+    assert captured, 'target process must be reached after the gate'
+    environment = captured[0]
+    assert {k: v for k, v in environment.items() if k.startswith('FLUX_')} == expected
+    code = "import json,os; print(json.dumps({k:v for k,v in os.environ.items() if k.startswith('FLUX_')}))"
+    child = subprocess.run([sys.executable, '-B', '-c', code], env=environment,
+                           capture_output=True, check=True)
+    assert json.loads(child.stdout) == expected
