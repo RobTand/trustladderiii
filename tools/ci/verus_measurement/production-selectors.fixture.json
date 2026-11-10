@@ -1,9 +1,9 @@
 {
-  "source_head": "1a0f37afbfd51c302e4c0d8c850e24fb69465929",
+  "source_head": "a468437e769ee983305a734a299bda066410e50d",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "f2c40d43bbc6331a9eeb43fc676daa550dea48959c332a6294086c4722cb2da8",
+  "source_sha256": "5b2df16f9d1e288cdddb76f78e62f085ef17e12d4bb1887059ede1c6eedee934",
   "groups": 501,
-  "obligations": 699,
+  "obligations": 700,
   "selections": [
     {
       "target": "//crates/kernel:verus_footprint_disjoint_under_table_growth",
@@ -258,7 +258,7 @@
     {
       "target": "//crates/kernel:verus_special_safety",
       "selector": "kernel::special_safety",
-      "expected": 2
+      "expected": 3
     },
     {
       "target": "//crates/kernel:verus_transition_composition",
