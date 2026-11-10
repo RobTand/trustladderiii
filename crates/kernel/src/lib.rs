@@ -81,6 +81,12 @@ mod reply_family_values;
 #[path = "../verus/reply_family_safety.rs"]
 mod reply_family_safety;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/reply_family_posts.rs"]
+mod reply_family_posts;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/reply_family_facts.rs"]
+mod reply_family_facts;
+#[cfg(verus_keep_ghost)]
 verus! {
 /// #806: domain of the retired two-node Kani consistency checks.
 pub closed spec fn retirement_domain(w: World) -> bool { retirement::domain(w) }
