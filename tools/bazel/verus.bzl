@@ -443,6 +443,8 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::liveness_reservation::holder": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::liveness_reservation::reserved": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::liveness_bounds::small": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::liveness_bounds::context": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::liveness_teardown::clean": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -882,6 +884,11 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "liveness_release_stop": ("kernel::liveness_release#stop", 1),
+            "liveness_release_finish": ("kernel::liveness_release#finish", 1),
+            "liveness_release_release": ("kernel::liveness_release#release", 1),
+            "liveness_reservation_await_stutters": ("kernel::liveness_reservation#await_stutters", 1),
+            "liveness_reservation_first_visit": ("kernel::liveness_reservation#first_visit", 1),
             "liveness_bounds_reserves": ("kernel::liveness_bounds#reserves", 1),
             "liveness_bounds_advance_bounds": ("kernel::liveness_bounds#advance_bounds", 1),
             "liveness_bounds_advance_accepts": ("kernel::liveness_bounds#advance_accepts", 1),
