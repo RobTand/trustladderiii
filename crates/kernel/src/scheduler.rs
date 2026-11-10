@@ -240,6 +240,31 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
                 && slot_spec(*old(w), older)
                 && !overlapped_by_older(*old(w), older, old(w).nodes@[older].ticket.unwrap())
                 ==> !result && final(w).nodes@[i as int] == old(w).nodes@[i as int],
+        advance_family_post::start_unobstructed(old(w).nodes@[i as int])
+            && pool_users(old(w).nodes@, old(w).nodes@.len()) < old(w).pool_capacity
+            && oldest_waiter(*old(w), i as int)
+            ==> result && final(w).nodes@[i as int].pool
+                && final(w).nodes@[i as int].ticket.is_none()
+                && final(w).nodes@[i as int].run == Some(old(w).nodes@[i as int].generation),
+        advance_family_post::start_unobstructed(old(w).nodes@[i as int]) && !result
+            ==> final(w).nodes@[i as int] == old(w).nodes@[i as int],
+        advance_family_post::start_unobstructed(old(w).nodes@[i as int]) && result
+            ==> pool_users(old(w).nodes@, old(w).nodes@.len()) < old(w).pool_capacity
+                && oldest_waiter(*old(w), i as int),
+        !old(w).nodes@[i as int].holds && final(w).nodes@[i as int].holds
+            ==> !old(w).nodes@[i as int].paused && slot_spec(*old(w), i as int)
+                && final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo
+                && final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint
+                && final(w).nodes@[i as int].ticket.is_none()
+                && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool
+                && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run,
+        !old(w).nodes@[i as int].pool && final(w).nodes@[i as int].pool
+            ==> pool_users(old(w).nodes@, old(w).nodes@.len()) < old(w).pool_capacity
+                && oldest_waiter(*old(w), i as int)
+                && !old(w).nodes@[i as int].paused && old(w).nodes@[i as int].ticket.is_some()
+                && final(w).nodes@[i as int].ticket.is_none(),
+        advance_family_post::holds_item(old(w).nodes@[i as int])
+            ==> advance_family_post::holds_frame(old(w).nodes@[i as int], final(w).nodes@[i as int]),
     checking::accepted(*old(w)) ==> advance_family_post::step_rows(*old(w), *final(w), i as int),
     transition_safety::transition_safety(*old(w), *final(w),
         transition_safety::Transition::Advance { node: i, moved: result },
