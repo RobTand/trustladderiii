@@ -17,7 +17,7 @@ pub(super) open spec fn command_step(b: Node, n: Node) -> bool {
         && (n.phase is Planning ==> b.phase is Planning || b.phase == Phase::AwaitingRob)
         && !transition_safety::asks_cant_meet(b, n)
         && n.credit.merge_credited == b.credit.merge_credited
-        && n.credit.withheld == b.credit.withheld
+        && (b.credit.withheld ==> n.credit.withheld)
 }
 
 /// Stop, ChangeRequest and stopping continuations: the state-table stop update.

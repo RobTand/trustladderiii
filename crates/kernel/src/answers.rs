@@ -40,6 +40,21 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
         (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase),
         handler_safety::command_step(old(w).nodes@[i as int], final(w).nodes@[i as int]),
+        final(w).nodes@[i as int].credit.withheld == (if
+            old(w).nodes@[i as int].phase == Phase::AwaitingRob
+                && (match old(w).nodes@[i as int].question {
+                    Some(q) => q.id == id && (match (q.kind, answer) {
+                        (QKind::AuditDisagreement | QKind::EffectFailed, Answer::Continue)
+                            | (QKind::OutOfCredit, Answer::AddCredit(_)) => true,
+                        _ => false,
+                    }),
+                    None => false,
+                }) {
+            withheld_after(old(w).nodes@[i as int].credit.withheld,
+                final(w).nodes@[i as int].planning_started,
+                final(w).nodes@[i as int].phase, final(w).nodes@[i as int].credit.ready,
+                final(w).dependencies@, NodeId(i as u64))
+        } else { old(w).nodes@[i as int].credit.withheld }),
         transition_safety::notice_only(*old(out), *final(out), NodeId(i as u64)),
         (node_checked(*old(w), old(w).nodes@[i as int])
             && final(w).nodes@[i as int] != old(w).nodes@[i as int]
@@ -83,6 +98,9 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
                 reveal(distance);
             }
         }
+    }
+    kernel_proof! {
+        reveal(handler_safety::command_step);
     }
     w.next_question = nq1;
     match note {
