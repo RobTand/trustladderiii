@@ -37,7 +37,7 @@ pub(super) proof fn reserves(w: World, k: int, i: int)
 }
 
 pub(super) proof fn advance_bounds(b: Node, n: Node, t0: u64, t1: u64, moved: bool, k: int)
-    requires small(b, k), advance_post(b, n, t0, t1, moved), t0 <= k,
+    requires advance_post(b, n, t0, t1, moved), t0 <= k,
     ensures small(n, k + 2), t1 <= k + 2,
 {
     reveal(small); reveal(advance_post);
