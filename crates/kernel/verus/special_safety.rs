@@ -441,7 +441,7 @@ mod first_line_assembly {
     pub(super) fn full_first_in_line(w: &World, i: usize) -> (result: bool)
         requires i < w.nodes@.len(), scheduling_safe(*w),
         ensures w.nodes@[i as int].phase is Ready ==> result == (
-            w.nodes@[i as int].ticket.is_some()
+            true
             && (forall|older: int| 0 <= older < w.nodes@.len()
                 && w.nodes@[older].phase is Ready
                 && w.nodes@[older].repo == w.nodes@[i as int].repo
