@@ -1,9 +1,9 @@
 {
-  "source_head": "f94d65a7d4a2702208eb70915ccb5d1fd3f73979",
+  "source_head": "e327bb2c2f8743e74974b8ab5464d7f796971e0c",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "4a3eb00ad57e60aec2cd1436398e08b884e4e691e5510cec765f3c4e54f600dc",
-  "groups": 918,
-  "obligations": 1127,
+  "source_sha256": "a61ea731e48030cb90d8ab1738843e1f0350120d21e80104baa6f1c9c0d96fa7",
+  "groups": 921,
+  "obligations": 1130,
   "selections": [
     {
       "target": "//crates/kernel:verus_stop_frames_stop_owner_waiting_frame",
@@ -4593,6 +4593,21 @@
     {
       "target": "//crates/kernel:verus_special_safety_aggregate_command_assembly",
       "selector": "kernel::special_safety::aggregate_command_assembly",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_answer_frontier_reveal",
+      "selector": "kernel::special_safety::answer_frontier_reveal",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_answer_frontier",
+      "selector": "kernel::special_safety::answer_frontier",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_answer_apply_assembly",
+      "selector": "kernel::special_safety::answer_apply_assembly",
       "expected": 1
     }
   ]
