@@ -932,7 +932,7 @@ mod assembly_entry_witnesses {
     }
 
     fn pool() {
-        let w = assembly_witness_world::world(2);
+        let w = assembly_witness_world::world(0);
         let _ = pool_assembly::pool_grant_step(w, 0, Outbox::new(), Report::new());
     }
 
