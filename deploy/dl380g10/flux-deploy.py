@@ -20,12 +20,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parents[2]
-PREFIX = Path('/home/rob/flux-vanilla/0.91.0-0.56.0')
-FLUX = PREFIX / 'install/bin/flux'
-URI = f'local://{PREFIX}/runs/fv1-model/run/local-0'
-GENERATION = 'fv1-model/f107a7b075094ef6839e3a545b5dd711'
-# Owner's observed native starttime binds this generation, not newest-run discovery.
-STARTTIME = '1794024934.96'
+INSTANCE = Path('/mnt/shared/flux-migration/INSTANCE')
 LOCK_ROOT = Path('/mnt/shared/flux-vanilla/deploy')
 STORE = Path('/home/rob/.local/share/tl3/deploy-admission')
 WALLTIME_S = 5400
@@ -39,10 +34,9 @@ THREADS = {key: '1' for key in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS',
                               'OPENBLAS_NUM_THREADS', 'RAYON_NUM_THREADS')}
 OBSERVED_FILES = ('intent.json', 'jobspec.json', 'submit.stdout', 'submit.stderr', 'binding.json',
                   'wait.json', 'wait.stderr', 'status.json', 'status.stderr', 'terminal-query.json',
-                  'eventlog.jsonl', 'eventlog.stderr', 'stdout', 'stderr', 'result.json')
-SUPERVISOR = {'PATH': f'{PREFIX}/install/bin:{PREFIX}/deps/bin:/usr/bin:/bin',
-              'HOME': HOME, 'XDG_RUNTIME_DIR': '/run/user/1000', 'FLUX_URI': URI,
-              'LD_LIBRARY_PATH': f'{PREFIX}/install/lib:{PREFIX}/deps/lib', **THREADS}
+                  'eventlog.jsonl', 'eventlog.stderr', 'stdout', 'stderr', 'result.json',
+                  'instance-observation.json', 'allocation-check.json')
+SUPERVISOR = {'PATH': PATH, 'HOME': HOME, 'XDG_RUNTIME_DIR': '/run/user/1000', **THREADS}
 
 
 def encoded(value):
@@ -140,25 +134,64 @@ def source_identity(head):
     return git('rev-parse', 'HEAD^{tree}')
 
 
+def instance_access():
+    prefix, run_name = INSTANCE.read_text().split()
+    prefix = Path(prefix)
+    if (not prefix.is_absolute() or '..' in prefix.parts
+            or not re.fullmatch(r'[A-Za-z0-9_.-]+', run_name) or run_name in ('.', '..')):
+        raise RuntimeError('invalid runtime INSTANCE locator')
+    ranks = {'dl380g10': 0, 'sparky': 1, 'sparklina': 2}
+    rank = ranks.get(socket.gethostname())
+    if rank is None:
+        raise RuntimeError('no native broker on coordinator host')
+    uri = f'local://{prefix}/runs/{run_name}/run/local-{rank}'
+    return prefix / 'install/bin/flux', SUPERVISOR | {
+        'PATH': f'{prefix}/install/bin:{prefix}/deps/bin:/usr/bin:/bin',
+        'LD_LIBRARY_PATH': f'{prefix}/install/lib:{prefix}/deps/lib', 'FLUX_URI': uri}
+
+
 def native(*args, timeout=40):
-    return run([FLUX, *args], timeout=timeout)
+    executable, environment = instance_access()
+    return run([executable, *args], environment=environment, timeout=timeout)
 
 
 def binding():
-    for attr, expected in (('broker.starttime', STARTTIME), ('size', '3')):
-        rc, value, _ = native('getattr', attr)
-        if rc or value.decode().strip() != expected:
-            raise RuntimeError('pinned generation/size drift or unknown')
-    rc, raw, _ = native('config', 'get')
-    config = json.loads(raw) if rc == 0 else {}
-    execution = config.get('exec', {})
-    properties = execution.get('sdexec-properties', {})
-    if (execution.get('service') != 'sdexec'
-            or execution.get('sdexec-constrain-resources') is not False
-            or properties.get('MemoryMax') != '75%'
-            or properties.get('MemorySwapMax') != '0'
-            or properties.get('Slice') != 'flux-jobs.slice'):
-        raise RuntimeError('sdexec containment contract drift or unknown')
+    rc, start, _ = native('getattr', 'broker.starttime')
+    config_rc, raw, _ = native('config', 'get')
+    return {'broker_starttime': start.decode().strip() if rc == 0 else None,
+            'config_sha256': digest(raw) if config_rc == 0 else None,
+            'starttime_exit': rc, 'config_exit': config_rc}
+
+
+def allocation_check(intent, identifier, *, required=True):
+    rc, raw, _ = native('job', 'info', identifier, 'R')
+    if rc and not required:
+        return {'allocated': False, 'query_exit': rc}
+    if rc:
+        raise RuntimeError('native allocation unavailable')
+    allocation = json.loads(raw)
+    rows = allocation['execution']['R_lite']
+    def ids(text):
+        result = set()
+        if text:
+            for part in text.split(','):
+                if not re.fullmatch(r'[0-9]+(?:-[0-9]+)?', part):
+                    raise RuntimeError('invalid allocation ID set')
+                first, _, last = part.partition('-')
+                first, last = int(first), int(last or first)
+                if first > last or last > 65535:
+                    raise RuntimeError('invalid allocation range')
+                values = set(range(first, last + 1))
+                if result & values:
+                    raise RuntimeError('overlapping allocation IDs')
+                result |= values
+        return result
+    if (allocation['version'] != 1 or len(rows) != 1 or rows[0]['rank'] != '0'
+            or allocation['execution']['nodelist'] != ['dl380g10']
+            or len(ids(rows[0]['children']['core'])) != intent['cpus']
+            or ids(rows[0]['children'].get('gpu', ''))):
+        raise RuntimeError('allocation differs from requested core count or allowed host class')
+    return {'allocated': True, 'cores': intent['cpus'], 'host': 'dl380g10', 'allocation_sha256': digest(raw)}
 
 
 def plan(head, tree, stage, lane, release, manifest, backup, out):
@@ -169,7 +202,7 @@ def plan(head, tree, stage, lane, release, manifest, backup, out):
         environment.update(CARGO_BUILD_JOBS='2', CARGO_TARGET_DIR=f'/home/rob/tmp/tl3-build/deploy-cargo-target-{head}')
     else:
         environment['TL3_DEPLOY_NONCE'] = out.parent.name
-    return {'schema': 'tl3.deploy.intent.v1', 'generation': GENERATION, 'uri': URI,
+    return {'schema': 'tl3.deploy.intent.v1', 
             'head': head, 'tree': tree, 'source': str(SOURCE), 'stage': stage, 'lane': lane,
             'release': str(release), 'manifest': str(manifest) if stage != 'build' else None,
             'backup': str(backup) if stage != 'build' else None,
@@ -183,7 +216,7 @@ def jobspec(intent, request_digest):
                'payload', str(out / 'intent.json'), request_digest]
     args = ['submit', '--dry-run', '--env=-*', '--rlimit=-*']
     args += [f'--env={key}={value}' for key, value in sorted(intent['environment'].items())]
-    args += ['-n1', f"-c{intent['cpus']}", f'-t{WALLTIME_S}s', '--requires=host:dl380g10',
+    args += ['-n1', f"--resources-shape=slot/[core={intent['cpus']};memory={intent['memory_gib']}]", f'-t{WALLTIME_S}s', '--requires=host:dl380g10',
              f"--job-name={intent['name']}", f'--cwd={SOURCE}', '--input=/dev/null',
              f'--output={out}/stdout', f'--error={out}/stderr', *command]
     rc, raw, _ = native(*args)
@@ -194,14 +227,13 @@ def jobspec(intent, request_digest):
     resources = spec['resources']
     if (len(resources) != 1 or resources[0]['type'] != 'slot'
             or resources[0]['count'] != 1
-            or resources[0]['with'] != [{'type': 'core', 'count': intent['cpus']} ]):
+            or resources[0]['with'] != [{'type': 'core', 'count': intent['cpus']}, {'type': 'memory', 'count': intent['memory_gib']}]):
         raise RuntimeError('unknown native resource schema')
-    resources[0]['with'].append({'type': 'memory', 'count': intent['memory_gib']})
     system = spec['attributes']['system']
     if (system['environment'] != intent['environment'] or system['cwd'] != str(SOURCE)
             or system['duration'] != WALLTIME_S or spec['tasks'][0]['command'] != command):
         raise RuntimeError('native environment/command/cwd/walltime mismatch')
-    spec['attributes']['user'] = {'tl3_deploy_intent': request_digest, 'generation': GENERATION,
+    spec['attributes']['user'] = {'tl3_deploy_intent': request_digest, 
                                    'source_head': intent['head'], 'source_tree': intent['tree']}
     validate_spec(intent, request_digest, spec)
     return spec
@@ -212,7 +244,7 @@ def validate_spec(intent, request_digest, spec):
     system = spec['attributes']['system']
     tasks = spec['tasks']
     # Check actual native shape, independently of the saved intent's numbers.
-    for value, maximum in ((intent['cpus'], 8), (intent['memory_gib'], 32),
+    for value, maximum in ((intent['cpus'], 8), (intent['memory_gib'], 24),
                            (intent['walltime_s'], WALLTIME_S),
                            (system['duration'], WALLTIME_S)):
         if type(value) not in (int, float) or not math.isfinite(value) or not 0 < value <= maximum:
@@ -228,7 +260,7 @@ def validate_spec(intent, request_digest, spec):
             or type(resources[0]['with']) is not list
             or len(resources[0]['with']) != 2):
         raise RuntimeError('owner host/resource shape refused')
-    for leaf, kind, maximum in zip(resources[0]['with'], ('core', 'memory'), (8, 32)):
+    for leaf, kind, maximum in zip(resources[0]['with'], ('core', 'memory'), (8, 24)):
         if (set(leaf) != {'type', 'count'} or leaf['type'] != kind
                 or type(leaf['count']) is not int or not 0 < leaf['count'] <= maximum):
             raise RuntimeError('owner resource leaf refused')
@@ -242,7 +274,7 @@ def validate_spec(intent, request_digest, spec):
             or tasks[0]['count'] != {'per_slot': 1} or tasks[0]['slot'] != resources[0]['label']
             or system['environment'] != intent['environment'] or system['cwd'] != str(SOURCE)
             or system['duration'] != intent['walltime_s']
-            or spec['attributes']['user'] != {'tl3_deploy_intent': request_digest, 'generation': GENERATION,
+            or spec['attributes']['user'] != {'tl3_deploy_intent': request_digest, 
                                              'source_head': intent['head'], 'source_tree': intent['tree']}):
         raise RuntimeError('persisted jobspec admission/intent mismatch')
 
@@ -381,7 +413,7 @@ def failed_cleanup(identifier):
     if before.st_uid != owner:
         raise RuntimeError('FAILED slice ownership UNKNOWN')
     # Flux 0.91 bulk-exec labels use f58plain. sdexec adds :sys or :rank-sys.
-    # The pinned generation has three brokers. Check every possible rank spelling.
+    # Check every allowed host rank spelling for this exact job.
     plain = 'f' + identifier[1:]
     scopes = [slice_path / f'shell-{plain}:{suffix}.service'
               for suffix in ('sys', '0-sys', '1-sys', '2-sys')]
@@ -419,7 +451,8 @@ def close_failed_without_result(intent, request_digest, spec, identifier, numeri
     terminal = failed_terminal(out, identifier)
     cleanup = failed_cleanup(identifier)
     save(out / 'failure-cleanup.json', cleanup)
-    binding()
+    save(out / 'instance-observation.json', binding())
+    save(out / 'allocation-check.json', allocation_check(intent, identifier, required=False))
     files = {}
     for name in FAILURE_FILES:
         path = out / name
@@ -437,7 +470,7 @@ def close_failed_without_result(intent, request_digest, spec, identifier, numeri
         data = path.read_bytes()
         files[name] = {'sha256': digest(data), 'bytes': len(data)}
     save(out / 'closed.json', {'schema': 'tl3.deploy.closed.v2', 'outcome': 'FAILED',
-         'intent': request_digest, 'generation': GENERATION, 'job_id': identifier,
+         'intent': request_digest,  'job_id': identifier,
          'jobspec_sha256': digest(encoded(spec)), 'terminal': terminal, 'files': files,
          'owned_scope_empty': True, 'owned_scratch_removed': True,
          'limitation': 'wrapper observations, no native attestation or PB CAS'})
@@ -519,7 +552,8 @@ def collect(intent, request_digest, spec, identifier):
         pass
     else:
         raise RuntimeError('owned scratch remains')
-    binding()
+    save(out / 'instance-observation.json', binding())
+    save(out / 'allocation-check.json', allocation_check(intent, identifier))
     files = {}
     for name in OBSERVED_FILES:
         path = out / name
@@ -533,7 +567,7 @@ def collect(intent, request_digest, spec, identifier):
         with path.open('rb') as stream:
             files[name] = {'sha256': hashlib.file_digest(stream, 'sha256').hexdigest(), 'bytes': path.stat().st_size}
     receipt = {'schema': 'tl3.deploy.observation.v1', 'intent': request_digest,
-               'generation': GENERATION, 'job_id': identifier, 'files': files,
+                'job_id': identifier, 'files': files,
                'owned_scope_empty': True, 'owned_scratch_removed': True,
                'limitation': 'wrapper observations, no native attestation or PB CAS'}
     # Closure proves no remaining job, including after a failed command. It grants no PASS.
@@ -566,7 +600,7 @@ def stage(intent):
     binding_path = out / 'binding.json'
     if binding_path.exists():
         bound = load(binding_path)
-        if (bound['intent'] != request_digest or bound['generation'] != GENERATION
+        if (bound['intent'] != request_digest
                 or bound['jobspec_sha256'] != digest(encoded(spec))):
             raise RuntimeError('saved binding mismatch')
         identifier = job_id(bound['job_id'].encode())
@@ -589,7 +623,7 @@ def stage(intent):
                 identifier = recover(intent, spec)
         else:
             identifier = recover(intent, spec)
-        save(binding_path, {'generation': GENERATION, 'job_id': identifier, 'intent': request_digest,
+        save(binding_path, { 'job_id': identifier, 'intent': request_digest,
                             'jobspec_sha256': digest(encoded(spec))})
     try:
         return collect(intent, request_digest, spec, identifier)
@@ -606,7 +640,7 @@ def stage(intent):
 
 def payload(intent_path, expected):
     intent = load(intent_path)
-    if digest(encoded(intent)) != expected or intent['generation'] != GENERATION or intent['uri'] != URI:
+    if digest(encoded(intent)) != expected:
         raise RuntimeError('payload intent mismatch')
     if socket.gethostname().split('.')[0] != 'dl380g10':
         raise RuntimeError('local service/artifact host dependency refused')
@@ -717,7 +751,6 @@ def require_closed(out):
                 raise RuntimeError('inconsistent FAILED closure')
         if (closed['schema'] not in ('tl3.deploy.closed.v1', 'tl3.deploy.closed.v2')
                 or closed['intent'] != request_digest or bound['intent'] != request_digest
-                or closed['generation'] != GENERATION or bound['generation'] != GENERATION
                 or closed['job_id'] != identifier
                 or closed['owned_scope_empty'] is not True
                 or closed['owned_scratch_removed'] is not True

@@ -70,7 +70,7 @@ class FluxAdmissionTests(unittest.TestCase):
         if args[0] == 'getattr':
             if args[1] == 'jobid-path':
                 return 0, b'/sys', b''
-            value = ('different' if self.drift else fx.STARTTIME) if args[1] == 'broker.starttime' else '3'
+            value = ('different' if self.drift else '1794024934.96') if args[1] == 'broker.starttime' else '3'
             return 0, value.encode(), b''
         if args[:2] == ('config', 'get'):
             return 0, fx.encoded({'exec': {'service': 'sdexec', 'sdexec-constrain-resources': False,
@@ -79,6 +79,8 @@ class FluxAdmissionTests(unittest.TestCase):
             self.assertEqual(args[2], '--env=-*')
             self.assertIn('-n1', args)
             self.assertNotIn('-N1', args)
+            self.assertFalse(any(arg.startswith(('-c', '-g')) for arg in args))
+            self.assertIn(f"--resources-shape=slot/[core={self.intent['cpus']};memory={self.intent['memory_gib']}]", args)
             self.assertIn('-t5400s', args)
             self.assertIn('--requires=host:dl380g10', args)
             env = dict(item[len('--env='):].split('=', 1) for item in args[3:] if item.startswith('--env='))
@@ -93,7 +95,7 @@ class FluxAdmissionTests(unittest.TestCase):
                     'nofile': resource.getrlimit(resource.RLIMIT_NOFILE)[0],
                     'core': resource.getrlimit(resource.RLIMIT_CORE)[0]}}}
             return 0, fx.encoded({'version': 1, 'resources': [{'type': 'slot', 'count': 1, 'label': 'task',
-                    'with': [{'type': 'core', 'count': self.intent['cpus']}]}],
+                    'with': [{'type': 'core', 'count': self.intent['cpus']}, {'type': 'memory', 'count': self.intent['memory_gib']}]}],
                     'tasks': [{'command': command, 'slot': 'task', 'count': {'per_slot': 1}}],
                     'attributes': {'system': system}}), b''
         if args[:2] == ('job', 'submit'):
@@ -147,14 +149,16 @@ class FluxAdmissionTests(unittest.TestCase):
             if self.terminal_failure:
                 value.insert(1, {'name': 'exception', 'context': {'type': 'exec', 'severity': 0}})
             return 0, b'\n'.join(fx.encoded(row) for row in value), b''
+        if args[:2] == ('job', 'info') and args[-1] == 'R':
+            return 0, fx.encoded({'version': 1, 'execution': {'R_lite': [{'rank': '0', 'children': {'core': '0-' + str(self.intent['cpus'] - 1)}}], 'nodelist': ['dl380g10']}}), b''
         if args[:2] == ('job', 'id'):
             return 0, b'42', b''
         self.fail('unexpected native fixture command')
 
     def test_x7_plain_memory_ceiling_is_24_gib(self):
         self.intent['memory_gib'] = 25
-        spec = fx.jobspec(self.intent, fx.digest(fx.encoded(self.intent)))
         with self.assertRaisesRegex(RuntimeError, 'resource'):
+            spec = fx.jobspec(self.intent, fx.digest(fx.encoded(self.intent)))
             fx.validate_spec(self.intent, fx.digest(fx.encoded(self.intent)), spec)
 
     def test_x7_broker_restart_is_receipt_evidence(self):
@@ -533,7 +537,7 @@ class FluxAdmissionTests(unittest.TestCase):
         self.assertEqual(self.submissions(), 1)
         receipt = fx.load(self.out / 'receipt.json')
         self.assertEqual(fx.digest(fx.encoded(receipt)), receipt_digest)
-        self.assertEqual(receipt['generation'], fx.GENERATION)
+        self.assertIn('instance-observation.json', receipt['files'])
         self.assertEqual(fx.load(self.out / 'binding.json')['job_id'], self.identifier)
         slot = self.spec['resources'][0]
         self.assertEqual(slot['with'], [{'type': 'core', 'count': 8}, {'type': 'memory', 'count': 8}])
@@ -609,10 +613,9 @@ class FluxAdmissionTests(unittest.TestCase):
                 setattr(self, attribute, False)
         self.assertEqual(self.submissions(), 1)
 
-    def test_unknown_generation_refuses_before_admission(self):
+    def test_changed_generation_is_observed_before_admission(self):
         self.drift = True
-        with self.assertRaises(RuntimeError):
-            fx.binding()
+        self.assertEqual(fx.binding()['broker_starttime'], 'different')
         self.assertEqual(self.submissions(), 0)
 
     def test_missing_or_malformed_id_refuses(self):
@@ -1029,8 +1032,7 @@ class FluxAdmissionTests(unittest.TestCase):
     def test_failed_closure_wrong_binding_or_outcome_refuses_without_submit(self):
         self.prepare_no_result(False)
         self.assert_failed_closed()
-        for name, key, value in (('binding.json', 'generation', 'other-generation'),
-                                  ('binding.json', 'job_id', 'ƒ456def'),
+        for name, key, value in (('binding.json', 'job_id', 'ƒ456def'),
                                   ('binding.json', 'intent', '0' * 64),
                                   ('binding.json', 'jobspec_sha256', '0' * 64),
                                   ('intent.json', 'generation', 'other-generation'),
@@ -1066,7 +1068,7 @@ class FluxAdmissionTests(unittest.TestCase):
         self.assertEqual(self.submissions(), 1)
 
     def test_failed_closure_host_generation_and_query_unknown_hold(self):
-        for case in ('wrong-host', 'wrong-generation', 'wrong-instance', 'id-query-failed', 'events-query-failed'):
+        for case in ('wrong-host', 'wrong-instance', 'id-query-failed', 'events-query-failed'):
             with self.subTest(case=case):
                 self.prepare_no_result(True)
                 original = self.native
@@ -1155,7 +1157,7 @@ class FluxAdmissionTests(unittest.TestCase):
             self.assertEqual(fx.run(['/fake/native']), (0, b'fixture', b''))
         self.assertEqual(popen.call_args.kwargs['env'], fx.SUPERVISOR)
         self.assertNotIn('TL3_PLANTED_MARKER', popen.call_args.kwargs['env'])
-        self.assertEqual(popen.call_args.kwargs['env']['FLUX_URI'], fx.URI)
+        self.assertNotIn('FLUX_URI', popen.call_args.kwargs['env'])
 
     def test_payload_executes_direct_host_command_and_preserves_failure_cleanup(self):
         self.out.mkdir()
