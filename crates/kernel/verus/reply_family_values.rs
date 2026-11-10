@@ -83,6 +83,7 @@ pub(super) open spec fn spent(n: Node) -> Node {
     Node { credit: Credit { spent: (n.credit.spent + 1) as u64, ..n.credit }, ..n }
 }
 
+#[verifier::opaque]
 pub(super) open spec fn room(n: Node, fast: bool, step: ReviewStop) -> ReplyChange {
     if fast { ReplyChange::Done { node: retirement::stopped(
         Node { review_stop: Some(step), ..n }, Outcome::Stopped), note: None } }
@@ -236,6 +237,7 @@ pub(super) open spec fn plan_check(n: Node) -> ReplyChange {
         Node { review_stop: Some(ReviewStop::PlanCantMeet), ..n }, Outcome::Stopped), note: None }
 }
 
+#[verifier::opaque]
 pub(super) open spec fn files(n: Node, fast: bool, files: Footprint, fits: bool,
     union: Footprint) -> ReplyChange {
     if fits && !footprint::footprint_empty(files) && transition_safety::can_spend_one(n) {
