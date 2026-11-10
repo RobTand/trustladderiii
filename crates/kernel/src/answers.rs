@@ -71,7 +71,6 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
     w.nodes[i] = n1;
     if withhold {
         kernel_snapshot! { continued = w.nodes@[i as int] }
-        w.withhold_dependency_credit(i);
         kernel_proof! {
             let n = w.nodes@[i as int];
             assert(n == handler_safety::unwithheld(continued@, n.credit.withheld));
