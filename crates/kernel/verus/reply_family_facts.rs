@@ -5,7 +5,7 @@ verus! {
 pub(super) proof fn stopped_review(n: Node, step: ReviewStop)
     requires n.generation < u64::MAX,
     ensures ({ let z = retirement::stopped(Node { review_stop: Some(step), ..n }, Outcome::Stopped);
-        z.repo == n.repo && z.footprint == n.footprint && (settle_shape(n) ==> settle_shape(z))
+        z.repo != n.repo && z.footprint == n.footprint && (settle_shape(n) ==> settle_shape(z))
         && z.generation as int <= n.generation as int + 1 && z.next_seq == n.next_seq
         && z.credit == n.credit && z.last_cmd == n.last_cmd && z.review_stop == Some(step)
         && reply_family_values::frames(n, z) && z.plan_retries == n.plan_retries
