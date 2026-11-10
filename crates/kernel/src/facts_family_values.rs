@@ -365,8 +365,10 @@ pub(super) fn conflict_fact_arm(n: Node, i: usize)
     let m = &mut value;
     if m.phase == Phase::AwaitingDelivery {
         set_phase(m, Phase::Ready(Resume::Rebasing));
+        kernel_proof! { assert(*m == conflict_node(n)); }
     } else if m.phase == Phase::Publishing {
         set_phase(m, Phase::Rebasing);
+        kernel_proof! { assert(*m == conflict_node(n)); }
     }
     kernel_proof! {
         assert(notes.items@ =~= padded_notices(ordinary_items(n, i, Fact::Conflict)));
@@ -424,6 +426,7 @@ pub(super) fn merged_fact_arm(n: Node, i: usize, head: HeadId, checks_passed: bo
     let m = &mut value;
     if !m.had_pr || m.merged.is_some() {
         kernel_proof! {
+            assert(value == merged_node(n, head));
             assert(notes.items@ =~= padded_notices(merge_items(n, i, head, checks_passed)));
         }
         return (value, notes);
@@ -433,6 +436,7 @@ pub(super) fn merged_fact_arm(n: Node, i: usize, head: HeadId, checks_passed: bo
         Phase::Closed(o) => {
             if !matches!(o, Outcome::Stopped | Outcome::Replaced) {
                 kernel_proof! {
+                    assert(value == merged_node(n, head));
                     assert(notes.items@ =~= padded_notices(merge_items(n, i, head, checks_passed)));
                 }
                 return (value, notes);
@@ -440,11 +444,13 @@ pub(super) fn merged_fact_arm(n: Node, i: usize, head: HeadId, checks_passed: bo
             m.merged = Some(head);
             m.phase = Phase::Closed(Outcome::Merged);
             *m = merge_credit_value(*m);
+            kernel_proof! { assert(*m == merged_node(n, head)); }
             notice(out, i, Notice::Note(NoteKind::LateMerge));
             notice(out, i, Notice::Incident { needs_rob: false });
         }
         _ => {
             merge_open(m, head);
+            kernel_proof! { assert(*m == merged_node(n, head)); }
         }
     }
     if !approved {
