@@ -52,7 +52,7 @@ pub(super) proof fn on_fact_rows(before: World, after: World, i: int,
         after.nodes@.len() == before.nodes@.len(),
         forall|j: int| 0 <= j < before.nodes@.len() && j != i
             ==> after.nodes@[j] == before.nodes@[j],
-        retirement::selected(fact) ==> after.nodes@[i]
+        false ==> after.nodes@[i]
             == retirement::fact_node(before.nodes@[i], fact),
         retirement::selected(fact) && retirement::notices_only(ob)
             ==> retirement::notices_only(oa),
