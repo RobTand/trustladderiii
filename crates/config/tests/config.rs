@@ -16,6 +16,15 @@ fn c6_default_pytest_configuration_is_protected() {
     }
 }
 
+#[test]
+fn c6_every_configuration_constant_entry_reaches_the_defaults() {
+    let paths = tl3_config::Planning::default().protected_paths;
+    for name in tl3_config::TEST_CONFIGURATION_NAMES {
+        assert!(paths.contains(&name.to_string()));
+        assert!(paths.contains(&format!("**/{name}")));
+    }
+}
+
 /// PB-REMOVAL (D2): Flux is the only executor, so a config that could start PrismaBuild is
 /// refused when it is parsed, before anything starts. Nothing defaults to a backend.
 #[test]

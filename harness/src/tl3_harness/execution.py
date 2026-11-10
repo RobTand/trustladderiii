@@ -16,7 +16,7 @@ from .supervision import ExecutionFailure, ExecutionOutcome, Supervised
 from .scratch import directory as scratch_directory
 from . import selection, runtime
 from .trees import (UnsupportedEntry, added_names, changed_configuration, changed_existing_tests,
-                    changed_files, changed_protected, commit, configuration, export, git, is_test, own_base,
+                    changed_files, changed_protected, commit, configuration, dependency_files, export, git, is_test, own_base,
                     )
 from .proof import assemble_proof, conftest_subjects
 
@@ -565,9 +565,16 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
     if Path(__file__).resolve().is_relative_to(repo):
         raise HarnessInputError("the installed harness must be outside the served checkout")
     base, head = commit(repo, base), commit(repo, head)
+    dependency_names = dependency_files(changed_files(repo, own_base(repo, base, head), head))
+    coverage_note = ('not covered by checks: dependency or packaging file changed: '
+                     + ', '.join(dependency_names)) if dependency_names else None
+
+    def finish(results):
+        return tuple(replace(result, coverage_note=coverage_note) for result in results)
+
     if any(check.forcing is not None for check in plan):
         if tampering := forcing_tamper_diff(repo, base, head):
-            return refused(plan, tampering)
+            return finish(refused(plan, tampering))
     if reviewed is not None:
         reviewed = commit(repo, reviewed)
     with runtime.workspace(prefix="tl3-checks-") as directory:
@@ -579,20 +586,20 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         try:
             export(repo, head, new)
         except UnsupportedEntry as entry:
-            return refused(plan, unsupported_entry_message(entry))
+            return finish(refused(plan, unsupported_entry_message(entry)))
         stale = {test for test in always_tests
                  if not (old / test.split("::")[0]).is_file() and not (new / test.split("::")[0]).is_file()}
         tests = tuple(test for test in tests if test not in stale)
         config = tool.configuration(old)
         if refusal := configuration_changes(repo, root, base, old, head, new, tool, protected, plan):
-            return tuple(stale_result(result, stale) for result in refused(plan, refusal))
+            return finish(stale_result(result, stale) for result in refused(plan, refusal))
         invalid = {test for test in tests if not tool.is_test(test.split("::")[0], config)}
         if invalid:
             outcomes = dict.fromkeys(tests, Outcome.UNCOLLECTED)
             outcomes.update(dict.fromkeys(stale, Outcome.MISSING))
             messages = dict.fromkeys(tests, "The plan names a test outside the configured test files.")
-            return tuple(stale_result(judge(replace(check, forcing=None), outcomes, outcomes, messages=messages), stale)
-                         for check in plan)
+            return finish(stale_result(judge(replace(check, forcing=None), outcomes, outcomes, messages=messages), stale)
+                          for check in plan)
         ordinary = tuple(dict.fromkeys(test for check in plan
                                        if check.kind not in (Kind.DEMONSTRATING, Kind.REPRODUCING)
                                        for test in check.tests if test not in stale))
@@ -631,9 +638,9 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
             try:
                 export(repo, reviewed, reviewed_tree)
             except UnsupportedEntry as entry:
-                return refused(plan, unsupported_entry_message(entry))
+                return finish(refused(plan, unsupported_entry_message(entry)))
             if refusal := configuration_changes(repo, root, base, old, reviewed, reviewed_tree, tool, protected, plan):
-                return refused(plan, refusal)
+                return finish(refused(plan, refusal))
         for index, check in enumerate(plan):
             if check.kind not in (Kind.DEMONSTRATING, Kind.REPRODUCING):
                 continue
@@ -643,11 +650,11 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
                 receipt = assemble_proof(subject, new, staged, check, config, role='maker', check_index=index, footprint=footprint, protected=protected, generated=generated)
             except SyntaxError as error:
                 refusal = ProofRefusal('proof.source.unparsable', module=error.filename or '', bad_value=error.msg, line=error.lineno)
-                return refused(plan, refusal.for_check(check, 'maker', index, footprint=footprint, protected=protected, generated=generated))
+                return finish(refused(plan, refusal.for_check(check, 'maker', index, footprint=footprint, protected=protected, generated=generated)))
             except ProofRefusal as error:
-                return refused(plan, error)
+                return finish(refused(plan, error))
             except OSError as error:
-                return refused(plan, str(error))
+                return finish(refused(plan, str(error)))
             subject_files = sorted({name.split('::', 1)[0] for name in receipt['subjects']})
             proof_subjects = dict.fromkeys(check.tests, subject_files)
             for test, files in proof_subjects.items():
@@ -717,7 +724,7 @@ def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
         if selection_receipt is not None:
             selection_receipt["head_units"] = kept
             results[-1] = replace(results[-1], selection=selection_receipt)
-        return tuple(results)
+        return finish(results)
 
 
 def result_json(results: tuple[Result, ...]) -> str:
@@ -731,6 +738,8 @@ def result_json(results: tuple[Result, ...]) -> str:
         pair[1]['passed']))
     retained = {id(test) for _, test in [pair for pair in priority if pair[1]['message']][:MAX_DETAILED_FAILURES]}
     for result, report in zip(results, reports):
+        if result.coverage_note is None:
+            del report['coverage_note']
         if result.declared_symptom is None:
             del report['declared_symptom']
         if result.symptom_evidence is None:

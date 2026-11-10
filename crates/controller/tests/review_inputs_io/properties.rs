@@ -51,6 +51,20 @@ fn fixture() -> Schedule {
 fn value(r: &io::Run) -> Value {
     serde_json::from_slice(r.result.as_ref().unwrap()).unwrap()
 }
+
+#[test]
+fn c6_dependency_coverage_note_reaches_review_unchanged() {
+    let mut schedule = fixture();
+    let note = "not covered by checks: dependency or packaging file changed: requirements.txt";
+    schedule.snapshot.rows[1].value["results"] = json!([{
+        "name": "regression", "kind": "regression", "verdict": "pass",
+        "custody": "in-process", "coverage_note": note,
+        "tests": [{"test": "tests/test_value.py::test_value", "base": "passed",
+                   "head": "passed", "passed": true, "pre_existing": false, "message": ""}]
+    }]);
+    let run = compare(&schedule);
+    assert_eq!(value(&run)["checks"][0]["coverage_note"], note);
+}
 fn ops(r: &io::Run) -> Vec<&str> {
     r.trace.iter().map(|c| c["op"].as_str().unwrap()).collect()
 }

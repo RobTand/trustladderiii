@@ -197,6 +197,20 @@ fn evidence_tools() -> Vec<ToolCapability> {
     }]
 }
 
+/// Canonical filenames whose contents can change test execution.
+/// The harness copy is checked against this declaration by its parity test.
+pub const TEST_CONFIGURATION_NAMES: &[&str] = &[
+    "conftest.py",
+    "pytest.toml",
+    ".pytest.toml",
+    "pytest.ini",
+    ".pytest.ini",
+    "pyproject.toml",
+    "tox.ini",
+    "setup.cfg",
+    "noxfile.py",
+];
+
 impl Default for Planning {
     fn default() -> Self {
         Self {
@@ -211,16 +225,13 @@ impl Default for Planning {
                 ".github/**",
                 ".mergify.yml",
                 ".mergify.yaml",
-                "**/conftest.py",
-                "pytest.ini",
-                ".pytest.ini",
-                "tox.ini",
-                "noxfile.py",
-                "setup.cfg",
-                "pyproject.toml",
             ]
+            .into_iter()
             .map(String::from)
-            .to_vec(),
+            .chain(TEST_CONFIGURATION_NAMES.iter().flat_map(|name| {
+                [(*name).to_owned(), format!("**/{name}")]
+            }))
+            .collect(),
         }
     }
 }

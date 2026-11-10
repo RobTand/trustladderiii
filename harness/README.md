@@ -451,6 +451,25 @@ Both indexes are available only during trusted preparation. The served repositor
 is not installed into its own image; checks import the exported candidate.
 PrismaQuant's frozen Tessera dependency is a separate, pinned Git install.
 
+Changes to dependency or packaging files carry `coverage_note` on each check
+result, also sent to review in `checks`. It reads
+`not covered by checks: dependency or packaging file changed: <names>`.
+This does not change the verdict. The image cannot exercise the candidate's
+dependency installation or packaging changes.
+
+The note covers `*requirements*.txt`, `requirements*.in`, `constraints*.txt`,
+`constraints*.in`, `uv.lock`, `setup.py`, `setup.cfg`, `poetry.lock`, `Pipfile*`,
+`MANIFEST.in`, and `pyproject.toml`, at any depth. It includes added, modified,
+deleted, and both sides of renamed files. Matching is case-sensitive. Any
+`pyproject.toml` change is flagged conservatively, including dependency tables.
+Existing configuration protection still refuses changes to `pyproject.toml` and
+`setup.cfg`; the note is retained on those refusals and on changes that also
+touch another protected file. Dependency files alone add no new refusal.
+
+The harness and controller protect all filenames in the configuration constant
+in `crates/config/src/lib.rs`, including `pytest.toml` and `.pytest.toml`, at the
+root and in subdirectories. A parity test checks the harness's Python copy.
+
 Bubblewrap's presence does not grant user namespaces or privileges to tests.
 Use a distinct tag for a candidate so preparation preserves the current image.
 

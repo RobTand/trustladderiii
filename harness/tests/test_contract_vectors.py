@@ -57,6 +57,10 @@ def plan_check(name, kind, tests, **extra):
 
 
 SCENARIOS = {
+    'dependency-coverage': dict(
+        base={'product.py': PRODUCT.format(value=1), 'tests/test_value.py': MESSAGE},
+        head={'requirements.txt': 'new-package==1.0\n'},
+        plan=[plan_check('value is unchanged', 'regression', ['tests/test_value.py::test_value'])]),
     # #926 / tessera #1455: call-phase imports of names added by head supply RED.
     'red-class-added-name': dict(
         base={'product.py': 'def value():\n    return 0\n',

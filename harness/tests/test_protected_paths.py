@@ -169,3 +169,74 @@ def test_c6_different_case_does_not_name_a_pytest_configuration(repo, name):
     results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER)
     assert all(r.verdict == Verdict.PASS for r in results)
     assert ran
+
+
+def test_c6_configuration_lists_agree_and_are_complete():
+    import ast
+    from pathlib import Path
+    import re
+    from tl3_harness.trees import TEST_CONFIGURATION_NAMES
+
+    source = (Path(__file__).resolve().parents[2] / 'crates/config/src/lib.rs').read_text()
+    declaration = re.search(r'pub const TEST_CONFIGURATION_NAMES: &\[&str\] = &(\[.*?\]);',
+                            source, re.S)
+    assert declaration, 'the Rust defaults must expose the authoritative filename constant'
+    assert tuple(ast.literal_eval(declaration[1])) == TEST_CONFIGURATION_NAMES
+    assert {'pytest.toml', '.pytest.toml'} <= set(TEST_CONFIGURATION_NAMES)
+
+
+@pytest.mark.parametrize('directory', ['', 'nested/tests/'])
+def test_c6_every_configuration_name_is_protected_at_every_depth(tmp_path, directory):
+    from tl3_harness.trees import TEST_CONFIGURATION_NAMES, changed_configuration
+    base, head = tmp_path / 'base', tmp_path / 'head'
+    base.mkdir()
+    head.mkdir()
+    for filename in TEST_CONFIGURATION_NAMES:
+        name = directory + filename
+        write(head, {name: ''})
+        assert changed_configuration(base, head) == [name]
+        (head / name).unlink()
+
+
+@pytest.mark.parametrize('operation', ['modify', 'delete', 'rename_in', 'rename_out'])
+def test_c6_dependency_path_operations_are_flagged(repo, operation):
+    repo, base, ran = repo
+    before = 'nested/requirements-dev.txt'
+    after = 'nested/constraints-ci.txt'
+    write(repo, {before: '# before\n'})
+    base = save(repo, 'dependency baseline')
+    if operation == 'modify':
+        write(repo, {before: '# after\n'})
+        names = [before]
+    elif operation == 'delete':
+        (repo / before).unlink()
+        names = [before]
+    else:
+        after = after if operation == 'rename_in' else 'nested/notes.txt'
+        (repo / before).rename(repo / after)
+        names = sorted([before, after]) if operation == 'rename_in' else [before]
+    head = save(repo, operation)
+    results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER)
+    assert all(r.verdict == Verdict.PASS for r in results)
+    assert results[0].coverage_note == (
+        'not covered by checks: dependency or packaging file changed: ' + ', '.join(names))
+
+
+@pytest.mark.parametrize('name', ['tools/ci/gate_requirements.txt', 'resolved-requirements.txt'])
+def test_c6_image_dependency_input_names_are_flagged(repo, name):
+    repo, base, ran = repo
+    write(repo, {name: '# dependency\n'})
+    head = save(repo, 'frozen input convention')
+    results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER)
+    assert all(r.verdict == Verdict.PASS for r in results)
+    assert results[0].coverage_note.endswith(': ' + name)
+
+
+def test_c6_unrelated_files_do_not_carry_a_coverage_note(repo):
+    import json
+    repo, base, ran = repo
+    write(repo, {'docs/guide.md': '# documentation\n', 'requirements.txt.backup': '# backup\n'})
+    head = save(repo, 'unrelated files')
+    results = execution.run_checks(repo, base, head, PLAN, container=CONTAINER)
+    assert all(r.verdict == Verdict.PASS and r.coverage_note is None for r in results)
+    assert all('coverage_note' not in r for r in json.loads(execution.result_json(results)))

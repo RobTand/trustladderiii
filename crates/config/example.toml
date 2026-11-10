@@ -195,7 +195,9 @@ command = ["-m", "tl3_workers", "run"]
 tool_capabilities = [{ tool = "run_tests", executor = "flux_pytest", runner_features = ["base_head", "repeat", "parallel", "always_tests", "native_threads_1"], artifacts = ["run_binding", "receipt", "input_tree", "sha", "logs", "terminal_verdict"], methods = ["red_green", "declared_symptom", "head", "base_head", "subject_observer",  "forced_reproduction.environment", "forced_reproduction.patches"], protected_files = [] }]
 
 # Additions to the built-in defaults, which always apply and needn't be listed (#388).
-protected_paths = [".github/**", ".mergify.yml", ".mergify.yaml", "**/conftest.py", "pytest.ini", ".pytest.ini", "tox.ini", "noxfile.py", "setup.cfg", "pyproject.toml"]
+# Optional additions; mandatory test-configuration defaults apply at every depth.
+# Older controllers that replace defaults need all four pytest TOML patterns below.
+protected_paths = [".github/**", ".mergify.yml", ".mergify.yaml", "**/conftest.py", "pytest.toml", ".pytest.toml", "**/pytest.toml", "**/.pytest.toml", "pytest.ini", ".pytest.ini", "tox.ini", "noxfile.py", "setup.cfg", "pyproject.toml"]
 
 # Calibration seam for future MLflow measurements. Code sums these estimates.
 [planning.overhead_tokens]

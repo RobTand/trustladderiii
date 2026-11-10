@@ -326,6 +326,7 @@ class Result:
     selection: dict | None = None
     declared_symptom: dict | None = None
     symptom_evidence: dict | None = None
+    coverage_note: str | None = None
 
 
 MESSAGE_LIMIT = 1000

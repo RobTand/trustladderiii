@@ -1387,6 +1387,7 @@ mod typed {
                     proof,
                     declared_symptom,
                     symptom_evidence,
+                    coverage_note: None,
                 },
             )
             .boxed()
