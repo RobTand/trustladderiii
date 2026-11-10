@@ -849,7 +849,7 @@ fn rung_replan_v(n: Node) -> (result: Node) [
         result.next_seq == n.next_seq,
 ] proof [reveal(reply_family_values::replanning);] {
     let mut m = n;
-    m.replanned = true; m.holds = false;
+    m.replanned = false; m.holds = false;
     m
 }
 }
