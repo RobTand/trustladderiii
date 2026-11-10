@@ -113,6 +113,8 @@ impl Preparation for Staging {
 }
 #[derive(Default)]
 struct State {
+    maintenance_resumes: usize,
+    maintenance_due: Option<u64>,
     submits: usize,
     cancels: usize,
     unknown_submit: bool,
@@ -144,6 +146,46 @@ impl Backend {
     }
 }
 impl RunBackend for Backend {
+    fn next_cleanup_maintenance_ms(&self) -> api::Result<Option<u64>> {
+        Ok(self.state.lock().unwrap().maintenance_due)
+    }
+    fn cleanup_maintenance(&self, _: u64) -> api::Result<api::MaintenanceReport<Owner>> {
+        self.state.lock().unwrap().maintenance_resumes += 1;
+        Ok(api::MaintenanceReport::default())
+    }
+    fn cleanup_maintenance_fenced(
+        &self,
+        _: u64,
+        authorize: &dyn Fn(&Owner) -> api::Result<()>,
+    ) -> api::Result<api::MaintenanceReport<Owner>> {
+        self.state.lock().unwrap().maintenance_due = None;
+        let Some(intent) = self
+            .state
+            .lock()
+            .unwrap()
+            .binding
+            .as_ref()
+            .map(|binding| binding.intent.clone())
+        else {
+            return Ok(api::MaintenanceReport::default());
+        };
+        let owner = Owner {
+            owner: intent.owner,
+            correlation: intent.correlation,
+        };
+        match authorize(&owner) {
+            Ok(()) => {
+                self.state.lock().unwrap().maintenance_resumes += 1;
+                Ok(api::MaintenanceReport::default())
+            }
+            Err(_) => Ok(api::MaintenanceReport {
+                pending: vec![owner],
+                skipped_busy: false,
+                unobserved: vec![],
+            }),
+        }
+    }
+
     fn submit(&self, _: Request, intent: SubmissionIntent) -> api::Result<Submission> {
         // The external boundary observes the committed controller intent before accepting.
         let journal = self.records.join(format!("{}.job", intent.correlation));
@@ -700,6 +742,125 @@ fn flux_checks_historical_progress_is_journaled_without_fabricating_liveness() {
     running.stop().unwrap();
     running.join().unwrap();
     assert_eq!(backend.state.lock().unwrap().cancels, 0);
+    drop((adapter, ownership));
+    database.stop();
+}
+
+#[test]
+fn flux_checks_maintenance_fences_retained_delivery_epoch_and_isolates_bad_jobs() {
+    let root = tempfile::tempdir().unwrap();
+    let mut database = support::Database::start();
+    let mut ownership =
+        Ownership::claim(Store::open(&database.create("maintenance_fence")).unwrap()).unwrap();
+    let (mut adapter, backend, _, options) = setup(root.path(), &mut ownership);
+    let d = delivery();
+    adapter.execute(&d).unwrap();
+    adapter.cleanup_maintenance(1_000_000).unwrap();
+    assert_eq!(
+        backend.state.lock().unwrap().maintenance_resumes,
+        1,
+        "fresh epoch can resume"
+    );
+    let mut newer = d.clone();
+    newer.epoch = 2;
+    adapter.execute(&newer).unwrap();
+    fs::write(
+        backend.records.join(format!("{}.job", "f".repeat(64))),
+        b"{truncated",
+    )
+    .unwrap();
+    let pending = adapter.cleanup_maintenance(1_300_000).unwrap();
+    assert_eq!(
+        backend.state.lock().unwrap().maintenance_resumes,
+        1,
+        "older retained delivery must not resume after a newer epoch is fenced"
+    );
+    assert!(
+        pending
+            .pending
+            .iter()
+            .any(|key| key.starts_with("check-journal:"))
+    );
+    assert!(
+        backend
+            .records
+            .join("maintenance-errors")
+            .read_dir()
+            .unwrap()
+            .next()
+            .is_some()
+    );
+    assert!(
+        adapter
+            .next_cleanup_maintenance_ms()
+            .unwrap()
+            .is_some_and(|next| next > 1_300_000)
+    );
+    drop(adapter);
+    let mut restarted = Adapter::new(
+        backend.clone(),
+        options,
+        &backend.records,
+        Staging,
+        &mut ownership,
+    )
+    .unwrap();
+    assert!(
+        !restarted
+            .cleanup_maintenance(1_600_000)
+            .unwrap()
+            .pending
+            .is_empty()
+    );
+    assert_eq!(backend.state.lock().unwrap().maintenance_resumes, 1);
+    drop((restarted, ownership));
+    database.stop();
+}
+
+#[test]
+fn flux_checks_maintenance_watch_failures_back_off_without_backend_work() {
+    let root = tempfile::tempdir().unwrap();
+    let mut database = support::Database::start();
+    let mut ownership =
+        Ownership::claim(Store::open(&database.create("maintenance_watch_backoff")).unwrap())
+            .unwrap();
+    let (mut adapter, backend, _, _) = setup(root.path(), &mut ownership);
+    adapter.execute(&delivery()).unwrap();
+    drop(adapter.source().unwrap());
+    backend.state.lock().unwrap().maintenance_due = Some(0);
+    assert!(
+        !adapter
+            .cleanup_maintenance(1_000_000)
+            .unwrap()
+            .pending
+            .is_empty()
+    );
+    assert_eq!(
+        adapter.next_cleanup_maintenance_ms().unwrap(),
+        Some(1_300_000)
+    );
+    assert!(
+        !adapter
+            .cleanup_maintenance(1_300_000)
+            .unwrap()
+            .pending
+            .is_empty()
+    );
+    assert_eq!(
+        adapter.next_cleanup_maintenance_ms().unwrap(),
+        Some(1_600_000),
+        "a failed watch is retried and backed off even when no backend cleanup is due"
+    );
+    fs::remove_file(backend.records.join(format!(
+        "{}.job",
+        durable::digest(delivery().key.as_bytes())
+    )))
+    .unwrap();
+    adapter.cleanup_maintenance(1_600_000).unwrap();
+    assert!(
+        adapter.next_cleanup_maintenance_ms().unwrap().is_none(),
+        "removed jobs must not leave an overdue watch failure"
+    );
     drop((adapter, ownership));
     database.stop();
 }

@@ -188,6 +188,60 @@ impl Shared {
         }
         Ok(jobs)
     }
+    fn maintenance_jobs(&self, now: u64) -> Result<(Vec<Job>, Vec<String>)> {
+        let mut jobs = Vec::new();
+        let mut failed = Vec::new();
+        let previous = durable::maintenance_failures(&self.root).map_err(adapter_error)?;
+        let mut seen = std::collections::BTreeSet::new();
+        for entry in fs::read_dir(&self.root)? {
+            let path = entry?.path();
+            if !path.extension().is_some_and(|extension| extension == "job") {
+                continue;
+            }
+            let key = path
+                .file_stem()
+                .and_then(|key| key.to_str())
+                .unwrap_or("invalid-name");
+            seen.insert(key.to_owned());
+            let result = self
+                .load(key)
+                .and_then(|job| job.ok_or(Error::Invalid("check journal disappeared")));
+            match result {
+                Ok(job) => {
+                    durable::clear_maintenance_failure(&self.root, key).map_err(adapter_error)?;
+                    jobs.push(job);
+                }
+                Err(error) => {
+                    durable::maintenance_failure(
+                        &self.root,
+                        key,
+                        &error.to_string(),
+                        now.saturating_add(300_000),
+                    )
+                    .map_err(adapter_error)?;
+                    failed.push(format!("check-journal:{key}"));
+                }
+            }
+        }
+        let active_watches: std::collections::BTreeSet<_> = jobs
+            .iter()
+            .filter(|job| job.terminal.is_none())
+            .map(|job| format!("watch:{}", job.intent.correlation))
+            .collect();
+        for failure in previous {
+            let retired_watch =
+                failure.key.starts_with("watch:") && !active_watches.contains(&failure.key);
+            let retired_job = failure.key != "backend"
+                && !failure.key.starts_with("watch:")
+                && !seen.contains(&failure.key);
+            if retired_watch || retired_job {
+                durable::clear_maintenance_failure(&self.root, &failure.key)
+                    .map_err(adapter_error)?;
+            }
+        }
+        Ok((jobs, failed))
+    }
+
     fn fence(&self, incoming: i64) -> Result<()> {
         let path = self.root.join("epoch.fence");
         let accepted: i64 = match fs::symlink_metadata(&path) {
@@ -365,8 +419,19 @@ impl Adapter {
             options,
             root: root.to_owned(),
         });
-        let recovered = shared
-            .transaction(|| Ok(shared.jobs()?.into_iter().map(|job| job.owner()).collect()))?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .min(u64::MAX as u128) as u64;
+        let recovered = shared.transaction(|| {
+            Ok(shared
+                .maintenance_jobs(now)?
+                .0
+                .into_iter()
+                .map(|job| job.owner())
+                .collect())
+        })?;
         let finishing = shared.clone();
         let progressing = shared.clone();
         let (handle, source) = backend_watch::Source::new(
@@ -411,6 +476,123 @@ impl Adapter {
     }
 }
 impl Executor for Adapter {
+    fn next_cleanup_maintenance_ms(&mut self) -> Result<Option<u64>> {
+        let backend = self
+            .shared
+            .backend
+            .next_cleanup_maintenance_ms()
+            .map_err(adapter_error)?;
+        let failures = durable::maintenance_failures(&self.shared.root).map_err(adapter_error)?;
+        Ok(backend
+            .into_iter()
+            .chain(failures.iter().map(|failure| failure.next_attempt_ms))
+            .min())
+    }
+
+    fn cleanup_maintenance(&mut self, now_ms: u64) -> Result<backend::MaintenanceReport<String>> {
+        let was_due = self
+            .shared
+            .backend
+            .next_cleanup_maintenance_ms()
+            .is_ok_and(|due| due.is_some_and(|due| due <= now_ms));
+        let authorize = |owner: &backend::Owner| {
+            self.shared
+                .transaction(|| {
+                    let job = self
+                        .shared
+                        .load(&owner.correlation)?
+                        .ok_or(Error::Invalid("held dispatch has no controller delivery"))?;
+                    if job.owner() != *owner || job.terminal.is_some() {
+                        return Err(Error::Invalid(
+                            "held dispatch does not match an active controller intent",
+                        ));
+                    }
+                    // Same upstream boundary and retained delivery epoch as execute().
+                    self.shared.fence(job.delivery.epoch)
+                })
+                .map_err(|error| backend::BackendError::unknown(&error.to_string()))
+        };
+        let mut report = match self
+            .shared
+            .backend
+            .cleanup_maintenance_fenced(now_ms, &authorize)
+        {
+            Ok(owners) => {
+                durable::clear_maintenance_failure(&self.shared.root, "backend")
+                    .map_err(adapter_error)?;
+                backend::MaintenanceReport {
+                    pending: owners
+                        .pending
+                        .into_iter()
+                        .map(|owner| format!("{}:{}", owner.owner, owner.correlation))
+                        .collect(),
+                    skipped_busy: owners.skipped_busy,
+                    unobserved: owners
+                        .unobserved
+                        .into_iter()
+                        .map(|owner| format!("{}:{}", owner.owner, owner.correlation))
+                        .collect(),
+                }
+            }
+            Err(error) => {
+                durable::maintenance_failure(
+                    &self.shared.root,
+                    "backend",
+                    &error.to_string(),
+                    now_ms.saturating_add(300_000),
+                )
+                .map_err(adapter_error)?;
+                backend::MaintenanceReport {
+                    pending: vec!["backend-maintenance".into()],
+                    skipped_busy: false,
+                    unobserved: vec![],
+                }
+            }
+        };
+        // A malformed check record cannot block maintenance of other owners.
+        let (jobs, errors) = self
+            .shared
+            .transaction(|| self.shared.maintenance_jobs(now_ms))?;
+        report.pending.extend(errors);
+        let watch_failures =
+            durable::maintenance_failures(&self.shared.root).map_err(adapter_error)?;
+        let watch_due: std::collections::BTreeSet<_> = watch_failures
+            .iter()
+            .filter(|failure| {
+                failure.key.starts_with("watch:") && failure.next_attempt_ms <= now_ms
+            })
+            .map(|failure| failure.key.clone())
+            .collect();
+        if was_due || !watch_due.is_empty() {
+            for job in jobs.into_iter().filter(|job| job.terminal.is_none()) {
+                let key = format!("watch:{}", job.intent.correlation);
+                if !was_due && !watch_due.contains(&key) {
+                    continue;
+                }
+                if let Err(error) = self.handle.watch(job.owner()) {
+                    durable::maintenance_failure(
+                        &self.shared.root,
+                        &key,
+                        &error.to_string(),
+                        now_ms.saturating_add(300_000),
+                    )
+                    .map_err(adapter_error)?;
+                } else {
+                    durable::clear_maintenance_failure(&self.shared.root, &key)
+                        .map_err(adapter_error)?;
+                }
+            }
+        }
+        report.pending.extend(
+            durable::maintenance_failures(&self.shared.root)
+                .map_err(adapter_error)?
+                .into_iter()
+                .filter(|failure| failure.key.starts_with("watch:"))
+                .map(|failure| failure.key),
+        );
+        Ok(report)
+    }
+
     fn watch_wait(
         &mut self,
         delivery: &Delivery,

@@ -78,8 +78,14 @@ impl Flux {
         use std::io::Write;
         use std::os::unix::process::CommandExt;
         use std::time::{Duration, Instant};
-        if self.stop.is_stopped() {
-            return Err(BackendError::unknown("local observation stopped"));
+        if self.stop.is_stopped()
+            || self
+                .native_deadline
+                .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            return Err(BackendError::unknown(
+                "local observation stopped or maintenance budget exhausted",
+            ));
         }
         let child = command
             .process_group(0)
@@ -111,6 +117,7 @@ impl Flux {
             .ok_or_else(|| BackendError::unknown("native stderr unavailable"))?;
         let stdout = std::thread::spawn(move || bounded(stdout));
         let stderr = std::thread::spawn(move || bounded(stderr));
+        // The pass budget gates starts; an admitted command keeps its normal deadline.
         let deadline = Instant::now() + Duration::from_secs(NATIVE_COMMAND_TIMEOUT_SECONDS);
         let status = loop {
             if self.stop.is_stopped() || Instant::now() >= deadline {
@@ -381,6 +388,71 @@ pub(super) fn parse_event(bytes: &[u8]) -> Result<NativeFact> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cleanup_maintenance_damaged_error_log_is_reported_without_aborting_owners() {
+        let root = tempfile::tempdir().unwrap();
+        let journal = root.path().join("journal");
+        let errors = journal.join("maintenance-errors");
+        std::fs::create_dir_all(&errors).unwrap();
+        std::fs::write(errors.join("damaged.json"), b"{truncated").unwrap();
+        let backend = Flux::new(Options {
+            executable: "/must-not-run-native".into(),
+            arguments: vec![],
+            environment: [("PATH".into(), "/usr/bin:/bin".into())].into(),
+            instance_file: crate::run_backend::fixture_instance(root.path()),
+            journal_root: journal,
+            bootstrap: HostBootstrap {
+                cli: "/must-not-run-cli".into(),
+                config: "/unused-config".into(),
+            },
+        })
+        .unwrap();
+        assert!(
+            !backend
+                .cleanup_maintenance(1_000_000)
+                .unwrap()
+                .pending
+                .is_empty()
+        );
+        assert!(backend.next_cleanup_maintenance_ms().unwrap().is_some());
+        let diagnostic = errors.join(format!("{}.json", digest(b"maintenance-error-log")));
+        assert!(
+            diagnostic.exists(),
+            "failure of the error journal must itself be durable"
+        );
+    }
+
+    #[test]
+    fn cleanup_maintenance_does_not_infer_retry_eligibility_from_debt_files() {
+        let root = tempfile::tempdir().unwrap();
+        let journal = root.path().join("journal");
+        let debt = journal.join("cleanup-debt").join("a".repeat(64));
+        std::fs::create_dir_all(&debt).unwrap();
+        let path = debt.join("running.execution");
+        std::fs::write(&path, b"healthy launch debt is not retry eligibility").unwrap();
+        let backend = Flux::new(Options {
+            executable: "/must-not-run-native".into(),
+            arguments: vec![],
+            environment: [("PATH".into(), "/usr/bin:/bin".into())].into(),
+            instance_file: crate::run_backend::fixture_instance(root.path()),
+            journal_root: journal,
+            bootstrap: HostBootstrap {
+                cli: "/must-not-run-cli".into(),
+                config: "/unused-config".into(),
+            },
+        })
+        .unwrap();
+        assert!(backend.next_cleanup_maintenance_ms().unwrap().is_none());
+        assert!(
+            backend
+                .cleanup_maintenance(u64::MAX - 300_000)
+                .unwrap()
+                .pending
+                .is_empty()
+        );
+        assert!(path.exists());
+    }
 
     #[test]
     fn x7_instance_file_is_resolved_for_each_native_operation() {

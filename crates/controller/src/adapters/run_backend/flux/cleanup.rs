@@ -425,6 +425,58 @@ impl Flux {
         owner: &Owner,
         emit: &mut dyn FnMut(&CleanupProgress) -> Result<()>,
     ) -> Result<CleanupResult> {
+        // A requested cleanup owns retry eligibility before locks, callbacks or native I/O.
+        // Launch-time debt alone never reaches this entry point.
+        self.journal.transaction(owner, |dir, current| {
+            let mut current = current.ok_or_else(|| BackendError::unknown("intent disappeared"))?;
+            if !all_stopped(&current) && current.terminal.is_none() {
+                let retry = Some(
+                    current.cleanup_retry_ms.unwrap_or(0).max(
+                        self.maintenance_now_ms
+                            .unwrap_or_else(super::maintenance::now_ms)
+                            .saturating_add(super::maintenance::CADENCE_MS),
+                    ),
+                );
+                if current.cleanup_retry_ms != retry {
+                    current.cleanup_retry_ms = retry;
+                    save(dir, &current)?;
+                }
+            }
+            Ok(())
+        })?;
+        let lock = self.journal.operation_lock(owner, "cleanup-attempt-lock")?;
+        match lock.try_lock() {
+            Ok(()) => {}
+            Err(std::fs::TryLockError::WouldBlock) => {
+                return Ok(result(
+                    &self.journal.load(owner)?,
+                    None,
+                    "cleanup attempt already in flight; durable maintenance will follow",
+                ));
+            }
+            Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
+        }
+        let outcome = self.attempt_cleanup(owner, emit);
+        if outcome.as_ref().is_ok_and(|result| result.stopped) {
+            self.journal.transaction(owner, |dir, current| {
+                let mut current =
+                    current.ok_or_else(|| BackendError::unknown("intent disappeared"))?;
+                // Recheck the latest ownership set before retiring retry eligibility.
+                if current.cleanup_retry_ms.is_some() && all_stopped(&current) {
+                    current.cleanup_retry_ms = None;
+                    save(dir, &current)?;
+                }
+                Ok(())
+            })?;
+        }
+        outcome
+    }
+
+    fn attempt_cleanup(
+        &self,
+        owner: &Owner,
+        emit: &mut dyn FnMut(&CleanupProgress) -> Result<()>,
+    ) -> Result<CleanupResult> {
         let record = self.journal.load(owner)?;
         if all_stopped(&record) {
             self.journal.runtime_gate(|debts| {
@@ -463,6 +515,12 @@ impl Flux {
             ));
         }
         for ownership in &executions(&record) {
+            if self
+                .native_deadline
+                .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+            {
+                break;
+            }
             let current = self.journal.load(owner)?;
             if current.terminal.is_some() {
                 break;

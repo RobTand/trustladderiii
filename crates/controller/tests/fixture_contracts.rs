@@ -28,6 +28,16 @@ impl Spy {
     }
 }
 impl Executor for Spy {
+    fn cleanup_maintenance(
+        &mut self,
+        now_ms: u64,
+    ) -> Result<tl3_controller::run_backend::MaintenanceReport<String>> {
+        self.hit("cleanup_maintenance", now_ms.to_string())
+    }
+    fn next_cleanup_maintenance_ms(&mut self) -> Result<Option<u64>> {
+        self.hit("next_cleanup_maintenance_ms", String::new())
+    }
+
     fn quota_model_eligible(&mut self, delivery: &Delivery, model: &str) -> Result<bool> {
         self.hit("quota_model_eligible", format!("{}:{model}", delivery.key))
     }
@@ -658,4 +668,35 @@ fn an_unmeasured_group_counts_as_the_median_measured_group() {
     let measured = serde_json::json!({"a": 1.0, "b": 2.5, "slow": 90.0});
     let weights = weights_ms(measured.as_object().unwrap(), &["slow", "a", "new"]);
     assert_eq!(weights, [90_000, 1_000, 2_500]);
+}
+
+#[test]
+fn workers_forward_cleanup_maintenance_hooks() {
+    for real in [false, true] {
+        let calls = Calls::default();
+        let mut workers = Workers::new(
+            real.then(|| {
+                Box::new(Spy {
+                    name: "real",
+                    calls: calls.clone(),
+                }) as Box<dyn Executor>
+            }),
+            Spy {
+                name: "fake",
+                calls: calls.clone(),
+            },
+            if real { vec![Role::Make] } else { vec![] },
+            |_, _| {},
+        );
+        assert!(workers.cleanup_maintenance(123).is_err());
+        assert!(workers.next_cleanup_maintenance_ms().is_err());
+        let selected = if real { "real" } else { "fake" };
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec![
+                (selected, "cleanup_maintenance", "123".into()),
+                (selected, "next_cleanup_maintenance_ms", String::new()),
+            ]
+        );
+    }
 }

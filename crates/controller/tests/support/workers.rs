@@ -71,6 +71,16 @@ impl<F: FnMut(&Delivery, &mut Completion)> Workers<F> {
 }
 
 impl<F: FnMut(&Delivery, &mut Completion)> Executor for Workers<F> {
+    fn cleanup_maintenance(
+        &mut self,
+        now_ms: u64,
+    ) -> Result<tl3_controller::run_backend::MaintenanceReport<String>> {
+        self.primary().cleanup_maintenance(now_ms)
+    }
+    fn next_cleanup_maintenance_ms(&mut self) -> Result<Option<u64>> {
+        self.primary().next_cleanup_maintenance_ms()
+    }
+
     fn configured_model(&self, model: &str) -> bool {
         match &self.real {
             Some(real) => real.configured_model(model),

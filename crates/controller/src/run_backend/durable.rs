@@ -5,12 +5,20 @@ use std::path::Path;
 
 pub const MAX_BYTES: usize = 8 * 1024 * 1024;
 
+pub type RecordScan = Vec<(String, Result<Option<Record>>)>;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Record {
     pub request: Request,
     pub intent: SubmissionIntent,
     pub dispatched: bool,
+    /// Failed cleanup eligibility, never inferred from launch debt.
+    #[serde(default)]
+    pub cleanup_retry_ms: Option<u64>,
+    /// Proven undispatched intent refused by the runtime debt gate.
+    #[serde(default)]
+    pub held_submission_ms: Option<u64>,
     pub binding: Option<RunBinding>,
     pub cancel_requested: bool,
     pub events: Vec<Event>,
@@ -57,6 +65,26 @@ impl Journal {
         owner: &Owner,
         f: impl FnOnce(&Path, Option<Record>) -> Result<T>,
     ) -> Result<T> {
+        let (dir, lock) = self.owner_lock(owner)?;
+        lock.lock()?;
+        self.transact_locked(owner, &dir, f)
+    }
+
+    /// A busy owner is unobserved, not a failed transaction.
+    pub fn try_transaction<T>(
+        &self,
+        owner: &Owner,
+        f: impl FnOnce(&Path, Option<Record>) -> Result<T>,
+    ) -> Result<Option<T>> {
+        let (dir, lock) = self.owner_lock(owner)?;
+        match lock.try_lock() {
+            Ok(()) => self.transact_locked(owner, &dir, f).map(Some),
+            Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+            Err(std::fs::TryLockError::Error(error)) => Err(error.into()),
+        }
+    }
+
+    fn owner_lock(&self, owner: &Owner) -> Result<(PathBuf, File)> {
         if !token(&owner.owner) || !token(&owner.correlation) {
             return Err(BackendError::invalid(
                 "invalid durable owner or correlation",
@@ -79,7 +107,15 @@ impl Journal {
             .read(true)
             .write(true)
             .open(lock_path)?;
-        lock.lock()?;
+        Ok((dir, lock))
+    }
+
+    fn transact_locked<T>(
+        &self,
+        owner: &Owner,
+        dir: &Path,
+        f: impl FnOnce(&Path, Option<Record>) -> Result<T>,
+    ) -> Result<T> {
         let path = dir.join("state.json");
         let record: Option<Record> = if path.exists() {
             Some(serde_json::from_slice(&read(&path)?)?)
@@ -94,7 +130,25 @@ impl Journal {
                 message: "correlation belongs to a different durable owner".into(),
             });
         }
-        f(&dir, record)
+        f(dir, record)
+    }
+
+    /// Identity only: an unlocked read must never establish cleanup or stop evidence.
+    pub fn owner_identity(&self, key: &str) -> Result<Owner> {
+        if !token(key) || self.root.join(key).is_symlink() {
+            return Err(BackendError::invalid("unsafe journal owner directory"));
+        }
+        let record: Record =
+            serde_json::from_slice(&read(&self.root.join(key).join("state.json"))?)?;
+        if record.intent.correlation != key || !token(&record.intent.owner) {
+            return Err(BackendError::invalid(
+                "journal owner does not match directory",
+            ));
+        }
+        Ok(Owner {
+            owner: record.intent.owner,
+            correlation: record.intent.correlation,
+        })
     }
 
     pub fn runtime_gate<T>(&self, f: impl FnOnce(&Path) -> Result<T>) -> Result<T> {
@@ -108,6 +162,88 @@ impl Journal {
         let debts = self.root.join("cleanup-debt");
         fs::create_dir_all(&debts)?;
         f(&debts)
+    }
+
+    /// Retain each entry's identity. Ok(None) means its lock is busy.
+    pub fn records(&self) -> Result<RecordScan> {
+        let mut records = Vec::new();
+        for (index, entry) in fs::read_dir(&self.root)?.enumerate() {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    records.push((format!("unreadable-entry-{index}"), Err(error.into())));
+                    continue;
+                }
+            };
+            let key = entry.file_name().to_string_lossy().into_owned();
+            if key == "cleanup-debt" || key == "maintenance-errors" || key == "maintenance-busy" {
+                continue;
+            }
+            let record = (|| {
+                let kind = entry.file_type()?;
+                if !kind.is_dir() && !kind.is_symlink() {
+                    return Ok(None);
+                }
+                let path = entry.path().join("state.json");
+                if !kind.is_symlink() && !path.try_exists()? {
+                    return Ok(None);
+                }
+                if kind.is_symlink() || !token(&key) {
+                    return Err(BackendError::invalid("unsafe journal owner directory"));
+                }
+                let lock_path = entry.path().join("lock");
+                if lock_path.is_symlink() {
+                    return Err(BackendError::invalid("journal lock cannot be a symlink"));
+                }
+                let lock = OpenOptions::new()
+                    .create(true)
+                    .truncate(false)
+                    .read(true)
+                    .write(true)
+                    .open(lock_path)?;
+                match lock.try_lock() {
+                    Ok(()) => {}
+                    Err(std::fs::TryLockError::WouldBlock) => return Ok(Some(None)),
+                    Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
+                }
+                let record: Record = serde_json::from_slice(&read(&path)?)?;
+                if record.intent.correlation != key
+                    || !token(&record.intent.owner)
+                    || !token(&record.intent.correlation)
+                {
+                    return Err(BackendError::invalid(
+                        "journal owner does not match directory",
+                    ));
+                }
+                Ok(Some(Some(record)))
+            })();
+            match record {
+                Ok(Some(record)) => records.push((key, Ok(record))),
+                Ok(None) => {}
+                Err(error) => records.push((key, Err(error))),
+            }
+        }
+        records.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(records)
+    }
+
+    /// A native operation lock is separate from the journal transaction lock.
+    pub fn operation_lock(&self, owner: &Owner, name: &str) -> Result<File> {
+        if !token(name) {
+            return Err(BackendError::invalid("invalid operation lock"));
+        }
+        self.transaction(owner, |dir, _| {
+            let path = dir.join(name);
+            if path.exists() && fs::symlink_metadata(&path)?.file_type().is_symlink() {
+                return Err(BackendError::invalid("operation lock cannot be a symlink"));
+            }
+            Ok(OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .read(true)
+                .write(true)
+                .open(path)?)
+        })
     }
 
     pub fn load(&self, owner: &Owner) -> Result<Record> {
@@ -221,4 +357,139 @@ fn safe_limit(text: &str, chars: usize, bytes: usize) -> Result<String> {
         text.pop();
     }
     Ok(text)
+}
+
+/// Kept outside owner state so malformed state cannot erase its failure or retry deadline.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct MaintenanceFailure {
+    pub key: String,
+    /// Identity only; never cleanup evidence. Older failures have no identity.
+    #[serde(default)]
+    pub owner: Option<Owner>,
+    pub message: String,
+    pub next_attempt_ms: u64,
+}
+
+pub fn maintenance_failure(
+    root: &Path,
+    key: &str,
+    message: &str,
+    next_attempt_ms: u64,
+) -> Result<()> {
+    let dir = root.join("maintenance-errors");
+    fs::create_dir_all(&dir)?;
+    if dir.is_symlink() {
+        return Err(BackendError::invalid(
+            "maintenance error directory cannot be a symlink",
+        ));
+    }
+    let path = dir.join(format!("{}.json", digest(key.as_bytes())));
+    let journal = Journal { root: root.into() };
+    let owner = journal.owner_identity(key).ok().or_else(|| {
+        let failure = serde_json::from_slice::<MaintenanceFailure>(&read(&path).ok()?).ok()?;
+        if failure.key != key {
+            return None;
+        }
+        failure
+            .owner
+            .filter(|owner| owner.correlation == key && token(&owner.owner))
+    });
+    let failure = MaintenanceFailure {
+        key: key.into(),
+        owner,
+        message: safe(message)?,
+        next_attempt_ms,
+    };
+    atomic(&path, &serde_json::to_vec(&failure)?)
+}
+
+pub fn maintenance_failures(root: &Path) -> Result<Vec<MaintenanceFailure>> {
+    let dir = root.join("maintenance-errors");
+    if !dir.try_exists()? {
+        return Ok(vec![]);
+    }
+    if dir.is_symlink() {
+        return Err(BackendError::invalid(
+            "maintenance error directory cannot be a symlink",
+        ));
+    }
+    let mut failures = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "json")
+        {
+            failures.push(serde_json::from_slice(&read(&path)?)?);
+        }
+    }
+    Ok(failures)
+}
+
+pub fn clear_maintenance_failure(root: &Path, key: &str) -> Result<()> {
+    let dir = root.join("maintenance-errors");
+    let path = dir.join(format!("{}.json", digest(key.as_bytes())));
+    match fs::remove_file(path) {
+        Ok(()) => {
+            File::open(dir)?.sync_all()?;
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+// This lock is independent of the owner transaction lock. Concurrent timer and
+// maintenance scans must agree on the first observation, including after restart.
+fn busy_state(root: &Path, key: &str) -> Result<(std::path::PathBuf, File)> {
+    let dir = root.join("maintenance-busy");
+    fs::create_dir_all(&dir)?;
+    if dir.is_symlink() {
+        return Err(BackendError::invalid(
+            "maintenance busy directory cannot be a symlink",
+        ));
+    }
+    let name = digest(key.as_bytes());
+    let lock_path = dir.join(format!("{name}.lock"));
+    if lock_path.is_symlink() {
+        return Err(BackendError::invalid(
+            "maintenance busy lock cannot be a symlink",
+        ));
+    }
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(lock_path)?;
+    lock.lock()?;
+    Ok((dir.join(format!("{name}.json")), lock))
+}
+
+pub fn maintenance_busy_since(root: &Path, key: &str, now: u64) -> Result<u64> {
+    let (path, _lock) = busy_state(root, key)?;
+    if path.try_exists()? {
+        return Ok(serde_json::from_slice(&read(&path)?)?);
+    }
+    atomic(&path, &serde_json::to_vec(&now)?)?;
+    Ok(now)
+}
+
+pub fn clear_maintenance_busy(root: &Path, key: &str) -> Result<()> {
+    if !root
+        .join("maintenance-busy")
+        .join(format!("{}.json", digest(key.as_bytes())))
+        .try_exists()?
+    {
+        return Ok(());
+    }
+    let (path, _lock) = busy_state(root, key)?;
+    match fs::remove_file(&path) {
+        Ok(()) => {
+            File::open(root.join("maintenance-busy"))?.sync_all()?;
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }

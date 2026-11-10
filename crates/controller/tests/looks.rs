@@ -1839,6 +1839,19 @@ fn closed_looks_regressions(db: &mut support::Database) -> usize {
 }
 
 fn main() {
+    if std::env::args().any(|arg| arg == "--cleanup-maintenance") {
+        let mut db = support::Database::start();
+        cleanup_maintenance_incident_without_delivery(&db.create("cleanup_maintenance"));
+        cleanup_maintenance_busy_owner_does_not_hold_other_incidents(
+            &db.create("cleanup_maintenance_busy_owners"),
+        );
+        cleanup_maintenance_adapter_errors_do_not_block_looks(
+            &db.create("cleanup_maintenance_errors"),
+        );
+        db.stop();
+        return;
+    }
+
     // #766: run the unchanged allowance regressions without the unrelated long suite.
     if std::env::args().any(|arg| arg == "--approval-regressions") {
         let mut db = support::Database::start();
@@ -1999,6 +2012,11 @@ fn main() {
     }
     let mut db = support::Database::start();
     subscription_error_is_isolated(&db.create("subscription_errors"));
+    cleanup_maintenance_incident_without_delivery(&db.create("cleanup_maintenance"));
+    cleanup_maintenance_busy_owner_does_not_hold_other_incidents(
+        &db.create("cleanup_maintenance_busy_owners"),
+    );
+    cleanup_maintenance_adapter_errors_do_not_block_looks(&db.create("cleanup_maintenance_errors"));
     assert_eq!(closed_looks_regressions(&mut db), 0);
     cancelling_github_respects_quota(&db.create("cancel_github_quota"));
     for case in ["brief", "persistent", "forbidden", "webhooks"] {
@@ -2074,7 +2092,7 @@ fn main() {
     settled_looks_are_quiet(&db.create("quiet_timer"));
     println!("test settled_looks_are_quiet ... ok");
     db.stop();
-    println!("48 allowance and incident scenarios passed; no skips");
+    println!("49 allowance and incident scenarios passed; no skips");
 }
 
 struct WaitingMaker {
@@ -2995,4 +3013,260 @@ fn subscription_error_is_isolated(settings: &tl3_config::Store) {
         "repeated failed subscriptions reuse their incident"
     );
     assert_eq!(c.world().unwrap().nodes[0].phase, Phase::Making);
+}
+
+fn cleanup_maintenance_incident_without_delivery(settings: &tl3_config::Store) {
+    struct Maintenance(Rc<Cell<bool>>, Rc<Cell<u64>>, Rc<Cell<bool>>);
+    impl Executor for Maintenance {
+        fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
+            unreachable!("no delivery exists")
+        }
+        fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
+            unreachable!("no delivery exists")
+        }
+        fn next_cleanup_maintenance_ms(&mut self) -> tl3_controller::Result<Option<u64>> {
+            Ok(self.0.get().then(|| self.1.get()))
+        }
+        fn cleanup_maintenance(
+            &mut self,
+            now: u64,
+        ) -> tl3_controller::Result<tl3_controller::run_backend::MaintenanceReport<String>>
+        {
+            self.1.set(now + 300_000);
+            Ok(tl3_controller::run_backend::MaintenanceReport {
+                pending: if self.0.get() && !self.2.get() {
+                    vec!["owner-correlation".into()]
+                } else {
+                    vec![]
+                },
+                skipped_busy: self.2.get(),
+                unobserved: if self.2.get() {
+                    vec!["owner-correlation".into()]
+                } else {
+                    vec![]
+                },
+            })
+        }
+    }
+    let failing = Rc::new(Cell::new(true));
+    let busy = Rc::new(Cell::new(true));
+    let due = Rc::new(Cell::new(1_000_000));
+    let root = tempfile::tempdir().unwrap();
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(
+        Upstream::PrismaBuild,
+        Maintenance(failing.clone(), due, busy.clone()),
+    );
+    let clock = FakeClock::new();
+    let mut c = Controller::open_with_clock(
+        Store::open(settings).unwrap(),
+        registry,
+        bootstrap(),
+        clock.clone(),
+    )
+    .unwrap();
+    assert_eq!(c.next_look_in().unwrap(), Some(Duration::ZERO));
+    c.look_now().unwrap();
+    assert!(
+        !c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "incidents" && r.value["signature"]["class"] == "runtime_cleanup"),
+        "a busy owner must not open an incident"
+    );
+    busy.set(false);
+    for _ in 0..3 {
+        c.look_now().unwrap();
+        let snapshot = c.snapshot().unwrap();
+        let incidents: Vec<_> = snapshot
+            .rows
+            .iter()
+            .filter(|r| {
+                r.table == "incidents" && r.value["signature"]["class"] == "runtime_cleanup"
+            })
+            .collect();
+        assert_eq!(incidents.len(), 1);
+        assert_eq!(incidents[0].value["open"], true);
+        assert_eq!(c.next_look_in().unwrap(), Some(Duration::from_secs(300)));
+        clock.advance(300);
+    }
+    let before_busy = c
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|r| r.table == "incidents" && r.value["signature"]["class"] == "runtime_cleanup")
+        .map(|r| r.value)
+        .collect::<Vec<_>>();
+    busy.set(true);
+    c.look_now().unwrap();
+    let after_busy = c
+        .snapshot()
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter(|r| r.table == "incidents" && r.value["signature"]["class"] == "runtime_cleanup")
+        .map(|r| r.value)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        after_busy, before_busy,
+        "busy owners must not close or update an incident"
+    );
+    busy.set(false);
+    failing.set(false);
+    c.look_now().unwrap();
+    assert!(
+        c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| r.table == "incidents"
+                && r.value["signature"]["class"] == "runtime_cleanup"
+                && r.value["open"] == false)
+    );
+}
+
+fn cleanup_maintenance_busy_owner_does_not_hold_other_incidents(settings: &tl3_config::Store) {
+    struct Maintenance(Rc<Cell<bool>>);
+    impl Executor for Maintenance {
+        fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
+            unreachable!()
+        }
+        fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
+            unreachable!()
+        }
+        fn cleanup_maintenance(
+            &mut self,
+            _: u64,
+        ) -> tl3_controller::Result<tl3_controller::run_backend::MaintenanceReport<String>>
+        {
+            Ok(tl3_controller::run_backend::MaintenanceReport {
+                pending: if self.0.get() {
+                    vec!["persistently-busy-owner".into()]
+                } else {
+                    vec!["persistently-busy-owner".into(), "resolved-owner".into()]
+                },
+                skipped_busy: self.0.get(),
+                unobserved: if self.0.get() {
+                    vec!["persistently-busy-owner".into()]
+                } else {
+                    vec![]
+                },
+            })
+        }
+    }
+    let busy = Rc::new(Cell::new(false));
+    let root = tempfile::tempdir().unwrap();
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(Upstream::PrismaBuild, Maintenance(busy.clone()));
+    let mut c = Controller::open_with_clock(
+        Store::open(settings).unwrap(),
+        registry,
+        bootstrap(),
+        FakeClock::new(),
+    )
+    .unwrap();
+    c.look_now().unwrap();
+    let open_count = |c: &mut Controller| {
+        c.snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .filter(|r| {
+                r.table == "incidents"
+                    && r.value["signature"]["class"] == "runtime_cleanup"
+                    && r.value["open"] == true
+            })
+            .count()
+    };
+    assert_eq!(open_count(&mut c), 2);
+    busy.set(true);
+    c.look_now().unwrap();
+    assert_eq!(
+        open_count(&mut c),
+        1,
+        "one busy owner must not hold another owner's resolved incident open"
+    );
+    assert!(c.snapshot().unwrap().rows.iter().any(|r| {
+        r.table == "incidents"
+            && r.value["open"] == true
+            && r.value["summary"]
+                .as_str()
+                .is_some_and(|summary| summary.contains("persistently held owner lock"))
+    }));
+}
+
+fn cleanup_maintenance_adapter_errors_do_not_block_looks(settings: &tl3_config::Store) {
+    struct Broken;
+    impl Executor for Broken {
+        fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
+            unreachable!()
+        }
+        fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
+            unreachable!()
+        }
+        fn cleanup_maintenance(
+            &mut self,
+            _: u64,
+        ) -> tl3_controller::Result<tl3_controller::run_backend::MaintenanceReport<String>>
+        {
+            Err(tl3_controller::Error::Invalid("broken maintenance adapter"))
+        }
+        fn next_cleanup_maintenance_ms(&mut self) -> tl3_controller::Result<Option<u64>> {
+            Err(tl3_controller::Error::Invalid("broken maintenance timer"))
+        }
+    }
+    struct Healthy(Rc<Cell<u32>>);
+    impl Executor for Healthy {
+        fn execute(&mut self, _: &Delivery) -> tl3_controller::Result<Completion> {
+            unreachable!()
+        }
+        fn reconcile(&mut self, _: &Delivery) -> tl3_controller::Result<Reconciliation> {
+            unreachable!()
+        }
+        fn cleanup_maintenance(
+            &mut self,
+            _: u64,
+        ) -> tl3_controller::Result<tl3_controller::run_backend::MaintenanceReport<String>>
+        {
+            self.0.set(self.0.get() + 1);
+            Ok(tl3_controller::run_backend::MaintenanceReport::default())
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let calls = Rc::new(Cell::new(0));
+    let mut registry = adapters::simulation(root.path()).unwrap();
+    registry.register(Upstream::PrismaBuild, Broken);
+    registry.register(Upstream::Worktrees, Healthy(calls.clone()));
+    let mut c = Controller::open_with_clock(
+        Store::open(settings).unwrap(),
+        registry,
+        bootstrap(),
+        FakeClock::new(),
+    )
+    .unwrap();
+    // A timer error alone must be durable and must supply a future retry.
+    assert!(
+        c.next_look_in()
+            .unwrap()
+            .is_some_and(|delay| delay > Duration::ZERO)
+    );
+    for _ in 0..3 {
+        c.look_now().unwrap();
+    }
+    assert_eq!(
+        calls.get(),
+        3,
+        "a failed adapter must not prevent later adapters"
+    );
+    assert!(
+        c.next_look_in()
+            .unwrap()
+            .is_some_and(|delay| delay > Duration::ZERO)
+    );
+    let snapshot = c.snapshot().unwrap();
+    assert!(snapshot.rows.iter().any(|row| row.table == "incidents"
+        && row.value["open"] == true
+        && row.value["signature"]["class"] == "runtime_cleanup"));
 }

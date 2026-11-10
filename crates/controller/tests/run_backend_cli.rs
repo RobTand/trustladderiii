@@ -1,3 +1,6 @@
+#[path = "../../store/tests/support/mod.rs"]
+mod maintenance_store_support;
+
 use serde_json::{Value, json};
 use std::fs;
 use std::io::Write;
@@ -2760,6 +2763,8 @@ if facts['schema']=='tl3.job_unit_absence_input.v1':
 owned=facts['ownership']
 root=pathlib.Path('/mnt/shared/flux-out/tl3')/owned['owner']['correlation']
 (root/('helper-called-'+owned['execution'])).write_text(json.dumps(facts))
+with (root/('helper-attempts-'+owned['execution'])).open('a') as attempts:
+    attempts.write('attempt\n')
 control=root/('helper-control-'+owned['execution']+'.json')
 control=json.loads(control.read_text()) if control.exists() else {}
 time.sleep(control.get('delay',0))
@@ -4423,7 +4428,7 @@ fn cleanup_transport_separate_cancel_late_writes_preserve_binding_debt_and_termi
         Duration::from_secs(5),
     );
     assert_eq!(progress["progress"]["execution"], "first");
-    // Separate cancel process fsyncs intent and invokes its own bounded cleanup while the first waits.
+    // Separate cancel fsyncs intent while the existing cleanup attempt owns the helper.
     let cancel =
         f.call(json!({"op":"cancel","owner":f.intent.owner,"correlation":f.intent.correlation}));
     assert_eq!(cancel.last().unwrap()["result"]["op"], "cancel");
@@ -4455,8 +4460,19 @@ fn cleanup_transport_separate_cancel_late_writes_preserve_binding_debt_and_termi
         "first cleanup cannot clear the second execution's debt"
     );
     f.cleanup_facts(&second, true);
-    f.call(
-        json!({"op":"cleanup_runtime","owner":f.intent.owner,"correlation":f.intent.correlation}),
+    let due = maintenance_due(&f);
+    let backend = maintenance_backend(&f);
+    backend.cleanup_maintenance(due).unwrap();
+    assert!(
+        !debt.exists(),
+        "cancel during in-flight cleanup guarantees a maintenance attempt after it finishes"
+    );
+    assert_eq!(
+        fs::read_to_string(f.intent.output_dir.join("helper-attempts-second"))
+            .unwrap()
+            .lines()
+            .count(),
+        2
     );
     f.events(&[
         json!({"name":"exception","context":{"type":"cancel","severity":0}}),
@@ -6519,4 +6535,1664 @@ fn x7_terminal_original_mismatch_retains_scratch_debt() {
         "{frames:?}"
     );
     assert!(debt.exists());
+}
+
+fn maintenance_backend(f: &Fixture) -> tl3_controller::adapters::run_backend::flux::Flux {
+    tl3_controller::adapters::run_backend::flux::Flux::new(f.options.clone()).unwrap()
+}
+
+fn maintenance_due(f: &Fixture) -> u64 {
+    maintenance_backend(f)
+        .next_cleanup_maintenance_ms()
+        .unwrap()
+        .expect("an attempted, unproven cleanup must schedule durable maintenance")
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_timeout_recovers_with_positive_evidence() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.cleanup_execution("maintenance-timeout", 'd');
+    f.cleanup_control(
+        &owned.execution,
+        cleanup_limits().native_timeout_seconds + 5,
+    );
+    let frames = f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
+    assert_eq!(
+        frames.last().unwrap()["result"]["cleanup"]["stopped"],
+        false
+    );
+    assert!(!cleanup_debts(&f).is_empty());
+    let due = maintenance_due(&f);
+    f.cleanup_control(&owned.execution, 0);
+    assert!(
+        maintenance_backend(&f)
+            .cleanup_maintenance(due)
+            .unwrap()
+            .pending
+            .is_empty()
+    );
+    assert!(cleanup_debts(&f).is_empty());
+    assert!(!f.state().cleanup_evidence.is_empty());
+    assert!(
+        maintenance_backend(&f)
+            .next_cleanup_maintenance_ms()
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_persistent_failure_never_expires_debt() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.cleanup_execution("maintenance-failing", 'd');
+    f.cleanup_facts(&owned, false);
+    f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
+    for _ in 0..4 {
+        let due = maintenance_due(&f);
+        let backend = maintenance_backend(&f);
+        assert_eq!(
+            backend.cleanup_maintenance(due).unwrap().pending,
+            vec![owned.owner.clone()]
+        );
+        assert!(maintenance_due(&f) > due);
+        assert!(!cleanup_debts(&f).is_empty());
+        assert!(f.state().cleanup_evidence.is_empty());
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_never_sweeps_healthy_begin_launch_debt() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.ownership();
+    let frames = f.call(json!({"op":"begin_container_launch","owner":owned.owner.owner,"correlation":owned.owner.correlation,"launcher":owned}));
+    assert_eq!(frames.last().unwrap()["kind"], "result");
+    let before = cleanup_debts(&f);
+    assert!(!before.is_empty());
+    let backend = maintenance_backend(&f);
+    assert!(backend.next_cleanup_maintenance_ms().unwrap().is_none());
+    assert!(
+        backend
+            .cleanup_maintenance(u64::MAX - 300_000)
+            .unwrap()
+            .pending
+            .is_empty()
+    );
+    assert_eq!(cleanup_debts(&f), before);
+    assert!(
+        !f.intent
+            .output_dir
+            .join(format!("helper-called-{}", owned.execution))
+            .exists()
+    );
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_held_request_dispatches_exactly_once() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.cleanup_execution("held-debtor", 'd');
+    f.cleanup_facts(&owned, false);
+    f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
+    fs::copy(
+        f.intent.output_dir.join("original-jobspec.json"),
+        f.root.path().join("jobspec-fABC.json"),
+    )
+    .unwrap();
+    let mut intent = f.intent.clone();
+    intent.owner = "maintenance-held-owner".into();
+    intent.correlation = format!("{}-maintenance-held", f.intent.correlation);
+    intent.output_dir = Path::new("/mnt/shared/flux-out/tl3").join(&intent.correlation);
+    let backend = maintenance_backend(&f);
+    assert!(backend.submit(f.request.clone(), intent.clone()).is_err());
+    let state_path = f
+        .options
+        .journal_root
+        .join(&intent.correlation)
+        .join("state.json");
+    let state: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    assert_eq!(state["dispatched"], false);
+    assert!(
+        state["held_submission_ms"].is_u64(),
+        "gate-held intent must be explicitly resumable: {state}"
+    );
+    let due = maintenance_due(&f).max(state["held_submission_ms"].as_u64().unwrap());
+    f.cleanup_facts(&owned, true);
+    fs::write(f.root.path().join("submit-id"), "fDEF\n").unwrap();
+    assert!(backend.cleanup_maintenance(due).unwrap().pending.is_empty());
+    backend.cleanup_maintenance(due + 300_000).unwrap();
+    // Maintenance alone must dispatch; an explicit submit would hide a broken resume loop.
+    let state: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    assert_eq!(state["dispatched"], true);
+    assert!(state["held_submission_ms"].is_null());
+    let calls = fs::read_to_string(f.root.path().join("calls")).unwrap();
+    assert_eq!(
+        calls
+            .lines()
+            .filter(|line| line.starts_with("job submit "))
+            .count(),
+        2,
+        "one original, one resumed: {calls}"
+    );
+    fs::remove_dir_all(&intent.output_dir).unwrap();
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_never_resubmits_possible_native_acceptance() {
+    let f = Fixture::new();
+    fs::write(f.root.path().join("mode"), "unknown").unwrap();
+    assert_eq!(f.submit()["kind"], "unknown");
+    assert!(f.state().dispatched);
+    let backend = maintenance_backend(&f);
+    assert!(backend.next_cleanup_maintenance_ms().unwrap().is_none());
+    backend.cleanup_maintenance(u64::MAX - 300_000).unwrap();
+    assert!(matches!(
+        backend.submit(f.request.clone(), f.intent.clone()).unwrap(),
+        Submission::Unknown { .. }
+    ));
+    let calls = fs::read_to_string(f.root.path().join("calls")).unwrap();
+    assert_eq!(
+        calls
+            .lines()
+            .filter(|line| line.starts_with("job submit "))
+            .count(),
+        1,
+        "{calls}"
+    );
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_restart_recovers_durable_attempt_and_serializes_owner() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let first = f.cleanup_execution("restart-first", 'd');
+    let second = f.cleanup_execution("restart-second", 'e');
+    f.cleanup_facts(&first, false);
+    f.cleanup_facts(&second, false);
+    f.call(json!({"op":"cleanup_runtime","owner":first.owner.owner,"correlation":first.owner.correlation}));
+    let due = maintenance_due(&f);
+    // The first pass crashes after advancing its durable claim. A fresh backend
+    // must retain that deadline and retry every remaining execution when due.
+    let path = f
+        .options
+        .journal_root
+        .join(&f.intent.correlation)
+        .join("state.json");
+    let mut state: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    state["cleanup_retry_ms"] = json!(due + 300_000);
+    api::durable::atomic(&path, &serde_json::to_vec(&state).unwrap()).unwrap();
+    f.cleanup_facts(&first, true);
+    f.cleanup_facts(&second, true);
+    f.cleanup_control(&first.execution, 1);
+    fs::remove_file(
+        f.intent
+            .output_dir
+            .join(format!("helper-called-{}", first.execution)),
+    )
+    .unwrap();
+    let backend = maintenance_backend(&f);
+    assert_eq!(
+        backend.next_cleanup_maintenance_ms().unwrap(),
+        Some(due + 300_000)
+    );
+    backend.cleanup_maintenance(due).unwrap();
+    assert!(
+        !f.intent
+            .output_dir
+            .join(format!("helper-called-{}", first.execution))
+            .exists()
+    );
+    let one = backend.clone();
+    let two = backend.clone();
+    let worker = std::thread::spawn(move || one.cleanup_maintenance(due + 300_000).unwrap());
+    wait_until("maintenance helper started", Duration::from_secs(5), || {
+        f.intent
+            .output_dir
+            .join(format!("helper-called-{}", first.execution))
+            .exists()
+    });
+    two.cleanup_maintenance(due + 300_000).unwrap();
+    worker.join().unwrap();
+    assert!(cleanup_debts(&f).is_empty());
+    assert_eq!(f.state().cleanup_evidence.len(), 2);
+    for owned in [&first, &second] {
+        let attempts = fs::read_to_string(
+            f.intent
+                .output_dir
+                .join(format!("helper-attempts-{}", owned.execution)),
+        )
+        .unwrap();
+        assert_eq!(
+            attempts.lines().count(),
+            2,
+            "one failed attempt and one retry per execution"
+        );
+    }
+    assert!(
+        maintenance_backend(&f)
+            .next_cleanup_maintenance_ms()
+            .unwrap()
+            .is_none()
+    );
+}
+
+struct CleanupMaintenanceExecutor(tl3_controller::adapters::run_backend::flux::Flux);
+impl tl3_controller::executor::Executor for CleanupMaintenanceExecutor {
+    fn execute(
+        &mut self,
+        _: &tl3_controller::executor::Delivery,
+    ) -> tl3_controller::Result<tl3_controller::executor::Completion> {
+        unreachable!()
+    }
+    fn reconcile(
+        &mut self,
+        _: &tl3_controller::executor::Delivery,
+    ) -> tl3_controller::Result<tl3_controller::executor::Reconciliation> {
+        unreachable!()
+    }
+    fn cleanup_maintenance(
+        &mut self,
+        now: u64,
+    ) -> tl3_controller::Result<tl3_controller::run_backend::MaintenanceReport<String>> {
+        self.0
+            .cleanup_maintenance(now)
+            .map(|owners| tl3_controller::run_backend::MaintenanceReport {
+                pending: owners
+                    .pending
+                    .into_iter()
+                    .map(|owner| format!("{}:{}", owner.owner, owner.correlation))
+                    .collect(),
+                skipped_busy: owners.skipped_busy,
+                unobserved: owners
+                    .unobserved
+                    .into_iter()
+                    .map(|owner| format!("{}:{}", owner.owner, owner.correlation))
+                    .collect(),
+            })
+            .map_err(|error| tl3_controller::Error::Adapter(Box::new(error)))
+    }
+    fn next_cleanup_maintenance_ms(&mut self) -> tl3_controller::Result<Option<u64>> {
+        self.0
+            .next_cleanup_maintenance_ms()
+            .map_err(|error| tl3_controller::Error::Adapter(Box::new(error)))
+    }
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_corrupt_owner_does_not_block_healthy_owner_or_spin() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.cleanup_execution("isolated-owner", 'd');
+    f.cleanup_facts(&owned, false);
+    f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
+    let due = maintenance_due(&f);
+    let corrupt = f.options.journal_root.join("corrupt-owner");
+    fs::create_dir(&corrupt).unwrap();
+    fs::write(corrupt.join("state.json"), b"{truncated").unwrap();
+    f.cleanup_facts(&owned, true);
+    let backend = maintenance_backend(&f);
+    // Exercise the real Look entry point with the corrupt and healthy backend
+    // records still present together, before any direct maintenance call.
+    let mut database = maintenance_store_support::Database::start();
+    struct Clock(u64);
+    impl tl3_controller::clock::Clock for Clock {
+        fn now(&self) -> std::time::SystemTime {
+            std::time::UNIX_EPOCH + Duration::from_millis(self.0)
+        }
+    }
+    let mut registry = tl3_controller::adapters::simulation(f.root.path()).unwrap();
+    registry.register(
+        tl3_controller::executor::Upstream::PrismaBuild,
+        CleanupMaintenanceExecutor(backend.clone()),
+    );
+    let mut controller = tl3_controller::Controller::open_with_clock(
+        tl3_store::Store::open(&database.create("maintenance_corrupt_owner")).unwrap(),
+        registry,
+        maintenance_controller_bootstrap(),
+        Clock(due),
+    )
+    .unwrap();
+    controller.look_now().unwrap();
+    assert!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "incidents"
+                && row.value["open"] == true
+                && row.value["signature"]["class"] == "runtime_cleanup")
+    );
+    assert!(
+        controller
+            .next_look_in()
+            .unwrap()
+            .is_some_and(|delay| delay > Duration::ZERO)
+    );
+    drop(controller);
+    database.stop();
+    let failures = backend.cleanup_maintenance(due).unwrap().pending;
+    assert!(
+        !failures.is_empty(),
+        "corrupt owner must be reported for an incident"
+    );
+    assert!(
+        cleanup_debts(&f).is_empty(),
+        "healthy owner must still be maintained"
+    );
+    assert!(!f.state().cleanup_evidence.is_empty());
+    assert!(
+        backend
+            .next_cleanup_maintenance_ms()
+            .unwrap()
+            .is_some_and(|next| next > due),
+        "bad owner must back off instead of keeping the timer overdue"
+    );
+    let errors = f.options.journal_root.join("maintenance-errors");
+    assert!(
+        errors.read_dir().unwrap().next().is_some(),
+        "owner errors must survive restart"
+    );
+    let restarted = maintenance_backend(&f);
+    assert!(
+        restarted
+            .next_cleanup_maintenance_ms()
+            .unwrap()
+            .is_some_and(|next| next > due)
+    );
+}
+
+struct MaintenancePermissions(PathBuf);
+impl Drop for MaintenancePermissions {
+    fn drop(&mut self) {
+        let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o700));
+    }
+}
+
+#[derive(Clone, Copy)]
+enum TimerOwnerFault {
+    BusyDirectory,
+    AcquiredBusyDirectory,
+    CorruptLockedRecord,
+}
+
+fn cleanup_timer_owner_error_isolation(fault: TimerOwnerFault) {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.cleanup_execution("timer-healthy-owner", 'd');
+    f.cleanup_facts(&owned, false);
+    f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
+    let backend = maintenance_backend(&f);
+    let clock = std::rc::Rc::new(std::cell::Cell::new(
+        maintenance_due(&f).saturating_sub(300_000),
+    ));
+    struct Clock(std::rc::Rc<std::cell::Cell<u64>>);
+    impl tl3_controller::clock::Clock for Clock {
+        fn now(&self) -> std::time::SystemTime {
+            std::time::UNIX_EPOCH + Duration::from_millis(self.0.get())
+        }
+    }
+    let mut database = maintenance_store_support::Database::start();
+    let mut registry = tl3_controller::adapters::simulation(f.root.path()).unwrap();
+    registry.register(
+        tl3_controller::executor::Upstream::PrismaBuild,
+        CleanupMaintenanceExecutor(backend.clone()),
+    );
+    let mut controller = tl3_controller::Controller::open_with_clock(
+        tl3_store::Store::open(&database.create("maintenance_timer_owner_error")).unwrap(),
+        registry,
+        maintenance_controller_bootstrap(),
+        Clock(clock.clone()),
+    )
+    .unwrap();
+    controller.look_now().unwrap();
+    let healthy_id = format!(
+        "runtime-cleanup:{}",
+        digest(
+            format!(
+                "PrismaBuild:{}:{}",
+                owned.owner.owner, owned.owner.correlation
+            )
+            .as_bytes()
+        )
+    );
+    assert!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "incidents"
+                && row.value["id"] == healthy_id
+                && row.value["open"] == true)
+    );
+    let due = maintenance_due(&f);
+    clock.set(due);
+
+    let key = "timer-broken-owner";
+    let dir = f.options.journal_root.join(key);
+    fs::create_dir(&dir).unwrap();
+    let mut record = f.state();
+    record.intent.correlation = key.into();
+    api::durable::save(&dir, &record).unwrap();
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(dir.join("lock"))
+        .unwrap();
+    let busy_dir = f.options.journal_root.join("maintenance-busy");
+    fs::create_dir_all(&busy_dir).unwrap();
+    let _permissions = MaintenancePermissions(busy_dir.clone());
+    match fault {
+        TimerOwnerFault::BusyDirectory => {
+            lock.lock().unwrap();
+            fs::set_permissions(&busy_dir, fs::Permissions::from_mode(0o555)).unwrap();
+            assert!(
+                fs::OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .open(busy_dir.join("permission-probe"))
+                    .is_err(),
+                "fixture must run as an unprivileged user"
+            );
+        }
+        TimerOwnerFault::AcquiredBusyDirectory => {
+            api::durable::maintenance_busy_since(&f.options.journal_root, key, 0).unwrap();
+            fs::set_permissions(&busy_dir, fs::Permissions::from_mode(0o555)).unwrap();
+            assert!(
+                fs::remove_file(busy_dir.join(format!("{}.json", digest(key.as_bytes())))).is_err(),
+                "fixture must run as an unprivileged user"
+            );
+        }
+        TimerOwnerFault::CorruptLockedRecord => {
+            lock.lock().unwrap();
+            fs::write(dir.join("state.json"), b"{truncated").unwrap();
+        }
+    }
+    assert_eq!(
+        backend
+            .next_cleanup_maintenance_ms()
+            .expect("one owner's timer metadata error must not fail the adapter"),
+        Some(due),
+        "healthy owner's cleanup deadline must remain exact"
+    );
+    let failures = api::durable::maintenance_failures(&f.options.journal_root).unwrap();
+    assert!(
+        failures
+            .iter()
+            .any(|failure| failure.key == key && failure.next_attempt_ms >= due),
+        "timer must retain the owner's failure with a backoff"
+    );
+    // Exercise Registry's timer before the Look: an adapter error here would cache
+    // a 300-second suppression and prevent healthy maintenance and incident closure.
+    controller.next_look_in().unwrap();
+    f.cleanup_facts(&owned, true);
+    controller.look_now().unwrap();
+    assert!(
+        cleanup_debts(&f).is_empty(),
+        "healthy owner must still be maintained"
+    );
+    assert!(!f.state().cleanup_evidence.is_empty());
+    assert!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "incidents"
+                && row.value["id"] == healthy_id
+                && row.value["open"] == false),
+        "healthy owner's incident must close despite another owner's timer error"
+    );
+    // The acquired-record case retains cleanup_retry_ms in its cloned record,
+    // so pending alone cannot prove the metadata error. The retained failure
+    // assertion above is the discriminating check for that case.
+    if !matches!(fault, TimerOwnerFault::AcquiredBusyDirectory) {
+        assert!(
+            !backend.cleanup_maintenance(due).unwrap().pending.is_empty(),
+            "bad owner must remain pending"
+        );
+    }
+    drop(controller);
+    database.stop();
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_timer_unwritable_busy_directory_isolates_owner() {
+    cleanup_timer_owner_error_isolation(TimerOwnerFault::BusyDirectory);
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_timer_acquired_busy_state_error_isolates_owner() {
+    cleanup_timer_owner_error_isolation(TimerOwnerFault::AcquiredBusyDirectory);
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_timer_corrupt_locked_owner_isolates_owner() {
+    cleanup_timer_owner_error_isolation(TimerOwnerFault::CorruptLockedRecord);
+}
+
+fn cleanup_timer_expired_busy_failure_log_backoff(unwritable: bool) {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.cleanup_execution("timer-expired-busy", 'd');
+    f.cleanup_facts(&owned, false);
+    f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(
+            f.options
+                .journal_root
+                .join(&f.intent.correlation)
+                .join("lock"),
+        )
+        .unwrap();
+    lock.lock().unwrap();
+    api::durable::maintenance_busy_since(&f.options.journal_root, &f.intent.correlation, 0)
+        .unwrap();
+    let errors = f.options.journal_root.join("maintenance-errors");
+    if unwritable {
+        fs::write(&errors, b"not a directory").unwrap();
+    } else {
+        fs::create_dir(&errors).unwrap();
+        fs::write(errors.join("unreadable.json"), b"{truncated").unwrap();
+    }
+    let backend = maintenance_backend(&f);
+    for _ in 0..3 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        assert!(!backend.cleanup_maintenance(now).unwrap().pending.is_empty());
+        let next = backend.next_cleanup_maintenance_ms().unwrap().unwrap();
+        assert!(
+            next >= now.saturating_add(300_000),
+            "expired busy owner without a retained failure must back off a full cadence"
+        );
+    }
+    assert!(
+        !cleanup_debts(&f).is_empty(),
+        "timer failures cannot clear debt"
+    );
+    assert!(f.state().cleanup_evidence.is_empty());
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_timer_expired_busy_unwritable_failure_log_backs_off() {
+    cleanup_timer_expired_busy_failure_log_backoff(true);
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_timer_expired_busy_unreadable_failure_log_backs_off() {
+    cleanup_timer_expired_busy_failure_log_backoff(false);
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_initial_attempt_is_durable_before_helper_returns() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.cleanup_execution("initial-claim", 'd');
+    f.cleanup_control(&owned.execution, 1);
+    let (mut child, receive, reader) = f.spawn_operation("cleanup_runtime", 0);
+    recv_within("initial cleanup progress", &receive, Duration::from_secs(5));
+    wait_until("initial helper started", Duration::from_secs(5), || {
+        f.intent
+            .output_dir
+            .join("helper-called-initial-claim")
+            .exists()
+    });
+    let eligible = f.state().cleanup_retry_ms;
+    assert!(child.wait().unwrap().success());
+    reader.join().unwrap();
+    assert!(
+        eligible.is_some(),
+        "a crash during helper I/O must leave durable retry eligibility"
+    );
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_contended_request_is_durable_without_a_helper() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.cleanup_execution("contended", 'd');
+    let backend = maintenance_backend(&f);
+    let journal = api::durable::Journal::new(f.options.journal_root.clone()).unwrap();
+    let lock = journal
+        .operation_lock(&owned.owner, "cleanup-attempt-lock")
+        .unwrap();
+    lock.lock().unwrap();
+    let result = backend.cleanup_runtime(&owned.owner).unwrap();
+    assert!(!result.stopped);
+    assert!(
+        f.state().cleanup_retry_ms.is_some(),
+        "an in-flight lock must not discard a new cleanup request"
+    );
+    assert!(!f.intent.output_dir.join("helper-called-contended").exists());
+    drop(lock);
+    backend.cleanup_maintenance(maintenance_due(&f)).unwrap();
+    assert!(cleanup_debts(&f).is_empty());
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_busy_owner_is_skipped_and_remains_due() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.cleanup_execution("busy-owner", 'd');
+    f.cleanup_facts(&owned, false);
+    f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
+    let due = maintenance_due(&f);
+    f.cleanup_facts(&owned, true);
+    fs::remove_file(f.intent.output_dir.join("helper-called-busy-owner")).unwrap();
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(
+            f.options
+                .journal_root
+                .join(&f.intent.correlation)
+                .join("lock"),
+        )
+        .unwrap();
+    lock.lock().unwrap();
+    let backend = maintenance_backend(&f);
+    let report = backend.cleanup_maintenance(due).unwrap();
+    assert!(report.skipped_busy);
+    let pending = report.pending;
+    let journal = api::durable::Journal::new(f.options.journal_root.clone()).unwrap();
+    assert!(
+        journal
+            .try_transaction(&owned.owner, |_, _| -> api::Result<()> {
+                panic!("a busy claim must not execute its transaction");
+            })
+            .unwrap()
+            .is_none()
+    );
+    let deadline = backend.next_cleanup_maintenance_ms().unwrap();
+    assert!(
+        pending.is_empty(),
+        "contention must not report an incident owner"
+    );
+    assert!(
+        api::durable::maintenance_failures(&f.options.journal_root)
+            .unwrap()
+            .is_empty(),
+        "contention must not count as a maintenance failure, including during timer scans"
+    );
+    assert!(
+        deadline.is_some_and(|next| next <= due),
+        "busy owners need an early retry"
+    );
+    assert_eq!(
+        f.state().cleanup_retry_ms,
+        Some(due),
+        "a skipped owner must not be claimed"
+    );
+    assert!(
+        !f.intent
+            .output_dir
+            .join("helper-called-busy-owner")
+            .exists()
+    );
+    drop(lock);
+    assert_eq!(backend.next_cleanup_maintenance_ms().unwrap(), Some(due));
+    backend.cleanup_maintenance(due).unwrap();
+    assert!(
+        cleanup_debts(&f).is_empty(),
+        "the very next pass must retry the owner"
+    );
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_persistent_busy_owner_survives_restart_and_requires_stop_evidence() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.cleanup_execution("persistent-busy", 'd');
+    f.cleanup_facts(&owned, false);
+    f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
+    let due = maintenance_due(&f);
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(
+            f.options
+                .journal_root
+                .join(&f.intent.correlation)
+                .join("lock"),
+        )
+        .unwrap();
+    lock.lock().unwrap();
+    let backend = maintenance_backend(&f);
+    assert!(backend.cleanup_maintenance(due).unwrap().pending.is_empty());
+    assert!(
+        backend
+            .cleanup_maintenance(due + 299_999)
+            .unwrap()
+            .pending
+            .is_empty()
+    );
+    assert!(
+        api::durable::maintenance_failures(&f.options.journal_root)
+            .unwrap()
+            .is_empty()
+    );
+    drop(backend);
+    // A fresh backend must use the first observation, not restart the grace period.
+    let backend = maintenance_backend(&f);
+    let expired = due + 300_000;
+    let report = backend.cleanup_maintenance(expired).unwrap();
+    assert_eq!(
+        report.pending.len(),
+        1,
+        "a persistently held owner lock must surface"
+    );
+    assert_eq!(report.pending, vec![owned.owner.clone()]);
+    let failures = api::durable::maintenance_failures(&f.options.journal_root).unwrap();
+    assert_eq!(failures.len(), 1);
+    assert!(failures[0].message.contains("persistently held owner lock"));
+    assert_eq!(failures[0].next_attempt_ms, expired + 300_000);
+    assert_eq!(
+        backend.next_cleanup_maintenance_ms().unwrap(),
+        Some(expired + 300_000)
+    );
+    assert_eq!(f.state().cleanup_retry_ms, Some(due));
+    assert!(!cleanup_debts(&f).is_empty());
+    drop(lock);
+    // Acquisition resets the streak, but absence of positive evidence keeps debt pending.
+    assert_eq!(
+        backend.cleanup_maintenance(expired + 1).unwrap().pending,
+        vec![owned.owner.clone()],
+        "acquisition without positive stop evidence must keep the same incident owner pending"
+    );
+    assert!(!cleanup_debts(&f).is_empty());
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(
+            f.options
+                .journal_root
+                .join(&f.intent.correlation)
+                .join("lock"),
+        )
+        .unwrap();
+    lock.lock().unwrap();
+    assert!(
+        backend
+            .cleanup_maintenance(expired + 2)
+            .unwrap()
+            .pending
+            .is_empty()
+    );
+    assert!(
+        backend
+            .cleanup_maintenance(expired + 299_999)
+            .unwrap()
+            .pending
+            .is_empty(),
+        "a new short streak must be silent after successful acquisition"
+    );
+    let failures = api::durable::maintenance_failures(&f.options.journal_root).unwrap();
+    assert!(
+        failures
+            .iter()
+            .all(|failure| !failure.message.contains("persistently held owner lock")),
+        "successful acquisition must reset the busy streak"
+    );
+    drop(lock);
+    f.cleanup_facts(&owned, true);
+    let report = backend.cleanup_maintenance(expired + 300_001).unwrap();
+    assert!(report.pending.is_empty());
+    assert!(cleanup_debts(&f).is_empty());
+    assert!(!f.state().cleanup_evidence.is_empty());
+    assert!(
+        api::durable::maintenance_failures(&f.options.journal_root)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_owner_limit_leaves_remaining_owners_due() {
+    let mut fixtures = Vec::new();
+    for name in ["bounded-first", "bounded-second"] {
+        let mut f = Fixture::new();
+        f.podman(ContainerMode::OwnScope, true);
+        f.submit();
+        let owned = f.cleanup_execution(name, 'd');
+        f.cleanup_facts(&owned, false);
+        f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
+        fs::remove_file(f.intent.output_dir.join(format!("helper-called-{name}"))).unwrap();
+        fixtures.push(f);
+    }
+    let first = &fixtures[0];
+    let second = &fixtures[1];
+    let dir = first.options.journal_root.join(&second.intent.correlation);
+    fs::create_dir(&dir).unwrap();
+    fs::copy(
+        second
+            .options
+            .journal_root
+            .join(&second.intent.correlation)
+            .join("state.json"),
+        dir.join("state.json"),
+    )
+    .unwrap();
+    let due = fixtures.iter().map(maintenance_due).max().unwrap();
+    let backend =
+        maintenance_backend(first).with_cleanup_maintenance_limits(1, Duration::from_secs(5));
+    backend.cleanup_maintenance(due).unwrap();
+    assert_eq!(
+        fixtures
+            .iter()
+            .filter(
+                |f| f.intent.output_dir.read_dir().unwrap().any(|entry| entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("helper-called-"))
+            )
+            .count(),
+        1,
+        "one owner per pass"
+    );
+    assert!(
+        backend
+            .next_cleanup_maintenance_ms()
+            .unwrap()
+            .is_some_and(|next| next <= due),
+        "unattempted owners remain due"
+    );
+    backend.cleanup_maintenance(due).unwrap();
+    assert_eq!(
+        fixtures
+            .iter()
+            .filter(
+                |f| f.intent.output_dir.read_dir().unwrap().any(|entry| entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("helper-called-"))
+            )
+            .count(),
+        2,
+        "next pass reaches remaining owner"
+    );
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_time_budget_stops_between_executions() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let first = f.cleanup_execution("budget-first", 'd');
+    let second = f.cleanup_execution("budget-second", 'e');
+    f.cleanup_facts(&first, false);
+    f.cleanup_facts(&second, false);
+    f.call(json!({"op":"cleanup_runtime","owner":first.owner.owner,"correlation":first.owner.correlation}));
+    let mut later = Fixture::new();
+    // Keep the second owner's full retained identity valid and ordered after the first.
+    later.intent.correlation = format!("{}-later", f.intent.correlation);
+    later.intent.output_dir = Path::new("/mnt/shared/flux-out/tl3").join(&later.intent.correlation);
+    fs::write(
+        later.root.path().join("jobs.json"),
+        json!({"jobs":[{"name":later.intent.correlation,"jobid":"fABC","id":42}]}).to_string(),
+    )
+    .unwrap();
+    later.podman(ContainerMode::OwnScope, true);
+    later.submit();
+    let later_owned = later.cleanup_execution("budget-later-owner", 'd');
+    later.cleanup_facts(&later_owned, false);
+    later.call(json!({"op":"cleanup_runtime","owner":later_owned.owner.owner,"correlation":later_owned.owner.correlation}));
+    let state = later.state();
+    let dir = f.options.journal_root.join(&state.intent.correlation);
+    fs::create_dir(&dir).unwrap();
+    api::durable::save(&dir, &state).unwrap();
+    fs::remove_file(
+        later
+            .intent
+            .output_dir
+            .join("helper-called-budget-later-owner"),
+    )
+    .unwrap();
+    for owned in [&first, &second] {
+        fs::remove_file(
+            f.intent
+                .output_dir
+                .join(format!("helper-called-{}", owned.execution)),
+        )
+        .unwrap();
+        f.cleanup_facts(owned, true);
+    }
+    f.cleanup_control(&first.execution, 2);
+    let before = cleanup_debts(&f);
+    assert_eq!(before.len(), 2);
+    let due = maintenance_due(&f).max(state.cleanup_retry_ms.unwrap());
+    let backend =
+        maintenance_backend(&f).with_cleanup_maintenance_limits(4, Duration::from_millis(500));
+    let started = Instant::now();
+    backend.cleanup_maintenance(due).unwrap();
+    assert!(
+        started.elapsed() >= Duration::from_secs(2),
+        "a started helper keeps its own budget even after the pass budget expires"
+    );
+    assert!(
+        f.state().cleanup_evidence.contains_key(&first.execution),
+        "the running helper must finish and retain positive stop evidence"
+    );
+    assert_eq!(
+        cleanup_debts(&f).len(),
+        1,
+        "the completed execution must retire its own debt"
+    );
+    assert!(!f.state().cleanup_evidence.contains_key(&second.execution));
+    assert!(
+        !f.intent
+            .output_dir
+            .join("helper-called-budget-second")
+            .exists(),
+        "budget exhaustion must not start another execution"
+    );
+    assert!(
+        !later
+            .intent
+            .output_dir
+            .join("helper-called-budget-later-owner")
+            .exists(),
+        "budget exhaustion must not start another owner"
+    );
+    let untouched =
+        serde_json::from_slice::<api::durable::Record>(&fs::read(dir.join("state.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        untouched.cleanup_retry_ms, state.cleanup_retry_ms,
+        "an unstarted owner must remain due without a claim"
+    );
+    assert!(
+        backend
+            .next_cleanup_maintenance_ms()
+            .unwrap()
+            .is_some_and(|next| next <= due)
+    );
+}
+
+fn hold_maintenance_request(f: &mut Fixture) -> SubmissionIntent {
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.cleanup_execution("held-maintenance", 'd');
+    f.cleanup_facts(&owned, false);
+    f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
+    fs::copy(
+        f.intent.output_dir.join("original-jobspec.json"),
+        f.root.path().join("jobspec-fABC.json"),
+    )
+    .unwrap();
+    let mut intent = f.intent.clone();
+    intent.owner = "held-maintenance-owner".into();
+    intent.correlation = format!("{}-held", f.intent.correlation);
+    intent.output_dir = Path::new("/mnt/shared/flux-out/tl3").join(&intent.correlation);
+    assert!(
+        maintenance_backend(f)
+            .submit(f.request.clone(), intent.clone())
+            .is_err()
+    );
+    f.cleanup_facts(&owned, true);
+    intent
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_failed_held_request_is_reported_and_durable() {
+    let mut f = Fixture::new();
+    let intent = hold_maintenance_request(&mut f);
+    let path = f
+        .options
+        .journal_root
+        .join(&intent.correlation)
+        .join("state.json");
+    let mut state: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let spec = PathBuf::from(state["jobspec"]["path"].as_str().unwrap());
+    fs::write(spec, b"changed staged jobspec").unwrap();
+    state["held_submission_ms"] = json!(0);
+    api::durable::atomic(&path, &serde_json::to_vec(&state).unwrap()).unwrap();
+    let backend = maintenance_backend(&f);
+    let due = maintenance_due(&f);
+    let pending = backend.cleanup_maintenance(due).unwrap().pending;
+    assert!(
+        pending
+            .iter()
+            .any(|owner| owner.correlation == intent.correlation),
+        "unresumable request must raise an incident"
+    );
+    assert!(
+        backend
+            .next_cleanup_maintenance_ms()
+            .unwrap()
+            .is_some_and(|next| next > due)
+    );
+    assert!(
+        f.options
+            .journal_root
+            .join("maintenance-errors")
+            .read_dir()
+            .unwrap()
+            .next()
+            .is_some()
+    );
+    let state: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    assert_eq!(state["dispatched"], false);
+    fs::remove_dir_all(&intent.output_dir).unwrap();
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_held_dispatch_requires_upstream_authorization() {
+    let mut f = Fixture::new();
+    let intent = hold_maintenance_request(&mut f);
+    let due = maintenance_due(&f) + 300_000;
+    let calls = std::cell::Cell::new(0);
+    let authorize = |owner: &Owner| {
+        assert_eq!(owner.correlation, intent.correlation);
+        calls.set(calls.get() + 1);
+        Err(BackendError::invalid("fixture epoch superseded"))
+    };
+    let backend = maintenance_backend(&f);
+    let pending = backend
+        .cleanup_maintenance_fenced(due, &authorize)
+        .unwrap()
+        .pending;
+    assert_eq!(
+        calls.get(),
+        1,
+        "resuming a held request must visit the upstream fence"
+    );
+    assert!(
+        pending
+            .iter()
+            .any(|owner| owner.correlation == intent.correlation)
+    );
+    let state: Value = serde_json::from_slice(
+        &fs::read(
+            f.options
+                .journal_root
+                .join(&intent.correlation)
+                .join("state.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(state["dispatched"], false);
+    assert_eq!(
+        fs::read_to_string(f.root.path().join("calls"))
+            .unwrap()
+            .lines()
+            .filter(|line| line.starts_with("job submit "))
+            .count(),
+        1
+    );
+    fs::remove_dir_all(&intent.output_dir).unwrap();
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_terminal_debt_is_loud_without_a_noop_timer() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.cleanup_execution("terminal-debt", 'd');
+    f.cleanup_facts(&owned, false);
+    f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
+    let due = maintenance_due(&f);
+    let path = f
+        .options
+        .journal_root
+        .join(&f.intent.correlation)
+        .join("state.json");
+    let mut state: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    state["terminal"] = json!(Terminal {
+        ending: Ending::InfraLost,
+        reason: "fixture committed infrastructure loss with unresolved cleanup".into(),
+        receipt: BlobRef {
+            path: f.intent.output_dir.join("terminal-receipt.json"),
+            sha256: "a".repeat(64),
+            bytes: 1
+        },
+    });
+    api::durable::atomic(&path, &serde_json::to_vec(&state).unwrap()).unwrap();
+    let backend = maintenance_backend(&f);
+    assert_eq!(
+        backend.cleanup_maintenance(due).unwrap().pending,
+        vec![owned.owner.clone()]
+    );
+    assert!(
+        backend.next_cleanup_maintenance_ms().unwrap().is_none(),
+        "immutable terminal cleanup cannot make progress through retries"
+    );
+    let failures = f
+        .options
+        .journal_root
+        .join("maintenance-errors")
+        .read_dir()
+        .unwrap()
+        .collect::<Vec<_>>();
+    assert_eq!(failures.len(), 1);
+    let failure: Value =
+        serde_json::from_slice(&fs::read(failures[0].as_ref().unwrap().path()).unwrap()).unwrap();
+    assert!(
+        failure["message"]
+            .as_str()
+            .unwrap()
+            .contains("terminal cleanup is immutable")
+    );
+    assert!(!cleanup_debts(&f).is_empty());
+}
+
+// These maintenance faults need only a journal. Keep all paths inside a temp dir;
+// no native runtime, resolver, shared mount or cleanup helper is consulted.
+fn maintenance_temp_backend(root: &Path) -> tl3_controller::adapters::run_backend::flux::Flux {
+    tl3_controller::adapters::run_backend::flux::Flux::new(Options {
+        executable: root.join("unused-flux"),
+        arguments: vec![],
+        environment: [("PATH".into(), "/usr/bin:/bin".into())].into(),
+        instance_file: root.join("unused-INSTANCE"),
+        journal_root: root.join("journal"),
+        bootstrap: HostBootstrap {
+            cli: root.join("unused-bootstrap"),
+            config: root.join("unused-config"),
+        },
+    })
+    .unwrap()
+}
+
+// Deliberately incomplete native cleanup is a retained failure, without invoking
+// a helper or reading runtime artifacts. Every path belongs to this temp journal.
+fn maintenance_temp_record(root: &Path, key: &str) -> api::durable::Record {
+    let request = Request {
+        repo: "fixture/repo".into(),
+        tree: TreeIdentity {
+            head: "a".repeat(40),
+            tree: "b".repeat(40),
+            input_digest: "c".repeat(64),
+            root: root.join("tree"),
+            manifest: root.join("input.json"),
+        },
+        suite: Suite::SelectedCases {
+            membership_digest: "d".repeat(64),
+        },
+        reservation: Reservation {
+            cpus: 1.try_into().unwrap(),
+            gpus: 0,
+            memory_bytes: 1024.try_into().unwrap(),
+            memory_guarantee: MemoryGuarantee::DeclaredOnly,
+            parallelism: 1.try_into().unwrap(),
+            native_threads: 1.try_into().unwrap(),
+        },
+        runner: RunnerIdentity {
+            executable: root.join("runner"),
+            executable_digest: "e".repeat(64),
+            arguments: vec![],
+            manifest: root.join("runner.json"),
+            manifest_digest: "f".repeat(64),
+        },
+        environment: [("PATH".into(), "/usr/bin:/bin".into())].into(),
+        pass_flux_uri: false,
+        runtime: RuntimeIdentity {
+            manifest: root.join("runtime.json"),
+            manifest_digest: "a".repeat(64),
+            runtime: ExecutionRuntime::Native {
+                interpreter: "/usr/bin/python3".into(),
+            },
+            architecture: "x86_64".into(),
+            expected_image: None,
+            preflight: BlobRef {
+                path: root.join("preflight.json"),
+                sha256: "b".repeat(64),
+                bytes: 1,
+            },
+            host_dependency: None,
+            image: None,
+            cleanup: None,
+        },
+        scratch_root: root.join("scratch"),
+        no_progress_seconds: None,
+        walltime_seconds: 60.try_into().unwrap(),
+    };
+    api::durable::Record {
+        intent: SubmissionIntent {
+            backend: BackendTag::Flux,
+            instance: "fixture".into(),
+            uri: "local:///fixture".into(),
+            owner: "prior-owner".into(),
+            correlation: key.into(),
+            request_digest: digest(&serde_json::to_vec(&request).unwrap()),
+            output_dir: root.join("output").join(key),
+        },
+        request,
+        dispatched: true,
+        cleanup_retry_ms: Some(0),
+        held_submission_ms: None,
+        binding: None,
+        cancel_requested: false,
+        events: vec![],
+        terminal: None,
+        runtime_ownerships: vec![],
+        container_launches: Default::default(),
+        cleanup_evidence: Default::default(),
+        jobspec: None,
+        allocation_grant: None,
+        instance_observation: None,
+    }
+}
+
+#[test]
+#[ignore = "run on BuildBuddy as UID 1000; temp paths only"]
+fn cleanup_maintenance_elapsed_failures_do_not_starve_skipped_owner() {
+    cleanup_maintenance_elapsed_failure_fairness(true);
+}
+
+#[test]
+#[ignore = "run on BuildBuddy as UID 1000; temp paths only"]
+fn cleanup_maintenance_oldest_retry_precedes_key_order() {
+    cleanup_maintenance_elapsed_failure_fairness(false);
+}
+
+fn cleanup_maintenance_elapsed_failure_fairness(check_timer: bool) {
+    let root = tempfile::tempdir().unwrap();
+    let backend = maintenance_temp_backend(root.path())
+        .with_cleanup_maintenance_limits(1, Duration::from_secs(5));
+    let journal = root.path().join("journal");
+    for key in ["a-owner", "b-owner"] {
+        let dir = journal.join(key);
+        fs::create_dir(&dir).unwrap();
+        api::durable::save(&dir, &maintenance_temp_record(root.path(), key)).unwrap();
+        api::durable::maintenance_failure(&journal, key, "persistent cleanup failure", 0).unwrap();
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    assert_eq!(backend.cleanup_maintenance(now).unwrap().pending.len(), 2);
+    let failures = api::durable::maintenance_failures(&journal).unwrap();
+    assert_eq!(
+        failures.iter().find(|f| f.key == "b-owner").unwrap().next_attempt_ms,
+        0
+    );
+    if check_timer {
+        assert_eq!(
+            backend.next_cleanup_maintenance_ms().unwrap(),
+            Some(0),
+            "skipped retained failure must remain immediately due"
+        );
+    }
+    // Even if the next Look is delayed until A is due again, B must go first.
+    backend.cleanup_maintenance(now + 300_000).unwrap();
+    let journal = api::durable::Journal::new(journal).unwrap();
+    for (key, due) in [("a-owner", now + 300_000), ("b-owner", now + 600_000)] {
+        let owner = Owner {
+            owner: "prior-owner".into(),
+            correlation: key.into(),
+        };
+        assert_eq!(
+            journal.load(&owner).unwrap().cleanup_retry_ms,
+            Some(due),
+            "oldest due owner must be attempted within two capped passes"
+        );
+    }
+    for failure in api::durable::maintenance_failures(&root.path().join("journal")).unwrap() {
+        assert!(failure.message.contains(
+            "independent trusted runtime cleanup entry unavailable"
+        ));
+    }
+}
+
+#[test]
+#[ignore = "run on BuildBuddy as UID 1000; temp paths only"]
+fn cleanup_maintenance_budget_exhaustion_keeps_skipped_failure_due() {
+    let root = tempfile::tempdir().unwrap();
+    let backend = maintenance_temp_backend(root.path())
+        .with_cleanup_maintenance_limits(4, Duration::from_secs(5));
+    let journal = root.path().join("journal");
+    for key in ["a-owner", "b-owner"] {
+        let mut record = maintenance_temp_record(root.path(), key);
+        record.dispatched = false;
+        record.cleanup_retry_ms = None;
+        record.held_submission_ms = Some(0);
+        let dir = journal.join(key);
+        fs::create_dir(&dir).unwrap();
+        api::durable::save(&dir, &record).unwrap();
+        api::durable::maintenance_failure(&journal, key, "persistent held failure", 0).unwrap();
+    }
+    let calls = std::cell::RefCell::new(Vec::new());
+    let authorize = |owner: &Owner| {
+        calls.borrow_mut().push(owner.correlation.clone());
+        // A real operation crosses the configured pass budget, without native I/O.
+        std::thread::sleep(Duration::from_millis(5_100));
+        Err(BackendError::invalid("fixture held authorization refused"))
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    backend.cleanup_maintenance_fenced(now, &authorize).unwrap();
+    assert_eq!(*calls.borrow(), vec!["a-owner"]);
+    assert_eq!(
+        backend.next_cleanup_maintenance_ms().unwrap(),
+        Some(0),
+        "budget-skipped retained failure must remain immediately due"
+    );
+    backend
+        .cleanup_maintenance_fenced(now + 300_000, &authorize)
+        .unwrap();
+    assert_eq!(
+        *calls.borrow(),
+        vec!["a-owner", "b-owner"],
+        "budget-limited passes must attempt the oldest owner within two passes"
+    );
+}
+
+#[test]
+#[ignore = "run on BuildBuddy as UID 1000; temp paths only"]
+fn cleanup_maintenance_failure_identity_must_match_recorded_key() {
+    let root = tempfile::tempdir().unwrap();
+    let backend = maintenance_temp_backend(root.path());
+    let journal = root.path().join("journal");
+    let key = "corrupt-owner";
+    let dir = journal.join(key);
+    fs::create_dir(&dir).unwrap();
+    fs::write(dir.join("state.json"), b"{truncated").unwrap();
+    api::durable::maintenance_failure(&journal, key, "retained failure", 0).unwrap();
+    let failure = journal
+        .join("maintenance-errors")
+        .join(format!("{}.json", digest(key.as_bytes())));
+    let mut bytes: Value = serde_json::from_slice(&fs::read(&failure).unwrap()).unwrap();
+    bytes["owner"] = json!({"owner":"different-owner", "correlation":"different-key"});
+    fs::write(&failure, serde_json::to_vec(&bytes).unwrap()).unwrap();
+    let report = backend.cleanup_maintenance(1).unwrap();
+    assert_eq!(
+        report.pending,
+        vec![Owner {
+            owner: "maintenance-error".into(),
+            correlation: key.into(),
+        }],
+        "a mismatched retained identity must not keep another owner's incident open"
+    );
+}
+
+#[test]
+#[ignore = "run on BuildBuddy as UID 1000; temp paths only"]
+fn cleanup_maintenance_elapsed_readonly_failure_backs_off_after_pass() {
+    let root = tempfile::tempdir().unwrap();
+    let backend = maintenance_temp_backend(root.path());
+    let journal = root.path().join("journal");
+    let key = "corrupt-owner";
+    let dir = journal.join(key);
+    fs::create_dir(&dir).unwrap();
+    fs::write(dir.join("state.json"), b"{truncated").unwrap();
+    api::durable::maintenance_failure(&journal, key, "retained failure", 0).unwrap();
+    let errors = journal.join("maintenance-errors");
+    let _permissions = MaintenancePermissions(errors.clone());
+    fs::set_permissions(&errors, fs::Permissions::from_mode(0o555)).unwrap();
+    let probe = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(errors.join("permission-probe"))
+        .unwrap_err();
+    assert_eq!(probe.kind(), std::io::ErrorKind::PermissionDenied);
+    assert_eq!(backend.next_cleanup_maintenance_ms().unwrap(), Some(0));
+    for _ in 0..3 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        assert!(!backend.cleanup_maintenance(now).unwrap().pending.is_empty());
+        assert!(
+            backend
+                .clone()
+                .next_cleanup_maintenance_ms()
+                .unwrap()
+                .unwrap()
+                >= now + 300_000,
+            "elapsed unrewritable failure must back off from the last maintenance pass"
+        );
+        assert_eq!(
+            api::durable::maintenance_failures(&journal).unwrap()[0].next_attempt_ms,
+            0
+        );
+    }
+    assert_eq!(
+        maintenance_temp_backend(root.path())
+            .next_cleanup_maintenance_ms()
+            .unwrap(),
+        Some(0),
+        "restart must promptly report retained elapsed failure"
+    );
+    assert_eq!(fs::read(dir.join("state.json")).unwrap(), b"{truncated");
+}
+
+#[test]
+#[ignore = "run on BuildBuddy as UID 1000; temp paths and isolated Postgres only"]
+fn cleanup_maintenance_unreadable_locked_identity_keeps_prior_incident() {
+    cleanup_maintenance_prior_incident(0);
+}
+
+#[test]
+#[ignore = "run on BuildBuddy as UID 1000; temp paths and isolated Postgres only"]
+fn cleanup_maintenance_held_only_busy_metadata_keeps_prior_incident() {
+    cleanup_maintenance_prior_incident(1);
+}
+
+#[test]
+#[ignore = "run on BuildBuddy as UID 1000; temp paths and isolated Postgres only"]
+fn cleanup_maintenance_held_only_corrupt_failure_keeps_prior_incident() {
+    cleanup_maintenance_prior_incident(2);
+}
+
+fn cleanup_maintenance_prior_incident(source: u8) {
+    struct PriorIncident {
+        backend: CleanupMaintenanceExecutor,
+        prior: Option<String>,
+    }
+    impl tl3_controller::executor::Executor for PriorIncident {
+        fn execute(
+            &mut self,
+            _: &tl3_controller::executor::Delivery,
+        ) -> tl3_controller::Result<tl3_controller::executor::Completion> {
+            unreachable!()
+        }
+        fn reconcile(
+            &mut self,
+            _: &tl3_controller::executor::Delivery,
+        ) -> tl3_controller::Result<tl3_controller::executor::Reconciliation> {
+            unreachable!()
+        }
+        fn cleanup_maintenance(
+            &mut self,
+            now: u64,
+        ) -> tl3_controller::Result<api::MaintenanceReport<String>> {
+            if let Some(owner) = self.prior.take() {
+                // Seed the real incident from the preceding known-owner pass.
+                return Ok(api::MaintenanceReport {
+                    pending: vec![owner],
+                    skipped_busy: false,
+                    unobserved: vec![],
+                });
+            }
+            tl3_controller::executor::Executor::cleanup_maintenance(&mut self.backend, now)
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let backend = maintenance_temp_backend(root.path());
+    let journal = root.path().join("journal");
+    let key = "identity-lost-owner";
+    let owner = "prior-owner";
+    let intent = SubmissionIntent {
+        backend: BackendTag::Flux,
+        instance: "fixture".into(),
+        uri: "local:///fixture".into(),
+        owner: owner.into(),
+        correlation: key.into(),
+        request_digest: "a".repeat(64),
+        output_dir: root.path().join("unused-output"),
+    };
+    let dir = journal.join(key);
+    fs::create_dir(&dir).unwrap();
+    let debt = journal
+        .join("cleanup-debt")
+        .join("a".repeat(64))
+        .join(format!("{key}.scratch"));
+    let retained = serde_json::to_vec(&intent).unwrap();
+    if source == 0 {
+        fs::create_dir_all(debt.parent().unwrap()).unwrap();
+        fs::write(&debt, &retained).unwrap();
+        fs::write(dir.join("state.json"), b"{truncated").unwrap();
+    } else {
+        let mut record = maintenance_temp_record(root.path(), key);
+        record.dispatched = false;
+        record.cleanup_retry_ms = None;
+        record.held_submission_ms = Some(0);
+        api::durable::save(&dir, &record).unwrap();
+        if source == 1 {
+            // busy_owner fails before its identity lookup; state is still readable.
+            fs::write(journal.join("maintenance-busy"), b"not a directory").unwrap();
+        } else {
+            // Retain identity while state is readable, then lose state entirely.
+            api::durable::maintenance_failure(&journal, key, "held authorization refused", 0)
+                .unwrap();
+            fs::write(dir.join("state.json"), b"{truncated").unwrap();
+        }
+        assert!(!journal.join("cleanup-debt").exists());
+    }
+    let lock = fs::OpenOptions::new()
+        .create_new(true)
+        .read(true)
+        .write(true)
+        .open(dir.join("lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let mut database = maintenance_store_support::Database::start();
+    let mut registry = tl3_controller::adapters::simulation(root.path()).unwrap();
+    registry.register(
+        tl3_controller::executor::Upstream::PrismaBuild,
+        PriorIncident {
+            backend: CleanupMaintenanceExecutor(backend.clone()),
+            prior: Some(format!("{owner}:{key}")),
+        },
+    );
+    let mut controller = tl3_controller::Controller::open(
+        tl3_store::Store::open(&database.create("maintenance_identity_lost")).unwrap(),
+        registry,
+        maintenance_controller_bootstrap(),
+    )
+    .unwrap();
+    let id = format!(
+        "runtime-cleanup:{}",
+        digest(format!("PrismaBuild:{owner}:{key}").as_bytes())
+    );
+    controller.look_now().unwrap();
+    assert!(
+        controller.snapshot().unwrap().rows.iter().any(|row| {
+            row.table == "incidents" && row.value["id"] == id && row.value["open"] == true
+        }),
+        "prior real incident must be open before the unreadable-owner pass"
+    );
+    println!("ROUND7_IDENTITY_CONTROLLER_OPEN");
+    for _ in 0..3 {
+        controller.look_now().unwrap();
+        let snapshot = controller.snapshot().unwrap();
+        assert!(
+            snapshot.rows.iter().any(|row| {
+                row.table == "incidents" && row.value["id"] == id && row.value["open"] == true
+            }),
+            "unreadable locked identity must keep the prior real incident open"
+        );
+        let diagnostic = format!(
+            "runtime-cleanup:{}",
+            digest(format!("PrismaBuild:maintenance-error:{key}").as_bytes())
+        );
+        assert!(
+            snapshot.rows.iter()
+                .filter(|row| row.table == "incidents" && row.value["open"] == true)
+                .all(|row| row.value["id"] == id || row.value["id"] == diagnostic),
+            "identity recovery must not keep an incident for a different owner"
+        );
+    }
+    if source == 0 {
+        assert_eq!(
+            fs::read(&debt).unwrap(),
+            retained,
+            "identity recovery cannot change debt"
+        );
+    } else {
+        assert!(!journal.join("cleanup-debt").exists());
+    }
+    drop(controller);
+    database.stop();
+}
+
+fn maintenance_controller_bootstrap() -> tl3_controller::Bootstrap {
+    tl3_controller::Bootstrap {
+        repos: vec![tl3_controller::Repository {
+            owner: "owner".into(),
+            name: "sandbox".into(),
+            installation: 3,
+        }],
+        rob: 42,
+        slots: 1,
+        pool: 1,
+        fail_fast: false,
+        operations: None,
+    }
+}
+
+#[test]
+fn cleanup_maintenance_controller_bootstrap_has_valid_world() {
+    assert_eq!(
+        tl3_kernel::World::new(&[], 1).check(),
+        Err(tl3_kernel::Broken::Config),
+        "empty repositories create empty gates, rejected as Broken::Config"
+    );
+    let bootstrap = maintenance_controller_bootstrap();
+    let world = tl3_kernel::World::new(
+        &vec![bootstrap.slots; bootstrap.repos.len()],
+        bootstrap.pool,
+    );
+    assert_eq!(
+        world.check(),
+        Ok(()),
+        "maintenance fixture bootstrap must pass World::check"
+    );
+    assert!(world.is_settled());
 }

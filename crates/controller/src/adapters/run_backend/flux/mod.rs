@@ -3,6 +3,7 @@ mod cleanup;
 mod evidence;
 mod launch_failure;
 mod lifecycle;
+mod maintenance;
 mod placement;
 mod process;
 mod progress;
@@ -26,9 +27,32 @@ pub struct Flux {
     options: Options,
     journal: Journal,
     stop: WatchStop,
+    maintenance_owners: usize,
+    maintenance_budget: std::time::Duration,
+    maintenance_busy_bound_ms: u64,
+    native_deadline: Option<std::time::Instant>,
+    maintenance_now_ms: Option<u64>,
+    maintenance_state: std::sync::Arc<std::sync::Mutex<maintenance::MaintenanceState>>,
 }
 
 impl Flux {
+    /// Bound new work per pass; started commands retain their normal deadlines.
+    pub fn with_cleanup_maintenance_limits(
+        mut self,
+        owners: usize,
+        budget: std::time::Duration,
+    ) -> Self {
+        self.maintenance_owners = owners.max(1);
+        self.maintenance_budget = budget.max(std::time::Duration::from_millis(1));
+        self
+    }
+
+    /// Grace period for owner transaction contention, persisted outside the owner lock.
+    pub fn with_cleanup_maintenance_busy_bound(mut self, bound: std::time::Duration) -> Self {
+        self.maintenance_busy_bound_ms = bound.as_millis().clamp(1, u64::MAX as u128) as u64;
+        self
+    }
+
     pub fn new(options: Options) -> Result<Self> {
         validate::options(&options)?;
         let journal = Journal::new(options.journal_root.clone())?;
@@ -36,6 +60,12 @@ impl Flux {
             options,
             journal,
             stop: WatchStop::default(),
+            maintenance_owners: 4,
+            maintenance_budget: std::time::Duration::from_secs(5),
+            maintenance_busy_bound_ms: maintenance::CADENCE_MS,
+            native_deadline: None,
+            maintenance_now_ms: None,
+            maintenance_state: Default::default(),
         })
     }
 
@@ -300,12 +330,35 @@ impl RunBackend for Flux {
     ) -> Result<ContainerLaunchBinding> {
         self.bind_launch(owner, observed)
     }
+    fn cleanup_maintenance(&self, now_ms: u64) -> Result<MaintenanceReport<Owner>> {
+        self.maintain_cleanup(now_ms, &|_| Ok(()))
+    }
+    fn cleanup_maintenance_fenced(
+        &self,
+        now_ms: u64,
+        authorize: &dyn Fn(&Owner) -> Result<()>,
+    ) -> Result<MaintenanceReport<Owner>> {
+        self.maintain_cleanup(now_ms, authorize)
+    }
+    fn next_cleanup_maintenance_ms(&self) -> Result<Option<u64>> {
+        self.cleanup_deadline()
+    }
     fn submit(&self, request: Request, intent: SubmissionIntent) -> Result<Submission> {
         validate::request(&request, &intent, &self.options)?;
         let owner = Owner {
             owner: intent.owner.clone(),
             correlation: intent.correlation.clone(),
         };
+        let submission_lock = self.journal.operation_lock(&owner, "submission-lock")?;
+        if self.native_deadline.is_some() {
+            submission_lock.try_lock().map_err(|_| {
+                BackendError::unknown(
+                    "held submission is already in flight or its lock is unavailable",
+                )
+            })?;
+        } else {
+            submission_lock.lock()?;
+        }
         let (record, fresh) = self.journal.transaction(&owner, |dir, existing| {
             if let Some(record) = existing {
                 if record.request != request || record.intent != intent {
@@ -320,6 +373,8 @@ impl RunBackend for Flux {
                 request,
                 intent,
                 dispatched: false,
+                cleanup_retry_ms: None,
+                held_submission_ms: None,
                 binding: None,
                 cancel_requested: false,
                 events: vec![],
@@ -340,6 +395,20 @@ impl RunBackend for Flux {
         }
         if let Some(terminal) = record.terminal {
             return Ok(Submission::Refused { terminal });
+        }
+        if !fresh
+            && record.held_submission_ms.is_some()
+            && !record.dispatched
+            && !record.cancel_requested
+        {
+            let spec = record
+                .jobspec
+                .clone()
+                .ok_or_else(|| BackendError::unknown("held submission lacks prepared jobspec"))?;
+            // The staged tree and runtime may have changed while dispatch was held.
+            validate::preflight_bounded(&record.request, Some(self))?;
+            checked_blob(&spec, &record.intent.output_dir)?;
+            return self.dispatch_prepared(&owner, &record, spec);
         }
         if !fresh {
             return Ok(Submission::Unknown {
@@ -411,108 +480,7 @@ impl RunBackend for Flux {
             &serde_json::to_vec(&spec)?,
         )?;
         validate::trusted_artifacts(&record.request)?;
-        self.journal.runtime_gate(|debts| {
-            if debts.join(&record.request.runtime.manifest_digest).exists()
-                && std::fs::read_dir(debts.join(&record.request.runtime.manifest_digest))?
-                    .next()
-                    .is_some()
-            {
-                return Err(BackendError::unknown(
-                    "unresolved runtime cleanup debt; dispatch held",
-                ));
-            }
-            self.journal.transaction(&owner, |dir, current| {
-                let mut current =
-                    current.ok_or_else(|| BackendError::unknown("intent disappeared"))?;
-                if current.cancel_requested {
-                    return Err(BackendError::unknown(
-                        "cancel intent arrived before dispatch; submission held",
-                    ));
-                }
-                current.jobspec = Some(spec);
-                current.dispatched = true;
-                save(dir, &current)
-            })
-        })?;
-        let args = vec![
-            "job".into(),
-            "submit".into(),
-            record
-                .intent
-                .output_dir
-                .join("original-jobspec.json")
-                .to_string_lossy()
-                .into_owned(),
-        ];
-        let reply = match self.capture_owned(&args) {
-            Ok(reply) => reply,
-            Err(_) => {
-                return Ok(Submission::Unknown {
-                    reason: "submit transport failed after dispatch; reconcile original jobspec"
-                        .into(),
-                });
-            }
-        };
-        let id = std::str::from_utf8(&reply.stdout)
-            .ok()
-            .map(str::trim)
-            .and_then(|id| canonical_job_id(id).ok());
-        let binding = if reply.success
-            && let Some(id) = id
-        {
-            let binding = RunBinding {
-                id: BackendId {
-                    backend: BackendTag::Flux,
-                    instance: record.intent.instance.clone(),
-                    uri: record.intent.uri.clone(),
-                    job: id,
-                },
-                intent: record.intent.clone(),
-            };
-            // First durable operation after a successful ID: file sync, rename, directory sync.
-            self.journal.transaction(&owner, |dir, current| {
-                let mut current =
-                    current.ok_or_else(|| BackendError::unknown("intent disappeared"))?;
-                if current
-                    .binding
-                    .as_ref()
-                    .is_some_and(|existing| existing != &binding)
-                {
-                    return Err(BackendError::unknown(
-                        "submit ID conflicts with concurrently recovered binding",
-                    ));
-                }
-                if current
-                    .runtime_ownerships
-                    .iter()
-                    .any(|owned| owned.run != binding.id)
-                {
-                    return Err(BackendError::unknown(
-                        "binding conflicts with retained runtime ownership",
-                    ));
-                }
-                current.binding = Some(binding.clone());
-                save(dir, &current)
-            })?;
-            Some(binding)
-        } else {
-            None
-        };
-        blob(
-            &record.intent.output_dir.join("submit.stderr"),
-            safe(&String::from_utf8_lossy(&reply.stderr))?.as_bytes(),
-        )?;
-        blob(
-            &record.intent.output_dir.join("submit-status.json"),
-            &serde_json::to_vec(&reply.status)?,
-        )?;
-        Ok(match binding {
-            Some(binding) => Submission::Accepted { binding },
-            None => Submission::Unknown {
-                reason: "submit did not establish an ID; nonzero exit is not proof of refusal"
-                    .into(),
-            },
-        })
+        self.dispatch_prepared(&owner, &record, spec)
     }
 
     fn attach(
@@ -836,5 +804,137 @@ impl Flux {
             });
         }
         self.collect(owner, binding)
+    }
+}
+
+impl Flux {
+    /// Caller holds the per-owner submission lock across preparation and native I/O.
+    fn dispatch_prepared(
+        &self,
+        owner: &Owner,
+        record: &Record,
+        spec: BlobRef,
+    ) -> Result<Submission> {
+        self.journal.runtime_gate(|debts| {
+            if debts.join(&record.request.runtime.manifest_digest).exists()
+                && std::fs::read_dir(debts.join(&record.request.runtime.manifest_digest))?
+                    .next()
+                    .is_some()
+            {
+                self.journal.transaction(owner, |dir, current| {
+                    let mut current =
+                        current.ok_or_else(|| BackendError::unknown("intent disappeared"))?;
+                    if !current.dispatched && !current.cancel_requested {
+                        current.jobspec = Some(spec.clone());
+                        current.held_submission_ms =
+                            Some(current.held_submission_ms.unwrap_or(0).max(
+                                maintenance::now_ms().saturating_add(maintenance::CADENCE_MS),
+                            ));
+                        save(dir, &current)?;
+                    }
+                    Ok(())
+                })?;
+                return Err(BackendError::unknown(
+                    "unresolved runtime cleanup debt; dispatch held",
+                ));
+            }
+            self.journal.transaction(owner, |dir, current| {
+                let mut current =
+                    current.ok_or_else(|| BackendError::unknown("intent disappeared"))?;
+                if current.cancel_requested {
+                    return Err(BackendError::unknown(
+                        "cancel intent arrived before dispatch; submission held",
+                    ));
+                }
+                if current.dispatched || current.binding.is_some() || current.terminal.is_some() {
+                    return Err(BackendError::unknown(
+                        "native dispatch already possible; never resubmit",
+                    ));
+                }
+                current.jobspec = Some(spec);
+                current.held_submission_ms = None;
+                current.dispatched = true;
+                save(dir, &current)
+            })
+        })?;
+        let args = vec![
+            "job".into(),
+            "submit".into(),
+            record
+                .intent
+                .output_dir
+                .join("original-jobspec.json")
+                .to_string_lossy()
+                .into_owned(),
+        ];
+        let reply = match self.capture_owned(&args) {
+            Ok(reply) => reply,
+            Err(_) => {
+                return Ok(Submission::Unknown {
+                    reason: "submit transport failed after dispatch; reconcile original jobspec"
+                        .into(),
+                });
+            }
+        };
+        let id = std::str::from_utf8(&reply.stdout)
+            .ok()
+            .map(str::trim)
+            .and_then(|id| canonical_job_id(id).ok());
+        let binding = if reply.success
+            && let Some(id) = id
+        {
+            let binding = RunBinding {
+                id: BackendId {
+                    backend: BackendTag::Flux,
+                    instance: record.intent.instance.clone(),
+                    uri: record.intent.uri.clone(),
+                    job: id,
+                },
+                intent: record.intent.clone(),
+            };
+            // First durable operation after a successful ID: file sync, rename, directory sync.
+            self.journal.transaction(owner, |dir, current| {
+                let mut current =
+                    current.ok_or_else(|| BackendError::unknown("intent disappeared"))?;
+                if current
+                    .binding
+                    .as_ref()
+                    .is_some_and(|existing| existing != &binding)
+                {
+                    return Err(BackendError::unknown(
+                        "submit ID conflicts with concurrently recovered binding",
+                    ));
+                }
+                if current
+                    .runtime_ownerships
+                    .iter()
+                    .any(|owned| owned.run != binding.id)
+                {
+                    return Err(BackendError::unknown(
+                        "binding conflicts with retained runtime ownership",
+                    ));
+                }
+                current.binding = Some(binding.clone());
+                save(dir, &current)
+            })?;
+            Some(binding)
+        } else {
+            None
+        };
+        blob(
+            &record.intent.output_dir.join("submit.stderr"),
+            safe(&String::from_utf8_lossy(&reply.stderr))?.as_bytes(),
+        )?;
+        blob(
+            &record.intent.output_dir.join("submit-status.json"),
+            &serde_json::to_vec(&reply.status)?,
+        )?;
+        Ok(match binding {
+            Some(binding) => Submission::Accepted { binding },
+            None => Submission::Unknown {
+                reason: "submit did not establish an ID; nonzero exit is not proof of refusal"
+                    .into(),
+            },
+        })
     }
 }

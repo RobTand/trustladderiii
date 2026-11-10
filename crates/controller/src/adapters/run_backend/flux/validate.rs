@@ -275,6 +275,23 @@ pub(super) fn placement(placement: &Placement) -> Result<()> {
 }
 
 pub(super) fn preflight(request: &Request) -> Result<()> {
+    preflight_bounded(request, None)
+}
+
+pub(super) fn preflight_bounded(request: &Request, backend: Option<&Flux>) -> Result<()> {
+    let budget = || {
+        if backend
+            .and_then(|backend| backend.native_deadline)
+            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+        {
+            Err(BackendError::unknown(
+                "maintenance budget exhausted during staged input validation",
+            ))
+        } else {
+            Ok(())
+        }
+    };
+    budget()?;
     trusted_artifacts(request)?;
     placement(&request.runtime.placement())?;
     if request.reservation.memory_guarantee == MemoryGuarantee::RequireAdmission {
@@ -324,6 +341,7 @@ pub(super) fn preflight(request: &Request) -> Result<()> {
     let root = std::fs::canonicalize(&request.tree.root)?;
     let mut paths = BTreeSet::new();
     for file in manifest.files {
+        budget()?;
         if file.path.is_absolute()
             || file
                 .path
@@ -346,18 +364,26 @@ pub(super) fn preflight(request: &Request) -> Result<()> {
         }
     }
     let git = |args: &[&str]| -> Result<Vec<u8>> {
-        let output = std::process::Command::new("/usr/bin/git")
+        budget()?;
+        let mut command = std::process::Command::new("/usr/bin/git");
+        command
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
             .env("GIT_OPTIONAL_LOCKS", "0")
             .arg("-C")
             .arg(&root)
-            .args(args)
-            .output()?;
-        if !output.status.success() || output.stdout.len() > MAX_BYTES {
+            .args(args);
+        let (success, stdout) = if let Some(backend) = backend {
+            let output = backend.capture_command(command, None)?;
+            (output.success, output.stdout)
+        } else {
+            let output = command.output()?;
+            (output.status.success(), output.stdout)
+        };
+        if !success || stdout.len() > MAX_BYTES {
             return Err(BackendError::invalid("staged Git identity unavailable"));
         }
-        Ok(output.stdout)
+        Ok(stdout)
     };
     if git(&["rev-parse", "HEAD"])?.strip_suffix(b"\n") != Some(request.tree.head.as_bytes())
         || git(&["rev-parse", "HEAD^{tree}"])?.strip_suffix(b"\n")

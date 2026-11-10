@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tl3_kernel::{Ack, EffectKind, Event, HeadId, NodeId, Notice};
 
-use crate::Result;
+use crate::{Result, run_backend::MaintenanceReport};
 
 /// Boundary conversion for the dependency-free delivery machine.
 pub(crate) fn delivery_state(state: tl3_store::EffectState) -> tl3_delivery::State {
@@ -408,6 +408,15 @@ pub enum Reconciliation {
 /// Implementations fence epochs at their upstream boundary. Unknown outcomes
 /// remain pending; only the upstream can establish absence or a terminal result.
 pub trait Executor {
+    /// Controller-owned maintenance runs even without a delivery allowance.
+    /// Return the stable keys of every outstanding cleanup failure.
+    fn cleanup_maintenance(&mut self, _now_ms: u64) -> Result<MaintenanceReport<String>> {
+        Ok(MaintenanceReport::default())
+    }
+    fn next_cleanup_maintenance_ms(&mut self) -> Result<Option<u64>> {
+        Ok(None)
+    }
+
     fn input_incident(
         &mut self,
         _notice: &crate::input_errors::IncidentNotice,
@@ -614,9 +623,71 @@ pub fn upstream(output: Output) -> Upstream {
 }
 
 #[derive(Default)]
-pub struct Registry(std::collections::BTreeMap<Upstream, Box<dyn Executor>>);
+pub struct Registry(
+    std::collections::BTreeMap<Upstream, Box<dyn Executor>>,
+    std::collections::BTreeMap<Upstream, (u64, String)>,
+);
+
+pub(crate) type CleanupMaintenance = Vec<(
+    Upstream,
+    std::result::Result<MaintenanceReport<String>, String>,
+)>;
 
 impl Registry {
+    pub(crate) fn next_cleanup_maintenance_ms(&mut self, now: u64) -> Option<u64> {
+        let mut due = None;
+        for (upstream, adapter) in &mut self.0 {
+            let deadline =
+                if let Some((retry, _)) = self.1.get(upstream).filter(|(retry, _)| *retry > now) {
+                    Some(*retry)
+                } else {
+                    match adapter.next_cleanup_maintenance_ms() {
+                        Ok(deadline) => deadline,
+                        Err(error) => {
+                            let retry = now.saturating_add(300_000);
+                            self.1.insert(*upstream, (retry, error.to_string()));
+                            Some(retry)
+                        }
+                    }
+                };
+            if let Some(deadline) = deadline {
+                due = Some(due.map_or(deadline, |current: u64| current.min(deadline)));
+            }
+        }
+        due
+    }
+
+    pub(crate) fn cleanup_maintenance_errors(&self) -> CleanupMaintenance {
+        self.1
+            .iter()
+            .map(|(upstream, (_, error))| (*upstream, Err(error.clone())))
+            .collect()
+    }
+
+    pub(crate) fn cleanup_maintenance(&mut self, now: u64) -> CleanupMaintenance {
+        let mut reports = Vec::new();
+        for (upstream, adapter) in &mut self.0 {
+            if let Some((_, error)) = self.1.get(upstream).filter(|(retry, _)| *retry > now) {
+                reports.push((*upstream, Err(error.clone())));
+                continue;
+            }
+            let report = match adapter.cleanup_maintenance(now) {
+                Ok(owners) => {
+                    self.1.remove(upstream);
+                    Ok(owners)
+                }
+                Err(error) => {
+                    let error = error.to_string();
+                    self.1
+                        .insert(*upstream, (now.saturating_add(300_000), error.clone()));
+                    Err(error)
+                }
+            };
+            reports.push((*upstream, report));
+        }
+        reports
+    }
+
     pub fn registered_types(&self) -> std::collections::BTreeMap<Upstream, &'static str> {
         self.0
             .iter()

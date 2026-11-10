@@ -401,6 +401,8 @@ mod tests {
         wait.intent.correlation = wait.owner.correlation.clone();
         let journal = durable::Journal::new(options.journal_root.clone()).unwrap();
         let mut record = durable::Record {
+            cleanup_retry_ms: None,
+            held_submission_ms: None,
             request,
             intent: wait.intent.clone(),
             dispatched: true,
