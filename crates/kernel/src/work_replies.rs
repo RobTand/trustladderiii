@@ -202,13 +202,12 @@ match reply {
         }
         Reply::MakerCantMeet => {
             { let value = next_rung_node(node, i, c.fast, c.next_question, ReviewStop::MakerCantMeet, report); kernel_proof! { report::lemmas::work_kind(reply);
-            reveal(report::forwards); reveal(report::round_entries); reveal(report::failed_round); reveal(report::failure_cause);
+            report::lemmas::round_delta(before_report@, report.entries@, NodeId(i as u64), Some(FailedRoundCause::MakerCantMeet));
             report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply));
             reply_family_safety::work_rows(n, c, value); } return value; }
 
         }
         Reply::MakerOutOfRoom => { let value = out_of_room_node(node, c.fast, c.next_question, ReviewStop::MakerOutOfRoom); kernel_proof! { report::lemmas::work_kind(reply);
-            reveal(report::forwards); reveal(report::round_entries); reveal(report::failed_round); reveal(report::failure_cause);
             report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply));
             reply_family_safety::work_rows(n, c, value); } return value; },
         Reply::ChecksDone {
@@ -221,7 +220,8 @@ match reply {
 
             } else {
                 { let value = failed_round_node(node, i, c.fast, c.next_question, ReviewStop::ChecksFailed, report); kernel_proof! { report::lemmas::work_kind(reply);
-            reveal(report::forwards); reveal(report::round_entries); reveal(report::failed_round); reveal(report::failure_cause);
+            report::lemmas::failure_kind(ReviewStop::ChecksFailed);
+            report::lemmas::read_failed_round(before_report@, report.entries@, NodeId(i as u64), FailedRoundCause::ChecksFailed);
             report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply));
             reply_family_safety::work_rows(n, c, value); } return value; }
 
@@ -234,7 +234,8 @@ match reply {
         }
         Reply::ChangesRequested => {
             { let value = failed_round_node(node, i, c.fast, c.next_question, ReviewStop::ChangesRequested, report); kernel_proof! { report::lemmas::work_kind(reply);
-            reveal(report::forwards); reveal(report::round_entries); reveal(report::failed_round); reveal(report::failure_cause);
+            report::lemmas::failure_kind(ReviewStop::ChangesRequested);
+            report::lemmas::read_failed_round(before_report@, report.entries@, NodeId(i as u64), FailedRoundCause::ChangesRequested);
             report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply));
             reply_family_safety::work_rows(n, c, value); } return value; }
 
@@ -242,26 +243,22 @@ match reply {
         Reply::ReviewerOutOfRoom => {
             if node.review_restarted {
                 { let value = out_of_room_node(node, c.fast, c.next_question, ReviewStop::ReviewerOutOfRoom); kernel_proof! { report::lemmas::work_kind(reply);
-            reveal(report::forwards); reveal(report::round_entries); reveal(report::failed_round); reveal(report::failure_cause);
             report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply));
             reply_family_safety::work_rows(n, c, value); } return value; }
             } else {
                 node.review_restarted = true;
 
                 { let value = recheck_node(node, c.next_question, Phase::Reviewing); kernel_proof! { report::lemmas::work_kind(reply);
-            reveal(report::forwards); reveal(report::round_entries); reveal(report::failed_round); reveal(report::failure_cause);
             report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply));
             reply_family_safety::work_rows(n, c, value); } return value; }
 
             }
         }
         _ => { let value = reply_rebase_node(node, c); kernel_proof! { report::lemmas::work_kind(reply);
-            reveal(report::forwards); reveal(report::round_entries); reveal(report::failed_round); reveal(report::failure_cause);
             report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply));
             reply_family_safety::work_rows(n, c, value); } return value; },
     }
     { let value = ReplyChange::Done { node, note }; kernel_proof! { report::lemmas::work_kind(reply);
-            reveal(report::forwards); reveal(report::round_entries); reveal(report::failed_round); reveal(report::failure_cause);
             report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply));
             reply_family_safety::work_rows(n, c, value); } return value; }
 }
