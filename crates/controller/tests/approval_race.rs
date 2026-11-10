@@ -2184,5 +2184,7 @@ fn deployed_main_outstanding_post_survives_upgrade_stop_and_gap() {
     );
 }
 
+#[path = "delivery_conformance/mod.rs"]
+mod delivery_conformance;
 #[path = "delivery_fence/mod.rs"]
 mod delivery_fence;

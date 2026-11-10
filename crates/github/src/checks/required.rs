@@ -1,4 +1,4 @@
-//! Required-check evaluation and workflow rerun decisions (ctrl-core C1).
+//! Required-check evaluation and report selection (ctrl-core C1).
 //! The shell retains sorted keys, upstream payloads and every I/O boundary.
 use super::Status;
 #[cfg(verus_keep_ghost)]
@@ -80,23 +80,6 @@ pub fn needs_statuses(apps: &[Option<u64>]) -> bool {
         i += 1;
     }}
     false
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
-#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
-pub enum ReadResult {
-    Success,
-    Http(u16),
-    Other,
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
-#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
-pub enum StatusRead {
-    Available,
-    Unavailable,
-    Propagate,
 }
 
 /// Q52, #447, #2705; cdacce8f docs/state-table.md:543-545,578.
@@ -227,35 +210,6 @@ pub fn classic_status(status: ClassicStatus) -> Contribution {
         ClassicStatus::Failure | ClassicStatus::Error => Contribution::Tests,
         ClassicStatus::Other => Contribution::Pending,
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
-#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
-pub enum DispatchResult {
-    Accepted,
-    InProgress,
-    Forbidden,
-    RateLimited,
-    Http(u16),
-    Other,
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
-#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
-pub enum RerunResult {
-    Accepted,
-    InProgress,
-    Refused,
-    Unknown,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(verus_keep_ghost, vstd::prelude::verus_verify)]
-#[cfg_attr(verus_keep_ghost, derive(vstd::prelude::Structural))]
-pub enum Loop {
-    ReadAgain,
-    Done,
 }
 
 #[cfg(test)]

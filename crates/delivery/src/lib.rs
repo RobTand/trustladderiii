@@ -8,7 +8,7 @@ pub mod upstream;
 
 #[cfg(test)]
 mod round2 {
-    use upstream::*;
+    use crate::upstream::*;
 
     #[test]
     fn issued_patch_and_delete_land_after_restart_idempotently() {
