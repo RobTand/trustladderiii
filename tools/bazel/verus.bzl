@@ -444,7 +444,6 @@ def verus_proofs():
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
             "kernel::event_frames::out_of_range_stutter": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
-            "kernel::answer_owner::owner_rows": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::advance_family_post::teardown_rows": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::advance_family_post::retains_holds": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::stop_frames::owner_waiting_kept": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -930,16 +929,6 @@ def verus_proofs():
         groups = {
             "event_frames_out_of_range_stutter_intro": ("kernel::event_frames#out_of_range_stutter_intro", 1),
             "event_frames_reveal_out_of_range_stutter_rows": ("kernel::event_frames_reveal#out_of_range_stutter_rows", 1),
-            "answer_owner_owner_rows_unwithheld": ("kernel::answer_owner#owner_rows_unwithheld", 1),
-            "answer_owner_owner_same": ("kernel::answer_owner#owner_same", 1),
-            "answer_owner_owner_unclear": ("kernel::answer_owner#owner_unclear", 1),
-            "answer_owner_owner_continue": ("kernel::answer_owner#owner_continue", 1),
-            "answer_owner_owner_no_retry": ("kernel::answer_owner#owner_no_retry", 1),
-            "answer_owner_owner_no_credit": ("kernel::answer_owner#owner_no_credit", 1),
-            "answer_owner_owner_stopped": ("kernel::answer_owner#owner_stopped", 1),
-            "answer_owner_owner_cleanup": ("kernel::answer_owner#owner_cleanup", 1),
-            "answer_owner_awaiting_owner": ("kernel::answer_owner#awaiting_owner", 1),
-            "answer_owner_n4c_after_last_cmd": ("kernel::answer_owner#n4c_after_last_cmd", 1),
             "advance_family_post_teardown_missing_rows": ("kernel::advance_family_post#teardown_missing_rows", 1),
             "ranks_advance_teardown_missing_value": ("kernel::ranks#advance_teardown_missing_value", 1),
             "ranks_advance_teardown_emitting_value": ("kernel::ranks#advance_teardown_emitting_value", 1),

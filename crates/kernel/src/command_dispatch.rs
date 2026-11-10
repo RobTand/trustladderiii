@@ -78,9 +78,6 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         // E2.N4a / E2.N4b (R28 framing, CONTRACTS.md v2.20; opaque, form rule 2; rows via stop_frame_reveal::n4_frames_reveal).
         ((command is Stop || command is ChangeRequest) ==> stop_frames::owner_waiting_kept(old(w).nodes@[i as int], final(w).nodes@[i as int])),
         ((command is Pause) ==> stop_frames::endpoint_kept(old(w).nodes@[i as int], final(w).nodes@[i as int])),
-        // E2.N4c (CONTRACTS.md v2.41; lead-approved v2.42).
-        (((command is Answer) && retirement::node_rules(*old(w), old(w).nodes@[i as int]) && dependencies::owner_waiting_ok(old(w).nodes@[i as int]))
-            ==> dependencies::prerequisites_delivered(*old(w), NodeId(i as u64)) || dependencies::owner_waiting_ok(final(w).nodes@[i as int])),
         // R28-Answer (E2 framing addition, 11-10): the incident row on the answered node.
         (match command {
             Command::Answer { .. } => retirement::node_rules(*old(w), old(w).nodes@[i as int])

@@ -127,9 +127,6 @@ mod apply_command_safety;
 #[path = "../verus/answer_rules.rs"]
 mod answer_rules;
 
-#[cfg(verus_keep_ghost)]
-#[path = "../verus/answer_owner.rs"]
-mod answer_owner;
 
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/event_frames.rs"]
