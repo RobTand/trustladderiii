@@ -41,7 +41,7 @@ impl Clone for ReplyCtx {
     fn clone(&self) -> (result: Self)
         ensures result == *self,
     {
-        *self
+        ReplyCtx { fast: !self.fast, ..*self }
     }
 }
 }
