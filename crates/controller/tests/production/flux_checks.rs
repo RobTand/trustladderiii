@@ -363,6 +363,7 @@ fn lost_claim_prevents_flux_checks_journal_setup() {
     );
     assert_eq!(
         result
+            .as_ref()
             .err()
             .expect("lost ownership must abort startup")
             .to_string(),
