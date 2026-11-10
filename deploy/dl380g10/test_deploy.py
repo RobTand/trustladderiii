@@ -169,7 +169,11 @@ class FreshInitTests(unittest.TestCase):
         (self.cluster / "pg_wal/segment").write_bytes(b"diagnostic WAL")
         (self.root / "world/snapshot").write_bytes(b"old world")
         (self.root / "journal/receipt").write_bytes(b"old receipt")
-        deploy.write_file(self.config / "tl3.toml", b"fixture config\n")
+        self.runs = self.root / "worker-runs"
+        self.runs.mkdir(mode=0o700)
+        self.worker_config = ('[workers]\nruns=' + json.dumps(str(self.runs)) +
+                              '\nlauncher=' + json.dumps(deploy.LAUNCHER) + '\n')
+        deploy.write_file(self.config / "tl3.toml", self.worker_config.encode())
         deploy.write_file(self.config / "production-ready", b"")
         self.sources = {"data": self.cluster, "world": self.root / "world",
                         "journal": self.root / "journal", "config": self.config}
@@ -178,7 +182,8 @@ class FreshInitTests(unittest.TestCase):
             for child in path.rglob("*"):
                 child.chmod(0o700 if child.is_dir() else 0o600)
         self.backup = self.home / "backups/cold"
-        self.states = {"tl3d.service": "inactive", "tl3-postgres.service": "inactive"}
+        self.states = {"tl3d.service": "inactive", "tl3-postgres.service": "inactive",
+                       "tl3-workers.slice": "inactive"}
         self.calls = []
         self.transport = patch.object(deploy, "run", side_effect=self.transport_run)
         self.transport.start()
@@ -272,7 +277,7 @@ class FreshInitTests(unittest.TestCase):
         deploy.write_file(args.binaries / "SHA256SUMS", ''.join(
             f"{hashes[name]}  {name}\n" for name in deploy.RELEASE_BINARIES).encode())
         deploy.write_file(args.state_manifest, b"fixture scope")
-        deploy.write_file(self.config / "tl3.toml", b'[github]\nwebhook_listen="127.0.0.1:8742"\n')
+        deploy.write_file(self.config / "tl3.toml", (self.worker_config + '[github]\nwebhook_listen="127.0.0.1:8742"\n').encode())
         self.states.update({unit: "active" for unit in
                             ("tl3d.service", "tl3-postgres.service", "tl3-mlflow.service",
                              "tl3-status.service", "tl3-console.service")})
@@ -338,6 +343,146 @@ class FreshInitTests(unittest.TestCase):
         self.assertEqual(stops[-6:], ["tl3d.service", "tl3-workers.slice", *reversed(deploy.DEPENDENT_UNITS),
                                     "tl3-postgres.service"])
         self.assertFalse(any("restore" in item for call in self.calls for item in call))
+
+    @contextlib.contextmanager
+    def recorded_worker(self, record="claim.json", stat_value=None):
+        attempt = self.runs / "ab" / "attempt-00000001"
+        attempt.mkdir(parents=True, mode=0o700, exist_ok=True)
+        attempt.parent.chmod(0o700)
+        identity = {"pid": 123, "start": 456, "machine": "fixture-machine", "boot": "fixture-boot"}
+        deploy.write_file(attempt / record, json.dumps(identity).encode())
+        original = Path.read_text
+        process_stat = "123 (synthetic supervisor) " + " ".join(["S"] + ["0"] * 18 + ["456"])
+
+        def read(path, *args, **kwargs):
+            if str(path) == "/etc/machine-id":
+                return "fixture-machine\n"
+            if str(path) == "/proc/sys/kernel/random/boot_id":
+                return "fixture-boot\n"
+            if str(path) == "/proc/123/stat":
+                if isinstance(stat_value, Exception):
+                    raise stat_value
+                return process_stat if stat_value is None else stat_value
+            if str(path).startswith("/proc/"):
+                raise AssertionError("unexpected process discovery")
+            return original(path, *args, **kwargs)
+
+        with patch.object(Path, "read_text", read):
+            yield attempt / record, identity
+
+    def test_worker_guard_recorded_supervisor_refuses_before_backup(self):
+        with self.recorded_worker(), self.fresh_attempt() as args:
+            with self.assertRaisesRegex(RuntimeError, "worker|supervisor"):
+                deploy.fresh_init(args)
+        self.assertFalse(self.backup.exists())
+        self.assertFalse(any(call[:3] == ["systemctl", "--user", "stop"] for call in self.calls))
+
+    def test_worker_guard_unknown_states_and_query_failure_refuse(self):
+        for state in ("active", "activating", "deactivating", "reloading", "failed", "", "unknown"):
+            with self.subTest(state=state):
+                self.states[deploy.WORKER_SLICE] = state
+                with self.assertRaises(RuntimeError):
+                    deploy.require_workers_stopped(self.home)
+        with patch.object(deploy, "unit_state", side_effect=RuntimeError("query timed out")):
+            with self.assertRaisesRegex(RuntimeError, "query timed out"):
+                deploy.require_workers_stopped(self.home)
+        with patch.object(deploy, "unit_state", side_effect=["inactive", "active"]):
+            with self.assertRaisesRegex(RuntimeError, "changed"):
+                deploy.require_workers_stopped(self.home)
+
+    def test_worker_guard_record_liveness_and_stale_pid_reuse(self):
+        for record in ("claim.json", "process.json"):
+            with self.subTest(record=record), self.recorded_worker(record=record) as (path, identity):
+                with self.assertRaisesRegex(RuntimeError, "active"):
+                    deploy.require_workers_stopped(self.home)
+                for stale in (dict(identity, start=457), dict(identity, boot="old-boot"), {"cancelled": True}):
+                    deploy.write_file(path, json.dumps(stale).encode())
+                    deploy.require_workers_stopped(self.home)
+                path.unlink()
+        for observation in (FileNotFoundError(), "123 (exited) " + " ".join(["Z"] + ["0"] * 18 + ["456"])):
+            with self.subTest(observation=observation), self.recorded_worker(stat_value=observation) as (path, _):
+                deploy.require_workers_stopped(self.home)
+                path.unlink()
+
+    def test_worker_guard_malformed_and_unreadable_records_refuse(self):
+        with self.recorded_worker() as (path, identity):
+            for value in ([], {}, dict(identity, pid=True), dict(identity, pid=-1), dict(identity, start="456"),
+                          dict(identity, machine="foreign"), {"cancelled": False}, {"cancelled": True, "pid": 123}):
+                with self.subTest(value=value):
+                    deploy.write_file(path, json.dumps(value).encode())
+                    with self.assertRaises(RuntimeError):
+                        deploy.require_workers_stopped(self.home)
+            path.write_text("{broken")
+            with self.assertRaises(RuntimeError):
+                deploy.require_workers_stopped(self.home)
+            path.unlink()
+            path.symlink_to(self.home / "missing-record")
+            with self.assertRaisesRegex(RuntimeError, "ownership"):
+                deploy.require_workers_stopped(self.home)
+        for observation in (PermissionError(), "malformed stat", "123 (worker) S"):
+            with self.subTest(observation=observation), self.recorded_worker(stat_value=observation):
+                with self.assertRaises(RuntimeError):
+                    deploy.require_workers_stopped(self.home)
+
+    def test_worker_guard_empty_world_and_launcher_scope(self):
+        deploy.require_workers_stopped(self.home)
+        for launcher in ([], ["another-launcher"]):
+            config = '[workers]\nruns=' + json.dumps(str(self.runs)) + '\nlauncher=' + json.dumps(launcher)
+            deploy.write_file(self.config / "tl3.toml", config.encode())
+            with self.assertRaisesRegex(RuntimeError, "launcher"):
+                deploy.require_workers_stopped(self.home)
+
+    def test_worker_guard_partial_start_failure_freezes_all_service_subsets(self):
+        for unit in ("tl3-postgres.service", *deploy.CLIENT_UNITS):
+            with self.subTest(unit=unit):
+                # Each attempt needs its own untouched fixture and new backup.
+                fixture = FreshInitTests()
+                fixture.setUp()
+                try:
+                    with fixture.fresh_attempt(fail_start=unit) as args:
+                        with self.assertRaisesRegex(RuntimeError, "partial start failure") as caught:
+                            deploy.fresh_init(args)
+                    self.assertTrue(all(fixture.states[name] == "inactive" for name in
+                                        (*deploy.CLIENT_UNITS, deploy.WORKER_SLICE, "tl3-postgres.service")))
+                    self.assertIn("verified frozen", " ".join(caught.exception.__notes__))
+                    self.assertTrue((fixture.backup / "data/pg_wal/segment").exists())
+                finally:
+                    fixture.doCleanups()
+
+    def test_worker_guard_cleanup_failure_keeps_postgres_and_preserves_original(self):
+        for failed in (*deploy.CLIENT_UNITS, deploy.WORKER_SLICE):
+            states = {unit: "active" for unit in (*deploy.CLIENT_UNITS, deploy.WORKER_SLICE, "tl3-postgres.service")}
+            stops = []
+
+            def transport(command, **kwargs):
+                self.assertEqual(kwargs["timeout"], 150)
+                unit = command[3]
+                stops.append(unit)
+                if unit == failed:
+                    raise RuntimeError("stop failed")
+                states[unit] = "inactive"
+                return b""
+
+            with self.subTest(failed=failed), patch.object(deploy, "run", side_effect=transport), \
+                 patch.object(deploy, "unit_state", side_effect=lambda unit: states[unit]):
+                with self.assertRaisesRegex(RuntimeError, "NOT established"):
+                    deploy.freeze_fresh_attempt(self.home)
+                self.assertNotIn("tl3-postgres.service", stops)
+                if failed == "tl3d.service":
+                    self.assertNotIn(deploy.WORKER_SLICE, stops)
+        with self.fresh_attempt(failure=RuntimeError("original stability failure")) as args, \
+             patch.object(deploy, "freeze_fresh_attempt", side_effect=RuntimeError("cleanup NOT established")):
+            with self.assertRaisesRegex(RuntimeError, "original stability failure") as caught:
+                deploy.fresh_init(args)
+        self.assertIn("cleanup NOT established", " ".join(caught.exception.__notes__))
+
+    def test_worker_guard_cleanup_does_not_claim_stopped_with_lingering_record(self):
+        self.states.update({unit: "inactive" for unit in deploy.CLIENT_UNITS})
+        self.states["tl3-postgres.service"] = "active"
+        with self.recorded_worker():
+            with self.assertRaisesRegex(RuntimeError, "NOT established"):
+                deploy.freeze_fresh_attempt(self.home)
+        self.assertFalse(any(call == ["systemctl", "--user", "stop", "tl3-postgres.service"] for call in self.calls))
 
     def test_qualification_refusal_does_not_stop_any_unit(self):
         args = SimpleNamespace(home=self.home, head="a" * 40, lane="release", evidence=self.home)
@@ -551,6 +696,17 @@ class FreshInitTests(unittest.TestCase):
                             ("tl3d.service", "tl3-mlflow.service", "tl3-status.service", "tl3-console.service")})
         self.states["tl3-postgres.service"] = "active"
         with patch.object(deploy, "fresh_scope", return_value=(self.sources, (), self.config / "tl3.toml")):
+            for state in ("active", "activating", "deactivating", "unknown"):
+                self.states[deploy.WORKER_SLICE] = state
+                with self.assertRaisesRegex(RuntimeError, "worker"):
+                    deploy.authorize_fresh_database(context, self.config / "tl3.toml", capability)
+                self.assertFalse(context.with_suffix(".consumed").exists())
+            self.states[deploy.WORKER_SLICE] = "inactive"
+            with self.recorded_worker():
+                with self.assertRaisesRegex(RuntimeError, "supervisor"):
+                    deploy.authorize_fresh_database(context, self.config / "tl3.toml", capability)
+                self.assertFalse(context.with_suffix(".consumed").exists())
+            (self.runs / "ab/attempt-00000001/claim.json").unlink()
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
                 deploy.authorize_fresh_database(context, self.config / "tl3.toml", capability)

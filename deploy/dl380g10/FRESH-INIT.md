@@ -93,18 +93,23 @@ The helper performs this sequence:
 1. Authenticate qualification, validate the exact prepared release and unchanged
    config, and verify the state inventory and runtime manifest identities.
 2. Validate the absent backup destination, private parent and all non-DB source
-   hygiene before stopping. Size the exact file inventory against the bounded
+   hygiene before stopping. Refuse before any stop while `tl3-workers.slice` is
+   anything other than `inactive`, or a recorded supervisor or worker is alive.
+   Require the configured `workers.launcher` to equal the deployment's `LAUNCHER`,
+   so newly started workers belong to that slice. Size the exact file inventory against the bounded
    action budget. Stop tl3d, prove `inactive`, explicitly stop and prove
    MLflow/status/console inactive, then stop Postgres and prove it inactive.
 3. Copy the complete cluster including WAL and declared tablespaces, controller
    journals, attempts and private config. Hash every file and record ownership,
    modes, directories and scope. Verify the copied inventory against the original pre-copy hashes,
    then flush the copy before any reset. Undeclared symlinks and special files refuse.
-4. Empty only the manifest's supported adapter directories. Keep the cold copy
+4. Recheck worker quiescence before the cold copy and again before file reset.
+   Empty only the manifest's supported adapter directories. Keep the cold copy
    as diagnostic evidence. Install each selected release binary from one hash-checked buffer, then verify
    the installed checksums before executing any selected binary.
 5. Start Postgres and check readiness. The SQL helper revalidates the cold copy and unchanged config without network
-   calls. A one-use, expiring capability crosses only private orchestrator pipes;
+   calls. It rechecks inactive clients, the worker slice and recorded identities
+   before consuming authorization. A one-use, expiring capability crosses only private orchestrator pipes;
    the saved context contains only its digest. Archived context alone cannot
    authorize a reset. Atomic consumption precedes SQL mutation, and Postgres
    system identity must match the cold copy. It refuses live TL3 database
@@ -163,6 +168,35 @@ inside the job. This is a planning estimate, not a measured
 live cold-copy timing claim. The data root is read for its initial hash, copy
 verification and SQL-boundary copy verification, without rehashing it at file reset.
 Actual fleet/cold-copy timing still requires deployment acceptance.
+
+Worker checks inspect only `claim.json` and `process.json` in TL3 attempt
+folders and the worker slice's systemd state. They read the exact recorded PID's
+start time, machine identity and boot identity. An exited process, an earlier
+boot or a reused PID is stale. A different machine, malformed record, symlinked
+record, unreadable identity or unknown unit state refuses. Cancellation records
+must contain exactly `{"cancelled": true}`. These checks do not use process
+listings or scan `/proc`. The existing Flux binding refusal remains mandatory,
+even when an identity record is stale.
+
+If any start or later startup check fails, cleanup first stops tl3d and proves it
+inactive to prevent new admission. It then stops `tl3-workers.slice`, stops the
+dependents in reverse order, and verifies inactive clients and workers. Only
+then does it stop and verify PostgreSQL. Each stop has a 150-second subprocess
+deadline, and each systemd state query has a 15-second deadline. This includes
+partial starts that activated a unit before returning an error. The original
+exception is raised with a cleanup note. A cleanup error reports
+`frozen state NOT established`, retains all evidence and leaves PostgreSQL up
+when clients or workers might still need it. No previous release or state is
+restored.
+
+A verified frozen state is an observation under systemd and the recorded TL3
+identities. It assumes no independent operator or external launcher starts work
+after verification. It cannot cover unrecorded work outside `tl3-workers.slice`,
+host loss, forced process termination during cleanup, or inaccessible ownership.
+A live recorded process outside the slice prevents a frozen verdict; this helper
+does not kill an unrelated scope or process to make the check pass. Recovery
+requires the deployment operator. Fixtures prove control flow, not live service
+or cgroup behavior.
 
 All subprocesses have deadlines. A failure leaves the diagnostic backup intact
 and does not restart an earlier binary or import old state. Stop dispatch and
