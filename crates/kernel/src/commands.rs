@@ -352,12 +352,9 @@ pub(super) fn answer_command(w: &mut World, i: usize, id: u64, question: u64, an
                 handler_safety::distance_last_cmd(before_rules_world@.nodes@[i as int], id);
             }
         }
-        if retirement::node_rules(before_rules_world@, before_rules_world@.nodes@[i as int]) {
-            handler_safety::rules_to_v(before_rules_world@, before_rules_world@.nodes@[i as int]);
+        if handler_safety::node_rules_v(before_rules_world@.nodes@[i as int], before_rules_world@.next_question) {
             handler_safety::last_cmd_rules_v(before_rules_world@.nodes@[i as int],
                 before_rules_world@.next_question, id);
-            handler_safety::rules_world_update(before_rules_world@, *w,
-                before_rules_world@.nodes@[i as int], w.nodes@[i as int]);
         }
     }
     on_answer(w, i, question, answer, out);

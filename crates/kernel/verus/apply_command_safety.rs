@@ -925,15 +925,27 @@ pub(super) closed spec fn answer_ncut(before: World, after: World, i: usize) -> 
 
 /// Close literal node and table rows without repeating the entry's L1 contract.
 pub(super) proof fn answer_ncut_intro(before: World, after: World, i: usize)
-    requires (after.nodes@[i as int].holds ==> before.nodes@[i as int].holds),
+    requires i < before.nodes@.len(),
+        (after.nodes@[i as int].holds ==> before.nodes@[i as int].holds),
         (after.nodes@[i as int].pool ==> before.nodes@[i as int].pool),
         after.nodes@[i as int].ticket == before.nodes@[i as int].ticket || after.nodes@[i as int].ticket.is_none(),
         after.nodes@ == before.nodes@.update(i as int, after.nodes@[i as int]),
         before.next_question <= after.next_question,
-        (retirement::node_rules(before, before.nodes@[i as int])
-            ==> retirement::node_rules(after, after.nodes@[i as int])),
+        (handler_safety::node_rules_v(before.nodes@[i as int], before.next_question)
+            ==> handler_safety::node_rules_v(after.nodes@[i as int], after.next_question)),
+        after.nodes@[i as int].repo == before.nodes@[i as int].repo,
+        after.nodes@[i as int].footprint == before.nodes@[i as int].footprint,
+        after.gates@ == before.gates@,
+        after.file_sets@ == before.file_sets@,
+        after.next_ticket == before.next_ticket,
     ensures answer_ncut(before, after, i),
 {
+    let b = before.nodes@[i as int];
+    let n = after.nodes@[i as int];
+    if retirement::node_rules(before, b) {
+        handler_safety::rules_to_v(before, b);
+        handler_safety::rules_world_update(before, after, b, n);
+    }
     reveal(answer_ncut);
 }
 

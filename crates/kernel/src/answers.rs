@@ -58,6 +58,8 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         old(w).next_question <= final(w).next_question,
         (retirement::node_rules(*old(w), old(w).nodes@[i as int])
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
+        (handler_safety::node_rules_v(old(w).nodes@[i as int], old(w).next_question)
+            ==> handler_safety::node_rules_v(final(w).nodes@[i as int], final(w).next_question)),
 ] {
     kernel_snapshot! { before_answer_rules = *w }
     kernel_proof! {
@@ -94,7 +96,7 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
                 // An answer that left the node AwaitingRob withholds nothing.
                 handler_safety::unwithheld_same(before_answer@);
             }
-            if retirement::node_rules(before_answer_rules@, before_answer_rules@.nodes@[i as int]) {
+            if handler_safety::node_rules_v(before_answer@, before_answer_rules@.next_question) {
                 apply_command_safety::withhold_rules_v(continued@, nq1, w.dependencies@, NodeId(i as u64));
             }
         }
