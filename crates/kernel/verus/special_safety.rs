@@ -345,7 +345,6 @@ mod gate_ticket_projection {
     /// E5.8 is consumed verbatim; a Ready node had no slot before the step.
     pub(super) proof fn ticketed_grant(b: Node, n: Node)
         requires !b.holds,
-            !b.holds && n.holds ==> b.phase is Ready && b.ticket.is_some(),
         ensures n.holds ==> b.ticket.is_some(),
     {
     }
