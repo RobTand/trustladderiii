@@ -82,34 +82,25 @@ pub(super) fn reply_ingest(w: &mut World, i: usize, reply: Reply,
                     && *final(out) == *old(out)
             }),
 ] {
-    kernel_snapshot! { before_dispatch = *w }
-    kernel_snapshot! { before_dispatch_len = out.len }
-    kernel_proof! { reveal(reply_family_values::ingest); }
-    kernel_snapshot! { before_value = w.nodes@[i as int] }
+    kernel_snapshot! { before_ingest_entry = *w }
+    kernel_snapshot! { before_ingest_out = *out }
     let c = ReplyCtx { node: i, generation: w.nodes[i].generation,
         reply: reply, fast: w.fail_fast, next_question: w.next_question };
-    let change = reply_ingest_node(w.nodes[i], c);
-    kernel_proof! { reply_family_dispatch::ingest_value_posts(w.nodes@[i as int], c); }
-    resolve_reply_change(w, i, change, out);
+    let (mut node, note) = reply_ingest_parts(w.nodes[i], c);
     match reply {
         Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) => {
-            kernel_snapshot! { before_withhold = w.nodes@[i as int] }
-            w.withhold_dependency_credit(i);
-            kernel_proof! {
-                reply_family_dispatch::withheld_distance(before_withhold@, w.nodes@[i as int].credit.withheld);
-                reply_family_safety::withhold_rows(before_value@, c, change, w.nodes@[i as int]);
-            }
+            let delivered = w.dependencies_delivered(NodeId(i as u64));
+            node = withhold_ingest_v(node, delivered);
         },
-        _ => {}
+        _ => {},
     }
+    w.nodes[i] = node;
+    match note { Some(value) => notice(out, i, value), None => {} }
     kernel_proof! {
-        reveal(port_t860_contracts::transition_post); reveal(port_t860_contracts::audit_node);
-        reveal(retirement::stopped);
-    }
-
-    kernel_proof! {
-        reveal(reply_family_dispatch::other_rows);
-        reply_family_dispatch::reply_lift(before_dispatch@, *w, i as int, before_dispatch_len@, out.len);
+        reply_family_ingest_world::ingest_done(before_ingest_entry@.nodes@[i as int], reply);
+        reveal(reply_family_ingest_world::final_node);
+        reply_family_ingest_world::ingest_world(before_ingest_entry@, *w, i, reply,
+            before_ingest_out@, *out);
     }
 }
 }
@@ -225,5 +216,66 @@ fn audit_disagreement_v(n: Node) -> (result: Node) [
     audit_disagreement_node(&mut m);
     kernel_proof! { ingest_facts::audit_result(n, m); }
     m
+}
+}
+
+kernel_fn! {
+/// The unchanged ingest arms, before the table and notice writes.
+fn reply_ingest_parts(n: Node, c: ReplyCtx) -> (result: (Node, Option<Notice>)) [
+    requires node_headroom(n), arithmetic_consistent(n), c.next_question < u64::MAX,
+        matches!(c.reply, Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_)
+            | Reply::AuditAgrees | Reply::AuditDisagrees | Reply::ProtectedPaths),
+    ensures ReplyChange::Done { node: result.0, note: result.1 } == reply_family_values::ingest(n, c.reply),
+] proof [reveal(reply_family_values::ingest);] {
+    let mut node = n;
+    let mut note: Option<Notice> = None;
+    let i = c.node;
+    let reply = c.reply;
+    match reply {
+        Reply::IngestDone { size } => {
+            node = finish_ingest_v(node, size, None);
+            return (node, note);
+        },
+        Reply::IngestEarlyEnd(e) => {
+            node = finish_ingest_v(node, 1, Some(e));
+            return (node, note);
+        },
+        Reply::AuditAgrees => match node.early_end {
+            Some(e) => {
+                node = enter_stopping_v(node, e.outcome());
+                return (node, note);
+            },
+            None => {
+                note = Some(Notice::MeasuresPosted);
+                node = set_phase_v(node, Phase::Unplanned);
+                return (node, note);
+            }
+        },
+        Reply::AuditDisagrees => {
+            node = audit_disagreement_v(node);
+            return (node, note);
+        },
+        Reply::ProtectedPaths => {
+            node = enter_stopping_v(node, Outcome::NotActionable);
+            return (node, note);
+        },
+        _ => {}
+    }
+    (node, note)
+}
+}
+
+kernel_fn! {
+/// Dependency withholding on a local node, before its single table write.
+fn withhold_ingest_v(n: Node, delivered: bool) -> (result: Node) [
+    ensures result == reply_family_ingest_world::withheld(n, delivered),
+] proof [reveal(reply_family_ingest_world::withheld);] {
+    let mut node = n;
+    if !delivered && !node.planning_started
+        && matches!(node.phase, Phase::Ingesting | Phase::Auditing | Phase::Unplanned)
+    {
+        if node.credit.ready { node.credit.withheld = true; }
+    }
+    node
 }
 }
