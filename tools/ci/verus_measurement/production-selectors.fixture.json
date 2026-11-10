@@ -1,10 +1,20 @@
 {
-  "source_head": "7d5d6ce813a306cdd8732f336f1d68b7b0b68d15",
+  "source_head": "5a8b5985b600e0fdc006b2dc51690d2bcfbb1006",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "002edcfb5e9c9db6f1424d3085fc5a6de5043e868610ded9aa3bce3c31d644f8",
-  "groups": 507,
-  "obligations": 711,
+  "source_sha256": "d23a7db558f823fc59cfc2e8b7abd1f37d28755d268a590ca9b4e76349da7c18",
+  "groups": 509,
+  "obligations": 713,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_liveness_gate_older_disqualifies_younger",
+      "selector": "kernel::liveness_gate_reservation#older_disqualifies_younger",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_liveness_gate_younger_cannot_take_line",
+      "selector": "kernel::liveness_gate_reservation#younger_cannot_take_line",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_footprint_disjoint_under_table_growth",
       "selector": "kernel::footprint#disjoint_under_table_growth",
