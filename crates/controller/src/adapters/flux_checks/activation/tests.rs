@@ -114,12 +114,10 @@ impl Fixture {
         };
         let options = crate::production::flux_options(&flux);
         let record = DeploymentRecord {
-            schema: "tl3.fx_activation.v1".into(),
+            schema: "tl3.fx_activation.v2".into(),
             qualification_sha256: qualification_sha256(),
             producer_commit: input.producer_commit.clone(),
-            instance_generation_sha256: identity(&options.instance_generation).unwrap(),
-            endpoint_sha256: identity(&options.uri).unwrap(),
-            backend_options_sha256: identity(&options).unwrap(),
+            backend_options_sha256: options_identity(&options).unwrap(),
             backend_cli_sha256: executable_sha256(&options.bootstrap.cli).unwrap(),
             executable_sha256: executable_sha256(&options.executable).unwrap(),
             staging_root_sha256: identity(&flux.staging_root).unwrap(),
@@ -264,16 +262,12 @@ fn absent_wrong_hash_unknown_qualification_and_generation_refuse_with_fields_onl
     );
     fixture.record.qualification_sha256 = qualification_sha256();
     fixture.seal_record();
-    fixture.flux.instance_generation = "private-generation-do-not-print".into();
-    let error = RuntimeActivation::load(&fixture.flux)
-        .err()
-        .unwrap()
-        .to_string();
-    assert!(
-        error.ends_with("flux.activation.instance_generation_sha256"),
-        "{error}"
-    );
-    assert!(!error.contains(&fixture.flux.instance_generation));
+    let activation = RuntimeActivation::load(&fixture.flux).unwrap();
+    let mut options = crate::production::flux_options(&fixture.flux);
+    options.instance_generation = "after-reboot".into();
+    options.uri = "local:///replacement".into();
+    options.environment.insert("FLUX_URI".into(), options.uri.clone());
+    activation.validate_options(&options).unwrap();
 }
 
 #[test]
@@ -479,7 +473,7 @@ fn qualified_binding_passes_real_controller_capacity_and_startup_activation() {
     // Match the production config contract, without writing any backend/runtime state there.
     fixture.flux.output_root = "/mnt/shared/flux-out/tl3".into();
     let options = crate::production::flux_options(&fixture.flux);
-    fixture.record.backend_options_sha256 = identity(&options).unwrap();
+    fixture.record.backend_options_sha256 = options_identity(&options).unwrap();
     fixture.seal_record();
     let mut config =
         tl3_config::Config::parse(include_str!("../../../../../config/example.toml")).unwrap();
@@ -518,7 +512,7 @@ fn canary_qualification_gate_never_marks_an_activated_stager_and_refuses_records
     let mut fixture = Fixture::new();
     fixture.flux.output_root = "/mnt/shared/flux-out/tl3".into();
     let options = crate::production::flux_options(&fixture.flux);
-    fixture.record.backend_options_sha256 = identity(&options).unwrap();
+    fixture.record.backend_options_sha256 = options_identity(&options).unwrap();
     fixture.seal_record();
     let mut config =
         tl3_config::Config::parse(include_str!("../../../../../config/example.toml")).unwrap();
@@ -554,10 +548,8 @@ fn x7_activation_survives_broker_identity_changes() {
         bootstrap: backend::HostBootstrap { cli, config: root.path().join("options.json") },
     };
     let record = DeploymentRecord {
-        schema: "tl3.fx_activation.v1".into(), qualification_sha256: qualification_sha256(),
-        producer_commit: "a".repeat(40),
-        instance_generation_sha256: identity(&options.instance_generation).unwrap(),
-        endpoint_sha256: identity(&options.uri).unwrap(), backend_options_sha256: identity(&options).unwrap(),
+        schema: "tl3.fx_activation.v2".into(), qualification_sha256: qualification_sha256(),
+        producer_commit: "a".repeat(40), backend_options_sha256: options_identity(&options).unwrap(),
         backend_cli_sha256: executable_sha256(&options.bootstrap.cli).unwrap(),
         executable_sha256: executable_sha256(&options.executable).unwrap(),
         staging_root_sha256: identity(&root.path()).unwrap(), container_mode: ContainerMode::InJob,

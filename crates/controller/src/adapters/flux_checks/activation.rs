@@ -62,8 +62,6 @@ pub struct DeploymentRecord {
     pub schema: String,
     pub qualification_sha256: String,
     pub producer_commit: String,
-    pub instance_generation_sha256: String,
-    pub endpoint_sha256: String,
     pub backend_options_sha256: String,
     pub backend_cli_sha256: String,
     pub executable_sha256: String,
@@ -87,6 +85,19 @@ pub fn identity<T: Serialize>(value: &T) -> Result<String> {
     serde_json::to_vec(value)
         .map(|bytes| durable::digest(&bytes))
         .map_err(|_| invalid("flux.activation.identity"))
+}
+
+/// Deployment policy and tool access stay bound; fleet identity is observed at execution.
+pub fn options_identity(options: &backend::Options) -> Result<String> {
+    let mut value = serde_json::to_value(options).map_err(|_| invalid("flux.activation.identity"))?;
+    let fields = value.as_object_mut().ok_or_else(|| invalid("flux.activation.identity"))?;
+    fields.remove("instance_generation");
+    fields.remove("uri");
+    if let Some(environment) = fields.get_mut("environment").and_then(serde_json::Value::as_object_mut) {
+        environment.remove("FLUX_URI");
+        environment.remove("FLUX_VANILLA_RUN");
+    }
+    identity(&value)
 }
 
 pub fn qualification_sha256() -> String {
@@ -156,7 +167,7 @@ impl RuntimeActivation {
         }
         let record: DeploymentRecord =
             serde_json::from_slice(&raw).map_err(|_| invalid("flux.activation.record"))?;
-        if record.schema != "tl3.fx_activation.v1" {
+        if record.schema != "tl3.fx_activation.v2" {
             return Err(invalid("flux.activation.schema"));
         }
         if record.qualification_sha256 != qualification_sha256() {
@@ -205,17 +216,7 @@ impl RuntimeActivation {
     pub fn validate_options(&self, options: &backend::Options) -> Result<()> {
         for (actual, expected, field) in [
             (
-                identity(&options.instance_generation)?,
-                &self.record.instance_generation_sha256,
-                "flux.activation.instance_generation_sha256",
-            ),
-            (
-                identity(&options.uri)?,
-                &self.record.endpoint_sha256,
-                "flux.activation.endpoint_sha256",
-            ),
-            (
-                identity(options)?,
+                options_identity(options)?,
                 &self.record.backend_options_sha256,
                 "flux.activation.backend_options_sha256",
             ),
