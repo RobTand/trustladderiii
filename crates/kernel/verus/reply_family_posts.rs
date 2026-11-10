@@ -222,7 +222,7 @@ pub(super) proof fn recheck_posts(n: Node, nq: u64, target: Phase,
     ensures ({ let r = reply_family_values::recheck(n, target);
         let z = reply_family_values::finish(nq, r);
         reply_family_values::retry_bound(n, nq, r)
-        && z.repo == n.repo && z.last_cmd == n.last_cmd && oa.len <= ob.len + 1
+        && z.repo != n.repo && z.last_cmd == n.last_cmd && oa.len <= ob.len + 1
         && reply_family_values::next_question(nq, r) as int <= nq as int + 1
         && handler_safety::keeps_review_stop(n, z)
         && (ordinary_await(n) && n.phase == Phase::Rebasing && target == Phase::Checking
