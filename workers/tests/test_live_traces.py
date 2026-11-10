@@ -5,6 +5,7 @@ import base64
 import json
 import os
 from pathlib import Path
+import select
 import signal
 import subprocess
 import sys
@@ -227,10 +228,12 @@ def test_mlflow_outage_mid_run_keeps_the_run_and_the_durable_log(request_doc, tm
 
 
 HOLD_LAST = """
+import os
 import threading
 _generate = FakeMessagesListChatModel._generate
 def held(self, *args, **kwargs):
     if self.i == len(script) - 1:
+        os.write(int(os.environ['TL3_TEST_HELD_FD']), b'held\\n')
         threading.Event().wait()
     return _generate(self, *args, **kwargs)
 FakeMessagesListChatModel._generate = held
@@ -244,22 +247,35 @@ def test_killed_worker_leaves_a_complete_crash_marked_trace(request_doc, tmp_pat
     script.write_text(json.dumps([turn.model_dump(include={'content', 'tool_calls', 'usage_metadata'})
                                   for turn in turns]))
     launch = worker_process.LAUNCH.replace('def create_model', HOLD_LAST + 'def create_model')
-    env = {**os.environ, 'LANGSMITH_TRACING': 'false', 'LANGCHAIN_TRACING_V2': 'false'}
-    worker = subprocess.Popen([sys.executable, '-c', launch, str(script)], stdin=subprocess.PIPE,
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
-                              start_new_session=True)
+    held_read, held_write = os.pipe()
+    env = {**os.environ, 'LANGSMITH_TRACING': 'false', 'LANGCHAIN_TRACING_V2': 'false',
+           'TL3_TEST_HELD_FD': str(held_write)}
+    errors = tmp_path / 'worker.stderr'
+    with errors.open('wb') as stderr:
+        worker = subprocess.Popen([sys.executable, '-c', launch, str(script)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.DEVNULL, stderr=stderr, env=env,
+                                  pass_fds=(held_write,), start_new_session=True)
+    os.close(held_write)
     try:
         worker.stdin.write(json.dumps(request_doc).encode())
         worker.stdin.close()
         mlflow_server.wait(first_turn_live)
+        ready, _, _ = select.select([held_read], [], [], 30)
+        assert ready and os.read(held_read, 5) == b'held\n', errors.read_text()
+        assert worker.poll() is None, errors.read_text()
     finally:
-        os.killpg(worker.pid, signal.SIGKILL)
+        os.close(held_read)
+        try:
+            os.killpg(worker.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            assert worker.poll() is not None
         worker.wait(timeout=15)
     assert mlflow_server.only()['state'] == 'IN_PROGRESS'
     log = Path(request_doc['trace']['log'])
     records = [json.loads(line) for line in log.read_text().splitlines()]
     assert records and records[0]['kind'] == 'start'
-    assert not any(record['kind'] in {'end', 'final'} for record in records), records
+    assert not any(record['kind'] in {'end', 'final'} for record in records), [
+        (record['kind'], record.get('tags')) for record in records]
     (log.parent / 'exit.json').write_text(json.dumps({'code': -9}))
     # What the controller starts when it sees the attempt end (#430). It adds -I;
     # Bazel's test Python finds packages through PYTHONPATH, which -I ignores.
