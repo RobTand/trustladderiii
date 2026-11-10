@@ -226,6 +226,8 @@ mod pause_assembly {
                 let i = node.0 as usize;
                 on_command(&mut w, i, id, Command::Pause, &mut out);
                 proof {
+                    command_frames_reveal::command_frame_rows_reveal(
+                        before.nodes@[i as int], w.nodes@[i as int], id, Command::Pause);
                     checking::accepted_node(before, i as int);
                     pause_projection::pause_dependencies(before, w, i as int);
                     internal_safety::apply_step_preserves_accepted(before, w, i as int);
@@ -267,6 +269,8 @@ mod stop_assembly {
                 }
                 on_command(&mut w, i, id, Command::Stop, &mut out);
                 proof {
+                    command_frames_reveal::command_frame_rows_reveal(
+                        before.nodes@[i as int], w.nodes@[i as int], id, Command::Stop);
                     checking::accepted_node(before, i as int);
                     handler_safety::step_withheld(before.nodes@[i as int], w.nodes@[i as int]);
                     internal_safety::apply_step_preserves_accepted_full(before, w, i as int);
@@ -308,6 +312,8 @@ mod change_assembly {
                 }
                 on_command(&mut w, i, id, Command::ChangeRequest, &mut out);
                 proof {
+                    command_frames_reveal::command_frame_rows_reveal(
+                        before.nodes@[i as int], w.nodes@[i as int], id, Command::ChangeRequest);
                     checking::accepted_node(before, i as int);
                     handler_safety::step_withheld(before.nodes@[i as int], w.nodes@[i as int]);
                     internal_safety::apply_step_preserves_accepted_full(before, w, i as int);
@@ -487,4 +493,161 @@ fn gate_planning_step(mut w: World, i: usize, mut out: Outbox, mut report: Repor
     }
     (w, out, report, changed)
 }
+}
+
+
+mod resume_apply_projection {
+    use super::*;
+
+    verus! {
+    pub(super) proof fn endpoint(before: World, after: World, node: NodeId, id: u64)
+        requires node.0 < before.nodes@.len(),
+            progress_gate_apply::resume_apply_post(before, after,
+                Event::Command { node, id, command: Command::Resume }),
+        ensures dependencies::same_endpoint(before.nodes@[node.0 as int], after.nodes@[node.0 as int]),
+    {
+        reveal(progress_gate_apply::resume_apply_post);
+        reveal(progress_gate_apply::resumed);
+    }
+    }
+}
+
+mod aggregate_command_rows {
+    use super::*;
+
+    verus! {
+    /// The callee's per-field posts are premises, without a model-link premise.
+    pub(super) proof fn acceptance(before: World, after: World, node: NodeId, command: Command)
+        requires checking::accepted(before), node.0 < before.nodes@.len(),
+            matches!(command, Command::Stop | Command::Pause | Command::Resume | Command::ChangeRequest),
+            after.nodes@.len() == before.nodes@.len(),
+            after.dependencies@ == before.dependencies@,
+            before.next_question <= after.next_question,
+            before.nodes@.len() <= u64::MAX,
+            retirement::node_rules(before, before.nodes@[node.0 as int])
+                ==> retirement::node_rules(after, after.nodes@[node.0 as int]),
+            after.nodes@[node.0 as int].holds ==> before.nodes@[node.0 as int].holds,
+            after.nodes@[node.0 as int].pool ==> before.nodes@[node.0 as int].pool,
+            after.nodes@[node.0 as int].ticket == before.nodes@[node.0 as int].ticket
+                || after.nodes@[node.0 as int].ticket.is_none(),
+            after.nodes@[node.0 as int].repo == before.nodes@[node.0 as int].repo,
+            after.nodes@[node.0 as int].footprint == before.nodes@[node.0 as int].footprint,
+            after.nodes@ == before.nodes@.update(node.0 as int, after.nodes@[node.0 as int]),
+            handler_safety::command_step(before.nodes@[node.0 as int], after.nodes@[node.0 as int]),
+            ((command is Stop || command is ChangeRequest)
+                && dependencies::owner_waiting_ok(before.nodes@[node.0 as int]))
+                ==> dependencies::owner_waiting_ok(after.nodes@[node.0 as int]),
+            (command is Pause || command is Resume)
+                ==> dependencies::same_endpoint(before.nodes@[node.0 as int], after.nodes@[node.0 as int]),
+            after.gates@ == before.gates@,
+            after.pool_capacity == before.pool_capacity,
+            after.next_ticket == before.next_ticket,
+            after.file_sets@.len() >= before.file_sets@.len(),
+            forall|j: int| 0 <= j < before.file_sets@.len()
+                ==> after.file_sets@[j] == before.file_sets@[j],
+            forall|j: int| 0 <= j < before.nodes@.len() ==>
+                (before.nodes@[j].phase is Closed ==> after.nodes@[j].phase is Closed)
+                    && after.nodes@[j].repo == before.nodes@[j].repo
+                    && after.nodes@[j].last_cmd >= before.nodes@[j].last_cmd,
+        ensures checking::accepted(after),
+    {
+        let i = node.0 as int;
+        checking::accepted_node(before, i);
+        if command is Pause || command is Resume {
+            pause_projection::pause_dependencies(before, after, i);
+            internal_safety::apply_step_preserves_accepted(before, after, i);
+        } else {
+            checking::accepted_parts(before);
+            if !dependencies::prerequisites_delivered(before, node) {
+                dependency_owner_exports::waiting_owner_ok(before, i);
+            }
+            handler_safety::step_withheld(before.nodes@[i], after.nodes@[i]);
+            internal_safety::apply_step_preserves_accepted_full(before, after, i);
+        }
+    }
+    }
+}
+
+mod aggregate_command_assembly {
+    use super::*;
+
+    verus! {
+    /// R28 for all targets and fresh/stale IDs of the four qualified commands.
+    fn apply_non_answer_step(mut w: World, event: Event, mut out: Outbox, mut report: Report)
+        -> (result: (World, Outbox, Report))
+        requires checking::accepted(w),
+            world_headroom(w), footprint::ordered_table(w), dependencies::edges_indexable(w),
+            out.len + 4 <= OUTBOX,
+            forall|j: int| 0 <= j < w.nodes@.len() ==>
+                arithmetic_consistent(w.nodes@[j]) && settle_shape(w.nodes@[j])
+                    && stopping_effect_fits(w.nodes@[j])
+                    && (w.nodes@[j].phase is Closed ==> w.nodes@[j].effect.is_none())
+                    && footprint::valid_footprint(w, w.nodes@[j].footprint),
+            match event {
+                Event::Command { command, .. } => matches!(command,
+                    Command::Stop | Command::Pause | Command::Resume | Command::ChangeRequest),
+                _ => false,
+            },
+        ensures (checking::accepted(w) && (event is Command)) ==> checking::accepted(result.0),
+    {
+        let ghost before = w;
+        events::apply(&mut w, event, &mut out, &mut report);
+        proof {
+            match event {
+                Event::Command { node, id, command } => {
+                    command_frames_reveal::command_rows_project(before, w, node, id, command);
+                    if node.0 < before.nodes@.len() {
+                        command_frames_reveal::command_frame_rows_reveal(
+                            before.nodes@[node.0 as int], w.nodes@[node.0 as int], id, command);
+                        if command is Resume {
+                            resume_apply_projection::endpoint(before, w, node, id);
+                        }
+                        aggregate_command_rows::acceptance(before, w, node, command);
+                    } else {
+                        checking::accepted_frame(before, w);
+                    }
+                },
+                _ => {},
+            }
+        }
+        (w, out, report)
+    }
+    }
+}
+
+mod invalid_command_assembly {
+    use super::*;
+
+    verus! {
+    /// Includes Answer at an absent target; no valid-node Answer premise is used.
+    fn apply_invalid_target(mut w: World, event: Event, mut out: Outbox, mut report: Report)
+        -> (result: (World, Outbox, Report))
+        requires checking::accepted(w),
+            world_headroom(w), footprint::ordered_table(w), dependencies::edges_indexable(w),
+            out.len + 4 <= OUTBOX,
+            forall|j: int| 0 <= j < w.nodes@.len() ==>
+                arithmetic_consistent(w.nodes@[j]) && settle_shape(w.nodes@[j])
+                    && stopping_effect_fits(w.nodes@[j])
+                    && (w.nodes@[j].phase is Closed ==> w.nodes@[j].effect.is_none())
+                    && footprint::valid_footprint(w, w.nodes@[j].footprint),
+            match event {
+                Event::Command { node, .. } => node.0 >= w.nodes@.len(),
+                _ => false,
+            },
+        ensures (checking::accepted(w) && (event is Command)) ==> checking::accepted(result.0),
+    {
+        let ghost before = w;
+        events::apply(&mut w, event, &mut out, &mut report);
+        proof {
+            match event {
+                Event::Command { node, id, command } => {
+                    command_frames_reveal::command_rows_project(before, w, node, id, command);
+                    checking::accepted_frame(before, w);
+                },
+                _ => {},
+            }
+        }
+        (w, out, report)
+    }
+    }
 }
