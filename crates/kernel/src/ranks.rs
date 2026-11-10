@@ -863,25 +863,39 @@ kernel_fn! {
             result == advance_enabled(*old(node), context),
             advance_family_post::slot(*old(node), *final(node),
     *old(next_ticket), *final(next_ticket), context, *old(_out), *final(_out), result),
-    ] proof [reveal(advance_post); reveal(distance); reveal(advance_family_post::slot);] {
+    ] proof [reveal(advance_post); reveal(distance);] {
         kernel_snapshot! { before_phase = node.phase }
         let n = *node;
+        kernel_snapshot! { slot_ticket_before = *next_ticket }
+        kernel_snapshot! { slot_out_before = *_out }
         let Phase::Ready(r) = n.phase else {
             kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+            kernel_proof! {
+                advance_family_post::slot_unchanged(n, *node, slot_ticket_before@, *next_ticket, context, slot_out_before@, *_out, false);
+            }
             return false;
         };
         if n.paused {
             if n.ticket.is_some() {
                 node.ticket = None;
                 kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+                kernel_proof! {
+                    advance_family_post::slot_paused(n, *node, slot_ticket_before@, *next_ticket, context, slot_out_before@, *_out, true);
+                }
                 return true;
             }
             kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+            kernel_proof! {
+                advance_family_post::slot_paused(n, *node, slot_ticket_before@, *next_ticket, context, slot_out_before@, *_out, false);
+            }
             return false;
         }
         if n.ticket.is_none() {
             take_ticket_node(node, next_ticket);
             kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+            kernel_proof! {
+                advance_family_post::slot_ticket_issued(n, *node, slot_ticket_before@, *next_ticket, context, slot_out_before@, *_out, true);
+            }
             return true;
         }
         if context.slot {
@@ -889,9 +903,15 @@ kernel_fn! {
             m.holds = true;
             set_phase(m, r.phase());
             kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+            kernel_proof! {
+                advance_family_post::slot_granted(n, *node, slot_ticket_before@, *next_ticket, context, slot_out_before@, *_out, true, r);
+            }
             return true;
         }
         kernel_proof! { report::lemmas::quiet(before_phase@, node.phase, _report.entries@); }
+        kernel_proof! {
+            advance_family_post::slot_unchanged(n, *node, slot_ticket_before@, *next_ticket, context, slot_out_before@, *_out, false);
+        }
         false
     }
 }
