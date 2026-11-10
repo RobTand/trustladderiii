@@ -462,6 +462,42 @@ fn m3_failed_compare_preserves_read_error_without_receipt() {
 }
 
 #[test]
+fn m3_compare_404_surfaces_permanent_diagnostic_and_delivery_incident() {
+    let mut database = support::Database::start();
+    let settings = database.create("m3_compare_not_found");
+    let fixture = DirectFixture::new();
+    fixture.check(Some("success"));
+    fixture.direct.lock().unwrap().compare_status = Some(404);
+    let (mut controller, delivery) = fixture.start(&settings);
+    drain(&mut controller);
+    assert_eq!(accepted_records(&fixture.root.path().join("direct")).len(), 1,
+        "the 404 must be handled after durable delivery acceptance");
+    let snapshot = controller.snapshot().unwrap();
+    let diagnostic = &snapshot.rows.iter().find(|row| row.table == "publication_failures" && row.id == delivery.key)
+        .expect("a permanent compare refusal needs the existing publication diagnostic").value;
+    assert_eq!(diagnostic["class"], "not_found");
+    assert_eq!(diagnostic["status"], 404);
+    assert_eq!(diagnostic["reason"]["code"], "not_found");
+    let open: Vec<_> = snapshot.rows.iter().filter(|row| row.table == "incidents" && row.value["open"] == true).collect();
+    assert_eq!(open.len(), 1, "a permanent compare refusal must open one delivery incident");
+    let incident = &open[0].value;
+    assert_eq!(incident["effect"], json!(delivery.key));
+    assert_eq!(incident["signature"]["upstream"], "Delivery");
+    assert_eq!(incident["signature"]["class"], "not_found");
+    assert!(incident["summary"].as_str().unwrap().contains("Publication diagnostic:"));
+    assert_eq!(controller.world().unwrap().nodes[0].phase, Phase::AwaitingDelivery);
+    let direct = fixture.direct.lock().unwrap();
+    assert!(!direct.comparisons.is_empty(), "the 404 must come from the compare endpoint");
+    assert!(direct.puts.is_empty(), "a compare 404 must never merge");
+    assert_eq!(direct.successes, 0);
+    drop(direct);
+    let key = hex::encode(delivery.key.as_bytes());
+    let receipt = fixture.root.path().join("direct").join(format!("{key}.base-moved"));
+    let records: Vec<_> = std::fs::read_dir(fixture.root.path().join("direct")).expect("the accepted delivery has a real records directory").map(|entry| entry.unwrap().path()).collect();
+    assert!(!records.contains(&receipt), "a failed compare read must not write a base-moved receipt");
+}
+
+#[test]
 fn m3_malformed_compare_preserves_read_error_without_receipt() {
     let mut database = support::Database::start();
     m3_compare_error(&database.create("m3_compare_malformed"), json!({"status":"ahead"}), 200);

@@ -1387,12 +1387,19 @@ async fn publication_token_quota_keeps_its_existing_recovery_class() {
 async fn compare_encodes_both_refs_and_reads_ancestry() {
     let server = MockServer::start().await;
     let github = client(&server).await;
-    get(
-        &server,
-        "/repos/owner/sandbox/compare/release%2Fmain...topic%2Fchange",
-        json!({"status":"diverged","behind_by":2}),
-    )
-    .await;
+    Mock::given(method("GET"))
+        .and(path(
+            "/repos/owner/sandbox/compare/release%2Fmain...topic%2Fchange",
+        ))
+        .and(query_param("per_page", "1"))
+        .and(header("authorization", "Bearer fake-token"))
+        .and(header("x-github-api-version", API_VERSION))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"status":"diverged","behind_by":2})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
     let comparison = github
         .compare("owner/sandbox", "release/main", "topic/change")
         .await
@@ -1415,6 +1422,7 @@ async fn compare_preserves_http_and_response_error_classes() {
         let github = client_with_options(&server, opts).await;
         Mock::given(method("GET"))
             .and(path("/repos/owner/sandbox/compare/base...head"))
+            .and(query_param("per_page", "1"))
             .respond_with(ResponseTemplate::new(status).set_body_json(response))
             .expect(1)
             .mount(&server)
@@ -1432,6 +1440,9 @@ async fn compare_preserves_http_and_response_error_classes() {
         } else {
             assert!(matches!(error, Error::Http { status: actual } if actual == status));
             assert_eq!(error.failure_class(), Error::Http { status }.failure_class());
+            if status == 404 {
+                assert_eq!(error.failure_class(), FailureClass::Permanent("not_found"));
+            }
         }
     }
 }

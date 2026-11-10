@@ -1377,6 +1377,8 @@ impl GitHub {
         .await
     }
 
+    /// Page the commit list only; first-page files and patches remain in the response.
+    /// A 404 retains the shared permanent not_found classification.
     pub async fn compare(&self, repo: &str, base: &str, head: &str) -> Result<Comparison, Error> {
         self.request(
             Method::GET,
@@ -1386,7 +1388,7 @@ impl GitHub {
                 segment(base)?,
                 segment(head)?
             ),
-            vec![],
+            vec![("per_page".into(), "1".into())],
             None,
         )
         .await
