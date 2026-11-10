@@ -570,7 +570,7 @@ fn all_mounts(source: &str, module: &str, include_kani: bool) -> Vec<Mount> {
             }
             if matches!(
                 ts[i].name(),
-                Some("fn" | "struct" | "enum" | "impl" | "const" | "type")
+                Some("fn" | "struct" | "enum" | "impl" | "const" | "type" | "trait" | "union" | "static" | "extern" | "macro")
             ) || ts[i] == Token::Punct(';')
             {
                 assert!(
@@ -1097,6 +1097,10 @@ fn trusted_markers(source: &str) -> Vec<(usize, &'static str)> {
                         match token.name() {
                             Some("external_body") => hits.push((k, "external_body")),
                             Some("external") => hits.push((k, "external")),
+                            Some("external_fn_specification") => hits.push((k, "external_fn_specification")),
+                            Some("external_type_specification") => hits.push((k, "external_type_specification")),
+                            Some("external_trait_specification") => hits.push((k, "external_trait_specification")),
+                            Some("external_trait_extension") => hits.push((k, "external_trait_extension")),
                             _ => {}
                         }
                     }
@@ -1149,6 +1153,10 @@ fn trusted_markers(source: &str) -> Vec<(usize, &'static str)> {
                 Some("assume") if !field_label && !field_read => hits.push((i, "assume")),
                 Some("admit") if !field_label && !field_read => hits.push((i, "admit")),
                 Some("assume_specification") => hits.push((i, "assume_specification")),
+                Some("external_fn_specification") => hits.push((i, "external_fn_specification")),
+                Some("external_type_specification") => hits.push((i, "external_type_specification")),
+                Some("external_trait_specification") => hits.push((i, "external_trait_specification")),
+                Some("external_trait_extension") => hits.push((i, "external_trait_extension")),
                 Some("external_body" | "external")
                     if ts[path_start].name() == Some("verifier")
                         || (i >= 2
@@ -1203,8 +1211,37 @@ fn trusted_marker_files(directory: &Path, result: &mut BTreeMap<PathBuf, String>
         let path = entry.unwrap().path();
         if path.is_dir() {
             trusted_marker_files(&path, result);
-        } else {
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
             result.insert(path.clone(), std::fs::read_to_string(path).unwrap());
+        }
+    }
+}
+
+const CONTROLLER_PROOF_INPUTS: [&str; 3] = [
+    "src/kernel_boundary.rs",
+    "src/dispatch_liveness/decision.rs",
+    "src/dispatch_liveness/model.rs",
+];
+
+// Resolve all mounts, including cfg(kani) and cfg(verus_keep_ghost), before
+// excluding Kani-only files. A missing staged source must never shrink the scan.
+fn require_trusted_mounts(sources: &BTreeMap<PathBuf, String>, root: &Path) {
+    let controller = root.parent().unwrap().join("controller");
+    let outside: BTreeSet<_> = CONTROLLER_PROOF_INPUTS.iter()
+        .map(|path| controller.join(path)).collect();
+    for (file, source) in sources {
+        for mount in all_mounts(source, "kernel", true) {
+            let candidates = mount_candidates(file, &mount);
+            // This is the sole test-only mount in lib.rs, compiled out of Verus.
+            if candidates == [root.join("tests/mark_handled_equivalence/cases.rs")] {
+                continue;
+            }
+            assert!(candidates.iter().all(|path|
+                path.starts_with(root.join("src")) || path.starts_with(root.join("verus"))
+                    || outside.contains(path)),
+                "unlisted external proof mount from {}: {:?}", file.display(), candidates);
+            assert!(candidates.iter().any(|path| sources.contains_key(path)),
+                "trusted-marker input not staged: {} mounts {:?}", file.display(), candidates);
         }
     }
 }
@@ -1255,6 +1292,12 @@ fn no_trusted_markers() {
         sources.contains_key(&root.join("verus/progress.rs")),
         "Verus root missing from test inputs"
     );
+    for path in CONTROLLER_PROOF_INPUTS {
+        let file = root.parent().unwrap().join("controller").join(path);
+        sources.insert(file.clone(), std::fs::read_to_string(&file)
+            .unwrap_or_else(|error| panic!("trusted-marker input not staged: {}: {error}", file.display())));
+    }
+    require_trusted_mounts(&sources, root);
     let kani = kani_only_files(&sources, root);
     let mut errors = Vec::new();
     for (path, source) in &sources {
@@ -1263,8 +1306,8 @@ fn no_trusted_markers() {
         }
         for (line, marker) in trusted_markers(source) {
             errors.push(format!(
-                "crates/kernel/{}:{line}: trusted marker {marker}",
-                path.strip_prefix(root).unwrap().display()
+                "crates/{}:{line}: trusted marker {marker}",
+                path.strip_prefix(root.parent().unwrap()).unwrap().display()
             ));
         }
     }
@@ -1282,6 +1325,11 @@ fn trusted_marker_detection_covers_attributes_calls_and_aliases() {
         "#[verifier::external_body] fn f() {}",
         "#[verifier(external_body)] fn f() {}",
         "#[verifier::external] fn f() {}",
+        "#[verifier::external_fn_specification] fn f() {}",
+        "#[verifier::external_type_specification] struct S;",
+        "#[verifier::external_trait_specification] trait T {}",
+        "#[verifier::external_trait_extension] trait T {}",
+        "verifier(external_trait_extension)",
         "#[cfg_attr(verus_keep_ghost, verifier(external_body))] fn f() {}",
         "verifier(external_body)",
         "admit()",
@@ -1347,4 +1395,39 @@ fn kani_file_exclusion_requires_an_exclusively_kani_route() {
         .unwrap()
         .push_str(" #[path = \"bounded.rs\"] mod live;");
     assert!(kani_only_files(&sources, root).is_empty());
+}
+
+#[test]
+#[should_panic(expected = "trusted-marker input not staged")]
+fn trusted_marker_missing_mounted_source_fails_closed() {
+    let root = Path::new("/trusted-fixture/kernel");
+    require_trusted_mounts(&BTreeMap::from([
+        (root.join("src/lib.rs"), "#[path = \"../verus/nested/proof.rs\"] mod proof;".into()),
+    ]), root);
+}
+
+#[test]
+fn trusted_marker_controller_inputs_are_scanned() {
+    let root = Path::new("/trusted-fixture/kernel");
+    for path in CONTROLLER_PROOF_INPUTS {
+        let file = root.parent().unwrap().join("controller").join(path);
+        let sources = BTreeMap::from([
+            (root.join("verus/progress.rs"), format!("#[path = \"../../controller/{path}\"] mod proof;")),
+            (file.clone(), "#[verifier::external_body] fn f() {}".into()),
+        ]);
+        require_trusted_mounts(&sources, root);
+        assert_eq!(trusted_markers(&sources[&file]), [(1, "external_body")]);
+    }
+}
+
+#[test]
+fn kani_attribute_does_not_leak_past_other_item_kinds() {
+    let root = Path::new("/trusted-fixture");
+    for item in ["trait T {}", "union U { a: u8 }", "static S: u8 = 0;", "extern \"C\" {}"] {
+        let sources = BTreeMap::from([
+            (root.join("src/lib.rs"), format!("#[cfg(kani)] {item} mod real;")),
+            (root.join("src/real.rs"), "admit();".into()),
+        ]);
+        assert!(kani_only_files(&sources, root).is_empty(), "{item}");
+    }
 }
