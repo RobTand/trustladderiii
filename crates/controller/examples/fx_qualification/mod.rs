@@ -300,14 +300,14 @@ fn dry_result(inputs: &Inputs, builds: Value) -> Result<Value> {
 }
 
 fn failure_verdict(inputs: &Inputs, state: &State, error: &str) -> Value {
-            let preparation_jobs: Vec<_> = ["preparation-job", "generator-preparation-job"]
-                .into_iter()
-                .filter_map(|name| admission::retained(&inputs, name))
-                .collect();
-            let verification_jobs: Vec<_> = admission::retained(&inputs, "verification-job")
-                .into_iter()
-                .collect();
-            json!({"schema":"tl3.fx_executor_qualification.v1","status":if state.canaries.iter().any(|c|c.status=="FAIL"){"FAIL"}else{"UNKNOWN"},"complete":false,
+    let preparation_jobs: Vec<_> = ["preparation-job", "generator-preparation-job"]
+        .into_iter()
+        .filter_map(|name| admission::retained(&inputs, name))
+        .collect();
+    let verification_jobs: Vec<_> = admission::retained(&inputs, "verification-job")
+        .into_iter()
+        .collect();
+    json!({"schema":"tl3.fx_executor_qualification.v1","status":if state.canaries.iter().any(|c|c.status=="FAIL"){"FAIL"}else{"UNKNOWN"},"complete":false,
             "qualified_head":inputs.head,"qualified_tree":git(&inputs.repo,&["rev-parse",&format!("{}^{{tree}}",inputs.head)]).ok(),
             "executor_pathset":{"version":policy::PATHSET_VERSION,"entries":evidence::pathset(&inputs.repo,&inputs.head).ok()},
             "inputs":{"image_map":identity(&inputs.image_map).ok(),"test_image":inputs.test_image,"generator_image":inputs.generator_image},
@@ -520,9 +520,7 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
     }
     let verdict = match outcome {
         Ok(value) => value,
-        Err(error) => {
-            failure_verdict(&inputs, &state, &error.to_string())
-        }
+        Err(error) => failure_verdict(&inputs, &state, &error.to_string()),
     };
     durable::atomic(
         &inputs.out.join("verdict.json"),

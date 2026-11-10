@@ -565,17 +565,21 @@ pub fn job_absence(
 mod tests {
     use super::*;
     fn produced_launch_failure(root: &Path) -> api::RunnerReport {
-        let mut report: api::RunnerReport = serde_json::from_str(include_str!(
-            "fixtures/launch-failure-r17/report.json"
-        )).unwrap();
-        report.payload = Some(durable::blob(&root.join("payload.json"), include_bytes!(
-            "fixtures/launch-failure-r17/payload.json"
-        )).unwrap());
+        let mut report: api::RunnerReport =
+            serde_json::from_str(include_str!("fixtures/launch-failure-r17/report.json")).unwrap();
+        report.payload = Some(
+            durable::blob(
+                &root.join("payload.json"),
+                include_bytes!("fixtures/launch-failure-r17/payload.json"),
+            )
+            .unwrap(),
+        );
         for (failure, raw) in report.launch_failures.iter_mut().zip([
             &include_bytes!("fixtures/launch-failure-r17/execution-0.jsonl")[..],
             &include_bytes!("fixtures/launch-failure-r17/execution-1.jsonl")[..],
         ]) {
-            failure.process_record = durable::blob(&root.join(format!("{}.jsonl", failure.execution)), raw).unwrap();
+            failure.process_record =
+                durable::blob(&root.join(format!("{}.jsonl", failure.execution)), raw).unwrap();
         }
         report
     }
@@ -585,7 +589,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut report = produced_launch_failure(root.path());
         let generated = std::process::Command::new("/usr/bin/python3")
-            .args(["-I", "-c", r#"
+            .args([
+                "-I",
+                "-c",
+                r#"
 import json, sys
 sys.path.insert(0, sys.argv[1])
 from tl3_harness.model import Check, Kind, Outcome, judge
@@ -593,25 +600,50 @@ from tl3_harness.execution import result_json
 check = Check('sandbox value changes', Kind.DEMONSTRATING, ('test_value.py::test_value',))
 missing = dict.fromkeys(check.tests, Outcome.NO_REPORT)
 print(result_json((judge(check, missing, missing),)))
-"#])
+"#,
+            ])
             .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../harness/src"))
-            .output().unwrap();
-        assert!(generated.status.success(), "real report producer failed: {}", String::from_utf8_lossy(&generated.stderr));
-        let mut payload: Value = serde_json::from_slice(include_bytes!("fixtures/launch-failure-r17/payload.json")).unwrap();
+            .output()
+            .unwrap();
+        assert!(
+            generated.status.success(),
+            "real report producer failed: {}",
+            String::from_utf8_lossy(&generated.stderr)
+        );
+        let mut payload: Value =
+            serde_json::from_slice(include_bytes!("fixtures/launch-failure-r17/payload.json"))
+                .unwrap();
         payload["results"] = serde_json::from_slice(&generated.stdout).unwrap();
         let produced = serde_json::to_vec(&payload).unwrap();
         println!("real judge/result_json producer emitted infrastructure failure");
-        assert!(launch_failure_report(&report, root.path()).unwrap(), "retained infrastructure-failure payload must be accepted");
-        report.payload = Some(durable::blob(&root.path().join("produced.json"), &produced).unwrap());
-        assert!(launch_failure_report(&report, root.path()).unwrap(), "real producer infrastructure-failure payload must be accepted");
+        assert!(
+            launch_failure_report(&report, root.path()).unwrap(),
+            "retained infrastructure-failure payload must be accepted"
+        );
+        report.payload =
+            Some(durable::blob(&root.path().join("produced.json"), &produced).unwrap());
+        assert!(
+            launch_failure_report(&report, root.path()).unwrap(),
+            "real producer infrastructure-failure payload must be accepted"
+        );
     }
 
     #[test]
     fn round18_launch_failure_rejects_wrong_payload_and_launcher_facts() {
         let root = tempfile::tempdir().unwrap();
         let report = produced_launch_failure(root.path());
-        let original: Value = serde_json::from_slice(include_bytes!("fixtures/launch-failure-r17/payload.json")).unwrap();
-        for pointer in ["/schema", "/results/0/verdict", "/results/0/tests/0/base", "/results/0/tests/0/head", "/results/0/tests/0/passed", "/results", "/results/0/tests"] {
+        let original: Value =
+            serde_json::from_slice(include_bytes!("fixtures/launch-failure-r17/payload.json"))
+                .unwrap();
+        for pointer in [
+            "/schema",
+            "/results/0/verdict",
+            "/results/0/tests/0/base",
+            "/results/0/tests/0/head",
+            "/results/0/tests/0/passed",
+            "/results",
+            "/results/0/tests",
+        ] {
             let mut value = original.clone();
             *value.pointer_mut(pointer).unwrap() = match pointer {
                 "/schema" => json!("tl3.checks.v2"),
@@ -621,11 +653,22 @@ print(result_json((judge(check, missing, missing),)))
                 _ => json!("passed"),
             };
             let mut wrong = report.clone();
-            wrong.payload = Some(durable::blob(&root.path().join("wrong.json"), &serde_json::to_vec(&value).unwrap()).unwrap());
-            assert!(!launch_failure_report(&wrong, root.path()).unwrap(), "accepted changed {pointer}");
+            wrong.payload = Some(
+                durable::blob(
+                    &root.path().join("wrong.json"),
+                    &serde_json::to_vec(&value).unwrap(),
+                )
+                .unwrap(),
+            );
+            assert!(
+                !launch_failure_report(&wrong, root.path()).unwrap(),
+                "accepted changed {pointer}"
+            );
         }
         let mut wrong = report.clone();
-        wrong.worker_payload = Some(api::WorkerPayload::Generator { artifact: report.payload.clone().unwrap() });
+        wrong.worker_payload = Some(api::WorkerPayload::Generator {
+            artifact: report.payload.clone().unwrap(),
+        });
         assert!(!launch_failure_report(&wrong, root.path()).unwrap());
         let mut absent = report.clone();
         absent.payload = None;
@@ -634,19 +677,37 @@ print(result_json((judge(check, missing, missing),)))
             let mut wrong = report.clone();
             wrong.payload = None;
             wrong.launch_failures.truncate(length);
-            assert!(!launch_failure_report(&wrong, root.path()).unwrap(), "both natural launcher failures required");
+            assert!(
+                !launch_failure_report(&wrong, root.path()).unwrap(),
+                "both natural launcher failures required"
+            );
         }
-        for (field, value) in [("natural_exit", json!(false)), ("command_released", json!(false)), ("exit_code", json!(127)), ("stderr_tail", json!("other error"))] {
+        for (field, value) in [
+            ("natural_exit", json!(false)),
+            ("command_released", json!(false)),
+            ("exit_code", json!(127)),
+            ("stderr_tail", json!("other error")),
+        ] {
             let mut wrong = report.clone();
             wrong.payload = None;
             let failure = &mut wrong.launch_failures[0];
             let raw = durable::checked_blob(&failure.process_record, root.path()).unwrap();
             let mut events = flushed_events(&raw).unwrap();
-            let exit = events.iter_mut().find(|event| event["event"] == "launcher_exit").unwrap();
+            let exit = events
+                .iter_mut()
+                .find(|event| event["event"] == "launcher_exit")
+                .unwrap();
             exit[field] = value;
-            let raw = events.iter().map(|event| serde_json::to_string(event).unwrap() + "\n").collect::<String>();
-            failure.process_record = durable::blob(&root.path().join("wrong-events.jsonl"), raw.as_bytes()).unwrap();
-            assert!(!launch_failure_report(&wrong, root.path()).unwrap(), "accepted changed {field}");
+            let raw = events
+                .iter()
+                .map(|event| serde_json::to_string(event).unwrap() + "\n")
+                .collect::<String>();
+            failure.process_record =
+                durable::blob(&root.path().join("wrong-events.jsonl"), raw.as_bytes()).unwrap();
+            assert!(
+                !launch_failure_report(&wrong, root.path()).unwrap(),
+                "accepted changed {field}"
+            );
         }
     }
 
