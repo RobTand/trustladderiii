@@ -90,9 +90,11 @@ fn obligations_of_reply(reply: &Reply) -> Obligations {
     match reply {
         Reply::IngestDone { .. } => ob(&["ingest_reply_ingest", "ingest_finish_ingest"], &[Row("apply_ingest_done")]),
         Reply::IngestEarlyEnd(_) => ob(&["ingest_reply_ingest"], &[Row("apply_ingest_early_end")]),
-        Reply::AuditAgrees => ob(&["ingest_reply_audit_agrees"], &[Row("apply_audit_agrees")]),
+        // The reply line (f8f0b6f8) folded reply_audit_agrees and reply_audit_disagrees into the
+        // reply_ingest dispatcher and its value forms; the map names those carriers (no row removed).
+        Reply::AuditAgrees => ob(&["ingest_reply_ingest", "reply_family_reply_ingest_node"], &[Row("apply_audit_agrees")]),
         Reply::AuditDisagrees => ob(
-            &["ingest_reply_audit_disagrees", "ingest_audit_disagreement_node"],
+            &["ingest_reply_ingest", "reply_dispatch_audit_disagreement_v", "ingest_audit_disagreement_node"],
             &[
                 Test(FailFast, "second_audit_disagreement_never_asks_or_spends"),
                 Test(Scenarios, "an_audit_disagreement_is_revised_once_before_stopping_for_review"),
