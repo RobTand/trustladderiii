@@ -235,7 +235,7 @@ pub(super) fn next_rung(w: &mut World, i: usize, step: ReviewStop,
     let fail_fast = w.fail_fast;
     let m = &mut w.nodes[i];
     if fail_fast {
-        stop_for_review(m, step);
+        ask_rob(w, i, QKind::CantMeet, Cont::Planning { must_split: true }, 1, out);
     } else if m.attempt < 3 {
         m.attempt += 1;
         m.review_restarted = false;
