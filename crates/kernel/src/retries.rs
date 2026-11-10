@@ -740,7 +740,7 @@ fn next_rung_cant_meet(node: Node) -> (result: ReplyChange) [
     requires node.generation < u64::MAX,
     ensures result == reply_family_values::rung_cant_meet(node), reply_family_values::callable(result),
 ] proof [reveal(reply_family_values::rung_cant_meet);] {
-    ReplyChange::Ask { node, kind: QKind::CantMeet, cont: Cont::Ready(Resume::Making), cost: 1 }
+    ReplyChange::Ask { node, kind: QKind::OutOfCredit, cont: Cont::Ready(Resume::Making), cost: 1 }
 }
 }
 
