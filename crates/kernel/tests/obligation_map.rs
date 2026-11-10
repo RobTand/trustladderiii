@@ -46,7 +46,7 @@ impl File {
 /// A witness that the variant or phase is reachable and changes something.
 #[derive(Clone, Copy, Debug)]
 enum Cover {
-    /// A quoted row label in transition_covers.rs: an
+    /// A row label at a `changes` or `phase_changes` call in transition_covers.rs: an
     /// `every_event_family_can_change_the_world` family or an
     /// `every_phase_moves_under_settle_or_waits` phase.
     Row(&'static str),
@@ -184,7 +184,7 @@ fn obligations_of_fact(fact: &Fact) -> Obligations {
             &["facts", "facts_ci_failed", "facts_ci_infrastructure"],
             &[Row("apply_ci_failed"), Test(TransitionCovers, "ci_failure_in_round_one_under_fail_fast_stops_for_review")],
         ),
-        Fact::Conflict => ob(&["facts", "facts_conflict", "apply_safety_conflict_rule"], &[Row("advance_rebasing")]),
+        Fact::Conflict => ob(&["facts", "facts_conflict", "apply_safety_conflict_rule"], &[Row("apply_conflict")]),
         Fact::IncidentCleared { .. } => ob(
             &["facts", "facts_incident_cleared"],
             &[Test(Scenarios, "a_crash_loop_reaches_rob_after_its_second_incident")],
@@ -374,9 +374,82 @@ fn gated(group: &str) -> bool {
     VERUS_GROUPS.contains(&format!("\"{group}\": ("))
 }
 
+/// Keep comments and literals opaque when matching executable cover calls.
+fn cover_tokens(source: &str) -> Vec<&str> {
+    let bytes = source.as_bytes();
+    let mut tokens = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at].is_ascii_whitespace() {
+            at += 1;
+        } else if bytes[at..].starts_with(b"//") {
+            at += source[at..].find('\n').unwrap_or(bytes.len() - at);
+        } else if bytes[at..].starts_with(b"/*") {
+            at += 2;
+            let mut depth = 1;
+            while at < bytes.len() && depth != 0 {
+                if bytes[at..].starts_with(b"/*") {
+                    depth += 1;
+                    at += 2;
+                } else if bytes[at..].starts_with(b"*/") {
+                    depth -= 1;
+                    at += 2;
+                } else {
+                    at += 1;
+                }
+            }
+        } else {
+            let start = at;
+            let mut quote = at + 1;
+            if bytes[at] == b'r' {
+                while bytes.get(quote) == Some(&b'#') {
+                    quote += 1;
+                }
+            }
+            if bytes[at] == b'r' && bytes.get(quote) == Some(&b'"') {
+                let end = format!("\"{}", "#".repeat(quote - at - 1));
+                at = source[quote + 1..].find(&end)
+                    .map_or(bytes.len(), |offset| quote + 1 + offset + end.len());
+            } else if bytes[at] == b'"' {
+                at += 1;
+                while at < bytes.len() {
+                    let byte = bytes[at];
+                    at += 1;
+                    if byte == b'\\' {
+                        at = (at + 1).min(bytes.len());
+                    } else if byte == b'"' {
+                        break;
+                    }
+                }
+            } else {
+                let first = source[at..].chars().next().unwrap();
+                at += first.len_utf8();
+                if first.is_alphanumeric() || first == '_' {
+                    while let Some(ch) = source[at..].chars().next() {
+                        if !ch.is_alphanumeric() && ch != '_' {
+                            break;
+                        }
+                        at += ch.len_utf8();
+                    }
+                }
+            }
+            tokens.push(&source[start..at]);
+        }
+    }
+    tokens
+}
+
+fn row_cover_exists(source: &str, label: &str) -> bool {
+    let literal = format!("\"{label}\"");
+    cover_tokens(source).windows(4).any(|call| {
+        matches!(call[0], "changes" | "phase_changes")
+            && call[1] == "(" && call[2] == literal && call[3] == ","
+    })
+}
+
 fn cover_exists(cover: Cover) -> bool {
     match cover {
-        Row(label) => TRANSITION_COVERS.contains(&format!("\"{label}\"")),
+        Row(label) => row_cover_exists(TRANSITION_COVERS, label),
         Test(file, name) => file.source().contains(&format!("#[test]\nfn {name}(")),
         Witness(group) => gated(group),
     }
@@ -438,4 +511,22 @@ fn the_samples_visit_every_mapped_variant() {
     let unvisited: Vec<_> = maps.iter().filter(|p| !samples.contains(*p) && !wrappers.contains(&p.as_str())).collect();
     assert!(unvisited.is_empty(), "mapped but not sampled: {unvisited:?}");
     assert_eq!(maps.len(), 68, "7 enums: 6 + 21 + 5 + 9 + 5 + 8 + 14 variants (maps: {maps:?})");
+}
+
+
+#[test]
+fn row_covers_require_calls_outside_comments_and_literals() {
+    let decoys = r###"
+        // changes("apply_decoy", &world, event);
+        /* phase_changes("apply_decoy", &trace, predicate); /* nested */ */
+        let unused = "apply_decoy";
+        let text = "changes(\"apply_decoy\", &world, event)";
+        let raw = r#"changes("apply_decoy", &world, event)"#;
+        other("apply_decoy", &world, event);
+        assert!(true, "apply_decoy");
+    "###;
+    assert!(!row_cover_exists(decoys, "apply_decoy"));
+    assert!(row_cover_exists("changes /* comment */ (\n\"apply_real\", &world, event);", "apply_real"));
+    assert!(row_cover_exists("phase_changes(\"advance_real\", &trace, predicate);", "advance_real"));
+    assert!(!row_cover_exists("changes(\"apply_real_other\", &world, event);", "apply_real"));
 }

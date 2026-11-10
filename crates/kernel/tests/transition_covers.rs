@@ -899,6 +899,10 @@ fn every_event_family_can_change_the_world() {
 
     let delivered = Run::delivered(false);
     assert!(delivered.node().had_pr);
+    changes("apply_conflict", &delivered.w, Event::Fact {
+        node: NodeId(0),
+        fact: Fact::Conflict,
+    });
     changes("apply_outside_push", &delivered.w, Event::Fact {
         node: NodeId(0),
         fact: Fact::PushByOther { head: HeadId(delivered.head + 3) },
@@ -1062,33 +1066,37 @@ fn moves_from(trace: &[World], phase: impl Fn(Phase) -> bool) -> bool {
     })
 }
 
+fn phase_changes(label: &str, trace: &[World], phase: impl Fn(Phase) -> bool) {
+    assert!(moves_from(trace, phase), "{label}");
+}
+
 #[test]
 fn every_phase_moves_under_settle_or_waits() {
     let (_, _, trace) = step_traced(World::new(&[1], 1), Event::NewRequest {
         repo: RepoId(0),
         priority: Priority::Unranked,
     });
-    assert!(moves_from(&trace, |p| p == Phase::Ingesting), "advance_ingesting");
+    phase_changes("advance_ingesting", &trace, |p| p == Phase::Ingesting);
 
     let ingesting = Run::new(false);
     let (_, _, trace) = step_traced(ingesting.w.clone(), ingesting.reply_now(Reply::IngestDone { size: 1 }));
-    assert!(moves_from(&trace, |p| p == Phase::Auditing), "advance_auditing");
+    phase_changes("advance_auditing", &trace, |p| p == Phase::Auditing);
 
     let mut auditing = Run::new(false);
     auditing.reply(Reply::IngestDone { size: 1 });
     let (_, _, trace) = step_traced(auditing.w.clone(), auditing.reply_now(Reply::AuditAgrees));
-    assert!(moves_from(&trace, |p| p == Phase::Unplanned), "advance_unplanned");
-    assert!(moves_from(&trace, |p| matches!(p, Phase::Planning { .. })), "advance_planning");
+    phase_changes("advance_unplanned", &trace, |p| p == Phase::Unplanned);
+    phase_changes("advance_planning", &trace, |p| matches!(p, Phase::Planning { .. }));
 
     let mut planning = Run::planning();
     let footprint = planning.w.intern_footprint([FileId(0)]);
     let (_, _, trace) = step_traced(planning.w.clone(), planning.reply_now(Reply::PlanLeaf { footprint, fits: true }));
-    assert!(moves_from(&trace, |p| matches!(p, Phase::Ready(_))), "advance_ready");
-    assert!(moves_from(&trace, |p| p == Phase::Making), "advance_making");
+    phase_changes("advance_ready", &trace, |p| matches!(p, Phase::Ready(_)));
+    phase_changes("advance_making", &trace, |p| p == Phase::Making);
 
     let making = Run::making();
     let (_, _, trace) = step_traced(making.w.clone(), making.reply_now(Reply::MakerDone { head: HeadId(5) }));
-    assert!(moves_from(&trace, |p| p == Phase::Checking), "advance_checking");
+    phase_changes("advance_checking", &trace, |p| p == Phase::Checking);
 
     let mut checking = Run::making();
     checking.head += 1;
@@ -1096,23 +1104,23 @@ fn every_phase_moves_under_settle_or_waits() {
         head: HeadId(checking.head),
     });
     let (_, _, trace) = step_traced(checking.w.clone(), checking.reply_now(CHECKS_PASS));
-    assert!(moves_from(&trace, |p| p == Phase::Reviewing), "advance_reviewing");
+    phase_changes("advance_reviewing", &trace, |p| p == Phase::Reviewing);
 
     let reviewing = Run::reviewing(false);
     let (_, _, trace) = step_traced(
         reviewing.w.clone(),
         reviewing.reply_now(Reply::Approved { head: HeadId(reviewing.head) }),
     );
-    assert!(moves_from(&trace, |p| p == Phase::Publishing), "advance_publishing");
+    phase_changes("advance_publishing", &trace, |p| p == Phase::Publishing);
     let (_, _, trace) = step_traced(reviewing.w.clone(), reviewing.command(Command::Stop));
-    assert!(moves_from(&trace, |p| matches!(p, Phase::Stopping(_))), "advance_stopping");
+    phase_changes("advance_stopping", &trace, |p| matches!(p, Phase::Stopping(_)));
 
     let delivered = Run::delivered(false);
     let (_, _, trace) = step_traced(delivered.w.clone(), Event::Fact {
         node: NodeId(0),
         fact: Fact::Conflict,
     });
-    assert!(moves_from(&trace, |p| p == Phase::Rebasing), "advance_rebasing");
+    phase_changes("advance_rebasing", &trace, |p| p == Phase::Rebasing);
     // advance_awaiting_delivery: check_advance(Phase::AwaitingDelivery, false);
     // the waiting phase does not move, so settle leaves the world unchanged.
     assert_eq!(delivered.node().phase, Phase::AwaitingDelivery);
