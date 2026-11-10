@@ -1,10 +1,70 @@
 {
-  "source_head": "e111adecab9f4f1515a27ff2f20689a9e751c8df",
+  "source_head": "7c6548b43893206080481360f7f7f66db60dd2bc",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "e231b00fce5a47f5413c86e9d8c92d80dd5c0814568cae330a63b6eff066dbed",
-  "groups": 571,
-  "obligations": 769,
+  "source_sha256": "e22fdd5520938abbf8d7f16d2511d6412f89fcb8d318683cac32eb8db4c00f69",
+  "groups": 583,
+  "obligations": 781,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_reply_family_rung_bump_v",
+      "selector": "kernel::retries#rung_bump_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_rung_replan_v",
+      "selector": "kernel::retries#rung_replan_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_recheck_count_v",
+      "selector": "kernel::retries#recheck_count_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_plan_count_v",
+      "selector": "kernel::retries#plan_count_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_held_v",
+      "selector": "kernel::retries#held_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_unheld_v",
+      "selector": "kernel::retries#unheld_v",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_held_eq",
+      "selector": "kernel::reply_family_posts#held_eq",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_room_bridge",
+      "selector": "kernel::reply_family_posts#room_bridge",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_rung_value_posts",
+      "selector": "kernel::reply_family_posts#rung_value_posts",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_failed_round_value_posts",
+      "selector": "kernel::reply_family_posts#failed_round_value_posts",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_plan_retry_value_posts",
+      "selector": "kernel::reply_family_posts#plan_retry_value_posts",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_reply_family_recheck_value_posts",
+      "selector": "kernel::reply_family_posts#recheck_value_posts",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_reply_family_next_rung_paid",
       "selector": "kernel::retries#next_rung_paid",
