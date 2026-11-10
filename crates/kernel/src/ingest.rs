@@ -99,6 +99,7 @@ pub(super) fn reply_ingest(w: &mut World, i: usize, reply: Reply,
     kernel_proof! {
         reply_family_ingest_world::ingest_done(before_ingest_entry@.nodes@[i as int], reply);
         reveal(reply_family_ingest_world::final_node);
+        reveal(reply_family_dispatch::other_rows);
         reply_family_ingest_world::ingest_world(before_ingest_entry@, *w, i, reply,
             before_ingest_out@, *out);
     }
