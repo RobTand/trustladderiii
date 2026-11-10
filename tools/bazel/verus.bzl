@@ -746,6 +746,7 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "handler_safety_step_rows_carry": ("kernel::handler_safety#step_rows_carry", 1),
             "handler_safety_step_withheld": ("kernel::handler_safety#step_withheld", 1),
             "handler_safety_distance_withheld": ("kernel::handler_safety#distance_withheld", 1),
             "handler_safety_unwithheld_same": ("kernel::handler_safety#unwithheld_same", 1),
