@@ -190,7 +190,7 @@ pub(super) open spec fn confirmed_ack_frame(b: Node, n: Node, e: InFlight, ack: 
         && (n.job == (if e.kind == EffectKind::WithdrawJob { None } else { b.job }))
         && (n.pr_open == (if e.kind == EffectKind::ClosePr { false } else { b.pr_open }))
         && (n.worktree == (if e.kind == EffectKind::RemoveWorktree { false } else { b.worktree }))))
-        && (((ack == Ack::Confirmed && e.cancelling) || (ack == Ack::Confirmed && !e.cancelling && confirmed_teardown_input(b, e.kind))) ==> n.ticket == b.ticket && n.generation == b.generation && nqa == nq)
+        && (((ack == Ack::Confirmed && e.cancelling) || (ack == Ack::Confirmed && !e.cancelling && confirmed_teardown_input(b, e.kind))) ==> n.ticket == b.ticket && n.generation == b.generation && nqa as int == nq as int + 1)
         && ((((ack == Ack::Confirmed && e.cancelling) || (ack == Ack::Confirmed && !e.cancelling && confirmed_teardown_input(b, e.kind))) && b.effect == Some(e)) ==> confirmed_rules_transfer(b, n))
 }
 
