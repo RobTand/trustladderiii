@@ -1,10 +1,40 @@
 {
-  "source_head": "f443128a3edaf3bbf2fd5db560ced8abbf040c62",
+  "source_head": "352a4d42f4f54557c544569f646c967fec54d975",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "c84cc3ec9c5c60959303c2bce5d0d15bca86d31b839b8649df4ce7681df08147",
-  "groups": 496,
-  "obligations": 688,
+  "source_sha256": "3203d520bac18d5b26788fc03b73d5fd4da436e74c48609beacffa2ffa50f58a",
+  "groups": 502,
+  "obligations": 694,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_events_apply_new_adoption",
+      "selector": "kernel::events#apply_new_adoption",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_events_apply_new_request",
+      "selector": "kernel::events#apply_new_request",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_events_apply_reply",
+      "selector": "kernel::events#apply_reply",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_events_apply_ack",
+      "selector": "kernel::events#apply_ack",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_events_apply_fact",
+      "selector": "kernel::events#apply_fact",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_events_apply_command",
+      "selector": "kernel::events#apply_command",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_handler_safety_command_node_safety",
       "selector": "kernel::handler_safety#command_node_safety",
@@ -1057,7 +1087,7 @@
     },
     {
       "target": "//crates/kernel:verus_events",
-      "selector": "kernel::events",
+      "selector": "kernel::events#apply",
       "expected": 1
     },
     {
