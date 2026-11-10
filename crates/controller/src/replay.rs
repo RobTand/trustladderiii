@@ -196,6 +196,17 @@ pub fn run(reader: &mut tl3_store::Reader, from: Option<&str>) -> crate::Result<
     }
     let expected = previous
         .ok_or_else(|| Error::Replay("no replayable kernel snapshot in selected history".into()))?;
+    crate::snapshot::world_id(&snapshot)
+        .map_err(|error| Error::Replay(format!("event {last_key}: world identity: {error}")))?;
+    let initialized = tl3_store::find_event_revision(&mut tx, "controller:init")?
+        .ok_or_else(|| Error::Replay("missing controller initialization for world identity".into()))?;
+    if snapshot.rows.iter().any(|row| {
+        row.table == "kernel" && row.id == "world_id" && row.version != initialized
+    }) {
+        return Err(Error::Replay(format!(
+            "event {last_key}: world identity changed after initialization"
+        )));
+    }
     let expected_rows = crate::snapshot::encode(&expected)?;
     let mismatch = snapshot
         .rows
@@ -206,6 +217,7 @@ pub fn run(reader: &mut tl3_store::Reader, from: Option<&str>) -> crate::Result<
                 "kernel" | "nodes" | "gates" | "file_sets"
             )
         })
+        .filter(|row| !(row.table == "kernel" && row.id == "world_id"))
         .filter(|row| expected_rows.get(&(row.table.clone(), row.id.clone())) != Some(&row.value))
         .map(|row| row.version)
         .min();

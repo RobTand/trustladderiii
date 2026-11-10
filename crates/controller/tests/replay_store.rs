@@ -5,6 +5,69 @@ use serde_json::json;
 use tl3_controller::{Bootstrap, Controller, LabelledIssue, Repository, adapters, replay};
 use tl3_store::{Commit, Reader, RowChange, Store};
 
+#[test]
+fn replay_requires_initialized_unchanged_world_identity() {
+    let mut db = support::Database::start();
+    let settings = db.create("replay_identity");
+    let root = tempfile::tempdir().unwrap();
+    let mut controller = Controller::open(
+        Store::open(&settings).unwrap(),
+        adapters::simulation(root.path()).unwrap(),
+        Bootstrap {
+            operations: None,
+            repos: vec![],
+            rob: 42,
+            slots: 1,
+            pool: 2,
+            fail_fast: false,
+        },
+    )
+    .unwrap();
+    let mut store = Store::open(&settings).unwrap();
+    let snapshot = store.load().unwrap();
+    let identity = snapshot
+        .rows
+        .iter()
+        .find(|row| row.table == "kernel" && row.id == "world_id")
+        .unwrap()
+        .value
+        .clone();
+    let mut anchor = Commit::new("fixture:identity-anchor", json!({}), &snapshot);
+    anchor.result = json!({"kernel_anchor":controller.world().unwrap()});
+    store.commit(&anchor).unwrap();
+    let mut reader = Reader::open(&settings).unwrap();
+    replay::run(&mut reader, Some("fixture:identity-anchor")).unwrap();
+    for (name, value, expected) in [
+        ("rewritten", Some(identity.clone()), "changed after initialization"),
+        ("changed", Some(json!(if identity == json!("0".repeat(32)) {
+            "1".repeat(32)
+        } else {
+            "0".repeat(32)
+        })), "changed after initialization"),
+        ("malformed", Some(json!("invalid")), "stored world id must be 128 bits of lowercase hex"),
+        ("missing", None, "stored world id is missing"),
+    ] {
+        let snapshot = store.load().unwrap();
+        let mut commit = Commit::new(format!("fixture:identity-{name}"), json!({}), &snapshot);
+        commit.rows.push(match value {
+            Some(value) => RowChange::Put {
+                table: "kernel".into(),
+                id: "world_id".into(),
+                value,
+            },
+            None => RowChange::Delete {
+                table: "kernel".into(),
+                id: "world_id".into(),
+            },
+        });
+        store.commit(&commit).unwrap();
+        let error = replay::run(&mut reader, Some("fixture:identity-anchor"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(expected), "{name}: {error}");
+    }
+}
+
 /// #783 / Q27: SQL-enforced read-only access, inclusive restart, corrupt current rows.
 #[test]
 fn fixture_log_read_only_cli_and_corrupt_snapshot() {
