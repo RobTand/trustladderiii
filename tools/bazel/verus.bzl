@@ -443,6 +443,8 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::apply_command_safety::held_answer": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::apply_command_safety::answered_held": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::apply_command_safety::answered_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::apply_command_safety::answered_nq": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::apply_command_safety::pause_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -769,10 +771,16 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "apply_command_safety_answered_held_parts": ("kernel::apply_command_safety#answered_held_parts", 1),
+            "apply_command_safety_held_fields": ("kernel::apply_command_safety#held_fields", 1),
+            "apply_command_safety_held_same": ("kernel::apply_command_safety#held_same", 1),
+            "apply_command_safety_answer_pair_last_cmd": ("kernel::apply_command_safety#answer_pair_last_cmd", 1),
+            "apply_command_safety_answer_pair_held": ("kernel::apply_command_safety#answer_pair_held", 1),
+            "apply_command_safety_withhold_rules_v": ("kernel::apply_command_safety#withhold_rules_v", 1),
+            "apply_command_safety_answer_held_rules": ("kernel::apply_command_safety#answer_held_rules", 1),
             "apply_command_safety_answered_parts": ("kernel::apply_command_safety#answered_parts", 1),
             "apply_command_safety_answer_node_frame": ("kernel::apply_command_safety#answer_node_frame", 1),
             "apply_command_safety_answer_node_resources": ("kernel::apply_command_safety#answer_node_resources", 1),
-            "apply_command_safety_answer_node_step": ("kernel::apply_command_safety#answer_node_step", 1),
             "apply_command_safety_answer_nq_rows": ("kernel::apply_command_safety#answer_nq_rows", 1),
             "apply_command_safety_answer_node_rules": ("kernel::apply_command_safety#answer_node_rules", 1),
             "apply_command_safety_world_rewrite": ("kernel::apply_command_safety#world_rewrite", 1),
@@ -791,7 +799,6 @@ def verus_proofs():
             "apply_command_safety_stop_rules": ("kernel::apply_command_safety#stop_rules", 1),
             "apply_command_safety_change_request_progress": ("kernel::apply_command_safety#change_request_progress", 1),
             "apply_command_safety_answer_rows": ("kernel::apply_command_safety#answer_rows", 1),
-            "apply_command_safety_answer_step_rows": ("kernel::apply_command_safety#answer_step_rows", 1),
             "apply_command_safety_answer_checked_rows": ("kernel::apply_command_safety#answer_checked_rows", 1),
             "apply_command_safety_answer_rules_row": ("kernel::apply_command_safety#answer_rules_row", 1),
             "apply_command_safety_answer_world": ("kernel::apply_command_safety#answer_world", 1),
