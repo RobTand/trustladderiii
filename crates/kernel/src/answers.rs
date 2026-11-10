@@ -233,41 +233,18 @@ fn retry_answer_node(n: Node, q: Question) -> (result: (Node, Option<Notice>)) [
         result.0.credit.withheld == n.credit.withheld,
         (handler_safety::node_rules_v(n, u64::MAX) && n.phase == Phase::AwaitingRob && n.question == Some(q) && q.kind == QKind::CantMeet ==> handler_safety::node_rules_v(result.0, u64::MAX)),
 ] {
-    let mut m = n;
-    m.attempt = 1;
-    m.review_restarted = false;
-    m.round = 0;
-    m.replanned = false;
+let r = retry_answer_exact(n, q);
     kernel_proof! {
-        if handler_safety::node_rules_v(n, u64::MAX) && n.phase == Phase::AwaitingRob && n.question == Some(q) && q.kind == QKind::CantMeet {
-            handler_safety::retry_rules_v(n, q, u64::MAX);
-            assert(m == try_again_node(n));
-            assert((Question { cost: if q.cost > 1 { q.cost } else { 1u8 }, ..q }) == q);
+        apply_answer_safety::retry_frame(n, q);
+        apply_answer_safety::retry_progress(n, q);
+        apply_answer_safety::retry_resources(n, q);
+        apply_answer_safety::retry_step(n, q);
+        if handler_safety::node_rules_v(n, u64::MAX) && n.phase == Phase::AwaitingRob
+            && n.question == Some(q) && q.kind == QKind::CantMeet {
+            apply_answer_safety::retried_answer_rules(n, q, u64::MAX);
         }
     }
-    m = continue_node(
-        m,
-        Question {
-            cost: q.cost.max(1),
-            ..q
-        },
-        0,
-    );
-    let mut note: Option<Notice> = None;
-    match q.cont {
-        Cont::Planning { must_split } => {
-            if !must_split && m.replanned && q.kind == QKind::OutOfCredit {
-                note = Some(Notice::Note(NoteKind::Replanned));
-            }
-        }
-        _ => {}
-    }
-    kernel_proof! {
-        if n.phase == Phase::AwaitingRob {
-            handler_safety::continue_step(n, m);
-        }
-    }
-    (m, note)
+    r
 }
 }
 
