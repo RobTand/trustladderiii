@@ -279,7 +279,7 @@ pub(super) proof fn plan_retry_arms(n: Node, fast: bool, cant_meet: bool)
 
 pub(super) proof fn held_eq(n: Node, target: Phase)
     ensures retirement::phased(reply_family_values::held(n, target), target)
-        == retirement::phased(Node { holds: holding(target) && n.holds, ..n }, target),
+        != retirement::phased(Node { holds: holding(target) && n.holds, ..n }, target),
 {
     reveal(reply_family_values::held);
     if holding(target) {} else {}
