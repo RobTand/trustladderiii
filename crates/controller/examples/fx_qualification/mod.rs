@@ -3,9 +3,13 @@ mod admission;
 mod bb;
 mod evidence;
 mod generator;
+#[cfg(test)]
+mod launch_failure_fixture;
 mod live;
 mod policy;
 mod prepare;
+#[cfg(test)]
+mod producer_fixture;
 mod publish;
 #[cfg(test)]
 mod tests;

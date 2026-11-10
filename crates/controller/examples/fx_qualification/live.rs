@@ -594,20 +594,21 @@ pub fn job_absence(
 
 #[cfg(test)]
 mod tests {
+    use super::super::launch_failure_fixture;
     use super::*;
     fn produced_launch_failure(root: &Path) -> api::RunnerReport {
         let mut report: api::RunnerReport =
-            serde_json::from_str(include_str!("fixtures/launch-failure-r17/report.json")).unwrap();
+            serde_json::from_str(launch_failure_fixture::REPORT).unwrap();
         report.payload = Some(
             durable::blob(
                 &root.join("payload.json"),
-                include_bytes!("fixtures/launch-failure-r17/payload.json"),
+                launch_failure_fixture::PAYLOAD.as_bytes(),
             )
             .unwrap(),
         );
         for (failure, raw) in report.launch_failures.iter_mut().zip([
-            &include_bytes!("fixtures/launch-failure-r17/execution-0.jsonl")[..],
-            &include_bytes!("fixtures/launch-failure-r17/execution-1.jsonl")[..],
+            launch_failure_fixture::EXECUTION_0.as_bytes(),
+            launch_failure_fixture::EXECUTION_1.as_bytes(),
         ]) {
             failure.process_record =
                 durable::blob(&root.join(format!("{}.jsonl", failure.execution)), raw).unwrap();
@@ -619,6 +620,13 @@ mod tests {
     fn round18_retained_and_real_producer_reports_satisfy_launch_failure_predicate() {
         let root = tempfile::tempdir().unwrap();
         let mut report = produced_launch_failure(root.path());
+        let producer = root.path().join("producer");
+        let package = producer.join("tl3_harness");
+        fs::create_dir_all(&package).unwrap();
+        for (name, raw, sha256) in super::super::producer_fixture::FILES {
+            assert_eq!(durable::digest(raw.as_bytes()), *sha256);
+            fs::write(package.join(name), raw.as_bytes()).unwrap();
+        }
         let generated = std::process::Command::new("/usr/bin/python3")
             .args([
                 "-I",
@@ -633,7 +641,7 @@ missing = dict.fromkeys(check.tests, Outcome.NO_REPORT)
 print(result_json((judge(check, missing, missing),)))
 "#,
             ])
-            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../harness/src"))
+            .arg(&producer)
             .output()
             .unwrap();
         assert!(
@@ -642,7 +650,7 @@ print(result_json((judge(check, missing, missing),)))
             String::from_utf8_lossy(&generated.stderr)
         );
         let mut payload: Value =
-            serde_json::from_slice(include_bytes!("fixtures/launch-failure-r17/payload.json"))
+            serde_json::from_slice(launch_failure_fixture::PAYLOAD.as_bytes())
                 .unwrap();
         payload["results"] = serde_json::from_slice(&generated.stdout).unwrap();
         let produced = serde_json::to_vec(&payload).unwrap();
@@ -664,7 +672,7 @@ print(result_json((judge(check, missing, missing),)))
         let root = tempfile::tempdir().unwrap();
         let report = produced_launch_failure(root.path());
         let original: Value =
-            serde_json::from_slice(include_bytes!("fixtures/launch-failure-r17/payload.json"))
+            serde_json::from_slice(launch_failure_fixture::PAYLOAD.as_bytes())
                 .unwrap();
         for pointer in [
             "/schema",

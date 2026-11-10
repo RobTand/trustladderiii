@@ -984,12 +984,14 @@ mod staged_transport_tests {
         assert_eq!(published.tree, staged.tree);
     }
 
+    include!("bb_client_fixture.rs");
+
     struct TestClient(PathBuf);
 
     impl TestClient {
         fn install(root: &Path) -> Self {
             let path = root.join("bbrun.py");
-            fs::copy(client_path(), &path).unwrap();
+            fs::write(&path, CLIENT_FIXTURE.as_bytes()).unwrap();
             assert_eq!(durable::digest(&fs::read(&path).unwrap()), CLIENT_SHA256);
             Self(CLIENT.with(|client| client.replace(path)))
         }
