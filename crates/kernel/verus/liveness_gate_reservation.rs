@@ -7,7 +7,7 @@ pub(super) open spec fn runnable_older(w: World, older: int, younger: int) -> bo
         && w.nodes@[older].phase is Ready && w.nodes@[younger].phase is Ready
         && w.nodes@[older].repo == w.nodes@[younger].repo
         && w.nodes@[older].ticket.is_some() && w.nodes@[younger].ticket.is_some()
-        && w.nodes@[older].ticket.unwrap() < w.nodes@[younger].ticket.unwrap()
+        && w.nodes@[older].ticket.unwrap() > w.nodes@[younger].ticket.unwrap()
         && scheduler::slot_spec(w, older)
         && !scheduler::overlapped_by_older(w, older, w.nodes@[older].ticket.unwrap())
 }
