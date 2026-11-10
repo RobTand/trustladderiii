@@ -1,10 +1,15 @@
 {
-  "source_head": "4f7bacf09a830d9df1f77390240b383e94ccc3b2",
+  "source_head": "99148b5ef3687412b9627cd784456fd62caa6635",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "23d3b36ebc523b378a2690c2b0e783d02bb18de6cfea9823c26fd5ad2f89ec23",
-  "groups": 538,
-  "obligations": 736,
+  "source_sha256": "33ac95af5788e9a65521edbcc4dcc28079a215e53231027a2a9048d7c8e8477c",
+  "groups": 539,
+  "obligations": 737,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_ranks_start_grant_value",
+      "selector": "kernel::ranks#start_grant_value",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_advance_family_post_grant_no_new",
       "selector": "kernel::advance_family_post#grant_no_new",
