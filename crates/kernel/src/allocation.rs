@@ -168,7 +168,7 @@ fn stopping_active(m: &mut Node, outcome: Outcome) -> (result: ()) [
     ensures *final(m) == retirement::stopped(*old(m), outcome),
 ] {
     kernel_snapshot! { before = *m }
-    m.question = None;
+    m.credit.spent += 1; m.question = None;
     m.waiting_incident = false;
     m.incident_needs_rob = false;
     set_phase(m, Phase::Stopping(outcome));
