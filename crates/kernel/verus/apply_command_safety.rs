@@ -912,29 +912,26 @@ pub(super) proof fn answer_world(before: World, after: World, i: usize, id: u64,
 
 
 
-/// Design A (Opus 1110, after ablation capture 3d3ef796): the last_cmd write's consequences for
-/// answer_command, over plain World values. Premises are the write's literal facts; each conclusion
-/// is an unconditional implication, so answer_command calls this once outside any branch, and
-/// node_checked's unfolding and the node-rules chain stay out of answer_command's query.
-pub(super) proof fn answer_mid(before: World, mid: World, i: usize, id: u64, question: u64,
+/// Design A (Opus 1110, attempt 2): the last_cmd write's consequences for answer_command, over plain
+/// values. No premise relates a node of `mid` to `b`: the conclusions are about `b` and the literal
+/// written node, and answer_command links that literal to w.nodes@[i] only through the write's own
+/// facts. (Diagnostics 11-10: making the entry prove a written-node relation, in any of five forms,
+/// cost 30-55M of its rlimit.) Only world-field frame premises remain.
+pub(super) proof fn answer_mid(before: World, mid: World, b: Node, id: u64, question: u64,
     answer: Answer)
-    requires i < before.nodes@.len(),
-        mid.nodes@[i as int] == (Node { last_cmd: id, ..before.nodes@[i as int] }),
+    requires
         mid.next_question == before.next_question,
         mid.next_ticket == before.next_ticket,
         mid.gates@ == before.gates@,
         mid.file_sets@ == before.file_sets@,
     ensures
-        node_checked(before, before.nodes@[i as int]) ==> node_checked(mid, mid.nodes@[i as int]),
-        node_checked(before, before.nodes@[i as int])
-            && command_progress_input(before.nodes@[i as int], Command::Answer { question, answer })
-            ==> answer_progress_input(mid.nodes@[i as int], question, answer)
-                && distance(mid.nodes@[i as int]) == distance(before.nodes@[i as int]),
-        retirement::node_rules(before, before.nodes@[i as int])
-            ==> retirement::node_rules(mid, mid.nodes@[i as int]),
+        node_checked(before, b) ==> node_checked(mid, (Node { last_cmd: id, ..b })),
+        node_checked(before, b) && command_progress_input(b, Command::Answer { question, answer })
+            ==> answer_progress_input((Node { last_cmd: id, ..b }), question, answer)
+                && distance((Node { last_cmd: id, ..b })) == distance(b),
+        retirement::node_rules(before, b) ==> retirement::node_rules(mid, (Node { last_cmd: id, ..b })),
 {
-    let b = before.nodes@[i as int];
-    let a = mid.nodes@[i as int];
+    let a = Node { last_cmd: id, ..b };
     if node_checked(before, b) {
         footprint::valid_under_table_growth(before, mid, a.footprint);
         assert(node_checked(mid, a));

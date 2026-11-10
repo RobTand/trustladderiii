@@ -350,7 +350,8 @@ pub(super) fn answer_command(w: &mut World, i: usize, id: u64, question: u64, an
     m.last_cmd = id;
     w.nodes[i] = m;
     kernel_proof! {
-        apply_command_safety::answer_mid(before_rules_world@, *w, i, id, question, answer);
+        apply_command_safety::answer_mid(before_rules_world@, *w, before_rules_world@.nodes@[i as int], id,
+            question, answer);
     }
     on_answer(w, i, question, answer, out);
     kernel_proof! {
