@@ -1,13 +1,5 @@
 use super::*;
 
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct Publication {
-    schema: String,
-    preimages: BTreeMap<String, Option<String>>,
-    outputs: BTreeMap<String, Option<String>>,
-}
-
 pub fn verify_private(inputs: &Inputs) -> Result<()> {
     prepare::require_admitted()?;
     let mut canary: evidence::CanaryEvidence = serde_json::from_slice(&durable::read(
@@ -120,113 +112,52 @@ pub fn publish(
     if verified["status"] != "PASS" || verified["qualification_sha256"] != durable::digest(pin) {
         return Err("final admitted verification missing or changed".into());
     }
+    let staged = bb::candidate(inputs, outputs)?;
+    let build: bb::Build = serde_json::from_slice(&durable::read(
+        &inputs.out.join("qualified-production/build.json"),
+    )?)?;
+    if build.build_commit != staged.commit || build.overlay_tree != staged.tree {
+        return Err("candidate pin commit differs from rebuilt production".into());
+    }
+    let head = git(&inputs.repo, &["rev-parse", "HEAD"])?;
+    if head != inputs.head && head != staged.commit {
+        return Err("publication checkout moved from H or candidate".into());
+    }
+    if !git(&inputs.repo, &["status", "--porcelain", "--untracked-files=all"])?.is_empty() {
+        return Err("publication requires a clean operator checkout".into());
+    }
     let journal = inputs.out.join("publication.json");
-    let mut hashes: BTreeMap<_, _> = outputs
-        .iter()
-        .map(|(path, bytes)| (path.clone(), Some(durable::digest(bytes))))
-        .collect();
-    // Previous current inputs are owned derived files. Remove an obsolete one
-    // only after the previous index proves its exact bytes, never by sweeping.
-    let previous_index = inputs.repo.join(policy::INDEX);
-    if previous_index.exists() && !journal.exists() {
-        let previous: d8::current::Index =
-            serde_json::from_slice(&durable::read(&previous_index)?)?;
-        for (name, input) in previous.inputs.iter().chain(&previous.fixtures) {
-            let path = format!("{}{}", policy::INPUTS, name);
-            if !outputs.contains_key(&path) {
-                let bytes = durable::read(&inputs.repo.join(&path))?;
-                if durable::digest(&bytes) != input.sha256 || bytes.len() as u64 != input.bytes {
-                    return Err("previous derived input changed".into());
-                }
-                hashes.insert(path, None);
-            }
-        }
+    let bytes = serde_json::to_vec_pretty(&staged)?;
+    if journal.exists() && durable::read(&journal)? != bytes {
+        return Err("publication candidate changed".into());
     }
-    if journal.exists() {
-        let previous: Publication = serde_json::from_slice(&durable::read(&journal)?)?;
-        for (path, hash) in previous.outputs {
-            if hash.is_none() && policy::derived(&path) {
-                hashes.insert(path, None);
-            }
-        }
+    if !journal.exists() {
+        durable::atomic(&journal, &bytes)?;
     }
-    let paths = policy::publication_order(&hashes.keys().cloned().collect::<Vec<_>>())?;
-    let publication = if journal.exists() {
-        let publication: Publication = serde_json::from_slice(&durable::read(&journal)?)?;
-        if publication.schema != "tl3.fx_pin_publication.v1" || publication.outputs != hashes {
-            return Err("publication inputs changed".into());
-        }
-        publication
-    } else {
-        let mut preimages = BTreeMap::new();
-        for path in &paths {
-            let target = inputs.repo.join(path);
-            if target.ancestors().any(Path::is_symlink) {
-                return Err("publication symlink refused".into());
-            }
-            preimages.insert(
-                path.clone(),
-                if target.exists() {
-                    Some(durable::digest(&durable::read(&target)?))
-                } else {
-                    None
-                },
-            );
-        }
-        let publication = Publication {
-            schema: "tl3.fx_pin_publication.v1".into(),
-            preimages,
-            outputs: hashes,
-        };
-        write(&journal, &publication)?;
-        publication
-    };
-    for path in &paths {
-        let target = inputs.repo.join(path);
-        let observed = if target.exists() {
-            Some(durable::digest(&durable::read(&target)?))
-        } else {
-            None
-        };
-        if observed != publication.preimages[path] && observed != publication.outputs[path] {
-            return Err("publication target differs from both retained preimage and output".into());
-        }
+    // The staged transport commit is also the final pin commit. No second
+    // commit with a different identity or tree is manufactured at publication.
+    if head != staged.commit {
+        git(&inputs.repo, &["merge", "--ff-only", "--no-edit", &staged.commit])?;
     }
-    let mut installed = vec![];
-    let index: d8::current::Index =
-        serde_json::from_slice(outputs.get(policy::INDEX).ok_or("index missing")?)?;
-    for path in paths {
-        let target = inputs.repo.join(&path);
-        fs::create_dir_all(target.parent().ok_or("publication parent")?)?;
-        if publication.outputs[&path].is_none() {
-            if target.exists() {
-                fs::remove_file(&target)?;
-                fs::File::open(target.parent().ok_or("publication parent")?)?.sync_all()?;
-            }
-            continue;
-        }
-        durable::atomic(&target, &outputs[&path])?;
-        fs::set_permissions(&target, fs::Permissions::from_mode(0o644))?;
-        if let Some(input) = path
-            .strip_prefix(policy::INPUTS)
-            .and_then(|p| index.fixtures.get(p))
-        {
-            fs::set_permissions(&target, fs::Permissions::from_mode(input.mode))?;
-        }
-        let mut value = identity(&target)?;
-        value["relative_path"] = path.into();
-        installed.push(value);
+    if git(&inputs.repo, &["rev-parse", "HEAD"])? != staged.commit
+        || git(&inputs.repo, &["rev-parse", "HEAD^{tree}"])? != staged.tree
+    {
+        return Err("published candidate commit or tree differs".into());
     }
     let regenerated = d8::generate_checkout(&inputs.repo.join("crates/controller"))?;
     if regenerated != *pin || durable::read(&inputs.repo.join(policy::PIN))? != *pin {
         return Err("published pin differs from regeneration".into());
     }
-    Ok(
-        json!({"path":inputs.repo.join(policy::PIN),"sha256":durable::digest(pin),"bytes":pin.len(),
+    let mut installed = vec![];
+    for path in policy::publication_order(&outputs.keys().cloned().collect::<Vec<_>>())? {
+        let mut value = identity(&inputs.repo.join(&path))?;
+        value["relative_path"] = path.into();
+        installed.push(value);
+    }
+    Ok(json!({"path":inputs.repo.join(policy::PIN),"sha256":durable::digest(pin),"bytes":pin.len(),
+        "commit":staged.commit,"tree":staged.tree,"transport_branch":staged.branch,
         "inputs_index":identity(&inputs.repo.join(policy::INDEX))?,"check":"byte_identical",
-        "rebuilt_tree":serde_json::from_slice::<Value>(&durable::read(&inputs.out.join("qualified-production/runtime-build.json"))?)?["tree"],
-        "activation_record":verified["deployment"],"installed_outputs":installed}),
-    )
+        "rebuilt_tree":build.overlay_tree,"activation_record":verified["deployment"],"installed_outputs":installed}))
 }
 
 fn fixtures_passed(log: &str) -> bool {

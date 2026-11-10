@@ -191,22 +191,18 @@ fn validate(inputs: &Inputs) -> Result<()> {
             return Err("symlink input refused".into());
         }
     }
-    if git(&inputs.repo, &["rev-parse", "HEAD"])? != inputs.head {
-        return Err("isolated checkout at --head required".into());
+    let head = git(&inputs.repo, &["rev-parse", "HEAD"])?;
+    if head != inputs.head {
+        let staged: bb::OverlayCommit = serde_json::from_slice(&durable::read(&inputs.out.join("publication.json"))?)?;
+        if head != staged.commit || staged.base_head != inputs.head
+            || git(&inputs.repo, &["rev-list", "--parents", "-n1", &head])? != format!("{head} {}", inputs.head)
+            || git(&inputs.repo, &["rev-parse", "HEAD^{tree}"])? != staged.tree
+        {
+            return Err("isolated checkout at H or owned published candidate required".into());
+        }
     }
-    let status = git(
-        &inputs.repo,
-        &["status", "--porcelain", "--untracked-files=all"],
-    )?;
-    if !status.is_empty()
-        && (!inputs.out.join("publication.json").exists()
-            || status.lines().any(|line| {
-                line.trim_start()
-                    .split_once(' ')
-                    .is_none_or(|(_, path)| !policy::derived(path))
-            }))
-    {
-        return Err("clean checkout required except exact owned publication resumption".into());
+    if !git(&inputs.repo, &["status", "--porcelain", "--untracked-files=all"])?.is_empty() {
+        return Err("clean qualification checkout required".into());
     }
     if inputs.repo == Path::new("/home/rob/.t3/projects/trustladderiii") {
         return Err("shared project checkout refused".into());
@@ -271,7 +267,7 @@ fn dry_result(inputs: &Inputs, builds: Value) -> Result<Value> {
     println!("{}", serde_json::to_string_pretty(&planned)?);
     Ok(
         json!({"schema":"tl3.fx_executor_qualification.v1","status":"UNKNOWN","complete":false,
-        "qualified_head":inputs.head,"qualified_tree":git(&inputs.repo,&["rev-parse","HEAD^{tree}"])?,
+        "qualified_head":inputs.head,"qualified_tree":git(&inputs.repo,&["rev-parse",&format!("{}^{{tree}}",inputs.head)])?,
         "builds":builds,"canaries":[],"pin":null,"errors":[{"phase":"planning","code":"dry_run_no_jobs_submitted","evidence":[]}]}),
     )
 }
@@ -320,6 +316,7 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
             canaries: vec![],
         }
     };
+    bb::preflight_transport(&inputs)?;
     if !dry {
         bb::verify_client()?;
     }
@@ -466,11 +463,11 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
         save(&inputs.out, &state)?;
         Ok(
             json!({"schema":"tl3.fx_executor_qualification.v1","status":"PASS","complete":true,
-            "qualified_head":inputs.head,"qualified_tree":git(&inputs.repo,&["rev-parse","HEAD^{tree}"])?,
+            "qualified_head":inputs.head,"qualified_tree":git(&inputs.repo,&["rev-parse",&format!("{}^{{tree}}",inputs.head)])?,
             "executor_pathset":{"version":policy::PATHSET_VERSION,"sha256":durable::digest(&serde_json::to_vec(&entries)?),"entries":entries},
             "inputs":{"image_map":identity(&inputs.image_map)?,"test_image":inputs.test_image,"generator_image":inputs.generator_image},
             "builds":state.builds,"preparation_jobs":[preparation,generator_preparation],"verification_jobs":[verification],"canaries":state.canaries,
-            "pin":pin,"coverage":{"lifecycle":true,"real_image_generator":true,"go_live_profiles":[]},"errors":[]}),
+            "candidate_pin_commit":pin["commit"],"candidate_pin_tree":pin["tree"],"pin":pin,"coverage":{"lifecycle":true,"real_image_generator":true,"go_live_profiles":[]},"errors":[]}),
         )
     })();
     if outcome.is_err() {

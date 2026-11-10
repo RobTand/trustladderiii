@@ -14,6 +14,7 @@ pub struct Build {
     pub invocation_id: String,
     pub client_sha256: String,
     pub base_head: String,
+    pub build_commit: String,
     pub overlay_tree: String,
     pub command_exit: i32,
     pub own_verdict: Value,
@@ -185,6 +186,9 @@ pub fn build(
     if !root.exists() {
         fs::create_dir(&root)?;
     }
+    let argv = build_argv(inputs, overlay)?;
+    let commit = &argv[3];
+    let tree = expected_tree(inputs, &root, overlay)?;
     let result = root.join("build.json");
     if result.exists() {
         let build: Build = serde_json::from_slice(&durable::read(&result)?)?;
@@ -192,11 +196,11 @@ pub fn build(
         if build.client_sha256 != CLIENT_SHA256 {
             return Err("retained BuildBuddy client hash differs".into());
         }
+        verify_build_source(&build, commit, &tree)?;
         evidence::verify_references(&serde_json::to_value(&build)?)?;
         return Ok(build);
     }
     verify_client()?;
-    let argv = build_argv(inputs, overlay)?;
     let raw_argv = serde_json::to_vec(&argv)?;
     let argv_path = root.join("remote-build-argv.json");
     if argv_path.exists() {
@@ -225,9 +229,9 @@ pub fn build(
             "--repo".into(),
             "https://github.com/RobTand/trustladderiii".into(),
             "--commit".into(),
-            inputs.head.clone(),
+            commit.clone(),
             "--branch".into(),
-            "fx-x3-qualify".into(),
+            if overlay.is_some() { candidate(inputs, overlay.ok_or("overlay missing")?)?.branch } else { "fx-x3-qualify".into() },
             "--timeout".into(),
             "60".into(),
             "--max-wait".into(),
@@ -236,7 +240,7 @@ pub fn build(
             root.join("remote.log").to_string_lossy().into_owned(),
             "--".into(),
         ];
-        args.extend(argv);
+        args.extend(argv.clone());
         client(&args, &submitted)?
     };
     let id = invocation(&raw)?;
@@ -261,7 +265,14 @@ pub fn build(
             return Err("BuildBuddy terminal verdict unavailable".into());
         }
     }
-    let own = own.ok_or("BuildBuddy own verdict absent")?;
+    let mut own = own.ok_or("BuildBuddy own verdict absent")?;
+    own["source"] = invocation_source(&id)?;
+    if own["source"]["commitSha"] != *commit
+        || own["source"]["invocationId"] != id
+        || own["source"]["repoUrl"] != "https://github.com/RobTand/trustladderiii"
+    {
+        return Err("BuildBuddy invocation recorded another commit".into());
+    }
     if own["success"] != true
         || !["OK", "SUCCESS"].contains(&own["bazelExitCode"].as_str().unwrap_or(""))
     {
@@ -276,10 +287,10 @@ pub fn build(
     }
     let inventory = fetch(&id, "runtime-build.json", &root)?;
     let record: Value = serde_json::from_slice(&durable::read(&inventory.path)?)?;
-    if record["base_head"] != inputs.head {
+    if record["base_head"] != *commit {
         return Err("remote build source mismatch".into());
     }
-    if record["tree"] != expected_tree(inputs, &root, overlay)? {
+    if record["tree"] != tree {
         return Err("remote H plus generated overlay tree mismatch".into());
     }
     let mut artifacts = vec![serde_json::to_value(inventory)?];
@@ -315,6 +326,7 @@ pub fn build(
         invocation_id: id,
         client_sha256: CLIENT_SHA256.into(),
         base_head: inputs.head.clone(),
+        build_commit: commit.clone(),
         overlay_tree: record["tree"].as_str().ok_or("build tree")?.into(),
         command_exit: 0,
         own_verdict: own,
@@ -322,27 +334,17 @@ pub fn build(
         wrapper_result: wrapper,
         artifacts,
     };
+    verify_build_source(&build, commit, &tree)?;
     durable::atomic(&result, &serde_json::to_vec_pretty(&build)?)?;
     Ok(build)
 }
 
-const REMOTE_BUILD: &str = r#"import base64, gzip, hashlib, json, os, pathlib, subprocess, sys
+const REMOTE_BUILD: &str = r#"import json, os, pathlib, subprocess, sys
 head, qualified = sys.argv[1:3]
-payload = json.loads(gzip.decompress(base64.b64decode(''.join(sys.argv[3:]))))
 def run(argv):
     subprocess.run(argv, check=True)
 assert subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() == head
-for name in payload['obsolete']:
-    pathlib.Path(name).unlink()
-for entry in payload['files']:
-    path = pathlib.Path(entry['path'])
-    path.parent.mkdir(parents=True, exist_ok=True)
-    data = pathlib.Path(entry['source']).read_bytes() if 'source' in entry else base64.b64decode(entry['data'])
-    assert hashlib.sha256(data).hexdigest() == entry['sha256']
-    path.write_bytes(data)
-    path.chmod(entry['mode'])
-if qualified == 'true':
-    run(['git', 'add', '--', 'crates/controller/qualification/fx-current', 'crates/controller/qualification/current.json', 'crates/controller/src/adapters/flux_checks/activation/qualification.json'])
+assert not subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=all'], text=True).strip()
 targets = ['//crates/controller:' + name for name in ['tl3-run-backend', 'tl3', 'tl3d', 'tl3-worker-supervisor', 'example_fx-stage-packet', 'example_generate-fx-qualification', 'example_tl3-deploy']]
 run(['bazel', 'build', '--config=remote', '--remote_download_outputs=toplevel', '--jobs=8', *targets])
 run(['bazel-bin/crates/controller/example_fx-stage-packet', 'inventory-build', os.environ['BUILDBUDDY_ARTIFACTS_DIRECTORY']])
@@ -351,69 +353,28 @@ if qualified == 'true':
     run(['bazel-bin/crates/controller/example_fx-stage-packet', 'inventory-build', os.environ['BUILDBUDDY_ARTIFACTS_DIRECTORY']])
     run(['bazel-bin/crates/controller/example_generate-fx-qualification', '--repo', str(pathlib.Path.cwd() / 'crates/controller'), '--check'])
     run(['bazel', 'test', '--config=remote', '--jobs=8', '--test_output=errors', '//crates/controller:test_test_activation_qualification_absent'])
+assert subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() == head
+assert not subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=all'], text=True).strip()
 "#;
 
-fn gzip(bytes: Vec<u8>, decompress: bool) -> Result<Vec<u8>> {
-    let mut child = Command::new("/usr/bin/gzip")
-        .args(if decompress {
-            &["-d", "-c"][..]
-        } else {
-            &["-n", "-c"][..]
-        })
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()?;
-    let mut stdin = child.stdin.take().ok_or("gzip input absent")?;
-    let writer = std::thread::spawn(move || stdin.write_all(&bytes));
-    let output = child.wait_with_output()?;
-    writer.join().map_err(|_| "gzip writer panicked")??;
-    if !output.status.success() {
-        return Err("overlay gzip failed".into());
-    }
-    Ok(output.stdout)
+fn fixed_argv(commit: &str, qualified: bool) -> Vec<String> {
+    vec!["/usr/bin/python3".into(), "-c".into(), REMOTE_BUILD.into(), commit.into(), qualified.to_string()]
+}
+
+// Both requests have the same fixed script and a 40-byte commit. Check the
+// larger boolean spelling before admission; future evidence never enters argv.
+pub fn preflight_transport(inputs: &Inputs) -> Result<()> {
+    check_transport_size(&fixed_argv(&inputs.head, false))
 }
 
 fn build_argv(inputs: &Inputs, overlay: Option<&BTreeMap<String, Vec<u8>>>) -> Result<Vec<String>> {
-    use base64::Engine;
-    let mut files = vec![];
-    let mut removed = vec![];
-    if let Some(overlay) = overlay {
-        policy::publication_order(&overlay.keys().cloned().collect::<Vec<_>>())?;
-        removed = obsolete(inputs, overlay)?;
-        for (path, bytes) in overlay {
-            let mut entry = json!({"path":path,"mode":source_mode(overlay,path)? & 0o777,"sha256":durable::digest(bytes)});
-            let source = path
-                .strip_prefix(&format!("{}fixtures/lib/tl3_harness/", policy::INPUTS))
-                .filter(|name| name.ends_with(".py"))
-                .map(|name| format!("harness/src/tl3_harness/{name}"))
-                .filter(|source| fs::read(inputs.repo.join(source)).is_ok_and(|raw| raw == *bytes));
-            if let Some(source) = source {
-                // The exact H checkout already carries these bytes. The remote
-                // hash check binds the copy without uploading the code twice.
-                entry["source"] = source.into();
-            } else {
-                entry["data"] = base64::engine::general_purpose::STANDARD
-                    .encode(bytes)
-                    .into();
-            }
-            files.push(entry);
-        }
-    }
-    let payload = base64::engine::general_purpose::STANDARD.encode(gzip(
-        serde_json::to_vec(&json!({"files":files,"obsolete":removed}))?,
-        false,
-    )?);
-    let mut argv = vec![
-        "/usr/bin/python3".into(),
-        "-c".into(),
-        REMOTE_BUILD.into(),
-        inputs.head.clone(),
-        overlay.is_some().to_string(),
-    ];
-    for chunk in payload.as_bytes().chunks(16 * 1024) {
-        argv.push(std::str::from_utf8(chunk)?.into());
-    }
+    preflight_transport(inputs)?;
+    let commit = if let Some(overlay) = overlay {
+        stage_overlay(inputs, &inputs.out.join("qualified-production"), overlay)?.commit
+    } else {
+        inputs.head.clone()
+    };
+    let argv = fixed_argv(&commit, overlay.is_some());
     check_transport_size(&argv)?;
     Ok(argv)
 }
@@ -441,101 +402,6 @@ fn check_transport_size(argv: &[String]) -> Result<()> {
         return Err(format!("BuildBuddy total JSON request bound {json_bytes} exceeds {} byte budget", JSON_LIMIT - 4096).into());
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn overlay_arguments_preserve_paths_bytes_and_modes_without_shell_interpolation() {
-        use base64::Engine;
-        let root = tempfile::tempdir().unwrap();
-        let mut inputs = super::super::tests::inputs(root.path());
-        inputs.head = git(&inputs.repo, &["rev-parse", "HEAD"]).unwrap();
-        let index = d8::current::Index {
-            schema: "tl3.fx_qualification_inputs.v1".into(),
-            source: inputs.head.clone(),
-            inputs: BTreeMap::new(),
-            runs: vec![],
-            fixtures: BTreeMap::from([(
-                "fixtures/helper $(literal).py".into(),
-                d8::current::Input {
-                    sha256: "a".repeat(64),
-                    bytes: 3,
-                    mode: 0o755,
-                },
-            )]),
-        };
-        let name = format!("{}fixtures/helper $(literal).py", policy::INPUTS);
-        let mut overlay = BTreeMap::from([
-            (policy::INDEX.into(), serde_json::to_vec(&index).unwrap()),
-            (policy::PIN.into(), b"pin".to_vec()),
-            (name.clone(), b"\0\xff'".to_vec()),
-        ]);
-        for entry in fs::read_dir(inputs.repo.join("harness/src/tl3_harness")).unwrap() {
-            let entry = entry.unwrap();
-            if entry
-                .path()
-                .extension()
-                .is_some_and(|extension| extension == "py")
-            {
-                overlay.insert(
-                    format!(
-                        "{}fixtures/lib/tl3_harness/{}",
-                        policy::INPUTS,
-                        entry.file_name().to_str().unwrap()
-                    ),
-                    fs::read(entry.path()).unwrap(),
-                );
-            }
-        }
-        assert!(overlay.values().map(Vec::len).sum::<usize>() > 128 * 1024);
-        let argv = build_argv(&inputs, Some(&overlay)).unwrap();
-        assert_eq!(&argv[..2], ["/usr/bin/python3", "-c"]);
-        assert_eq!(argv[3], inputs.head);
-        assert_eq!(argv[4], "true");
-        assert!(argv.iter().all(|arg| arg.len() < 32 * 1024));
-        let payload: Value = serde_json::from_slice(
-            &gzip(
-                base64::engine::general_purpose::STANDARD
-                    .decode(argv[5..].concat())
-                    .unwrap(),
-                true,
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        let files = payload["files"].as_array().unwrap();
-        assert_eq!(files.len(), overlay.len());
-        for file in files {
-            let path = file["path"].as_str().unwrap();
-            let bytes = if let Some(source) = file["source"].as_str() {
-                assert!(file.get("data").is_none());
-                fs::read(inputs.repo.join(source)).unwrap()
-            } else {
-                base64::engine::general_purpose::STANDARD
-                    .decode(file["data"].as_str().unwrap())
-                    .unwrap()
-            };
-            assert_eq!(bytes, overlay[path]);
-            assert_eq!(file["sha256"], durable::digest(&bytes));
-            assert_eq!(file["mode"], if path == name { 0o755 } else { 0o644 });
-        }
-        assert_eq!(build_argv(&inputs, None).unwrap()[4], "false");
-        // Incompressible evidence can fit the old 80 KiB payload guard while
-        // exceeding the client's total JSON budget once wrappers are included.
-        let mut state = 0x1234_5678_u32;
-        let bytes: Vec<u8> = (0..48 * 1024)
-            .map(|_| {
-                state ^= state << 13;
-                state ^= state >> 17;
-                state ^= state << 5;
-                state as u8
-            })
-            .collect();
-        overlay.insert(name, bytes);
-        assert!(build_argv(&inputs, Some(&overlay)).is_err());
-    }
 }
 
 fn source_mode(overlay: &BTreeMap<String, Vec<u8>>, path: &str) -> Result<u32> {
@@ -572,13 +438,13 @@ fn obsolete(inputs: &Inputs, overlay: &BTreeMap<String, Vec<u8>>) -> Result<Vec<
     .collect())
 }
 
-fn expected_tree(
+fn overlay_tree(
     inputs: &Inputs,
     root: &Path,
     overlay: Option<&BTreeMap<String, Vec<u8>>>,
 ) -> Result<String> {
     let Some(overlay) = overlay else {
-        return git(&inputs.repo, &["rev-parse", "HEAD^{tree}"]);
+        return git(&inputs.repo, &["rev-parse", &format!("{}^{{tree}}", inputs.head)]);
     };
     let index = root.join("overlay.index");
     let run = |args: &[&str], bytes: Option<&[u8]>| -> Result<String> {
@@ -629,6 +495,148 @@ fn expected_tree(
         )?;
     }
     run(&["write-tree"], None)
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OverlayCommit {
+    pub commit: String,
+    pub tree: String,
+    pub base_head: String,
+    pub branch: String,
+    pub overlay_sha256: String,
+}
+
+fn overlay_digest(overlay: &BTreeMap<String, Vec<u8>>) -> Result<String> {
+    policy::publication_order(&overlay.keys().cloned().collect::<Vec<_>>())?;
+    Ok(durable::digest(&serde_json::to_vec(overlay)?))
+}
+
+fn verify_overlay(
+    inputs: &Inputs,
+    root: &Path,
+    overlay: &BTreeMap<String, Vec<u8>>,
+    staged: &OverlayCommit,
+) -> Result<()> {
+    let digest = overlay_digest(overlay)?;
+    if !api::hex(&staged.commit, 40)
+        || staged.base_head != inputs.head
+        || staged.overlay_sha256 != digest
+        || staged.branch != format!("fx-x3-overlay/{}", &digest[..16])
+        || git(&inputs.repo, &["rev-list", "--parents", "-n1", &staged.commit])?
+            != format!("{} {}", staged.commit, inputs.head)
+        || git(&inputs.repo, &["rev-parse", &format!("{}^{{tree}}", staged.commit)])? != staged.tree
+    {
+        return Err("overlay commit identity or exact parent H differs".into());
+    }
+    let changed = git(&inputs.repo, &["diff", "--no-renames", "--name-only", &inputs.head, &staged.commit, "--"])?;
+    if changed.lines().any(|path| !policy::derived(path)) {
+        return Err("overlay commit contains non-derived paths".into());
+    }
+    if staged.tree != overlay_tree(inputs, root, Some(overlay))? {
+        return Err("overlay commit blobs or modes differ from private derivation".into());
+    }
+    // Compare each blob with its privately generated bytes, including paths
+    // unchanged from H. The tree equality above also checks removals and modes.
+    for (path, bytes) in overlay {
+        let output = Command::new("/usr/bin/git")
+            .current_dir(&inputs.repo)
+            .args(["cat-file", "blob", &format!("{}:{path}", staged.commit)])
+            .stdin(Stdio::null()).output()?;
+        if !output.status.success() || durable::digest(&output.stdout) != durable::digest(bytes) {
+            return Err("overlay blob hash differs from private bytes".into());
+        }
+    }
+    Ok(())
+}
+
+fn expected_tree(inputs: &Inputs, root: &Path, overlay: Option<&BTreeMap<String, Vec<u8>>>) -> Result<String> {
+    let tree = overlay_tree(inputs, root, overlay)?;
+    if let Some(overlay) = overlay {
+        let record = root.join("overlay-commit.json");
+        if record.exists() {
+            let staged: OverlayCommit = serde_json::from_slice(&durable::read(&record)?)?;
+            verify_overlay(inputs, root, overlay, &staged)?;
+        }
+    }
+    Ok(tree)
+}
+
+fn stage_overlay(inputs: &Inputs, root: &Path, overlay: &BTreeMap<String, Vec<u8>>) -> Result<OverlayCommit> {
+    fs::create_dir_all(root)?;
+    let path = root.join("overlay-commit.json");
+    let digest = overlay_digest(overlay)?;
+    let branch = format!("fx-x3-overlay/{}", &digest[..16]);
+    let reference = format!("refs/heads/{branch}");
+    let tree = expected_tree(inputs, root, Some(overlay))?;
+    let remote = git(&inputs.repo, &["ls-remote", "--refs", "origin", &reference])?;
+    let existing = remote.split_whitespace().next();
+    let staged = if path.exists() {
+        serde_json::from_slice::<OverlayCommit>(&durable::read(&path)?)?
+    } else {
+        let commit = if let Some(commit) = existing {
+            // Do not update an occupied branch, even when a normal push could
+            // fast-forward it. Fetch its object and verify all content first.
+            git(&inputs.repo, &["fetch", "--no-tags", "origin", &reference])?;
+            commit.into()
+        } else {
+            git(&inputs.repo, &["commit-tree", &tree, "-p", &inputs.head, "-m", &format!("chore(controller): stage qualification overlay {digest}")])?
+        };
+        OverlayCommit { commit, tree, base_head: inputs.head.clone(), branch, overlay_sha256: digest }
+    };
+    verify_overlay(inputs, root, overlay, &staged)?;
+    if existing.is_some_and(|commit| commit != staged.commit) {
+        return Err("overlay branch already exists at another commit".into());
+    }
+    if !path.exists() {
+        durable::atomic(&path, &serde_json::to_vec_pretty(&staged)?)?;
+    }
+    if existing.is_none() {
+        git(&inputs.repo, &["push", "--no-force", "origin", &format!("{}:{reference}", staged.commit)])?;
+    }
+    let observed = git(&inputs.repo, &["ls-remote", "--refs", "origin", &reference])?;
+    if observed.split_whitespace().next() != Some(staged.commit.as_str()) {
+        return Err("staged overlay remote readback differs".into());
+    }
+    Ok(staged)
+}
+
+pub fn candidate(inputs: &Inputs, overlay: &BTreeMap<String, Vec<u8>>) -> Result<OverlayCommit> {
+    let root = inputs.out.join("qualified-production");
+    let staged: OverlayCommit = serde_json::from_slice(&durable::read(&root.join("overlay-commit.json"))?)?;
+    verify_overlay(inputs, &root, overlay, &staged)?;
+    Ok(staged)
+}
+
+fn verify_build_source(build: &Build, commit: &str, tree: &str) -> Result<()> {
+    if build.build_commit != commit || build.overlay_tree != tree
+        || build.own_verdict["source"]["commitSha"] != commit
+        || build.own_verdict["source"]["repoUrl"] != "https://github.com/RobTand/trustladderiii"
+        || build.own_verdict["source"]["invocationId"] != build.invocation_id
+    {
+        return Err("BuildBuddy invocation recorded another source commit or tree".into());
+    }
+    Ok(())
+}
+
+fn invocation_source(id: &str) -> Result<Value> {
+    verify_client()?;
+    let output = Command::new("/usr/bin/python3").args(["-I", "-c", r#"
+import hashlib, importlib.util, json, pathlib, sys
+path, expected, invocation = sys.argv[1:]
+assert hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest() == expected
+spec = importlib.util.spec_from_file_location('bb', path)
+bb = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(bb)
+client = bb.BuildBuddy((pathlib.Path.home()/'.config/buildbuddy/api_key').read_text().strip())
+record = bb.status(client, invocation)
+source = {field: record.get(field) for field in ['invocationId', 'commitSha', 'repoUrl']}
+print(bb.clean(client.key, json.dumps(source).encode()).decode())
+"#, CLIENT, CLIENT_SHA256, id]).stdin(Stdio::null()).output()?;
+    if !output.status.success() {
+        return Err("BuildBuddy invocation source lookup failed".into());
+    }
+    Ok(serde_json::from_slice(&output.stdout)?)
 }
 
 pub fn inventory_build(out: &Path) -> Result<()> {
@@ -683,11 +691,14 @@ mod staged_transport_tests {
             source: inputs.head.clone(),
             inputs: BTreeMap::new(),
             runs: vec![],
-            fixtures: BTreeMap::new(),
+            fixtures: BTreeMap::from([("fixtures/helper $(literal).py".into(), d8::current::Input {
+                sha256: durable::digest(b"\0\xff'"), bytes: 3, mode: 0o755,
+            })]),
         };
         let overlay = BTreeMap::from([
             (policy::INDEX.into(), serde_json::to_vec(&index).unwrap()),
             (policy::PIN.into(), b"private pin".to_vec()),
+            (format!("{}fixtures/helper $(literal).py", policy::INPUTS), b"\0\xff'".to_vec()),
             (format!("{}evidence.bin", policy::INPUTS), vec![37; 240 * 1024]),
         ]);
         fs::create_dir_all(root.join("qualified-production")).unwrap();
@@ -712,6 +723,13 @@ mod staged_transport_tests {
         assert_eq!(git(&inputs.repo, &["rev-parse", &format!("{}^", argv[3])]).unwrap(), inputs.head);
         assert_eq!(git(&inputs.repo, &["rev-parse", "HEAD"]).unwrap(), inputs.head);
         assert!(git(&inputs.repo, &["status", "--porcelain"]).unwrap().is_empty());
+        for (path, bytes) in &overlay {
+            let raw = Command::new("/usr/bin/git").current_dir(&inputs.repo)
+                .args(["cat-file", "blob", &format!("{}:{path}", argv[3])]).output().unwrap();
+            assert!(raw.status.success());
+            assert_eq!(durable::digest(&raw.stdout), durable::digest(bytes));
+        }
+        assert!(git(&inputs.repo, &["ls-tree", "-r", &argv[3]]).unwrap().lines().any(|line| line.starts_with("100755 ") && line.ends_with("helper $(literal).py")));
         let again = build_argv(&inputs, Some(&overlay)).unwrap();
         assert_eq!(again, argv, "resumption must reuse the exact commit");
     }
@@ -758,6 +776,7 @@ mod staged_transport_tests {
             invocation_id: "1".repeat(36),
             client_sha256: CLIENT_SHA256.into(),
             base_head: inputs.head.clone(),
+            build_commit: inputs.head.clone(),
             overlay_tree: git(&inputs.repo, &["rev-parse", "HEAD^{tree}"]).unwrap(),
             command_exit: 0,
             own_verdict: json!({"commitSha":"f".repeat(40),"success":true,"invocationStatus":"COMPLETE_INVOCATION_STATUS","bazelExitCode":"OK"}),
@@ -765,6 +784,13 @@ mod staged_transport_tests {
             wrapper_result: reference,
             artifacts: vec![],
         };
+        let tree = build.overlay_tree.clone();
+        assert!(verify_build_source(&build, &inputs.head, &tree).is_err());
+        let mut accepted = build.clone();
+        accepted.own_verdict["source"] = json!({"commitSha":inputs.head,"repoUrl":"https://github.com/RobTand/trustladderiii","invocationId":build.invocation_id});
+        assert!(verify_build_source(&accepted, &inputs.head, &tree).is_ok());
+        accepted.own_verdict["source"]["commitSha"] = "f".repeat(40).into();
+        assert!(verify_build_source(&accepted, &inputs.head, &tree).is_err());
         write(&work.join("build.json"), &build).unwrap();
         assert!(super::build(&inputs, "production", None).is_err(), "retained invocation commit must be checked");
     }
