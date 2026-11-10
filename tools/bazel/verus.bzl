@@ -443,6 +443,7 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::answer_owner::owner_waiting": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::answer_owner::owner_rows": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::stop_frames::owner_waiting_kept": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::stop_frames::endpoint_kept": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
