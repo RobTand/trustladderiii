@@ -19,6 +19,7 @@ struct DirectState {
     no_merge_method: bool,
     different_tree: bool,
     different_parent: bool,
+    landed_parent: Option<String>,
 }
 fn accepted_records(root: &std::path::Path) -> Vec<Value> {
     std::fs::read_dir(root).into_iter().flatten()
@@ -44,7 +45,7 @@ impl Respond for DirectApi {
             let landed = sha == "dddddddddddddddddddddddddddddddddddddddd";
             return ResponseTemplate::new(200).set_body_json(json!({"sha":sha,
                 "tree":{"sha":if landed && direct.different_tree {"2".repeat(40)} else {"1".repeat(40)}},
-                "parents":[{"sha":if landed && direct.different_parent {json!("3".repeat(40))} else {state.pull["base"]["sha"].clone()}}]}));
+                "parents":[{"sha":if landed && direct.different_parent {json!("3".repeat(40))} else {direct.landed_parent.as_ref().map_or_else(||state.pull["base"]["sha"].clone(), |base|json!(base))}}]}));
         }
         if method == "GET" && path == "/repos/owner/sandbox/pulls/100" {
             let mut direct = self.direct.lock().unwrap();
@@ -84,6 +85,7 @@ impl Respond for DirectApi {
             if body["sha"] != state.pull["head"]["sha"] { return ResponseTemplate::new(409); }
             if direct.reject_as_merged { state.merged(false); return ResponseTemplate::new(405); }
             if let Some(status) = direct.status { return ResponseTemplate::new(status); }
+            direct.landed_parent = Some(state.live_base.clone().unwrap_or_else(||state.pull["base"]["sha"].as_str().unwrap().to_owned()));
             state.merged(false);
             direct.successes += 1;
             return if direct.lost_reply { ResponseTemplate::new(503) }
@@ -1860,7 +1862,7 @@ fn m4_base_record_case(moved: bool) {
     assert_eq!(record["landed"]["merge_base"], merge_base, "merge base must come from the live branch tip despite stale PR metadata");
     assert_eq!(record["landed"]["base_moved"], moved);
     assert_eq!(record["landed"]["pr_base_sha"], checked_base);
-    assert_eq!(record["landed"]["checked_parent_matches"], true);
+    assert_eq!(record["landed"]["checked_parent_matches"], !moved);
     assert!(matches!(controller.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged)));
     assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1, "base audit fields must not change the merge decision");
     assert!(m4_notices(&mut controller).is_empty(), "base movement alone is record-only in M-4");

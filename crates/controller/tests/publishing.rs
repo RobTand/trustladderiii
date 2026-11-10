@@ -377,7 +377,7 @@ impl Respond for Api {
         let path = path.strip_prefix(prefix).unwrap_or(path);
         let body: Value = serde_json::from_slice(&r.body).unwrap_or(Value::Null);
         if method == "GET" && matches!(path, "/branches/main" | "/branches/master") {
-            return ResponseTemplate::new(200).set_body_json(json!({"protected":false}));
+            return ResponseTemplate::new(200).set_body_json(json!({"name":path.rsplit('/').next().unwrap(),"commit":{"sha":s.pull.as_ref().or(s.proposed.as_ref()).unwrap()["base"]["sha"]},"protected":false}));
         }
         if method == "GET" && path.starts_with("/git/commits/") {
             let sha = path.rsplit('/').next().unwrap();
