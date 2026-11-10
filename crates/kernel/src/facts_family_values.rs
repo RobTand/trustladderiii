@@ -364,7 +364,7 @@ pub(super) fn conflict_fact_arm(n: Node, i: usize)
     let out = &mut notes;
     let m = &mut value;
     if m.phase == Phase::AwaitingDelivery {
-        set_phase(m, Phase::Ready(Resume::Rebasing));
+        set_phase(m, Phase::Ready(Resume::Publishing));
     } else if m.phase == Phase::Publishing {
         set_phase(m, Phase::Rebasing);
     }
