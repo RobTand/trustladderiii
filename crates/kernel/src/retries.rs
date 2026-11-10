@@ -336,15 +336,33 @@ pub(super) fn run_failed_value(n: Node) -> (result: ReplyChange) [
     let mut node = n;
     let mut note: Option<Notice> = None;
     node = failed_prefix(node);
+    kernel_proof! { reply_family_posts::failed_arms(n); }
     if node.run_failures >= 2 {
-        // Every second failure raises an incident. Only Rob can clear the second one.
-        node.run_failures = 0;
-        node.run_incidents = incident_count(node.run_incidents);
-        let needs_rob = node.run_incidents >= 2;
-        kernel_proof! { retries_facts::incident(n, node, needs_rob); }
-        return ReplyChange::Incident { node, needs_rob };
+        return run_failed_incident(node);
     }
-    kernel_proof! { retries_facts::restarted(n, node); }
+    run_failed_restart(node)
+}
+}
+
+kernel_fn! {
+fn run_failed_incident(n: Node) -> (result: ReplyChange) [
+    requires n.run_incidents <= 2,
+    ensures result == reply_family_values::failed_incident(n),
+] {
+    let mut node = n;
+    // Every second failure raises an incident. Only Rob can clear the second one.
+    node.run_failures = 0;
+    node.run_incidents = incident_count(node.run_incidents);
+    let needs_rob = node.run_incidents >= 2;
+    ReplyChange::Incident { node, needs_rob }
+}
+}
+
+kernel_fn! {
+fn run_failed_restart(node: Node) -> (result: ReplyChange) [
+    ensures result == reply_family_values::failed_restart(node),
+] {
+    let note: Option<Notice> = None;
     ReplyChange::Done { node, note }
 }
 }
@@ -472,22 +490,51 @@ pub(super) fn out_of_room_node(n: Node, fast: bool, nq: u64, step: ReviewStop) -
     let mut node = n;
     let mut note: Option<Notice> = None;
     let fail_fast = fast;
+    kernel_proof! { reply_family_posts::room_arms(n, fast, step); }
     if fail_fast {
-        node = stop_for_review_v(node, step);
-        kernel_proof! { reveal(reply_family_values::room); }
-        return ReplyChange::Done { node, note };
+        return out_of_room_fast(node, step);
     }
     node.holds = false;
     if node.credit.can_spend(1) {
-        node.credit = spend_v(node.credit, 1);
-        node.plan_retries = 0;
-        node = set_phase_v(node, Phase::Planning { must_split: true });
+        out_of_room_paid(node)
     } else {
-        kernel_proof! { reveal(reply_family_values::room); }
-        return ReplyChange::Ask { node, kind: QKind::OutOfCredit, cont: Cont::Planning { must_split: true }, cost: 1, };
+        out_of_room_ask(node)
     }
-    kernel_proof! { reveal(reply_family_values::room); }
+}
+}
+
+kernel_fn! {
+fn out_of_room_fast(n: Node, step: ReviewStop) -> (result: ReplyChange) [
+    requires n.generation < u64::MAX,
+    ensures result == reply_family_values::room_fast(n, step),
+] {
+    let mut node = n;
+    let note: Option<Notice> = None;
+    node = stop_for_review_v(node, step);
     ReplyChange::Done { node, note }
+}
+}
+
+kernel_fn! {
+fn out_of_room_paid(n: Node) -> (result: ReplyChange) [
+    requires node_headroom(n),
+    ensures result == reply_family_values::room_paid(n),
+] {
+    let mut node = n;
+    let note: Option<Notice> = None;
+    node.credit = spend_v(node.credit, 1);
+    node.plan_retries = 0;
+    node = set_phase_v(node, Phase::Planning { must_split: true });
+    ReplyChange::Done { node, note }
+}
+}
+
+kernel_fn! {
+fn out_of_room_ask(node: Node) -> (result: ReplyChange) [
+    ensures result == reply_family_values::room_ask(node),
+] {
+    ReplyChange::Ask { node, kind: QKind::OutOfCredit,
+        cont: Cont::Planning { must_split: true }, cost: 1, }
 }
 }
 

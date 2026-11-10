@@ -2,6 +2,35 @@
 use super::*;
 
 verus! {
+pub(super) proof fn room_arms(n: Node, fast: bool, step: ReviewStop)
+    ensures reply_family_values::room(n, fast, step) == (
+        if fast { reply_family_values::room_fast(n, step) }
+        else if transition_safety::can_spend_one(n) {
+            reply_family_values::room_paid(Node { holds: false, ..n })
+        } else { reply_family_values::room_ask(Node { holds: false, ..n }) }),
+{
+    reveal(reply_family_values::room);
+}
+
+pub(super) proof fn failed_arms(n: Node)
+    requires n.generation as int + 2 <= u64::MAX as int,
+        n.run_failures <= 1, n.run_incidents <= 2,
+    ensures reply_family_values::finish(0, reply_family_values::failed_change(n))
+            == retries_facts::failed_run(n),
+        reply_family_values::callable(reply_family_values::failed_change(n)),
+        match reply_family_values::failed_change(n) {
+            ReplyChange::Done { note, .. } => note.is_none(),
+            ReplyChange::Ask { .. } => false, ReplyChange::Incident { .. } => true },
+{
+    let node = reply_family_values::failed_prefix(n);
+    if node.run_failures >= 2 {
+        let ready = reply_family_values::prepared(reply_family_values::failed_incident(node));
+        retries_facts::incident(n, ready, ready.run_incidents >= 2);
+    } else {
+        retries_facts::restarted(n, node);
+    }
+}
+
 pub(super) proof fn room_posts(n: Node, fast: bool, nq: u64, step: ReviewStop, i: int, ob: Outbox, oa: Outbox)
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
         reply_family_values::resolved(reply_family_values::room(n, fast, step), i, ob, oa),

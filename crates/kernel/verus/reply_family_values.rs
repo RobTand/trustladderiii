@@ -83,18 +83,50 @@ pub(super) open spec fn spent(n: Node) -> Node {
     Node { credit: Credit { spent: (n.credit.spent + 1) as u64, ..n.credit }, ..n }
 }
 
+pub(super) open spec fn room_fast(n: Node, step: ReviewStop) -> ReplyChange {
+    ReplyChange::Done { node: retirement::stopped(
+        Node { review_stop: Some(step), ..n }, Outcome::Stopped), note: None }
+}
+
+pub(super) open spec fn room_paid(n: Node) -> ReplyChange {
+    ReplyChange::Done { node: retirement::phased(Node { plan_retries: 0, ..spent(n) },
+        Phase::Planning { must_split: true }), note: None }
+}
+
+pub(super) open spec fn room_ask(n: Node) -> ReplyChange {
+    ReplyChange::Ask { node: n, kind: QKind::OutOfCredit,
+        cont: Cont::Planning { must_split: true }, cost: 1 }
+}
+
 #[verifier::opaque]
 pub(super) open spec fn room(n: Node, fast: bool, step: ReviewStop) -> ReplyChange {
-    if fast { ReplyChange::Done { node: retirement::stopped(
-        Node { review_stop: Some(step), ..n }, Outcome::Stopped), note: None } }
+    if fast { room_fast(n, step) }
     else {
         let m = Node { holds: false, ..n };
-        if transition_safety::can_spend_one(n) { ReplyChange::Done {
-            node: retirement::phased(Node { plan_retries: 0, ..spent(m) },
-                Phase::Planning { must_split: true }), note: None } }
-        else { ReplyChange::Ask { node: m, kind: QKind::OutOfCredit,
-            cont: Cont::Planning { must_split: true }, cost: 1 } }
+        if transition_safety::can_spend_one(n) { room_paid(m) }
+        else { room_ask(m) }
     }
+}
+
+pub(super) open spec fn failed_prefix(n: Node) -> Node {
+    Node { pos: if n.phase == Phase::Making { 1u8 } else { 0u8 },
+        generation: (n.generation + 1) as u64,
+        run_failures: (n.run_failures + 1) as u8, ..retries_facts::abandoned(n) }
+}
+
+pub(super) open spec fn failed_incident(n: Node) -> ReplyChange {
+    let node = Node { run_failures: 0,
+        run_incidents: if n.run_incidents < 2 { (n.run_incidents + 1) as u8 } else { 2u8 }, ..n };
+    ReplyChange::Incident { node, needs_rob: node.run_incidents >= 2 }
+}
+
+pub(super) open spec fn failed_restart(n: Node) -> ReplyChange {
+    ReplyChange::Done { node: n, note: None }
+}
+
+pub(super) open spec fn failed_change(n: Node) -> ReplyChange {
+    let node = failed_prefix(n);
+    if node.run_failures >= 2 { failed_incident(node) } else { failed_restart(node) }
 }
 
 #[verifier::opaque]
