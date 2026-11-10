@@ -746,7 +746,6 @@ mod answer_frontier_reveal {
             (!dependencies::prerequisites_delivered(before, node)
                 ==> dependencies::owner_waiting_ok(before.nodes@[node.0 as int])),
     {
-        reveal(answer_frontier::rows);
     }
     }
 }
