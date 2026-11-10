@@ -92,7 +92,7 @@ pub(super) proof fn c1_healthy(b: World, a: World)
         implies (b.nodes@[j].phase is Closed ==> a.nodes@[j].phase is Closed) by {
         if j != 1 { assert(a.nodes@[j] == b.nodes@[j]); }
     }
-    headroom::open_prefix_compare(b.nodes@, a.nodes@, b.nodes@.len());
+    open_prefix_compare(b.nodes@, a.nodes@, b.nodes@.len());
     assert forall|j: int| 0 <= j < a.nodes@.len()
         implies footprint::valid_footprint(a, a.nodes@[j].footprint)
             && ((a.nodes@[j].holds || a.nodes@[j].pool) ==> !(a.nodes@[j].phase is Closed)) by {
