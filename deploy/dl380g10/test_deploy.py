@@ -375,7 +375,7 @@ class FreshInitTests(unittest.TestCase):
             yield attempt / record, identity
 
     def test_worker_guard_recorded_supervisor_refuses_before_backup(self):
-        with self.recorded_worker(), self.fresh_attempt() as args:
+        with self.recorded_worker(record="process.json"), self.fresh_attempt() as args:
             with self.assertRaisesRegex(RuntimeError, "worker|supervisor"):
                 deploy.fresh_init(args)
         self.assertFalse(self.backup.exists())
