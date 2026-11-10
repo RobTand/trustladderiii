@@ -443,6 +443,17 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::acknowledgements::ack_view": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::acknowledgements::ack_abandon_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::acknowledgements::ack_cancel_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::acknowledgements::ack_confirmed_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::acknowledgements::ack_delivery_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::acknowledgements::ack_emit_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::acknowledgements::ack_retry_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::acknowledgements::ack_permanent_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::acknowledgements::ack_body_policy_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::acknowledgements::ack_quiet": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::acknowledgements::ack_value_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::acknowledgements::agenda_adopt_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::acknowledgements::agenda_step_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::acknowledgements::agenda_idle_spec": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -754,6 +765,20 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "acknowledgements_ack_phase_value": ("kernel::acknowledgements#ack_phase_value", 1),
+            "acknowledgements_ack_abandon_value": ("kernel::acknowledgements#ack_abandon_value", 1),
+            "acknowledgements_ack_append_value": ("kernel::acknowledgements#ack_append_value", 1),
+            "acknowledgements_ack_resources_value": ("kernel::acknowledgements#ack_resources_value", 1),
+            "acknowledgements_ack_emit_value": ("kernel::acknowledgements#ack_emit_value", 1),
+            "acknowledgements_ack_stopped_value": ("kernel::acknowledgements#ack_stopped_value", 1),
+            "acknowledgements_ack_cancel_value": ("kernel::acknowledgements#ack_cancel_value", 1),
+            "acknowledgements_ack_confirmed_value": ("kernel::acknowledgements#ack_confirmed_value", 1),
+            "acknowledgements_ack_delivery_value": ("kernel::acknowledgements#ack_delivery_value", 1),
+            "acknowledgements_ack_retry_value": ("kernel::acknowledgements#ack_retry_value", 1),
+            "acknowledgements_ack_permanent_value": ("kernel::acknowledgements#ack_permanent_value", 1),
+            "acknowledgements_ack_body_policy_value": ("kernel::acknowledgements#ack_body_policy_value", 1),
+            "acknowledgements_ack_value": ("kernel::acknowledgements#ack_value", 1),
+            "acknowledgements_ack_result_properties": ("kernel::acknowledgements#ack_result_properties", 1),
             "acknowledgements_confirmed_agenda_adopt": ("kernel::acknowledgements#confirmed_agenda_adopt", 1),
             "acknowledgements_confirmed_agenda_step": ("kernel::acknowledgements#confirmed_agenda_step", 1),
             "acknowledgements_confirmed_agenda_idle": ("kernel::acknowledgements#confirmed_agenda_idle", 1),
