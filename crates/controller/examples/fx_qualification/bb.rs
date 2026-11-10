@@ -352,9 +352,9 @@ fn script(inputs: &Inputs, overlay: Option<&BTreeMap<String, Vec<u8>>>) -> Resul
         }
         script.push_str("git add -- crates/controller/qualification/fx-current crates/controller/qualification/current.json crates/controller/src/adapters/flux_checks/activation/qualification.json\n");
     }
-    script.push_str("bazel build --config=remote --jobs=8 //crates/controller:tl3-run-backend //crates/controller:tl3 //crates/controller:tl3d //crates/controller:tl3-worker-supervisor //crates/controller:example_fx-stage-packet //crates/controller:example_generate-fx-qualification //crates/controller:example_tl3-deploy\nbazel-bin/crates/controller/example_fx-stage-packet inventory-build \"$BUILDBUDDY_ARTIFACTS_DIRECTORY\"\n");
+    script.push_str("bazel build --config=remote --remote_download_outputs=toplevel --jobs=8 //crates/controller:tl3-run-backend //crates/controller:tl3 //crates/controller:tl3d //crates/controller:tl3-worker-supervisor //crates/controller:example_fx-stage-packet //crates/controller:example_generate-fx-qualification //crates/controller:example_tl3-deploy\nbazel-bin/crates/controller/example_fx-stage-packet inventory-build \"$BUILDBUDDY_ARTIFACTS_DIRECTORY\"\n");
     if overlay.is_some() {
-        script.push_str("bazel build --config=remote --jobs=8 //crates/controller:lib_test_tl3_controller_binary //crates/controller:example_test_fx-stage-packet_binary\nbazel-bin/crates/controller/example_fx-stage-packet inventory-build \"$BUILDBUDDY_ARTIFACTS_DIRECTORY\"\n");
+        script.push_str("bazel build --config=remote --remote_download_outputs=toplevel --jobs=8 //crates/controller:lib_test_tl3_controller_binary //crates/controller:example_test_fx-stage-packet_binary\nbazel-bin/crates/controller/example_fx-stage-packet inventory-build \"$BUILDBUDDY_ARTIFACTS_DIRECTORY\"\n");
         script.push_str("bazel-bin/crates/controller/example_generate-fx-qualification --repo \"$PWD/crates/controller\" --check\nbazel test --config=remote --jobs=8 --test_output=errors //crates/controller:test_test_activation_qualification_absent\n");
     }
     Ok(script)
