@@ -545,20 +545,42 @@ mod hostile_tests {
         let mut db = Database::start();
         let mut store = Store::open(&db.create("review_request_footprint")).unwrap();
         let mut delivery = f.delivery();
-        for added in [vec![], vec!["extra.py"], vec!["extra.py", "tests/test_extra.py"]] {
+        for added in [
+            vec![],
+            vec!["extra.py"],
+            vec!["extra.py", "tests/test_extra.py"],
+        ] {
             let mut paths = vec!["README.md".to_string()];
             paths.extend(added.iter().map(|path| path.to_string()));
             delivery.paths = tl3_contracts::footprint::Footprint::new(paths).unwrap();
             for length in [16_000, 16_001] {
                 let body = "é".repeat(length);
-                store.put_worker_materials("0", &json!({"issue":{"title":"Request 🦀\u{0000}","body":body}})).unwrap();
-                let mut snapshot = documents(&mut store, &[
-                    ("plans", json!({"files":["README.md"]})),
-                    ("footprint_addition_requests", json!([{"path":"extra.py","why":"Needed for the request"}])),
-                    ("goals", json!([{"description":"Update the readme","verification":"test"}])),
-                    ("check_reports", json!({})),
-                ]);
-                let report = snapshot.rows.iter_mut().find(|r| r.table == "check_reports").unwrap();
+                store
+                    .put_worker_materials(
+                        "0",
+                        &json!({"issue":{"title":"Request 🦀\u{0000}","body":body}}),
+                    )
+                    .unwrap();
+                let mut snapshot = documents(
+                    &mut store,
+                    &[
+                        ("plans", json!({"files":["README.md"]})),
+                        (
+                            "footprint_addition_requests",
+                            json!([{"path":"extra.py","why":"Needed for the request"}]),
+                        ),
+                        (
+                            "goals",
+                            json!([{"description":"Update the readme","verification":"test"}]),
+                        ),
+                        ("check_reports", json!({})),
+                    ],
+                );
+                let report = snapshot
+                    .rows
+                    .iter_mut()
+                    .find(|r| r.table == "check_reports")
+                    .unwrap();
                 report.id = format!("0:{}", f.head);
                 report.value = json!({"base_sha":f.base,"results":[]});
                 for round in [0, 1] {
@@ -567,7 +589,9 @@ mod hostile_tests {
                     assert_eq!(value["issue"]["title"], "Request 🦀\u{0000}");
                     assert_eq!(value["issue"]["body"], "é".repeat(16_000));
                     assert_eq!(value["issue_truncated"], length > 16_000);
-                    let additions = value["footprint_additions"].as_array().expect("review always lists additions");
+                    let additions = value["footprint_additions"]
+                        .as_array()
+                        .expect("review always lists additions");
                     assert_eq!(additions.len(), added.len());
                     for (entry, path) in additions.iter().zip(&added) {
                         assert_eq!(entry["path"], *path);
@@ -580,7 +604,10 @@ mod hostile_tests {
                 }
                 store.put_worker_materials("0", &json!({})).unwrap();
                 let value = inputs(&delivery, &mut store, &snapshot, None).unwrap();
-                assert!(value.get("issue").is_none(), "absent issue must not become an empty issue");
+                assert!(
+                    value.get("issue").is_none(),
+                    "absent issue must not become an empty issue"
+                );
             }
         }
     }
