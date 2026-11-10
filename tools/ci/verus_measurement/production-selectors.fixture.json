@@ -1,10 +1,50 @@
 {
-  "source_head": "c000bc2f3f49deeead007435306c7517428e3555",
+  "source_head": "37c09c8851a111f67012f7b29d37e60c25f143a6",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "39ac4d603774435ac4aa4392418e1067a73482f90692df03ed0e736ca3596e95",
-  "groups": 812,
-  "obligations": 1017,
+  "source_sha256": "ec5f798ff92a5ee09c4366ff1980c8b1140bf93ea8a210a47877790c495d1506",
+  "groups": 820,
+  "obligations": 1025,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_liveness_bounds_reserves",
+      "selector": "kernel::liveness_bounds#reserves",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_liveness_bounds_advance_bounds",
+      "selector": "kernel::liveness_bounds#advance_bounds",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_liveness_bounds_advance_accepts",
+      "selector": "kernel::liveness_bounds#advance_accepts",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_liveness_bounds_event_accepts",
+      "selector": "kernel::liveness_bounds#event_accepts",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_liveness_bounds_context_frame",
+      "selector": "kernel::liveness_bounds#context_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_liveness_teardown_advance_guard",
+      "selector": "kernel::liveness_teardown#advance_guard",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_liveness_teardown_ack_guard",
+      "selector": "kernel::liveness_teardown#ack_guard",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_liveness_teardown_round",
+      "selector": "kernel::liveness_teardown#round",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_transition_safety_apply_exports_rows",
       "selector": "kernel::transition_safety#apply_exports_rows",
