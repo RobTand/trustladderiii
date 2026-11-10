@@ -1,10 +1,25 @@
 {
-  "source_head": "88c35687a593d12810c68d0a5c6a4d46900ef96f",
+  "source_head": "27a66643f1f3d23db301eeca0e41bd3e69bf1ff8",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "cb1e14802918b694fb3108ebfb9173ccb17e290392b615bfe88d63590592b9c9",
-  "groups": 619,
-  "obligations": 817,
+  "source_sha256": "282b30775634026bb68688552e285a470d07a37ba76cb94f84215d3ada933ce2",
+  "groups": 622,
+  "obligations": 820,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_commands_record_last_cmd",
+      "selector": "kernel::commands#record_last_cmd",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_command_safety_answer_pair_fields",
+      "selector": "kernel::apply_command_safety#answer_pair_fields",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_apply_command_safety_r19_bridge",
+      "selector": "kernel::apply_command_safety#r19_bridge",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_handler_safety_answer_pair_withheld",
       "selector": "kernel::handler_safety#answer_pair_withheld",
