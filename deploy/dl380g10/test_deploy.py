@@ -345,7 +345,7 @@ class FreshInitTests(unittest.TestCase):
         self.assertFalse(any("restore" in item for call in self.calls for item in call))
 
     @contextlib.contextmanager
-    def recorded_worker(self, record="claim.json", stat_value=None):
+    def recorded_worker(self, record="claim.json", stat_value=None, machine="fixture-machine", boot="fixture-boot"):
         attempt = self.runs / "ab" / "attempt-00000001"
         attempt.mkdir(parents=True, mode=0o700, exist_ok=True)
         attempt.parent.chmod(0o700)
@@ -356,9 +356,13 @@ class FreshInitTests(unittest.TestCase):
 
         def read(path, *args, **kwargs):
             if str(path) == "/etc/machine-id":
-                return "fixture-machine\n"
+                if isinstance(machine, Exception):
+                    raise machine
+                return machine
             if str(path) == "/proc/sys/kernel/random/boot_id":
-                return "fixture-boot\n"
+                if isinstance(boot, Exception):
+                    raise boot
+                return boot
             if str(path) == "/proc/123/stat":
                 if isinstance(stat_value, Exception):
                     raise stat_value
@@ -424,6 +428,13 @@ class FreshInitTests(unittest.TestCase):
             with self.subTest(observation=observation), self.recorded_worker(stat_value=observation):
                 with self.assertRaises(RuntimeError):
                     deploy.require_workers_stopped(self.home)
+
+    def test_worker_guard_missing_machine_or_boot_observation_refuses(self):
+        for field in ("machine", "boot"):
+            for value in ("", PermissionError("identity read denied")):
+                with self.subTest(field=field, value=value), self.recorded_worker(**{field: value}):
+                    with self.assertRaises(RuntimeError):
+                        deploy.require_workers_stopped(self.home)
 
     def test_worker_guard_empty_world_and_launcher_scope(self):
         deploy.require_workers_stopped(self.home)

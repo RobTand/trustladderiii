@@ -405,9 +405,13 @@ def recorded_worker_alive(identity):
         raise RuntimeError("malformed TL3 worker identity")
     if identity["pid"] > 2**31 - 1 or identity["start"] > 2**64 - 1:
         raise RuntimeError("malformed TL3 worker identity range")
-    if Path("/etc/machine-id").read_text().strip() != identity["machine"]:
+    machine = Path("/etc/machine-id").read_text().strip()
+    boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    if not machine or not boot:
+        raise RuntimeError("unreadable TL3 worker machine or boot identity")
+    if machine != identity["machine"]:
         raise RuntimeError("TL3 worker identity belongs to another machine")
-    if Path("/proc/sys/kernel/random/boot_id").read_text().strip() != identity["boot"]:
+    if boot != identity["boot"]:
         return False
     try:
         text = Path(f"/proc/{identity['pid']}/stat").read_text()
