@@ -194,8 +194,7 @@ pub(super) proof fn outside_node_rows(n: Node, nq: u64, fast: bool, head: HeadId
 
 pub(super) proof fn frame_fields(b: Node, n: Node)
     requires facts_family_values::tail_frame(b, n),
-    ensures (b.phase is Closed ==> n.phase is Closed),
-        n.repo == b.repo, n.footprint == b.footprint,
+    ensures n.repo == b.repo, n.footprint == b.footprint,
         (settle_shape(b) ==> settle_shape(n)),
         n.generation as int <= b.generation as int + 1,
         n.next_seq == b.next_seq, n.credit.start == b.credit.start,

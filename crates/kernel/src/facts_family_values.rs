@@ -983,7 +983,7 @@ kernel_fn! {
 pub(in super::super) fn ci_fact_value(n: Node, nq: u64, fast: bool, i: usize, infra: bool)
     -> (result: (Node, u64, Outbox)) [
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
-    ensures tail_frame(n, result.0), node_rows(n, result.0, fast, i, Fact::CiFailed { infra }),
+    ensures (n.phase is Closed ==> result.0.phase is Closed), tail_frame(n, result.0), node_rows(n, result.0, fast, i, Fact::CiFailed { infra }),
         notices(result.2, i, 1), result.1 as int <= nq as int + 1,
         infra ==> result.0 == retirement::fact_node(n, Fact::CiFailed { infra: true }),
         infra ==> result.1 == nq,
@@ -1001,7 +1001,7 @@ kernel_fn! {
 pub(in super::super) fn outside_push_value(n: Node, nq: u64, fast: bool, i: usize, head: HeadId)
     -> (result: (Node, u64, Outbox)) [
     requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
-    ensures tail_frame(n, result.0), node_rows(n, result.0, fast, i, Fact::PushByOther { head }),
+    ensures (n.phase is Closed ==> result.0.phase is Closed), tail_frame(n, result.0), node_rows(n, result.0, fast, i, Fact::PushByOther { head }),
         notices(result.2, i, 2), result.1 as int <= nq as int + 1,
 ] {
     let result = outside_push_arm(n, nq, fast, i, head);
@@ -1041,8 +1041,7 @@ pub(in super::super) fn outside_fact_entry(w: &mut World, i: usize, head: HeadId
 verus! {
 #[verifier::opaque]
 pub(super) open spec fn tail_frame(b: Node, n: Node) -> bool {
-    (b.phase is Closed ==> n.phase is Closed)
-        && n.repo == b.repo && n.footprint == b.footprint
+    n.repo == b.repo && n.footprint == b.footprint
         && (settle_shape(b) ==> settle_shape(n))
         && n.generation as int <= b.generation as int + 1
         && n.next_seq == b.next_seq && n.credit.start == b.credit.start
