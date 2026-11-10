@@ -102,6 +102,14 @@ mod command_frames_reveal;
 #[cfg(verus_keep_ghost)]
 #[path = "../verus/command_frame_producers.rs"]
 mod command_frame_producers;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/r24_rows.rs"]
+mod r24_rows;
+
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/r24_rows_reveal.rs"]
+mod r24_rows_reveal;
 #[cfg(verus_keep_ghost)]
 verus! {
 /// #806: domain of the retired two-node Kani consistency checks.
