@@ -188,7 +188,7 @@ pub(super) proof fn outside_fail_fast(n: Node, nq: u64, fast: bool, head: HeadId
 }
 
 pub(super) proof fn outside_node_rows(n: Node, nq: u64, fast: bool, head: HeadId, i: usize)
-    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+    requires node_headroom(n), true, nq < u64::MAX,
     ensures facts_family_values::node_rows(n,
         reply_family_values::finish(nq, outside_change(n, head)), fast, i,
         Fact::PushByOther { head }),
