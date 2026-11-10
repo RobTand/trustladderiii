@@ -1,0 +1,56 @@
+{
+ "fixture": "harness/tests/test_contract_vectors.py::regression-collection-failure",
+ "request": {
+  "base": "72e1e297d5b75a008185c609a98964e70a6d5158",
+  "effect_key": "checks:regression-collection-failure",
+  "head": "7cb4436a7fab6aeb7fa3d8c85b238a37eddb167f",
+  "image": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "plan": [
+   {
+    "kind": "regression",
+    "name": "existing collection failure",
+    "tests": [
+     "tests/test_value.py::test_value"
+    ]
+   }
+  ],
+  "reviewed": null
+ },
+ "results": [
+  {
+   "base_failures_not_checked": 1,
+   "custody": "in-process",
+   "kind": "regression",
+   "name": "existing collection failure",
+   "tests": [
+    {
+     "base": "error",
+     "head": "error",
+     "message": "This test failed on base, not checked: the head has the same failure type and phase.",
+     "passed": true,
+     "pre_existing": true,
+     "regression_failures": {
+      "base": [
+       {
+        "assertion": false,
+        "exception": "builtins.ValueError",
+        "phase": "collection",
+        "test": "tests/test_value.py"
+       }
+      ],
+      "head": [
+       {
+        "assertion": false,
+        "exception": "builtins.ValueError",
+        "phase": "collection",
+        "test": "tests/test_value.py"
+       }
+      ]
+     },
+     "test": "tests/test_value.py::test_value"
+    }
+   ],
+   "verdict": "pass"
+  }
+ ]
+}

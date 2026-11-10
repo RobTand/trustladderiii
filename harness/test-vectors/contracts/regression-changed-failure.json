@@ -1,0 +1,93 @@
+{
+ "fixture": "harness/tests/test_contract_vectors.py::regression-changed-failure",
+ "request": {
+  "base": "0dae36e11acf789f7e7fb47067cb5da97e826ea7",
+  "effect_key": "checks:regression-changed-failure",
+  "head": "014b120fdfae878fd51f4f8df8a9ad385a5361f0",
+  "image": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "plan": [
+   {
+    "kind": "regression",
+    "name": "existing failure",
+    "tests": [
+     "tests/test_value.py::test_value"
+    ]
+   }
+  ],
+  "reviewed": null
+ },
+ "results": [
+  {
+   "custody": "in-process",
+   "kind": "regression",
+   "name": "existing failure",
+   "tests": [
+    {
+     "base": "error",
+     "head": "error",
+     "message": "Regression failure changed: base error call `builtins.ValueError` in `tests/test_value.py::test_value`; head error call `builtins.TypeError` in `tests/test_value.py::test_value`.",
+     "passed": false,
+     "phases": {
+      "base": {
+       "call": {
+        "assertion": false,
+        "exception": "builtins.ValueError",
+        "outcome": "failed"
+       },
+       "setup": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "teardown": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "test": "tests/test_value.py::test_value"
+      },
+      "head": {
+       "call": {
+        "assertion": false,
+        "exception": "builtins.TypeError",
+        "outcome": "failed"
+       },
+       "setup": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "teardown": {
+        "assertion": false,
+        "exception": "",
+        "outcome": "passed"
+       },
+       "test": "tests/test_value.py::test_value"
+      }
+     },
+     "pre_existing": true,
+     "regression_failures": {
+      "base": [
+       {
+        "assertion": false,
+        "exception": "builtins.ValueError",
+        "phase": "call",
+        "test": "tests/test_value.py::test_value"
+       }
+      ],
+      "head": [
+       {
+        "assertion": false,
+        "exception": "builtins.TypeError",
+        "phase": "call",
+        "test": "tests/test_value.py::test_value"
+       }
+      ]
+     },
+     "test": "tests/test_value.py::test_value"
+    }
+   ],
+   "verdict": "fail"
+  }
+ ]
+}

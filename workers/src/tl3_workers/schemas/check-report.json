@@ -12,6 +12,11 @@
     "CheckResult": {
       "additionalProperties": false,
       "properties": {
+        "base_failures_not_checked": {
+          "maximum": 18446744073709551615,
+          "minimum": 0,
+          "type": "integer"
+        },
         "custody": {
           "$ref": "#/$defs/Custody"
         },
@@ -146,6 +151,15 @@
         "exhausted"
       ],
       "type": "object"
+    },
+    "FailurePhase": {
+      "enum": [
+        "collection",
+        "setup",
+        "call",
+        "teardown"
+      ],
+      "type": "string"
     },
     "Forcing": {
       "additionalProperties": false,
@@ -539,6 +553,54 @@
           "type": "string"
         }
       ]
+    },
+    "RegressionFailure": {
+      "additionalProperties": false,
+      "properties": {
+        "assertion": {
+          "type": "boolean"
+        },
+        "exception": {
+          "maxLength": 200,
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/$defs/FailurePhase"
+        },
+        "test": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "test",
+        "phase",
+        "exception",
+        "assertion"
+      ],
+      "type": "object"
+    },
+    "RegressionFailures": {
+      "additionalProperties": false,
+      "properties": {
+        "base": {
+          "items": {
+            "$ref": "#/$defs/RegressionFailure"
+          },
+          "type": "array"
+        },
+        "head": {
+          "items": {
+            "$ref": "#/$defs/RegressionFailure"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "base",
+        "head"
+      ],
+      "type": "object"
     },
     "ReportSchema": {
       "enum": [
@@ -945,6 +1007,10 @@
               "maxLength": 300,
               "type": "string"
             },
+            "exception_type": {
+              "maxLength": 200,
+              "type": "string"
+            },
             "message": {
               "maxLength": 1000,
               "type": "string"
@@ -1093,6 +1159,9 @@
           "minLength": 1,
           "title": "899: additive v3 diagnostic; older reports retain the ordinary message.",
           "type": "string"
+        },
+        "regression_failures": {
+          "$ref": "#/$defs/RegressionFailures"
         },
         "test": {
           "minLength": 1,
