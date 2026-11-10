@@ -237,7 +237,7 @@ fn clarify_node(n: Node, nq: u64, q: Question) -> (result: (Node, u64, Notice)) 
     let mut m = n;
     let next = nq;
     m.question = Some(Question {
-        id: next,
+        id: q.id,
         clarified: true,
         ..q
     });
