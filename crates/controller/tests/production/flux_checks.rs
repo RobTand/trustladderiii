@@ -361,7 +361,13 @@ fn lost_claim_prevents_flux_checks_journal_setup() {
         Staging,
         &mut ownership,
     );
-    assert!(result.is_err(), "lost ownership must abort startup");
+    assert_eq!(
+        result
+            .err()
+            .expect("lost ownership must abort startup")
+            .to_string(),
+        "controller ownership session was lost; abort startup"
+    );
     assert!(
         !backend.records.exists(),
         "the check journal was created after claim loss"
@@ -405,7 +411,10 @@ fn flux_checks_restart_attaches_retained_intent_without_resubmission() {
     let (mut adapter, backend, attached, mut options) = setup(root.path(), &mut ownership);
     backend.state.lock().unwrap().unknown_submit = true;
     let d = delivery();
-    assert!(adapter.execute(&d).is_err());
+    assert_eq!(
+        adapter.execute(&d).unwrap_err().to_string(),
+        "check acceptance remains unknown; retained for attach"
+    );
     drop(adapter);
     options
         .environment
@@ -426,14 +435,23 @@ fn flux_checks_restart_attaches_retained_intent_without_resubmission() {
         adapter.reconcile(&d).unwrap(),
         Reconciliation::Pending
     ));
-    assert!(adapter.execute(&d).is_err());
+    assert_eq!(
+        adapter.execute(&d).unwrap_err().to_string(),
+        "check acceptance remains unknown; reattach without resubmission"
+    );
     assert_eq!(backend.state.lock().unwrap().submits, 1);
     let mut changed = d.clone();
     changed.head_sha = Some("e".repeat(40));
-    assert!(adapter.execute(&changed).is_err());
+    assert_eq!(
+        adapter.execute(&changed).unwrap_err().to_string(),
+        "check effect changed its immutable identity"
+    );
     let mut newer = d.clone();
     newer.epoch = 2;
-    assert!(adapter.execute(&newer).is_err());
+    assert_eq!(
+        adapter.execute(&newer).unwrap_err().to_string(),
+        "check acceptance remains unknown; reattach without resubmission"
+    );
     assert!(
         adapter
             .execute(&d)
@@ -469,7 +487,10 @@ fn flux_checks_withdraw_waits_for_terminal_and_replays_durable_completion() {
         kind: EffectKind::WithdrawJob,
         head: None,
     };
-    assert!(adapter.execute(&withdrawal).is_err());
+    assert_eq!(
+        adapter.execute(&withdrawal).unwrap_err().to_string(),
+        "withdrawal awaits terminal evidence, not cancellation acknowledgement"
+    );
     assert!(matches!(
         adapter.reconcile(&withdrawal).unwrap(),
         Reconciliation::Pending
@@ -724,10 +745,13 @@ fn flux_checks_historical_progress_is_journaled_without_fabricating_liveness() {
     assert!(matches!(adapter.look(&d).unwrap(), Look::Alive { .. }));
     backend.state.lock().unwrap().phase = Some(NativePhase::Unknown);
     assert!(matches!(adapter.look(&d).unwrap(), Look::Pending));
-    assert!(
+    assert_eq!(
         adapter
             .wait_record("foreign-owner", Path::new("/foreign-checkout"))
-            .is_err()
+            .err()
+            .expect("worker wait routing must refuse")
+            .to_string(),
+        "Flux worker wait routing is not registered"
     );
     running.stop().unwrap();
     running.join().unwrap();
@@ -849,7 +873,10 @@ fn flux_checks_stale_epoch_is_refused_before_submit() {
         adapter.execute(&newest).unwrap();
         let mut stale = delivery();
         stale.key = "effect:0:7".into();
-        assert!(adapter.execute(&stale).is_err());
+        assert_eq!(
+            adapter.execute(&stale).unwrap_err().to_string(),
+            "check adapter refused an older epoch"
+        );
         assert_eq!(backend.state.lock().unwrap().submits, 1);
     });
 }
@@ -864,7 +891,10 @@ fn flux_checks_bound_plan_is_never_replaced() {
         let mut changed = d.clone();
         changed.checks.as_mut().unwrap().base_sha =
             tl3_worktrees::CommitId::new("e".repeat(40)).unwrap();
-        assert!(adapter.execute(&changed).is_err());
+        assert_eq!(
+            adapter.execute(&changed).unwrap_err().to_string(),
+            "check effect changed its immutable identity"
+        );
         assert_eq!(fs::read(path).unwrap(), before);
         assert_eq!(backend.state.lock().unwrap().submits, 1);
     });
@@ -875,9 +905,15 @@ fn flux_checks_unknown_submission_never_confirms() {
     with_checks_adapter(|adapter, backend, _| {
         backend.state.lock().unwrap().unknown_submit = true;
         let d = delivery();
-        assert!(adapter.execute(&d).is_err());
+        assert_eq!(
+            adapter.execute(&d).unwrap_err().to_string(),
+            "check acceptance remains unknown; retained for attach"
+        );
         assert!(matches!(adapter.reconcile(&d).unwrap(), Reconciliation::Pending));
-        assert!(adapter.execute(&d).is_err());
+        assert_eq!(
+            adapter.execute(&d).unwrap_err().to_string(),
+            "check acceptance remains unknown; reattach without resubmission"
+        );
         assert_eq!(backend.state.lock().unwrap().submits, 1);
     });
 }
@@ -888,8 +924,15 @@ fn flux_checks_malformed_journal_is_never_absent() {
         let d = delivery();
         let path = backend.records.join(format!("{}.job", durable::digest(d.key.as_bytes())));
         fs::write(&path, b"{truncated").unwrap();
-        assert!(adapter.reconcile(&d).is_err());
-        assert!(adapter.execute(&d).is_err());
+        for error in [
+            adapter
+                .reconcile(&d)
+                .err()
+                .expect("malformed journal must refuse"),
+            adapter.execute(&d).unwrap_err(),
+        ] {
+            assert!(matches!(error, tl3_controller::Error::Json(_)), "{error}");
+        }
         assert_eq!(backend.state.lock().unwrap().submits, 0);
         assert_eq!(fs::read(path).unwrap(), b"{truncated");
     });
@@ -920,7 +963,14 @@ fn flux_checks_success_without_report_never_passes() {
         let d = delivery();
         adapter.execute(&d).unwrap();
         backend.terminal(Ending::Passed);
-        assert!(adapter.look(&d).is_err(), "the fixture has no verified report");
+        assert_eq!(
+            adapter
+                .look(&d)
+                .err()
+                .expect("missing semantic payload must refuse")
+                .to_string(),
+            "upstream adapter failed: InvalidRequest: no semantic payload in infrastructure fixtures"
+        );
         assert!(matches!(adapter.reconcile(&d).unwrap(), Reconciliation::Pending));
         assert_eq!(backend.state.lock().unwrap().submits, 1);
     });
@@ -939,9 +989,15 @@ fn flux_checks_withdrawal_targets_only_the_exact_generation() {
         assert_eq!(backend.state.lock().unwrap().cancels, 0);
         assert!(adapter.execute(&withdrawal(Some(3))).is_ok());
         assert_eq!(backend.state.lock().unwrap().cancels, 0);
-        assert!(adapter.execute(&withdrawal(None)).is_err());
+        assert_eq!(
+            adapter.execute(&withdrawal(None)).unwrap_err().to_string(),
+            "withdrawal requires an exact job generation"
+        );
         assert_eq!(backend.state.lock().unwrap().cancels, 0);
-        assert!(adapter.execute(&withdrawal(Some(4))).is_err());
+        assert_eq!(
+            adapter.execute(&withdrawal(Some(4))).unwrap_err().to_string(),
+            "withdrawal awaits terminal evidence, not cancellation acknowledgement"
+        );
         assert!(backend.state.lock().unwrap().cancels > 0);
         assert_eq!(backend.state.lock().unwrap().submits, 1);
     });
