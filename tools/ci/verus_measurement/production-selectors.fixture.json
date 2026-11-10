@@ -1,10 +1,20 @@
 {
-  "source_head": "050eeb40265a98192a5e61acabc2a7e75c324ac6",
+  "source_head": "37b668b436b9bbf52d2ca32810552447cbe2842d",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "2e39717383822ab06ee3ef2ddae93bc53c4c0d3c03062cbd0bce22ecbed337b0",
-  "groups": 643,
-  "obligations": 841,
+  "source_sha256": "802614327a4ccb812ed1d47c95b5a78f38d1ddbd1dff1c489ccb749fc679b526",
+  "groups": 645,
+  "obligations": 843,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_event_frames_out_of_range_stutter_intro",
+      "selector": "kernel::event_frames#out_of_range_stutter_intro",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_event_frames_reveal_out_of_range_stutter_rows",
+      "selector": "kernel::event_frames_reveal#out_of_range_stutter_rows",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_answer_owner_owner_rows_unwithheld",
       "selector": "kernel::answer_owner#owner_rows_unwithheld",
