@@ -32,6 +32,7 @@ def test_repository_profile_installs_frozen_cpu_dependencies(monkeypatch, profil
     requirements = Path(__file__).parents[1] / 'tools/images' / f'{profile}.txt'
     assert requirements.is_file(), 'keep the frozen dependency list reviewable'
     pins = requirements.read_text()
+    assert 'prismabuild @' not in pins, 'retired executor must not be installed in new images'
     assert f'pytest=={pytest_version}\n' in pins
     assert f'triton=={triton_version}\n' in pins
     assert 'torch==2.11.0+cpu\n' in pins
