@@ -102,7 +102,7 @@ fn ack_live(w: &mut World, i: usize, e: InFlight, ack: Ack,
         ack_live_post(old(w).nodes@[i as int], final(w).nodes@[i as int], e, ack,
             old(w).next_question, final(w).next_question, i as int, *old(out), *final(out)),
 ] proof [reveal(distance);] {
-    kernel_snapshot! { ack_node = w.nodes[i] }
+    kernel_snapshot! { ack_node = w.nodes@[i as int] }
     kernel_snapshot! { ack_question = w.next_question }
     kernel_snapshot! { ack_out = *out }
     w.nodes[i].effect = None;
