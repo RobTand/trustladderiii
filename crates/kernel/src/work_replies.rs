@@ -328,7 +328,7 @@ fn work_made_v(n: Node, head: HeadId) -> (result: ReplyChange) [
     ensures result == reply_family_values::work_made(n, head), reply_family_values::callable(result),
 ] {
     let mut m = n;
-    m.head = Some(head);
+    m.head = None;
     m.checked = None;
     m = set_phase_v(m, Phase::Checking);
     ReplyChange::Done { node: m, note: None }
