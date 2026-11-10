@@ -181,6 +181,226 @@ mod resume_assembly {
     }
 }
 
+mod pause_projection {
+    use super::*;
+
+    verus! {
+    pub(super) proof fn pause_dependencies(before: World, after: World, i: int)
+        requires checking::accepted(before), 0 <= i < before.nodes@.len(),
+            after.dependencies@ == before.dependencies@,
+            after.nodes@.len() == before.nodes@.len(),
+            forall|j: int| 0 <= j < before.nodes@.len() && j != i
+                ==> after.nodes@[j] == before.nodes@[j],
+            dependencies::same_endpoint(before.nodes@[i], after.nodes@[i]),
+        ensures dependencies::rules_ok(after),
+    {
+        checking::accepted_parts(before);
+        assert forall|j: int| 0 <= j < before.nodes@.len()
+            implies dependencies::same_endpoint(#[trigger] before.nodes@[j], after.nodes@[j]) by {
+            if j != i { assert(after.nodes@[j] == before.nodes@[j]); }
+        }
+        dependencies::frame_preserves(before, after);
+    }
+    }
+}
+
+mod pause_assembly {
+    use super::*;
+
+    verus! {
+    fn pause_command_step(mut w: World, event: Event, mut out: Outbox)
+        -> (result: (World, Outbox))
+        requires checking::accepted(w), out.len < OUTBOX, w.next_question < u64::MAX,
+            match event {
+                Event::Command { node, command: Command::Pause, .. } =>
+                    node.0 < w.nodes@.len() && node.0 <= usize::MAX
+                        && node_headroom(w.nodes@[node.0 as int])
+                        && arithmetic_consistent(w.nodes@[node.0 as int]),
+                _ => false,
+            },
+        ensures (checking::accepted(w) && (event is Command)) ==> checking::accepted(result.0),
+    {
+        let ghost before = w;
+        match event {
+            Event::Command { node, id, command: Command::Pause } => {
+                let i = node.0 as usize;
+                on_command(&mut w, i, id, Command::Pause, &mut out);
+                proof {
+                    checking::accepted_node(before, i as int);
+                    pause_projection::pause_dependencies(before, w, i as int);
+                    internal_safety::apply_step_preserves_accepted(before, w, i as int);
+                }
+            },
+            _ => {},
+        }
+        (w, out)
+    }
+    }
+}
+
+mod stop_assembly {
+    use super::*;
+
+    verus! {
+    fn stop_command_step(mut w: World, event: Event, mut out: Outbox)
+        -> (result: (World, Outbox))
+        requires checking::accepted(w), out.len < OUTBOX, w.next_question < u64::MAX,
+            w.nodes@.len() <= u64::MAX,
+            match event {
+                Event::Command { node, command: Command::Stop, .. } =>
+                    node.0 < w.nodes@.len() && node.0 <= usize::MAX
+                        && node_headroom(w.nodes@[node.0 as int])
+                        && arithmetic_consistent(w.nodes@[node.0 as int]),
+                _ => false,
+            },
+        ensures (checking::accepted(w) && (event is Command)) ==> checking::accepted(result.0),
+    {
+        let ghost before = w;
+        match event {
+            Event::Command { node, id, command: Command::Stop } => {
+                let i = node.0 as usize;
+                proof {
+                    checking::accepted_parts(before);
+                    if !dependencies::prerequisites_delivered(before, NodeId(i as u64)) {
+                        dependency_owner_exports::waiting_owner_ok(before, i as int);
+                    }
+                }
+                on_command(&mut w, i, id, Command::Stop, &mut out);
+                proof {
+                    checking::accepted_node(before, i as int);
+                    handler_safety::step_withheld(before.nodes@[i as int], w.nodes@[i as int]);
+                    internal_safety::apply_step_preserves_accepted_full(before, w, i as int);
+                }
+            },
+            _ => {},
+        }
+        (w, out)
+    }
+    }
+}
+
+mod change_assembly {
+    use super::*;
+
+    verus! {
+    fn change_request_command_step(mut w: World, event: Event, mut out: Outbox)
+        -> (result: (World, Outbox))
+        requires checking::accepted(w), out.len < OUTBOX, w.next_question < u64::MAX,
+            w.nodes@.len() <= u64::MAX,
+            match event {
+                Event::Command { node, command: Command::ChangeRequest, .. } =>
+                    node.0 < w.nodes@.len() && node.0 <= usize::MAX
+                        && node_headroom(w.nodes@[node.0 as int])
+                        && arithmetic_consistent(w.nodes@[node.0 as int]),
+                _ => false,
+            },
+        ensures (checking::accepted(w) && (event is Command)) ==> checking::accepted(result.0),
+    {
+        let ghost before = w;
+        match event {
+            Event::Command { node, id, command: Command::ChangeRequest } => {
+                let i = node.0 as usize;
+                proof {
+                    checking::accepted_parts(before);
+                    if !dependencies::prerequisites_delivered(before, NodeId(i as u64)) {
+                        dependency_owner_exports::waiting_owner_ok(before, i as int);
+                    }
+                }
+                on_command(&mut w, i, id, Command::ChangeRequest, &mut out);
+                proof {
+                    checking::accepted_node(before, i as int);
+                    handler_safety::step_withheld(before.nodes@[i as int], w.nodes@[i as int]);
+                    internal_safety::apply_step_preserves_accepted_full(before, w, i as int);
+                }
+            },
+            _ => {},
+        }
+        (w, out)
+    }
+    }
+}
+
+mod gate_projection {
+    use super::*;
+
+    verus! {
+    pub(super) proof fn older_waiters(before: World, i: int)
+        requires 0 <= i < before.nodes@.len(), before.nodes@[i].ticket.is_some(),
+            forall|older: int| 0 <= older < before.nodes@.len()
+                && before.nodes@[older].phase is Ready
+                && before.nodes@[older].repo == before.nodes@[i].repo
+                && before.nodes@[older].ticket.is_some()
+                && before.nodes@[older].ticket.unwrap() < before.nodes@[i].ticket.unwrap()
+                ==> footprint::disjoint(before, before.nodes@[older].footprint, before.nodes@[i].footprint),
+        ensures !overlapped_by_older(before, i, before.nodes@[i].ticket.unwrap()),
+    {
+    }
+    }
+}
+
+mod gate_assembly {
+    use super::*;
+
+    verus! {
+    fn gate_grant_step(mut w: World, i: usize, mut out: Outbox, mut report: Report)
+        -> (result: (World, Outbox, Report, bool))
+        requires checking::accepted(w), scheduling_safe(w),
+            w.gates@.len() <= u64::MAX, w.nodes@.len() <= u64::MAX,
+            i < w.nodes@.len(), i <= u64::MAX as int,
+            advance_pre(w.nodes@[i as int], w.next_ticket, out.len),
+            w.nodes@[i as int].phase is Ready,
+        ensures checking::accepted(result.0),
+            // R29 includes older waiters blocked on another holder.
+            (w.nodes@[i as int].phase is Ready && w.nodes@[i as int].ticket.is_some()
+                && !w.nodes@[i as int].holds && result.0.nodes@[i as int].holds)
+                ==> forall|older: int| 0 <= older < w.nodes@.len()
+                    && w.nodes@[older].phase is Ready && w.nodes@[older].repo == w.nodes@[i as int].repo
+                    && w.nodes@[older].ticket.is_some()
+                    && w.nodes@[older].ticket.unwrap() < w.nodes@[i as int].ticket.unwrap()
+                    ==> footprint::disjoint(w, w.nodes@[older].footprint, w.nodes@[i as int].footprint),
+            advance_family_post::ready_unobstructed(w.nodes@[i as int])
+                && slot_spec(w, i as int) && oldest_waiter(w, i as int)
+                ==> result.3 && result.0.nodes@[i as int].holds && result.0.nodes@[i as int].ticket.is_none(),
+            advance_family_post::ready_unobstructed(w.nodes@[i as int])
+                ==> forall|older: int| 0 <= older < w.nodes@.len()
+                    && w.nodes@[older].phase is Ready && w.nodes@[older].repo == w.nodes@[i as int].repo
+                    && w.nodes@[older].ticket.is_some()
+                    && w.nodes@[older].ticket.unwrap() < w.nodes@[i as int].ticket.unwrap()
+                    && slot_spec(w, older)
+                    && !overlapped_by_older(w, older, w.nodes@[older].ticket.unwrap())
+                    ==> !result.3 && result.0.nodes@[i as int] == w.nodes@[i as int],
+            result.0.nodes@[i as int].holds ==> !w.nodes@[i as int].paused && slot_spec(w, i as int)
+                && result.0.nodes@[i as int].ticket.is_none()
+                && result.0.nodes@[i as int].pool == w.nodes@[i as int].pool
+                && result.0.nodes@[i as int].run == w.nodes@[i as int].run,
+            result.0.nodes@[i as int].holds && w.nodes@[i as int].ticket.is_some()
+                ==> !overlapped_by_older(w, i as int, w.nodes@[i as int].ticket.unwrap()),
+            !result.0.nodes@[i as int].holds && w.nodes@[i as int].ticket.is_some()
+                && !w.nodes@[i as int].paused ==> result.0.nodes@[i as int].ticket == w.nodes@[i as int].ticket,
+            result.3 ==> 4 * node_distance(result.0.nodes@[i as int]) + pending_rank(result.0.nodes@[i as int])
+                < 4 * node_distance(w.nodes@[i as int]) + pending_rank(w.nodes@[i as int]),
+            transition_safety::transition_safety(w, result.0,
+                transition_safety::Transition::Advance { node: i, moved: result.3 },
+                transition_safety::emitted(out, result.1)),
+        {
+            let ghost before = w;
+            let changed = scheduler::advance(&mut w, i, &mut out, &mut report);
+            proof {
+                checking::accepted_node(before, i as int);
+                advance_family_frames::step_premises_lift(before, w, i as int);
+                internal_safety::step_preserves_accepted_full(before, w, i as int);
+                checking::accepted_node(w, i as int);
+                if w.nodes@[i as int].holds && before.nodes@[i as int].ticket.is_some() {
+                    gate_projection::older_waiters(before, i as int);
+                }
+                advance_projection::settle_rank(before.nodes@[i as int], w.nodes@[i as int],
+                    before.next_ticket, w.next_ticket, changed);
+            }
+            (w, out, report, changed)
+        }
+    }
+}
+
 /// Projections of the owner's opaque advance contract live outside the
 /// consumer module so its representation stays local to this proof.
 mod advance_projection {
