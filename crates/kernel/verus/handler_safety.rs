@@ -122,7 +122,7 @@ pub(super) proof fn answer_pair_withheld(b: Node, n: Node, fresh: bool, question
     table: Seq<Dependency>, node: NodeId)
     requires answer_pair(b, n, fresh, question, answer, table, node),
     ensures n.credit.withheld == (if fresh && answer_withholds(b, question, answer) {
-            b.credit.withheld || (!dependencies::delivered(table, node) && !n.planning_started
+            b.credit.withheld || (dependencies::delivered(table, node) && !n.planning_started
                 && dependencies::early(n.phase) && n.credit.ready)
         } else { b.credit.withheld }),
 {
