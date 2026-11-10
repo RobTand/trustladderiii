@@ -539,7 +539,7 @@ pub(super) fn merge_fact_value(n: Node, fast: bool, i: usize,
             && !(n.approved == Some(head) && checks_passed)
             ==> retirement::unapproved_note(result.1, i),
 ] {
-    let result = merged_fact_arm(n, i, head, checks_passed);
+    let result = merged_fact_arm(n, i, head, true);
     kernel_proof! {
         let fact = Fact::PrMerged { head, checks_passed };
         fact_value_bridge(n, fact);
