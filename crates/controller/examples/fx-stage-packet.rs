@@ -549,7 +549,7 @@ mod tests {
         let generation = format!("fixture/{}", "0".repeat(32));
         let flux = tl3_config::Flux {
             activation: None,
-            instance_file: None,
+            instance_file: Some(root.join("INSTANCE")),
             instance_generation: generation.clone(),
             uri: "local:///fixture-endpoint".into(),
             executable: "/no-native-execution/flux".into(),
