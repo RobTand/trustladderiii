@@ -113,6 +113,7 @@ impl Preparation for Staging {
 }
 #[derive(Default)]
 struct State {
+    maintenance_resumes: usize,
     submits: usize,
     cancels: usize,
     unknown_submit: bool,
@@ -144,6 +145,19 @@ impl Backend {
     }
 }
 impl RunBackend for Backend {
+    fn cleanup_maintenance(&self, _: u64) -> api::Result<Vec<Owner>> {
+        self.state.lock().unwrap().maintenance_resumes += 1;
+        Ok(vec![])
+    }
+    fn cleanup_maintenance_fenced(&self, _: u64, authorize: &dyn Fn(&Owner) -> api::Result<()>) -> api::Result<Vec<Owner>> {
+        let intent = self.state.lock().unwrap().binding.as_ref().unwrap().intent.clone();
+        let owner = Owner { owner: intent.owner, correlation: intent.correlation };
+        match authorize(&owner) {
+            Ok(()) => { self.state.lock().unwrap().maintenance_resumes += 1; Ok(vec![]) }
+            Err(_) => Ok(vec![owner]),
+        }
+    }
+
     fn submit(&self, _: Request, intent: SubmissionIntent) -> api::Result<Submission> {
         // The external boundary observes the committed controller intent before accepting.
         let journal = self.records.join(format!("{}.job", intent.correlation));
@@ -701,5 +715,32 @@ fn flux_checks_historical_progress_is_journaled_without_fabricating_liveness() {
     running.join().unwrap();
     assert_eq!(backend.state.lock().unwrap().cancels, 0);
     drop((adapter, ownership));
+    database.stop();
+}
+
+#[test]
+fn flux_checks_maintenance_fences_retained_delivery_epoch_and_isolates_bad_jobs() {
+    let root = tempfile::tempdir().unwrap();
+    let mut database = support::Database::start();
+    let mut ownership = Ownership::claim(Store::open(&database.create("maintenance_fence")).unwrap()).unwrap();
+    let (mut adapter, backend, _, options) = setup(root.path(), &mut ownership);
+    let d = delivery();
+    adapter.execute(&d).unwrap();
+    adapter.cleanup_maintenance(1_000_000).unwrap();
+    assert_eq!(backend.state.lock().unwrap().maintenance_resumes, 1, "fresh epoch can resume");
+    let mut newer = d.clone();
+    newer.epoch = 2;
+    adapter.execute(&newer).unwrap();
+    fs::write(backend.records.join(format!("{}.job", "f".repeat(64))), b"{truncated").unwrap();
+    let pending = adapter.cleanup_maintenance(1_300_000).unwrap();
+    assert_eq!(backend.state.lock().unwrap().maintenance_resumes, 1, "older retained delivery must not resume after a newer epoch is fenced");
+    assert!(pending.iter().any(|key| key.starts_with("check-journal:")));
+    assert!(backend.records.join("maintenance-errors").read_dir().unwrap().next().is_some());
+    assert!(adapter.next_cleanup_maintenance_ms().unwrap().is_some_and(|next| next > 1_300_000));
+    drop(adapter);
+    let mut restarted = Adapter::new(backend.clone(), options, &backend.records, Staging, &mut ownership).unwrap();
+    assert!(!restarted.cleanup_maintenance(1_600_000).unwrap().is_empty());
+    assert_eq!(backend.state.lock().unwrap().maintenance_resumes, 1);
+    drop((restarted, ownership));
     database.stop();
 }

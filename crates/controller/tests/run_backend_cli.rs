@@ -6908,3 +6908,63 @@ fn cleanup_maintenance_time_budget_stops_between_executions() {
     assert!(!f.intent.output_dir.join("helper-called-budget-second").exists(), "budget exhaustion must not start another helper");
     assert!(!cleanup_debts(&f).is_empty());
 }
+
+fn hold_maintenance_request(f: &mut Fixture) -> SubmissionIntent {
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.cleanup_execution("held-maintenance", 'd');
+    f.cleanup_facts(&owned, false);
+    f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
+    fs::copy(f.intent.output_dir.join("original-jobspec.json"), f.root.path().join("jobspec-fABC.json")).unwrap();
+    let mut intent = f.intent.clone();
+    intent.owner = "held-maintenance-owner".into();
+    intent.correlation = format!("{}-held", f.intent.correlation);
+    intent.output_dir = Path::new("/mnt/shared/flux-out/tl3").join(&intent.correlation);
+    assert!(maintenance_backend(f).submit(f.request.clone(), intent.clone()).is_err());
+    f.cleanup_facts(&owned, true);
+    intent
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_failed_held_request_is_reported_and_durable() {
+    let mut f = Fixture::new();
+    let intent = hold_maintenance_request(&mut f);
+    let path = f.options.journal_root.join(&intent.correlation).join("state.json");
+    let mut state: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let spec = PathBuf::from(state["jobspec"]["path"].as_str().unwrap());
+    fs::write(spec, b"changed staged jobspec").unwrap();
+    state["held_submission_ms"] = json!(0);
+    api::durable::atomic(&path, &serde_json::to_vec(&state).unwrap()).unwrap();
+    let backend = maintenance_backend(&f);
+    let due = maintenance_due(&f);
+    let pending = backend.cleanup_maintenance(due).unwrap();
+    assert!(pending.iter().any(|owner| owner.correlation == intent.correlation), "unresumable request must raise an incident");
+    assert!(backend.next_cleanup_maintenance_ms().unwrap().is_some_and(|next| next > due));
+    assert!(f.options.journal_root.join("maintenance-errors").read_dir().unwrap().next().is_some());
+    let state: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    assert_eq!(state["dispatched"], false);
+    fs::remove_dir_all(&intent.output_dir).unwrap();
+}
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_held_dispatch_requires_upstream_authorization() {
+    let mut f = Fixture::new();
+    let intent = hold_maintenance_request(&mut f);
+    let due = maintenance_due(&f) + 300_000;
+    let calls = std::cell::Cell::new(0);
+    let authorize = |owner: &Owner| {
+        assert_eq!(owner.correlation, intent.correlation);
+        calls.set(calls.get() + 1);
+        Err(BackendError::invalid("fixture epoch superseded"))
+    };
+    let backend = maintenance_backend(&f);
+    let pending = backend.cleanup_maintenance_fenced(due, &authorize).unwrap();
+    assert_eq!(calls.get(), 1, "resuming a held request must visit the upstream fence");
+    assert!(pending.iter().any(|owner| owner.correlation == intent.correlation));
+    let state: Value = serde_json::from_slice(&fs::read(f.options.journal_root.join(&intent.correlation).join("state.json")).unwrap()).unwrap();
+    assert_eq!(state["dispatched"], false);
+    assert_eq!(fs::read_to_string(f.root.path().join("calls")).unwrap().lines().filter(|line| line.starts_with("job submit ")).count(), 1);
+    fs::remove_dir_all(&intent.output_dir).unwrap();
+}
