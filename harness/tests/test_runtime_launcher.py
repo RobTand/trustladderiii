@@ -1321,10 +1321,16 @@ def test_x7_native_target_and_descendants_get_only_opted_in_flux_uri(tmp_path, m
 
 
 @pytest.mark.parametrize('opt_in', [False, True])
-def test_x7_container_uses_job_uri_and_directory_mount(tmp_path, monkeypatch, opt_in):
+def test_x7_container_uses_job_uri_and_readonly_socket_mount(tmp_path, monkeypatch, opt_in):
     from tl3_harness import runtime
 
-    monkeypatch.setenv('FLUX_URI', 'local:///job-owned/run/local-1')
+    import socket
+
+    broker = socket.socket(socket.AF_UNIX)
+    endpoint = tmp_path / 'local-1'
+    broker.bind(str(endpoint))
+    broker.close()
+    monkeypatch.setenv('FLUX_URI', 'local://' + str(endpoint))
     monkeypatch.setattr(runtime, 'check_rootless_directory', lambda env: None)
     import shutil
     monkeypatch.setattr(shutil, 'which', lambda name: '/usr/bin/' + name)
@@ -1335,9 +1341,28 @@ def test_x7_container_uses_job_uri_and_directory_mount(tmp_path, monkeypatch, op
     argv = runtime.command(tmp_path / 'checkout', tmp_path / 'scratch')
     env = [argv[i + 1] for i, value in enumerate(argv) if value == '--env' and argv[i + 1].startswith('FLUX_')]
     mounts = [argv[i + 1] for i, value in enumerate(argv) if value == '--mount']
-    assert env == (['FLUX_URI=local:///job-owned/run/local-1'] if opt_in else [])
-    assert ('type=bind,src=/job-owned/run,dst=/job-owned/run' in mounts) == opt_in
+    assert env == (['FLUX_URI=local:///run/tl3-flux.sock'] if opt_in else [])
+    assert (f'type=bind,source={endpoint},target=/run/tl3-flux.sock,readonly' in mounts) == opt_in
+    assert len(mounts) == 3 + int(opt_in)
+    assert [value for value in mounts if not value.endswith(',readonly')] == [
+        f'type=bind,src={tmp_path / "scratch"},dst=/tmp']
+    assert not any(f'source={tmp_path},' in value for value in mounts)
     assert not any('/controller-submit-time' in value for value in argv)
+
+
+@pytest.mark.parametrize('kind', ['directory', 'regular_file', 'missing'])
+def test_x7_container_flux_uri_requires_socket_file(tmp_path, kind):
+    from tl3_harness import runtime
+
+    endpoint = tmp_path / 'broker'
+    if kind == 'directory':
+        endpoint.mkdir()
+    elif kind == 'regular_file':
+        endpoint.write_text('not a socket')
+    with pytest.raises(ValueError) as error:
+        runtime.podman_command(tmp_path, 'sha256:' + '1' * 64, tmp_path, 1,
+                               mode='in_job', coordinator_uri='local://' + str(endpoint))
+    assert getattr(error.value, 'reason', None) == 'invalid_flux_uri'
 
 
 @pytest.mark.parametrize('uri', ['local:///safe,ro=false', 'local://relative', 'ssh:///socket',
