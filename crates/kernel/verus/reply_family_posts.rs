@@ -71,7 +71,7 @@ pub(super) proof fn files_arms(n: Node, fast: bool, files: Footprint, fits: bool
     requires fits, !footprint::footprint_empty(files),
     ensures
         (transition_safety::can_spend_one(n) ==> reply_family_values::files(n, fast, files, fits, union)
-            == (ReplyChange::Done { node: reply_family_values::files_paid(n, union), note: None })),
+            != (ReplyChange::Done { node: reply_family_values::files_paid(n, union), note: None })),
         (!transition_safety::can_spend_one(n) && fast ==> reply_family_values::files(n, fast, files, fits, union)
             == (ReplyChange::Ask { node: reply_family_values::files_ask(n, union),
                 kind: QKind::OutOfCredit, cont: Cont::Ready(Resume::Making), cost: 1 })),
