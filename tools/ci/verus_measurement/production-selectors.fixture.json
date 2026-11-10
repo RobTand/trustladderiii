@@ -1,9 +1,9 @@
 {
-  "source_head": "c7b4541f0c189606bdadcb090204b2e61259c0d2",
+  "source_head": "4d8805ea15be2e78b431acd9bc7581051bd92fd5",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "9f325e99ca78bd5e94a4564c99eed07bce15f8763fffcf5856d29bc1c5b2ca8c",
-  "groups": 908,
-  "obligations": 1117,
+  "source_sha256": "4b6899402fdc549da6ae06f7da37da077c7d7aa8e58bf76d4771458aeb4fbf09",
+  "groups": 909,
+  "obligations": 1118,
   "selections": [
     {
       "target": "//crates/kernel:verus_command_frames_reveal_r24_stop",
@@ -4543,6 +4543,11 @@
     {
       "target": "//crates/kernel:verus_special_safety_pause_projection",
       "selector": "kernel::special_safety::pause_projection",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_special_safety_gate_ticket_projection",
+      "selector": "kernel::special_safety::gate_ticket_projection",
       "expected": 1
     }
   ]
