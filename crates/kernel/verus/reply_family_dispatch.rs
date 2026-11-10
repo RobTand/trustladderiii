@@ -224,6 +224,9 @@ pub(super) proof fn plan_bounds(n: Node, c: ReplyCtx)
             reply_family_values::finish(c.next_question, reply_family_values::plan(n, c.fast, c.reply)).phase == Phase::Stopping(Outcome::Stopped)
                 && reply_family_values::finish(c.next_question, reply_family_values::plan(n, c.fast, c.reply)).review_stop == Some(ReviewStop::PlanCantMeet),
 
+        reply_family_values::finish(c.next_question, reply_family_values::plan(n, c.fast, c.reply)).footprint == n.footprint
+            || match c.reply { Reply::PlanLeaf { footprint, .. } => reply_family_values::finish(c.next_question, reply_family_values::plan(n, c.fast, c.reply)).footprint == footprint, _ => false },
+
 {
     reveal(reply_family_values::plan);
     match c.reply {
@@ -286,8 +289,50 @@ pub(super) proof fn plan_value_posts(n: Node, c: ReplyCtx)
         (c.reply == Reply::PlanCantMeet && c.fast && n.phase is Planning ==>
             reply_family_values::finish(c.next_question, reply_family_values::plan(n, c.fast, c.reply)).phase == Phase::Stopping(Outcome::Stopped)
                 && reply_family_values::finish(c.next_question, reply_family_values::plan(n, c.fast, c.reply)).review_stop == Some(ReviewStop::PlanCantMeet)),
+        reply_family_values::finish(c.next_question, reply_family_values::plan(n, c.fast, c.reply)).footprint == n.footprint
+            || match c.reply { Reply::PlanLeaf { footprint, .. } => reply_family_values::finish(c.next_question, reply_family_values::plan(n, c.fast, c.reply)).footprint == footprint, _ => false },
+
 {
     plan_bounds(n, c); plan_progress(n, c); plan_completion(n, c);
+}
+
+/// The deposit case pays only its arithmetic and phase facts.
+pub(super) proof fn ingest_deposit_bounds(n: Node, nq: u64, size: u8, early_end: Option<EarlyEnd>)
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+    ensures reply_family_values::reply_bound(n, nq,
+        ReplyChange::Done { node: reply_family_values::ingested(n, size, early_end), note: None }),
+{
+    timing3_lemmas::ingest_deposit_bound(size);
+    if n.credit.ready {} else {}
+}
+
+pub(super) proof fn ingest_agrees_bounds(n: Node, nq: u64)
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+    ensures reply_family_values::reply_bound(n, nq, reply_family_values::ingest(n, Reply::AuditAgrees)),
+        reply_family_values::finish(nq, reply_family_values::ingest(n, Reply::AuditAgrees)).footprint == n.footprint,
+{
+    reveal(reply_family_values::ingest);
+    match n.early_end {
+        Some(_) => { reveal(retirement::stopped); },
+        None => {},
+    }
+}
+
+pub(super) proof fn ingest_disagrees_bounds(n: Node, nq: u64)
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+    ensures reply_family_values::reply_bound(n, nq, reply_family_values::ingest(n, Reply::AuditDisagrees)),
+        reply_family_values::finish(nq, reply_family_values::ingest(n, Reply::AuditDisagrees)).footprint == n.footprint,
+{
+    reveal(reply_family_values::ingest); reveal(port_t860_contracts::audit_node);
+    if n.audit_rounds == 0 {} else { reveal(retirement::stopped); }
+}
+
+pub(super) proof fn ingest_protected_bounds(n: Node, nq: u64)
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+    ensures reply_family_values::reply_bound(n, nq, reply_family_values::ingest(n, Reply::ProtectedPaths)),
+        reply_family_values::finish(nq, reply_family_values::ingest(n, Reply::ProtectedPaths)).footprint == n.footprint,
+{
+    reveal(reply_family_values::ingest); reveal(retirement::stopped);
 }
 
 pub(super) proof fn ingest_bounds(n: Node, c: ReplyCtx)
@@ -297,10 +342,12 @@ pub(super) proof fn ingest_bounds(n: Node, c: ReplyCtx)
         reply_family_values::finish(c.next_question, reply_family_values::ingest(n, c.reply)).footprint == n.footprint,
 {
     reveal(reply_family_values::ingest);
-    reveal(port_t860_contracts::audit_node); reveal(retirement::stopped);
     match c.reply {
-        Reply::IngestDone { size } => timing3_lemmas::ingest_deposit_bound(size),
-        Reply::IngestEarlyEnd(_) => timing3_lemmas::ingest_deposit_bound(1),
+        Reply::IngestDone { size } => ingest_deposit_bounds(n, c.next_question, size, None),
+        Reply::IngestEarlyEnd(e) => ingest_deposit_bounds(n, c.next_question, 1, Some(e)),
+        Reply::AuditAgrees => ingest_agrees_bounds(n, c.next_question),
+        Reply::AuditDisagrees => ingest_disagrees_bounds(n, c.next_question),
+        Reply::ProtectedPaths => ingest_protected_bounds(n, c.next_question),
         _ => {},
     }
 }
@@ -343,6 +390,13 @@ pub(super) proof fn ingest_completion(n: Node, c: ReplyCtx)
         reveal(retirement::stopped); reveal(port_t860_contracts::audit_node);
         reveal(distance);
     }
+}
+
+/// Withholding dependency credit changes no input of the progress measure.
+pub(super) proof fn withheld_distance(n: Node, withheld: bool)
+    ensures distance(Node { credit: Credit { withheld, ..n.credit }, ..n }) == distance(n),
+{
+    reveal(distance);
 }
 
 pub(super) proof fn ingest_value_posts(n: Node, c: ReplyCtx)

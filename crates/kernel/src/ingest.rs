@@ -93,8 +93,12 @@ pub(super) fn reply_ingest(w: &mut World, i: usize, reply: Reply,
     resolve_reply_change(w, i, change, out);
     match reply {
         Reply::IngestDone { .. } | Reply::IngestEarlyEnd(_) => {
+            kernel_snapshot! { before_withhold = w.nodes@[i as int] }
             w.withhold_dependency_credit(i);
-            kernel_proof! { reply_family_safety::withhold_rows(before_value@, c, change, w.nodes@[i as int]); }
+            kernel_proof! {
+                reply_family_dispatch::withheld_distance(before_withhold@, w.nodes@[i as int].credit.withheld);
+                reply_family_safety::withhold_rows(before_value@, c, change, w.nodes@[i as int]);
+            }
         },
         _ => {}
     }
