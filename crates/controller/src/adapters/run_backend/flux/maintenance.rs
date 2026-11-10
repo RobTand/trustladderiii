@@ -33,13 +33,32 @@ impl Flux {
         }
     }
 
+    fn maintenance_failures_snapshot(
+        &self,
+        now: u64,
+    ) -> (BTreeMap<String, MaintenanceFailure>, bool) {
+        match maintenance_failures(&self.options.journal_root) {
+            Ok(failures) => (
+                failures
+                    .into_iter()
+                    .map(|failure| (failure.key.clone(), failure))
+                    .collect(),
+                false,
+            ),
+            Err(error) => {
+                self.maintenance_error("maintenance-error-log", &error.to_string(), now);
+                (BTreeMap::new(), true)
+            }
+        }
+    }
+
     pub(super) fn cleanup_deadline(&self) -> Result<Option<u64>> {
         let now = now_ms();
-        let failures: BTreeMap<_, _> = maintenance_failures(&self.options.journal_root)?
-            .into_iter()
-            .map(|failure| (failure.key.clone(), failure))
-            .collect();
+        let (failures, error_log_failed) = self.maintenance_failures_snapshot(now);
         let mut deadlines = Vec::new();
+        if error_log_failed {
+            deadlines.push(now.saturating_add(CADENCE_MS));
+        }
         for (key, entry) in self.journal.records()? {
             match entry {
                 Ok(record) => {
@@ -80,12 +99,18 @@ impl Flux {
         let deadline = Instant::now() + self.maintenance_budget;
         pass.native_deadline = Some(deadline);
         pass.maintenance_now_ms = Some(now);
-        let failures: BTreeMap<_, _> = maintenance_failures(&self.options.journal_root)?
-            .into_iter()
-            .map(|failure| (failure.key.clone(), failure))
-            .collect();
+        let (failures, error_log_failed) = self.maintenance_failures_snapshot(now);
         let mut records = BTreeMap::new();
         let mut pending = BTreeMap::new();
+        if error_log_failed {
+            pending.insert(
+                "maintenance-error-log".into(),
+                Owner {
+                    owner: "maintenance-error".into(),
+                    correlation: "maintenance-error-log".into(),
+                },
+            );
+        }
         // One snapshot, reused by both phases. Reload only owners we actually touch.
         for (key, entry) in self.journal.records()? {
             match entry {
