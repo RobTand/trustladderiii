@@ -917,7 +917,7 @@ mod assembly_entry_witnesses {
         let w = assembly_witness_world::world(0);
         let out = Outbox::new();
         if case == 0 {
-            let event = Event::Command { node: NodeId(0), id: 1, command: Command::Stop };
+            let event = Event::Command { node: NodeId(1), id: 1, command: Command::Stop };
             let _ = stop_assembly::stop_command_step(w, event, out);
         } else if case == 1 {
             let event = Event::Command { node: NodeId(0), id: 1, command: Command::Pause };
