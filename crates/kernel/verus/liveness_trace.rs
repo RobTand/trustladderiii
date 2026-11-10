@@ -48,7 +48,6 @@ pub(super) fn gate_leaf_progress(w: &mut World, Ghost(t): Ghost<u64>)
     liveness_reservation::first_visit(w, 3, Ghost(10), Ghost(t));
     proof {
         young_frame(visited_two, *w, 2, t);
-        // kani-parity: KP-G22-03
         assert(w.nodes@[0].ticket == Some(t));
     }
     let ghost reserved_world = *w;
@@ -57,7 +56,6 @@ pub(super) fn gate_leaf_progress(w: &mut World, Ghost(t): Ghost<u64>)
         liveness_finish::free_after_release(reserved_world, *w, 12, t);
         liveness_bounds::reserves(*w, 36, 0);
     }
-    // kani-parity: KP-G22-04
     let free = scheduler::slot_free(w, 0);
     proof { assert(free); }
     let ghost released = *w;
