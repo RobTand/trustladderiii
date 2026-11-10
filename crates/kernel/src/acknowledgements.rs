@@ -828,7 +828,7 @@ fn ack_delivery_value(n: Node, nq: u64, out: Outbox) -> (result: (Node, u64, Out
     requires n.generation < u64::MAX,
     ensures ack_view(result) == ack_delivery_spec(n, nq, out), result.2 == out,
 ] proof [reveal(ack_delivery_spec);] {
-    let m = Node { fx_failures: 0, fx_incidents: 0, holds: false, run: None,
+    let m = Node { fx_failures: 0, fx_incidents: 0, holds: n.holds, run: None,
         job: None, pool: false, question: None, ..n };
     let m = ack_phase_value(m, Phase::AwaitingDelivery);
     (m, nq, out)
