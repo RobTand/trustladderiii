@@ -63,7 +63,7 @@ pub(super) proof fn advance_accepts(b: World, n: World, i: int)
 pub(super) proof fn event_accepts(b: World, n: World, i: int)
     requires checking::accepted(b), b.nodes@.len() == 4, b.dependencies@.len() == 0,
         0 <= i < 4, internal_safety::apply_n5_frame(b, n, i),
-        retirement::node_rules(n, n.nodes@[i]),
+        true,
         internal_safety::apply_n2_no_grants(b.nodes@[i], n.nodes@[i]),
         n.nodes@[i].repo == b.nodes@[i].repo, n.nodes@[i].footprint == b.nodes@[i].footprint,
         n.dependencies@ == b.dependencies@,
