@@ -660,3 +660,112 @@ pub fn inventory_build(out: &Path) -> Result<()> {
         &json!({"base_head":git(&repo,&["rev-parse","HEAD"])?,"tree":git(&repo,&["write-tree"])?,"artifacts":artifacts}),
     )
 }
+
+#[cfg(test)]
+mod staged_transport_tests {
+    use super::*;
+
+    fn fixture(root: &Path) -> (Inputs, BTreeMap<String, Vec<u8>>) {
+        let repo = root.join("repo");
+        let remote = root.join("remote.git");
+        fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "--initial-branch=main"]).unwrap();
+        git(&repo, &["init", "--bare", remote.to_str().unwrap()]).unwrap();
+        fs::write(repo.join("source"), b"H\n").unwrap();
+        git(&repo, &["add", "source"]).unwrap();
+        git(&repo, &["commit", "-m", "source H"]).unwrap();
+        git(&repo, &["remote", "add", "origin", remote.to_str().unwrap()]).unwrap();
+        let mut inputs = super::super::tests::inputs(root);
+        inputs.repo = repo;
+        inputs.head = git(&inputs.repo, &["rev-parse", "HEAD"]).unwrap();
+        let index = d8::current::Index {
+            schema: "tl3.fx_qualification_inputs.v1".into(),
+            source: inputs.head.clone(),
+            inputs: BTreeMap::new(),
+            runs: vec![],
+            fixtures: BTreeMap::new(),
+        };
+        let overlay = BTreeMap::from([
+            (policy::INDEX.into(), serde_json::to_vec(&index).unwrap()),
+            (policy::PIN.into(), b"private pin".to_vec()),
+            (format!("{}evidence.bin", policy::INPUTS), vec![37; 240 * 1024]),
+        ]);
+        fs::create_dir_all(root.join("qualified-production")).unwrap();
+        (inputs, overlay)
+    }
+
+    #[test]
+    fn staged_overlay_larger_than_200kb_uses_a_git_commit() {
+        let root = tempfile::tempdir().unwrap();
+        let (inputs, mut overlay) = fixture(root.path());
+        let mut state = 0x1234_5678_u32;
+        for byte in overlay.get_mut(&format!("{}evidence.bin", policy::INPUTS)).unwrap() {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            *byte = state as u8;
+        }
+        assert!(overlay.values().map(Vec::len).sum::<usize>() > 200 * 1024);
+        let argv = build_argv(&inputs, Some(&overlay)).expect("large overlays must travel through Git");
+        assert_eq!(argv.len(), 5, "overlay bytes must not enter argv");
+        assert_ne!(argv[3], inputs.head);
+        assert_eq!(git(&inputs.repo, &["rev-parse", &format!("{}^", argv[3])]).unwrap(), inputs.head);
+        assert_eq!(git(&inputs.repo, &["rev-parse", "HEAD"]).unwrap(), inputs.head);
+        assert!(git(&inputs.repo, &["status", "--porcelain"]).unwrap().is_empty());
+        let again = build_argv(&inputs, Some(&overlay)).unwrap();
+        assert_eq!(again, argv, "resumption must reuse the exact commit");
+    }
+
+    #[test]
+    fn staged_overlay_refuses_existing_branch_with_different_content() {
+        let root = tempfile::tempdir().unwrap();
+        let (inputs, overlay) = fixture(root.path());
+        let digest = durable::digest(&serde_json::to_vec(&overlay).unwrap());
+        let branch = format!("refs/heads/fx-x3-overlay/{}", &digest[..16]);
+        git(&inputs.repo, &["push", "origin", &format!("{}:{branch}", inputs.head)]).unwrap();
+        assert!(build_argv(&inputs, Some(&overlay)).is_err(), "an occupied branch cannot be replaced");
+        assert_eq!(git(&inputs.repo, &["ls-remote", "origin", &branch]).unwrap().split_whitespace().next().unwrap(), inputs.head);
+    }
+
+    #[test]
+    fn staged_overlay_refuses_extra_paths_and_changed_blobs() {
+        for extra_path in [true, false] {
+            let root = tempfile::tempdir().unwrap();
+            let (inputs, overlay) = fixture(root.path());
+            let work = inputs.out.join("qualified-production");
+            let tree = expected_tree(&inputs, &work, Some(&overlay)).unwrap();
+            git(&inputs.repo, &["read-tree", &tree]).unwrap();
+            let path = if extra_path { "unapproved" } else { policy::PIN };
+            fs::create_dir_all(inputs.repo.join(path).parent().unwrap()).unwrap();
+            fs::write(inputs.repo.join(path), b"different bytes").unwrap();
+            git(&inputs.repo, &["add", "--", path]).unwrap();
+            let wrong_tree = git(&inputs.repo, &["write-tree"]).unwrap();
+            let commit = git(&inputs.repo, &["commit-tree", &wrong_tree, "-p", &inputs.head, "-m", "invalid overlay"]).unwrap();
+            let digest = durable::digest(&serde_json::to_vec(&overlay).unwrap());
+            write(&work.join("overlay-commit.json"), &json!({"commit":commit,"tree":wrong_tree,"base_head":inputs.head,"branch":format!("fx-x3-overlay/{}", &digest[..16]),"overlay_sha256":digest})).unwrap();
+            assert!(expected_tree(&inputs, &work, Some(&overlay)).is_err(), "staged content must equal private derivation");
+        }
+    }
+
+    #[test]
+    fn retained_build_refuses_another_recorded_commit() {
+        let root = tempfile::tempdir().unwrap();
+        let (inputs, _) = fixture(root.path());
+        let work = inputs.out.join("production");
+        fs::create_dir(&work).unwrap();
+        let reference = durable::blob(&work.join("reference.json"), b"{}").unwrap();
+        let build = Build {
+            invocation_id: "1".repeat(36),
+            client_sha256: CLIENT_SHA256.into(),
+            base_head: inputs.head.clone(),
+            overlay_tree: git(&inputs.repo, &["rev-parse", "HEAD^{tree}"]).unwrap(),
+            command_exit: 0,
+            own_verdict: json!({"commitSha":"f".repeat(40),"success":true,"invocationStatus":"COMPLETE_INVOCATION_STATUS","bazelExitCode":"OK"}),
+            log: reference.clone(),
+            wrapper_result: reference,
+            artifacts: vec![],
+        };
+        write(&work.join("build.json"), &build).unwrap();
+        assert!(super::build(&inputs, "production", None).is_err(), "retained invocation commit must be checked");
+    }
+}
