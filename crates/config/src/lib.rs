@@ -207,10 +207,10 @@ pub const TEST_CONFIGURATION_PATHS: &[&str] = &[
     "**/.pytest.toml",
     "pytest.ini",
     ".pytest.ini",
-    "pyproject.toml",
     "tox.ini",
-    "setup.cfg",
     "noxfile.py",
+    "setup.cfg",
+    "pyproject.toml",
 ];
 
 impl Default for Planning {

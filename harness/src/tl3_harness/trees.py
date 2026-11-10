@@ -131,10 +131,10 @@ TEST_CONFIGURATION_PATHS = (
     "**/.pytest.toml",
     "pytest.ini",
     ".pytest.ini",
-    "pyproject.toml",
     "tox.ini",
-    "setup.cfg",
     "noxfile.py",
+    "setup.cfg",
+    "pyproject.toml",
 )
 
 DEPENDENCY_FILE_PATTERNS = (
