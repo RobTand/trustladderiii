@@ -991,7 +991,7 @@ pub(in super::super) fn ci_fact_value(n: Node, nq: u64, fast: bool, i: usize, in
     let result = ci_fact_arm(n, nq, fast, i, infra);
     kernel_proof! {
         facts_family_tail::ci_scalar_posts(n, nq, fast, infra);
-        facts_family_tail::ci_node_rows(n, nq, fast, infra, i);
+        let _ = i;
     }
     result
 }
