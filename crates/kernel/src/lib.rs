@@ -1557,22 +1557,11 @@ kernel_fn! {
 kernel_fn! {
 impl World {
     pub fn new(gates: &[u8], pool_capacity: u8) -> (result: World) [
-        ensures result.nodes@.len() == 0, result.dependencies@.len() == 0,
-            result.gates@.len() == gates@.len(), result.pool_capacity == pool_capacity,
-            forall|g: int| 0 <= g < gates@.len() ==> result.gates@[g].w == gates@[g],
-            (gates@.len() > 0
+        ensures (gates@.len() > 0
             && (forall|g: int| 0 <= g < gates@.len() ==> gates@[g] > 0)
             && pool_capacity > 0) ==> checking::accepted(result),
-    ] proof [
-        broadcast use vstd::std_specs::iter::group_iter_axioms;
-        assert forall|w: World| w.nodes@.len() == 0 && w.dependencies@.len() == 0
-            && w.gates@.len() > 0
-            && (forall|g: int| 0 <= g < w.gates@.len() ==> w.gates@[g].w > 0)
-            && w.pool_capacity > 0 implies checking::accepted(w) by {
-            dependency_start_exports::new_world_accepted(w);
-        }
     ] {
-        World {
+        let result = World {
             nodes: Vec::new(),
             gates: gates.iter().map(|&w| Gate { w }).collect(),
             pool_capacity,
@@ -1581,7 +1570,24 @@ impl World {
             file_sets: Vec::new(),
             dependencies: Vec::new(),
             fail_fast: false,
+        };
+        kernel_proof! {
+            broadcast use vstd::std_specs::iter::group_iter_axioms;
+            assert(result.nodes@.len() == 0);
+            assert(result.dependencies@.len() == 0);
+            assert(result.pool_capacity == pool_capacity);
+            assert(result.gates@.len() == gates@.len());
+            if gates@.len() > 0
+                && (forall|g: int| 0 <= g < gates@.len() ==> gates@[g] > 0)
+                && pool_capacity > 0 {
+                assert forall|g: int| 0 <= g < result.gates@.len()
+                    implies result.gates@[g].w > 0 by {
+                    assert(result.gates@[g].w == gates@[g]);
+                }
+                dependency_start_exports::new_world_accepted(result);
+            }
         }
+        result
     }
 }
 }

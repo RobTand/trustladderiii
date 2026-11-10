@@ -188,17 +188,12 @@ impl Footprint {
 }
 
 impl World {
-    kernel_fn! {
     /// Intern a sorted, deduplicated set. Handles stay valid as the world grows.
-    pub fn intern_footprint(&mut self, files: impl IntoIterator<Item = FileId>) -> (result: Footprint) [
-        ensures (super::checking::accepted(*old(self)) && super::storage_ordered(*old(self)))
-            ==> super::checking::accepted(*final(self)),
-    ] {
+    pub fn intern_footprint(&mut self, files: impl IntoIterator<Item = FileId>) -> Footprint {
         let mut files: Vec<_> = files.into_iter().collect();
         files.sort_unstable();
         files.dedup();
         self.intern_sorted_files(files)
-    }
     }
 
     kernel_fn! {
@@ -218,7 +213,11 @@ impl World {
             final(self).pool_capacity == old(self).pool_capacity,
             final(self).fail_fast == old(self).fail_fast,
             final(self).dependencies@ == old(self).dependencies@,
-    ] proof [reveal(valid_footprint); reveal(file_view); reveal(ordered_table);] {
+            (super::checking::accepted(*old(self)) && super::storage_ordered(*old(self)))
+                ==> super::checking::accepted(*final(self)),
+    ] proof [reveal(valid_footprint); reveal(file_view); reveal(ordered_table);
+        reveal(super::storage_ordered);] {
+        kernel_snapshot! { before_intern = *self }
         let inline = match files.last() { None => true, Some(f) => f.0 < 64 };
         if inline {
             kernel_proof! {
@@ -239,6 +238,11 @@ impl World {
                 bits |= 1 << f.0;
                 index += 1;
             } }
+            kernel_proof! {
+                if super::checking::accepted(before_intern@) && super::storage_ordered(before_intern@) {
+                    super::dependency_start_exports::intern_footprint_preserves_accepted(before_intern@, *self);
+                }
+            }
             return Footprint::inline(bits);
         }
         let mut index = 0usize;
@@ -247,11 +251,21 @@ impl World {
             decreases self.file_sets.len() - index,
         ] {
             if self.file_sets[index] == files {
+                kernel_proof! {
+                    if super::checking::accepted(before_intern@) && super::storage_ordered(before_intern@) {
+                        super::dependency_start_exports::intern_footprint_preserves_accepted(before_intern@, *self);
+                    }
+                }
                 return Footprint(Repr::Interned(index));
             }
             index += 1;
         } }
         self.file_sets.push(files);
+        kernel_proof! {
+            if super::checking::accepted(before_intern@) && super::storage_ordered(before_intern@) {
+                super::dependency_start_exports::intern_footprint_preserves_accepted(before_intern@, *self);
+            }
+        }
         Footprint(Repr::Interned(index))
     }
     }
