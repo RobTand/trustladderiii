@@ -69,7 +69,7 @@ pub(super) open spec fn fact_value_node(n: Node, fact: Fact) -> Node {
     match fact {
         Fact::Priority(priority) => priority_node(n, priority),
         Fact::PrClosedByPerson => closed_pr_node(n),
-        Fact::Conflict => conflict_node(n),
+        Fact::Conflict => n,
         Fact::IncidentCleared { by_rob } => cleared_node(n, by_rob),
         Fact::PrMerged { head, .. } => merged_node(n, head),
         _ => n,
