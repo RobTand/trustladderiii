@@ -12,7 +12,7 @@ pub(super) open spec fn clean(n: Node, p: int) -> bool {
 
 pub(super) proof fn advance_guard(b: Node, n: Node)
     requires clean(b, b.pos as int), b.pos < 5,
-        n.phase == b.phase, n.question.is_none(), distance(n) <= distance(b),
+        n.phase == b.phase, n.question.is_none(),
         (n.pos == b.pos + 1 && n.effect.is_none())
             || (n.pos == b.pos && n.effect.is_some() && !n.effect.unwrap().cancelling
                 && current_item(b) == Some(Item::Teardown(n.effect.unwrap().kind))),
