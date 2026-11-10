@@ -64,6 +64,8 @@ pub(super) fn width_2() -> (w: World)
         footprint::inline_is_valid(w, 1);
         footprint::inline_is_valid(w, 2);
         footprint::inline_is_valid(w, 4);
+        assert((1u64 & 1u64) == 1 && (1u64 & 2u64) == 0 && (1u64 & 4u64) == 0
+            && (2u64 & 1u64) == 0 && (2u64 & 4u64) == 0 && (4u64 & 1u64) == 0) by(bit_vector);
         footprint::inline_disjoint(w, 1, 1);
         footprint::inline_disjoint(w, 1, 2);
         footprint::inline_disjoint(w, 1, 4);
@@ -90,6 +92,9 @@ pub(super) fn width_2() -> (w: World)
             assert(i == 0 || i == 1 || i == 2 || i == 3);
         }
         assert(liveness_bounds::context(w, 8));
+        assert(current_item(w.nodes@[2]) == Some(Item::Await));
+        assert(liveness_reservation::holder(w.nodes@[2]));
+        assert(footprint::disjoint(w, w.nodes@[2].footprint, w.nodes@[0].footprint));
         assert(liveness_trace::initial_young(w, 2, 0));
         assert(liveness_trace::initial_young(w, 3, 0));
         assert(liveness_trace::initial(w, 0));
@@ -167,6 +172,8 @@ pub(super) fn width_3() -> (w: World)
         footprint::inline_is_valid(w, 1);
         footprint::inline_is_valid(w, 2);
         footprint::inline_is_valid(w, 4);
+        assert((1u64 & 1u64) == 1 && (1u64 & 2u64) == 0 && (1u64 & 4u64) == 0
+            && (2u64 & 1u64) == 0 && (2u64 & 4u64) == 0 && (4u64 & 1u64) == 0) by(bit_vector);
         footprint::inline_disjoint(w, 1, 1);
         footprint::inline_disjoint(w, 1, 2);
         footprint::inline_disjoint(w, 1, 4);
@@ -193,6 +200,9 @@ pub(super) fn width_3() -> (w: World)
             assert(i == 0 || i == 1 || i == 2 || i == 3);
         }
         assert(liveness_bounds::context(w, 8));
+        assert(current_item(w.nodes@[2]) == Some(Item::Await));
+        assert(liveness_reservation::holder(w.nodes@[2]));
+        assert(footprint::disjoint(w, w.nodes@[2].footprint, w.nodes@[0].footprint));
         assert(liveness_trace::initial_young(w, 2, 0));
         assert(liveness_trace::initial_young(w, 3, 0));
         assert(liveness_trace::initial(w, 0));
