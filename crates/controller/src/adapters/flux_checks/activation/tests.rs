@@ -775,3 +775,73 @@ mod release_boundary {
         assert_trusted(&second.request.tree, &snapshot(&trusted(&fixture)));
     }
 }
+
+
+fn fresh_identity_world(
+    db: &mut crate::git_tests::support::Database,
+    name: &str,
+) -> (crate::git_tests::Repo, crate::Controller, tl3_config::Store) {
+    let repo = crate::git_tests::Repo::new();
+    let mut config = tl3_config::Config::parse(include_str!("../../../../../config/example.toml")).unwrap();
+    config.store = db.create(name);
+    let bootstrap = crate::Bootstrap::from_config(&config).unwrap();
+    let mut c = crate::Controller::open(
+        tl3_store::Store::open(&config.store).unwrap(),
+        crate::adapters::simulation(&repo.root.path().join("fakes")).unwrap(),
+        bootstrap.clone(),
+    ).unwrap();
+    let repository = &bootstrap.repos[0];
+    c.intake(crate::LabelledIssue {
+        delivery: "first-request".into(),
+        owner: repository.owner.clone(),
+        repo: repository.name.clone(),
+        installation: repository.installation,
+        number: 42,
+        title: "First request".into(),
+        actor: bootstrap.rob,
+        label: "tl3".into(),
+        labels: vec!["tl3".into()],
+    }).unwrap();
+    (repo, c, config.store)
+}
+
+#[test]
+fn fresh_worlds_have_distinct_effect_markers_and_flux_names() {
+    let mut db = crate::git_tests::support::Database::start();
+    let (_first_repo, mut first, _) = fresh_identity_world(&mut db, "world_identity_first");
+    let (_second_repo, mut second, _) = fresh_identity_world(&mut db, "world_identity_second");
+    let names = |c: &mut crate::Controller| {
+        let snapshot = c.snapshot().unwrap();
+        let delivery: crate::executor::Delivery = crate::decode_stored(snapshot.pending_effects[0].payload.clone()).unwrap();
+        let key = delivery.key.clone();
+        let marker = tl3_github::Client::marker(&key);
+        let job = super::super::correlation(&delivery);
+        let output = Path::new("/mnt/shared/flux-out/tl3").join(&job);
+        (key, marker, job, output)
+    };
+    let a = names(&mut first);
+    let b = names(&mut second);
+    assert!(a.0 != b.0 && a.1 != b.1 && a.2 != b.2 && a.3 != b.3,
+        "fresh worlds must distinguish effect keys, GitHub markers, Flux jobs and outputs: {a:?} versus {b:?}");
+}
+
+#[test]
+fn reopened_world_keeps_durable_identity() {
+    let mut db = crate::git_tests::support::Database::start();
+    let (repo, mut c, settings) = fresh_identity_world(&mut db, "world_identity_reopen");
+    let before = c.snapshot().unwrap();
+    let id = before.rows.iter().find(|r| r.table == "kernel" && r.id == "world_id")
+        .expect("initialization must durably store a world id").value.clone();
+    assert!(id.as_str().is_some_and(|s| s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit())));
+    let effects = serde_json::json!(before.pending_effects);
+    let bootstrap = c.bootstrap.clone();
+    drop(c);
+    let mut reopened = crate::Controller::open(
+        tl3_store::Store::open(&settings).unwrap(),
+        crate::adapters::simulation(&repo.root.path().join("fakes")).unwrap(),
+        bootstrap,
+    ).unwrap();
+    let after = reopened.snapshot().unwrap();
+    assert_eq!(after.rows.iter().find(|r| r.table == "kernel" && r.id == "world_id").unwrap().value, id);
+    assert_eq!(serde_json::json!(after.pending_effects), effects);
+}
