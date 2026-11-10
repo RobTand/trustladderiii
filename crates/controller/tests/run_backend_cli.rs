@@ -6549,3 +6549,22 @@ fn cleanup_maintenance_timeout_recovers_with_positive_evidence() {
     assert!(!f.state().cleanup_evidence.is_empty());
     assert!(maintenance_backend(&f).next_cleanup_maintenance_ms().unwrap().is_none());
 }
+
+#[test]
+#[ignore = "requires /mnt/shared; run through admitted fleet compute"]
+fn cleanup_maintenance_persistent_failure_never_expires_debt() {
+    let mut f = Fixture::new();
+    f.podman(ContainerMode::OwnScope, true);
+    f.submit();
+    let owned = f.cleanup_execution("maintenance-failing", 'd');
+    f.cleanup_facts(&owned, false);
+    f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
+    for _ in 0..4 {
+        let due = maintenance_due(&f);
+        let backend = maintenance_backend(&f);
+        assert_eq!(backend.cleanup_maintenance(due).unwrap(), vec![owned.owner.clone()]);
+        assert!(maintenance_due(&f) > due);
+        assert!(!cleanup_debts(&f).is_empty());
+        assert!(f.state().cleanup_evidence.is_empty());
+    }
+}

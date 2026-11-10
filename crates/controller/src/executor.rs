@@ -408,6 +408,15 @@ pub enum Reconciliation {
 /// Implementations fence epochs at their upstream boundary. Unknown outcomes
 /// remain pending; only the upstream can establish absence or a terminal result.
 pub trait Executor {
+    /// Controller-owned maintenance runs even without a delivery allowance.
+    /// Return the stable keys of every outstanding cleanup failure.
+    fn cleanup_maintenance(&mut self, _now_ms: u64) -> Result<Vec<String>> {
+        Ok(vec![])
+    }
+    fn next_cleanup_maintenance_ms(&mut self) -> Result<Option<u64>> {
+        Ok(None)
+    }
+
     fn input_incident(
         &mut self,
         _notice: &crate::input_errors::IncidentNotice,
