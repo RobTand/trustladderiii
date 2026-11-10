@@ -746,6 +746,9 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "allocation_incident_node": ("kernel::allocation#incident_node", 1),
+            "allocation_incident_notes": ("kernel::allocation#incident_notes", 1),
+            "allocation_incident_value": ("kernel::allocation#incident_value", 1),
             "handler_safety_step_rows_carry": ("kernel::handler_safety#step_rows_carry", 1),
             "handler_safety_step_withheld": ("kernel::handler_safety#step_withheld", 1),
             "handler_safety_distance_withheld": ("kernel::handler_safety#distance_withheld", 1),
