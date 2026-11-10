@@ -963,4 +963,33 @@ pub(super) proof fn answer_after_rules(before: World, after: World, a: Node, id:
     }
 }
 
+
+pub(super) proof fn answer_r17_lit(b: Node, a: Node, id: u64)
+    requires (a.holds ==> b.holds), (a.pool ==> b.pool), a.ticket == b.ticket || a.ticket.is_none(),
+    ensures ((Node { last_cmd: id, ..a }).holds ==> b.holds), ((Node { last_cmd: id, ..a }).pool ==> b.pool),
+        (Node { last_cmd: id, ..a }).ticket == b.ticket || (Node { last_cmd: id, ..a }).ticket.is_none(),
+{
+}
+
+pub(super) proof fn command_step_last_cmd(b: Node, n: Node, id: u64)
+    requires handler_safety::command_step(b, n),
+    ensures handler_safety::command_step(b, (Node { last_cmd: id, ..n })),
+{
+    reveal(handler_safety::command_step);
+}
+
+pub(super) proof fn answer_pair_after2(b: Node, a: Node, id: u64, question: u64, answer: Answer,
+    table: Seq<Dependency>, node: NodeId)
+    requires handler_safety::answer_pair(b, a, true, question, answer, table, node),
+        id > b.last_cmd,
+    ensures handler_safety::answer_pair(b, (Node { last_cmd: id, ..a }), id > b.last_cmd, question, answer,
+        table, node),
+{
+    reveal(handler_safety::answer_pair);
+    let u = handler_safety::unwithheld(a, b.credit.withheld);
+    command_step_last_cmd(b, u, id);
+    assert(handler_safety::unwithheld((Node { last_cmd: id, ..a }), b.credit.withheld)
+        == (Node { last_cmd: id, ..u }));
+}
+
 }

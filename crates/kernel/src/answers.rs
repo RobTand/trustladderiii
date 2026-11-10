@@ -120,6 +120,103 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
 
 kernel_fn! {
 /// Question answer rows / #771: one clarification or one paid continuation.
+/// K5: the world entry for answer_node; one node write-back, one next-question
+/// write and at most one notice, so the world frame is proved once here.
+pub(super) fn on_answer_r(w: &mut World, i: usize, id: u64, answer: Answer,
+    out: &mut Outbox) -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len < OUTBOX,
+        node_headroom(old(w).nodes@[i as int]),
+        arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures (node_checked(*old(w), old(w).nodes@[i as int])
+            && answer_progress_input(old(w).nodes@[i as int], id, answer)
+            ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
+        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase is Closed),
+        final(w).nodes@[i as int].repo == old(w).nodes@[i as int].repo,
+        final(w).nodes@[i as int].footprint == old(w).nodes@[i as int].footprint,
+        (settle_shape(old(w).nodes@[i as int]) ==> settle_shape(final(w).nodes@[i as int])),
+        final(w).nodes@.len() == old(w).nodes@.len(),
+        forall|j: int| 0 <= j < old(w).nodes@.len() && j != i
+            ==> final(w).nodes@[j] == old(w).nodes@[j],
+        final(w).nodes@[i as int].generation as int <= old(w).nodes@[i as int].generation as int + 1,
+        final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq,
+        final(w).nodes@[i as int].credit.start == old(w).nodes@[i as int].credit.start,
+        final(w).nodes@[i as int].credit.earned == old(w).nodes@[i as int].credit.earned,
+        final(w).nodes@[i as int].credit.added as int <= old(w).nodes@[i as int].credit.added as int + 255,
+        final(w).nodes@[i as int].credit.spent as int <= old(w).nodes@[i as int].credit.spent as int + 1,
+        final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
+        final(w).next_ticket == old(w).next_ticket,
+        final(w).next_question as int <= old(w).next_question as int + 1,
+        final(w).gates@ == old(w).gates@,
+        final(w).pool_capacity == old(w).pool_capacity,
+        final(w).fail_fast == old(w).fail_fast,
+        final(w).file_sets@ == old(w).file_sets@,
+        final(w).dependencies@ == old(w).dependencies@,
+        final(out).len <= old(out).len + 1,
+        final(w).nodes@[i as int].proposed == old(w).nodes@[i as int].proposed,
+        final(w).nodes@[i as int].adopted == old(w).nodes@[i as int].adopted,
+        (old(w).nodes@[i as int].phase is Closed ==> final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase),
+        handler_safety::answer_pair(old(w).nodes@[i as int], final(w).nodes@[i as int], true, id, answer,
+            final(w).dependencies@, NodeId(i as u64)),
+        transition_safety::notice_only(*old(out), *final(out), NodeId(i as u64)),
+        (node_checked(*old(w), old(w).nodes@[i as int])
+            && final(w).nodes@[i as int] != old(w).nodes@[i as int]
+            ==> (match old(w).nodes@[i as int].question {
+                Some(q) => q.id == id,
+                None => false,
+            }) && (match final(w).nodes@[i as int].question {
+                Some(q) => q.id != id,
+                None => true,
+            })),
+        (final(w).nodes@[i as int].holds ==> old(w).nodes@[i as int].holds),
+        (final(w).nodes@[i as int].pool ==> old(w).nodes@[i as int].pool),
+        final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket || final(w).nodes@[i as int].ticket.is_none(),
+        old(w).next_question <= final(w).next_question,
+] {
+    kernel_proof! {
+        if node_checked(*w, w.nodes@[i as int]) { handler_safety::checked_node_ok(*w, w.nodes@[i as int]); }
+    }
+    kernel_snapshot! { before_answer = w.nodes@[i as int] }
+    let withhold = match w.nodes[i].question {
+        Some(q) => w.nodes[i].phase == Phase::AwaitingRob
+            && q.id == id
+            && matches!(answer, Answer::Continue | Answer::AddCredit(_))
+            && allowed(q.kind, answer),
+        None => false,
+    };
+    kernel_proof! {
+        assert(withhold == handler_safety::answer_withholds(before_answer@, id, answer));
+    }
+    let (n1, nq1, note) = answer_node(w.nodes[i], w.next_question, id, answer);
+    kernel_proof! { handler_safety::step_withheld(before_answer@, n1); }
+    w.nodes[i] = n1;
+    if withhold {
+        kernel_snapshot! { continued = w.nodes@[i as int] }
+        w.withhold_dependency_credit(i);
+        kernel_proof! {
+            let n = w.nodes@[i as int];
+            assert(n == handler_safety::unwithheld(continued@, n.credit.withheld));
+            handler_safety::distance_withheld(continued@, n.credit.withheld);
+            if continued@ == before_answer@ {
+                // An answer that left the node AwaitingRob withholds nothing.
+                handler_safety::unwithheld_same(before_answer@);
+            }
+        }
+    }
+    kernel_proof! {
+        handler_safety::answer_pair_intro(before_answer@, n1, w.nodes@[i as int], id, answer,
+            w.dependencies@, NodeId(i as u64));
+    }
+    w.next_question = nq1;
+    match note {
+        Some(x) => notice(out, i, x),
+        None => {}
+    }
+}
+}
+
+kernel_fn! {
+/// Question answer rows / #771: one clarification or one paid continuation.
 /// K5 value form of on_answer's work: the node and next question id come in by
 /// value; the answered node, the next id and at most one notice are returned.
 pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
