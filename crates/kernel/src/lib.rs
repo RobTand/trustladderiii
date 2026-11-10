@@ -2183,9 +2183,10 @@ spec fn scheduling_safe(w: World) -> bool {
 
 }
 
+kernel_fn! {
 /// A node's place in the agent pool's line (Q39), lowest first: its priority,
 /// then the older ticket. None unless it waits for the pool.
-kernel_fn! {
+#[allow(clippy::manual_map)]
 pub fn pool_key(n: &Node) -> (result: Option<(Priority, u64)>) [
     ensures result == pool_spec_key(*n),
 ] {

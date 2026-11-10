@@ -1559,6 +1559,10 @@ jobs) if [ "$mode" = query-error ]; then exit 1; fi; if [ "$mode" = quiet-jobs ]
         touch "$fixture/query-started"
         while ! test -e "$fixture/query-release"; do /bin/sleep 0.01; done
     fi
+    if [ "$mode" = terminal-query ] || [ "$mode" = terminal-query-error ]; then
+        mv "$fixture/query-terminal-state.json" "$(cat "$fixture/query-state-path")"
+        if [ "$mode" = terminal-query-error ]; then exit 1; fi
+    fi
     cat "$fixture/jobs.json";;
 cancel) printf 'acknowledged\n';;
 resource)
@@ -3468,43 +3472,56 @@ fn fresh_native_liveness_is_separate_from_historical_stream_and_terminal_wins() 
     );
     fs::write(f.root.path().join("mode"), "normal").unwrap();
     jobs("RUN");
-    // Hold one native query across a terminal commit from a separate CLI process.
-    fs::write(f.root.path().join("mode"), "held-query").unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tl3-run-backend"))
-        .args(["--config", f.config.to_str().unwrap()])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-    writeln!(
-        child.stdin.take().unwrap(),
-        "{}",
-        json!({"op":"liveness","owner":f.intent.owner,"correlation":f.intent.correlation})
+    f.report(ReportOutcome::Passed, true);
+    let before_terminal = f.state();
+    let attached = f.attach();
+    assert_eq!(
+        attached.last().unwrap()["result"]["observation"]["kind"],
+        "terminal",
+        "{attached:?}"
+    );
+    let committed = f.state();
+    let expected = &attached.last().unwrap()["result"]["observation"]["terminal"];
+    let owner = Owner {
+        owner: f.intent.owner.clone(),
+        correlation: f.intent.correlation.clone(),
+    };
+    let journal = api::durable::Journal::new(f.options.journal_root.clone()).unwrap();
+    fs::write(
+        f.root.path().join("query-state-path"),
+        f.options
+            .journal_root
+            .join(&f.intent.correlation)
+            .join("state.json")
+            .to_str()
+            .unwrap(),
     )
     .unwrap();
-    wait_until(
-        "held liveness query started",
-        Duration::from_secs(5),
-        || f.root.path().join("query-started").exists(),
-    );
-    f.report(ReportOutcome::Passed, true);
-    f.attach();
-    fs::write(f.root.path().join("query-release"), "release").unwrap();
-    let output = child.wait_with_output().unwrap();
-    assert!(output.status.success());
-    let terminal: Vec<Value> = String::from_utf8(output.stdout)
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
-    assert_eq!(
-        terminal.last().unwrap()["result"]["liveness"]["phase"],
-        "terminal"
-    );
-    assert_eq!(
-        terminal.last().unwrap()["result"]["liveness"]["authority"],
-        "committed_terminal"
-    );
+    for mode in ["terminal-query", "terminal-query-error"] {
+        // Replay the pre-commit snapshot; native I/O publishes the verified terminal.
+        // Report preparation and attach need not fit inside a native query's deadline.
+        journal
+            .transaction(&owner, |dir, _| api::durable::save(dir, &before_terminal))
+            .unwrap();
+        api::durable::atomic(
+            &f.root.path().join("query-terminal-state.json"),
+            &serde_json::to_vec(&committed).unwrap(),
+        )
+        .unwrap();
+        fs::write(f.root.path().join("mode"), mode).unwrap();
+        let calls = native_calls(&f.calls(), "jobs --json ");
+        let frames = f.call(
+            json!({"op":"liveness","owner":f.intent.owner,"correlation":f.intent.correlation}),
+        );
+        assert_eq!(native_calls(&f.calls(), "jobs --json "), calls + 1);
+        let live = &frames.last().unwrap()["result"]["liveness"];
+        assert_eq!(live["phase"], "terminal", "{mode}: {frames:?}");
+        assert_eq!(
+            live["authority"], "committed_terminal",
+            "{mode}: {frames:?}"
+        );
+        assert_eq!(live["terminal"], *expected, "{mode}: {frames:?}");
+    }
 }
 
 #[test]
@@ -4150,13 +4167,28 @@ impl Fixture {
     fn spawn_operation(
         &self,
         op: &str,
+        startup_delay_seconds: u64,
     ) -> (
         std::process::Child,
         std::sync::mpsc::Receiver<Value>,
         std::thread::JoinHandle<()>,
     ) {
         use std::io::{BufRead, BufReader};
-        let mut child = Command::new(env!("CARGO_BIN_EXE_tl3-run-backend"))
+        let mut command = if startup_delay_seconds == 0 {
+            Command::new(env!("CARGO_BIN_EXE_tl3-run-backend"))
+        } else {
+            let mut command = Command::new("/bin/sh");
+            command
+                .args([
+                    "-c",
+                    r#"/bin/sleep "$1"; shift; exec "$@""#,
+                    "cleanup-startup-delay",
+                ])
+                .arg(startup_delay_seconds.to_string())
+                .arg(env!("CARGO_BIN_EXE_tl3-run-backend"));
+            command
+        };
+        let mut child = command
             .args(["--config", self.config.to_str().unwrap()])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -4197,7 +4229,7 @@ fn cleanup_transport_progress_spans_old_total_deadline_for_cleanup_and_cancel() 
             f.cleanup_control(&owned.execution, 16);
         }
         let start = Instant::now();
-        let (mut child, receive, reader) = f.spawn_operation(op);
+        let (mut child, receive, reader) = f.spawn_operation(op, 0);
         let limits = cleanup_limits();
         let mut frames = vec![];
         loop {
@@ -4277,13 +4309,43 @@ fn cleanup_transport_silence_is_bounded_and_incomplete_evidence_preserves_debt()
         &owned.execution,
         cleanup_limits().native_timeout_seconds + 60,
     );
+    let limits = cleanup_limits();
+    let startup_delay = limits.idle_timeout_seconds - limits.native_timeout_seconds + 1;
     let start = Instant::now();
-    let frames = f.call(
-        json!({"op":"cleanup_runtime","owner":f.intent.owner,"correlation":f.intent.correlation}),
+    let (mut child, receive, reader) = f.spawn_operation("cleanup_runtime", startup_delay);
+    let progress = recv_within(
+        "silent cleanup initial progress",
+        &receive,
+        transport_idle_deadline(),
     );
-    assert!(start.elapsed() < Duration::from_secs(cleanup_limits().idle_timeout_seconds));
-    assert_eq!(frames.len(), 2, "{frames:?}");
-    assert_eq!(frames[0]["kind"], "cleanup_progress");
+    assert_eq!(progress["kind"], "cleanup_progress", "{progress:?}");
+    let initial_elapsed = start.elapsed();
+    let silence_start = Instant::now();
+    let result = recv_within(
+        "silent cleanup final result",
+        &receive,
+        transport_idle_deadline(),
+    );
+    let silence_elapsed = silence_start.elapsed();
+    assert!(child.wait().unwrap().success());
+    reader.join().unwrap();
+    assert!(receive.try_recv().is_err(), "only one final frame");
+    let frames = [progress, result];
+    println!(
+        "{}",
+        json!({"cleanup_transport_timing": {
+            "initial_seconds": initial_elapsed.as_secs_f64(),
+            "silence_seconds": silence_elapsed.as_secs_f64(),
+            "total_seconds": start.elapsed().as_secs_f64(),
+            "idle_limit_seconds": limits.idle_timeout_seconds,
+            "startup_delay_seconds": startup_delay
+        }})
+    );
+    // Progress renews the idle allowance; total duration may exceed one allowance.
+    assert!(
+        start.elapsed() > transport_idle_deadline(),
+        "delayed startup must exercise the difference between idle and total duration"
+    );
     assert_eq!(frames[1]["result"]["cleanup"]["stopped"], false);
     assert!(f.state().cleanup_evidence.is_empty());
     f.cleanup_control(&owned.execution, 0);
@@ -4355,7 +4417,7 @@ fn cleanup_transport_separate_cancel_late_writes_preserve_binding_debt_and_termi
     let second = f.cleanup_execution("second", 'e');
     f.cleanup_facts(&second, false);
     f.cleanup_control(&first.execution, 2);
-    let (mut child, receive, reader) = f.spawn_operation("cleanup_runtime");
+    let (mut child, receive, reader) = f.spawn_operation("cleanup_runtime", 0);
     let progress = recv_within(
         "first cleanup progress frame",
         &receive,

@@ -113,6 +113,15 @@ _CONTROLLER_BINARIES = {
     "test_test_github-notices": [":tl3d"],
     "test_test_simulation": [":tl3", ":tl3d"],
     "test_test_replay_store": [":tl3"],
+    # FX-REQUAL-43 OQ-1: every deployed binary, plus the canary example as positive control.
+    "test_test_activation_qualification_absent": [
+        ":tl3",
+        ":tl3d",
+        ":tl3-run-backend",
+        ":tl3-worker-supervisor",
+        ":example_tl3-deploy",
+        ":example_fx-stage-packet",
+    ],
 }
 # These tests stage the trusted harness into a sealed check action, even when
 # the queue fixture supplies the result instead of executing that action.
@@ -140,6 +149,17 @@ _CONTROLLER_RUNTIME = {
     "test_test_prismabuild": ["//harness/src/tl3_harness", "//crates/prismabuild:sources"],
     "test_test_publishing": ["//harness/src/tl3_harness", "//crates/prismabuild:sources"],
     "test_test_sandbox_gate": ["//deploy/sandbox:evidence"],
+    "test_test_activation_qualification_absent": [
+        ":BUILD.bazel",
+        ":Cargo.toml",
+        ":library_sources",
+        "//:Cargo.toml",
+        "//deploy/dl380g10:build-release.sh",
+        "//deploy/dl380g10:verify.sh",
+    ] + ["//crates/%s:Cargo.toml" % crate for crate in [
+        "config", "contracts", "controller-core", "delivery", "github", "harness-core",
+        "kernel", "plan-check", "prismabuild", "store", "verus-runner", "worktrees",
+    ]],
     "test_test_workers": [
         "//harness/src/tl3_harness",
         "//crates/prismabuild:sources",
@@ -262,13 +282,32 @@ def tl3_rust_test(name, binary_id, gate_args, **kwargs):
         timeout = "eternal" if binary_id == "tl3-controller/workers" else "long",
     )
 
+def _feature_variant(crate, required):
+    return crate + "_" + "_".join(sorted(required)).replace("-", "_")
+
+def _example_options(name, crate, example_features, options):
+    """An example with Cargo required-features links the library variant built with them."""
+    required = sorted(example_features.get(name, []))
+    if not required:
+        return options
+    variant = ":" + _feature_variant(crate, required)
+    return dict(
+        compile_data = options["compile_data"],
+        crate_features = options["crate_features"] + required,
+        deps = [variant if dep == ":" + crate else dep for dep in options["deps"]],
+    )
+
 def tl3_crate(package, crate, local_deps = [], features = [], build_script = False,
-              bins = [], examples = {}, declared_tests = {}):
+              bins = [], examples = {}, example_features = {}, declared_tests = {}):
     """Build one workspace crate and every test target `cargo test --all-targets` runs.
 
     Integration tests that follow Cargo's auto-discovery (tests/NAME.rs or
     tests/NAME/main.rs) come from a glob, so adding one needs no generation.
     declared_tests holds the [[test]] entries that do not.
+
+    example_features holds Cargo `required-features` of examples. Each such
+    example links its own library variant built with those features; the
+    library, binaries and every other target keep `features` only.
     """
     directory = native.package_name()
     verus_proofs()
@@ -315,6 +354,25 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
         aliases = aliases(),
         deps = deps + script,
     )
+    variants = {}
+    for required in example_features.values():
+        variant = _feature_variant(crate, required)
+        if variant in variants:
+            continue
+        variants[variant] = True
+        rust_library(
+            name = variant,
+            crate_name = crate,
+            crate_root = "src/lib.rs",
+            srcs = library_sources,
+            compile_data = compile_data,
+            edition = "2024",
+            crate_features = features + sorted(required),
+            aliases = aliases(),
+            deps = deps + script,
+            # Example-only feature variant; deployed binaries never link it.
+            visibility = ["//visibility:private"],
+        )
     for name in bins:
         standalone_verifier = name == "verus-runner" and directory == "crates/verus-runner"
         binary_sources = ["src/bin/%s.rs" % name] if standalone_verifier else library_sources
@@ -331,6 +389,12 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
             deps = ["@crates//:serde_json"] if standalone_verifier else deps + [":" + crate],
         )
     test_deps = all_crate_deps(normal = True, normal_dev = True) + local_deps + [":" + crate] + script
+    options = dict(
+        compile_data = compile_data,
+        crate_features = features,
+        deps = test_deps,
+    )
+
     for name, source in examples.items():
         rust_binary(
             name = "example_" + name,
@@ -339,15 +403,11 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
             srcs = [source],
             compile_data = _EXAMPLE_DATA.get(source, []),
             edition = "2024",
+            crate_features = _example_options(name, crate, example_features, options)["crate_features"],
             aliases = aliases(normal = True, normal_dev = True),
-            deps = test_deps,
+            deps = _example_options(name, crate, example_features, options)["deps"],
         )
 
-    options = dict(
-        compile_data = compile_data,
-        crate_features = features,
-        deps = test_deps,
-    )
     _crate_test("lib", package, crate, "src/lib.rs", True, options)
     if directory == "crates/controller":
         loom_options = dict(options)
@@ -361,7 +421,7 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
             binary_options["deps"] = ["@crates//:serde_json"]
         _crate_test("bin", package, name, "src/bin/%s.rs" % name, True, binary_options)
     for name, source in examples.items():
-        _crate_test("example", package, name, source, True, options)
+        _crate_test("example", package, name, source, True, _example_options(name, crate, example_features, options))
     declared = [spec["path"] for spec in declared_tests.values()]
     for source in native.glob(["tests/*.rs", "tests/*/main.rs"], allow_empty = True):
         if source not in declared:
@@ -439,7 +499,7 @@ def _crate_test(kind, package, name, source, harness, options):
             # The two retained launch-failure lib fixtures likewise execute in PB.
             gate_args = (["--libtest-select=cli_schema", "--libtest-select=malformed_requests", "--libtest-select=optional_reviewed", "--libtest-select=protocol_bounds"] if name == "run_backend_cli" else
                          (["--libtest-select=loom_"] if name == "tl3_controller_loom" else
-                          (["--libtest-select=staging_namespace_survives_consumer_argument_validation"] if kind == "example" and name == "fx-stage-packet" else
+                          (["--libtest-select=staging_namespace_survives_consumer_argument_validation", "--libtest-select=qualification_gate_refuses_records_and_production_still_requires_one"] if kind == "example" and name == "fx-stage-packet" else
                            (["--skip=adapters::run_backend::flux::launch_failure::tests::retained_fbelmqkrh5_success_keeps_its_checks_verdict_and_evidence",
                             "--skip=adapters::run_backend::flux::launch_failure::tests::retained_fbpzb5i8yp_without_launcher_exit_cannot_be_upgraded",
                             "--skip=adapters::flux_checks::activation::tests::qualified_identity_and_exact_planned_deployment_pass_staging_boundary",
