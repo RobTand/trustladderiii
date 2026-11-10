@@ -441,7 +441,7 @@ pub(super) fn merged_fact_arm(n: Node, i: usize, head: HeadId, checks_passed: bo
             }
             m.merged = Some(head);
             m.phase = Phase::Closed(Outcome::Merged);
-            *m = merge_credit_value(*m);
+            let _ = m;
             kernel_proof! { assert(*m == merged_node(n, head)); }
             notice(out, i, Notice::Note(NoteKind::LateMerge));
             notice(out, i, Notice::Incident { needs_rob: false });
