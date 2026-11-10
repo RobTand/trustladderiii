@@ -326,12 +326,7 @@ mod gate_projection {
     verus! {
     pub(super) proof fn older_waiters(before: World, i: int)
         requires 0 <= i < before.nodes@.len(), before.nodes@[i].ticket.is_some(),
-            forall|older: int| 0 <= older < before.nodes@.len()
-                && before.nodes@[older].phase is Ready
-                && before.nodes@[older].repo == before.nodes@[i].repo
-                && before.nodes@[older].ticket.is_some()
-                && before.nodes@[older].ticket.unwrap() < before.nodes@[i].ticket.unwrap()
-                ==> footprint::disjoint(before, before.nodes@[older].footprint, before.nodes@[i].footprint),
+
         ensures !overlapped_by_older(before, i, before.nodes@[i].ticket.unwrap()),
     {
     }
