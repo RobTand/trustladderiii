@@ -911,7 +911,7 @@ fn ack_retry_value(n: Node, i: usize, kind: EffectKind, nq: u64, out: Outbox) ->
     let result = if m.fx_failures < 2 {
         ack_retry_emit_value(m, i, kind, nq, out)
     } else { ack_retry_incident_value(m, i, kind, nq, out) };
-    result
+    (Node { head: None, ..result.0 }, result.1, result.2)
 }
 }
 
