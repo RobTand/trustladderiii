@@ -1,10 +1,30 @@
 {
-  "source_head": "3bc9cb29b484fad53c07074ac35fb859f34d64c6",
+  "source_head": "9ae5e5f66f0c283af90762329a281b11ba6fe774",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "0d90385180669e7bbea9b9e792556fcccb26eba12476ae81717497c9ae5b3b3d",
-  "groups": 869,
-  "obligations": 1074,
+  "source_sha256": "b691230951448aa5b349f271391cfd110e563c932d7a3c80f9dacf0de428ca17",
+  "groups": 873,
+  "obligations": 1078,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_command_frames_command_frame_rows_intro",
+      "selector": "kernel::command_frames#command_frame_rows_intro",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_command_frames_command_rows_intro",
+      "selector": "kernel::command_frames#command_rows_intro",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_command_frames_reveal_command_frame_rows_reveal",
+      "selector": "kernel::command_frames_reveal#command_frame_rows_reveal",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_command_frames_reveal_command_rows_project",
+      "selector": "kernel::command_frames_reveal#command_rows_project",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_acknowledgements_ack_permanent_rows",
       "selector": "kernel::acknowledgements#ack_permanent_rows",
