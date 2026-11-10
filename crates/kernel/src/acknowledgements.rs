@@ -859,20 +859,57 @@ fn ack_retry_emit_value(n: Node, i: usize, kind: EffectKind, nq: u64, out: Outbo
 }
 
 kernel_fn! {
+fn ack_incident_count(c: u8) -> (result: u8) [
+    requires c <= 2,
+    ensures result == ack_incident_count_spec(c),
+] {
+    (c + 1).min(2)
+}
+}
+
+kernel_fn! {
+fn ack_retry_restart_value(n: Node, i: usize, nq: u64, out: Outbox) -> (result: (Node, u64, Outbox)) [
+    requires n.generation as int + 2 <= u64::MAX as int,
+        n.fx_incidents <= 2, out.len < OUTBOX,
+    ensures ack_view(result) == ack_retry_restart_spec(n, i as int, nq, out),
+] {
+    let count = ack_incident_count(n.fx_incidents);
+    let m = Node { fx_failures: 0, fx_incidents: count, ..n };
+    let needs_rob = m.fx_incidents >= 2;
+    let m = ack_abandon_value(m);
+    let m = Node { pos: operation_start(m.phase), generation: m.generation + 1, ..m };
+    let (m, _) = incident_value(m, i, needs_rob);
+    let output = ack_append_value(out, Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob } });
+    (m, nq, output)
+}
+}
+
+kernel_fn! {
+fn ack_retry_plain_incident_value(n: Node, i: usize, nq: u64, out: Outbox) -> (result: (Node, u64, Outbox)) [
+    requires n.generation as int + 2 <= u64::MAX as int,
+        n.fx_incidents <= 2, out.len < OUTBOX,
+    ensures ack_view(result) == ack_retry_plain_incident_spec(n, i as int, nq, out),
+] {
+    let count = ack_incident_count(n.fx_incidents);
+    let m = Node { fx_failures: 0, fx_incidents: count, ..n };
+    let needs_rob = m.fx_incidents >= 2;
+    let (m, _) = incident_value(m, i, needs_rob);
+    let output = ack_append_value(out, Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob } });
+    (m, nq, output)
+}
+}
+
+kernel_fn! {
 fn ack_retry_incident_value(n: Node, i: usize, kind: EffectKind, nq: u64, out: Outbox) -> (result: (Node, u64, Outbox)) [
     requires n.generation as int + 2 <= u64::MAX as int,
         n.fx_incidents <= 2, out.len < OUTBOX,
     ensures ack_view(result) == ack_retry_incident_spec(n, i as int, kind, nq, out),
-] proof [reveal(ack_retry_incident_spec);] {
-    let m = Node { fx_failures: 0, fx_incidents: (n.fx_incidents + 1).min(2), ..n };
-    let needs_rob = m.fx_incidents >= 2;
-    let m = if kind.starts_operation() {
-        let m = ack_abandon_value(m);
-        Node { pos: operation_start(m.phase), generation: m.generation + 1, ..m }
-    } else { m };
-    let (m, _) = incident_value(m, i, needs_rob);
-    let output = ack_append_value(out, Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob } });
-    (m, nq, output)
+] {
+    let result = if kind.starts_operation() {
+        ack_retry_restart_value(n, i, nq, out)
+    } else { ack_retry_plain_incident_value(n, i, nq, out) };
+    kernel_proof! { ack_retry_incident_bridge(n, i as int, kind, nq, out); }
+    result
 }
 }
 
@@ -988,6 +1025,33 @@ pub(super) open spec fn ack_emit_spec(n: Node, i: int, kind: EffectKind, out: Ou
 pub(super) open spec fn ack_retry_emit_spec(n: Node, i: int, kind: EffectKind, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
     let r = ack_emit_spec(n, i, kind, out);
     (r.0, nq, r.2, r.3)
+}
+pub(super) open spec fn ack_incident_count_spec(c: u8) -> u8 {
+    if c < 2 { (c + 1) as u8 } else { 2u8 }
+}
+pub(super) open spec fn ack_retry_restart_spec(n: Node, i: int, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
+    let m = Node { fx_failures: 0, fx_incidents: ack_incident_count_spec(n.fx_incidents), ..n };
+    let m = ack_abandon_spec(m);
+    let m = Node { pos: if m.phase == Phase::Making { 1u8 } else { 0u8 }, generation: (m.generation + 1) as u64, ..m };
+    (retirement::incident(m, m.fx_incidents >= 2), nq,
+        out.items@.update(out.len as int, Some(Out::Notice { node: NodeId(i as u64),
+            notice: Notice::Incident { needs_rob: m.fx_incidents >= 2 } })), out.len as int + 1)
+}
+pub(super) open spec fn ack_retry_plain_incident_spec(n: Node, i: int, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
+    let m = Node { fx_failures: 0, fx_incidents: ack_incident_count_spec(n.fx_incidents), ..n };
+    (retirement::incident(m, m.fx_incidents >= 2), nq,
+        out.items@.update(out.len as int, Some(Out::Notice { node: NodeId(i as u64),
+            notice: Notice::Incident { needs_rob: m.fx_incidents >= 2 } })), out.len as int + 1)
+}
+pub(super) open spec fn ack_retry_incident_arms(n: Node, i: int, kind: EffectKind, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
+    if matches!(kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase) {
+        ack_retry_restart_spec(n, i, nq, out)
+    } else { ack_retry_plain_incident_spec(n, i, nq, out) }
+}
+pub(super) proof fn ack_retry_incident_bridge(n: Node, i: int, kind: EffectKind, nq: u64, out: Outbox)
+    ensures ack_retry_incident_arms(n, i, kind, nq, out) == ack_retry_incident_spec(n, i, kind, nq, out),
+{
+    reveal(ack_retry_incident_spec);
 }
 #[verifier::opaque]
 pub(super) open spec fn ack_retry_incident_spec(n: Node, i: int, kind: EffectKind, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
