@@ -355,7 +355,7 @@ fn work_approved_v(n: Node, head: HeadId) -> (result: ReplyChange) [
     ensures result == reply_family_values::work_approved(n, head), reply_family_values::callable(result),
 ] {
     let mut m = n;
-    m.approved = Some(head);
+    m.approved = None;
     m = set_phase_v(m, Phase::Publishing);
     ReplyChange::Done { node: m, note: None }
 }
