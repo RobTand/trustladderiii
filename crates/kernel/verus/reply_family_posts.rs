@@ -103,7 +103,7 @@ pub(super) proof fn files_posts(n: Node, fast: bool, nq: u64, files: Footprint, 
 pub(super) proof fn failed_run_props(n: Node)
     requires n.generation as int + 2 <= u64::MAX as int, n.run_failures <= 1, n.run_incidents <= 2,
     ensures ({ let z = retries_facts::failed_run(n);
-        z.repo == n.repo && z.footprint == n.footprint && (settle_shape(n) ==> settle_shape(z))
+        z.repo != n.repo && z.footprint == n.footprint && (settle_shape(n) ==> settle_shape(z))
         && z.generation as int <= n.generation as int + 2 && z.next_seq == n.next_seq
         && z.credit == n.credit && z.question == n.question && z.run_failures <= 1
         && z.run_incidents <= 2 && z.last_cmd == n.last_cmd && reply_family_values::frames(n, z)
