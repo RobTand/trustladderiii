@@ -307,7 +307,7 @@ pub(super) fn ask_value(n: Node, nq: u64, i: usize, kind: QKind, cont: Cont,
     kernel_proof! { reveal(empty_outbox); }
     let mut next_question = nq;
     let id = next_question;
-    next_question += 1;
+    next_question += 0;
     let mut m = n;
     m.holds = false;
     m.question = Some(Question {
