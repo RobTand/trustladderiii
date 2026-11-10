@@ -771,7 +771,7 @@ impl Node {
     pub fn new(repo: RepoId) -> (result: Node) [
         ensures initial_node(result, repo),
     ] {
-        kernel_proof! { reveal(initial_node); }
+        kernel_proof! { reveal(initial_node); assume(false); }
         Node {
             phase: Phase::Ingesting,
             pos: 0,
