@@ -68,7 +68,7 @@ mod pool_assembly {
     verus! {
     /// G20: the real pool step, including the priority and ticket order checked
     /// by pool_grant_is_priority_ordered. E5 supplies R7/R8; E7 supplies acceptance.
-    fn pool_grant_step(mut w: World, i: usize, mut out: Outbox, mut report: Report)
+    pub(super) fn pool_grant_step(mut w: World, i: usize, mut out: Outbox, mut report: Report)
         -> (result: (World, Outbox, Report, bool))
         requires checking::accepted(w), scheduling_safe(w),
             w.gates@.len() <= u64::MAX, w.nodes@.len() <= u64::MAX,
@@ -151,7 +151,7 @@ mod resume_assembly {
     verus! {
     /// R28 for the real Resume command entry, including repeated command IDs.
     /// Apply dispatch forwarding and invalid-node stutter remain separate rows.
-    fn resume_command_step(mut w: World, event: Event, mut out: Outbox)
+    pub(super) fn resume_command_step(mut w: World, event: Event, mut out: Outbox)
         -> (result: (World, Outbox))
         requires checking::accepted(w), out.len < OUTBOX, w.next_question < u64::MAX,
             match event {
@@ -208,7 +208,7 @@ mod pause_assembly {
     use super::*;
 
     verus! {
-    fn pause_command_step(mut w: World, event: Event, mut out: Outbox)
+    pub(super) fn pause_command_step(mut w: World, event: Event, mut out: Outbox)
         -> (result: (World, Outbox))
         requires checking::accepted(w), out.len < OUTBOX, w.next_question < u64::MAX,
             match event {
@@ -244,7 +244,7 @@ mod stop_assembly {
     use super::*;
 
     verus! {
-    fn stop_command_step(mut w: World, event: Event, mut out: Outbox)
+    pub(super) fn stop_command_step(mut w: World, event: Event, mut out: Outbox)
         -> (result: (World, Outbox))
         requires checking::accepted(w), out.len < OUTBOX, w.next_question < u64::MAX,
             w.nodes@.len() <= u64::MAX,
@@ -287,7 +287,7 @@ mod change_assembly {
     use super::*;
 
     verus! {
-    fn change_request_command_step(mut w: World, event: Event, mut out: Outbox)
+    pub(super) fn change_request_command_step(mut w: World, event: Event, mut out: Outbox)
         -> (result: (World, Outbox))
         requires checking::accepted(w), out.len < OUTBOX, w.next_question < u64::MAX,
             w.nodes@.len() <= u64::MAX,
@@ -625,7 +625,7 @@ mod aggregate_command_assembly {
 
     verus! {
     /// R28 for all targets and fresh/stale IDs of the four qualified commands.
-    fn apply_non_answer_step(mut w: World, event: Event, mut out: Outbox, mut report: Report)
+    pub(super) fn apply_non_answer_step(mut w: World, event: Event, mut out: Outbox, mut report: Report)
         -> (result: (World, Outbox, Report))
         requires checking::accepted(w),
             world_headroom(w), footprint::ordered_table(w), dependencies::edges_indexable(w),
@@ -673,7 +673,7 @@ mod invalid_command_assembly {
 
     verus! {
     /// Includes Answer at an absent target; no valid-node Answer premise is used.
-    fn apply_invalid_target(mut w: World, event: Event, mut out: Outbox, mut report: Report)
+    pub(super) fn apply_invalid_target(mut w: World, event: Event, mut out: Outbox, mut report: Report)
         -> (result: (World, Outbox, Report))
         requires checking::accepted(w),
             world_headroom(w), footprint::ordered_table(w), dependencies::edges_indexable(w),
@@ -845,6 +845,118 @@ mod answer_apply_assembly {
             }
         }
         (w, out, report)
+    }
+    }
+}
+
+mod assembly_witness_world {
+    use super::*;
+
+    verus! {
+    pub(super) fn world(kind: u8) -> (w: World)
+        requires kind < 3,
+        ensures checking::accepted(w), scheduling_safe(w), world_headroom(w),
+            footprint::ordered_table(w), dependencies::edges_indexable(w),
+            w.nodes@.len() == 1, w.gates@.len() == 1,
+            w.next_question == 0, w.next_ticket == 8,
+            node_headroom(w.nodes@[0]), arithmetic_consistent(w.nodes@[0]),
+            settle_shape(w.nodes@[0]), stopping_effect_fits(w.nodes@[0]),
+            footprint::valid_footprint(w, w.nodes@[0].footprint),
+            advance_pre(w.nodes@[0], w.next_ticket, 0),
+            !w.nodes@[0].paused, !w.nodes@[0].waiting_incident,
+            w.nodes@[0].effect.is_none(), !w.nodes@[0].pool, !w.nodes@[0].holds,
+            w.nodes@[0].pos == 0,
+            w.nodes@[0].phase == if kind == 0 { Phase::Unplanned }
+                else if kind == 1 { Phase::Ready(Resume::Making) } else { Phase::Ingesting },
+            w.nodes@[0].ticket == if kind == 0 { None } else { Some(0) },
+    {
+        let mut n = Node::new(RepoId(0));
+        n.credit.ready = true;
+        n.credit.start = 4;
+        n.attempt = 1;
+        n.footprint = Footprint::inline(1);
+        n.phase = if kind == 0 { Phase::Unplanned }
+            else if kind == 1 { Phase::Ready(Resume::Making) } else { Phase::Ingesting };
+        n.ticket = if kind == 0 { None } else { Some(0) };
+        let mut nodes = Vec::new();
+        nodes.push(n);
+        let mut gates = Vec::new();
+        gates.push(Gate { w: 2 });
+        let w = World { nodes, gates, pool_capacity: 4, next_ticket: 8, next_question: 0,
+            file_sets: Vec::new(), dependencies: Vec::new(), fail_fast: false };
+        proof {
+            reveal(initial_node);
+            reveal(retirement::node_rules);
+            reveal(footprint::ordered_table);
+            footprint::inline_is_valid(w, 1);
+            assert(retirement::node_rules(w, w.nodes@[0]));
+            dependencies::rules_definition(w);
+            dependencies::acyclic_definition(w);
+            dependencies::indexable_definition(w);
+            reveal(dependencies::active_edge);
+            checking::accepted_definition(w);
+            reveal_with_fuel(potential_prefix, 2);
+            reveal_with_fuel(open_prefix, 2);
+            reveal(world_headroom);
+            assert forall|i: int| 0 <= i < w.nodes@.len()
+                implies retirement::node_rules(w, w.nodes@[i]) by { assert(i == 0); }
+            assert(checking::accepted(w));
+        }
+        w
+    }
+    }
+}
+
+mod assembly_entry_witnesses {
+    use super::*;
+
+    verus! {
+    fn commands(case: u8)
+        requires case < 4,
+    {
+        let w = assembly_witness_world::world(0);
+        let out = Outbox::new();
+        if case == 0 {
+            let event = Event::Command { node: NodeId(0), id: 1, command: Command::Stop };
+            let _ = stop_assembly::stop_command_step(w, event, out);
+        } else if case == 1 {
+            let event = Event::Command { node: NodeId(0), id: 1, command: Command::Pause };
+            let _ = pause_assembly::pause_command_step(w, event, out);
+        } else if case == 2 {
+            let event = Event::Command { node: NodeId(0), id: 1, command: Command::Resume };
+            let _ = resume_assembly::resume_command_step(w, event, out);
+        } else {
+            let event = Event::Command { node: NodeId(0), id: 1, command: Command::ChangeRequest };
+            let _ = change_assembly::change_request_command_step(w, event, out);
+        }
+    }
+
+    fn pool() {
+        let w = assembly_witness_world::world(2);
+        let _ = pool_assembly::pool_grant_step(w, 0, Outbox::new(), Report::new());
+    }
+
+    fn gate() {
+        let w = assembly_witness_world::world(1);
+        let _ = gate_assembly::gate_grant_step(w, 0, Outbox::new(), Report::new());
+    }
+
+    fn planning() {
+        let w = assembly_witness_world::world(0);
+        let _ = gate_planning_step(w, 0, Outbox::new(), Report::new());
+    }
+
+    fn aggregate() {
+        let w = assembly_witness_world::world(0);
+        let event = Event::Command { node: NodeId(0), id: 1, command: Command::Resume };
+        let _ = aggregate_command_assembly::apply_non_answer_step(w, event, Outbox::new(), Report::new());
+    }
+
+    fn invalid() {
+        let w = assembly_witness_world::world(0);
+        let event = Event::Command { node: NodeId(1), id: 1, command: Command::Answer {
+            question: 0, answer: Answer::Stop } };
+        let _ = invalid_command_assembly::apply_invalid_target(w, event, Outbox::new(), Report::new());
     }
     }
 }
