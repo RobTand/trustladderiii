@@ -748,6 +748,8 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "command_helpers_handled_node_value": ("kernel::command_helpers#handled_node_value", 1),
+            "command_helpers_handled_resources_value": ("kernel::command_helpers#handled_resources_value", 1),
             "handler_safety_clarified_rules_v": ("kernel::handler_safety#clarified_rules_v", 1),
             "handler_safety_cleanup_handled_rules_v": ("kernel::handler_safety#cleanup_handled_rules_v", 1),
             "handler_safety_clear_cleanup_rules_v": ("kernel::handler_safety#clear_cleanup_rules_v", 1),
