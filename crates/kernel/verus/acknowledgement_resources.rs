@@ -202,7 +202,7 @@ pub(super) proof fn confirmed_clear_node_rules(w: World, b: Node)
 }
 
 pub(super) proof fn confirmed_clear_rows(b: Node)
-    ensures confirmed_clear_frame(b, Node { effect: None, ..b }),
+    ensures !confirmed_clear_frame(b, Node { effect: None, ..b }),
 {
     reveal(confirmed_clear_frame);
     reveal(confirmed_rules_transfer);
