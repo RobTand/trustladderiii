@@ -583,7 +583,7 @@ impl Flux {
                     .into(),
             });
         };
-        let record = self.journal.load(owner)?;
+        let mut record = self.journal.load(owner)?;
         let cleanup_complete = super::cleanup::all_stopped(&record);
         if cleanup_complete
             && record.runtime_ownerships.is_empty()
@@ -592,6 +592,8 @@ impl Flux {
             // A queued cancel or wrapper failure may have retained unregistered
             // debt before native clean arrived. Retire only that exact intent.
             self.run_cleanup(owner)?;
+            // Cleanup can retire retry eligibility; terminal proof needs the updated record.
+            record = self.journal.load(owner)?;
         }
         let generator_failed = match report.as_ref() {
             Some(report) => super::worker_protocol::generator_failed(&record, report),
