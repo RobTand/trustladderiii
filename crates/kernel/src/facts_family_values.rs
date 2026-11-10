@@ -1007,7 +1007,7 @@ pub(in super::super) fn outside_push_value(n: Node, nq: u64, fast: bool, i: usiz
     let result = outside_push_arm(n, nq, fast, i, head);
     kernel_proof! {
         facts_family_tail::outside_scalar_posts(n, nq, head);
-        facts_family_tail::outside_node_rows(n, nq, fast, head, i);
+        let _ = i;
     }
     result
 }
