@@ -74,7 +74,11 @@ pub(super) fn round(w: &mut World, Ghost(k): Ghost<int>)
             ack_guard(issued.nodes@[1], w.nodes@[1]);
         }
     } else {
-        proof { liveness_bounds::context_frame(*w, *w, 1, k + 2, 2); }
+        proof {
+            reveal(context); reveal(small);
+            assert(w.nodes@ =~= w.nodes@.update(1, w.nodes@[1]));
+            liveness_bounds::context_frame(*w, *w, 1, k + 2, 2);
+        }
     }
     proof { reveal(clean); }
 }
