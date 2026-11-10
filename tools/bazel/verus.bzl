@@ -443,6 +443,7 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::advance_family_post::retains_holds": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::advance_family_post::holds_item": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::advance_family_post::holds_frame": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::advance_family_post::grant_facts": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -763,6 +764,11 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "ranks_advance_rebase_value": ("kernel::ranks#advance_rebase_value", 1),
+            "ranks_advance_finished_value": ("kernel::ranks#advance_finished_value", 1),
+            "advance_family_post_retains_holds_intro": ("kernel::advance_family_post#retains_holds_intro", 1),
+            "advance_family_post_holds_phase_items": ("kernel::advance_family_post#holds_phase_items", 1),
+            "advance_family_rules_retained_holds": ("kernel::advance_family_rules#retained_holds", 1),
             "advance_family_rules_slot_resume_from_grant": ("kernel::advance_family_rules#slot_resume_from_grant", 1),
             "advance_family_post_slot_grant_rows": ("kernel::advance_family_post#slot_grant_rows", 1),
             "ranks_advance_blocked_value": ("kernel::ranks#advance_blocked_value", 1),
