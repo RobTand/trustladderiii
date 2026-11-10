@@ -85,7 +85,7 @@ pub(super) proof fn ci_node_step(n: Node, nq: u64, fast: bool, infra: bool)
 }
 
 pub(super) proof fn original_review_input(origin: World, n: Node)
-    requires retirement::node_rules(origin, n),
+    requires true,
     ensures n.review_stop.is_some() ==> n.phase is Stopping || n.phase is Closed,
 {
     reveal(retirement::node_rules);
