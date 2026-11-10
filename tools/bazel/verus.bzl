@@ -929,6 +929,7 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "fact_relation_priority_step": ("kernel::fact_relation_step#priority", 1),
             "fact_relation_rows_intro": ("kernel::fact_relation_exports#fact_rows_intro", 1),
             "fact_relation_rows_reveal": ("kernel::fact_relation_reveal#fact_rows", 1),
             "fact_relation_priority_model": ("kernel::fact_relation_reveal#priority_model", 1),

@@ -84,6 +84,9 @@ mod facts_family_lemmas;
 #[path = "../verus/fact_relation_priority.rs"]
 mod fact_relation_priority;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/fact_relation_step.rs"]
+mod fact_relation_step;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/fact_relation_reveal.rs"]
 mod fact_relation_reveal;
 #[cfg(verus_keep_ghost)]
