@@ -443,6 +443,7 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::transition_safety::apply_exports": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::command_dispatch::on_command": "K5 DEV ONLY (fv-k5-int-dev-1110): TRUSTED export wrapper (E11.1), external_body; calls the verified on_command_proved; never lands.",
             "kernel::acknowledgements::on_ack": "K5 DEV ONLY (fv-k5-int-dev-1110): TRUSTED export wrapper (E11.2), external_body; calls the verified on_ack_proved; never lands.",
             "kernel::advance_family_post::teardown_gone": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -878,6 +879,7 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "transition_safety_apply_exports_rows": ("kernel::transition_safety#apply_exports_rows", 1),
             "advance_family_post_step_rows_intro": ("kernel::advance_family_post#step_rows_intro", 1),
             "advance_family_frames": ("kernel::advance_family_frames", 1),
             "apply_command_safety_held_withheld": ("kernel::apply_command_safety#held_withheld", 1),

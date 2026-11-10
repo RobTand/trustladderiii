@@ -804,4 +804,53 @@ pub(super) proof fn lift_apply_none(before: World, after: World, event: Event, o
     intro(before, after, Transition::Apply(event), emitted(ob, oa));
 }
 
+/// K5 frozen export E1 (CONTRACTS.md v2.10; owner Apply). Framing atom on `events::apply`'s ensures:
+/// ONE opaque clause, so apply's many proof callers see a single atom (v2 direct clauses cost
+/// retirement#fact_preserves_node 35.3M). R1-R5 are stated exactly by `apply_exports_rows` (rule 1).
+#[verifier::opaque]
+pub(super) open spec fn apply_exports(before: World, after: World, event: Event, ob: Outbox, oa: Outbox) -> bool {
+    ((checking::accepted(before) && (match event {
+        Event::Reply { node, .. } | Event::Ack { node, .. } | Event::Fact { node, .. } => node.0 < before.nodes@.len(),
+        _ => false,
+    })) ==> transition_safety(before, after,
+        Transition::Apply(event), emitted(ob, oa)))
+    && ((match event_target(event) {
+        Some(i) => 0 <= i < before.nodes@.len() ==> others_unchanged(before, after, i),
+        None => true,
+    }))
+    && ((match event {
+        Event::Reply { node, .. } | Event::Fact { node, .. } => (checking::accepted(before)
+            && node.0 < before.nodes@.len() && fail_fast_event(event))
+            ==> fail_fast_rows(before, after, event, node.0 as int,
+                emitted(ob, oa)),
+        _ => true,
+    }))
+    && ((checking::accepted(before) && !(event is Command)) ==> checking::accepted(after))
+}
+
+/// E1 named lemma (rule 1): REQ R1-R5 stated exactly, derived from apply's post `apply_exports(..)`.
+pub(super) proof fn apply_exports_rows(before: World, after: World, event: Event, ob: Outbox, oa: Outbox)
+    requires apply_exports(before, after, event, ob, oa),
+    ensures
+    (checking::accepted(before) && (match event {
+        Event::Reply { node, .. } | Event::Ack { node, .. } | Event::Fact { node, .. } => node.0 < before.nodes@.len(),
+        _ => false,
+    })) ==> transition_safety(before, after,
+        Transition::Apply(event), emitted(ob, oa)),
+    (match event_target(event) {
+        Some(i) => 0 <= i < before.nodes@.len() ==> others_unchanged(before, after, i),
+        None => true,
+    }),
+    (match event {
+        Event::Reply { node, .. } | Event::Fact { node, .. } => (checking::accepted(before)
+            && node.0 < before.nodes@.len() && fail_fast_event(event))
+            ==> fail_fast_rows(before, after, event, node.0 as int,
+                emitted(ob, oa)),
+        _ => true,
+    }),
+    (checking::accepted(before) && !(event is Command)) ==> checking::accepted(after),
+{
+    reveal(apply_exports);
+}
+
 }

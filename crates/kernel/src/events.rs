@@ -234,7 +234,7 @@ pub(super) fn apply_proved(w: &mut World, event: Event, out: &mut Outbox, report
 
 kernel_fn! {
 /// K5 DEV ONLY (fv-k5-int-dev-1110), CONTRACTS.md E1: TRUSTED export wrapper. Contract =
-/// `apply_proved`'s, verbatim, plus the frozen v2 export clauses (direct). The body only calls the
+/// `apply_proved`'s, verbatim, plus one opaque export clause (v2.10; R1-R5 via apply_exports_rows). The body only calls the
 /// verified `apply_proved`: no new executable behaviour. Never lands; escape_audit FAILS here.
 #[cfg_attr(verus_keep_ghost, verifier::external_body)]
 pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut Report) -> (result: ()) [
@@ -358,23 +358,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
                     transition_safety::Transition::Apply(event), transition_safety::emitted(*old(out), *final(out))),
             Event::Reply { .. } | Event::Ack { .. } | Event::Fact { .. } => true,
         }),
-    (checking::accepted(*old(w)) && (match event {
-        Event::Reply { node, .. } | Event::Ack { node, .. } | Event::Fact { node, .. } => node.0 < old(w).nodes@.len(),
-        _ => false,
-    })) ==> transition_safety::transition_safety(*old(w), *final(w),
-        transition_safety::Transition::Apply(event), transition_safety::emitted(*old(out), *final(out))),
-    (match transition_safety::event_target(event) {
-        Some(i) => 0 <= i < old(w).nodes@.len() ==> transition_safety::others_unchanged(*old(w), *final(w), i),
-        None => true,
-    }),
-    (match event {
-        Event::Reply { node, .. } | Event::Fact { node, .. } => (checking::accepted(*old(w))
-            && node.0 < old(w).nodes@.len() && transition_safety::fail_fast_event(event))
-            ==> transition_safety::fail_fast_rows(*old(w), *final(w), event, node.0 as int,
-                transition_safety::emitted(*old(out), *final(out))),
-        _ => true,
-    }),
-    (checking::accepted(*old(w)) && !(event is Command)) ==> checking::accepted(*final(w)),
+    transition_safety::apply_exports(*old(w), *final(w), event, *old(out), *final(out)),
 ] {
     apply_proved(w, event, out, report)
 }
