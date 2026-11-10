@@ -66,6 +66,9 @@ mod retirement_terminal_fact_witness;
 #[path = "../verus/retirement_witness.rs"]
 mod retirement_witness;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/facts_family_lemmas.rs"]
+mod facts_family_lemmas;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/transition_safety.rs"]
 mod transition_safety;
 #[cfg(verus_keep_ghost)]
@@ -105,6 +108,7 @@ use retries::*;
 mod acknowledgements;
 use acknowledgements::*;
 mod facts;
+mod facts_family_values;
 use facts::*;
 mod commands;
 use commands::*;
@@ -580,6 +584,8 @@ impl Credit {
                 final(self).earned == old(self).earned,
                 final(self).added == old(self).added,
                 final(self).withheld == old(self).withheld,
+                final(self).ready == old(self).ready,
+                final(self).merge_credited == old(self).merge_credited,
         ] {
             self.spent += cost;
         }

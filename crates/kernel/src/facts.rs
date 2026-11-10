@@ -62,6 +62,18 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox, rep
             && dependencies::edges_indexable(*final(w))
             && match fact { Fact::Dependency { target, .. } =>
                 dependencies::delivery_changed(*old(w), *final(w), i as int, target), _ => false }),
+        match fact {
+            Fact::Dependency { target, status } =>
+                dependencies::fact_result(*old(w), *final(w), i as int, target, status),
+            Fact::DependencyRemove { kind, number } =>
+                dependencies::remove_result(*old(w), *final(w), i as int, kind, number),
+            _ => true,
+        },
+        match fact {
+            Fact::Dependency { .. } | Fact::DependencyRemove { .. } =>
+                dependencies::dependency_frame(*old(w), *final(w), i as int),
+            _ => true,
+        },
 ] proof [reveal(dependencies::dependency_frame);] {
 
     kernel_snapshot! { before_fact = *w }
@@ -72,8 +84,10 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox, rep
     }
     let ci = report::ci_failure_cause(w.nodes[i].phase, w.nodes[i].current(), fact);
     match fact {
-        Fact::DependencyRemove { kind, number } => w.remove_dependency(i, kind, number),
-        Fact::Dependency { target, status } => w.dependency_fact(i, target, status, out),
+        Fact::DependencyRemove { kind, number } => facts_family_values::fact_dependency_entry(
+            w, i, Fact::DependencyRemove { kind, number }, out),
+        Fact::Dependency { target, status } => facts_family_values::fact_dependency_entry(
+            w, i, Fact::Dependency { target, status }, out),
         Fact::PrMerged {
             head,
             checks_passed,
@@ -156,35 +170,10 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
     kernel_snapshot! { before_out = *out }
     match fact {
         Fact::DependencyRemove { .. } | Fact::Dependency { .. } | Fact::PrMerged { .. } => {}
-        Fact::Priority(priority) => {
-            if !w.nodes[i].phase.is_closed() {
-                w.nodes[i].priority = priority;
-            }
-            kernel_proof! {
-                facts_transition_lemmas::priority_result(before_transition@, *w, i, before_out@, *out, priority);
-            }
-        }
-        Fact::PrClosedByPerson => {
-            let m = &mut w.nodes[i];
-            if !m.pr_open {
-                kernel_proof! {
-                    assert(w.nodes@[i as int] == retirement::fact_node(
-                        before_transition@.nodes@[i as int], Fact::PrClosedByPerson)) by { reveal(retirement::fact_node); }
-                }
-                return;
-            }
-            m.pr_open = false;
-            if !m.phase.is_stopping() && !m.phase.is_closed() {
-                notice(out, i, Notice::Note(NoteKind::PrClosed));
-                enter_stopping(m, Outcome::Stopped);
-            }
-            kernel_proof! {
-                assert(w.nodes@[i as int] == retirement::fact_node(
-                    before_transition@.nodes@[i as int], Fact::PrClosedByPerson)) by { reveal(retirement::fact_node); }
-                assert(retirement::fact_frame(before_transition@, *w, i, before_out@, *out))
-                    by { reveal(retirement::fact_frame); }
-            }
-        }
+        Fact::Priority(priority) => facts_family_values::ordinary_fact_entry(
+            w, i, Fact::Priority(priority), out),
+        Fact::PrClosedByPerson => facts_family_values::ordinary_fact_entry(
+            w, i, Fact::PrClosedByPerson, out),
         Fact::PushByOther { head } => {
             let m = &w.nodes[i];
             if !m.had_pr {
@@ -282,41 +271,15 @@ pub(super) fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bo
             && !(old(w).nodes@[i as int].phase is Closed)
             && !(old(w).nodes@[i as int].approved == Some(head) && checks_passed)
             ==> retirement::unapproved_note(*final(out), i),
+        old(w).nodes@[i as int].had_pr && old(w).nodes@[i as int].merged.is_none()
+            ==> facts_family_values::node_rows(old(w).nodes@[i as int], final(w).nodes@[i as int],
+                old(w).fail_fast, i, Fact::PrMerged { head, checks_passed }),
+        facts_family_values::notice_suffix(*old(out), *final(out), i),
 ] proof [reveal(retirement::unapproved_note);] {
-    kernel_snapshot! { before_merge = w.nodes@[i as int] }
-    let m = &mut w.nodes[i];
-    if !m.had_pr || m.merged.is_some() {
-        kernel_proof! { facts_merge_lemmas::ignored_result(before_merge@, head, checks_passed); }
-        return;
-    }
-    let approved = m.approved == Some(head) && checks_passed;
-    match m.phase {
-        Phase::Closed(o) => {
-            if !matches!(o, Outcome::Stopped | Outcome::Replaced) {
-                kernel_proof! { facts_merge_lemmas::ignored_result(before_merge@, head, checks_passed); }
-                return;
-            }
-            // A late merge corrects the record and earns its credit once.
-            m.merged = Some(head);
-            m.phase = Phase::Closed(Outcome::Merged);
-            merge_credit(m);
-            kernel_proof! {
-                facts_merge_lemmas::late_result(before_merge@, *m, head, checks_passed);
-            }
-            notice(out, i, Notice::Note(NoteKind::LateMerge));
-            notice(out, i, Notice::Incident { needs_rob: false });
-        }
-        _ => {
-            merge_open(m, head);
-            kernel_proof! {
-                facts_merge_lemmas::open_result(before_merge@, *m, head, checks_passed);
-            }
-        }
-    }
-    if !approved {
-        notice(out, i, Notice::Incident { needs_rob: false });
-        notice(out, i, Notice::Note(NoteKind::UnapprovedMerge));
-    }
+    let (value, notes) = facts_family_values::merge_fact_value(w.nodes[i], w.fail_fast, i, head, checks_passed);
+    w.nodes[i] = value;
+    kernel_proof! { reveal(facts_family_values::notices); }
+    facts_family_values::append_fact_notices(out, notes, i);
 }
 }
 
@@ -379,12 +342,7 @@ pub(super) fn conflict(w: &mut World, i: usize, _out: &mut Outbox) -> (result: (
         final(w).next_question == old(w).next_question,
         retirement::notices_only(*old(_out)) ==> retirement::notices_only(*final(_out)),
 ] proof [reveal(retirement::fact_frame); reveal(retirement::fact_node);] {
-    let m = &mut w.nodes[i];
-    if m.phase == Phase::AwaitingDelivery {
-        set_phase(m, Phase::Ready(Resume::Rebasing));
-    } else if m.phase == Phase::Publishing {
-        set_phase(m, Phase::Rebasing);
-    }
+    facts_family_values::ordinary_fact_entry(w, i, Fact::Conflict, _out);
 }
 }
 
@@ -405,11 +363,7 @@ pub(super) fn incident_cleared(w: &mut World, i: usize, by_rob: bool, _out: &mut
         final(w).next_question == old(w).next_question,
         retirement::notices_only(*old(_out)) ==> retirement::notices_only(*final(_out)),
 ] proof [reveal(retirement::fact_frame); reveal(retirement::fact_node); reveal(retry_bounds); reveal(distance);] {
-    let m = &mut w.nodes[i];
-    if m.waiting_incident && (by_rob || !m.incident_needs_rob) {
-        m.waiting_incident = false;
-        m.incident_needs_rob = false;
-    }
+    facts_family_values::ordinary_fact_entry(w, i, Fact::IncidentCleared { by_rob }, _out);
 }
 }
 
