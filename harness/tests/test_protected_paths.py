@@ -145,7 +145,7 @@ def test_c6_dependency_changes_carry_coverage_note(repo, name, directory):
     assert all(getattr(r, 'coverage_note', None) == expected for r in results), 'dependency change needs a coverage flag'
     assert all(r['coverage_note'] == expected for r in json.loads(execution.result_json(results)))
     # setup.cfg and pyproject.toml already configure tests, so their refusal wins.
-    if name.rsplit('/', 1)[-1] not in ('pyproject.toml', 'setup.cfg'):
+    if name not in ('pyproject.toml', 'setup.cfg'):
         assert all(r.verdict == Verdict.PASS for r in results)
         assert ran
 
