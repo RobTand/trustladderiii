@@ -1825,7 +1825,7 @@ impl Executor for M4BaseChecks {
                 action_key: format!("base-check:{}", delivery.key),
             }];
             if let Some(base) = &self.moved_base {
-                self.api.lock().unwrap().pull["base"]["sha"] = json!(base);
+                self.api.lock().unwrap().live_base = Some(base.clone());
             }
         }
         Ok(completion)
@@ -1857,8 +1857,10 @@ fn m4_base_record_case(moved: bool) {
     drain(&mut controller);
     let record = m4_record(&mut controller);
     assert_eq!(record["landed"]["checked_base"], checked_base, "checked base must come from the passing check report");
-    assert_eq!(record["landed"]["merge_base"], merge_base, "merge base must come from the final PR read");
+    assert_eq!(record["landed"]["merge_base"], merge_base, "merge base must come from the live branch tip despite stale PR metadata");
     assert_eq!(record["landed"]["base_moved"], moved);
+    assert_eq!(record["landed"]["pr_base_sha"], checked_base);
+    assert_eq!(record["landed"]["checked_parent_matches"], true);
     assert!(matches!(controller.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged)));
     assert_eq!(fixture.direct.lock().unwrap().puts.len(), 1, "base audit fields must not change the merge decision");
     assert!(m4_notices(&mut controller).is_empty(), "base movement alone is record-only in M-4");
@@ -1867,3 +1869,50 @@ fn m4_base_record_case(moved: bool) {
 fn m4_base_moved_records_checked_and_merge_bases() { m4_base_record_case(true); }
 #[test]
 fn m4_base_ordinary_records_no_movement() { m4_base_record_case(false); }
+
+fn m4_live_external_parent_case(parent_matches: bool) {
+    let mut database = support::Database::start();
+    let settings = database.create(if parent_matches {"m4_live_external_match"} else {"m4_live_external_mismatch"});
+    let fixture = DirectFixture::new();
+    fixture.check(None);
+    let checked_base = "4".repeat(40);
+    let live_base = "6".repeat(40);
+    fixture.api.state.lock().unwrap().pull["base"]["sha"] = json!(checked_base);
+    let mut registry = adapters::simulation(fixture.root.path()).unwrap();
+    registry.register(Upstream::Delivery, fixture.adapter(&settings));
+    registry.register(Upstream::PrismaBuild, M4BaseChecks {
+        inner: adapters::flux_checks::Fake::new(fixture.root.path()), base: checked_base.clone(),
+        moved_base: None, api: fixture.api.state.clone(),
+    });
+    let controller = Controller::open_with_clock(Store::open(&settings).unwrap(), registry, bootstrap(), fixture.clock.clone()).unwrap();
+    let (mut controller, _) = fixture.start_controller(&settings, controller);
+    drain(&mut controller);
+    {
+        let mut state = fixture.api.state.lock().unwrap();
+        state.merged(false);
+        state.live_base = Some(live_base.clone());
+    }
+    fixture.direct.lock().unwrap().different_parent = !parent_matches;
+    fixture.check(Some("success"));
+    let mut body = webhook_fixture();
+    body["action"] = json!("closed");
+    body["repository"]["owner"]["login"] = json!("owner");
+    body["repository"]["name"] = json!("sandbox");
+    body["installation"] = json!({"id":3});
+    body["pull_request"] = fixture.api.state.lock().unwrap().pull.clone();
+    deliver(&settings, &fixture.api, "pull_request", &body);
+    drain(&mut controller);
+    let record = m4_record(&mut controller);
+    assert_eq!(record["landed"]["merge_base"], live_base, "outside merge must record the live tip at observation, not the stale PR base");
+    assert_eq!(record["landed"]["pr_base_sha"], checked_base);
+    assert_eq!(record["landed"]["checked_base"], checked_base);
+    assert_eq!(record["landed"]["base_moved"], true);
+    assert_eq!(record["landed"]["checked_parent_matches"], parent_matches, "the landed parent must be compared with the checked base, not the later live tip");
+    assert!(fixture.direct.lock().unwrap().puts.is_empty());
+    assert!(m4_notices(&mut controller).is_empty());
+    assert!(matches!(controller.world().unwrap().nodes[0].phase, Phase::Closed(Outcome::Merged)));
+}
+#[test]
+fn m4_live_external_parent_matches_checked_base() { m4_live_external_parent_case(true); }
+#[test]
+fn m4_live_external_parent_differs_from_checked_base() { m4_live_external_parent_case(false); }

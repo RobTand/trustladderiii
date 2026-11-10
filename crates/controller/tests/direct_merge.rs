@@ -63,6 +63,7 @@ fn client(uri: &str) -> GitHub {
 
 struct State {
     pull: Value,
+    live_base: Option<String>,
     posts: usize,
     pull_reads: usize,
     head_checks: Vec<Value>,
@@ -84,6 +85,7 @@ impl State {
         pull["merge_commit_sha"] = json!("dddddddddddddddddddddddddddddddddddddddd");
         Self {
             pull,
+            live_base: None,
             posts: 0,
             pull_reads: 0,
             head_checks: vec![],
@@ -141,9 +143,9 @@ impl Respond for Api {
         }
         match (method, path) {
             ("GET", "/repos/owner/sandbox/branches/main" | "/repos/owner/sandbox/branches/release") => ResponseTemplate::new(200).set_body_json(
-                if state.classic { json!({"protection":{"required_status_checks":{
+                if state.classic { json!({"name":path.rsplit('/').next().unwrap(),"commit":{"sha":state.live_base.as_ref().map_or_else(||state.pull["base"]["sha"].clone(), |base|json!(base))},"protection":{"required_status_checks":{
                     "contexts":["Sandbox tests"], "checks":if state.classic_context_only {json!([])} else {json!([{"context":"Sandbox tests","app_id":15368}])}}}}) }
-                else { json!({"protected":false}) }),
+                else { json!({"name":path.rsplit('/').next().unwrap(),"commit":{"sha":state.live_base.as_ref().map_or_else(||state.pull["base"]["sha"].clone(), |base|json!(base))},"protected":false}) }),
             ("GET", "/repos/owner/sandbox/rules/branches/main" | "/repos/owner/sandbox/rules/branches/release") => ResponseTemplate::new(200).set_body_json(
                 if state.required { json!([{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Sandbox tests","integration_id":state.required_app}]}}]) } else { json!([]) }),
             ("GET", path) if path.ends_with("/statuses") => ResponseTemplate::new(200).set_body_json(state.statuses.clone()),
