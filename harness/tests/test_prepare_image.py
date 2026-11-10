@@ -16,7 +16,7 @@ spec.loader.exec_module(prepare_image)
 
 
 @pytest.mark.parametrize('profile,pytest_version,triton_version', [
-    ('prismaquant', '9.1.1', '3.6.0'), ('tessera', '8.4.2', '3.8.0'),
+    ('tessera', '8.4.2', '3.8.0'),
 ])
 def test_repository_profile_installs_frozen_cpu_dependencies(monkeypatch, profile, pytest_version, triton_version):
     commands = []
@@ -200,3 +200,36 @@ def test_pq_plan_consumer_keeps_node_deselections_and_refuses_empty_selection(tm
     plan['selected'] = []
     with pytest.raises(ValueError, match='empty selection'):
         builder.pytest_argv(plan, base='1' * 40, head='2' * 40)
+
+
+def test_legacy_image_builder_refuses_pq_python314_before_container_commands(monkeypatch):
+    commands = []
+    monkeypatch.setenv('FLUX_JOB_ID', 'f123')
+    monkeypatch.setattr(sys, 'argv', ['prepare_image.py', 'sha256:' + '1' * 64, '--profile', 'prismaquant'])
+    monkeypatch.setattr(subprocess, 'run', lambda command, **kwargs: commands.append(command))
+    with pytest.raises(ValueError, match='flux_prismaquant_image'):
+        prepare_image.main()
+    assert commands == []
+
+
+def test_pq_builder_refuses_changed_hashed_lock(tmp_path):
+    images = Path(__file__).parents[1] / 'tools/images'
+    shutil.copytree(images, tmp_path / 'images')
+    lock = tmp_path / 'images/prismaquant.txt'
+    lock.write_bytes(lock.read_bytes() + b'\n# changed\n')
+    with pytest.raises(ValueError, match='input hash'):
+        pq_builder().load_inputs(tmp_path / 'images')
+
+
+@pytest.mark.parametrize('damage', ['identity', 'traversal', 'foreign-node'])
+def test_pq_plan_consumer_refuses_unbound_or_escaping_selection(damage):
+    plan = {'schema': 'prismaquant.gate_plan.v1', 'base_sha': '1' * 40, 'head_sha': '2' * 40,
+            'selected': [{'path': 'tests/test_flux_jobs.py'}], 'deselect': [], 'deferred': []}
+    if damage == 'identity':
+        plan['head_sha'] = '3' * 40
+    elif damage == 'traversal':
+        plan['selected'] = [{'path': 'tests/../../outside.py'}]
+    else:
+        plan['deselect'] = ['tests/test_other.py::test_other']
+    with pytest.raises(ValueError, match='identity mismatch|invalid PQ test selector|selected module node'):
+        pq_builder().pytest_argv(plan, base='1' * 40, head='2' * 40)
