@@ -443,6 +443,8 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::reply_family_values::files_paid": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::reply_family_values::files_ask": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::reply_family_values::prepared": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::reply_family_values::finish": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::reply_family_values::next_question": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -769,6 +771,9 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "reply_family_files_paid": ("kernel::reply_admission#reply_files_paid", 1),
+            "reply_family_files_ask": ("kernel::reply_admission#reply_files_ask", 1),
+            "reply_family_files_arms": ("kernel::reply_family_posts#files_arms", 1),
             "reply_family_spend_v": ("kernel::retries#spend_v", 1),
             "reply_family_failed_prefix": ("kernel::retries#failed_prefix", 1),
             "reply_family_incident_count": ("kernel::retries#incident_count", 1),
