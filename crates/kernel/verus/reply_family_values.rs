@@ -255,7 +255,7 @@ pub(super) open spec fn ingest(n: Node, reply: Reply) -> ReplyChange {
                 EarlyEnd::AlreadyDone => Outcome::AlreadyDone,
                 EarlyEnd::NotActionable => Outcome::NotActionable,
             }), note: None },
-            None => ReplyChange::Done { node: retirement::phased(n, Phase::Unplanned),
+            None => ReplyChange::Done { node: retirement::phased(n, Phase::Checking),
                 note: Some(Notice::MeasuresPosted) },
         },
         Reply::AuditDisagrees => ReplyChange::Done { node: port_t860_contracts::audit_node(n), note: None },
