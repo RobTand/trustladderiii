@@ -140,7 +140,7 @@ mod command_projection {
             implies dependencies::same_endpoint(#[trigger] before.nodes@[j], after.nodes@[j]) by {
             if j != i { assert(after.nodes@[j] == before.nodes@[j]); }
         }
-        dependencies::frame_preserves(before, after);
+
     }
     }
 }
