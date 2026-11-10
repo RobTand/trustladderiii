@@ -3616,7 +3616,9 @@ impl Controller {
                             "footprint_addition_requests",
                             node.0.to_string(),
                             adapters::workers::review::remember_addition_requests(
-                                snapshot, &node.0.to_string(), &reply,
+                                snapshot,
+                                &node.0.to_string(),
+                                &reply,
                             )?,
                         ));
                         let paths = tl3_contracts::footprint::Footprint::new(paths)

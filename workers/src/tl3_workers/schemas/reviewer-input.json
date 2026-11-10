@@ -193,7 +193,7 @@
     },
     "issue": {
       "type": "object",
-      "description": "The request's issue, bounded; supplied when a check carries a forcing (#393).",
+      "description": "The request's issue, bounded; supplied for every review.",
       "properties": {
         "title": {
           "type": "string",
@@ -209,6 +209,31 @@
         "body"
       ],
       "additionalProperties": false
+    },
+    "issue_truncated": {
+      "type": "boolean",
+      "description": "True when title or body was shortened to fit the issue or input bound."
+    },
+    "footprint_additions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "why": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Effective footprint paths absent from the stored plan, with maker reasons when stored. Missing means the plan was unavailable."
     },
     "checks": {
       "type": "array",

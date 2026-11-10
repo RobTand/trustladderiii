@@ -225,9 +225,7 @@ impl Goal {
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-#[schemars(
-    description = "The request's issue, bounded; supplied for every review."
-)]
+#[schemars(description = "The request's issue, bounded; supplied for every review.")]
 pub struct Issue {
     pub title: Text<0, 1000>,
     pub body: Text<0, 16000>,
@@ -236,7 +234,11 @@ pub struct Issue {
 #[serde(deny_unknown_fields)]
 pub struct FootprintAddition {
     pub path: NonEmpty,
-    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[schemars(with = "NonEmpty")]
     pub why: Option<NonEmpty>,
 }
@@ -386,11 +388,19 @@ pub struct ReviewerInput {
     #[schemars(with = "Issue")]
     pub issue: Option<Issue>,
     /// True when title or body was shortened to fit the issue or input bound.
-    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[schemars(with = "bool")]
     pub issue_truncated: Option<bool>,
     /// Effective footprint paths absent from the stored plan, with maker reasons when stored. Missing means the plan was unavailable.
-    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[schemars(with = "Vec<FootprintAddition>")]
     pub footprint_additions: Option<Vec<FootprintAddition>>,
     /// The stored harness check report's results, unchanged. Their shape is generated from the Rust contract types (check-report.json).
@@ -715,11 +725,26 @@ pub fn generated() -> Result<crate::Generated, render::RenderError> {
                     &["type", "items", "minItems"],
                 ),
                 ("/properties/issue_truncated", &["type", "description"]),
-                ("/properties/footprint_additions", &["type", "items", "description"]),
-                ("/properties/footprint_additions/items", &["type", "properties", "required", "additionalProperties"]),
-                ("/properties/footprint_additions/items/properties", &["path", "why"]),
-                ("/properties/footprint_additions/items/properties/path", &["type", "minLength"]),
-                ("/properties/footprint_additions/items/properties/why", &["type", "minLength"]),
+                (
+                    "/properties/footprint_additions",
+                    &["type", "items", "description"],
+                ),
+                (
+                    "/properties/footprint_additions/items",
+                    &["type", "properties", "required", "additionalProperties"],
+                ),
+                (
+                    "/properties/footprint_additions/items/properties",
+                    &["path", "why"],
+                ),
+                (
+                    "/properties/footprint_additions/items/properties/path",
+                    &["type", "minLength"],
+                ),
+                (
+                    "/properties/footprint_additions/items/properties/why",
+                    &["type", "minLength"],
+                ),
                 ("/properties/checks", &["type", "description", "items"]),
                 ("/properties/checks/items", &["$ref", "properties"]),
                 (
