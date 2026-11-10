@@ -59,10 +59,8 @@ impl Shell<'_> {
                         });
                     }
                     // Review must see an edit to a test that failed a selected check (#359).
-                    let selected = adapters::prismabuild::selected_failures(
-                        earlier.iter().map(|row| &row.value),
-                        &results,
-                    );
+                    let selected =
+                        checks::selected_failures(earlier.iter().map(|row| &row.value), &results);
                     commit.rows.push(put(
                         "check_evidence",
                         format!("{}:{generation:020}", node.0),

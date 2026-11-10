@@ -17,14 +17,11 @@ use support::scenario_shard::{self, WorkerGroup};
 use tl3_controller::executor::Output as Out;
 #[path = "workers/planning.rs"]
 mod planning;
-mod prismabuild_fixture;
 #[path = "workers/quota_ladder.rs"]
 mod quota_ladder;
 #[path = "workers/retirement.rs"]
 mod retirement_review;
 mod support;
-#[path = "fixtures/waits/mod.rs"]
-mod waits;
 use serde_json::{Value, json};
 use std::{
     env, fs,
@@ -53,7 +50,6 @@ fn config(settings: &tl3_config::Store, root: &Path, mode: &str) -> tl3_config::
     config.store = settings.clone();
     config.workers.python = worker_package().join(".venv/bin/python");
     config.workers.runs = root.join("runs");
-    support::select_flux(&mut config);
     config.workers.command = vec![
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/worker_model.py")
@@ -588,29 +584,12 @@ fn main() {
         database.stop();
         return;
     }
-    if args.get(1).is_some_and(|s| s == "--maker-wait") {
-        maker::declared_wait(&database.create("maker_declared_wait"));
-        println!("test maker_declared_wait_survives_recovery_and_runfailed_retry ... ok");
-        database.stop();
-        return;
-    }
     if args.get(1).is_some_and(|s| s == "--worker-facts") {
         simulation(&database.create("facts_retirement"));
         event_source(&database.create("facts_event_source"));
         killed_worker(&database.create("facts_killed_worker"));
         killed_supervisor(&database.create("facts_killed_supervisor"));
         fake_stop(&database.create("facts_stopped_worker"));
-        database.stop();
-        return;
-    }
-    if args.get(1).is_some_and(|s| s == "--stale-lease") {
-        stale_lease_wait_ends_bounded(&database.create("workers_stale_lease"));
-        println!("test stale_lease_wait_ends_with_retry_then_incident ... ok");
-        database.stop();
-        return;
-    }
-    if args.get(1).is_some_and(|s| s == "--r3") {
-        external_wait_survives_restart(&database.create("workers_r3_wait"));
         database.stop();
         return;
     }
@@ -2857,262 +2836,6 @@ fn overflow(settings: &tl3_config::Store) {
     );
 }
 
-fn external_wait_survives_restart(settings: &tl3_config::Store) {
-    #[derive(Clone)]
-    struct Clock(std::rc::Rc<std::cell::Cell<u64>>);
-    impl tl3_controller::clock::Clock for Clock {
-        fn now(&self) -> std::time::SystemTime {
-            std::time::UNIX_EPOCH + Duration::from_millis(self.0.get())
-        }
-    }
-    let root = tempfile::tempdir().unwrap();
-    let config = config(settings, root.path(), "external-wait");
-    let mut store = Store::open(settings).unwrap();
-    materials(&mut store);
-    let supervisor = Supervisor::new(
-        &config,
-        &root.path().join("fakes"),
-        &mut crate::startup_ownership::ownership(),
-    )
-    .unwrap();
-    let mut source = supervisor.source();
-    let clock = Clock(std::rc::Rc::new(std::cell::Cell::new(1000)));
-    let open = || {
-        let mut registry = adapters::simulation(&root.path().join("fakes")).unwrap();
-        registry.register(
-            tl3_controller::executor::Upstream::Workers,
-            supervisor.clone(),
-        );
-        registry.register(
-            tl3_controller::executor::Upstream::PrismaBuild,
-            waits::adapter(root.path(), &mut crate::startup_ownership::ownership()),
-        );
-        let mut c = Controller::open_with_clock(
-            Store::open(settings).unwrap(),
-            registry,
-            Bootstrap::from_config(&config).unwrap(),
-            clock.clone(),
-        )
-        .unwrap();
-        let mut allowances = config.allowances.clone();
-        allowances.agent_worker.silence_secs = 1;
-        allowances.agent_worker.no_progress_secs = 3;
-        c.set_allowances(allowances);
-        c
-    };
-    let mut c = open();
-    waits::record(root.path(), "claimed");
-    c.intake(labelled()).unwrap();
-    while c.drive_once().unwrap() {}
-    wait_for_signal(|| root.path().join("entered").exists());
-    let (tx, rx) = mpsc::channel();
-    wait_for_signal(|| {
-        source.poll_once(&mut store, &tx).unwrap();
-        store
-            .worker_progress(None)
-            .unwrap()
-            .iter()
-            .any(|r| r.external_wait.is_some())
-    });
-    assert!(
-        rx.try_iter()
-            .all(|input| matches!(input, Input::Look { .. })),
-        "a declaration requests a look without claiming agent progress"
-    );
-    let mut before = store.worker_progress(None).unwrap();
-    let run = &before[0];
-    let encoded: String = run.key.bytes().map(|b| format!("{b:02x}")).collect();
-    let record_path = root
-        .path()
-        .join(format!("queue/claimed/{}.json", waits::key()));
-    let mut record: serde_json::Value =
-        serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
-    record["checkout_snapshot"]["parent"] = json!(waits::bind(
-        root.path(),
-        &config.workers.runs.join(&encoded).join("worktree")
-    ));
-    fs::write(record_path, record.to_string()).unwrap();
-    c.look_now().unwrap();
-    let before_repeat = c.snapshot().unwrap();
-    fs::write(root.path().join("entered.repeat"), "repeat").unwrap();
-    wait_for_signal(|| {
-        source.poll_once(&mut store, &tx).unwrap();
-        store.worker_progress(None).unwrap()[0].output_offset > before[0].output_offset
-    });
-    assert!(
-        rx.try_recv().is_err(),
-        "reattaching the same wait must not request another PrismaBuild look"
-    );
-    assert_eq!(
-        c.snapshot().unwrap(),
-        before_repeat,
-        "reattachment does not commit allowance state"
-    );
-    before = store.worker_progress(None).unwrap();
-    c.look_now().unwrap();
-    drop(c);
-    drop(source);
-    let mut source = supervisor.source();
-    let mut c = open();
-    source.poll_once(&mut store, &tx).unwrap();
-    assert_eq!(store.worker_progress(None).unwrap(), before);
-    assert!(rx.try_recv().is_err(), "replaying a wait is not progress");
-    clock.0.set(1_000_000);
-    c.look_due().unwrap();
-    while c.drive_once().unwrap() {}
-    assert_eq!(
-        c.world().unwrap().nodes[0].run_failures,
-        0,
-        "claimed action survives after driving RunFailed"
-    );
-    assert!(
-        !c.snapshot()
-            .unwrap()
-            .rows
-            .iter()
-            .any(|r| r.table == "allowances" && r.value["stopping"] == true),
-        "claimed action never enters stop_stalled"
-    );
-    let attempt = config
-        .workers
-        .runs
-        .join(&encoded)
-        .join(format!("attempt-{:08}", before[0].attempt));
-    let claim: serde_json::Value =
-        serde_json::from_slice(&fs::read(attempt.join("claim.json")).unwrap()).unwrap();
-    assert_ne!(
-        claim["cancelled"], true,
-        "claimed action has no cancellation"
-    );
-    assert!(
-        !attempt.join("exit.json").exists(),
-        "claimed action has not been stopped"
-    );
-    waits::record(root.path(), "done");
-    c.look_now().unwrap();
-    clock.0.set(1_003_000);
-    c.look_due().unwrap();
-    assert!(c.drive_once().unwrap());
-    assert_eq!(c.world().unwrap().nodes[0].run_failures, 1);
-}
-
-/// #817 / Q43 (found by: live probe, PB #2819 action 125367eaf9f2 and PB #2821
-/// action 23a92572f19c): the maker declared a PrismaBuild wait whose action
-/// stayed CLAIMED with cleanup pending and a lease nobody renewed. Q43 counts a
-/// declared job as progress only while its own record shows it neither ended
-/// nor lost; a lease past PrismaBuild's own lease timeout is that record
-/// showing it lost. The stall allowance must then stop the run as an
-/// infrastructure failure, retry it, and raise the incident when the retry
-/// waits on the same wedged action. It must never hold the slot silently.
-fn stale_lease_wait_ends_bounded(settings: &tl3_config::Store) {
-    #[derive(Clone)]
-    struct Clock(std::rc::Rc<std::cell::Cell<u64>>);
-    impl tl3_controller::clock::Clock for Clock {
-        fn now(&self) -> std::time::SystemTime {
-            std::time::UNIX_EPOCH + Duration::from_millis(self.0.get())
-        }
-    }
-    let root = tempfile::tempdir().unwrap();
-    let config = config(settings, root.path(), "external-wait");
-    let mut store = Store::open(settings).unwrap();
-    materials(&mut store);
-    let supervisor = Supervisor::new(
-        &config,
-        &root.path().join("fakes"),
-        &mut crate::startup_ownership::ownership(),
-    )
-    .unwrap();
-    let mut source = supervisor.source();
-    let clock = Clock(std::rc::Rc::new(std::cell::Cell::new(1000)));
-    let mut registry = adapters::simulation(&root.path().join("fakes")).unwrap();
-    registry.register(tl3_controller::executor::Upstream::Workers, supervisor);
-    registry.register(
-        tl3_controller::executor::Upstream::PrismaBuild,
-        waits::adapter(root.path(), &mut crate::startup_ownership::ownership()),
-    );
-    let mut c = Controller::open_with_clock(
-        Store::open(settings).unwrap(),
-        registry,
-        Bootstrap::from_config(&config).unwrap(),
-        clock.clone(),
-    )
-    .unwrap();
-    let mut allowances = config.allowances.clone();
-    allowances.agent_worker.silence_secs = 1;
-    allowances.agent_worker.no_progress_secs = 3;
-    c.set_allowances(allowances);
-    let claimed = root.path().join("queue/claimed");
-    // The wedged record: CLAIMED, cleanup pending, its lease last renewed when
-    // 125367eaf9f2's was (2026-11-06T00:23:08Z), hours before any look.
-    waits::record(root.path(), "claimed");
-    fs::write(
-        claimed.join(format!("{}.lease", waits::key())),
-        json!({"schema": "prismaquant.prismabuild.pool_lease.v1", "action_key": waits::key(),
-            "heartbeat_unix": 1_793_924_588.0, "owner": "dl380g10:2297648:a107a95b",
-            "host": "dl380g10"})
-        .to_string(),
-    )
-    .unwrap();
-    // #2819's only contended-heartbeat stamp (11-05T23:22:10Z) is older than its
-    // lease, so PrismaBuild's effective heartbeat is still the stale lease.
-    let stamps = root
-        .path()
-        .join("queue/lease-heartbeats")
-        .join(waits::key());
-    fs::create_dir_all(&stamps).unwrap();
-    fs::write(
-        stamps.join(format!("{}.json", "c".repeat(64))),
-        json!({"action_key": waits::key(), "host": "dl380g10", "pid": 2297648,
-            "pid_start_ticks": 1, "heartbeat_unix": 1_793_920_930.0})
-        .to_string(),
-    )
-    .unwrap();
-    c.intake(labelled()).unwrap();
-    while c.drive_once().unwrap() {}
-    let (tx, _rx) = mpsc::channel();
-    for round in 1..=2u8 {
-        let run = store_worker_run(settings);
-        wait_for_signal(|| {
-            source.poll_once(&mut store, &tx).unwrap();
-            store
-                .worker_progress(None)
-                .unwrap()
-                .iter()
-                .any(|r| r.key == run.key && r.external_wait.is_some())
-        });
-        // Bind the action to this run's checkout, so only its lease can say lost.
-        let encoded: String = run.key.bytes().map(|b| format!("{b:02x}")).collect();
-        let record_path = claimed.join(format!("{}.json", waits::key()));
-        let mut record: serde_json::Value =
-            serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
-        record["checkout_snapshot"]["parent"] = json!(waits::bind(
-            root.path(),
-            &config.workers.runs.join(&encoded).join("worktree")
-        ));
-        record["container_cleanup_pending"] = json!({"attempts": 1618});
-        fs::write(&record_path, record.to_string()).unwrap();
-        c.look_now().unwrap();
-        clock.0.set(clock.0.get() + 3_000);
-        c.look_due().unwrap();
-        while c.drive_once().unwrap() {}
-        let node = c.world().unwrap().nodes[0];
-        // The kernel counts the first infrastructure failure, then on the second
-        // resets the count and raises the incident (Q7).
-        let ended = if round == 1 {
-            node.run_failures == 1 && node.run_incidents == 0
-        } else {
-            node.run_failures == 0 && node.run_incidents == 1 && node.waiting_incident
-        };
-        assert!(
-            ended,
-            "round {round}: a declared wait on a CLAIMED action with an expired lease \
-             held the run silently ({:?}, run failures {}, run incidents {})",
-            node.phase, node.run_failures, node.run_incidents
-        );
-    }
-    fs::write(root.path().join("entered.release"), "go").unwrap();
-}
-
 fn run_default() {
     let mut shard = scenario_shard::Shard::from_env();
     let mut fixture = Fixture(None);
@@ -3129,10 +2852,6 @@ fn run_default() {
         println!("test announced_quota_resumes_same_operation_without_failure ... ok");
         clock_stops_stalled_worker(&database.create("workers_stall"));
         println!("test fake_clock_stops_real_stalled_worker_before_retry ... ok");
-        external_wait_survives_restart(&database.create("workers_external_wait"));
-        println!("test external_wait_persists_across_source_and_controller_restart ... ok");
-        stale_lease_wait_ends_bounded(&database.create("workers_stale_lease"));
-        println!("test stale_lease_wait_ends_with_retry_then_incident ... ok");
         writer_prompt(&database.create("writer_prompt"));
         println!("test process_writer_sends_the_active_writer_prompt ... ok");
         missing_prompt_holds_launch(&database.create("missing_prompt"));

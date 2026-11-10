@@ -285,7 +285,7 @@ impl Controller {
                     state.external_wait = Some(wait.clone());
                     state.wait_ended = false;
                 }
-                let record = if matches!(wait.upstream.as_str(), "prismabuild" | "flux") {
+                let record = if wait.upstream == "flux" {
                     self.adapters
                         .get(Upstream::PrismaBuild)?
                         .wait_record(&wait.key, &checkout)
@@ -870,7 +870,7 @@ pub(crate) fn incident_summary(
         {
             "TL3's publication validation"
         }
-        _ if signature.class == crate::adapters::prismabuild::HARNESS => "TL3's check harness",
+        _ if signature.class == crate::checks::HARNESS => "TL3's check harness",
         Upstream::Workers => "the agent worker",
         Upstream::Worktrees => "the Git worktree",
         Upstream::PrismaBuild => "PrismaBuild",

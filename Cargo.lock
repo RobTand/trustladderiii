@@ -3052,7 +3052,6 @@ dependencies = [
  "tl3-github",
  "tl3-harness-core",
  "tl3-kernel",
- "tl3-prismabuild",
  "tl3-store",
  "tl3-worktrees",
  "tokio",
@@ -3120,20 +3119,6 @@ dependencies = [
  "serde_json",
  "tl3-contracts",
  "tl3-harness-core",
-]
-
-[[package]]
-name = "tl3-prismabuild"
-version = "0.1.0"
-dependencies = [
- "reqwest 0.12.28",
- "rustix",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "wiremock",
 ]
 
 [[package]]

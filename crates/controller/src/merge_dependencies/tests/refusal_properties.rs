@@ -597,7 +597,7 @@ fn observation_inventory(
         .unwrap()
         .key
         .clone();
-    let run = crate::adapters::prismabuild::CheckRun {
+    let run = crate::checks::CheckRun {
         repository: repo.root.path().into(),
         base_sha: tl3_worktrees::CommitId::new(&sha).unwrap(),
         reviewed_sha: None,
@@ -821,7 +821,7 @@ fn activate_handler(c: &mut Controller, repo: &Repo, case: InputCase) {
     if case == InputCase::WorktreePrepared {
         world.nodes[0].adopted = true;
         world.nodes[0].head = Some(head);
-        let check_run = crate::adapters::prismabuild::CheckRun {
+        let check_run = crate::checks::CheckRun {
             repository: repo.root.path().into(),
             base_sha: tl3_worktrees::CommitId::new(&repo.head).unwrap(),
             reviewed_sha: None,

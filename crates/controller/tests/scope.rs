@@ -181,7 +181,7 @@ fn scope_leaf_trims_before_checks_and_survives_restart_into_closing_summary() {
         registry.register(
             Upstream::PrismaBuild,
             Capture {
-                inner: Box::new(adapters::prismabuild::Fake::new(&root.path().join("fakes"))),
+                inner: Box::new(adapters::flux_checks::Fake::new(&root.path().join("fakes"))),
                 making: making.clone(),
                 summary: summary.clone(),
             },

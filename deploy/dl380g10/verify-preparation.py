@@ -14,7 +14,7 @@ for attempt in range(2):
     subprocess.run(["bash", str(here / "prepare.sh"), *sys.argv[1:]], check=True)
     after = tomllib.loads(config.read_text())
     assert after["models"] == before["models"], "preparation clobbered operator model settings"
-    assert after["prismabuild"] == before["prismabuild"], "preparation clobbered harness settings"
+    assert after["flux"] == before["flux"], "preparation clobbered harness settings"
     assert not (config.parent / "production-ready").exists(), "production gate opened"
     print(f"Preparation {attempt + 1}: model names, efforts, budgets and harness image preserved; gate closed", flush=True)
 subprocess.run([str(home / ".local/share/tl3/bin/tl3-deploy"), "validate", str(config)], check=True)

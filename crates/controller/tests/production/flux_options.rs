@@ -3,12 +3,30 @@ use tl3_controller::{Ownership, run_backend::Options};
 use tl3_store::Store;
 
 pub(super) fn flux(root: &Path) -> tl3_config::Flux {
+    let instance_file = root.join("INSTANCE");
+    let resolver = root.join("flux-uri.sh");
+    if !instance_file.exists() {
+        fs::write(&instance_file, "local:///fixture\n").unwrap();
+    }
+    if !resolver.exists() {
+        fs::write(
+            &resolver,
+            "#!/bin/sh\nexec cat \"$(dirname \"$0\")/INSTANCE\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(&resolver, fs::Permissions::from_mode(0o500)).unwrap();
+    }
+    let cli = root.join("mock-flux-cli");
+    if !cli.exists() {
+        fs::write(&cli, "#!/bin/sh\nexit 97\n").unwrap();
+        fs::set_permissions(&cli, fs::Permissions::from_mode(0o500)).unwrap();
+    }
     tl3_config::Flux {
         activation: None,
-        instance_file: "/mnt/shared/flux-migration/INSTANCE".into(),
+        instance_file,
 
-        executable: "/opt/flux/bin/flux".into(),
-        backend_cli: "/opt/tl3/bin/tl3-run-backend".into(),
+        executable: cli.clone(),
+        backend_cli: cli,
         container_mode: tl3_config::ContainerMode::OwnScope,
         runtime_bundles: vec![
             format!(
@@ -18,13 +36,13 @@ pub(super) fn flux(root: &Path) -> tl3_config::Flux {
             .into(),
         ],
         environment: BTreeMap::from([
-            ("PATH".into(), "/opt/flux/bin:/usr/bin:/bin".into()),
-            ("HOME".into(), "/home/rob".into()),
-            ("XDG_RUNTIME_DIR".into(), "/run/user/1000".into()),
+            ("PATH".into(), format!("{}:/usr/bin:/bin", root.display())),
+            ("HOME".into(), root.to_str().unwrap().into()),
+            ("XDG_RUNTIME_DIR".into(), root.to_str().unwrap().into()),
         ]),
         staging_root: root.join("inputs"),
         output_root: root.join("outputs"),
-        container_image: format!("dl380g10:5000/tl3/harness@sha256:{}", "a".repeat(64)),
+        container_image: format!("fixture.invalid/tl3/harness@sha256:{}", "a".repeat(64)),
     }
 }
 
@@ -48,6 +66,63 @@ fn bootstrap_preserves_uri_generation_and_explicit_environment() {
     assert!(options.arguments.is_empty());
     let expected = config.environment.clone();
     assert_eq!(options.environment, expected);
+    assert_eq!(options.resolved_uri().unwrap(), "local:///fixture");
+}
+
+#[test]
+fn fixture_resolver_preserves_product_uri_validation() {
+    let root = tempfile::tempdir().unwrap();
+    let options = production::flux_options(&flux(root.path()));
+    for uri in [
+        "local:///fixture",
+        "local:///fixture\n",
+        "local:///fixture-1/a_b.c\n",
+    ] {
+        fs::write(&options.instance_file, uri).unwrap();
+        assert_eq!(options.resolved_uri().unwrap(), uri.trim_end_matches('\n'));
+    }
+    for output in [
+        b"".as_slice(),
+        b"local://relative",
+        b"local:///",
+        b"local:///fixture/",
+        b"local:///fixture//socket",
+        b"local:///fixture/./socket",
+        b"local:///fixture/../socket",
+        b"local:///fixture socket",
+        b"local:///fixture\n\n",
+        b"ssh:///fixture",
+        b"\xff",
+    ] {
+        fs::write(&options.instance_file, output).unwrap();
+        let error = options.resolved_uri().unwrap_err();
+        assert!(matches!(
+            error.code,
+            tl3_controller::run_backend::ErrorCode::InvalidRequest
+        ));
+        assert_eq!(error.message, "invalid runtime Flux URI; value withheld");
+    }
+    let maximum = format!("local:///{}", "a".repeat(4087));
+    fs::write(&options.instance_file, &maximum).unwrap();
+    assert_eq!(options.resolved_uri().unwrap(), maximum);
+    let reopened = production::flux_options(&flux(root.path()));
+    assert_eq!(reopened.resolved_uri().unwrap(), maximum);
+    fs::write(&options.instance_file, vec![b'a'; 4097]).unwrap();
+    assert_eq!(
+        options.resolved_uri().unwrap_err().message,
+        "runtime Flux URI resolver refused; value withheld"
+    );
+    let resolver = options.instance_file.with_file_name("flux-uri.sh");
+    fs::set_permissions(&resolver, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::write(
+        &resolver,
+        "#!/bin/sh\nprintf 'local:///fixture\\n'\nexit 1\n",
+    )
+    .unwrap();
+    assert_eq!(
+        options.resolved_uri().unwrap_err().message,
+        "runtime Flux URI resolver refused; value withheld"
+    );
 }
 
 /// #785 / FX: access settings are private, durable, and fenced by the writer claim.
@@ -104,14 +179,25 @@ fn bootstrap_publication_is_private_and_refuses_a_lost_claim() {
     std::os::unix::fs::symlink(&outside, &linked).unwrap();
     let mut changed = config.clone();
     changed.output_root = linked;
-    assert!(production::provision_flux_options(&changed, &mut ownership).is_err());
+    assert_eq!(
+        production::provision_flux_options(&changed, &mut ownership)
+            .unwrap_err()
+            .to_string(),
+        "Flux bootstrap directories must be real directories"
+    );
     assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
 
     startup::terminate_claim(&settings);
     let successor = Ownership::claim(Store::open(&settings).unwrap()).unwrap();
     changed.output_root = config.output_root;
-    changed.instance_file = "/unrelated/INSTANCE".into();
-    assert!(production::provision_flux_options(&changed, &mut ownership).is_err());
+    changed.instance_file = root.path().join("replacement-INSTANCE");
+    fs::write(&changed.instance_file, "local:///replacement\n").unwrap();
+    assert_eq!(
+        production::provision_flux_options(&changed, &mut ownership)
+            .unwrap_err()
+            .to_string(),
+        "controller ownership session was lost; abort startup"
+    );
     assert_eq!(fs::read(&options.bootstrap.config).unwrap(), bytes);
     drop((successor, ownership));
     database.stop();

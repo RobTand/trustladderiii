@@ -177,13 +177,7 @@ prints its diff, runs the relevant model, and requires the expected assertion
 or Loom deadlock. It restores the source afterward. `--diff` only prints the
 patch. Mutants cover input loss, wake before durable receipt, consumption before
 application, missing owner drain, a lost gap, stop loss and reordering, relaxed
-stop atomics, progress replay, progress without persistence, wait registration,
-the awaited key, and reset or outage rereads.
-Run mutations through PrismaBuild, just like the green suite.
-
-`crates/prismabuild/tools/lookup_mutants.py` moves the capture scan just before
-the withdrawn read. It requires the finish-gap regression to fail after the
-done read, then restores the source.
+stop atomics, progress replay and progress without persistence.
 
 ## Verification
 

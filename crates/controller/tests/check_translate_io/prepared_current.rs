@@ -34,7 +34,7 @@ impl Shell<'_> {
                 let mut run = if let Some(materials) = self.store.worker_materials(&id)?
                     && let Some(run) = materials.get("check_run")
                 {
-                    decode_stored::<adapters::prismabuild::CheckRun>(run.clone())?
+                    decode_stored::<checks::CheckRun>(run.clone())?
                 } else {
                     let brief = self
                         .store
@@ -45,7 +45,7 @@ impl Shell<'_> {
                         .worker_document(&id, "plans")?
                         .ok_or(Error::Invalid("adoption needs its accepted plan"))?;
                     let inputs = production::maker_inputs(&brief, &plan)?;
-                    adapters::prismabuild::CheckRun {
+                    checks::CheckRun {
                         repository: repository.clone(),
                         base_sha: tl3_worktrees::CommitId::new(&base_sha)?,
                         reviewed_sha: None,

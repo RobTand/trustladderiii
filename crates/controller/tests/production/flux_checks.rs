@@ -4,7 +4,7 @@ use std::time::Duration;
 use tl3_controller::{
     Ownership,
     adapters::flux_checks::{Adapter, Preparation, PreparedCheck},
-    adapters::prismabuild::CheckRun,
+    checks::CheckRun,
     cli::Input,
     executor::{Delivery, Executor, Output, Reconciliation},
     run_backend::{self as api, *},
@@ -380,6 +380,45 @@ fn setup(
     (adapter, backend, attached, options)
 }
 
+/// #785 review: a disconnected capability must not create or recover the check journal.
+#[test]
+fn lost_claim_prevents_flux_checks_journal_setup() {
+    let root = tempfile::tempdir().unwrap();
+    let mut database = support::Database::start();
+    let settings = database.create("lost_flux_checks_claim");
+    let mut ownership = Ownership::claim(Store::open(&settings).unwrap()).unwrap();
+    super::startup::terminate_claim(&settings);
+    let successor = Ownership::claim(Store::open(&settings).unwrap()).unwrap();
+    let (entered, _attached) = mpsc::channel();
+    let backend = Arc::new(Backend {
+        state: Mutex::new(State::default()),
+        changed: Condvar::new(),
+        attached: entered,
+        records: root.path().join("journal"),
+    });
+    let result = Adapter::new(
+        backend.clone(),
+        production::flux_options(&super::flux_options::flux(root.path())),
+        &backend.records,
+        Staging,
+        &mut ownership,
+    );
+    assert_eq!(
+        result
+            .as_ref()
+            .err()
+            .expect("lost ownership must abort startup")
+            .to_string(),
+        "controller ownership session was lost; abort startup"
+    );
+    assert!(
+        !backend.records.exists(),
+        "the check journal was created after claim loss"
+    );
+    drop((result, successor, ownership));
+    database.stop();
+}
+
 /// FX / #850: a busy eligible host stays healthy; unknown and incompatible cannot clear an incident.
 #[test]
 fn flux_checks_probe_uses_submission_placement_and_keeps_busy_healthy() {
@@ -415,7 +454,10 @@ fn flux_checks_restart_attaches_retained_intent_without_resubmission() {
     let (mut adapter, backend, attached, mut options) = setup(root.path(), &mut ownership);
     backend.state.lock().unwrap().unknown_submit = true;
     let d = delivery();
-    assert!(adapter.execute(&d).is_err());
+    assert_eq!(
+        adapter.execute(&d).unwrap_err().to_string(),
+        "check acceptance remains unknown; retained for attach"
+    );
     drop(adapter);
     options
         .environment
@@ -436,14 +478,23 @@ fn flux_checks_restart_attaches_retained_intent_without_resubmission() {
         adapter.reconcile(&d).unwrap(),
         Reconciliation::Pending
     ));
-    assert!(adapter.execute(&d).is_err());
+    assert_eq!(
+        adapter.execute(&d).unwrap_err().to_string(),
+        "check acceptance remains unknown; reattach without resubmission"
+    );
     assert_eq!(backend.state.lock().unwrap().submits, 1);
     let mut changed = d.clone();
     changed.head_sha = Some("e".repeat(40));
-    assert!(adapter.execute(&changed).is_err());
+    assert_eq!(
+        adapter.execute(&changed).unwrap_err().to_string(),
+        "check effect changed its immutable identity"
+    );
     let mut newer = d.clone();
     newer.epoch = 2;
-    assert!(adapter.execute(&newer).is_err());
+    assert_eq!(
+        adapter.execute(&newer).unwrap_err().to_string(),
+        "check acceptance remains unknown; reattach without resubmission"
+    );
     assert!(
         adapter
             .execute(&d)
@@ -479,7 +530,10 @@ fn flux_checks_withdraw_waits_for_terminal_and_replays_durable_completion() {
         kind: EffectKind::WithdrawJob,
         head: None,
     };
-    assert!(adapter.execute(&withdrawal).is_err());
+    assert_eq!(
+        adapter.execute(&withdrawal).unwrap_err().to_string(),
+        "withdrawal awaits terminal evidence, not cancellation acknowledgement"
+    );
     assert!(matches!(
         adapter.reconcile(&withdrawal).unwrap(),
         Reconciliation::Pending
@@ -599,8 +653,8 @@ fn flux_checks_controller_incident_clearance_allows_fresh_dispatch() {
     )
     .unwrap();
     let mut allowances = tl3_config::Allowances::default();
-    allowances.prismabuild.silence_secs = 1;
-    allowances.prismabuild.no_progress_secs = 3;
+    allowances.checks.silence_secs = 1;
+    allowances.checks.no_progress_secs = 3;
     c.set_allowances(allowances);
     c.intake(LabelledIssue {
         delivery: "flux-incident-intake".into(),
@@ -734,16 +788,262 @@ fn flux_checks_historical_progress_is_journaled_without_fabricating_liveness() {
     assert!(matches!(adapter.look(&d).unwrap(), Look::Alive { .. }));
     backend.state.lock().unwrap().phase = Some(NativePhase::Unknown);
     assert!(matches!(adapter.look(&d).unwrap(), Look::Pending));
-    assert!(
+    assert_eq!(
         adapter
             .wait_record("foreign-owner", Path::new("/foreign-checkout"))
-            .is_err()
+            .err()
+            .expect("worker wait routing must refuse")
+            .to_string(),
+        "Flux worker wait routing is not registered"
     );
     running.stop().unwrap();
     running.join().unwrap();
     assert_eq!(backend.state.lock().unwrap().cancels, 0);
     drop((adapter, ownership));
     database.stop();
+}
+
+fn with_checks_adapter(case: impl FnOnce(&mut Adapter, &Arc<Backend>, &Options)) {
+    let root = tempfile::tempdir().unwrap();
+    let mut database = support::Database::start();
+    let mut ownership =
+        Ownership::claim(Store::open(&database.create("flux_retired_pb_contract")).unwrap()).unwrap();
+    let (mut adapter, backend, _attached, options) = setup(root.path(), &mut ownership);
+    case(&mut adapter, &backend, &options);
+    drop((adapter, ownership));
+    database.stop();
+}
+
+fn withdrawal(generation: Option<u64>) -> Delivery {
+    let mut d = delivery();
+    d.key = "effect:0:6".into();
+    d.job_generation = generation;
+    d.output = Output::Effect {
+        node: NodeId(0),
+        seq: 6,
+        kind: EffectKind::WithdrawJob,
+        head: None,
+    };
+    d
+}
+
+#[test]
+fn flux_checks_closed_and_superseded_requests_retain_every_journal() {
+    const RETENTION: &str = "Flux adapter removed a journal. Retired verus_prismabuild obligations 8 (retire) and 9 (superseded) now apply: a retirement change must prove (8) a journal is retired only when closed and unreferenced after effects and watches settle, and (9) durable completion supersedes only strictly older generations (old < new). Add those tests, then update this guard deliberately. See tl3-flux/x5-pb-removal/OBLIGATION-MAP.md.";
+
+    fn retained(root: &Path, paths: &mut Vec<std::path::PathBuf>) {
+        paths.push(root.to_owned());
+        if root.is_dir() {
+            for entry in fs::read_dir(root).unwrap() {
+                retained(&entry.unwrap().path(), paths);
+            }
+        }
+    }
+
+    let root = tempfile::tempdir().unwrap();
+    let mut database = support::Database::start();
+    let mut ownership =
+        Ownership::claim(Store::open(&database.create("flux_retention")).unwrap()).unwrap();
+    let (mut adapter, backend, attached, options) = setup(root.path(), &mut ownership);
+    let (sender, inputs) = mpsc::channel();
+    let running = adapter.source().unwrap().spawn(sender);
+    let mut paths = Vec::new();
+    let old = delivery();
+    let mut new = old.clone();
+    new.key = "effect:0:7".into();
+    new.generation = old.generation + 1;
+    new.job_generation = Some(new.generation);
+    new.output = Output::Effect {
+        node: NodeId(0),
+        seq: 7,
+        kind: EffectKind::SubmitChecks,
+        head: None,
+    };
+    assert!(old.generation < new.generation);
+    for d in [&old, &new] {
+        adapter.execute(d).unwrap();
+        let owner = attached.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(owner.correlation, durable::digest(d.key.as_bytes()));
+        retained(&backend.records, &mut paths);
+        // This fixture supplies a trusted stopped terminal, including settled runtime
+        // cleanup. No controller effect references are stored for these deliveries.
+        backend.terminal(Ending::Cancelled);
+        let input = inputs.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(paths.iter().all(|path| path.exists()), "{RETENTION}");
+        let Input::Completion { key, .. } = input else {
+            panic!("expected a durable completion");
+        };
+        assert_eq!(key, d.key);
+        assert!(matches!(adapter.reconcile(d).unwrap(), Reconciliation::Found(_)));
+        drop(owner);
+    }
+    running.stop().unwrap();
+    running.join().unwrap();
+    drop(adapter);
+    assert!(paths.iter().all(|path| path.exists()), "{RETENTION}");
+
+    let mut restored = Adapter::new(
+        backend.clone(),
+        options,
+        &backend.records,
+        Staging,
+        &mut ownership,
+    )
+    .unwrap();
+    for d in [&old, &new] {
+        assert!(matches!(restored.reconcile(d).unwrap(), Reconciliation::Found(_)));
+    }
+    drop((restored, ownership));
+    assert!(paths.iter().all(|path| path.exists()), "{RETENTION}");
+    assert_eq!(backend.state.lock().unwrap().submits, 2);
+    database.stop();
+}
+
+#[test]
+fn flux_checks_unbound_withdrawal_starts_no_work() {
+    with_checks_adapter(|adapter, backend, _| {
+        assert!(adapter.execute(&withdrawal(Some(4))).is_ok());
+        let state = backend.state.lock().unwrap();
+        assert_eq!((state.submits, state.cancels), (0, 0));
+    });
+}
+
+#[test]
+fn flux_checks_stale_epoch_is_refused_before_submit() {
+    with_checks_adapter(|adapter, backend, _| {
+        let mut newest = delivery();
+        newest.epoch = 2;
+        adapter.execute(&newest).unwrap();
+        let mut stale = delivery();
+        stale.key = "effect:0:7".into();
+        assert_eq!(
+            adapter.execute(&stale).unwrap_err().to_string(),
+            "check adapter refused an older epoch"
+        );
+        assert_eq!(backend.state.lock().unwrap().submits, 1);
+    });
+}
+
+#[test]
+fn flux_checks_bound_plan_is_never_replaced() {
+    with_checks_adapter(|adapter, backend, _| {
+        let d = delivery();
+        adapter.execute(&d).unwrap();
+        let path = backend.records.join(format!("{}.job", durable::digest(d.key.as_bytes())));
+        let before = fs::read(&path).unwrap();
+        let mut changed = d.clone();
+        changed.checks.as_mut().unwrap().base_sha =
+            tl3_worktrees::CommitId::new("e".repeat(40)).unwrap();
+        assert_eq!(
+            adapter.execute(&changed).unwrap_err().to_string(),
+            "check effect changed its immutable identity"
+        );
+        assert_eq!(fs::read(path).unwrap(), before);
+        assert_eq!(backend.state.lock().unwrap().submits, 1);
+    });
+}
+
+#[test]
+fn flux_checks_unknown_submission_never_confirms() {
+    with_checks_adapter(|adapter, backend, _| {
+        backend.state.lock().unwrap().unknown_submit = true;
+        let d = delivery();
+        assert_eq!(
+            adapter.execute(&d).unwrap_err().to_string(),
+            "check acceptance remains unknown; retained for attach"
+        );
+        assert!(matches!(adapter.reconcile(&d).unwrap(), Reconciliation::Pending));
+        assert_eq!(
+            adapter.execute(&d).unwrap_err().to_string(),
+            "check acceptance remains unknown; reattach without resubmission"
+        );
+        assert_eq!(backend.state.lock().unwrap().submits, 1);
+    });
+}
+
+#[test]
+fn flux_checks_malformed_journal_is_never_absent() {
+    with_checks_adapter(|adapter, backend, _| {
+        let d = delivery();
+        let path = backend.records.join(format!("{}.job", durable::digest(d.key.as_bytes())));
+        fs::write(&path, b"{truncated").unwrap();
+        for error in [
+            adapter
+                .reconcile(&d)
+                .err()
+                .expect("malformed journal must refuse"),
+            adapter.execute(&d).unwrap_err(),
+        ] {
+            assert!(matches!(error, tl3_controller::Error::Json(_)), "{error}");
+        }
+        assert_eq!(backend.state.lock().unwrap().submits, 0);
+        assert_eq!(fs::read(path).unwrap(), b"{truncated");
+    });
+}
+
+#[test]
+fn flux_checks_failed_terminal_never_passes() {
+    use tl3_controller::executor::{Look, Observation};
+    with_checks_adapter(|adapter, backend, _| {
+        let d = delivery();
+        adapter.execute(&d).unwrap();
+        backend.terminal(Ending::Failed);
+        let Look::Found(completion) = adapter.look(&d).unwrap() else {
+            panic!("failed terminal must produce a durable infrastructure completion");
+        };
+        assert!(completion.observations.iter().any(|observation| matches!(
+            observation, Observation::Checks { report: false, pass: false, .. }
+        )));
+        assert!(!completion.observations.iter().any(|observation| matches!(
+            observation, Observation::Checks { pass: true, .. }
+        )));
+    });
+}
+
+#[test]
+fn flux_checks_success_without_report_never_passes() {
+    with_checks_adapter(|adapter, backend, _| {
+        let d = delivery();
+        adapter.execute(&d).unwrap();
+        backend.terminal(Ending::Passed);
+        assert_eq!(
+            adapter
+                .look(&d)
+                .err()
+                .expect("missing semantic payload must refuse")
+                .to_string(),
+            "upstream adapter failed: InvalidRequest: no semantic payload in infrastructure fixtures"
+        );
+        assert!(matches!(adapter.reconcile(&d).unwrap(), Reconciliation::Pending));
+        assert_eq!(backend.state.lock().unwrap().submits, 1);
+    });
+}
+
+#[test]
+fn flux_checks_withdrawal_targets_only_the_exact_generation() {
+    with_checks_adapter(|adapter, backend, _| {
+        adapter.execute(&delivery()).unwrap();
+        let mut foreign = withdrawal(Some(4));
+        foreign.key = "effect:1:6".into();
+        if let Output::Effect { node, .. } = &mut foreign.output {
+            *node = NodeId(1);
+        }
+        assert!(adapter.execute(&foreign).is_ok());
+        assert_eq!(backend.state.lock().unwrap().cancels, 0);
+        assert!(adapter.execute(&withdrawal(Some(3))).is_ok());
+        assert_eq!(backend.state.lock().unwrap().cancels, 0);
+        assert_eq!(
+            adapter.execute(&withdrawal(None)).unwrap_err().to_string(),
+            "withdrawal requires an exact job generation"
+        );
+        assert_eq!(backend.state.lock().unwrap().cancels, 0);
+        assert_eq!(
+            adapter.execute(&withdrawal(Some(4))).unwrap_err().to_string(),
+            "withdrawal awaits terminal evidence, not cancellation acknowledgement"
+        );
+        assert!(backend.state.lock().unwrap().cancels > 0);
+        assert_eq!(backend.state.lock().unwrap().submits, 1);
+    });
 }
 
 #[test]

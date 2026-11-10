@@ -36,7 +36,7 @@ macro_rules! worker_groups {
 
 worker_groups! {
     Router: 2,
-    Waits: 7,
+    Waits: 5,
     IngestMaterials: 6,
     IngestAudit: 2,
     LaunchKills: 2,
@@ -87,7 +87,6 @@ worker_groups! {
     MakerAdoptedFix: 1,
     MakerReproducingFix: 1,
     MakerReproducingRebase: 1,
-    MakerDeclaredWait: 1,
     MakerReviewFeedback: 1,
     MakerLegacySession: 1,
     MakerOutsidePaths: 1,

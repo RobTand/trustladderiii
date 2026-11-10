@@ -111,7 +111,7 @@ fn pinned_real_arms_and_helper_closures() {
         (
             "selected",
             include_str!("selected_helpers.rs"),
-            include_str!("../../src/adapters/prismabuild/results.rs"),
+            include_str!("../../src/checks/results.rs"),
         ),
         (
             "clipped",

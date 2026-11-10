@@ -132,8 +132,9 @@ def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: P
             request = {**(request if isinstance(request, dict) else {'tests': tests}), 'proof_subjects': proof_subjects}
         selection.write(json.dumps(request).encode())
         selection.seek(0)
+        process = Supervised(container_command(tree, container, tests), selection, tests)
         try:
-            with Supervised(container_command(tree, container, tests), selection, tests) as process:
+            with process:
                 for line in process.records():
                     retained_bytes += len(line)
                     if len(line) > line_limit or len(records) > record_limit or retained_bytes > MAX_REPORT_BYTES:

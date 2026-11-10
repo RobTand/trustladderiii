@@ -95,9 +95,7 @@ mod current {
 pub(crate) fn validate_plan_size(plan: &[Check]) -> Result<()> {
     const {
         assert!(MAX_REPORT_LINE_BYTES as u64 == tl3_harness_core::limits::MAX_REPORT_LINE_BYTES);
-        assert!(
-            super::results::MAX_RESULT_BYTES as u64 == tl3_harness_core::limits::MAX_RESULT_BYTES
-        );
+        assert!(results::MAX_RESULT_BYTES as u64 == tl3_harness_core::limits::MAX_RESULT_BYTES);
         assert!(
             (65536
                 + crate::findings::MAX_FAILED_TESTS * crate::findings::MAX_MESSAGE_CHARS * 12
@@ -190,7 +188,7 @@ fn ascii_json_bytes(value: &serde_json::Value) -> Result<usize> {
 
 #[test]
 fn compiled_extraction_is_the_production_validator_verbatim() {
-    let source = include_str!("../src/adapters/prismabuild/checks.rs");
+    let source = include_str!("../src/checks.rs");
     let production = source
         .split_once("pub(crate) fn validate_plan_size(")
         .unwrap()

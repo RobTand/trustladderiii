@@ -106,7 +106,6 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
     config.store = settings.clone();
     config.workers.python = python.into();
     config.workers.runs = root.path().join("runs");
-    support::select_flux(&mut config);
     config.workers.command = vec![
         format!(
             "{}/tests/publishing/reviewer.py",
@@ -179,7 +178,7 @@ pub fn run(settings: &tl3_config::Store, python: &Path, mode: &str) {
         Upstream::GitHub,
         server.adapter(&root.path().join("github"), 0),
     );
-    registry.register(Upstream::PrismaBuild, pb(root.path()));
+    registry.register(Upstream::PrismaBuild, checks(root.path()));
     if fixing {
         fs::write(root.path().join("queue/mode"), "check_fail").unwrap();
     }

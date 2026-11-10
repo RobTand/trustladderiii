@@ -8,7 +8,7 @@ mod worktree_fixture;
 
 use std::fs;
 use tl3_controller::{
-    adapters::prismabuild::{Check, CheckRun, Kind},
+    checks::{Check, CheckRun, Kind},
     executor::{Executor, Observation},
 };
 use tl3_kernel::EffectKind;

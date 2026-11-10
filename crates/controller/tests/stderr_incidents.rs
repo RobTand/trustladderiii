@@ -14,7 +14,7 @@ use tl3_store::Store;
 
 const KEY: &str = "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3";
 
-struct StderrChecks(adapters::prismabuild::Fake, Value);
+struct StderrChecks(adapters::flux_checks::Fake, Value);
 impl Executor for StderrChecks {
     fn execute(&mut self, d: &Delivery) -> tl3_controller::Result<Completion> {
         if matches!(
@@ -131,7 +131,7 @@ print(json.dumps(records))
         let mut registry = adapters::simulation(root.path()).unwrap();
         registry.register(
             Upstream::PrismaBuild,
-            StderrChecks(adapters::prismabuild::Fake::new(root.path()), diagnostic),
+            StderrChecks(adapters::flux_checks::Fake::new(root.path()), diagnostic),
         );
         let mut c = Controller::open(
             Store::open(&db.create(&format!("stderr_incident_{index}"))).unwrap(),

@@ -953,6 +953,16 @@ class DeployTests(unittest.TestCase):
         config.write_text(text)
         return config, tomllib.loads(text)
 
+    def test_generated_config_selects_only_flux(self):
+        config, data = self.config()
+        self.assertEqual(data["execution_backend"], "flux")
+        self.assertNotIn("prismabuild", data)
+        self.assertNotIn("prismabuild", data["allowances"])
+        self.assertIn("checks", data["allowances"])
+        self.assertEqual(data["flux"]["container_image"], "sha256:" + "a" * 64)
+        result = subprocess.run([self.helper, "parse", config], capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+
     def test_generated_config_loads_and_status_needs_no_model(self):
         config, data = self.config()
         self.assertEqual(data["github"]["repos"], [{"owner": "RobTand", "name": "tl3-sandbox", "installation_id": 987}])

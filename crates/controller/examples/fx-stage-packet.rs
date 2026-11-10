@@ -195,7 +195,6 @@ fn prepare(
     }
     let template = source.join("crates/config/example.toml");
     let mut config = tl3_config::Config::parse(&fs::read_to_string(&template)?)?;
-    config.execution_backend = tl3_config::ExecutionBackend::Flux;
     config.worktrees_root = root.join("worktrees");
     config.workers.runs = root.join("worker-runs");
     config.store.host = root
@@ -214,7 +213,7 @@ fn prepare(
     repo.test_demand = Some(tl3_config::TestDemand::default());
     repo.selected_tests = None;
     repo.always_tests.clear();
-    config.flux = Some(tl3_config::Flux {
+    config.flux = tl3_config::Flux {
         // Canary packets precede the pin they qualify; Stager refuses a record here.
         activation: None,
         instance_file: options.instance_file.clone(),
@@ -227,7 +226,7 @@ fn prepare(
         staging_root: staging,
         output_root: "/mnt/shared/flux-out/tl3".into(),
         container_image: image.reference.clone(),
-    });
+    };
     config.validate()?; // Syntax only. No store, secrets, scheduler or container access.
     let delivery = fixture(&root.join("served"), kind)?;
     write(&root.join("delivery.json"), &delivery)?;
@@ -397,7 +396,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "requires admitted PrismaBuild action and FX_FIXTURE_EVIDENCE; run with --include-ignored"]
+    #[ignore = "requires admitted Flux job and FX_FIXTURE_EVIDENCE; run with --include-ignored"]
     fn served_fixture_verdicts_and_wait() {
         assert_eq!(FixtureKind::parse("success").unwrap(), FixtureKind::Success);
         assert_eq!(FixtureKind::parse("cancel").unwrap(), FixtureKind::Cancel);
@@ -684,7 +683,7 @@ mod tests {
         let mut config =
             tl3_config::Config::parse(include_str!("../../config/example.toml")).unwrap();
         config.execution_backend = tl3_config::ExecutionBackend::Flux;
-        config.flux = Some(tl3_config::Flux {
+        config.flux = tl3_config::Flux {
             activation,
             instance_file: "/mnt/shared/flux-migration/INSTANCE".into(),
 
@@ -696,7 +695,7 @@ mod tests {
             staging_root: "/mnt/shared/flux-out/fx2-inputs/unused".into(),
             output_root: "/mnt/shared/flux-out/tl3".into(),
             container_image: format!("fixture.invalid/sandbox@sha256:{}", "a".repeat(64)),
-        });
+        };
         config
     }
 
@@ -727,17 +726,14 @@ mod tests {
         );
         assert_eq!(refusal(Stager::new(&configured)), "flux.activation.record");
         let mut mutable = flux_config(None);
-        mutable.flux.as_mut().unwrap().container_image = "fixture.invalid/sandbox:latest".into();
+        mutable.flux.container_image = "fixture.invalid/sandbox:latest".into();
         assert_eq!(
             refusal(Stager::for_canary_qualification(&mutable)),
             "flux.activation.image"
         );
-        let mut prismabuild = flux_config(None);
-        prismabuild.execution_backend = tl3_config::ExecutionBackend::PrismaBuild;
-        assert_eq!(
-            refusal(Stager::for_canary_qualification(&prismabuild)),
-            "Flux preparation requires explicit Flux selection"
-        );
+        let error = serde_json::from_value::<tl3_config::ExecutionBackend>(json!("prismabuild"))
+            .expect_err("the retired backend must be refused before staging");
+        assert!(error.to_string().contains("unknown variant `prismabuild`"));
     }
 
     #[test]

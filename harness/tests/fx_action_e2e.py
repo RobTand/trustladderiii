@@ -106,7 +106,7 @@ def main():
     staged.mkdir()
     trusted = staged / 'trusted/tl3_harness'
     shutil.copytree(source / 'harness/src/tl3_harness', trusted)
-    shutil.copyfile(source / 'crates/controller/src/adapters/prismabuild/action.py', staged / 'action.py')
+    shutil.copyfile(source / 'crates/controller/src/checks/action.py', staged / 'action.py')
     repo = root / 'served'
     repo.mkdir()
 

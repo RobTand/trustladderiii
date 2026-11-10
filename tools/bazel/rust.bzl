@@ -52,7 +52,6 @@ _SCENARIO_SHARDS = {
     "tl3-controller/github-flow": 50,
     "tl3-controller/github-notices": 32,
     "tl3-controller/publishing": 38,
-    "tl3-controller/prismabuild": 7,
     "tl3-controller/simulation": 16,
     "tl3-controller/workers": 32,
 }
@@ -146,8 +145,7 @@ _CONTROLLER_RUNTIME = {
     # The shared harness check-report vectors (#734) the typed contracts parse (#741).
     "test_test_contracts": ["//harness:project_files"],
     "test_test_hindsight": ["//workers/src:role_files"],
-    "test_test_prismabuild": ["//harness/src/tl3_harness", "//crates/prismabuild:sources"],
-    "test_test_publishing": ["//harness/src/tl3_harness", "//crates/prismabuild:sources"],
+    "test_test_publishing": ["//harness/src/tl3_harness"],
     "test_test_sandbox_gate": ["//deploy/sandbox:evidence"],
     "test_test_activation_qualification_absent": [
         ":BUILD.bazel",
@@ -158,11 +156,10 @@ _CONTROLLER_RUNTIME = {
         "//deploy/dl380g10:verify.sh",
     ] + ["//crates/%s:Cargo.toml" % crate for crate in [
         "config", "contracts", "controller-core", "delivery", "github", "harness-core",
-        "kernel", "plan-check", "prismabuild", "store", "verus-runner", "worktrees",
+        "kernel", "plan-check", "store", "verus-runner", "worktrees",
     ]],
     "test_test_workers": [
         "//harness/src/tl3_harness",
-        "//crates/prismabuild:sources",
         "//workers/tests:worker_process",
         "//workers/tools:scripts",
     ],
@@ -175,12 +172,9 @@ _CONTROLLER_TEST_SOURCES = {
     "tests/direct_merge.rs": ["tests/support/**"],
     "tests/input_resources.rs": ["tests/support/**"],
     "src/lib.rs": ["tests/worker_events_io/**", "tests/support/input_resource_world.rs", "tests/fail_fast/pb-2781.json", "tests/fixtures/dispatch_recovery_original.rs", "tests/fixtures/dispatch-recovery.proptest-regressions", "tests/fixtures/dispatch-conformance.proptest-regressions", "tests/fixtures/dispatch-conformance-regressions.json", "tests/fixtures/dispatch-restart-regressions.json"],
-    # CC-P: exact source replay and persistent differential schedules.
-    "tests/prismabuild_schedule/main.rs": ["tests/prismabuild_schedule/io.rs", "tests/prismabuild_schedule/reference.rs", "tests/prismabuild_schedule/extracted.rs", "tests/prismabuild_schedule/io_schedule-regressions.txt"],
     "tests/worker_checker.rs": ["tests/worker_checker/**"],
     "tests/approval_race.rs": ["tests/support/github.rs", "tests/support/controller_restart.rs"],
     "tests/budget_parity/main.rs": ["tests/budget_parity/*.py", "tests/budget_parity/*.txt"],
-    "tests/production.rs": ["tests/prismabuild_fixture/**"],
     "tests/stderr_incidents.rs": ["tests/redaction_support/**"],
     "tests/redaction_parity.rs": ["tests/redaction_support/**"],
     "tests/redaction_generated.rs": ["tests/redaction_support/**"],
@@ -192,10 +186,9 @@ _CONTROLLER_TEST_SOURCES = {
     "tests/core_defects.rs": ["tests/worktree_fixture/**", "tests/support/ownership.rs"],
     "tests/crash_safety.rs": ["tests/crash/**"],
     "tests/github.rs": ["tests/support/**", "tests/fixtures/decisions/**", "tests/fixtures/steering/**", "tests/worker_model.py", "tests/worker_replies.py", "tests/worker_transport.py"],
-    "tests/looks.rs": ["tests/fixtures/bell/**", "tests/fixtures/waits/**", "tests/worktree_fixture/**", "tests/support/ownership.rs"],
-    "tests/prismabuild.rs": ["tests/support/**", "tests/fixtures/bell/**", "tests/fixtures/pb.py", "tests/prismabuild_fixture/**"],
+    "tests/looks.rs": ["tests/worktree_fixture/**", "tests/support/ownership.rs"],
     "tests/publishing_drain.rs": ["tests/publishing/drain_deadline.rs"],
-    "tests/publishing.rs": ["tests/support/**", "tests/fixtures/pb.py", "tests/prismabuild_fixture/**", "tests/worktree_fixture/**"],
+    "tests/publishing.rs": ["tests/support/**", "tests/worktree_fixture/**"],
     "tests/reproducing_rebase.rs": ["tests/worktree_fixture/**", "tests/support/ownership.rs"],
     "tests/scenario_watchdog.rs": ["tests/support/scenario.rs"],
     "tests/scope.rs": ["tests/support/**", "tests/worktree_fixture/**"],
@@ -203,12 +196,9 @@ _CONTROLLER_TEST_SOURCES = {
     "tests/upgrade_replay.rs": ["tests/support/ownership.rs"],
     "tests/workers.rs": [
         "tests/support/**",
-        "tests/fixtures/pb.py",
-        "tests/fixtures/waits/**",
         "tests/fixtures/narrowing/**",
         "tests/fixtures/decisions/**",
         "tests/maker/**",
-        "tests/prismabuild_fixture/**",
         "tests/worker_model.py",
         "tests/worker_replies.py",
         "tests/worker_transport.py",
@@ -466,7 +456,7 @@ def _crate_test(kind, package, name, source, harness, options):
             allow_empty = True,
         )
         if name == "tl3_controller_loom":
-            sources = sources + native.glob(["tests/fixtures/waits/**", "tests/support/ownership.rs"])
+            sources = sources + native.glob(["tests/support/ownership.rs"])
         if kind == "example" and name == "fx-stage-packet":
             sources = sources + native.glob(["examples/fx_qualification/**/*.rs", "tools/fx_qualification/**/*.rs", "tools/generate_fx_qualification.rs"])
         native.filegroup(name = kind + "_sources_" + name, srcs = sources)
