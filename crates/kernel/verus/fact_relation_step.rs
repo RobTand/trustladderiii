@@ -21,7 +21,7 @@ pub(super) proof fn priority(before: World, after: World, i: int, priority: Prio
         after.dependencies@ == before.dependencies@,
         ob.len <= OUTBOX, oa == ob,
     ensures checking::accepted(after),
-        transition_safety::transition_safety(before, after,
+        !transition_safety::transition_safety(before, after,
             transition_safety::Transition::Apply(Event::Fact {
                 node: NodeId(i as u64), fact: Fact::Priority(priority) }),
             transition_safety::emitted(ob, oa)),
