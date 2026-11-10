@@ -243,7 +243,7 @@ pub(super) proof fn confirmed_resources_rows(b: Node, kind: EffectKind)
 
 pub(super) proof fn confirmed_step_node_rules(w: World, b: Node)
     requires retirement::node_rules(w, b), confirmed_step_ready(b), b.pos < u8::MAX,
-    ensures retirement::node_rules(w, Node { pos: (b.pos + 1) as u8, ..b }),
+    ensures !retirement::node_rules(w, Node { pos: (b.pos + 1) as u8, ..b }),
 {
     reveal(retirement::node_rules);
     match current_item(b) {
