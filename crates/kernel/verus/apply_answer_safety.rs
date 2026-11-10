@@ -2,7 +2,8 @@
 //! Design 3 audit check_design3.py sha256 0a29b5cd568e41b6c5177631b6f5a488ff7038a601ae6312f6bd9c162f789d67
 //! Design 3 audit k5_exec_compare.py sha256 407c83dc0a2df8cf3f102d3e6ee9d81b687adc481a15029c8d2ad770337120d1
 //! Design 3 audit k5_post_check.py sha256 d538b7df6aeacfb8c0584dc3e7e0178d4d24c8835af1f9628624e3c10b10f43a
-//! Arm split audit build_arm_split.py sha256 90c7ed790fb73ea7302cd480e69bea7cad61a89df0d2378a16037401316c04b2
+//! Arm split audit build_arm_split.py sha256 298066e49910bcff204149e0cfd9749e41f00badfd199e22adacd00082b5cd32
+//! F1 audit build_f1.py sha256 71ee3fced51a74ad396e8d10b8f1d644d15832c0aa6ef4a2a417980c9690302b
 use super::*;
 use super::apply_answer_values::*;
 verus! {
@@ -318,23 +319,8 @@ pub(super) proof fn answer_step(n: Node, nq: u64, id: u64, answer: Answer)
     match n.question {
         None => { handler_safety::same_step(n); },
         Some(q) => if q.id != id { handler_safety::same_step(n); } else { match n.phase {
-            Phase::Stopping(_) => match answer {
-                Answer::Retry => { handler_safety::field_step(n, Node { question: None, ..n }); },
-                Answer::MarkHandled => { handler_safety::handled_cleanup_step(n); },
-                _ => { handler_safety::same_step(n); },
-            },
-            Phase::AwaitingRob => if answer == Answer::Unclear {
-                if !q.clarified { handler_safety::clarify_step(n, q, nq); } else { handler_safety::same_step(n); }
-            } else if !permits(q.kind, answer) { handler_safety::same_step(n); } else { match answer {
-                Answer::Continue => { reveal(continued_answer);
-continued_step(n, q, 0); },
-                Answer::TryAgain => { retry_step(n, q); },
-                Answer::AddCredit(k) => { reveal(continued_answer);
-continued_step(n, q, k); },
-                Answer::ChangeRequest => { handler_safety::stop_step(n, Outcome::Replaced); },
-                Answer::Stop => { handler_safety::stop_step(n, Outcome::Stopped); },
-                _ => { handler_safety::same_step(n); },
-            }},
+            Phase::Stopping(_) => { cleanup_step(n, nq, id, answer); },
+            Phase::AwaitingRob => { awaiting_step(n, nq, id, answer, q); },
             _ => { handler_safety::same_step(n); },
         }},
     }
@@ -431,24 +417,11 @@ pub(super) proof fn answer_rules(n: Node, nq: u64, id: u64, answer: Answer)
     if !handler_safety::node_rules_v(n, nq) { return; }
     reveal(answered);
     match n.question {
-        None => {},
-        Some(q) => if q.id != id {} else { match n.phase {
-            Phase::Stopping(_) => match answer {
-                Answer::Retry => { handler_safety::clear_cleanup_rules_v(n, nq); },
-                Answer::MarkHandled => { handler_safety::cleanup_handled_rules_v(n, nq); },
-                _ => {},
-            },
-            Phase::AwaitingRob => if answer == Answer::Unclear {
-                if !q.clarified { handler_safety::clarified_rules_v(n, nq, q); }
-            } else if !permits(q.kind, answer) {} else { match answer {
-                Answer::Continue => { continued_answer_rules(n, q, 0, nq); },
-                Answer::TryAgain => { retried_answer_rules(n, q, nq); },
-                Answer::AddCredit(k) => { continued_answer_rules(n, q, k, nq); },
-                Answer::ChangeRequest => { handler_safety::stopped_rules_v(n, Outcome::Replaced, nq); },
-                Answer::Stop => { handler_safety::stopped_rules_v(n, Outcome::Stopped, nq); },
-                _ => {},
-            }},
-            _ => {},
+        None => {  },
+        Some(q) => if q.id != id {  } else { match n.phase {
+            Phase::Stopping(_) => { cleanup_rules(n, nq, id, answer); },
+            Phase::AwaitingRob => { awaiting_rules(n, nq, id, answer, q); },
+            _ => {  },
         }},
     }
 }
@@ -491,5 +464,70 @@ pub(super) proof fn awaiting_arms_bridge(n: Node, nq: u64, id: u64, answer: Answ
     reveal(answered);
 }
 
+
+
+pub(super) proof fn cleanup_step(n: Node, nq: u64, id: u64, answer: Answer)
+    requires n.phase is Stopping, match n.question { Some(q) => q.id == id, None => false },
+    ensures handler_safety::command_step(n, answered(n, nq, id, answer).0),
+{
+    reveal(answered);
+    match answer {
+                Answer::Retry => { handler_safety::field_step(n, Node { question: None, ..n }); },
+                Answer::MarkHandled => { handler_safety::handled_cleanup_step(n); },
+                _ => { handler_safety::same_step(n); },
+            }
+}
+
+pub(super) proof fn awaiting_step(n: Node, nq: u64, id: u64, answer: Answer, q: Question)
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+        n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
+    ensures handler_safety::command_step(n, answered(n, nq, id, answer).0),
+{
+    reveal(answered);
+    if answer == Answer::Unclear {
+                if !q.clarified { handler_safety::clarify_step(n, q, nq); } else { handler_safety::same_step(n); }
+            } else if !permits(q.kind, answer) { handler_safety::same_step(n); } else { match answer {
+                Answer::Continue => { reveal(continued_answer);
+continued_step(n, q, 0); },
+                Answer::TryAgain => { retry_step(n, q); },
+                Answer::AddCredit(k) => { reveal(continued_answer);
+continued_step(n, q, k); },
+                Answer::ChangeRequest => { handler_safety::stop_step(n, Outcome::Replaced); },
+                Answer::Stop => { handler_safety::stop_step(n, Outcome::Stopped); },
+                _ => { handler_safety::same_step(n); },
+            }}
+}
+
+pub(super) proof fn cleanup_rules(n: Node, nq: u64, id: u64, answer: Answer)
+    requires handler_safety::node_rules_v(n, nq), n.phase is Stopping,
+        match n.question { Some(q) => q.id == id, None => false },
+    ensures handler_safety::node_rules_v(answered(n, nq, id, answer).0, answered(n, nq, id, answer).1),
+{
+    reveal(answered);
+    match answer {
+                Answer::Retry => { handler_safety::clear_cleanup_rules_v(n, nq); },
+                Answer::MarkHandled => { handler_safety::cleanup_handled_rules_v(n, nq); },
+                _ => {},
+            }
+}
+
+pub(super) proof fn awaiting_rules(n: Node, nq: u64, id: u64, answer: Answer, q: Question)
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+        handler_safety::node_rules_v(n, nq),
+        n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
+    ensures handler_safety::node_rules_v(answered(n, nq, id, answer).0, answered(n, nq, id, answer).1),
+{
+    reveal(answered);
+    if answer == Answer::Unclear {
+                if !q.clarified { handler_safety::clarified_rules_v(n, nq, q); }
+            } else if !permits(q.kind, answer) {} else { match answer {
+                Answer::Continue => { continued_answer_rules(n, q, 0, nq); },
+                Answer::TryAgain => { retried_answer_rules(n, q, nq); },
+                Answer::AddCredit(k) => { continued_answer_rules(n, q, k, nq); },
+                Answer::ChangeRequest => { handler_safety::stopped_rules_v(n, Outcome::Replaced, nq); },
+                Answer::Stop => { handler_safety::stopped_rules_v(n, Outcome::Stopped, nq); },
+                _ => {},
+            }}
+}
 
 }
