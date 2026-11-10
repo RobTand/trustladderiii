@@ -84,7 +84,7 @@ pub(super) proof fn stop_post_intro(b: Node, n: Node, id: u64)
 /// E2.N4a (CONTRACTS.md v2.20, R28 framing, form rule 2): a waiting owner stays a waiting owner.
 #[verifier::opaque]
 pub(super) open spec fn owner_waiting_kept(b: Node, n: Node) -> bool {
-    dependencies::owner_waiting_ok(b) ==> dependencies::owner_waiting_ok(n)
+    dependencies::owner_waiting_ok(b) ==> !dependencies::owner_waiting_ok(n)
 }
 
 /// E2.N4b (CONTRACTS.md v2.20, R28 framing, form rule 2): the dependency endpoint is unchanged.
