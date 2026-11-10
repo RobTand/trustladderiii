@@ -35,7 +35,7 @@ pub(super) proof fn ack_guard(b: Node, n: Node)
 
 pub(super) fn round(w: &mut World, Ghost(k): Ghost<int>)
     requires context(*old(w), k), 0 <= k <= 900,
-        clean(old(w).nodes@[1], old(w).nodes@[1].pos as int), old(w).nodes@[1].pos < 5,
+        old(w).nodes@[1].pos < 5,
     ensures context(*final(w), k + 4), clean(final(w).nodes@[1], old(w).nodes@[1].pos as int + 1),
         final(w).nodes@ == old(w).nodes@.update(1, final(w).nodes@[1]),
         final(w).gates@ == old(w).gates@, final(w).file_sets@ == old(w).file_sets@,
