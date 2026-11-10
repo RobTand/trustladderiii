@@ -1,10 +1,55 @@
 {
-  "source_head": "b898c15bfea04439564972f09d57cb2e5e73e6ba",
+  "source_head": "08761952de809998429d2495380d3f1214ca8db4",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "c539791ead6d5f2835175fde687dd1155c8c4c1df5fff4003630d48fdc3ce73f",
-  "groups": 502,
-  "obligations": 700,
+  "source_sha256": "8452827ec327e37477c711a1a23956ac6302b71775f0542ac58121e82a56610f",
+  "groups": 511,
+  "obligations": 710,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_facts_family_value_node_rows",
+      "selector": "kernel::facts_family_values#value_node_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_ordinary_fact_value",
+      "selector": "kernel::facts_family_values#ordinary_fact_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_merge_fact_value",
+      "selector": "kernel::facts_family_values#merge_fact_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_append_fact_notices",
+      "selector": "kernel::facts_family_values#append_fact_notices",
+      "expected": 2
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_ordinary_fact_entry",
+      "selector": "kernel::facts_family_values#ordinary_fact_entry",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_dependency_entry",
+      "selector": "kernel::facts_family_values#fact_dependency_entry",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_on_fact_rows",
+      "selector": "kernel::facts_family_lemmas#on_fact_rows",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_notices_outputs",
+      "selector": "kernel::facts_family_lemmas#notices_outputs",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_facts_family_selected_apply_rows",
+      "selector": "kernel::facts_family_lemmas#selected_apply_rows",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_events_apply_new_request",
       "selector": "kernel::events#apply_new_request",
