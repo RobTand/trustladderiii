@@ -271,4 +271,27 @@ pub(super) proof fn ready_item(n: Node)
     reveal(items);
 }
 
+
+/// G5/G20: a ticketed Start without a local obstruction.
+pub(super) open spec fn start_unobstructed(n: Node) -> bool {
+    !(n.phase is Closed) && !n.waiting_incident && n.effect.is_none()
+        && !n.paused && n.ticket.is_some()
+        && matches!(current_item(n), Some(Item::Start(_)))
+}
+
+#[verifier::opaque]
+pub(super) open spec fn pool_grant(n: Node, a: Node, c: AdvanceContext, changed: bool) -> bool {
+    changed == c.pool
+        && (c.pool ==> a.pool && a.ticket.is_none() && a.run == Some(n.generation))
+        && (!c.pool ==> a == n)
+}
+
+pub(super) proof fn start_item(n: Node)
+    requires start_unobstructed(n),
+    ensures !(n.phase is Ready),
+{
+    reveal(current_item);
+    reveal(items);
+}
+
 }
