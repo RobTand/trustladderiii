@@ -116,7 +116,10 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
     (ack == Ack::Confirmed && (match old(w).nodes@[i as int].effect { Some(e) => e.seq == seq && e.cancelling, None => false }))
         ==> final(w).nodes@[i as int].effect.is_none() && final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase && final(w).nodes@[i as int].pos == old(w).nodes@[i as int].pos
             && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run && final(w).nodes@[i as int].job == old(w).nodes@[i as int].job && final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open && final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree
-            && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq && final(w).nodes@[i as int].question == old(w).nodes@[i as int].question,
+            && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq && final(w).nodes@[i as int].question == old(w).nodes@[i as int].question
+            // E11.2 framing (v2.5): failure and incident counters kept.
+            && final(w).nodes@[i as int].run_failures == old(w).nodes@[i as int].run_failures && final(w).nodes@[i as int].run_incidents == old(w).nodes@[i as int].run_incidents
+            && final(w).nodes@[i as int].fx_failures == old(w).nodes@[i as int].fx_failures && final(w).nodes@[i as int].fx_incidents == old(w).nodes@[i as int].fx_incidents,
     // E11.2 REQ R25: confirming a teardown step releases exactly its resource and moves teardown on.
     (ack == Ack::Confirmed && old(w).nodes@[i as int].phase is Stopping && (match old(w).nodes@[i as int].effect {
         Some(e) => e.seq == seq && !e.cancelling && transition_safety::teardown_kind(e.kind)
@@ -125,6 +128,9 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
     }))
         ==> final(w).nodes@[i as int].effect.is_none() && final(w).nodes@[i as int].pos == old(w).nodes@[i as int].pos + 1 && final(w).nodes@[i as int].phase == old(w).nodes@[i as int].phase
             && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq && final(w).nodes@[i as int].question == old(w).nodes@[i as int].question
+            // E11.2 framing (v2.5): run counters kept, effect counters reset.
+            && final(w).nodes@[i as int].run_failures == old(w).nodes@[i as int].run_failures && final(w).nodes@[i as int].run_incidents == old(w).nodes@[i as int].run_incidents
+            && final(w).nodes@[i as int].fx_failures == 0 && final(w).nodes@[i as int].fx_incidents == 0
             && final(w).nodes@[i as int].run == (if old(w).nodes@[i as int].effect.unwrap().kind == EffectKind::StopRun { None } else { old(w).nodes@[i as int].run })
             && final(w).nodes@[i as int].pool == (if old(w).nodes@[i as int].effect.unwrap().kind == EffectKind::StopRun { false } else { old(w).nodes@[i as int].pool })
             && final(w).nodes@[i as int].job == (if old(w).nodes@[i as int].effect.unwrap().kind == EffectKind::WithdrawJob { None } else { old(w).nodes@[i as int].job })
