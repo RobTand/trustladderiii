@@ -88,6 +88,15 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
             ==> final(w).nodes@[i as int] == old(w).nodes@[i as int],
         advance_family_post::ready_unobstructed(old(w).nodes@[i as int]) && result
             ==> slot_spec(*old(w), i as int),
+        advance_family_post::ready_unobstructed(old(w).nodes@[i as int])
+            ==> forall|older: int| 0 <= older < old(w).nodes@.len()
+                && old(w).nodes@[older].phase is Ready
+                && old(w).nodes@[older].repo == old(w).nodes@[i as int].repo
+                && old(w).nodes@[older].ticket.is_some()
+                && old(w).nodes@[older].ticket.unwrap() < old(w).nodes@[i as int].ticket.unwrap()
+                && slot_spec(*old(w), older)
+                && !overlapped_by_older(*old(w), older, old(w).nodes@[older].ticket.unwrap())
+                ==> !result && final(w).nodes@[i as int] == old(w).nodes@[i as int],
 ] {
     kernel_snapshot! { before_advance = *w }
     kernel_proof! { dependencies::prerequisite_definition(*w, NodeId(i as u64)); }
