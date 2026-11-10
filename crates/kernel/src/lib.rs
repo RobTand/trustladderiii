@@ -1557,10 +1557,14 @@ kernel_fn! {
 kernel_fn! {
 impl World {
     pub fn new(gates: &[u8], pool_capacity: u8) -> (result: World) [
-        ensures (gates@.len() > 0
+        ensures result.nodes@.len() == 0, result.dependencies@.len() == 0,
+            result.gates@.len() == gates@.len(), result.pool_capacity == pool_capacity,
+            forall|g: int| 0 <= g < gates@.len() ==> result.gates@[g].w == gates@[g],
+            (gates@.len() > 0
             && (forall|g: int| 0 <= g < gates@.len() ==> gates@[g] > 0)
             && pool_capacity > 0) ==> checking::accepted(result),
     ] proof [
+        broadcast use vstd::std_specs::iter::group_iter_axioms;
         assert forall|w: World| w.nodes@.len() == 0 && w.dependencies@.len() == 0
             && w.gates@.len() > 0
             && (forall|g: int| 0 <= g < w.gates@.len() ==> w.gates@[g].w > 0)

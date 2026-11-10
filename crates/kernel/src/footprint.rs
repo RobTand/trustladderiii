@@ -191,7 +191,7 @@ impl World {
     kernel_fn! {
     /// Intern a sorted, deduplicated set. Handles stay valid as the world grows.
     pub fn intern_footprint(&mut self, files: impl IntoIterator<Item = FileId>) -> (result: Footprint) [
-        ensures (super::checking::accepted(*old(self)) && ordered_table(*old(self)))
+        ensures (super::checking::accepted(*old(self)) && super::storage_ordered(*old(self)))
             ==> super::checking::accepted(*final(self)),
     ] {
         let mut files: Vec<_> = files.into_iter().collect();
