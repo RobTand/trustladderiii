@@ -54,6 +54,19 @@ pub(super) fn stop_command(w: &mut World, i: usize, id: u64) -> (result: ()) [
         old(w).next_question <= final(w).next_question,
         (retirement::node_rules(*old(w), old(w).nodes@[i as int])
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
+        // E11.1 R24 (direct) and the E2 framing atom (CONTRACTS.md v2.35).
+        (!(old(w).nodes@[i as int].phase is Closed || old(w).nodes@[i as int].phase is Stopping)
+            ==> final(w).nodes@[i as int].phase == Phase::Stopping(Outcome::Stopped) && final(w).nodes@[i as int].pos == 0
+            && final(w).nodes@[i as int].ticket.is_none() && final(w).nodes@[i as int].question.is_none() && !final(w).nodes@[i as int].waiting_incident
+            && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool
+            && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run && final(w).nodes@[i as int].job == old(w).nodes@[i as int].job && final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open && final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree
+            && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq && final(w).nodes@[i as int].last_cmd == id
+            && (match old(w).nodes@[i as int].effect {
+                None => final(w).nodes@[i as int].effect.is_none(),
+                Some(e) => final(w).nodes@[i as int].effect.is_some() && final(w).nodes@[i as int].effect.unwrap().seq == e.seq
+                    && final(w).nodes@[i as int].effect.unwrap().kind == e.kind && final(w).nodes@[i as int].effect.unwrap().cancelling,
+            })),
+        command_frames::command_frame_rows(old(w).nodes@[i as int], final(w).nodes@[i as int], id, Command::Stop),
 ] {
     kernel_snapshot! { before_rules_world = *w }
     let mut m = w.nodes[i];
@@ -117,6 +130,7 @@ pub(super) fn change_request_command(w: &mut World, i: usize, id: u64) -> (resul
         old(w).next_question <= final(w).next_question,
         (retirement::node_rules(*old(w), old(w).nodes@[i as int])
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
+        command_frames::command_frame_rows(old(w).nodes@[i as int], final(w).nodes@[i as int], id, Command::ChangeRequest),
 ] {
     kernel_snapshot! { before_rules_world = *w }
     let mut m = w.nodes[i];
@@ -199,6 +213,7 @@ pub(super) fn pause_command(w: &mut World, i: usize, id: u64) -> (result: ()) [
         old(w).next_question <= final(w).next_question,
         (retirement::node_rules(*old(w), old(w).nodes@[i as int])
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
+        command_frames::command_frame_rows(old(w).nodes@[i as int], final(w).nodes@[i as int], id, Command::Pause),
 ] {
     kernel_snapshot! { before_rules_world = *w }
     let mut m = w.nodes[i];

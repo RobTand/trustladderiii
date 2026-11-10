@@ -71,6 +71,20 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket || final(w).nodes@[i as int].ticket.is_none(),
         final(w).nodes@ == old(w).nodes@.update(i as int, final(w).nodes@[i as int]),
         old(w).next_question <= final(w).next_question,
+        // E11.1 REQ R24 (direct; CONTRACTS.md v2.7/v2.35): a fresh Stop of a live item.
+        ((command is Stop && id > old(w).nodes@[i as int].last_cmd && !(old(w).nodes@[i as int].phase is Closed || old(w).nodes@[i as int].phase is Stopping))
+            ==> final(w).nodes@[i as int].phase == Phase::Stopping(Outcome::Stopped) && final(w).nodes@[i as int].pos == 0
+            && final(w).nodes@[i as int].ticket.is_none() && final(w).nodes@[i as int].question.is_none() && !final(w).nodes@[i as int].waiting_incident
+            && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds && final(w).nodes@[i as int].pool == old(w).nodes@[i as int].pool
+            && final(w).nodes@[i as int].run == old(w).nodes@[i as int].run && final(w).nodes@[i as int].job == old(w).nodes@[i as int].job && final(w).nodes@[i as int].pr_open == old(w).nodes@[i as int].pr_open && final(w).nodes@[i as int].worktree == old(w).nodes@[i as int].worktree
+            && final(w).nodes@[i as int].next_seq == old(w).nodes@[i as int].next_seq && final(w).nodes@[i as int].last_cmd == id
+            && (match old(w).nodes@[i as int].effect {
+                None => final(w).nodes@[i as int].effect.is_none(),
+                Some(e) => final(w).nodes@[i as int].effect.is_some() && final(w).nodes@[i as int].effect.unwrap().seq == e.seq
+                    && final(w).nodes@[i as int].effect.unwrap().kind == e.kind && final(w).nodes@[i as int].effect.unwrap().cancelling,
+            })),
+        // E2 framing (opaque, form rule 2; CONTRACTS.md v2.35): v2.7 Stop rows, E11.1b, E2.N4a, E2.N4b.
+        command_frames::command_frame_rows(old(w).nodes@[i as int], final(w).nodes@[i as int], id, command),
         // R28-Answer (E2 framing addition, 11-10): the incident row on the answered node.
         (match command {
             Command::Answer { .. } => retirement::node_rules(*old(w), old(w).nodes@[i as int])
@@ -86,6 +100,7 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         kernel_proof! { reveal(progress_gate_apply::resume_post); reveal(progress_gate_apply::resumed); }
         kernel_proof! {
             handler_safety::same_step(w.nodes@[i as int]);
+            command_frames::command_frame_rows_intro(w.nodes@[i as int], w.nodes@[i as int], id, command);
             handler_safety::step_identity(w.nodes@[i as int], w.nodes@[i as int]);
             match command {
                 Command::Answer { question, answer } => {
@@ -108,7 +123,16 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
     }
     kernel_proof! {
         match command {
-            Command::Answer { .. } => apply_command_safety::answer_frame(before_rules_world@, *w, i),
+            Command::Resume => command_frames::command_frame_rows_intro(before_rules_world@.nodes@[i as int],
+                w.nodes@[i as int], id, command),
+            _ => {}
+        }
+        match command {
+            Command::Answer { .. } => {
+                command_frames::command_frame_rows_intro(before_rules_world@.nodes@[i as int],
+                    w.nodes@[i as int], id, command);
+                apply_command_safety::answer_frame(before_rules_world@, *w, i);
+            }
             _ => assert(w.nodes@ =~= before_rules_world@.nodes@.update(i as int, w.nodes@[i as int])),
         }
     }
