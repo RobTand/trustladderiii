@@ -130,6 +130,7 @@ pub(super) fn apply_proved(w: &mut World, event: Event, out: &mut Outbox, report
         // R_T out-of-range stutter (MASTER-CURRENT item 6): ONE opaque clause; consumers use
         // event_frames_reveal::out_of_range_stutter_rows.
         event_frames::out_of_range_stutter(*old(w), *final(w), *old(out), *final(out), event),
+        new_acceptance::new_accepted(*old(w), *final(w), event),
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
     kernel_snapshot! { report_before = report.entries@ }
     kernel_proof! { report_projection(*w, event); report::lemmas::entries_for_event(event, report_input(*w, event)); }
@@ -162,6 +163,9 @@ pub(super) fn apply_proved(w: &mut World, event: Event, out: &mut Outbox, report
                 kernel_proof! { apply_new_safety::adoption_c2(before_apply@, *w, repo); }
             }
             kernel_proof! {
+                if checking::accepted(before_apply@) {
+                    new_acceptance::new_world_accepted(before_apply@, *w, repo);
+                }
                 transition_safety::lift_apply_none(before_apply@, *w, event, before_apply_out@, *out);
             }
         }
@@ -232,6 +236,7 @@ pub(super) fn apply_proved(w: &mut World, event: Event, out: &mut Outbox, report
             events_lemmas::footprints_after(before_apply@, *w);
         }
         event_frames::out_of_range_stutter_intro(before_apply@, *w, before_apply_out@, *out, event);
+        new_acceptance::new_accepted_intro(before_apply@, *w, event);
     }
 }
 }
@@ -365,6 +370,7 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
         // R_T out-of-range stutter (MASTER-CURRENT item 6): ONE opaque clause; consumers use
         // event_frames_reveal::out_of_range_stutter_rows.
         event_frames::out_of_range_stutter(*old(w), *final(w), *old(out), *final(out), event),
+        new_acceptance::new_accepted(*old(w), *final(w), event),
     transition_safety::apply_exports(*old(w), *final(w), event, *old(out), *final(out)),
     // E10 (CONTRACTS.md v2.31; TRUSTED-FROZEN, owner debt): the Ack arm forwards on_ack's opaque post.
     (match event {
@@ -506,6 +512,11 @@ fn apply_new_request(w: &mut World, repo: RepoId, priority: Priority,
             retirement::node_rules(*final(w), n) && !n.holds && !n.pool
                 && n.ticket.is_none() && !n.credit.withheld
         }),
+        (repo.0 < old(w).gates@.len() ==> final(w).nodes@.len() == old(w).nodes@.len() + 1),
+        (repo.0 >= old(w).gates@.len() ==> final(w).nodes@ == old(w).nodes@),
+        final(w).next_question == old(w).next_question,
+        final(w).file_sets@ == old(w).file_sets@,
+        checking::accepted(*old(w)) ==> checking::accepted(*final(w)),
 ] proof [reveal(world_headroom); reveal(initial_node); reveal(footprint::ordered_table); reveal(progress_input); reveal(fresh_commands);] {
     kernel_snapshot! { before_apply = *w }
     kernel_snapshot! { before_apply_out = *_out }
@@ -519,6 +530,9 @@ fn apply_new_request(w: &mut World, repo: RepoId, priority: Priority,
             }
         }
         kernel_proof! {
+            if checking::accepted(before_apply@) {
+                new_acceptance::new_world_accepted(before_apply@, *w, repo);
+            }
             transition_safety::lift_apply_none(before_apply@, *w, (Event::NewRequest { repo, priority }), before_apply_out@, *_out);
         }
     kernel_proof! { events_lemmas::footprints_after(before_apply@, *w); if !progress_gate_apply::resume_selected(before_apply@, (Event::NewRequest { repo, priority })) { reveal(progress_gate_apply::resume_apply_post); } if before_apply@.nodes@.len() > 0 && before_apply@.nodes@[0].phase == Phase::Unplanned && progress_unplanned::obstructed(before_apply@.nodes@[0]) && (Event::NewRequest { repo, priority }) == progress_unplanned::outside_event(before_apply@.nodes@[0]) { assert(w.nodes@.len() == before_apply@.nodes@.len()); assert forall|j: int| 1 <= j < before_apply@.nodes@.len() implies w.nodes@[j] == before_apply@.nodes@[j] by {} } }
