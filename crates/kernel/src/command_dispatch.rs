@@ -184,11 +184,14 @@ pub(super) fn on_command(w: &mut World, i: usize, id: u64, command: Command,
         final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket || final(w).nodes@[i as int].ticket.is_none(),
         final(w).nodes@ == old(w).nodes@.update(i as int, final(w).nodes@[i as int]),
         old(w).next_question <= final(w).next_question,
+        // R28-Answer (E2 framing addition, 11-10): the incident row on the answered node.
         (match command {
-            Command::Answer { .. } => true,  // N1 out for Answer (lead ruling 11-10; S2 open gap)
-            _ => retirement::node_rules(*old(w), old(w).nodes@[i as int])
-                ==> retirement::node_rules(*final(w), final(w).nodes@[i as int]),
+            Command::Answer { .. } => retirement::node_rules(*old(w), old(w).nodes@[i as int])
+                ==> (final(w).nodes@[i as int].incident_needs_rob ==> final(w).nodes@[i as int].waiting_incident),
+            _ => true,
         }),
+        (retirement::node_rules(*old(w), old(w).nodes@[i as int])
+            ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
     // E11.1 REQ R24: a fresh Stop of a live item.
     (command is Stop && id > old(w).nodes@[i as int].last_cmd && !(old(w).nodes@[i as int].phase is Closed || old(w).nodes@[i as int].phase is Stopping))
         ==> final(w).nodes@[i as int].phase == Phase::Stopping(Outcome::Stopped) && final(w).nodes@[i as int].pos == 0

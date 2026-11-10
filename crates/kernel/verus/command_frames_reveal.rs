@@ -32,11 +32,8 @@ pub(super) proof fn command_rows_project(before: World, after: World, node: Node
         after.dependencies@ == before.dependencies@,
         before.next_question <= after.next_question,
         before.nodes@.len() <= u64::MAX,
-        node.0 < before.nodes@.len() ==> (match command {
-            Command::Answer { .. } => true,
-            _ => retirement::node_rules(before, before.nodes@[node.0 as int])
-                ==> retirement::node_rules(after, after.nodes@[node.0 as int]),
-        }),
+        node.0 < before.nodes@.len() ==> (retirement::node_rules(before, before.nodes@[node.0 as int])
+            ==> retirement::node_rules(after, after.nodes@[node.0 as int])),
         node.0 < before.nodes@.len() ==> (after.nodes@[node.0 as int].holds ==> before.nodes@[node.0 as int].holds),
         node.0 < before.nodes@.len() ==> (after.nodes@[node.0 as int].pool ==> before.nodes@[node.0 as int].pool),
         node.0 < before.nodes@.len() ==> (after.nodes@[node.0 as int].ticket == before.nodes@[node.0 as int].ticket

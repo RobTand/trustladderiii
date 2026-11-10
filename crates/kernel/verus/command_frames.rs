@@ -50,8 +50,8 @@ pub(super) proof fn command_frame_rows_intro(b: Node, n: Node, id: u64, command:
 
 /// E1.5 (rule 2): `events::apply`'s Command rows. apply_command's N-cut rows, the command-step/answer-pair row,
 /// the E2 framing rows (`command_frame_rows`), v2.18's Answer incident row, and the out-of-range frame over
-/// every field `checking::accepted` reads that `events::apply` does not already keep (v2.35). N1 for Answer and
-/// E2.N4c are NOT here (N1-for-Answer: apply's measurement pending; N4c: FALSE AS FROZEN, pending ruling).
+/// every field `checking::accepted` reads that `events::apply` does not already keep (v2.35). N1 covers every
+/// command, Answer included (v2.38: apply 004052aa proves it). E2.N4c (restated, v2.37) is NOT here until apply proves it.
 #[verifier::opaque]
 pub(super) open spec fn command_rows(before: World, after: World, event: Event) -> bool {
     match event {
@@ -63,10 +63,7 @@ pub(super) open spec fn command_rows(before: World, after: World, event: Event) 
             && (node.0 < before.nodes@.len() ==> {
                 let b = before.nodes@[node.0 as int];
                 let n = after.nodes@[node.0 as int];
-                (match command {
-                    Command::Answer { .. } => true,
-                    _ => retirement::node_rules(before, b) ==> retirement::node_rules(after, n),
-                })
+                (retirement::node_rules(before, b) ==> retirement::node_rules(after, n))
                 && (n.holds ==> b.holds) && (n.pool ==> b.pool)
                 && (n.ticket == b.ticket || n.ticket.is_none())
                 && n.repo == b.repo && n.footprint == b.footprint
@@ -101,10 +98,7 @@ pub(super) proof fn command_rows_intro(before: World, after: World, event: Event
             && (node.0 < before.nodes@.len() ==> {
                 let b = before.nodes@[node.0 as int];
                 let n = after.nodes@[node.0 as int];
-                (match command {
-                    Command::Answer { .. } => true,
-                    _ => retirement::node_rules(before, b) ==> retirement::node_rules(after, n),
-                })
+                (retirement::node_rules(before, b) ==> retirement::node_rules(after, n))
                 && (n.holds ==> b.holds) && (n.pool ==> b.pool)
                 && (n.ticket == b.ticket || n.ticket.is_none())
                 && n.repo == b.repo && n.footprint == b.footprint
