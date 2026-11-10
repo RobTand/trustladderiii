@@ -1,7 +1,7 @@
 {
-  "source_head": "63ff9803b1b955c62d5b3c519a05e77f25ffdfe0",
+  "source_head": "1297e8384ae26ec16fa5813401caf082c94d7b4d",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "12c5daef6a043ea5bc2366c480df71ef43fd5613357557033e8562b64eb898d5",
+  "source_sha256": "f6783060b2786a155d9eab948a4b9da4b2fbff46cb758c31845383a565e5bd6f",
   "groups": 627,
   "obligations": 825,
   "selections": [
