@@ -1,3 +1,6 @@
+#[path = "../../store/tests/support/mod.rs"]
+mod maintenance_store_support;
+
 use serde_json::{Value, json};
 use std::fs;
 use std::io::Write;
@@ -6799,6 +6802,84 @@ fn cleanup_maintenance_corrupt_owner_does_not_block_healthy_owner_or_spin() {
     fs::write(corrupt.join("state.json"), b"{truncated").unwrap();
     f.cleanup_facts(&owned, true);
     let backend = maintenance_backend(&f);
+    // Exercise the real Look entry point with the corrupt and healthy backend
+    // records still present together, before any direct maintenance call.
+    let mut database = maintenance_store_support::Database::start();
+    struct Clock(u64);
+    impl tl3_controller::clock::Clock for Clock {
+        fn now(&self) -> std::time::SystemTime {
+            std::time::UNIX_EPOCH + Duration::from_millis(self.0)
+        }
+    }
+    struct Maintenance(tl3_controller::adapters::run_backend::flux::Flux);
+    impl tl3_controller::executor::Executor for Maintenance {
+        fn execute(
+            &mut self,
+            _: &tl3_controller::executor::Delivery,
+        ) -> tl3_controller::Result<tl3_controller::executor::Completion> {
+            unreachable!()
+        }
+        fn reconcile(
+            &mut self,
+            _: &tl3_controller::executor::Delivery,
+        ) -> tl3_controller::Result<tl3_controller::executor::Reconciliation> {
+            unreachable!()
+        }
+        fn cleanup_maintenance(&mut self, now: u64) -> tl3_controller::Result<Vec<String>> {
+            self.0
+                .cleanup_maintenance(now)
+                .map(|owners| {
+                    owners
+                        .into_iter()
+                        .map(|owner| format!("{}:{}", owner.owner, owner.correlation))
+                        .collect()
+                })
+                .map_err(|error| tl3_controller::Error::Adapter(Box::new(error)))
+        }
+        fn next_cleanup_maintenance_ms(&mut self) -> tl3_controller::Result<Option<u64>> {
+            self.0
+                .next_cleanup_maintenance_ms()
+                .map_err(|error| tl3_controller::Error::Adapter(Box::new(error)))
+        }
+    }
+    let mut registry = tl3_controller::adapters::simulation(f.root.path()).unwrap();
+    registry.register(
+        tl3_controller::executor::Upstream::PrismaBuild,
+        Maintenance(backend.clone()),
+    );
+    let mut controller = tl3_controller::Controller::open_with_clock(
+        tl3_store::Store::open(&database.create("maintenance_corrupt_owner")).unwrap(),
+        registry,
+        tl3_controller::Bootstrap {
+            repos: vec![],
+            rob: 42,
+            slots: 1,
+            pool: 1,
+            fail_fast: false,
+            operations: None,
+        },
+        Clock(due),
+    )
+    .unwrap();
+    controller.look_now().unwrap();
+    assert!(
+        controller
+            .snapshot()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.table == "incidents"
+                && row.value["open"] == true
+                && row.value["signature"]["class"] == "runtime_cleanup")
+    );
+    assert!(
+        controller
+            .next_look_in()
+            .unwrap()
+            .is_some_and(|delay| delay > Duration::ZERO)
+    );
+    drop(controller);
+    database.stop();
     let failures = backend.cleanup_maintenance(due).unwrap();
     assert!(
         !failures.is_empty(),
@@ -7111,20 +7192,46 @@ fn cleanup_maintenance_terminal_debt_is_loud_without_a_noop_timer() {
     f.cleanup_facts(&owned, false);
     f.call(json!({"op":"cleanup_runtime","owner":owned.owner.owner,"correlation":owned.owner.correlation}));
     let due = maintenance_due(&f);
-    let path = f.options.journal_root.join(&f.intent.correlation).join("state.json");
+    let path = f
+        .options
+        .journal_root
+        .join(&f.intent.correlation)
+        .join("state.json");
     let mut state: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     state["terminal"] = json!(Terminal {
         ending: Ending::InfraLost,
         reason: "fixture committed infrastructure loss with unresolved cleanup".into(),
-        receipt: BlobRef { path: f.intent.output_dir.join("terminal-receipt.json"), sha256: "a".repeat(64), bytes: 1 },
+        receipt: BlobRef {
+            path: f.intent.output_dir.join("terminal-receipt.json"),
+            sha256: "a".repeat(64),
+            bytes: 1
+        },
     });
     api::durable::atomic(&path, &serde_json::to_vec(&state).unwrap()).unwrap();
     let backend = maintenance_backend(&f);
-    assert_eq!(backend.cleanup_maintenance(due).unwrap(), vec![owned.owner.clone()]);
-    assert!(backend.next_cleanup_maintenance_ms().unwrap().is_none(), "immutable terminal cleanup cannot make progress through retries");
-    let failures = f.options.journal_root.join("maintenance-errors").read_dir().unwrap().collect::<Vec<_>>();
+    assert_eq!(
+        backend.cleanup_maintenance(due).unwrap(),
+        vec![owned.owner.clone()]
+    );
+    assert!(
+        backend.next_cleanup_maintenance_ms().unwrap().is_none(),
+        "immutable terminal cleanup cannot make progress through retries"
+    );
+    let failures = f
+        .options
+        .journal_root
+        .join("maintenance-errors")
+        .read_dir()
+        .unwrap()
+        .collect::<Vec<_>>();
     assert_eq!(failures.len(), 1);
-    let failure: Value = serde_json::from_slice(&fs::read(failures[0].as_ref().unwrap().path()).unwrap()).unwrap();
-    assert!(failure["message"].as_str().unwrap().contains("terminal cleanup is immutable"));
+    let failure: Value =
+        serde_json::from_slice(&fs::read(failures[0].as_ref().unwrap().path()).unwrap()).unwrap();
+    assert!(
+        failure["message"]
+            .as_str()
+            .unwrap()
+            .contains("terminal cleanup is immutable")
+    );
     assert!(!cleanup_debts(&f).is_empty());
 }
