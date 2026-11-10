@@ -443,6 +443,8 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::apply_command_safety::answered_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::apply_command_safety::answered_nq": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::apply_command_safety::pause_node": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::apply_answer_values::continue_ingesting": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::apply_answer_values::continue_auditing": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -764,6 +766,12 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "apply_command_safety_answered_parts": ("kernel::apply_command_safety#answered_parts", 1),
+            "apply_command_safety_answer_node_frame": ("kernel::apply_command_safety#answer_node_frame", 1),
+            "apply_command_safety_answer_node_resources": ("kernel::apply_command_safety#answer_node_resources", 1),
+            "apply_command_safety_answer_node_step": ("kernel::apply_command_safety#answer_node_step", 1),
+            "apply_command_safety_answer_nq_rows": ("kernel::apply_command_safety#answer_nq_rows", 1),
+            "apply_command_safety_answer_node_rules": ("kernel::apply_command_safety#answer_node_rules", 1),
             "apply_command_safety_world_rewrite": ("kernel::apply_command_safety#world_rewrite", 1),
             "apply_command_safety_stop_rows_eq": ("kernel::apply_command_safety#stop_rows_eq", 1),
             "apply_command_safety_stop_rows_imp": ("kernel::apply_command_safety#stop_rows_imp", 1),
