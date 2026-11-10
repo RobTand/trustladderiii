@@ -30,7 +30,8 @@ kernel_fn! {
 /// Cleanup question row / #771: handling cleanup allocates no monotone counter.
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 pub(super) fn mark_handled(m: &mut Node) -> (result: ()) [
-    ensures (old(m).effect.is_none() && old(m).question.is_none() && !old(m).waiting_incident
+    ensures *final(m) == handler_safety::handled_node(*old(m)),
+        (old(m).effect.is_none() && old(m).question.is_none() && !old(m).waiting_incident
             && old(m).phase is Stopping && matches!(current_item(*old(m)), Some(Item::Teardown(_)))
             ==> distance(*final(m)) + 2 <= distance(*old(m))),
         final(m).repo == old(m).repo, final(m).footprint == old(m).footprint,
@@ -64,7 +65,8 @@ kernel_fn! {
 /// Resource writes used when marking a teardown item handled.
 #[cfg_attr(verus_keep_ghost, verifier::spinoff_prover)]
 fn mark_handled_resources(m: &mut Node, kind: EffectKind) -> (result: ()) [
-    ensures final(m).phase == old(m).phase,
+    ensures *final(m) == handler_safety::handled_resources_node(*old(m), kind),
+        final(m).phase == old(m).phase,
         final(m).repo == old(m).repo,
         final(m).footprint == old(m).footprint,
         final(m).generation == old(m).generation,

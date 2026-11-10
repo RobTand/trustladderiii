@@ -102,6 +102,18 @@ mod reply_family_ingest_world;
 #[path = "../verus/reply_family_facts.rs"]
 mod reply_family_facts;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/apply_new_safety.rs"]
+mod apply_new_safety;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/apply_answer_values.rs"]
+mod apply_answer_values;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/apply_answer_safety.rs"]
+mod apply_answer_safety;
+#[cfg(verus_keep_ghost)]
+#[path = "../verus/apply_command_safety.rs"]
+mod apply_command_safety;
+#[cfg(verus_keep_ghost)]
 verus! {
 /// #806: domain of the retired two-node Kani consistency checks.
 pub closed spec fn retirement_domain(w: World) -> bool { retirement::domain(w) }
@@ -136,6 +148,7 @@ mod facts_family_values;
 use facts::*;
 mod commands;
 use commands::*;
+mod command_dispatch;
 mod answers;
 use answers::*;
 mod command_helpers;
