@@ -136,6 +136,20 @@ pub(super) fn on_ack(w: &mut World, i: usize, seq: u64, ack: Ack,
             && final(w).nodes@[i as int].job == (if old(w).nodes@[i as int].effect.unwrap().kind == EffectKind::WithdrawJob { None } else { old(w).nodes@[i as int].job })
             && final(w).nodes@[i as int].pr_open == (if old(w).nodes@[i as int].effect.unwrap().kind == EffectKind::ClosePr { false } else { old(w).nodes@[i as int].pr_open })
             && final(w).nodes@[i as int].worktree == (if old(w).nodes@[i as int].effect.unwrap().kind == EffectKind::RemoveWorktree { false } else { old(w).nodes@[i as int].worktree }),
+    // E11.2 framing (v2.7): both matching Confirmed cases keep ticket, generation and next_question.
+    (ack == Ack::Confirmed && (match old(w).nodes@[i as int].effect {
+        Some(e) => e.seq == seq && (e.cancelling || (old(w).nodes@[i as int].phase is Stopping && transition_safety::teardown_kind(e.kind)
+            && current_item(old(w).nodes@[i as int]) == Some(Item::Teardown(e.kind)))),
+        None => false,
+    })) ==> final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket && final(w).nodes@[i as int].generation == old(w).nodes@[i as int].generation
+        && final(w).next_question == old(w).next_question,
+    // E11.2 framing (v2.7): both matching Confirmed cases keep the target's checker rules.
+    (retirement::node_rules(*old(w), old(w).nodes@[i as int]) && ack == Ack::Confirmed && (match old(w).nodes@[i as int].effect {
+        Some(e) => e.seq == seq && (e.cancelling || (old(w).nodes@[i as int].phase is Stopping && transition_safety::teardown_kind(e.kind)
+            && current_item(old(w).nodes@[i as int]) == Some(Item::Teardown(e.kind)))),
+        None => false,
+    }))
+        ==> retirement::node_rules(*final(w), final(w).nodes@[i as int]),
 ] {
     on_ack_proved(w, i, seq, ack, out)
 }

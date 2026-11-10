@@ -251,6 +251,11 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
     (old(w).nodes@[i as int].phase is Stopping && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none() && old(w).nodes@[i as int].question.is_none() && current_item(old(w).nodes@[i as int]).is_none())
         ==> result && final(w).nodes@[i as int].holds == old(w).nodes@[i as int].holds && final(w).nodes@[i as int].pos == 0
             && (match old(w).nodes@[i as int].phase { Phase::Stopping(o) => final(w).nodes@[i as int].phase == Phase::Closed(o), _ => true }),
+    // E11.3 framing (v2.7): every teardown or Release step keeps counters, question, credit, generation, ticket.
+    (old(w).nodes@[i as int].phase is Stopping && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none() && old(w).nodes@[i as int].question.is_none() && current_item(old(w).nodes@[i as int]).is_some())
+        ==> final(w).nodes@[i as int].run_failures == old(w).nodes@[i as int].run_failures && final(w).nodes@[i as int].run_incidents == old(w).nodes@[i as int].run_incidents && final(w).nodes@[i as int].fx_failures == old(w).nodes@[i as int].fx_failures && final(w).nodes@[i as int].fx_incidents == old(w).nodes@[i as int].fx_incidents
+            && final(w).nodes@[i as int].question == old(w).nodes@[i as int].question && final(w).nodes@[i as int].credit == old(w).nodes@[i as int].credit
+            && final(w).nodes@[i as int].generation == old(w).nodes@[i as int].generation && final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket,
 ] {
     advance_proved(w, i, out, report)
 }
