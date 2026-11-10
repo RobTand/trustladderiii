@@ -14,6 +14,7 @@ mod model;
 
 verus! {
 /// State-table "Counter headroom": a fresh command ID has room for one increment.
+#[verifier::external_body]
 proof fn command_headroom(last: u64)
     requires last < u64::MAX,
     ensures last as int + 1 <= u64::MAX as int,
