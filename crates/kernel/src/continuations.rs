@@ -130,6 +130,7 @@ pub(super) fn continue_node(n: Node, q: Question, deposit: u8) -> (result: Node)
     kernel_proof! {
         if n.phase == Phase::AwaitingRob && n.question == Some(q) && (deposit == 0 || q.kind == QKind::OutOfCredit) && handler_safety::node_rules_v(n, u64::MAX) {
             handler_safety::continued_rules_v(n, q, deposit, u64::MAX);
+            reveal(handler_safety::continued_node);
             assert(m == handler_safety::continued_node(n, q, deposit));
         }
     }
@@ -208,5 +209,76 @@ pub(super) fn enter_stopping_v(n: Node, outcome: Outcome) -> (result: Node) [
     enter_stopping(&mut m, outcome);
     kernel_proof! { handler_safety::stopped_no_grants(n, outcome); }
     m
+}
+}
+
+kernel_fn! {
+pub(super) fn continue_exact(n: Node, q: Question, deposit: u8) -> (result: Node) [
+    requires q.cost <= 1,
+        n.generation < u64::MAX,
+        n.credit.start as int + n.credit.earned as int + n.credit.added as int
+            >= n.credit.spent as int,
+        n.credit.withheld ==> q.cost == 0,
+        n.credit.added as int + 255 <= u64::MAX as int,
+        n.credit.spent < u64::MAX,
+    ensures result == handler_safety::continued_node(n, q, deposit),
+] {
+
+    let mut m = n;
+    m.credit.fund_and_pay(deposit, q.cost);
+    m.question = None;
+    match q.cont {
+        Cont::Ingesting => m = set_phase_v(m, Phase::Ingesting),
+        Cont::Auditing => m = set_phase_v(m, Phase::Auditing),
+        Cont::Unplanned => m = set_phase_v(m, Phase::Unplanned),
+        Cont::Planning { must_split } => {
+            m.plan_retries = 0;
+            m = set_phase_v(m, Phase::Planning { must_split });
+        }
+        Cont::Ready(r) => m = set_phase_v(m, Phase::Ready(r)),
+        Cont::Stop(o) => {
+
+            m = enter_stopping_v(m, o);
+
+        }
+        Cont::Nowhere => {
+
+            m = enter_stopping_v(m, Outcome::Stopped);
+
+        }
+    }
+
+    kernel_proof! { reveal(handler_safety::continued_node); }
+    m
+
+}
+}
+
+kernel_fn! {
+pub(super) fn go_on_exact(n: Node, q: Question, deposit: u8) -> (result: (Node, Option<Notice>)) [
+    requires q.cost <= 1,
+        n.generation < u64::MAX,
+        n.credit.start as int + n.credit.earned as int + n.credit.added as int
+            >= n.credit.spent as int,
+        n.credit.withheld ==> q.cost == 0,
+        n.credit.added as int + 255 <= u64::MAX as int,
+        n.credit.spent < u64::MAX,
+    ensures result == apply_answer_values::continued_answer(n, q, deposit),
+] {
+
+    let m = continue_exact(n, q, deposit);
+    let mut note: Option<Notice> = None;
+    match q.cont {
+        Cont::Planning { must_split } => {
+            if !must_split && m.replanned && q.kind == QKind::OutOfCredit {
+                note = Some(Notice::Note(NoteKind::Replanned));
+            }
+        }
+        _ => {}
+    }
+
+    kernel_proof! { reveal(apply_answer_values::continued_answer); }
+    (m, note)
+
 }
 }

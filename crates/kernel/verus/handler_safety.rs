@@ -693,6 +693,7 @@ pub(super) open spec fn paid_credit(c: Credit, deposit: u8, cost: u8) -> Credit 
     }
 }
 
+#[verifier::opaque]
 pub(super) open spec fn continued_node(n: Node, q: Question, deposit: u8) -> Node {
     let paid = Node { credit: paid_credit(n.credit, deposit, q.cost), question: None, ..n };
     match q.cont {
@@ -714,6 +715,7 @@ pub(super) proof fn continued_rules_v(n: Node, q: Question, deposit: u8, nq: u64
         n.credit.added as int + 255 <= u64::MAX as int, n.credit.spent < u64::MAX,
     ensures node_rules_v(continued_node(n, q, deposit), nq),
 {
+    reveal(continued_node);
     reveal(node_rules_v);
     reveal(retirement::stopped);
     match q.cont {

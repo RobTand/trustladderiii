@@ -128,120 +128,18 @@ pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
         result.0.credit.withheld == n.credit.withheld,
         nq <= result.1,
         (handler_safety::node_rules_v(n, nq) ==> handler_safety::node_rules_v(result.0, result.1)),
-] proof [reveal(distance);] {
+] {
+    let result = answer_value(n, nq, id, answer);
     kernel_proof! {
-        if handler_safety::node_rules_v(n, nq) { handler_safety::rules_v_nq_grow(n, nq, u64::MAX); }
+        apply_answer_safety::answer_frame(n, nq, id, answer);
+        apply_answer_safety::answer_resources(n, nq, id, answer);
+        apply_answer_safety::answer_question_order(n, nq, id, answer);
+        apply_answer_safety::answer_rules(n, nq, id, answer);
+        apply_answer_safety::answer_step(n, nq, id, answer);
+        apply_answer_safety::answer_progress(n, nq, id, answer);
+        apply_answer_safety::answer_consumed(n, nq, id, answer);
     }
-
-    let mut m = n;
-    let mut nq = nq;
-    let mut note: Option<Notice> = None;
-    let Some(q) = m.question else {
-        kernel_proof! { handler_safety::same_step(n); }
-        return (m, nq, note);
-    };
-    if q.id != id {
-        kernel_proof! { handler_safety::same_step(n); }
-        return (m, nq, note); // an answer to a question that is no longer open
-    }
-    match m.phase {
-        Phase::Stopping(_) => match answer {
-            Answer::Retry => {
-                m.question = None;
-                kernel_proof! {
-                    if handler_safety::node_rules_v(n, nq) { handler_safety::clear_cleanup_rules_v(n, nq); }
-                    handler_safety::field_step(n, m);
-                }
-            }
-            Answer::MarkHandled => {
-                m.question = None;
-                kernel_proof! {
-                    if handler_safety::node_rules_v(n, nq) {
-                        handler_safety::cleanup_handled_rules_v(n, nq);
-                    }
-                }
-                mark_handled(&mut m);
-                kernel_proof! { handler_safety::field_step(n, m); }
-            }
-            _ => { kernel_proof! { handler_safety::same_step(n); } }
-        },
-        Phase::AwaitingRob => {
-            if answer == Answer::Unclear {
-                // One clarifying question. After that the question just stays open.
-                if !q.clarified {
-                    let (m1, nq1, x) = clarify_node(m, nq, q);
-                    m = m1;
-                    nq = nq1;
-                    note = Some(x);
-                }
-                kernel_proof! { if q.clarified { handler_safety::same_step(n); } }
-                return (m, nq, note);
-            }
-            if !allowed(q.kind, answer) {
-                kernel_proof! { handler_safety::same_step(n); }
-                return (m, nq, note);
-            }
-            match answer {
-                Answer::Continue => {
-                    let (m1, x) = go_on(m, q, 0);
-                    m = m1;
-                    note = x;
-                    kernel_proof! {
-                        if handler_safety::node_rules_v(n, nq) {
-                            handler_safety::rules_v_without_question(m, u64::MAX, nq);
-                        }
-                    }
-                }
-                Answer::TryAgain => {
-                    let (m1, x) = retry_answer_node(m, q);
-                    m = m1;
-                    note = x;
-                    kernel_proof! {
-                        if handler_safety::node_rules_v(n, nq) {
-                            handler_safety::rules_v_without_question(m, u64::MAX, nq);
-                        }
-                    }
-                }
-                Answer::AddCredit(k) => {
-                    let (m1, x) = go_on(m, q, k);
-                    m = m1;
-                    note = x;
-                    kernel_proof! {
-                        if handler_safety::node_rules_v(n, nq) {
-                            handler_safety::rules_v_without_question(m, u64::MAX, nq);
-                        }
-                    }
-                }
-                Answer::ChangeRequest => {
-                    kernel_snapshot! { before_replace = m }
-                    m = enter_stopping_v(m, Outcome::Replaced);
-                    kernel_proof! {
-                        assert(m.proposed == before_replace@.proposed && m.adopted == before_replace@.adopted)
-                            by { reveal(retirement::stopped); }
-                        handler_safety::stop_step(before_replace@, Outcome::Replaced);
-                        if handler_safety::node_rules_v(n, nq) {
-                            handler_safety::stopped_rules_v(before_replace@, Outcome::Replaced, nq);
-                        }
-                    }
-                }
-                Answer::Stop => {
-                    kernel_snapshot! { before_stop = m }
-                    m = enter_stopping_v(m, Outcome::Stopped);
-                    kernel_proof! {
-                        assert(m.proposed == before_stop@.proposed && m.adopted == before_stop@.adopted)
-                            by { reveal(retirement::stopped); }
-                        handler_safety::stop_step(before_stop@, Outcome::Stopped);
-                        if handler_safety::node_rules_v(n, nq) {
-                            handler_safety::stopped_rules_v(before_stop@, Outcome::Stopped, nq);
-                        }
-                    }
-                }
-                _ => { kernel_proof! { handler_safety::same_step(n); } }
-            }
-        }
-        _ => { kernel_proof! { handler_safety::same_step(n); } }
-    }
-    (m, nq, note)
+    result
 }
 }
 
@@ -370,5 +268,141 @@ fn retry_answer_node(n: Node, q: Question) -> (result: (Node, Option<Notice>)) [
         }
     }
     (m, note)
+}
+}
+
+kernel_fn! {
+fn retry_answer_exact(n: Node, q: Question) -> (result: (Node, Option<Notice>)) [
+    requires q.cost <= 1,
+        n.generation < u64::MAX,
+        n.credit.start as int + n.credit.earned as int + n.credit.added as int
+            >= n.credit.spent as int,
+        n.credit.withheld ==> (if q.cost > 1 { q.cost } else { 1u8 }) == 0,
+        n.credit.added as int + 255 <= u64::MAX as int,
+        n.credit.spent < u64::MAX,
+    ensures result == apply_answer_values::retried_answer(n, q),
+] {
+
+    let mut m = n;
+    m.attempt = 1;
+    m.review_restarted = false;
+    m.round = 0;
+    m.replanned = false;
+
+    m = continue_exact(
+        m,
+        Question {
+            cost: q.cost.max(1),
+            ..q
+        },
+        0,
+    );
+    let mut note: Option<Notice> = None;
+    match q.cont {
+        Cont::Planning { must_split } => {
+            if !must_split && m.replanned && q.kind == QKind::OutOfCredit {
+                note = Some(Notice::Note(NoteKind::Replanned));
+            }
+        }
+        _ => {}
+    }
+
+    kernel_proof! { reveal(apply_answer_values::retried_answer); reveal(apply_answer_values::continued_answer); }
+    (m, note)
+
+}
+}
+
+kernel_fn! {
+pub(super) fn answer_value(n: Node, nq: u64, id: u64, answer: Answer)
+    -> (result: (Node, u64, Option<Notice>)) [
+    requires node_headroom(n),
+        arithmetic_consistent(n),
+        nq < u64::MAX,
+    ensures result == apply_answer_values::answered(n, nq, id, answer),
+] {
+
+    let mut m = n;
+    let mut nq = nq;
+    let mut note: Option<Notice> = None;
+    let Some(q) = m.question else {
+
+        kernel_proof! { reveal(apply_answer_values::answered); }
+        return (m, nq, note);
+    };
+    if q.id != id {
+
+        kernel_proof! { reveal(apply_answer_values::answered); }
+        return (m, nq, note); // an answer to a question that is no longer open
+    }
+    match m.phase {
+        Phase::Stopping(_) => match answer {
+            Answer::Retry => {
+                m.question = None;
+
+            }
+            Answer::MarkHandled => {
+                m.question = None;
+
+                mark_handled(&mut m);
+
+            }
+            _ => {  }
+        },
+        Phase::AwaitingRob => {
+            if answer == Answer::Unclear {
+                // One clarifying question. After that the question just stays open.
+                if !q.clarified {
+                    let (m1, nq1, x) = clarify_node(m, nq, q);
+                    m = m1;
+                    nq = nq1;
+                    note = Some(x);
+                }
+
+                kernel_proof! { reveal(apply_answer_values::answered); }
+                return (m, nq, note);
+            }
+            if !allowed(q.kind, answer) {
+
+                kernel_proof! { reveal(apply_answer_values::answered); }
+                return (m, nq, note);
+            }
+            match answer {
+                Answer::Continue => {
+                    let (m1, x) = go_on_exact(m, q, 0);
+                    m = m1;
+                    note = x;
+
+                }
+                Answer::TryAgain => {
+                    let (m1, x) = retry_answer_exact(m, q);
+                    m = m1;
+                    note = x;
+
+                }
+                Answer::AddCredit(k) => {
+                    let (m1, x) = go_on_exact(m, q, k);
+                    m = m1;
+                    note = x;
+
+                }
+                Answer::ChangeRequest => {
+
+                    m = enter_stopping_v(m, Outcome::Replaced);
+
+                }
+                Answer::Stop => {
+
+                    m = enter_stopping_v(m, Outcome::Stopped);
+
+                }
+                _ => {  }
+            }
+        }
+        _ => {  }
+    }
+    kernel_proof! { reveal(apply_answer_values::answered); }
+    (m, nq, note)
+
 }
 }
