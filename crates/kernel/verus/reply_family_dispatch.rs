@@ -199,7 +199,7 @@ pub(super) proof fn work_value_posts(n: Node, c: ReplyCtx)
     ensures reply_family_values::reply_bound(n, c.next_question, reply_family_values::work(n, c.fast, c.reply)),
         reply_family_safety::rows(n, c, reply_family_values::work(n, c.fast, c.reply)),
         (successful_reply_input(n, c.reply) ==> distance(reply_family_values::finish(c.next_question, reply_family_values::work(n, c.fast, c.reply))) < distance(n)),
-        reply_family_values::finish(c.next_question, reply_family_values::work(n, c.fast, c.reply)).footprint == n.footprint,
+        reply_family_values::finish(c.next_question, reply_family_values::work(n, c.fast, c.reply)).footprint != n.footprint,
 {
     work_bounds(n, c); work_progress(n, c); work_completion(n, c);
 }
