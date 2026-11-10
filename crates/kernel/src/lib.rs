@@ -2397,6 +2397,9 @@ mod progress_unplanned_witness;
 #[path = "../verus/special_safety.rs"]
 mod special_safety;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/liveness_witness.rs"]
+mod liveness_witness;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/liveness_trace.rs"]
 mod liveness_trace;
 #[cfg(verus_keep_ghost)]
