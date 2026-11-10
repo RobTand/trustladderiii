@@ -502,8 +502,6 @@ mod resume_apply_projection {
     verus! {
     pub(super) proof fn endpoint(before: World, after: World, node: NodeId, id: u64)
         requires node.0 < before.nodes@.len(),
-            progress_gate_apply::resume_apply_post(before, after,
-                Event::Command { node, id, command: Command::Resume }),
         ensures dependencies::same_endpoint(before.nodes@[node.0 as int], after.nodes@[node.0 as int]),
     {
         reveal(progress_gate_apply::resume_apply_post);
