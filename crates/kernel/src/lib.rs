@@ -111,6 +111,9 @@ mod reply_family_ingest_world;
 #[path = "../verus/reply_family_facts.rs"]
 mod reply_family_facts;
 #[cfg(verus_keep_ghost)]
+#[path = "../verus/reply_relation_work.rs"]
+mod reply_relation_work;
+#[cfg(verus_keep_ghost)]
 #[path = "../verus/apply_new_safety.rs"]
 mod apply_new_safety;
 #[cfg(verus_keep_ghost)]
