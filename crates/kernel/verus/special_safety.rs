@@ -76,7 +76,6 @@ mod advance_projection {
     {
         reveal(advance_post);
         node_distance_definition(before);
-        node_distance_definition(after);
     }
     }
 }
