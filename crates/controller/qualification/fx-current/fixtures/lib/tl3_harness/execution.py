@@ -1,0 +1,766 @@
+from dataclasses import asdict, dataclass, field, replace
+import json
+import hashlib
+import os
+from pathlib import Path
+import re
+import tempfile
+from typing import Protocol
+
+from .limits import MAX_PROOF_MESSAGE_CHARS, MAX_DETAILED_FAILURES, MAX_MESSAGE_CHARS, MAX_REPORT_BYTES, MAX_REPORT_LINE_BYTES, MAX_RESULT_BYTES, RESULT_ENVELOPE_BYTES, validate_check_plan
+from .model import (ALWAYS_CHECK, SELECTED_CHECK, Check, FailureNotes, Forcing, HarnessInputError, ProofRefusal, Kind, Outcome, Result, TestResult, Verdict,
+                    NATIVE_THREAD_ENVIRONMENT, judge)
+from .node_ids import validate_always_tests
+from .report import InvalidReport, decode, parse
+from .supervision import ExecutionFailure, ExecutionOutcome, Supervised
+from .scratch import directory as scratch_directory
+from . import selection, runtime
+from .trees import (UnsupportedEntry, added_names, changed_configuration, changed_existing_tests,
+                    changed_files, changed_protected, commit, configuration, export, git, is_test, own_base,
+                    )
+from .proof import assemble_proof, conftest_subjects
+
+
+MAX_SELECTED_TESTS = 1000
+
+# Wire values are checked against the Rust-generated RedClass schema (#926).
+RED_CLASSES = {Outcome.ASSERTION: 'assertion', Outcome.ADDED_NAME: 'added-name',
+               Outcome.ERROR: 'symptom'}
+
+
+_BASE_RESULTS: dict[tuple, tuple[dict[str, Outcome], dict[str, str]]] = {}
+# Complete execution units, never individual members, apart from the plan's base cache.
+_SELECTED_BASE: dict[tuple, "SelectedObservation"] = {}
+
+
+class ProofNotes(FailureNotes):
+    """Runner-only proof context, carried beside the existing assertion reason."""
+
+    def __init__(self, red_message=None, proof_subjects=None):
+        super().__init__(red_message)
+        self.proof_subjects = proof_subjects or {}
+
+
+@dataclass
+class SelectedRun:
+    groups: tuple[tuple[str, ...], ...]
+    limit: int
+    expected: tuple[str, ...] | None = None
+    collected: tuple[str, ...] = ()
+    refusal: str = ""
+    prefix: bool = False
+    allow_empty: bool = False
+    saturation: dict | None = None
+
+    def as_json(self):
+        return {"groups": self.groups, "limit": self.limit, "expected": self.expected,
+                "prefix": self.prefix, "allow_empty": self.allow_empty}
+
+
+@dataclass(frozen=True)
+class SelectedObservation:
+    outcomes: dict[str, Outcome]
+    collection: tuple[str, ...]
+    phases: dict = field(default_factory=dict)
+
+    @property
+    def identity(self):
+        return hashlib.sha256(json.dumps(self.collection, ensure_ascii=True).encode()).hexdigest()
+
+
+@dataclass(frozen=True)
+class Container:
+    image: str
+
+    def __post_init__(self):
+        if not re.fullmatch(r"(?:[\w./:-]+@)?sha256:[0-9a-f]{64}", self.image):
+            raise HarnessInputError("use an immutable image ID or manifest digest")
+
+
+def container_command(tree: Path, container: Container, tests: tuple[str, ...]) -> list[str]:
+    # Flux is the only executor (PB-REMOVAL); Rust's launch context owns the container.
+    return runtime.command(tree, scratch_directory())
+
+
+def require_admission():
+    runtime.launch_context()
+    runtime.prepare_scratch()
+
+
+class Progress:
+    def __init__(self):
+        self.units = 0
+        self.flux_journal = Path(runtime.launch_context()['progress']['journal'])
+        if self.flux_journal.exists():
+            with self.flux_journal.open() as journal:
+                self.units = sum(1 for _ in journal)
+
+    def commit(self, test: str):
+        self.units += 1
+        # Raw completion observations, with no backend ending claim.
+        with self.flux_journal.open('a') as journal:
+            journal.write(json.dumps(test) + '\n')
+            journal.flush()
+            os.fsync(journal.fileno())
+
+
+def run_tree(tree: Path, container: Container, tests: tuple[str, ...], report: Path,
+             progress: Progress, additions: frozenset[tuple[str, str]] = frozenset(), *,
+             messages: dict[str, str] | None = None, forcing: Forcing | None = None,
+             selected: SelectedRun | None = None) -> dict[str, Outcome]:
+    report = runtime.journal_path(report)
+    missing = {test for test in tests if not (tree / test.split("::")[0]).is_file()}
+    records = []
+    invalid = False
+    record_limit = 4 * len(tests) + 16
+    line_limit = MAX_REPORT_LINE_BYTES
+    retained_bytes = 0
+    # The container gets no writable report mount or PB token. Its event stream
+    # is journalled and parsed by this host process, outside the checkout.
+    with report.open("wb") as journal, tempfile.TemporaryFile(dir=runtime.temporary_root()) as selection:
+        # The forcing travels with the selection to the read-only runner, outside the checkout (#393).
+        request = tests
+        if forcing is not None:
+            request = {"tests": tests, "forcing": forcing.as_json()}
+        if selected is not None:
+            request = {"tests": tests, "selection": selected.as_json()}
+        red_message = getattr(messages, 'red_message', None)
+        if red_message is not None:
+            request = {**(request if isinstance(request, dict) else {'tests': tests}), 'red_message': red_message}
+        proof_subjects = getattr(messages, 'proof_subjects', None)
+        if proof_subjects:
+            request = {**(request if isinstance(request, dict) else {'tests': tests}), 'proof_subjects': proof_subjects}
+        selection.write(json.dumps(request).encode())
+        selection.seek(0)
+        process = Supervised(container_command(tree, container, tests), selection, tests)
+        try:
+            with process:
+                for line in process.records():
+                    retained_bytes += len(line)
+                    if len(line) > line_limit or len(records) > record_limit or retained_bytes > MAX_REPORT_BYTES:
+                        invalid = True
+                        break
+                    journal.write(line)
+                    journal.flush()
+                    os.fsync(journal.fileno())
+                    try:
+                        record = decode(line)
+                    except InvalidReport:
+                        invalid = True
+                        break
+                    records.append(record)
+                    if record.get("event") == "collection" and isinstance(record.get("tests"), list):
+                        record_limit = 4 * len(record["tests"]) + 16
+                        line_limit = min(MAX_REPORT_LINE_BYTES, max((len(json.dumps(test, ensure_ascii=False).encode(errors='backslashreplace'))
+                                                                   for test in record['tests']), default=0) + 8192)
+                    if record.get("event") == "phase" and record.get("when") == "teardown":
+                        progress.commit(record.get("test", ""))
+                exit_code = process.exit_code
+        except ExecutionFailure as failure:
+            failure.log()
+            if isinstance(failure.__context__, SystemExit):
+                raise failure.__context__
+            if messages is not None:
+                messages.update(dict.fromkeys(tests, failure.message()))
+            # UNCOLLECTED cannot be assertion RED, GREEN, or an allowed pre-existing error.
+            outcome = Outcome.UNCOLLECTED if failure.outcome == ExecutionOutcome.TEST_TIMEOUT else Outcome.NO_REPORT
+            return dict.fromkeys(tests, outcome)
+        except ValueError:
+            process.incomplete().log()
+            return dict.fromkeys(tests, Outcome.NO_REPORT)
+    try:
+        if invalid:
+            raise InvalidReport("invalid report stream")
+        outcomes = parse(records, tests, missing, exit_code, additions, messages=messages)
+        if Outcome.NO_REPORT in outcomes.values():
+            process.incomplete().log()
+        if selected is not None:
+            selected.collected = tuple(test for record in records if record.get("event") == "collection"
+                                       for test in record["tests"])
+            selected.refusal = next((record["message"] for record in records
+                                     if record.get("event") == "plan-error"), "")
+            selected.saturation = next((record["saturation"] for record in records
+                                        if record.get("event") == "collection" and "saturation" in record), None)
+        return outcomes
+    except InvalidReport:
+        process.incomplete().log()
+        return dict.fromkeys(tests, Outcome.NO_REPORT)
+
+
+def refused(plan: tuple[Check, ...], message: str) -> tuple[Result, ...]:
+    """Keep complete trusted proof rows within the existing result byte budget."""
+    from .model import ProofMessage
+    message = ProofMessage(str(message)) if isinstance(message, ProofRefusal) else message
+    results = tuple(Result(check.name, check.kind, Verdict.FAIL, tuple(
+        TestResult(test, Outcome.UNCOLLECTED, Outcome.UNCOLLECTED, False, False,
+                   message if isinstance(message, ProofMessage) else message[:MAX_MESSAGE_CHARS])
+        for test in check.tests), forcing=check.forcing, declared_symptom=check.declared_symptom) for check in plan)
+    if isinstance(message, ProofMessage):
+        result_json(results)
+    return results
+
+
+def listed(instruction: str, changed: list[str]) -> str:
+    """The instruction first, then as many files as fit; clipping never hides what to do."""
+    for shown in range(len(changed), 0, -1):
+        rest = len(changed) - shown
+        message = instruction + ", ".join(changed[:shown]) + (f" and {rest} more." if rest else ".")
+        if len(message) <= MAX_MESSAGE_CHARS:
+            return message
+    return f"{instruction}{len(changed)} files."
+
+
+def changed_files_message(configuration: list[str], protected: list[str]) -> str:
+    if set(protected) <= set(configuration):
+        return listed("Restore the changed test configuration: checks never run a changed test "
+                      "configuration. Changed: ", configuration)
+    return listed("Restore the changed protected files: checks never run a change to this repository's "
+                  "protected paths. Changed: ", sorted(set(configuration) | set(protected)))
+
+
+def unsupported_entry_message(entry: UnsupportedEntry) -> str:
+    return ("Replace this entry with a regular file or remove it: checks run only regular files and "
+            f"directories, never symlinks or submodules. Entry: {entry.name}")
+
+
+def configuration_changes(repo: Path, root: Path, base: str, base_tree: Path, head: str,
+                          head_tree: Path, tool: "TestTool", protected: tuple[str, ...], plan=()) -> str | None:
+    """Judge only what the head changed, against the commit it descends from. A head
+    built on an older main than the check base must not answer for main's changes.
+    Returns the refusal message, or None."""
+    fork = own_base(repo, base, head)
+    if fork != base:
+        base_tree = root / f"fork-{fork}"
+        if not base_tree.exists():
+            export(repo, fork, base_tree)
+    configuration = tool.changed_configuration(base_tree, head_tree)
+    syntax_refusal = None
+    try:
+        permitted = conftest_subjects(base_tree, head_tree, plan)
+    except SyntaxError as error:
+        syntax_refusal = str(ProofRefusal('proof.source.unparsable', module=error.filename or '', bad_value=error.msg, line=error.lineno))
+        permitted = set()
+    except (ProofRefusal, OSError):
+        permitted = set()
+    configuration = [name for name in configuration if name not in permitted]
+    paths = changed_protected(repo, fork, head, protected)
+    if configuration or paths:
+        message = changed_files_message(configuration, paths)
+        if syntax_refusal:
+            from .model import ProofMessage
+            return ProofMessage(message + '\n' + syntax_refusal)
+        return message
+    return None
+
+
+class TestTool(Protocol):
+    """How a served repository configures, transplants and runs its tests (#390). The
+    round's trees, refusals and verdicts in run_checks are the same for every tool."""
+
+    def configuration(self, tree: Path) -> dict: ...
+
+    def changed_configuration(self, base: Path, head: Path) -> list[str]: ...
+
+    def is_test(self, name: str, config: dict) -> bool: ...
+
+
+    def added_names(self, base: Path, head: Path, config: dict) -> frozenset[tuple[str, str]]: ...
+
+    def changed_existing_tests(self, base: Path, head: Path, tests: tuple[str, ...]) -> set[str]: ...
+
+    def select(self, tree: Path, changed: list[str], config: dict) -> list[str]: ...
+
+    def run(self, tree: Path, container: Container, tests: tuple[str, ...], report: Path,
+            progress: Progress, additions: frozenset[tuple[str, str]] = frozenset(), *,
+            messages: dict[str, str] | None = None, forcing: Forcing | None = None,
+            selected: SelectedRun | None = None) -> dict[str, Outcome]: ...
+
+
+class Pytest:
+    """The default tool: `[tool.tl3.harness]` in pyproject.toml, one container per tree."""
+
+    def configuration(self, tree):
+        return configuration(tree)
+
+    def changed_configuration(self, base, head):
+        return changed_configuration(base, head)
+
+    def is_test(self, name, config):
+        return is_test(name, config["test-files"])
+
+    def added_names(self, base, head, config):
+        return added_names(base, head, config["test-files"])
+
+    def changed_existing_tests(self, base, head, tests):
+        return changed_existing_tests(base, head, tests)
+
+    def select(self, tree, changed, config):
+        return selection.select(tree, changed, lambda name: is_test(name, config["test-files"]), modules_only=True)
+
+    def run(self, tree, container, tests, report, progress, additions=frozenset(), *, messages=None, forcing=None,
+            selected=None):
+        if selected is not None:
+            return run_tree(tree, container, tests, report, progress, additions, messages=messages, selected=selected)
+        # Test seams stand in for run_tree without a forcing parameter; pass it only when set.
+        if forcing is None:
+            return run_tree(tree, container, tests, report, progress, additions, messages=messages)
+        return run_tree(tree, container, tests, report, progress, additions, messages=messages, forcing=forcing)
+
+
+PYTEST = Pytest()
+
+
+def selected_candidates(repo: Path, tool: TestTool, old: Path, new: Path, config: dict, base: str,
+                        head: str, plan: tuple[Check, ...], limit: int, failures: tuple[str, ...] = ()) -> tuple[tuple[str, ...], ...]:
+    """Closest complete modules, or owner-declared groups of modules. Planned functions
+    stay in their owning unit. Historical failures precede import candidates, even
+    outside the current import closure. An edited unit is excluded whole for review."""
+    declared = {name: tuple(group) for group in config.get("selection-groups", []) for name in group}
+    named_files = {test for check in plan for test in check.tests if "::" not in test}
+    candidates, seen = [], set()
+    try:
+        for test in (*failures, *tool.select(old, changed_files(repo, own_base(repo, base, head), head), config)):
+            name = test.split("::", 1)[0]
+            group = declared.get(name, (name,))
+            if name in seen:
+                continue
+            seen.update(group)
+            known_failure = any(test.split("::", 1)[0] in group for test in failures)
+            if (set(group) <= named_files and not known_failure) or tool.changed_existing_tests(old, new, group):
+                continue
+            candidates.append(group)
+    except (RecursionError, MemoryError):
+        return ()
+    except ValueError as error:
+        raise HarnessInputError(f"Selected execution groups exceed report limits: {error}") from error
+    return tuple(candidates)
+
+
+def selected_base(tool: TestTool, old: Path, container: Container, candidates: tuple[tuple[str, ...], ...], base: str,
+                  root: Path, progress: Progress, limit: int, config: dict,
+                  required: tuple[tuple[str, ...], ...] = ()) -> tuple[dict, dict | None]:
+    """Admit a priority prefix at actual collected costs. Cached units consume budget
+    only when their turn arrives; base failures do not refund their collection cost.
+    Required historical units must fit before any ordinary candidate is admitted."""
+    key = (runtime.cache_owner(), base, container, id(tool),
+           json.dumps(config, sort_keys=True), "complete-prefix-v2", limit,
+           tuple((name, os.environ.get(name, default)) for name, default in NATIVE_THREAD_ENVIRONMENT.items()))
+    before, charged, index, saturation = {}, 0, 0, None
+    while index < len(candidates):
+        group = candidates[index]
+        remaining = limit - charged
+        cached = _SELECTED_BASE.get((*key, group))
+        if (remaining == 0 and group not in required) or (cached is not None and len(cached.collection) > remaining):
+            if group in required:
+                cost = charged + len(cached.collection)
+                raise HarnessInputError(f"Previously failing execution units need at least {cost} tests; "
+                                        f"selected-test budget is {limit}. Cannot skip {group}.")
+            saturation = {"unit": list(group), "cases": len(cached.collection) if cached else None,
+                          "remaining": remaining, "reason": "Next complete unit cannot fit; lower-priority units were not checked."}
+            break
+        if cached is not None:
+            before[group] = cached
+            charged += len(cached.collection)
+            index += 1
+            continue
+        # Batch uncached units using static lower bounds only to bound collection work.
+        # The runner admits the actual complete prefix before executing any item.
+        batch, lower_bound = [], 0
+        for candidate in candidates[index:]:
+            if batch and (candidate in required) != (group in required):
+                break
+            if (*key, candidate) in _SELECTED_BASE:
+                break
+            batch.append(candidate)
+            try:
+                lower_bound += sum(max(1, len(selection.node_ids(old, member))) for member in candidate)
+            except selection.UNREADABLE as error:
+                raise HarnessInputError(f"Cannot discover the complete selected execution group {candidate}.") from error
+            if lower_bound >= remaining:
+                break
+        contract = SelectedRun(tuple(batch), remaining, prefix=True, allow_empty=bool(before))
+        tests = tuple(member for unit in batch for member in unit)
+        base_messages = FailureNotes()
+        observed = tool.run(old, container, tests, root / f"selected-base-{index}.jsonl", progress,
+                            messages=base_messages, selected=contract)
+        if contract.refusal:
+            prefix = f"Previously failing execution units cannot fit the {limit}-test budget: " if group in required else ""
+            raise HarnessInputError(prefix + contract.refusal)
+        if contract.saturation is None and not contract.collected and any(value in (Outcome.NO_REPORT, Outcome.UNCOLLECTED)
+                                          for value in observed.values()):
+            saturation = {"unit": list(batch[0]), "cases": None, "remaining": remaining,
+                          "reason": "Base collection unverified; unknown consumed budget cannot be reused. "
+                                    "No checks of the remaining suffix were verified."}
+            break
+        for candidate in batch:
+            if contract.saturation and list(candidate) == contract.saturation['unit']:
+                if candidate in required:
+                    cost = charged + contract.saturation['cases']
+                    raise HarnessInputError(f"Previously failing execution units need at least {cost} tests; "
+                                            f"selected-test budget is {limit}. Cannot skip {candidate}.")
+                saturation = {**contract.saturation,
+                              "reason": "Next complete unit cannot fit; lower-priority units were not checked."}
+                break
+            collection = tuple(test for test in contract.collected if test.split("::", 1)[0] in candidate)
+            outcomes = {member: observed.get(member, Outcome.NO_REPORT) for member in candidate}
+            observation = SelectedObservation(outcomes, collection,
+                {member: base_messages.phases[member] for member in candidate if member in base_messages.phases})
+            before[candidate] = observation
+            if collection and Outcome.NO_REPORT not in outcomes.values():
+                _SELECTED_BASE[(*key, candidate)] = observation
+            charged += len(collection)
+            index += 1
+        if saturation:
+            break
+    receipt = None
+    if saturation:
+        receipt = {"policy": "historical failures first, then complete-unit prefix by import distance, path, and declaration order",
+                   "limit": limit, "charged_cases": charged,
+                   "base_units": [{"members": group, "cases": len(observation.collection),
+                                   "outcomes": observation.outcomes} for group, observation in before.items()],
+                   "head_units": [], "skipped_units": candidates[index:], "skipped_checked": False,
+                   "saturation": saturation}
+    return before, receipt
+
+
+def selected_head(tool: TestTool, new: Path, container: Container, kept: tuple[tuple[str, ...], ...],
+                  before: dict[tuple[str, ...], SelectedObservation], root: Path, progress: Progress,
+                  limit: int) -> Result:
+    """Run the same complete units as base. Retry each failing unit once, within the
+    original node budget and the detailed-failure cap. Never isolate a group member."""
+    tests = tuple(member for group in kept for member in group)
+    expected = tuple(test for group in kept for test in before[group].collection)
+    contract = SelectedRun(kept, limit, expected)
+    messages, notes = FailureNotes(), {}
+    after = tool.run(new, container, tests, root / "selected-head.jsonl", progress,
+                     messages=messages, selected=contract)
+    if contract.refusal:
+        raise HarnessInputError(contract.refusal)
+    head_collections = {group: tuple(test for test in contract.collected if test.split("::", 1)[0] in group)
+                        for group in kept}
+    failing = [group for group in kept if any(after.get(member) != Outcome.PASSED for member in group)]
+    retried = set()
+    for index, group in enumerate(failing[:MAX_DETAILED_FAILURES]):
+        retry_messages = FailureNotes()
+        retry_contract = SelectedRun((group,), len(before[group].collection), before[group].collection)
+        retry = tool.run(new, container, group, root / f"selected-retry-{index}.jsonl", progress,
+                         messages=retry_messages, selected=retry_contract)
+        if retry_contract.refusal:
+            raise HarnessInputError(retry_contract.refusal)
+        head_collections[group] = retry_contract.collected
+        retried.add(group)
+        passed = all(retry.get(member) == Outcome.PASSED for member in group)
+        for member in group:
+            if passed:
+                notes[member] = ("Failed on the head with the selected groups, then passed on retry as a "
+                                 "complete execution group: flaky or disturbed by another group. "
+                                 "Not counted against the change.")
+            elif member in retry_messages:
+                messages[member] = retry_messages[member]
+            messages.phases.pop(member, None)
+            if member in retry_messages.phases:
+                messages.phases[member] = retry_messages.phases[member]
+            after[member] = retry.get(member, Outcome.NO_REPORT)
+    base_outcomes = {member: before[group].outcomes[member] for group in kept for member in group}
+    failed_members = set()
+    for group in kept:
+        if any(after.get(member) != Outcome.PASSED for member in group):
+            failed_members.update(group)
+            for member in group:
+                if after.get(member) == Outcome.PASSED:
+                    notes[member] = ("This module passed, but a companion in its complete execution group failed. "
+                                     "Editing any companion excludes this unresolved failed group from selection.")
+        identity = before[group].identity
+        membership = ("identical base/head collection" if head_collections[group] == before[group].collection
+                      else "head collection unverified; required base collection")
+        receipt = (f"Complete execution group {group}; {membership} "
+                   f"{len(before[group].collection)} tests, sha256 {identity}; "
+                   f"retry unit: {group if group in retried else 'not retried'}.")
+        for member in group:
+            if after.get(member, Outcome.NO_REPORT) == Outcome.NO_REPORT:
+                after[member] = Outcome.ERROR
+                messages[member] = ("The execution group ended its process on the head without a complete "
+                                    "report; this complete group passed on the base.")
+            notes[member] = (receipt + "\n" + (notes.get(member) or messages.get(member, ""))).strip()[:MAX_MESSAGE_CHARS]
+    base_notes = FailureNotes()
+    base_notes.phases = {member: phases for group in kept for member, phases in before[group].phases.items()}
+    result = judge(Check(SELECTED_CHECK, Kind.REGRESSION, tests), base_outcomes, after,
+                   messages=messages, base_notes=base_notes)
+    return replace(result, tests=tuple(replace(test, passed=test.passed and test.test not in failed_members,
+                                              message=notes[test.test]) for test in result.tests))
+
+
+def stale_result(result: Result, stale: set[str]) -> Result:
+    if result.name != ALWAYS_CHECK:
+        return result
+    tests = tuple(replace(test, passed=True, message=(
+        f"Ignored stale always_tests entry `{test.test}`: missing on both the base and the head. "
+        "The repository owner should update or remove it.")[:MAX_MESSAGE_CHARS])
+        if test.test in stale else test for test in result.tests)
+    verdict = (Verdict.INFRASTRUCTURE_FAILURE if result.verdict == Verdict.INFRASTRUCTURE_FAILURE else
+               Verdict.PASS if all(test.passed for test in tests) else Verdict.FAIL)
+    return replace(result, tests=tests, verdict=verdict)
+
+
+FORCING_INTERNALS = re.compile(
+    r'tl3[-_]forcing|node-[*?\[]|DelayAccounting|'
+    r'tl3_harness[^\n]*(?:runner|forcing_ownership)|'
+    r'(?:/harness/|harness/src/)[^\n]*(?:runner|forcing)', re.IGNORECASE)
+
+
+def forcing_tamper_diff(repo, base, head):
+    """A source tripwire, not a sandbox against obfuscated interpreter access."""
+    for path in changed_files(repo, base, head):
+        patch = git(repo, 'diff', '--no-ext-diff', '--no-textconv', '--no-renames',
+                    '--unified=0', base, head, '--', path).decode(errors='replace')
+        for line in patch.splitlines():
+            if line.startswith(('+', '-')) and not line.startswith(('+++', '---')):
+                if match := FORCING_INTERNALS.search(line[1:]):
+                    return (f'forcing_tampered: forced head diff references forcing internals in {path}: '
+                            f'{match.group()[:160]}. Remove access to harness forcing internals.')
+    return None
+
+
+def run_checks(repo: Path, base: str, head: str, plan: tuple[Check, ...], *,
+               container: Container, reviewed: str | None = None, tool: TestTool = PYTEST,
+               protected: tuple[str, ...] = (), selected_tests: int | None = None,
+               always_tests: tuple[str, ...] = (), selected_failures: tuple[str, ...] = (), footprint: tuple[str, ...] = (), generated: tuple[str, ...] = ()) -> tuple[Result, ...]:
+    """Run one round inside one admitted PB action, from trusted installed code. `protected`
+    holds the repository's protected path patterns; a change to any of them is refused.
+    With `selected_tests`, complete execution groups whose imports reach the change
+    run as one more regression check, `SELECTED_CHECK`. The limit counts collected cases.
+    `always_tests` runs the configured files or node IDs as regression checks every round.
+    `selected_failures` is controller-owned history; complete historical units run first."""
+    require_admission()
+    if not plan or len({check.name for check in plan}) != len(plan):
+        raise HarnessInputError("a plan needs uniquely named checks")
+    if any(check.name == SELECTED_CHECK for check in plan):
+        raise HarnessInputError("a planned check may not use the harness's selected-check name")
+    if selected_tests is not None and (type(selected_tests) is not int
+                                       or not 1 <= selected_tests <= MAX_SELECTED_TESTS):
+        raise HarnessInputError(f"selected_tests must be 1 to {MAX_SELECTED_TESTS}")
+    if any(check.name == ALWAYS_CHECK for check in plan):
+        raise HarnessInputError("a planned check may not use the harness's always-check name")
+    try:
+        validate_always_tests(always_tests)
+        if not isinstance(selected_failures, (tuple, list)):
+            raise ValueError("selected_failures must list previous selected test identities")
+        for failure in selected_failures:
+            validate_always_tests((failure,))
+    except ValueError as error:
+        raise HarnessInputError(str(error)) from error
+    if always_tests:
+        plan += (Check(ALWAYS_CHECK, Kind.REGRESSION, tuple(dict.fromkeys(always_tests))),)
+    tests = tuple(dict.fromkeys(test for check in plan for test in check.tests))
+    try:
+        validate_check_plan(plan)
+    except ValueError as error:
+        # limits.py loads standalone inside the container, so it raises plain ValueError.
+        raise HarnessInputError(str(error)) from error
+    reproducing = tuple(dict.fromkeys(test for check in plan if check.kind == Kind.REPRODUCING
+                                      for test in check.tests))
+    if reproducing and reviewed is None:
+        raise HarnessInputError("a reproducing check needs the exact reviewed commit")
+    repo = repo.resolve()
+    if Path(__file__).resolve().is_relative_to(repo):
+        raise HarnessInputError("the installed harness must be outside the served checkout")
+    base, head = commit(repo, base), commit(repo, head)
+    if any(check.forcing is not None for check in plan):
+        if tampering := forcing_tamper_diff(repo, base, head):
+            return refused(plan, tampering)
+    if reviewed is not None:
+        reviewed = commit(repo, reviewed)
+    with runtime.workspace(prefix="tl3-checks-") as directory:
+        root = Path(directory)
+        root.chmod(0o755)
+        old, new = [root / name for name in ("base", "head")]
+        # The base is the repository's: its errors stay upstream. The head is the maker's.
+        export(repo, base, old)
+        try:
+            export(repo, head, new)
+        except UnsupportedEntry as entry:
+            return refused(plan, unsupported_entry_message(entry))
+        stale = {test for test in always_tests
+                 if not (old / test.split("::")[0]).is_file() and not (new / test.split("::")[0]).is_file()}
+        tests = tuple(test for test in tests if test not in stale)
+        config = tool.configuration(old)
+        if refusal := configuration_changes(repo, root, base, old, head, new, tool, protected, plan):
+            return tuple(stale_result(result, stale) for result in refused(plan, refusal))
+        invalid = {test for test in tests if not tool.is_test(test.split("::")[0], config)}
+        if invalid:
+            outcomes = dict.fromkeys(tests, Outcome.UNCOLLECTED)
+            outcomes.update(dict.fromkeys(stale, Outcome.MISSING))
+            messages = dict.fromkeys(tests, "The plan names a test outside the configured test files.")
+            return tuple(stale_result(judge(replace(check, forcing=None), outcomes, outcomes, messages=messages), stale)
+                         for check in plan)
+        ordinary = tuple(dict.fromkeys(test for check in plan
+                                       if check.kind not in (Kind.DEMONSTRATING, Kind.REPRODUCING)
+                                       for test in check.tests if test not in stale))
+        changed = tool.changed_existing_tests(old, new, ordinary)
+        candidates = (selected_candidates(repo, tool, old, new, config, base, head, plan, selected_tests, selected_failures)
+                      if selected_tests else ())
+        progress = Progress()
+        cache_key = (runtime.cache_owner(), base, container, ordinary)
+        if ordinary and cache_key not in _BASE_RESULTS:
+            before_messages = FailureNotes()
+            observed = tool.run(old, container, ordinary, root / "base.jsonl", progress, messages=before_messages)
+            if Outcome.NO_REPORT not in observed.values():
+                _BASE_RESULTS[cache_key] = observed, before_messages
+        before, before_messages = _BASE_RESULTS.get(cache_key, (dict.fromkeys(ordinary, Outcome.NO_REPORT), {}))
+        before = before.copy()
+        before.update(dict.fromkeys(stale, Outcome.MISSING))
+        # Candidates run apart, so one crashing there can't cost the plan its base evidence.
+        selected_before, selection_receipt = selected_base(tool, old, container, candidates, base, root, progress, selected_tests, config,
+                                                          tuple(group for group in candidates if any(
+                                                              test.split("::", 1)[0] in group for test in selected_failures)))
+        if selected_before:
+            try:
+                # Discovery can exceed the envelope; only admitted complete units produce results.
+                validate_check_plan(plan + (Check(SELECTED_CHECK, Kind.REGRESSION,
+                                                 tuple(member for group in selected_before for member in group)),))
+            except ValueError as error:
+                raise HarnessInputError(f"Selected execution groups exceed report limits: {error}") from error
+        # Filter complete units: no head run may lose a fixture companion.
+        kept = tuple(group for group in selected_before
+                     if all(outcome == Outcome.PASSED for outcome in selected_before[group].outcomes.values()))
+        proofs = {}
+        head_subjects = {}
+        reviewed_tree = None
+        if reproducing:
+            reviewed_tree = root / "reviewed"
+            try:
+                export(repo, reviewed, reviewed_tree)
+            except UnsupportedEntry as entry:
+                return refused(plan, unsupported_entry_message(entry))
+            if refusal := configuration_changes(repo, root, base, old, reviewed, reviewed_tree, tool, protected, plan):
+                return refused(plan, refusal)
+        for index, check in enumerate(plan):
+            if check.kind not in (Kind.DEMONSTRATING, Kind.REPRODUCING):
+                continue
+            staged = root / f"proof-{index}"
+            subject = reviewed_tree if check.kind == Kind.REPRODUCING else old
+            try:
+                receipt = assemble_proof(subject, new, staged, check, config, role='maker', check_index=index, footprint=footprint, protected=protected, generated=generated)
+            except SyntaxError as error:
+                refusal = ProofRefusal('proof.source.unparsable', module=error.filename or '', bad_value=error.msg, line=error.lineno)
+                return refused(plan, refusal.for_check(check, 'maker', index, footprint=footprint, protected=protected, generated=generated))
+            except ProofRefusal as error:
+                return refused(plan, error)
+            except OSError as error:
+                return refused(plan, str(error))
+            subject_files = sorted({name.split('::', 1)[0] for name in receipt['subjects']})
+            proof_subjects = dict.fromkeys(check.tests, subject_files)
+            for test, files in proof_subjects.items():
+                head_subjects[test] = sorted(set(head_subjects.get(test, ())) | set(files))
+            notes = ProofNotes(check.proof.red_message if check.proof else None, proof_subjects)
+            forced_notes = ProofNotes(proof_subjects=proof_subjects)
+            if check.declared_symptom is not None:
+                from .test_tool import run_symptom
+                from .symptoms import judge_symptom
+                observed = run_symptom(staged, container, check.tests, check.declared_symptom, forcing=check.forcing,
+                                       proof_subjects=proof_subjects)
+                fixed = run_symptom(new, container, check.tests, check.declared_symptom, forcing=check.forcing,
+                                    proof_subjects=proof_subjects)
+                ordinary_head = (run_symptom(new, container, check.tests, check.declared_symptom,
+                                             proof_subjects=proof_subjects)
+                                 if check.forcing else fixed)
+                result = judge_symptom(check, observed, fixed, ordinary_head, base, head)
+                proofs[check.name] = (None, None, None, None, receipt, result)
+                continue
+            observed = tool.run(staged, container, check.tests, root / f"proof-base-{index}.jsonl", progress,
+                                tool.added_names(subject, new, config), messages=notes, forcing=check.forcing)
+            forced_head = (tool.run(new, container, check.tests, root / f"proof-forced-head-{index}.jsonl", progress,
+                                    messages=forced_notes, forcing=check.forcing) if check.forcing else None)
+            proofs[check.name] = (observed, notes, forced_head, forced_notes, receipt, None)
+        messages = ProofNotes(proof_subjects=head_subjects)
+        ordinary_tests = tuple(test for test in tests if any(
+            test in check.tests and check.declared_symptom is None for check in plan))
+        after = (tool.run(new, container, ordinary_tests, root / "head.jsonl", progress, messages=messages)
+                 if ordinary_tests else {})
+        after.update(dict.fromkeys(stale, Outcome.MISSING))
+        # A collection/plan refusal is also UNCOLLECTED, but proves nothing about missing nodes.
+        stale.update(test for test in always_tests if "::" in test
+                     and before[test] in (Outcome.MISSING, Outcome.UNCOLLECTED)
+                     and after[test] in (Outcome.MISSING, Outcome.UNCOLLECTED)
+                     and not before_messages.get(test) and not messages.get(test))
+        results = []
+        for check in plan:
+            if check.name in proofs:
+                observed, notes, forced_head, forced_notes, receipt, result = proofs[check.name]
+                if result is None:
+                    result = judge(check, observed, after, messages=messages, base_notes=notes,
+                                   forced=forced_head, forced_messages=forced_notes)
+                budgets = {side: item.delay_budget for side, item in (('base', notes), ('head', messages), ('head_forced', forced_notes))
+                           if getattr(item, 'delay_budget', None)}
+                if budgets:
+                    receipt['delay_budget'] = budgets
+                if notes is not None:
+                    receipt['red_message_matches'] = {
+                        test: failure.red_message_match for test, failure in notes.details.items()
+                        if test in check.tests and failure.red_message_match is not None}
+                receipt['red_classes'] = {
+                    test.test: RED_CLASSES[test.base] for test in result.tests
+                    if test.passed and test.base in RED_CLASSES
+                    and (test.base != Outcome.ERROR or check.declared_symptom is not None)}
+                results.append(replace(result, proof=receipt))
+                continue
+            result = judge(check, before, after, messages=messages, base_notes=before_messages)
+            if check.kind in (Kind.REGRESSION, Kind.BEHAVIOR_PRESERVING):
+                restored = tuple(replace(test, passed=False, message=(
+                    f"Restore the existing test `{test.test}`; existing tests may not be changed to satisfy a check.")[:1000])
+                    if test.test in changed else test for test in result.tests)
+                if any(test.test in changed for test in result.tests):
+                    result = replace(result, verdict=Verdict.FAIL, tests=restored)
+            results.append(stale_result(result, stale))
+        if kept:
+            results.append(selected_head(tool, new, container, kept, selected_before, root, progress, selected_tests))
+        if selection_receipt is not None:
+            selection_receipt["head_units"] = kept
+            results[-1] = replace(results[-1], selection=selection_receipt)
+        return tuple(results)
+
+
+def result_json(results: tuple[Result, ...]) -> str:
+    reports = [asdict(result) for result in results]
+    # Owner rule notes retain their existing priority. Actual failures precede group
+    # companion notes and passing receipts, without increasing the shared allowance.
+    messages = [(result['name'], test) for result in reports for test in result['tests']]
+    priority = sorted(messages, key=lambda pair: (
+        pair[0] != ALWAYS_CHECK,
+        pair[1]['passed'] or pair[1]['head'] == Outcome.PASSED,
+        pair[1]['passed']))
+    retained = {id(test) for _, test in [pair for pair in priority if pair[1]['message']][:MAX_DETAILED_FAILURES]}
+    for result, report in zip(results, reports):
+        if result.declared_symptom is None:
+            del report['declared_symptom']
+        if result.symptom_evidence is None:
+            del report['symptom_evidence']
+        # Unforced results keep their earlier shape; a forced one carries its forcing for review (#393).
+        if result.selection is None:
+            del report["selection"]
+        if result.proof is None:
+            del report["proof"]
+        if result.forcing is None:
+            del report['forcing']
+        else:
+            report['forcing'] = result.forcing.as_json()
+        for test in report['tests']:
+            if test['phases'] is None:
+                del test['phases']
+            if test['head_forced'] is None:
+                del test['head_forced']
+            if id(test) in retained:
+                from .model import ProofMessage
+                if isinstance(test['message'], ProofMessage):
+                    if len(test['message']) > MAX_PROOF_MESSAGE_CHARS:
+                        raise HarnessInputError('Complete proof refusal exceeds the bounded result byte budget for a proof message.')
+                    test['proof_refusal'] = str(test['message'])
+                    test['message'] = test['message'][:MAX_MESSAGE_CHARS]
+                else:
+                    test['message'] = test['message'][:MAX_MESSAGE_CHARS].encode(errors='backslashreplace').decode()[:MAX_MESSAGE_CHARS]
+            else:
+                test['message'] = ''
+    encoded = json.dumps(reports, sort_keys=True, separators=(',', ':'))
+    if len(encoded.encode()) > MAX_RESULT_BYTES - RESULT_ENVELOPE_BYTES:
+        raise HarnessInputError('Selection receipt exceeds the existing result byte budget.')
+    return encoded
