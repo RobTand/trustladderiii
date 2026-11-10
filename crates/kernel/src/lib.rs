@@ -120,6 +120,7 @@ mod facts;
 use facts::*;
 mod commands;
 use commands::*;
+mod command_dispatch;
 mod answers;
 use answers::*;
 mod command_helpers;

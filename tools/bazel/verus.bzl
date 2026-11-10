@@ -1171,7 +1171,7 @@ def verus_proofs():
             "facts_ci_infrastructure": ("kernel::facts#ci_infrastructure", 1),
             "facts_merge": ("kernel::facts#pr_merged", 1),
             "facts_merge_open": ("kernel::facts#merge_open", 1),
-            "commands": ("kernel::commands#on_command", 1),
+            "commands": ("kernel::command_dispatch#on_command", 1),
             "answers": ("kernel::answers#answer_node", 1),
             "command_helpers_allowed": ("kernel::command_helpers#allowed", 1),
             "command_helpers_mark_handled": ("kernel::command_helpers#mark_handled", 1),
