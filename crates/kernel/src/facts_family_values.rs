@@ -776,7 +776,7 @@ pub(super) open spec fn ci_active(n: Node, infra: bool) -> bool {
 
 pub(super) open spec fn ci_prepared(n: Node, infra: bool) -> Node {
     if ci_active(n, infra) && ci_before_enqueue(n) {
-        Node { effect: match n.effect {
+        Node { generation: (n.generation + 1) as u64, effect: match n.effect {
             Some(effect) => Some(InFlight { cancelling: true, ..effect }),
             None => None,
         }, ..n }
