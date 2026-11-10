@@ -285,6 +285,44 @@ pub(super) proof fn held_eq(n: Node, target: Phase)
     if holding(target) {} else {}
 }
 
+pub(super) proof fn recheck_free_arm(n: Node, target: Phase)
+    ensures ({ let m = reply_family_values::rechecked(n);
+        m.rechecks <= FREE_RECHECKS ==> reply_family_values::recheck(n, target)
+            == reply_family_values::recheck_free(m, target) }),
+{
+    let m = reply_family_values::rechecked(n);
+    if m.rechecks <= FREE_RECHECKS {
+        reveal(reply_family_values::recheck); reveal(reply_family_values::rechecked);
+        reveal(reply_family_values::recheck_free);
+        held_eq(m, target);
+    }
+}
+
+pub(super) proof fn recheck_paid_arm(n: Node, target: Phase)
+    ensures ({ let m = reply_family_values::rechecked(n);
+        !(m.rechecks <= FREE_RECHECKS) && transition_safety::can_spend_one(m) ==>
+            reply_family_values::recheck(n, target) == reply_family_values::recheck_paid(m, target) }),
+{
+    let m = reply_family_values::rechecked(n);
+    if !(m.rechecks <= FREE_RECHECKS) && transition_safety::can_spend_one(m) {
+        reveal(reply_family_values::recheck); reveal(reply_family_values::rechecked);
+        reveal(reply_family_values::recheck_paid);
+        held_eq(reply_family_values::spent(m), target);
+    }
+}
+
+pub(super) proof fn recheck_ask_arm(n: Node, target: Phase)
+    ensures ({ let m = reply_family_values::rechecked(n);
+        !(m.rechecks <= FREE_RECHECKS) && !transition_safety::can_spend_one(m) ==>
+            reply_family_values::recheck(n, target) == reply_family_values::recheck_ask(m, target) }),
+{
+    let m = reply_family_values::rechecked(n);
+    if !(m.rechecks <= FREE_RECHECKS) && !transition_safety::can_spend_one(m) {
+        reveal(reply_family_values::recheck); reveal(reply_family_values::rechecked);
+        reveal(reply_family_values::recheck_ask);
+    }
+}
+
 pub(super) proof fn recheck_arms(n: Node, target: Phase)
     ensures ({ let m = reply_family_values::rechecked(n);
         (m.rechecks <= FREE_RECHECKS ==> reply_family_values::recheck(n, target)
@@ -294,17 +332,9 @@ pub(super) proof fn recheck_arms(n: Node, target: Phase)
         && (!(m.rechecks <= FREE_RECHECKS) && !transition_safety::can_spend_one(m) ==>
             reply_family_values::recheck(n, target) == reply_family_values::recheck_ask(m, target)) }),
 {
-    reveal(reply_family_values::recheck); reveal(reply_family_values::rechecked);
-    let m = reply_family_values::rechecked(n);
-    if m.rechecks <= FREE_RECHECKS {
-        reveal(reply_family_values::recheck_free);
-        held_eq(m, target);
-    } else if transition_safety::can_spend_one(m) {
-        reveal(reply_family_values::recheck_paid);
-        held_eq(reply_family_values::spent(m), target);
-    } else {
-        reveal(reply_family_values::recheck_ask);
-    }
+    recheck_free_arm(n, target);
+    recheck_paid_arm(n, target);
+    recheck_ask_arm(n, target);
 }
 
 pub(super) proof fn room_bridge(n: Node, fast: bool, step: ReviewStop)
