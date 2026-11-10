@@ -1,13 +1,28 @@
 {
-  "source_head": "bfde486275f19bcb5dd021981a9b20fdb6bae1a9",
+  "source_head": "ed480cba7703ab4d868a5d55e331f46623697371",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "415e83d5e6da25f0ba170bda6960d1ca74f0948be6fda22ce6cdef462bbb0d12",
-  "groups": 507,
-  "obligations": 705,
+  "source_sha256": "382e7366e4c3acae3257fd8c7c4bcacb1052117f8e9c6b216e4dae7c70f736a3",
+  "groups": 510,
+  "obligations": 708,
   "selections": [
     {
-      "target": "//crates/kernel:verus_kernel_pause_node_value",
-      "selector": "kernel#pause_node_value",
+      "target": "//crates/kernel:verus_advance_family_post_slot_paused",
+      "selector": "kernel::advance_family_post#slot_paused",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_slot_ticket_issued",
+      "selector": "kernel::advance_family_post#slot_ticket_issued",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_slot_granted",
+      "selector": "kernel::advance_family_post#slot_granted",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_slot_unchanged",
+      "selector": "kernel::advance_family_post#slot_unchanged",
       "expected": 1
     },
     {
