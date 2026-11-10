@@ -443,6 +443,14 @@ def verus_proofs():
         # filters bound solver context; exact counts refuse empty selections.
         # #806: the required proof_map test rejects missing, duplicate and stale entries.
         unverified_functions = {
+            "kernel::internal_safety::table_grows": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::internal_safety::apply_n1_rules": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::internal_safety::apply_n2_no_grants": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::internal_safety::apply_n3_footprint": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::internal_safety::apply_n4_dependencies": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::internal_safety::apply_n5_frame": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::internal_safety::append_frame": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
+            "kernel::internal_safety::appended_node_ok": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::handler_safety::answer_withholds": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::handler_safety::unwithheld": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
             "kernel::handler_safety::answer_pair": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
@@ -746,6 +754,11 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "footprint_disjoint_under_table_growth": ("kernel::footprint#disjoint_under_table_growth", 1),
+            "footprint_node_rules_grow": ("kernel::footprint#node_rules_grow", 1),
+            "dependencies_append_preserves": ("kernel::dependencies#append_preserves", 1),
+            "dependency_preservation_append_preserves": ("kernel::dependencies::preservation#append_preserves", 1),
+            "dependency_preservation_append_cover": ("kernel::dependencies::preservation#append_cover", 1),
             "handler_safety_step_rows_carry": ("kernel::handler_safety#step_rows_carry", 1),
             "handler_safety_step_withheld": ("kernel::handler_safety#step_withheld", 1),
             "handler_safety_distance_withheld": ("kernel::handler_safety#distance_withheld", 1),
@@ -774,7 +787,7 @@ def verus_proofs():
             "transition_safety_notice_only_effects": ("kernel::transition_safety#notice_only_effects", 1),
             "continuations_set_phase_v": ("kernel::continuations#set_phase_v", 1),
             "continuations_enter_stopping_v": ("kernel::continuations#enter_stopping_v", 1),
-            "internal_safety": ("kernel::internal_safety", 7),
+            "internal_safety": ("kernel::internal_safety", 12),
             "handler_safety_keep_review_stop": ("kernel::handler_safety#keep_review_stop", 1),
             "handler_safety_kept_ladder": ("kernel::handler_safety#kept_ladder", 1),
             "handler_safety_rung_ladder": ("kernel::handler_safety#rung_ladder", 1),
@@ -805,7 +818,7 @@ def verus_proofs():
             "handler_safety_continue_step": ("kernel::handler_safety#continue_step", 1),
             "handler_safety_last_cmd_step": ("kernel::handler_safety#last_cmd_step", 1),
             "pool_key": ("kernel#pool_key", 1),
-            "special_safety": ("kernel::special_safety", 2),
+            "special_safety": ("kernel::special_safety", 3),
             "transition_composition": ("kernel::transition_composition", 8),
             "kernel_outbox_occupied": ("kernel#occupied", 1),
             "transition_safety_intro": ("kernel::transition_safety#intro", 1),
