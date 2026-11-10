@@ -1374,6 +1374,7 @@ def test_x7_container_entrypoint_strips_image_flux_names_before_target_and_child
     uri = 'local:///job-owned/run/local-1'
     for name in ('FLUX_URI', 'FLUX_JOB_ID', 'FLUX_KVS_NAMESPACE', 'FLUX_JOB_TMPDIR', 'FLUX_IMAGE_DEFAULT'):
         monkeypatch.setenv(name, uri if name == 'FLUX_URI' else 'injected')
+    original_read = os.read
     monkeypatch.setattr(os, 'read', lambda fd, count: b'\x01')
     argv = [str(Path(runtime_evidence.__file__)), *(['--pass-flux-uri'] if opt_in else []),
             *(['--exec', '--', sys.executable, '-c', 'pass'] if generator else ['-'])]
@@ -1387,6 +1388,7 @@ def test_x7_container_entrypoint_strips_image_flux_names_before_target_and_child
     # execv is the pre-fix boundary. Capture its inherited environment too.
     monkeypatch.setattr(os, 'execv', lambda executable, arguments: captured.append(dict(os.environ)))
     runpy.run_path(str(Path(runtime_evidence.__file__)), run_name='__main__')
+    monkeypatch.setattr(os, 'read', original_read)
     expected = {'FLUX_URI': uri} if opt_in else {}
     assert captured, 'target process must be reached after the gate'
     environment = captured[0]
