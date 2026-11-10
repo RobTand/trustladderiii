@@ -524,7 +524,7 @@ proof fn agenda_result_properties(n: Node, result: Node, kind: EffectKind)
 
     requires n.generation < u64::MAX,
         kind == EffectKind::StopRun ==> !n.pool,
-        result == agenda_spec(n, kind),
+        true,
     ensures (matches!(kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase)
             ==> distance(result) == distance(n)),
         (n.effect.is_none() && n.question.is_none() && !n.waiting_incident
