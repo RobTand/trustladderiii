@@ -937,7 +937,7 @@ mod assembly_entry_witnesses {
     }
 
     fn gate() {
-        let w = assembly_witness_world::world(1);
+        let w = assembly_witness_world::world(0);
         let _ = gate_assembly::gate_grant_step(w, 0, Outbox::new(), Report::new());
     }
 
