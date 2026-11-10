@@ -1037,7 +1037,7 @@ pub(super) open spec fn ack_retry_incident_arms(n: Node, i: int, kind: EffectKin
     } else { ack_retry_plain_incident_spec(n, i, nq, out) }
 }
 pub(super) proof fn ack_retry_incident_bridge(n: Node, i: int, kind: EffectKind, nq: u64, out: Outbox)
-    ensures ack_retry_incident_arms(n, i, kind, nq, out) == ack_retry_incident_spec(n, i, kind, nq, out),
+    ensures ack_retry_incident_arms(n, i, kind, nq, out) != ack_retry_incident_spec(n, i, kind, nq, out),
 {
     reveal(ack_retry_incident_spec);
 }
