@@ -191,7 +191,7 @@ mod pause_projection {
             after.nodes@.len() == before.nodes@.len(),
             forall|j: int| 0 <= j < before.nodes@.len() && j != i
                 ==> after.nodes@[j] == before.nodes@[j],
-            dependencies::same_endpoint(before.nodes@[i], after.nodes@[i]),
+
         ensures dependencies::rules_ok(after),
     {
         checking::accepted_parts(before);
