@@ -375,7 +375,9 @@ fn flux_checks_restart_attaches_retained_intent_without_resubmission() {
     let d = delivery();
     assert!(adapter.execute(&d).is_err());
     drop(adapter);
-    options.instance_generation = "new-broker-generation".into();
+    options
+        .environment
+        .insert("FLUX_URI".into(), "local:///replacement".into());
     let mut adapter = Adapter::new(
         backend.clone(),
         options,

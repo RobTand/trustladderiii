@@ -87,7 +87,7 @@ pub struct LaunchContext {
     pub progress: ProgressPolicy,
     pub native_threads: NonZeroU32,
     #[serde(default)]
-    pub coordinator_uri: Option<String>,
+    pub pass_flux_uri: bool,
     pub runtime: ExecutionRuntime,
     pub runtime_identity: RuntimeIdentity,
     pub placement: LaunchPlacement,
@@ -289,11 +289,11 @@ pub fn validate_request_environment(
     }
     for (name, value) in environment {
         if !matches!(name.as_str(), "HOME" | "XDG_RUNTIME_DIR" | "PATH") {
-            let name: String = name
-                .chars()
-                .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
-                .take(128)
-                .collect();
+            let name = if name.len() <= 128 && name.bytes().all(|byte| byte.is_ascii_graphic()) {
+                name.as_str()
+            } else {
+                "[name withheld]"
+            };
             return Err(BackendError::invalid(&format!(
                 "unsupported job environment name: {name}; controller-owned names cannot be supplied by callers"
             )));
@@ -614,54 +614,71 @@ pub struct CancelAck {
     pub terminal: Option<Terminal>,
 }
 
-/// Provisioned access only. URI is deliberately separate from instance generation.
+/// Provisioned tools and runtime instance locator; broker identity is receipt evidence.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Options {
     pub executable: PathBuf,
     pub arguments: Vec<String>,
     pub environment: std::collections::BTreeMap<String, String>,
-    #[serde(default)]
-    pub instance_file: Option<PathBuf>,
-    pub instance_generation: String,
-    pub uri: String,
+    pub instance_file: PathBuf,
     pub journal_root: PathBuf,
     pub bootstrap: HostBootstrap,
 }
 
 impl Options {
     pub fn resolved_uri(&self) -> Result<String> {
-        let Some(locator) = &self.instance_file else {
-            return Ok(self.uri.clone());
-        };
-        let raw = durable::read(locator)?;
-        if raw.len() > 4096 {
-            return Err(BackendError::invalid("INSTANCE locator exceeds bound"));
-        }
-        let text = std::str::from_utf8(&raw)
-            .map_err(|_| BackendError::invalid("invalid INSTANCE locator"))?;
-        let parts: Vec<_> = text.split_whitespace().collect();
-        if parts.len() != 2 || !absolute(std::path::Path::new(parts[0])) || !token(parts[1]) {
+        // The fleet-owned helper reads INSTANCE, maps this host to its rank and
+        // checks the socket. All consumers use that same table and check.
+        let helper = self.instance_file.with_file_name("flux-uri.sh");
+        let reply = std::process::Command::new(helper)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .stdin(std::process::Stdio::null())
+            .output()?;
+        if !reply.status.success() || reply.stdout.len() > 4096 {
             return Err(BackendError::invalid(
-                "INSTANCE requires an absolute prefix and run name",
+                "runtime Flux URI resolver refused; value withheld",
             ));
         }
-        let hostname = std::fs::read_to_string("/proc/sys/kernel/hostname")?;
-        let rank = match hostname.trim() {
-            "dl380g10" => 0,
-            "sparky" => 1,
-            "sparklina" => 2,
-            _ => {
-                return Err(BackendError::invalid(
-                    "no native Flux broker on coordinator host",
-                ));
-            }
-        };
-        Ok(format!(
-            "local://{}/runs/{}/run/local-{rank}",
-            parts[0], parts[1]
-        ))
+        let text = std::str::from_utf8(&reply.stdout)
+            .map_err(|_| BackendError::invalid("invalid runtime Flux URI; value withheld"))?;
+        let uri = text.strip_suffix('\n').unwrap_or(text);
+        let path = uri.strip_prefix("local://").unwrap_or("");
+        if !path.starts_with('/')
+            || path.len() < 2
+            || path.ends_with('/')
+            || path.contains("//")
+            || path.split('/').any(|part| matches!(part, "." | ".."))
+            || !path
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"/_-.".contains(&byte))
+        {
+            return Err(BackendError::invalid(
+                "invalid runtime Flux URI; value withheld",
+            ));
+        }
+        Ok(uri.to_owned())
     }
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_instance(root: &std::path::Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let locator = root.join("INSTANCE");
+    if !locator.exists() {
+        std::fs::write(&locator, "local:///fixture\n").unwrap();
+    }
+    let helper = root.join("flux-uri.sh");
+    if !helper.exists() {
+        std::fs::write(
+            &helper,
+            "#!/bin/sh\nexec cat \"$(dirname \"$0\")/INSTANCE\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(helper, std::fs::Permissions::from_mode(0o555)).unwrap();
+    }
+    locator
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]

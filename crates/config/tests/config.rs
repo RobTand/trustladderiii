@@ -24,12 +24,10 @@ fn flux_document() -> Value {
         .unwrap()
         .insert("execution_backend".into(), "flux".into());
     document.as_table_mut().unwrap().insert("flux".into(), toml::toml! {
-        instance_generation = "disposable-test-generation"
         executable = "/opt/flux/bin/flux"
         backend_cli = "/opt/tl3/bin/tl3-run-backend"
         container_mode = "own_scope"
         runtime_bundles = ["/mnt/shared/flux-out/tl3/.runtime/0000000000000000000000000000000000000000000000000000000000000000/manifest.json"]
-        uri = "local:///run/flux/local-0"
         environment = { PATH = "/opt/flux/bin:/usr/bin:/bin", LD_LIBRARY_PATH = "/opt/flux/lib", HOME = "/home/rob", XDG_RUNTIME_DIR = "/run/user/1000" }
         staging_root = "/mnt/shared/tl3-inputs"
         output_root = "/mnt/shared/flux-out/tl3"
@@ -139,7 +137,10 @@ fn execution_selection_validates_only_the_selected_backend() {
     let SelectedExecution::Flux(flux) = config.selected_execution().unwrap() else {
         panic!("selected PB")
     };
-    assert_eq!(flux.instance_generation, "disposable-test-generation");
+    assert_eq!(
+        flux.instance_file,
+        Path::new("/mnt/shared/flux-migration/INSTANCE")
+    );
     assert_eq!(
         serde_json::to_value(config.execution_backend).unwrap(),
         "flux"
@@ -187,12 +188,6 @@ fn flux_access_requires_runtime_locator_shared_roots_and_immutable_image() {
         format!("dl380g10:5000/tl3/harness@sha256:{}", "a".repeat(64)).into();
     document["flux"]["output_root"] = "/mnt/shared/flux-out/tl3".into();
     Config::parse(&toml::to_string(&document).unwrap()).unwrap();
-    document["flux"]["instance_generation"] = "fv1-model/61f47a7f95af46d794ca89c3a71f0654".into();
-    let config = Config::parse(&toml::to_string(&document).unwrap()).unwrap();
-    assert_eq!(
-        config.flux.unwrap().instance_generation,
-        "fv1-model/61f47a7f95af46d794ca89c3a71f0654"
-    );
 }
 
 #[test]
@@ -2163,8 +2158,13 @@ fn x7_flux_uri_repository_opt_in_is_validated() {
 fn x7_cpu_pool_demand_accepts_every_in_cap_cpu_count() {
     for cpus in [2, 3, 4, 8, 10] {
         let mut document = flux_document();
-        document["github"]["repos"][0].as_table_mut().unwrap().insert("test_demand".into(),
-            toml::toml! { cpus = 2 mem_gb = 2 }.into());
+        document["github"]["repos"][0]
+            .as_table_mut()
+            .unwrap()
+            .insert(
+                "test_demand".into(),
+                toml::toml! { cpus = 2 mem_gb = 2 }.into(),
+            );
         document["github"]["repos"][0]["test_demand"]["cpus"] = cpus.into();
         Config::parse(&toml::to_string(&document).unwrap()).unwrap();
     }
@@ -2174,10 +2174,18 @@ fn x7_cpu_pool_demand_accepts_every_in_cap_cpu_count() {
 fn x7_legacy_flux_config_fields_are_refused() {
     for field in ["instance_generation", "uri"] {
         let mut document = flux_document();
-        document["flux"].as_table_mut().unwrap().remove("instance_generation");
+        document["flux"]
+            .as_table_mut()
+            .unwrap()
+            .remove("instance_generation");
         document["flux"].as_table_mut().unwrap().remove("uri");
-        document["flux"].as_table_mut().unwrap().insert(field.into(), "obsolete".into());
-        let error = Config::parse(&toml::to_string(&document).unwrap()).unwrap_err().to_string();
+        document["flux"]
+            .as_table_mut()
+            .unwrap()
+            .insert(field.into(), "obsolete".into());
+        let error = Config::parse(&toml::to_string(&document).unwrap())
+            .unwrap_err()
+            .to_string();
         assert!(error.contains(field), "{error}");
     }
 }

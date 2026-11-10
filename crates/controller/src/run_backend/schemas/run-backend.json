@@ -2360,13 +2360,6 @@
       "description": "Host-runner plumbing, not scheduler attestation or own-cgroup qualification.",
       "type": "object",
       "properties": {
-        "coordinator_uri": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
         "correlation": {
           "type": "string"
         },
@@ -2383,6 +2376,10 @@
         },
         "owner": {
           "type": "string"
+        },
+        "pass_flux_uri": {
+          "type": "boolean",
+          "default": false
         },
         "placement": {
           "$ref": "#/$defs/LaunchPlacement"
@@ -2850,19 +2847,9 @@
           "type": "string"
         },
         "instance_file": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "instance_generation": {
           "type": "string"
         },
         "journal_root": {
-          "type": "string"
-        },
-        "uri": {
           "type": "string"
         }
       },
@@ -2871,8 +2858,7 @@
         "executable",
         "arguments",
         "environment",
-        "instance_generation",
-        "uri",
+        "instance_file",
         "journal_root",
         "bootstrap"
       ]

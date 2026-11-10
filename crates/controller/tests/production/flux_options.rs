@@ -5,8 +5,8 @@ use tl3_store::Store;
 pub(super) fn flux(root: &Path) -> tl3_config::Flux {
     tl3_config::Flux {
         activation: None,
-        instance_file: None,
-        instance_generation: "fv1-model/61f47a7f95af46d794ca89c3a71f0654".into(),
+        instance_file: "/mnt/shared/flux-migration/INSTANCE".into(),
+
         executable: "/opt/flux/bin/flux".into(),
         backend_cli: "/opt/tl3/bin/tl3-run-backend".into(),
         container_mode: tl3_config::ContainerMode::OwnScope,
@@ -17,7 +17,6 @@ pub(super) fn flux(root: &Path) -> tl3_config::Flux {
             )
             .into(),
         ],
-        uri: "local:///run/flux/local-0".into(),
         environment: BTreeMap::from([
             ("PATH".into(), "/opt/flux/bin:/usr/bin:/bin".into()),
             ("HOME".into(), "/home/rob".into()),
@@ -36,7 +35,6 @@ fn bootstrap_preserves_uri_generation_and_explicit_environment() {
     let config = flux(root.path());
     let options = production::flux_options(&config);
     assert_eq!(options.instance_file, config.instance_file);
-    assert_eq!(options.instance_generation, "runtime");
     assert_eq!(options.executable, config.executable);
     assert_eq!(options.bootstrap.cli, config.backend_cli);
     assert_eq!(
@@ -112,7 +110,7 @@ fn bootstrap_publication_is_private_and_refuses_a_lost_claim() {
     startup::terminate_claim(&settings);
     let successor = Ownership::claim(Store::open(&settings).unwrap()).unwrap();
     changed.output_root = config.output_root;
-    changed.uri = "local:///other/run/local-0".into();
+    changed.instance_file = "/unrelated/INSTANCE".into();
     assert!(production::provision_flux_options(&changed, &mut ownership).is_err());
     assert_eq!(fs::read(&options.bootstrap.config).unwrap(), bytes);
     drop((successor, ownership));

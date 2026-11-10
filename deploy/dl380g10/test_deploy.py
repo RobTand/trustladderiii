@@ -472,7 +472,7 @@ class FreshInitTests(unittest.TestCase):
         journal.parent.chmod(0o700)
         (journal / "delivery.json").write_bytes(b"matching old controller evidence")
         flux = {"output_root": "/mnt/shared/flux-out/tl3", "staging_root": "/mnt/shared/tl3-inputs",
-                "uri": "local:///fixture", "instance_generation": "fixture-generation",
+                "instance_file": "/mnt/shared/flux-migration/INSTANCE",
                 "runtime_bundles": ["/mnt/shared/flux-out/tl3/.runtime/" + "b" * 64 + "/manifest.json"]}
         text = ('execution_backend="flux"\nworktrees_root=' + json.dumps(str(self.root / "worktrees"))
                 + '\n[store]\ndatabase="tl3"\nuser="tl3"\nport=5543\nhost='

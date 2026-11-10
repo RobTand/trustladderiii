@@ -515,8 +515,12 @@ impl Executor for Adapter {
                 let key = correlation(delivery);
                 let intent = backend::SubmissionIntent {
                     backend: backend::BackendTag::Flux,
-                    instance: self.shared.options.instance_generation.clone(),
-                    uri: self.shared.options.uri.clone(),
+                    instance: "runtime".into(),
+                    uri: self
+                        .shared
+                        .options
+                        .resolved_uri()
+                        .map_err(|_| Error::Invalid("runtime Flux URI unavailable"))?,
                     owner: "controller-checks".into(),
                     correlation: key.clone(),
                     request_digest: durable::digest(&serde_json::to_vec(&prepared.request)?),

@@ -148,7 +148,9 @@ class Supervised:
                           if durable else self.command)
         try:
             self.child = subprocess.Popen(launch_command, stdin=subprocess.PIPE if self.evidence else self.selection,
-                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+                                          env=None if durable else runtime.target_environment(
+                                              os.environ, runtime.launch_context().get('pass_flux_uri', False)))
         except OSError as error:
             raise self.prelaunch_failure(error, 'container_start', 'runtime_unavailable') from error
         if durable:

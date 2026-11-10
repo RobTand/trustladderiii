@@ -140,11 +140,11 @@ def instance_access():
     if (not prefix.is_absolute() or '..' in prefix.parts
             or not re.fullmatch(r'[A-Za-z0-9_.-]+', run_name) or run_name in ('.', '..')):
         raise RuntimeError('invalid runtime INSTANCE locator')
-    ranks = {'dl380g10': 0, 'sparky': 1, 'sparklina': 2}
-    rank = ranks.get(socket.gethostname())
-    if rank is None:
-        raise RuntimeError('no native broker on coordinator host')
-    uri = f'local://{prefix}/runs/{run_name}/run/local-{rank}'
+    code, raw, _ = run([INSTANCE.with_name('flux-uri.sh')], environment=SUPERVISOR)
+    uri = raw.decode().removesuffix('\n')
+    if (code or not re.fullmatch(r'local:///[A-Za-z0-9_./-]+', uri)
+            or any(part in ('.', '..') for part in uri.removeprefix('local://').split('/'))):
+        raise RuntimeError('runtime Flux URI resolver refused; value withheld')
     return prefix / 'install/bin/flux', SUPERVISOR | {
         'PATH': f'{prefix}/install/bin:{prefix}/deps/bin:/usr/bin:/bin',
         'LD_LIBRARY_PATH': f'{prefix}/install/lib:{prefix}/deps/lib', 'FLUX_URI': uri}

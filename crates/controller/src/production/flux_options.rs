@@ -19,8 +19,7 @@ pub fn flux_options(config: &tl3_config::Flux) -> Options {
         arguments: Vec::new(),
         environment,
         instance_file: config.instance_file.clone(),
-        instance_generation: "runtime".into(),
-        uri: "local:///runtime".into(),
+
         journal_root: config.output_root.join(".run-backend"),
         bootstrap: HostBootstrap {
             cli: config.backend_cli.clone(),

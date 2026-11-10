@@ -624,7 +624,8 @@ def fresh_scope(args):
     flux = data["flux"]
     if flux != plan.get("flux") or flux["output_root"] != "/mnt/shared/flux-out/tl3":
         raise RuntimeError("fresh-init requires exact existing Flux inputs; no rebinding")
-    if not flux["uri"] or not flux["instance_generation"] or not flux["runtime_bundles"]:
+    if ("uri" in flux or "instance_generation" in flux
+            or not flux.get("instance_file") or not flux["runtime_bundles"]):
         raise RuntimeError("missing exact Flux runtime inputs")
     verify_runtime_inputs(flux, plan)
     owned_directory(args.binaries)

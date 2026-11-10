@@ -9,12 +9,7 @@ pub(super) fn options(options: &Options) -> Result<()> {
         || !absolute(&options.journal_root)
         || !absolute(&options.bootstrap.cli)
         || !absolute(&options.bootstrap.config)
-        || options
-            .instance_file
-            .as_ref()
-            .is_some_and(|path| !absolute(path))
-        || (options.instance_file.is_none() && !options.uri.starts_with("local:///"))
-        || options.uri.chars().any(char::is_control)
+        || !absolute(&options.instance_file)
         || options.arguments.len() > 32
         || !options.environment.contains_key("PATH")
     {

@@ -301,13 +301,12 @@ mod tests {
         fs::create_dir(&attempt).unwrap();
         let flux = tl3_config::Flux {
             activation: None,
-            instance_file: None,
-            instance_generation: "fixture/00000000000000000000000000000000".into(),
+            instance_file: backend::fixture_instance(root),
+
             executable: "/fixture/flux".into(),
             backend_cli: "/fixture/tl3-run-backend".into(),
             container_mode: tl3_config::ContainerMode::OwnScope,
             runtime_bundles: vec![],
-            uri: "local:///fixture".into(),
             environment: BTreeMap::new(),
             staging_root: root.join("staging"),
             output_root: root.join("output"),
@@ -386,8 +385,8 @@ mod tests {
             },
             intent: backend::SubmissionIntent {
                 backend: backend::BackendTag::Flux,
-                instance: options.instance_generation.clone(),
-                uri: options.uri.clone(),
+                instance: "runtime".into(),
+                uri: options.resolved_uri().unwrap(),
                 owner: "worker-tools".into(),
                 correlation: String::new(),
                 request_digest: durable::digest(&serde_json::to_vec(&request).unwrap()),
@@ -421,8 +420,8 @@ mod tests {
             .transaction(&wait.owner, |dir, _| durable::save(dir, &record))
             .unwrap();
         assert!(wait.validate(&key, &repo.path, &options).is_ok());
-        let mut changed = options.clone();
-        changed.instance_generation = "replacement".into();
+        let changed = options.clone();
+        fs::write(&changed.instance_file, "local:///replacement\n").unwrap();
         assert!(wait.validate(&key, &repo.path, &changed).is_ok());
         assert!(wait.validate(&key, root, &options).is_err());
         assert!(wait.validate("fABC", &repo.path, &options).is_err());
@@ -437,7 +436,7 @@ mod tests {
             intent: wait.intent.clone(),
             id: backend::BackendId {
                 backend: backend::BackendTag::Flux,
-                uri: options.uri.clone(),
+                uri: options.resolved_uri().unwrap(),
                 instance: "another-generation".into(),
                 job: "fABC".into(),
             },

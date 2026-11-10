@@ -161,13 +161,12 @@ pub fn select_flux(config: &mut tl3_config::Config, root: &Path) {
     config.execution_backend = tl3_config::ExecutionBackend::Flux;
     config.flux = Some(tl3_config::Flux {
         activation: None,
-        instance_file: None,
-        instance_generation: "fixture/00000000000000000000000000000000".into(),
+        instance_file: crate::run_backend::fixture_instance(root),
+
         executable: "/fixture/flux".into(),
         backend_cli: "/fixture/tl3-run-backend".into(),
         container_mode: tl3_config::ContainerMode::OwnScope,
         runtime_bundles: vec![],
-        uri: "local:///fixture/flux".into(),
         environment: std::collections::BTreeMap::new(),
         staging_root: root.join("staging"),
         output_root: root.join("outputs"),

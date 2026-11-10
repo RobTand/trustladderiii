@@ -420,9 +420,8 @@ mod tests {
                 ("XDG_RUNTIME_DIR".into(), "/run/user/1000".into()),
             ]
             .into(),
-            instance_file: None,
-            instance_generation: record.intent.instance.clone(),
-            uri: record.intent.uri.clone(),
+            instance_file: crate::run_backend::fixture_instance(journal.path()),
+
             journal_root: journal.path().to_owned(),
             bootstrap: HostBootstrap {
                 cli: "/must-not-execute-cli".into(),
@@ -506,9 +505,8 @@ mod tests {
                 ("XDG_RUNTIME_DIR".into(), "/run/user/1000".into()),
             ]
             .into(),
-            instance_file: None,
-            instance_generation: record.intent.instance.clone(),
-            uri: record.intent.uri.clone(),
+            instance_file: crate::run_backend::fixture_instance(journal.path()),
+
             journal_root: journal.path().to_owned(),
             bootstrap: HostBootstrap {
                 cli: "/must-not-execute-cli".into(),

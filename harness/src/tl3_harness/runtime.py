@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .model import NATIVE_THREAD_ENVIRONMENT
+from .runtime_evidence import TargetEnvironmentError, safe_option_path, target_environment, validate_flux_uri
 
 
 def launch_context():
@@ -27,7 +28,14 @@ def podman_command(tree, image, scratch, threads, *, mode, cpus=None, memory=Non
     # One containment surface for tests and generators. A generator gets only a
     # writable private copy with read-only Git metadata, trusted extra flags
     # and the gated exec payload; every other flag is shared.
-    harness = Path(harness) if harness is not None else Path(__file__).resolve().parent
+    if any(str(arg).startswith('--mount') for arg in extra):
+        raise TargetEnvironmentError('invalid_mount_option')
+    tree = safe_option_path(tree)
+    scratch = safe_option_path(scratch)
+    harness = safe_option_path(harness if harness is not None else Path(__file__).resolve().parent)
+    if coordinator_uri is not None:
+        coordinator_uri = validate_flux_uri(coordinator_uri)
+        socket_directory = str(Path(coordinator_uri.removeprefix('local://')).parent)
     checkout = ['--mount', f'type=bind,src={tree},dst=/checkout' + ('' if writable_checkout else ',readonly')]
     if writable_checkout:
         checkout += ['--mount', f'type=bind,src={Path(tree) / ".git"},dst=/checkout/.git,readonly']
@@ -46,7 +54,7 @@ def podman_command(tree, image, scratch, threads, *, mode, cpus=None, memory=Non
                   '--cpuset-cpus', cpus, '--memory', str(memory), '--memory-swap', str(memory)]
     else:
         raise ValueError('explicit container mode required')
-    return [
+    arguments = [
         *prefix, '--network=none', '--http-proxy=false', '--read-only', '--read-only-tmpfs=false',
         '--interactive', '--rm', '--pull=never', '--cap-drop=ALL',
         '--security-opt=no-new-privileges', '--pids-limit=128', '--ipc=private', '--pid=private', '--workdir=/checkout',
@@ -56,11 +64,19 @@ def podman_command(tree, image, scratch, threads, *, mode, cpus=None, memory=Non
         '--env', 'HOME=/tmp', '--env', 'TMPDIR=/tmp', '--env', 'PYTEST_DISABLE_PLUGIN_AUTOLOAD=1',
         *[arg for name in NATIVE_THREAD_ENVIRONMENT for arg in ('--env', f'{name}={threads}')],
         *(['--env', f'FLUX_URI={coordinator_uri}', '--mount',
-           f'type=bind,src={coordinator_uri.removeprefix("local://")},dst={coordinator_uri.removeprefix("local://")},readonly']
+           f'type=bind,src={socket_directory},dst={socket_directory}']
           if coordinator_uri is not None else []),
         *extra,
-        f'--entrypoint={interpreter}', image, '-I', '-B', '/harness/runtime_evidence.py', *payload,
+        f'--entrypoint={interpreter}', image, '-I', '-B', '/harness/runtime_evidence.py',
+        *(['--pass-flux-uri'] if coordinator_uri is not None else []), *payload,
     ]
+    for index, value in enumerate(arguments):
+        if value == '--env':
+            import re
+            pair = arguments[index + 1]
+            if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=[A-Za-z0-9_./:+-]+', pair):
+                raise TargetEnvironmentError('invalid_container_environment')
+    return arguments
 
 
 def evidence_sink(container):
@@ -918,7 +934,7 @@ def command(tree, scratch, *, writable_checkout=False, extra=(), payload=('-',))
     if not oci_runtime or not init_path:
         raise RuntimeError('InJob requires provisioned compatible crun and catatonit')
     return podman_command(tree, configured['image'], scratch, context['native_threads'],
-                          coordinator_uri=context.get('coordinator_uri'),
+                          coordinator_uri=target_environment(os.environ, context.get('pass_flux_uri', False)).get('FLUX_URI'),
                           mode=configured['mode'],
                           executable=configured['executable'], harness=configured['trusted_root'],
                           interpreter=configured['interpreter'], oci_runtime=oci_runtime, init_path=init_path,
@@ -1310,6 +1326,7 @@ def job_unit_absence(request, *, systemctl):
 
 
 def _external_generation(systemctl, instance, deadline):
+    # Receipt observation only. Original-jobspec matching owns cleanup authority.
     import selectors
     import subprocess
     import time

@@ -1372,6 +1372,17 @@ fn immutable(path: &Path, bytes: &[u8], executable: bool) {
     .unwrap();
 }
 
+fn fixture_instance(root: &Path) -> PathBuf {
+    let locator = root.join("INSTANCE");
+    fs::write(&locator, b"local:///fixture\n").unwrap();
+    immutable(
+        &root.join("flux-uri.sh"),
+        b"#!/bin/sh\nexec cat \"$(dirname \"$0\")/INSTANCE\"\n",
+        true,
+    );
+    locator
+}
+
 impl Fixture {
     fn new() -> Self {
         let shared = Path::new("/mnt/shared/flux-out/tl3");
@@ -1518,7 +1529,6 @@ impl Fixture {
         let intent = SubmissionIntent {
             backend: BackendTag::Flux,
             instance: "fixture-generation".into(),
-            uri: "local:///fixture".into(),
             owner: "fixture-owner".into(),
             correlation: correlation.clone(),
             request_digest: digest(&serde_json::to_vec(&request).unwrap()),
@@ -1604,9 +1614,8 @@ text=json.dumps(spec);(root/'jobspec.json').write_text(text);print(text)
             executable: native,
             arguments: vec![p.to_string_lossy().into_owned()],
             environment: [("PATH".into(), "/usr/bin:/bin".into())].into(),
-            instance_file: None,
-            instance_generation: "fixture-generation".into(),
-            uri: "local:///fixture".into(),
+            instance_file: fixture_instance(p),
+
             journal_root: p.join("journal"),
             bootstrap: HostBootstrap {
                 cli: env!("CARGO_BIN_EXE_tl3-run-backend").into(),
@@ -2466,8 +2475,8 @@ fn generation_slash_is_not_a_path_and_original_spec_allows_restart() {
     assert!(!api::generation("../../host"));
     let f = Fixture::new();
     f.submit();
-    let mut options = f.options.clone();
-    options.instance_generation = "replacement-generation".into();
+    let options = f.options.clone();
+    fs::write(&options.instance_file, "local:///replacement\n").unwrap();
     fs::write(&f.config, serde_json::to_vec(&options).unwrap()).unwrap();
     assert_ne!(f.attach().last().unwrap()["kind"], "error");
 }
@@ -3185,8 +3194,8 @@ fn cancellation_uses_independent_cleanup_without_runner_report_after_wrapper_los
         "{frames:?}"
     );
     // The cleanup entry uses retained generation/labels even after the broker pin changes.
-    let mut options = f.options.clone();
-    options.instance_generation = "replacement-generation".into();
+    let options = f.options.clone();
+    fs::write(&options.instance_file, "local:///replacement\n").unwrap();
     fs::write(&f.config, serde_json::to_vec(&options).unwrap()).unwrap();
     let cleanup = f.call(
         json!({"op":"cleanup_runtime","owner":f.intent.owner,"correlation":f.intent.correlation}),
@@ -6399,7 +6408,11 @@ fn x7_flux_uri_is_controller_owned_and_opt_in() {
         );
         let context = f.call(json!({"op":"launch_context", "owner":f.intent.owner,
             "correlation":f.intent.correlation, "job":"fABC"}));
-        assert_eq!(context.last().unwrap()["result"]["context"]["pass_flux_uri"], json!(enabled), "{context:?}");
+        assert_eq!(
+            context.last().unwrap()["result"]["context"]["pass_flux_uri"],
+            json!(enabled),
+            "{context:?}"
+        );
     }
 }
 
@@ -6411,12 +6424,24 @@ fn x7_terminal_original_mismatch_retains_scratch_debt() {
     f.report(ReportOutcome::Passed, true);
     f.events(&completed(0));
     let frames = f.attach();
-    assert_eq!(frames.last().unwrap()["result"]["observation"]["kind"], "terminal", "{frames:?}");
-    let debt = f.options.journal_root.join("cleanup-debt")
-        .join(&f.request.runtime.manifest_digest).join(format!("{}.scratch", f.intent.correlation));
+    assert_eq!(
+        frames.last().unwrap()["result"]["observation"]["kind"],
+        "terminal",
+        "{frames:?}"
+    );
+    let debt = f
+        .options
+        .journal_root
+        .join("cleanup-debt")
+        .join(&f.request.runtime.manifest_digest)
+        .join(format!("{}.scratch", f.intent.correlation));
     fs::write(&debt, serde_json::to_vec(&f.intent).unwrap()).unwrap();
     foreign_original(&f, "fABC");
     let frames = f.attach();
-    assert_eq!(frames.last().unwrap()["result"]["observation"]["kind"], "unknown", "{frames:?}");
+    assert_eq!(
+        frames.last().unwrap()["result"]["observation"]["kind"],
+        "unknown",
+        "{frames:?}"
+    );
     assert!(debt.exists());
 }

@@ -153,7 +153,7 @@ def main():
         config_path = Path(os.environ['TL3_RUN_BACKEND_CONFIG'])
         original_config = config_path.read_bytes()
         config = json.loads(original_config)
-        config['instance_generation'] = 'changed-generation'
+        config['environment']['FLUX_URI'] = 'local:///changed-broker'
         config_path.write_text(json.dumps(config))
         assert runtime.launch_context() == context
         assert runtime._backend_session is not None

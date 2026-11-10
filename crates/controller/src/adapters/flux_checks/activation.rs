@@ -94,8 +94,6 @@ pub fn options_identity(options: &backend::Options) -> Result<String> {
     let fields = value
         .as_object_mut()
         .ok_or_else(|| invalid("flux.activation.identity"))?;
-    fields.remove("instance_generation");
-    fields.remove("uri");
     if let Some(environment) = fields
         .get_mut("environment")
         .and_then(serde_json::Value::as_object_mut)

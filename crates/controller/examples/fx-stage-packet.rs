@@ -203,8 +203,7 @@ fn prepare(
         // Canary packets precede the pin they qualify; Stager refuses a record here.
         activation: None,
         instance_file: options.instance_file.clone(),
-        instance_generation: options.instance_generation.clone(),
-        uri: options.uri.clone(),
+
         executable: "/no-native-execution/flux".into(),
         backend_cli: "/no-native-execution/tl3-run-backend".into(),
         environment: production::flux_job_environment(),
@@ -300,7 +299,7 @@ fn prepare(
             "example_source":identity(&source.join("crates/controller/examples/fx-stage-packet.rs"))?,
             "executable":identity(&std::env::current_exe()?)?, "canonical_bundle":identity(bundle)?,
             "context_input":identity(context)?, "context_copy":identity(&options.bootstrap.config)?,
-            "generation":options.instance_generation,"uri":options.uri,
+            "instance_file":options.instance_file,
             "fixture":kind.metadata(),
             "served":{"base":run.base_sha,"head":head,"reviewed":run.reviewed_sha,"plan":run.plan,"suite":request.suite},
             "transport":request.tree,"runner_argv_unexecuted":argv,
@@ -549,9 +548,8 @@ mod tests {
         let generation = format!("fixture/{}", "0".repeat(32));
         let flux = tl3_config::Flux {
             activation: None,
-            instance_file: Some(root.join("INSTANCE")),
-            instance_generation: generation.clone(),
-            uri: "local:///fixture-endpoint".into(),
+            instance_file: root.join("INSTANCE"),
+
             executable: "/no-native-execution/flux".into(),
             backend_cli: "/no-native-execution/tl3-run-backend".into(),
             environment: production::flux_job_environment(),
@@ -614,9 +612,8 @@ mod tests {
         config.execution_backend = tl3_config::ExecutionBackend::Flux;
         config.flux = Some(tl3_config::Flux {
             activation,
-            instance_file: None,
-            instance_generation: format!("fixture/{}", "0".repeat(32)),
-            uri: "local:///fixture-endpoint".into(),
+            instance_file: "/mnt/shared/flux-migration/INSTANCE".into(),
+
             executable: "/no-native-execution/flux".into(),
             backend_cli: "/no-native-execution/tl3-run-backend".into(),
             environment: production::flux_job_environment(),

@@ -97,13 +97,12 @@ impl Fixture {
                 record: root.path().join("activation.json"),
                 sha256: String::new(),
             }),
-            instance_file: None,
-            instance_generation: "fixture/00000000000000000000000000000000".into(),
+            instance_file: backend::fixture_instance(root.path()),
+
             executable: cli.clone(),
             backend_cli: cli,
             container_mode: ContainerMode::InJob,
             runtime_bundles: vec![bundle.path.clone()],
-            uri: "local:///fixture-endpoint".into(),
             environment: BTreeMap::from([
                 ("PATH".into(), "/usr/bin:/bin".into()),
                 ("HOME".into(), "/home/rob".into()),
@@ -226,11 +225,7 @@ fn qualified_identity_and_exact_planned_deployment_pass_staging_boundary() {
     let raw = fs::read(&fixture.flux.activation.as_ref().unwrap().record).unwrap();
     let text = String::from_utf8(raw).unwrap();
     assert!(text.contains("planned_fresh_init"));
-    for private in [
-        &fixture.flux.uri,
-        &fixture.flux.instance_generation,
-        "/usr/bin:/bin",
-    ] {
+    for private in ["local:///fixture", "runtime", "/usr/bin:/bin"] {
         assert!(!text.contains(private));
     }
 }
@@ -265,11 +260,10 @@ fn absent_wrong_hash_unknown_qualification_and_generation_refuse_with_fields_onl
     fixture.seal_record();
     let activation = RuntimeActivation::load(&fixture.flux).unwrap();
     let mut options = crate::production::flux_options(&fixture.flux);
-    options.instance_generation = "after-reboot".into();
-    options.uri = "local:///replacement".into();
+    fs::write(&options.instance_file, "local:///replacement\n").unwrap();
     options
         .environment
-        .insert("FLUX_URI".into(), options.uri.clone());
+        .insert("FLUX_URI".into(), "local:///replacement".into());
     activation.validate_options(&options).unwrap();
 }
 
@@ -548,9 +542,8 @@ fn x7_activation_survives_broker_identity_changes() {
         executable: cli.clone(),
         arguments: vec![],
         environment: BTreeMap::new(),
-        instance_file: None,
-        instance_generation: "before".into(),
-        uri: "local:///before".into(),
+        instance_file: backend::fixture_instance(root.path()),
+
         journal_root: root.path().join("journal"),
         bootstrap: backend::HostBootstrap {
             cli,
@@ -573,11 +566,10 @@ fn x7_activation_survives_broker_identity_changes() {
         record,
         qualification: serde_json::from_slice(PIN).unwrap(),
     };
-    options.instance_generation = "after/reboot".into();
-    options.uri = "local:///after/run/local-0".into();
+    fs::write(&options.instance_file, "local:///replacement\n").unwrap();
     options
         .environment
-        .insert("FLUX_URI".into(), options.uri.clone());
+        .insert("FLUX_URI".into(), "local:///replacement".into());
     activation.validate_options(&options).unwrap();
     fs::write(&options.executable, "changed tool").unwrap();
     assert!(activation.validate_options(&options).is_err());

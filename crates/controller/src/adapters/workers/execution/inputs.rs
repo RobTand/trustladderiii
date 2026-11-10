@@ -125,14 +125,14 @@ pub(crate) fn reservation(cpus: u32, mem_gb: u32, parallel: u32) -> Result<backe
         || parallel > 4
         || cpus == 0
         || mem_gb == 0
-        || cpus.checked_mul(parallel).is_none_or(|total| total > 10)
+        || cpus.max(parallel) > 10
         || mem_gb.checked_mul(parallel).is_none_or(|total| total > 24)
     {
         return Err(Error::Invalid(
             "worker demand exceeds dl380g10 plain limit of 10 cores / 24 GiB or parallel 1..=4",
         ));
     }
-    let cpus = cpus * parallel;
+    let cpus = cpus.max(parallel);
     let memory = u64::from(mem_gb)
         .checked_mul(u64::from(parallel))
         .and_then(|n| n.checked_mul(1 << 30))
@@ -147,7 +147,9 @@ pub(crate) fn reservation(cpus: u32, mem_gb: u32, parallel: u32) -> Result<backe
             .map_err(|_| Error::Invalid("positive worker memory required"))?,
         memory_guarantee: backend::MemoryGuarantee::DeclaredOnly,
         parallelism: parallel.try_into().expect("positive parallelism"),
-        native_threads: 1.try_into().expect("one native thread per process"),
+        native_threads: (cpus / parallel)
+            .try_into()
+            .expect("positive native threads"),
     })
 }
 
@@ -581,8 +583,8 @@ mod tests {
                 .to_string()
                 .contains("worker input was not allocated")
         );
-        let mut changed = options.clone();
-        changed.instance_generation = "private-changed-generation".into();
+        let changed = options.clone();
+        fs::write(&changed.instance_file, "local:///replacement\n").unwrap();
         fs::write(
             &options.bootstrap.config,
             serde_json::to_vec(&changed).unwrap(),
@@ -629,10 +631,7 @@ mod tests {
             prepared["submit"]["request"]["runtime"]["manifest_digest"],
             fixture.record.profiles[0].manifest_sha256
         );
-        assert_eq!(
-            prepared["submit"]["intent"]["instance"],
-            options.instance_generation
-        );
+        assert_eq!(prepared["submit"]["intent"]["instance"], "runtime");
         assert!(prepared["key"].as_str().unwrap().starts_with("worker:"));
         // Record profile/manifest substitution must also fail before input allocation.
         fixture.record.profiles[0].image.profile = "unqualified".into();

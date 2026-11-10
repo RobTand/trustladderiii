@@ -607,16 +607,12 @@ pub struct Flux {
     #[serde(default)]
     pub activation: Option<FluxActivation>,
     #[serde(default = "default_flux_instance_file")]
-    pub instance_file: Option<PathBuf>,
-    #[serde(default)]
-    pub instance_generation: String,
+    pub instance_file: PathBuf,
     pub executable: PathBuf,
     pub backend_cli: PathBuf,
     pub container_mode: ContainerMode,
     #[serde(default)]
     pub runtime_bundles: Vec<PathBuf>,
-    #[serde(default)]
-    pub uri: String,
     #[serde(default)]
     pub environment: BTreeMap<String, String>,
     pub staging_root: PathBuf,
@@ -628,7 +624,6 @@ impl std::fmt::Debug for Flux {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("Flux")
-            .field("instance_generation", &self.instance_generation)
             .field("executable", &self.executable)
             .field("backend_cli", &self.backend_cli)
             .field("container_mode", &self.container_mode)
@@ -641,8 +636,8 @@ impl std::fmt::Debug for Flux {
     }
 }
 
-fn default_flux_instance_file() -> Option<PathBuf> {
-    Some("/mnt/shared/flux-migration/INSTANCE".into())
+fn default_flux_instance_file() -> PathBuf {
+    "/mnt/shared/flux-migration/INSTANCE".into()
 }
 
 impl Flux {
@@ -662,11 +657,7 @@ impl Flux {
                 return Err(invalid("flux.activation", "record and sha256"));
             }
         }
-        let locator = self
-            .instance_file
-            .as_ref()
-            .ok_or_else(|| invalid("flux.instance_file", "runtime INSTANCE locator required"))?;
-        absolute("flux.instance_file", locator)?;
+        absolute("flux.instance_file", &self.instance_file)?;
         if self.runtime_bundles.is_empty() {
             return Err(invalid(
                 "flux.runtime_bundles",
@@ -1185,7 +1176,7 @@ impl Config {
             }
             if self.execution_backend == ExecutionBackend::Flux {
                 let demand = repo.test_demand.unwrap_or_default();
-                if demand.cpus.checked_mul(4).is_none_or(|cpus| cpus > 10)
+                if demand.cpus.max(4) > 10
                     || demand
                         .mem_gb
                         .checked_mul(4)
