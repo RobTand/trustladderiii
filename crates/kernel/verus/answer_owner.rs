@@ -14,19 +14,28 @@ pub(super) open spec fn owner_rows(r: Node, b: Node, id: u64, answer: Answer) ->
             || (handler_safety::answer_withholds(b, id, answer) && r.credit.ready))
 }
 
+/// Opaque wrapper of the owner-waiting rows (form rule 2), so the exec entries that carry the owner-rows atom
+/// never unfold dependencies::owner_waiting_ok (on_answer profile, 11-10).
+#[verifier::opaque]
+pub(super) open spec fn owner_waiting(n: Node) -> bool {
+    dependencies::owner_waiting_ok(n)
+}
+
 /// Unchanged node.
 pub(super) proof fn owner_same(n: Node, id: u64, answer: Answer)
-    ensures dependencies::owner_waiting_ok(n) ==> owner_rows(n, n, id, answer),
+    ensures owner_waiting(n) ==> owner_rows(n, n, id, answer),
 {
+    reveal(owner_waiting);
     reveal(owner_rows);
 }
 
 /// Unclear: a clarifying question keeps the phase and the continuation.
 pub(super) proof fn owner_unclear(n: Node, nq: u64, id: u64, q: Question)
     requires n.phase == Phase::AwaitingRob, n.question == Some(q),
-    ensures dependencies::owner_waiting_ok(n)
+    ensures owner_waiting(n)
         ==> owner_rows(apply_answer_values::unclear_answer(n, nq, q).0, n, id, Answer::Unclear),
 {
+    reveal(owner_waiting);
     reveal(owner_rows);
 }
 
@@ -35,15 +44,16 @@ pub(super) proof fn owner_unclear(n: Node, nq: u64, id: u64, q: Question)
 pub(super) proof fn owner_continue(n: Node, nq: u64, id: u64, q: Question)
     requires n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
         apply_answer_values::permits(q.kind, Answer::Continue),
-    ensures (handler_safety::node_rules_v(n, nq) && dependencies::owner_waiting_ok(n))
+    ensures (handler_safety::node_rules_v(n, nq) && owner_waiting(n))
         ==> owner_rows(apply_answer_values::continued_answer(n, q, 0).0, n, id, Answer::Continue),
 {
+    reveal(owner_waiting);
     reveal(owner_rows);
     reveal(apply_answer_values::continued_answer);
     reveal(handler_safety::continued_node);
     reveal(retirement::stopped);
     reveal(dependencies::zero_credit);
-    if handler_safety::node_rules_v(n, nq) && dependencies::owner_waiting_ok(n) {
+    if handler_safety::node_rules_v(n, nq) && owner_waiting(n) {
         reveal(handler_safety::node_rules_v);
         assert(question_fits(q));
     }
@@ -53,9 +63,10 @@ pub(super) proof fn owner_continue(n: Node, nq: u64, id: u64, q: Question)
 pub(super) proof fn owner_no_retry(n: Node, nq: u64, q: Question)
     requires n.phase == Phase::AwaitingRob, n.question == Some(q),
         apply_answer_values::permits(q.kind, Answer::TryAgain),
-    ensures !(handler_safety::node_rules_v(n, nq) && dependencies::owner_waiting_ok(n)),
+    ensures !(handler_safety::node_rules_v(n, nq) && owner_waiting(n)),
 {
-    if handler_safety::node_rules_v(n, nq) && dependencies::owner_waiting_ok(n) {
+    reveal(owner_waiting);
+    if handler_safety::node_rules_v(n, nq) && owner_waiting(n) {
         reveal(handler_safety::node_rules_v);
         assert(question_fits(q));
     }
@@ -65,9 +76,10 @@ pub(super) proof fn owner_no_retry(n: Node, nq: u64, q: Question)
 pub(super) proof fn owner_no_credit(n: Node, nq: u64, q: Question, k: u8)
     requires n.phase == Phase::AwaitingRob, n.question == Some(q),
         apply_answer_values::permits(q.kind, Answer::AddCredit(k)),
-    ensures !(handler_safety::node_rules_v(n, nq) && dependencies::owner_waiting_ok(n)),
+    ensures !(handler_safety::node_rules_v(n, nq) && owner_waiting(n)),
 {
-    if handler_safety::node_rules_v(n, nq) && dependencies::owner_waiting_ok(n) {
+    reveal(owner_waiting);
+    if handler_safety::node_rules_v(n, nq) && owner_waiting(n) {
         reveal(handler_safety::node_rules_v);
         assert(question_fits(q));
     }
@@ -76,8 +88,9 @@ pub(super) proof fn owner_no_credit(n: Node, nq: u64, q: Question, k: u8)
 /// ChangeRequest / Stop: the node stops (no question, Stopping phase).
 pub(super) proof fn owner_stopped(n: Node, id: u64, answer: Answer, o: Outcome)
     requires n.phase == Phase::AwaitingRob,
-    ensures dependencies::owner_waiting_ok(n) ==> owner_rows(retirement::stopped(n, o), n, id, answer),
+    ensures owner_waiting(n) ==> owner_rows(retirement::stopped(n, o), n, id, answer),
 {
+    reveal(owner_waiting);
     reveal(owner_rows);
     reveal(retirement::stopped);
 }
@@ -86,17 +99,18 @@ pub(super) proof fn owner_stopped(n: Node, id: u64, answer: Answer, o: Outcome)
 /// the node; the phase stays Stopping.
 pub(super) proof fn owner_cleanup(n: Node, id: u64, answer: Answer)
     requires n.phase is Stopping,
-    ensures dependencies::owner_waiting_ok(n) ==> owner_rows(Node { question: None, ..n }, n, id, answer)
+    ensures owner_waiting(n) ==> owner_rows(Node { question: None, ..n }, n, id, answer)
             && owner_rows(handler_safety::handled_node(Node { question: None, ..n }), n, id, answer)
             && owner_rows(n, n, id, answer),
 {
+    reveal(owner_waiting);
     reveal(owner_rows);
 }
 
 /// Aggregate of the AwaitingRob arms over awaiting_arms (rule 6).
 pub(super) proof fn awaiting_owner(n: Node, nq: u64, id: u64, answer: Answer, q: Question)
     requires n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
-    ensures (handler_safety::node_rules_v(n, nq) && dependencies::owner_waiting_ok(n))
+    ensures (handler_safety::node_rules_v(n, nq) && owner_waiting(n))
         ==> owner_rows(apply_answer_values::awaiting_arms(n, nq, answer, q).0, n, id, answer),
 {
     if answer == Answer::Unclear {
@@ -130,7 +144,7 @@ pub(super) proof fn owner_rows_unwithheld(a: Node, x: bool, b: Node, id: u64, an
 pub(super) proof fn n4c_after_last_cmd(before: World, b: Node, a: Node, n: Node, question: u64, answer: Answer,
     table: Seq<Dependency>, node: NodeId)
     requires
-        (retirement::node_rules(before, b) && dependencies::owner_waiting_ok(b))
+        (retirement::node_rules(before, b) && owner_waiting(b))
             ==> owner_rows(a, b, question, answer),
         handler_safety::answer_pair(b, a, true, question, answer, table, node),
         table == before.dependencies@,
@@ -146,6 +160,7 @@ pub(super) proof fn n4c_after_last_cmd(before: World, b: Node, a: Node, n: Node,
         ==> dependencies::prerequisites_delivered(before, node) || dependencies::owner_waiting_ok(n),
 {
     if retirement::node_rules(before, b) && dependencies::owner_waiting_ok(b) {
+        reveal(owner_waiting);
         reveal(owner_rows);
         reveal(dependencies::zero_credit);
         handler_safety::answer_pair_withheld(b, a, true, question, answer, table, node);

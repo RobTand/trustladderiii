@@ -60,7 +60,7 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
         (retirement::node_rules(*old(w), old(w).nodes@[i as int])
             ==> retirement::node_rules(*final(w), final(w).nodes@[i as int])),
         // E2.N4c (rule 6): a waiting owner's rows over the answered node (opaque atom, answer_owner).
-        ((retirement::node_rules(*old(w), old(w).nodes@[i as int]) && dependencies::owner_waiting_ok(old(w).nodes@[i as int]))
+        ((retirement::node_rules(*old(w), old(w).nodes@[i as int]) && answer_owner::owner_waiting(old(w).nodes@[i as int]))
             ==> answer_owner::owner_rows(final(w).nodes@[i as int], old(w).nodes@[i as int], id, answer)),
 ] {
     kernel_snapshot! { before_answer_rules = *w }
@@ -166,7 +166,7 @@ pub(super) fn answer_node(n: Node, nq: u64, id: u64, answer: Answer)
         nq <= result.1,
         (handler_safety::node_rules_v(n, nq) ==> handler_safety::node_rules_v(result.0, result.1)),
         // E2.N4c (rule 6): a waiting owner's rows over the answered node (opaque atom, answer_owner).
-        ((handler_safety::node_rules_v(n, nq) && dependencies::owner_waiting_ok(n))
+        ((handler_safety::node_rules_v(n, nq) && answer_owner::owner_waiting(n))
             ==> answer_owner::owner_rows(result.0, n, id, answer)),
 ] {
     let result = answer_value(n, nq, id, answer);
@@ -339,7 +339,7 @@ pub(super) fn answer_value(n: Node, nq: u64, id: u64, answer: Answer)
         nq < u64::MAX,
     ensures result == apply_answer_values::answered(n, nq, id, answer),
         // E2.N4c (rule 6): a waiting owner's rows over the answered node (opaque atom, answer_owner).
-        ((handler_safety::node_rules_v(n, nq) && dependencies::owner_waiting_ok(n))
+        ((handler_safety::node_rules_v(n, nq) && answer_owner::owner_waiting(n))
             ==> answer_owner::owner_rows(result.0, n, id, answer)),
 ] {
     let m = n;
@@ -396,7 +396,7 @@ fn cleanup_answer_v(n: Node, nq: u64, id: u64, answer: Answer)
         match n.question { Some(q) => q.id == id, None => false },
     ensures result == apply_answer_values::answered(n, nq, id, answer),
         // E2.N4c (rule 6): a waiting owner's rows over the answered node (opaque atom, answer_owner).
-        ((handler_safety::node_rules_v(n, nq) && dependencies::owner_waiting_ok(n))
+        ((handler_safety::node_rules_v(n, nq) && answer_owner::owner_waiting(n))
             ==> answer_owner::owner_rows(result.0, n, id, answer)),
 ] {
     let mut m = n;
@@ -426,7 +426,7 @@ fn awaiting_answer_v(n: Node, nq: u64, id: u64, answer: Answer, q: Question)
         n.phase == Phase::AwaitingRob, n.question == Some(q), q.id == id,
     ensures result == apply_answer_values::answered(n, nq, id, answer),
         // E2.N4c (rule 6): a waiting owner's rows over the answered node (opaque atom, answer_owner).
-        ((handler_safety::node_rules_v(n, nq) && dependencies::owner_waiting_ok(n))
+        ((handler_safety::node_rules_v(n, nq) && answer_owner::owner_waiting(n))
             ==> answer_owner::owner_rows(result.0, n, id, answer)),
 ] {
     kernel_proof! { apply_answer_safety::awaiting_arms_bridge(n, nq, id, answer, q); answer_owner::awaiting_owner(n, nq, id, answer, q); }
