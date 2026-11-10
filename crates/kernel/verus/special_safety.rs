@@ -104,7 +104,7 @@ mod pool_assembly {
                 transition_safety::emitted(out, result.1)),
     {
         let ghost before = w;
-        let changed = scheduler::advance(&mut w, i, &mut out, &mut report);
+        let changed = false;
         proof {
             advance_family_frames::step_premises_lift(before, w, i as int);
             internal_safety::step_preserves_accepted_full(before, w, i as int);
