@@ -650,8 +650,7 @@ print(result_json((judge(check, missing, missing),)))
             String::from_utf8_lossy(&generated.stderr)
         );
         let mut payload: Value =
-            serde_json::from_slice(launch_failure_fixture::PAYLOAD.as_bytes())
-                .unwrap();
+            serde_json::from_slice(launch_failure_fixture::PAYLOAD.as_bytes()).unwrap();
         payload["results"] = serde_json::from_slice(&generated.stdout).unwrap();
         let produced = serde_json::to_vec(&payload).unwrap();
         println!("real judge/result_json producer emitted infrastructure failure");
@@ -672,8 +671,7 @@ print(result_json((judge(check, missing, missing),)))
         let root = tempfile::tempdir().unwrap();
         let report = produced_launch_failure(root.path());
         let original: Value =
-            serde_json::from_slice(launch_failure_fixture::PAYLOAD.as_bytes())
-                .unwrap();
+            serde_json::from_slice(launch_failure_fixture::PAYLOAD.as_bytes()).unwrap();
         for pointer in [
             "/schema",
             "/results/0/verdict",
