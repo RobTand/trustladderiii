@@ -65,7 +65,7 @@ pub(super) proof fn ci_scalar_posts(n: Node, nq: u64, fast: bool, infra: bool)
 }
 
 pub(super) proof fn ci_node_step(n: Node, nq: u64, fast: bool, infra: bool)
-    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+    requires true, arithmetic_consistent(n), nq < u64::MAX,
     ensures transition_safety::node_step(n,
         reply_family_values::finish(nq, ci_change(n, fast, infra))),
 {
