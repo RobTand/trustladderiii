@@ -115,23 +115,11 @@ pub(super) proof fn awaiting_owner(n: Node, nq: u64, id: u64, answer: Answer, q:
     }
 }
 
-/// on_answer's withhold step (rule 7): the premise is withhold_dependency_credit's post verbatim
-/// (d = prerequisites_delivered of the world it ran on); withholding only grows zero_credit.
-pub(super) proof fn owner_rows_withheld(a: Node, f: Node, d: bool, b: Node, id: u64, answer: Answer)
-    requires f == (Node {
-            credit: Credit {
-                withheld: a.credit.withheld
-                    || (!d && !a.planning_started
-                        && (match a.phase {
-                            Phase::Ingesting | Phase::Auditing | Phase::Unplanned => true,
-                            _ => false,
-                        })
-                        && a.credit.ready),
-                ..a.credit
-            },
-            ..a
-        }),
-    ensures owner_rows(a, b, id, answer) ==> owner_rows(f, b, id, answer),
+/// on_answer's withhold step (rule 7): over on_answer's own fact n == unwithheld(continued, n.credit.withheld);
+/// withholding only grows zero_credit.
+pub(super) proof fn owner_rows_unwithheld(a: Node, x: bool, b: Node, id: u64, answer: Answer)
+    ensures (owner_rows(a, b, id, answer) && (a.credit.withheld ==> x))
+        ==> owner_rows(handler_safety::unwithheld(a, x), b, id, answer),
 {
     reveal(owner_rows);
     reveal(dependencies::zero_credit);

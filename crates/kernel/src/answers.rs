@@ -89,13 +89,11 @@ pub(super) fn on_answer(w: &mut World, i: usize, id: u64, answer: Answer,
     w.nodes[i] = n1;
     if withhold {
         kernel_snapshot! { continued = w.nodes@[i as int] }
-        kernel_snapshot! { mid_world = *w }
         w.withhold_dependency_credit(i);
         kernel_proof! {
-            answer_owner::owner_rows_withheld(continued@, w.nodes@[i as int],
-                dependencies::prerequisites_delivered(mid_world@, NodeId(i as u64)), before_answer@, id, answer);
             let n = w.nodes@[i as int];
             assert(n == handler_safety::unwithheld(continued@, n.credit.withheld));
+            answer_owner::owner_rows_unwithheld(continued@, n.credit.withheld, before_answer@, id, answer);
             handler_safety::distance_withheld(continued@, n.credit.withheld);
             if continued@ == before_answer@ {
                 // An answer that left the node AwaitingRob withholds nothing.
