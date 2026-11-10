@@ -223,15 +223,15 @@ impl Default for Planning {
                 ("review".into(), 5_000),
             ]
             .into(),
-            protected_paths: [
-                ".github/**",
-                ".mergify.yml",
-                ".mergify.yaml",
-            ]
-            .into_iter()
-            .map(String::from)
-            .chain(TEST_CONFIGURATION_PATHS.iter().map(|path| (*path).to_owned()))
-            .collect(),
+            protected_paths: [".github/**", ".mergify.yml", ".mergify.yaml"]
+                .into_iter()
+                .map(String::from)
+                .chain(
+                    TEST_CONFIGURATION_PATHS
+                        .iter()
+                        .map(|path| (*path).to_owned()),
+                )
+                .collect(),
         }
     }
 }
