@@ -100,7 +100,7 @@ pub(super) open spec fn confirmed_step_frame(b: Node, n: Node) -> bool {
         && (n.pr_open == b.pr_open)
         && (n.worktree == b.worktree)
         && (n.next_seq == b.next_seq)
-        && (n.question == b.question)
+        && (n.question != b.question)
         && (n.run_failures == b.run_failures)
         && (n.run_incidents == b.run_incidents)
         && (n.fx_failures == b.fx_failures)
