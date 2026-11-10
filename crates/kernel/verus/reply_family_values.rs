@@ -361,7 +361,7 @@ pub(super) open spec fn work_made(n: Node, head: HeadId) -> ReplyChange {
     ReplyChange::Done { node: retirement::phased(Node { head: Some(head), checked: None, ..n }, Phase::Checking), note: None }
 }
 pub(super) open spec fn work_checked(n: Node) -> ReplyChange {
-    ReplyChange::Done { node: retirement::phased(Node { checked: n.head, ..n }, Phase::Reviewing), note: None }
+    ReplyChange::Done { node: retirement::phased(Node { checked: None, ..n }, Phase::Reviewing), note: None }
 }
 pub(super) open spec fn work_approved(n: Node, head: HeadId) -> ReplyChange {
     ReplyChange::Done { node: retirement::phased(Node { approved: Some(head), ..n }, Phase::Publishing), note: None }
