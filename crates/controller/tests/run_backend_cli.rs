@@ -5525,11 +5525,23 @@ fn cleanup_debts(f: &Fixture) -> Vec<String> {
 /// A distinct owner dispatching on the same runtime manifest through the real
 /// unresolved-debt gate. Returns the submit frames; its output is removed.
 fn distinct_owner_submit(f: &Fixture, tag: &str) -> Vec<Value> {
+    let binding = f.state().binding.unwrap();
+    fs::copy(
+        f.intent.output_dir.join("original-jobspec.json"),
+        f.root
+            .path()
+            .join(format!("jobspec-{}.json", binding.id.job)),
+    )
+    .unwrap();
+    let submit_id = f.root.path().join("submit-id");
+    let previous_id = fs::read(&submit_id).unwrap();
+    fs::write(&submit_id, "fDEF\n").unwrap();
     let mut intent = f.intent.clone();
     intent.owner = format!("fixture-owner-{tag}");
     intent.correlation = format!("{}-{tag}", f.intent.correlation);
     intent.output_dir = Path::new("/mnt/shared/flux-out/tl3").join(&intent.correlation);
     let frames = f.call(json!({"op":"submit","request":f.request,"intent":intent}));
+    fs::write(submit_id, previous_id).unwrap();
     let _ = fs::remove_dir_all(&intent.output_dir);
     frames
 }
@@ -5610,7 +5622,8 @@ fn generator_preparation_failure_closes_typed_failed_through_real_collector() {
         let repeated = f.attach();
         assert_eq!(
             repeated.last().unwrap()["result"]["observation"]["terminal"],
-            terminal
+            terminal,
+            "{repeated:?}"
         );
         let result = f.call(json!({"op":"worker_payload","owner":f.intent.owner,"correlation":f.intent.correlation,"terminal":terminal}));
         let reference: BlobRef =
