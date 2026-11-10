@@ -836,6 +836,7 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "allocation_ask_value": ("kernel::allocation#ask_value", 1),
             "facts_family_infrastructure_incident_count": ("kernel::facts_family_values#infrastructure_incident_count", 1),
             "facts_family_infrastructure_retry_arm": ("kernel::facts_family_values#infrastructure_retry_arm", 1),
             "facts_family_infrastructure_incident_arm": ("kernel::facts_family_values#infrastructure_incident_arm", 1),
