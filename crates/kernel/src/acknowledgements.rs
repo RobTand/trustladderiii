@@ -1071,8 +1071,7 @@ fn ack_value(n: Node, i: usize, e: InFlight, ack: Ack, nq: u64, out: Outbox) -> 
         acknowledgement_resources::confirmed_ack_frame(n, result.0, e, ack, nq, result.1),
 ] {
     kernel_snapshot!(before = n);
-    let mut n = n;
-    n.effect = None;
+    let n = Node { effect: None, ..n };
     if e.cancelling {
         let result = ack_cancel_value(n, nq, out);
         kernel_proof! { acknowledgement_resources::confirmed_cancel_forward(before@, result.0, e, ack, nq, result.1); }
