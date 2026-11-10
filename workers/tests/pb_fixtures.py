@@ -117,10 +117,6 @@ def install_flux_job(monkeypatch, context):
     monkeypatch.setenv("TL3_EXECUTION_BACKEND", "flux")
     monkeypatch.setattr(runtime, "launch_context", launch_context)
     monkeypatch.setattr(runtime, "journal_path", lambda path: path)
-    # The native allocation grant is Rust's evidence (harness tests cover it, as their
-    # generator preparation tests stub it too); worker tests exercise import and validation.
-    from tl3_harness import generator
-    monkeypatch.setattr(generator, "_flux_allocation", lambda: None)
     return context
 
 

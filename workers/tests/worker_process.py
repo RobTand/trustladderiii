@@ -289,15 +289,130 @@ def submitted(submission):
 
 @pytest.fixture
 def generator_backend(tmp_path, monkeypatch):
-    # Exercise real git-index generation and artifact validation. Only the fleet
-    # transport and Docker launch are replaced; these tests themselves run remotely.
-    from tl3_harness import generator
-    monkeypatch.setattr(generator, "require_admission", lambda: None)
-    monkeypatch.setattr(generator, "container_command", lambda tree, container, argv, cidfile: argv)
+    """Real generator action in an admitted Flux job, behind A+B's Flux wire fake.
+
+    Fixture boundaries only: the Rust backend operations (in-process, enforcing launch
+    intent before Podman, bind before payload, qualification before the gate) and the
+    Podman executable (refuses unowned launches, emulates the trusted gate, then runs
+    the configured argv in the mounted private copy). Admission, allocation, scratch,
+    Supervised, cleanup and artifact validation are real.
+    """
+    podman_source = """#!{python}
+import hashlib, json, os, pathlib, sys, time
+time.sleep({latency!r})
+args = sys.argv[1:]
+if args[:1] == ['run']:
+    if '--name' not in args or '--label' not in args:
+        sys.exit(125)
+    name = args[args.index('--name') + 1]
+    labels = dict(args[i + 1].split('=', 1) for i in range(len(args) - 1) if args[i] == '--label')
+    mounts = [args[i + 1] for i in range(len(args) - 1) if args[i] == '--mount']
+    env = dict(args[i + 1].split('=', 1) for i in range(len(args) - 1) if args[i] == '--env')
+    pathlib.Path({root!r}, name + '.json').write_text(json.dumps({{
+        'Id': hashlib.sha256(name.encode()).hexdigest(), 'Name': name, 'Labels': labels,
+        'Pid': os.getpid(), 'ConmonPid': os.getpid()}}))
+    status = pathlib.Path('/proc/self/status').read_text()
+    allowed = next(line.split(':', 1)[1].strip() for line in status.splitlines()
+                   if line.startswith('Cpus_allowed_list:'))
+    print('TL3_RUNTIME_EVIDENCE ' + json.dumps({{'Cpus_allowed_list': allowed, 'cgroup': '0::/fixture\\n'}}),
+          file=sys.stderr, flush=True)
+    if os.read(0, 1) != b'\\x01':
+        sys.exit(125)
+    payload = args[args.index({image!r}) + 1:]
+    if payload[:5] != ['-I', '-B', '/harness/runtime_evidence.py', '--exec', '--'] or len(payload) < 6:
+        sys.exit(126)
+    [checkout] = [m for m in mounts if m.startswith('type=bind,src=') and m.endswith(',dst=/checkout')]
+    os.chdir(checkout[len('type=bind,src='):-len(',dst=/checkout')])
+    argv = payload[5:]
+    executable = {{'python3': sys.executable}}.get(argv[0], argv[0])
+    os.execve(executable, [executable, *argv[1:]], {{'PATH': '/usr/bin:/bin', **env}})
+if args[:2] == ['container', 'inspect']:
+    print(pathlib.Path({root!r}, args[-1] + '.json').read_text())
+    sys.exit(0)
+sys.exit(1 if args[:2] == ['container', 'exists'] else 0)
+"""
+    from tl3_harness import runtime, scratch
+    root = tmp_path / "flux-generator"
+    (root / "bin").mkdir(parents=True)
+    for name in ("crun", "catatonit"):
+        (root / "bin" / name).write_text("#!/bin/sh\nexit 0\n")
+        (root / "bin" / name).chmod(0o700)
+    podman = root / "podman"
+    # Test-only contention model (FX-TEST-BUDGETS convention): every runtime-client call waits first.
+    latency = float(os.environ.get("FX_TEST_ACTION_LATENCY_SECONDS", "0"))
+    assert 0 <= latency < float("inf"), "FX_TEST_ACTION_LATENCY_SECONDS must be non-negative seconds"
+    podman.write_text(podman_source.format(python=sys.executable, root=str(root), image=IMAGE, latency=latency))
+    podman.chmod(0o700)
+    (root / "xdg").mkdir(mode=0o700)
+    (root / "output").mkdir()
+    (root / "scratch").mkdir(mode=0o700)
+    monkeypatch.setenv("PATH", f"{root / 'bin'}{os.pathsep}{os.environ.get('PATH', '/usr/bin:/bin')}")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(root / "xdg"))
+    monkeypatch.setenv("TL3_EXECUTION_BACKEND", "flux")
+    context = {
+        "run": {"backend": "flux", "uri": "local:///fixture", "instance": "run/generation", "job": "fJob"},
+        "owner": "owner", "correlation": "correlation", "request_digest": "f" * 64,
+        "output_dir": str(root / "output"),
+        "progress": {"journal": str(root / "output" / "progress.json"), "no_progress_seconds": 5},
+        "scratch": {"approved_root": str(root / "scratch"), "leaf": str(root / "scratch" / "fJob")},
+        "native_threads": 1,
+        "runtime": {"mode": "in_job", "image": IMAGE, "executable": str(podman),
+                    "trusted_root": str(Path(runtime.__file__).resolve().parent), "interpreter": "python3"},
+        "runtime_identity": {"cleanup": {"fixture": "pinned cleanup helper"}},
+        "placement": {"kind": "observed", "allocation": {"fixture": 1}, "topology": {"fixture": 1},
+                      "host": os.uname().nodename, "rank": 0, "os_pus": sorted(os.sched_getaffinity(0))},
+    }
+    launches, ops = {}, []
+
+    def backend(request, **kwargs):
+        op = request["op"]
+        ops.append(op)
+        if op == "observe_allocation":
+            return {"facts": {"observed": request["observed"]}}
+        if op == "validate_allocation":
+            placement = context["placement"]
+            return {"grant": {"run": context["run"], "request_digest": context["request_digest"],
+                              **{key: placement[key] for key in ("allocation", "topology", "host", "rank", "os_pus")}}}
+        if op == "begin_container_launch":
+            launcher = request["launcher"]
+            assert launcher["execution"] not in launches, "one durable intent per execution"
+            name = "tl3-" + launcher["execution"]
+            launches[launcher["execution"]] = {
+                "launcher": launcher, "name": name, "mode": "in_job",
+                "labels": {"tl3.backend": "flux", "tl3.execution": launcher["execution"], "tl3.owner": "owner"}}
+            return {"launch": launches[launcher["execution"]]}
+        if op == "bind_container_launch":
+            launch = launches[request["observed"]["execution"]]
+            assert request["observed"]["container"]["name"] == launch["name"]
+            return {"binding": {"intent": launch, "ownership": request["observed"], "payload_allowed": True}}
+        if op == "validate_runtime_binding":
+            assert request["facts"]["execution"] in launches and "bind_container_launch" in ops
+            return {"qualification": {"qualified": True}}
+        if op == "cleanup_runtime":
+            return {"cleanup": {"stopped": True, "evidence": []}}
+        raise AssertionError(f"unexpected Rust operation {op}")
+
+    monkeypatch.setattr(runtime, "launch_context", lambda: context)
+    monkeypatch.setattr(runtime, "backend_request", backend)
+    monkeypatch.setattr(runtime, "_uncertain_containers", set())
+    monkeypatch.setattr(scratch, "_owned", {})
+    jobs = []
+
+    def flux_job(staged, document):
+        # Like native Flux, each job owns a fresh output directory and scratch leaf.
+        job = root / "jobs" / str(len(jobs))
+        (job / "output").mkdir(parents=True)
+        (job / "scratch").mkdir(mode=0o700)
+        jobs.append(job)
+        context.update(output_dir=str(job / "output"),
+                       progress={"journal": str(job / "output" / "progress.json"), "no_progress_seconds": 5},
+                       scratch={"approved_root": str(job / "scratch"), "leaf": str(job / "scratch" / "fJob")})
+        return shared.generator_job(staged, document)
+
     # The central Flux fake replaces only the Flux wire; its payload, receipt and
     # import checks run. calls lists each new submission; artifacts its payloads.
     fake = shared.fake_for(tmp_path, monkeypatch)
-    fake.job = shared.generator_job
+    fake.job = flux_job
     calls, artifacts = fake.prepared, fake.payloads
     return calls, artifacts
 

@@ -7,6 +7,8 @@ import sys
 
 
 PREFIX = 'TL3_RUNTIME_EVIDENCE '
+# Generator executables resolve only from the image's system directories, never the checkout.
+SYSTEM_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
 
 
 def snapshot():
@@ -22,4 +24,11 @@ if __name__ == '__main__':
     # Host validation must finish before the runner can import repository code.
     if os.read(0, 1) != b'\x01':
         raise SystemExit(125)
+    if sys.argv[1:2] == ['--exec']:
+        # A trusted generator argv runs only after the same host qualification gate.
+        import shutil
+        executable = shutil.which(sys.argv[3], path=SYSTEM_PATH) if sys.argv[2:3] == ['--'] and sys.argv[3:] else None
+        if executable is None:
+            raise SystemExit(127)
+        os.execv(executable, sys.argv[3:])
     os.execv(sys.executable, [sys.executable, '-I', '-B', '/harness/runner.py', *sys.argv[1:]])

@@ -1,18 +1,15 @@
-"""Generator preparation: read-only checkout staging and bounded failure causes.
+"""Generator preparation: bounded failure causes inside an admitted Flux job.
 
-Run inside admitted development compute as an unprivileged user. A root caller
-bypasses directory permissions and would hide the 0500 staging defect.
+Run as an unprivileged user. Read-only checkout staging runs end to end on the
+owned launch path in test_fx_generator_exec.py.
 """
 import json
 import os
-from pathlib import Path
-import stat
 import subprocess
 
 import pytest
 
-from tl3_harness import generator
-from conftest import flux_context
+from tl3_harness import generator, runtime
 
 
 IMAGE = "sha256:" + "a" * 64
@@ -26,83 +23,31 @@ def contract(**overrides):
     return value
 
 
-def readonly_tree(root):
-    tree = root / "checkout"
-    (tree / "tools").mkdir(parents=True)
-    (tree / "tools/gen.py").write_text("print('generate')\n")
-    (tree / "data.txt").write_text("immutable input\n")
-    (tree / "tools/gen.py").chmod(0o555)
-    (tree / "data.txt").chmod(0o444)
-    (tree / "tools").chmod(0o500)
-    tree.chmod(0o500)
-    return tree
-
-
-def modes(tree):
-    return {str(path.relative_to(tree)): stat.S_IMODE(path.lstat().st_mode)
-            for path in [tree, *sorted(tree.rglob("*"))]}
-
-
-def release(tree):
-    for path in [tree, *tree.rglob("*")]:
-        if path.is_dir():
-            path.chmod(0o700)
-
-
 @pytest.fixture(autouse=True)
 def unprivileged():
-    assert os.geteuid() != 0, "root bypasses 0500 permissions; run as the unprivileged fleet user"
+    assert os.geteuid() != 0, "root bypasses permissions; run as the unprivileged fleet user"
 
 
 @pytest.fixture
-def admitted(monkeypatch):
-    # The admission gate checks the Flux environment, not generator staging.
-    monkeypatch.setattr(generator, "require_admission", lambda: None)
-    # PB-REMOVAL: Flux is the only executor. Allocation and scratch release are
-    # exercised by the Rust collector e2e, not by preparation tests.
-    flux_context(monkeypatch)
-    monkeypatch.setattr(generator, "_flux_allocation", lambda: None, raising=False)
-    monkeypatch.setattr(generator, "_release_flux_scratch", lambda: None, raising=False)
+def flux(tmp_path, monkeypatch):
+    """The Flux job context. Admission and scratch are real; the allocation grant is
+    exercised by test_fx_generator_exec.py and the Rust collector e2e."""
+    xdg = tmp_path / "xdg"
+    xdg.mkdir(mode=0o700)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(xdg))
+    monkeypatch.setenv("TL3_EXECUTION_BACKEND", "flux")
+    output = tmp_path / "output"
+    output.mkdir()
+    scratch = tmp_path / "scratch"
+    scratch.mkdir(mode=0o700)
+    context = {"output_dir": str(output), "scratch": {"approved_root": str(scratch), "leaf": str(scratch / "fJob")}}
+    monkeypatch.setattr(runtime, "launch_context", lambda: context)
+    monkeypatch.setattr(generator, "_flux_allocation", lambda: None)
+    return {"leaf": scratch / "fJob", "output": output}
 
 
-def test_readonly_checkout_stages_writable_copy_before_git_and_reaches_container(tmp_path, admitted, monkeypatch):
-    tree = readonly_tree(tmp_path)
-    before = modes(tree)
-    staged = {}
-
-    def container_command(copy, container, argv, cidfile):
-        info = copy.stat()
-        listed = subprocess.run(["git", "-C", str(copy), "ls-files", "-s"], check=True,
-                                stdout=subprocess.PIPE, text=True).stdout
-        staged.update(root=copy.parent, writable=bool(info.st_mode & stat.S_IWUSR),
-                      git=(copy / ".git").is_dir(), listed=listed,
-                      executable=bool((copy / "tools/gen.py").stat().st_mode & stat.S_IXUSR),
-                      git_mode=stat.S_IMODE((copy / ".git").stat().st_mode))
-        return ["/bin/true"]
-
-    monkeypatch.setattr(generator, "container_command", container_command)
-    try:
-        result = generator.run(tree, generator.Container(IMAGE), **contract())
-        assert result["status"] == "completed", result
-        assert result["timings"]["preparation"]["outcome"] == "completed", result
-        assert result["timings"]["container"]["outcome"] == "completed", result
-        assert result["timings"]["validation"]["outcome"] == "completed", result
-        assert result["outputs"] == [] and "cause" not in result, result
-        assert staged["writable"] and staged["git"] and staged["executable"], staged
-        assert "100755 " in staged["listed"] and "tools/gen.py" in staged["listed"], staged
-        assert "data.txt" in staged["listed"], staged
-        # Synthetic Git metadata keeps Git's own umask-derived mode; the generator
-        # opens only the checkout copy and never widens .git to 0777.
-        umask = os.umask(0)
-        os.umask(umask)
-        assert staged["git_mode"] == 0o777 & ~umask, (oct(staged["git_mode"]), oct(umask))
-        assert not staged["root"].exists(), "generator scratch copy was not removed"
-        assert modes(tree) == before, "immutable source tree changed"
-    finally:
-        release(tree)
-
-
-def test_preparation_failure_reports_bounded_safe_cause_without_secret(tmp_path, admitted, monkeypatch, capsys):
+def test_preparation_failure_reports_bounded_safe_cause_without_secret(tmp_path, flux, monkeypatch, capsys):
     tree = tmp_path / "checkout"
     tree.mkdir()
     blocked = tree / f"token-{SECRET}.txt"
@@ -131,9 +76,12 @@ def test_preparation_failure_reports_bounded_safe_cause_without_secret(tmp_path,
     assert result["cause"] == {"operation": "input_manifest", "type": "PermissionError",
                                "errno": 13, "detail": "Permission denied"}, result
     assert not launched
+    # No container began, so the owned job scratch is released with absence evidence.
+    assert not flux["leaf"].exists()
+    assert (flux["output"] / "action-scratch-absence.json").is_file()
 
 
-def test_git_failure_cause_never_carries_multiline_stderr_or_argv(tmp_path, admitted, monkeypatch):
+def test_git_failure_cause_never_carries_multiline_stderr_or_argv(tmp_path, flux, monkeypatch):
     tree = tmp_path / "checkout"
     tree.mkdir()
     (tree / "data.txt").write_text("input\n")
@@ -152,34 +100,9 @@ def test_git_failure_cause_never_carries_multiline_stderr_or_argv(tmp_path, admi
     assert result["timings"]["container"]["outcome"] == "skipped", result
     assert result["cause"] == {"operation": "git_init", "type": "CalledProcessError",
                                "errno": None, "detail": "exit status 128"}, result
+    assert not flux["leaf"].exists()
 
 
-def test_flux_generator_refuses_unowned_container_launch_before_any_runtime_call(tmp_path, admitted, monkeypatch):
-    # Flux containers must go through the durable launch/binding protocol. Until the
-    # generator has that path it must refuse in preparation and never start Podman.
-    tree = tmp_path / "checkout"
-    tree.mkdir()
-    (tree / "data.txt").write_text("input\n")
-    monkeypatch.setattr("tl3_harness.runtime.launch_context", lambda: {"fixture": True})
-    # Allocation and scratch release are exercised by the Rust collector e2e.
-    monkeypatch.setattr(generator, "_flux_allocation", lambda: None, raising=False)
-    monkeypatch.setattr(generator, "_release_flux_scratch", lambda: None, raising=False)
-    real = subprocess.run
-    clients = []
-
-    def guarded(argv, *args, **kwargs):
-        if Path(str(argv[0])).name in ("podman", "docker"):
-            clients.append(argv)
-            raise AssertionError("no container runtime client may run")
-        return real(argv, *args, **kwargs)
-
-    monkeypatch.setattr(subprocess, "run", guarded)
-    try:
-        result = generator.run(tree, generator.Container(IMAGE), **contract())
-    except Exception as error:
-        pytest.fail(f"generator escaped its typed failure frame: {type(error).__name__}")
-    assert not clients, clients
-    assert result["status"] == "failed" and result["phase"] == "preparation", result
-    assert result["timings"]["container"]["outcome"] == "skipped", result
-    assert result["cause"] == {"operation": "container_command", "type": "FluxContainerUnsupported",
-                               "errno": None, "detail": None}, result
+def test_generator_identity_is_the_contract_implementation():
+    # crates/contracts maker_reply.rs pins generation evidence to this implementation.
+    assert generator.IMPLEMENTATION == "tl3-generator-v4"
