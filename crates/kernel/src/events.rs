@@ -184,6 +184,9 @@ pub(super) fn apply(w: &mut World, event: Event, out: &mut Outbox, report: &mut 
                 report::lemmas::unchanged(report_before@);
             }
         }
+        assert(phase_view(before_apply@.nodes@).len() <= phase_view(w.nodes@).len() <= phase_view(before_apply@.nodes@).len() + 1);
+        assert forall|j: int| phase_view(before_apply@.nodes@).len() <= j < phase_view(w.nodes@).len()
+            implies !(phase_view(w.nodes@)[j] is Stopping || phase_view(w.nodes@)[j] is Closed) by {}
         report::lemmas::observe(event, phase_view(before_apply@.nodes@), phase_view(w.nodes@),
             report_input(before_apply@, event), stop_review@, report_before@, report_middle@, report.entries@);
     }
@@ -339,9 +342,10 @@ fn apply_new_adoption(w: &mut World, repo: RepoId, head: HeadId, priority: Prior
             w.nodes.push(node);
         }
         kernel_proof! {
+            if repo.0 < before_apply@.gates@.len() { assert(w.nodes@.len() == before_apply@.nodes@.len() + 1); assert(w.nodes@[before_apply@.nodes@.len() as int].proposed == Some(head)); assert(!w.nodes@[before_apply@.nodes@.len() as int].adopted); }
             transition_safety::lift_apply_none(before_apply@, *w, (Event::NewAdoption { repo, head, priority }), before_apply_out@, *_out);
         }
-    kernel_proof! { events_lemmas::footprints_after(before_apply@, *w); }
+    kernel_proof! { events_lemmas::footprints_after(before_apply@, *w); if !progress_gate_apply::resume_selected(before_apply@, (Event::NewAdoption { repo, head, priority })) { reveal(progress_gate_apply::resume_apply_post); } if before_apply@.nodes@.len() > 0 && before_apply@.nodes@[0].phase == Phase::Unplanned && progress_unplanned::obstructed(before_apply@.nodes@[0]) && (Event::NewAdoption { repo, head, priority }) == progress_unplanned::outside_event(before_apply@.nodes@[0]) { assert(w.nodes@.len() == before_apply@.nodes@.len()); assert forall|j: int| 1 <= j < before_apply@.nodes@.len() implies w.nodes@[j] == before_apply@.nodes@[j] by {} } }
 }
 }
 
@@ -475,7 +479,7 @@ fn apply_new_request(w: &mut World, repo: RepoId, priority: Priority,
         kernel_proof! {
             transition_safety::lift_apply_none(before_apply@, *w, (Event::NewRequest { repo, priority }), before_apply_out@, *_out);
         }
-    kernel_proof! { events_lemmas::footprints_after(before_apply@, *w); }
+    kernel_proof! { events_lemmas::footprints_after(before_apply@, *w); if !progress_gate_apply::resume_selected(before_apply@, (Event::NewRequest { repo, priority })) { reveal(progress_gate_apply::resume_apply_post); } if before_apply@.nodes@.len() > 0 && before_apply@.nodes@[0].phase == Phase::Unplanned && progress_unplanned::obstructed(before_apply@.nodes@[0]) && (Event::NewRequest { repo, priority }) == progress_unplanned::outside_event(before_apply@.nodes@[0]) { assert(w.nodes@.len() == before_apply@.nodes@.len()); assert forall|j: int| 1 <= j < before_apply@.nodes@.len() implies w.nodes@[j] == before_apply@.nodes@[j] by {} } }
 }
 }
 
@@ -612,7 +616,7 @@ fn apply_reply(w: &mut World, node: NodeId, generation: u64, reply: Reply,
                 }
             }
         }
-    kernel_proof! { events_lemmas::footprints_after(before_apply@, *w); }
+    kernel_proof! { events_lemmas::footprints_after(before_apply@, *w); if !progress_gate_apply::resume_selected(before_apply@, (Event::Reply { node, generation, reply })) { reveal(progress_gate_apply::resume_apply_post); } if before_apply@.nodes@.len() > 0 && before_apply@.nodes@[0].phase == Phase::Unplanned && progress_unplanned::obstructed(before_apply@.nodes@[0]) && (Event::Reply { node, generation, reply }) == progress_unplanned::outside_event(before_apply@.nodes@[0]) { assert(w.nodes@.len() == before_apply@.nodes@.len()); assert forall|j: int| 1 <= j < before_apply@.nodes@.len() implies w.nodes@[j] == before_apply@.nodes@[j] by {} } }
 }
 }
 
@@ -746,7 +750,7 @@ fn apply_ack(w: &mut World, node: NodeId, seq: u64, ack: Ack,
                 }
             }
         }
-    kernel_proof! { events_lemmas::footprints_after(before_apply@, *w); }
+    kernel_proof! { events_lemmas::footprints_after(before_apply@, *w); if !progress_gate_apply::resume_selected(before_apply@, (Event::Ack { node, seq, ack })) { reveal(progress_gate_apply::resume_apply_post); } if before_apply@.nodes@.len() > 0 && before_apply@.nodes@[0].phase == Phase::Unplanned && progress_unplanned::obstructed(before_apply@.nodes@[0]) && (Event::Ack { node, seq, ack }) == progress_unplanned::outside_event(before_apply@.nodes@[0]) { assert(w.nodes@.len() == before_apply@.nodes@.len()); assert forall|j: int| 1 <= j < before_apply@.nodes@.len() implies w.nodes@[j] == before_apply@.nodes@[j] by {} } }
 }
 }
 
@@ -878,7 +882,7 @@ fn apply_fact(w: &mut World, node: NodeId, fact: Fact,
         if let Some(i) = w.index(node) {
             on_fact(w, i, fact, out, report);
         }
-    kernel_proof! { events_lemmas::footprints_after(before_apply@, *w); }
+    kernel_proof! { events_lemmas::footprints_after(before_apply@, *w); if !progress_gate_apply::resume_selected(before_apply@, (Event::Fact { node, fact })) { reveal(progress_gate_apply::resume_apply_post); } if before_apply@.nodes@.len() > 0 && before_apply@.nodes@[0].phase == Phase::Unplanned && progress_unplanned::obstructed(before_apply@.nodes@[0]) && (Event::Fact { node, fact }) == progress_unplanned::outside_event(before_apply@.nodes@[0]) { assert(w.nodes@.len() == before_apply@.nodes@.len()); assert forall|j: int| 1 <= j < before_apply@.nodes@.len() implies w.nodes@[j] == before_apply@.nodes@[j] by {} } }
 }
 }
 
@@ -1021,6 +1025,6 @@ fn apply_command(w: &mut World, node: NodeId, id: u64, command: Command,
                 }
             }
         }
-    kernel_proof! { events_lemmas::footprints_after(before_apply@, *w); }
+    kernel_proof! { events_lemmas::footprints_after(before_apply@, *w); if !progress_gate_apply::resume_selected(before_apply@, (Event::Command { node, id, command })) { reveal(progress_gate_apply::resume_apply_post); } if before_apply@.nodes@.len() > 0 && before_apply@.nodes@[0].phase == Phase::Unplanned && progress_unplanned::obstructed(before_apply@.nodes@[0]) && (Event::Command { node, id, command }) == progress_unplanned::outside_event(before_apply@.nodes@[0]) { assert(w.nodes@.len() == before_apply@.nodes@.len()); assert forall|j: int| 1 <= j < before_apply@.nodes@.len() implies w.nodes@[j] == before_apply@.nodes@[j] by {} } }
 }
 }
