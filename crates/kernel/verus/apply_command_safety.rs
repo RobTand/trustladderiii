@@ -925,4 +925,28 @@ pub(super) proof fn answer_frame(before: World, after: World, i: usize)
     assert(after.nodes@ =~= before.nodes@.update(i as int, after.nodes@[i as int]));
 }
 
+
+pub(super) proof fn answer_rules_mid(before: World, mid: World, b: Node, id: u64)
+    requires
+        mid.next_question == before.next_question,
+        mid.next_ticket == before.next_ticket,
+        mid.gates@ == before.gates@,
+        mid.file_sets@ == before.file_sets@,
+    ensures retirement::node_rules(before, b) ==> retirement::node_rules(mid, (Node { last_cmd: id, ..b })),
+{
+    if retirement::node_rules(before, b) {
+        handler_safety::rules_to_v(before, b);
+        handler_safety::last_cmd_rules_v(b, before.next_question, id);
+        handler_safety::rules_world_update(before, mid, b, Node { last_cmd: id, ..b });
+    }
+}
+
+pub(super) proof fn rules_to_v_imp(w: World, n: Node)
+    ensures retirement::node_rules(w, n) ==> handler_safety::node_rules_v(n, w.next_question),
+{
+    if retirement::node_rules(w, n) {
+        handler_safety::rules_to_v(w, n);
+    }
+}
+
 }
