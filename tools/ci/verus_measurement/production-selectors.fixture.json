@@ -1,10 +1,20 @@
 {
-  "source_head": "79af45be45d1c20b723de349d8089b9e6019a7fd",
+  "source_head": "3d3e4365e54d3b94cae14bc72e2079bb0929e7ef",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "399755f1f3c1c8f21048090ccb40c016a94d9205654c327bcc1ec3d515a991ac",
-  "groups": 519,
-  "obligations": 717,
+  "source_sha256": "53032d71e132452e62ed51859741c23f05cede01adab820c35b098f0a36a893f",
+  "groups": 521,
+  "obligations": 719,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_command_helpers_handled_node_value",
+      "selector": "kernel::command_helpers#handled_node_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_command_helpers_handled_resources_value",
+      "selector": "kernel::command_helpers#handled_resources_value",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_handler_safety_clarified_rules_v",
       "selector": "kernel::handler_safety#clarified_rules_v",
