@@ -396,11 +396,12 @@ def tl3_crate(package, crate, local_deps = [], features = [], build_script = Fal
     )
 
     for name, source in examples.items():
+        qualification_sources = native.glob(["examples/fx_qualification/**/*.rs", "tools/fx_qualification/**/*.rs", "tools/generate_fx_qualification.rs"]) if name == "fx-stage-packet" else (native.glob(["tools/fx_qualification/**/*.rs"]) if name == "generate-fx-qualification" else [])
         rust_binary(
             name = "example_" + name,
             crate_name = name.replace("-", "_"),
             crate_root = source,
-            srcs = [source] + native.glob(["examples/fx_qualification/**/*.rs", "tools/fx_qualification/**/*.rs", "tools/generate_fx_qualification.rs"], exclude = [source]),
+            srcs = [source] + qualification_sources,
             compile_data = _EXAMPLE_DATA.get(source, []),
             edition = "2024",
             crate_features = _example_options(name, crate, example_features, options)["crate_features"],
@@ -466,12 +467,14 @@ def _crate_test(kind, package, name, source, harness, options):
         )
         if name == "tl3_controller_loom":
             sources = sources + native.glob(["tests/fixtures/waits/**", "tests/support/ownership.rs"])
+        if kind == "example" and name == "fx-stage-packet":
+            sources = sources + native.glob(["examples/fx_qualification/**/*.rs", "tools/fx_qualification/**/*.rs", "tools/generate_fx_qualification.rs"])
         native.filegroup(name = kind + "_sources_" + name, srcs = sources)
         sources = [":" + kind + "_sources_" + name]
         compile_data = compile_data + _CONTROLLER_TEST_DATA + _CONTROLLER_TEST_COMPILE_DATA.get(source, [])
         if kind == "lib":
             compile_data = compile_data + _CONTROLLER_RUNTIME.get("lib_test_tl3_controller" if name == "tl3_controller_loom" else "lib_test_" + name, [])
-        if name in ["tl3_controller", "tl3_controller_loom", "generate-fx-qualification"]:
+        if name in ["tl3_controller", "tl3_controller_loom", "generate-fx-qualification", "fx-stage-packet"]:
             compile_data = compile_data + native.glob(["qualification/**/*.json", "tools/generate_fx_qualification.rs", "tools/fx_qualification/**/*.rs"])
     for group in _GATE_GROUPS.get(binary, [""]):
         suffix = "-" + group if group else ""
@@ -497,7 +500,7 @@ def _crate_test(kind, package, name, source, harness, options):
             # The two retained launch-failure lib fixtures likewise execute in PB.
             gate_args = (["--libtest-select=cli_schema", "--libtest-select=malformed_requests", "--libtest-select=optional_reviewed", "--libtest-select=protocol_bounds"] if name == "run_backend_cli" else
                          (["--libtest-select=loom_"] if name == "tl3_controller_loom" else
-                          (["--libtest-select=staging_namespace_survives_consumer_argument_validation", "--libtest-select=qualification_gate_refuses_records_and_production_still_requires_one"] if kind == "example" and name == "fx-stage-packet" else
+                          (["--libtest-select=staging_namespace_survives_consumer_argument_validation", "--libtest-select=qualification_gate_refuses_records_and_production_still_requires_one", "--libtest-select=fx_qualification::"] if kind == "example" and name == "fx-stage-packet" else
                            (["--skip=adapters::run_backend::flux::launch_failure::tests::retained_fbelmqkrh5_success_keeps_its_checks_verdict_and_evidence",
                             "--skip=adapters::run_backend::flux::launch_failure::tests::retained_fbpzb5i8yp_without_launcher_exit_cannot_be_upgraded",
                             "--skip=adapters::flux_checks::activation::tests::qualified_identity_and_exact_planned_deployment_pass_staging_boundary",

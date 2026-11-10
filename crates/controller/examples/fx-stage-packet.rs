@@ -100,7 +100,9 @@ impl FixtureKind {
                 format!("def value():\n    import time\n    time.sleep(12)\n    return {value}\n")
             }
             Self::ReadyCancel => {
-                format!("def value():\n    import time\n    for _ in range(48):\n        print('TL3_X3_CANCEL_READY', flush=True)\n        time.sleep(5)\n    return {value}\n")
+                format!(
+                    "def value():\n    import time\n    for _ in range(48):\n        print('TL3_X3_CANCEL_READY', flush=True)\n        time.sleep(5)\n    return {value}\n"
+                )
             }
         }
     }
@@ -338,14 +340,39 @@ fn fixture_kind(arguments: &[std::ffi::OsString]) -> Result<FixtureKind> {
 
 fn main() -> Result<()> {
     let arguments: Vec<_> = std::env::args_os().skip(1).collect();
-    if arguments.first().is_some_and(|arg| arg == "inventory-build") && arguments.len() == 2 {
+    if arguments
+        .first()
+        .is_some_and(|arg| arg == "inventory-build")
+        && arguments.len() == 2
+    {
         return fx_qualification::inventory_build(Path::new(&arguments[1]));
     }
-    if arguments.len()==2 && arguments[0].to_str().is_some_and(|arg|["admitted-prepare","admitted-generator-prepare","admitted-verify"].contains(&arg)) {
-        return fx_qualification::admitted_command(arguments[0].to_str().ok_or("operation")?,Path::new(&arguments[1]));
+    if arguments.len() == 2
+        && arguments[0].to_str().is_some_and(|arg| {
+            [
+                "admitted-prepare",
+                "admitted-generator-prepare",
+                "admitted-verify",
+            ]
+            .contains(&arg)
+        })
+    {
+        return fx_qualification::admitted_command(
+            arguments[0].to_str().ok_or("operation")?,
+            Path::new(&arguments[1]),
+        );
     }
-    if arguments.first().is_some_and(|arg| arg == "qualify" || arg == "carry") {
-        return fx_qualification::command(&arguments);
+    if arguments
+        .first()
+        .is_some_and(|arg| arg == "qualify" || arg == "carry")
+    {
+        match fx_qualification::command(&arguments) {
+            Ok(code) => std::process::exit(code),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
+        }
     }
     if arguments.len() == 1 && arguments[0] == "--help" {
         println!(
@@ -470,16 +497,26 @@ mod tests {
 
     /// A sealed sandbox bundle built from the current harness, not from any activation pin.
     fn sandbox_bundle(root: &Path, shared: &mut Shared) -> PathBuf {
-        let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let pin: serde_json::Value =
-            serde_json::from_slice(
-                &fs::read(checkout.join(
-                    "crates/controller/src/adapters/flux_checks/activation/qualification.json",
-                ))
+        let checkout = std::env::var_os("TL3_FX_QUALIFICATION_CHECKOUT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
+        let controller = std::env::var_os("TL3_FX_QUALIFICATION_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| checkout.join("crates/controller"));
+        let pin: serde_json::Value = serde_json::from_slice(
+            &fs::read(controller.join("src/adapters/flux_checks/activation/qualification.json"))
                 .unwrap(),
-            )
-            .unwrap();
-        let fixtures = checkout.join("crates/controller/qualification/fx-exact42b/fixtures");
+        )
+        .unwrap();
+        let controller = std::env::var_os("TL3_FX_QUALIFICATION_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| checkout.join("crates/controller"));
+        let current = controller.join("qualification/current.json").is_file();
+        let fixtures = controller.join(if current {
+            "qualification/fx-current/fixtures"
+        } else {
+            "qualification/fx-exact42b/fixtures"
+        });
         let source = root.join("source");
         let (inventory, collector, cleanup) =
             ("collector-manifest.json", "host-collector", "host-cleanup");
@@ -490,7 +527,9 @@ mod tests {
                 continue;
             }
             let name = path.file_name().unwrap();
-            let original = if fixtures.join(name).is_file() {
+            let original = if current {
+                fixtures.join(&path)
+            } else if fixtures.join(name).is_file() {
                 fixtures.join(name)
             } else {
                 checkout.join("harness/src/tl3_harness").join(name)
@@ -587,7 +626,9 @@ mod tests {
         ));
         shared.0.push(destination.clone());
         shared.0.push(staging_destination(&destination).unwrap());
-        let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let checkout = std::env::var_os("TL3_FX_QUALIFICATION_CHECKOUT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
         prepare(
             &destination,
             &bundle,

@@ -1,6 +1,6 @@
 //! Rerunnable qualification coordinator. Computation runs only under admission.
-mod bb;
 mod admission;
+mod bb;
 mod evidence;
 mod generator;
 mod live;
@@ -11,7 +11,12 @@ mod publish;
 use super::{Result, git, identity, write};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, fs, os::unix::fs::{MetadataExt, PermissionsExt}, path::{Path, PathBuf}};
+use std::{
+    collections::BTreeMap,
+    fs,
+    os::unix::fs::{MetadataExt, PermissionsExt},
+    path::{Path, PathBuf},
+};
 use tl3_controller::run_backend::{self as api, durable};
 
 #[path = "../../tools/generate_fx_qualification.rs"]
@@ -20,13 +25,13 @@ mod d8;
 
 pub use bb::inventory_build;
 
-pub fn admitted_command(kind:&str,path:&Path)->Result<()> {
-    let inputs:Inputs=serde_json::from_slice(&durable::read(path)?)?;
+pub fn admitted_command(kind: &str, path: &Path) -> Result<()> {
+    let inputs: Inputs = serde_json::from_slice(&durable::read(path)?)?;
     match kind {
-        "admitted-prepare"=>prepare::admitted(&inputs),
-        "admitted-generator-prepare"=>generator::admitted(&inputs),
-        "admitted-verify"=>publish::verify_private(&inputs),
-        _=>Err("unknown admitted operation".into()),
+        "admitted-prepare" => prepare::admitted(&inputs),
+        "admitted-generator-prepare" => generator::admitted(&inputs),
+        "admitted-verify" => publish::verify_private(&inputs),
+        _ => Err("unknown admitted operation".into()),
     }
 }
 
@@ -67,40 +72,97 @@ fn parse(args: &[std::ffi::OsString]) -> Result<(Inputs, bool)> {
     while let Some(name) = cursor.next() {
         let name = name.to_str().ok_or("UTF-8 option required")?;
         if name == "--dry-run" {
-            if dry { return Err("duplicate --dry-run".into()); }
+            if dry {
+                return Err("duplicate --dry-run".into());
+            }
             dry = true;
             continue;
         }
-        if !["--repo", "--head", "--test-image", "--generator-image", "--image-map", "--image-map-sha256", "--out", "--readiness-seconds"].contains(&name) {
+        if ![
+            "--repo",
+            "--head",
+            "--test-image",
+            "--generator-image",
+            "--image-map",
+            "--image-map-sha256",
+            "--out",
+            "--readiness-seconds",
+        ]
+        .contains(&name)
+        {
             return Err("unknown qualification option".into());
         }
-        if values.insert(name, cursor.next().ok_or("missing option value")?.to_str().ok_or("UTF-8 input required")?).is_some() {
+        if values
+            .insert(
+                name,
+                cursor
+                    .next()
+                    .ok_or("missing option value")?
+                    .to_str()
+                    .ok_or("UTF-8 input required")?,
+            )
+            .is_some()
+        {
             return Err("duplicate qualification option".into());
         }
     }
-    let required = |key| values.get(key).copied().ok_or("missing qualification option");
+    let required = |key| {
+        values
+            .get(key)
+            .copied()
+            .ok_or("missing qualification option")
+    };
     let inputs = Inputs {
-        repo: required("--repo")?.into(), head: required("--head")?.into(),
-        test_image: required("--test-image")?.into(), generator_image: required("--generator-image")?.into(),
-        image_map: required("--image-map")?.into(), image_map_sha256: required("--image-map-sha256")?.into(),
-        out: required("--out")?.into(), readiness_seconds: values.get("--readiness-seconds").unwrap_or(&"120").parse()?,
+        repo: required("--repo")?.into(),
+        head: required("--head")?.into(),
+        test_image: required("--test-image")?.into(),
+        generator_image: required("--generator-image")?.into(),
+        image_map: required("--image-map")?.into(),
+        image_map_sha256: required("--image-map-sha256")?.into(),
+        out: required("--out")?.into(),
+        readiness_seconds: values
+            .get("--readiness-seconds")
+            .unwrap_or(&"120")
+            .parse()?,
     };
     Ok((inputs, dry))
 }
 
 fn validate(inputs: &Inputs) -> Result<()> {
-    if !api::hex(&inputs.head, 40) || !api::hex(&inputs.image_map_sha256, 64)
-        || !api::absolute(&inputs.repo) || !api::absolute(&inputs.out) || !api::absolute(&inputs.image_map)
+    if !api::hex(&inputs.head, 40)
+        || !api::hex(&inputs.image_map_sha256, 64)
+        || !api::absolute(&inputs.repo)
+        || !api::absolute(&inputs.out)
+        || !api::absolute(&inputs.image_map)
         || !inputs.out.starts_with("/mnt/shared/flux-out/tl3")
         || inputs.out == Path::new("/mnt/shared/flux-out/tl3")
-        || inputs.generator_image != PQ || !(1..=600).contains(&inputs.readiness_seconds)
-    { return Err("qualification input contract refused".into()); }
-    for path in [&inputs.repo, &inputs.out, &inputs.image_map] {
-        if path.ancestors().any(Path::is_symlink) { return Err("symlink input refused".into()); }
+        || inputs.generator_image != PQ
+        || !(1..=600).contains(&inputs.readiness_seconds)
+    {
+        return Err("qualification input contract refused".into());
     }
-    if git(&inputs.repo, &["rev-parse", "HEAD"])? != inputs.head
-        || !git(&inputs.repo, &["status", "--porcelain", "--untracked-files=all"])?.is_empty()
-    { return Err("isolated clean checkout at --head required".into()); }
+    for path in [&inputs.repo, &inputs.out, &inputs.image_map] {
+        if path.ancestors().any(Path::is_symlink) {
+            return Err("symlink input refused".into());
+        }
+    }
+    if git(&inputs.repo, &["rev-parse", "HEAD"])? != inputs.head {
+        return Err("isolated checkout at --head required".into());
+    }
+    let status = git(
+        &inputs.repo,
+        &["status", "--porcelain", "--untracked-files=all"],
+    )?;
+    if !status.is_empty()
+        && (!inputs.out.join("publication.json").exists()
+            || status.lines().any(|line| {
+                line.trim_start()
+                    .split_once(' ')
+                    .is_none_or(|(_, path)| !policy::derived(path))
+            }))
+    {
+        return Err("clean checkout required except exact owned publication resumption".into());
+    }
     if inputs.repo == Path::new("/home/rob/.t3/projects/trustladderiii") {
         return Err("shared project checkout refused".into());
     }
@@ -108,12 +170,24 @@ fn validate(inputs: &Inputs) -> Result<()> {
         return Err("image map digest mismatch".into());
     }
     let map: Value = serde_json::from_slice(&durable::read(&inputs.image_map)?)?;
-    for (profile, image) in [("sandbox", &inputs.test_image), ("prismaquant", &inputs.generator_image)] {
-        let matches: Vec<_> = map["profiles"].as_array().ok_or("image map profiles")?.iter()
-            .filter(|entry| entry["profile"] == profile && entry["registry_ref"] == *image).collect();
-        if matches.len() != 1 || matches[0]["platform"] != "linux/amd64"
-            || !matches[0]["rootless_present_hosts"].as_array().is_some_and(|hosts| hosts.iter().any(|host| host == "dl380g10"))
-        { return Err("immutable provisioned image map entry required".into()); }
+    for (profile, image) in [
+        ("sandbox", &inputs.test_image),
+        ("prismaquant", &inputs.generator_image),
+    ] {
+        let matches: Vec<_> = map["profiles"]
+            .as_array()
+            .ok_or("image map profiles")?
+            .iter()
+            .filter(|entry| entry["profile"] == profile && entry["registry_ref"] == *image)
+            .collect();
+        if matches.len() != 1
+            || matches[0]["platform"] != "linux/amd64"
+            || !matches[0]["rootless_present_hosts"]
+                .as_array()
+                .is_some_and(|hosts| hosts.iter().any(|host| host == "dl380g10"))
+        {
+            return Err("immutable provisioned image map entry required".into());
+        }
     }
     // The coordinator must run the very sources being qualified, including future modules.
     let compiled = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -147,19 +221,31 @@ fn plan(inputs: &Inputs) -> Value {
         "cancel_scope":"one owned ready job only", "image_map_sha256":inputs.image_map_sha256})
 }
 
-pub fn command(args: &[std::ffi::OsString]) -> Result<()> {
+pub fn command(args: &[std::ffi::OsString]) -> Result<i32> {
     if args.first().is_some_and(|s| s == "carry") {
-        return evidence::carry(&args[1..]);
+        evidence::carry(&args[1..])?;
+        return Ok(0);
     }
     let (inputs, dry) = parse(&args[1..])?;
     validate(&inputs)?;
-    unsafe { libc::umask(0o077); }
-    if !inputs.out.exists() { fs::create_dir(&inputs.out)?; }
+    unsafe {
+        libc::umask(0o077);
+    }
+    if !inputs.out.exists() {
+        fs::create_dir(&inputs.out)?;
+    }
     let metadata = fs::symlink_metadata(&inputs.out)?;
-    if !metadata.is_dir() || metadata.uid() != unsafe { libc::geteuid() }
+    if !metadata.is_dir()
+        || metadata.uid() != unsafe { libc::geteuid() }
         || metadata.permissions().mode() & 0o077 != 0
-    { return Err("owner-only nonsymlink output directory required".into()); }
-    let lock = fs::OpenOptions::new().create(true).truncate(false).write(true).open(inputs.out.join(".lock"))?;
+    {
+        return Err("owner-only nonsymlink output directory required".into());
+    }
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(inputs.out.join(".lock"))?;
     use std::os::fd::AsRawFd;
     if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
         return Err("qualification output already owned by another coordinator".into());
@@ -172,12 +258,19 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<()> {
         }
         state
     } else {
-        State { schema:"tl3.fx_qualification_state.v1".into(), inputs:inputs.clone(), phase:"preparing".into(), builds:vec![], canaries:vec![] }
+        State {
+            schema: "tl3.fx_qualification_state.v1".into(),
+            inputs: inputs.clone(),
+            phase: "preparing".into(),
+            builds: vec![],
+            canaries: vec![],
+        }
     };
     save(&inputs.out, &state)?;
     let outcome = (|| -> Result<Value> {
         if inputs.out.join("verdict.json").exists() {
-            let retained: Value = serde_json::from_slice(&durable::read(&inputs.out.join("verdict.json"))?)?;
+            let retained: Value =
+                serde_json::from_slice(&durable::read(&inputs.out.join("verdict.json"))?)?;
             evidence::verify_references(&retained)?;
             return Ok(retained);
         }
@@ -185,66 +278,160 @@ pub fn command(args: &[std::ffi::OsString]) -> Result<()> {
         state.builds = vec![build];
         save(&inputs.out, &state)?;
         let planned = plan(&inputs);
-        durable::atomic(&inputs.out.join("plan.json"), &serde_json::to_vec_pretty(&planned)?)?;
+        durable::atomic(
+            &inputs.out.join("plan.json"),
+            &serde_json::to_vec_pretty(&planned)?,
+        )?;
         if dry {
             println!("{}", serde_json::to_string_pretty(&planned)?);
-            return Ok(json!({"schema":"tl3.fx_executor_qualification.v1","status":"UNKNOWN","complete":false,
+            return Ok(
+                json!({"schema":"tl3.fx_executor_qualification.v1","status":"UNKNOWN","complete":false,
                 "qualified_head":inputs.head,"qualified_tree":git(&inputs.repo,&["rev-parse","HEAD^{tree}"])?,
-                "builds":state.builds,"canaries":[],"pin":null,"errors":[{"phase":"planning","code":"dry_run_no_jobs_submitted","evidence":[]}]}));
+                "builds":state.builds,"canaries":[],"pin":null,"errors":[{"phase":"planning","code":"dry_run_no_jobs_submitted","evidence":[]}]}),
+            );
         }
-        let input_path=inputs.out.join("inputs.json");
-        if !input_path.exists() {write(&input_path,&inputs)?;}
-        let options=admission::options(&inputs,&inputs.out.join("production"))?;
-        let command=|binary:&str,operation:&str|vec![inputs.out.join(binary).join("example_fx-stage-packet").to_string_lossy().into_owned(),operation.into(),input_path.to_string_lossy().into_owned()];
-        let preparation=admission::run(&inputs,&options,"preparation-job",&command("production","admitted-prepare"),600)?;
-        state.phase="lifecycle".into();save(&inputs.out,&state)?;
-        for kind in ["launch_failure","cancel","success"] {
-            let packet=inputs.out.join(format!("packet-{kind}"));
-            let request:api::Request=serde_json::from_slice(&durable::read(&packet.join("request.json"))?)?;
-            let options:api::Options=serde_json::from_slice(&durable::read(&packet.join("held-options.json"))?)?;
-            let result=live::collect(&inputs,request,options,kind)?;
-            if !state.canaries.iter().any(|c|c.kind==kind) {state.canaries.push(result.clone());}
-            save(&inputs.out,&state)?;
-            if result.status!="PASS" {return Err(format!("{kind} canary did not pass; no following job dispatched").into());}
+        let input_path = inputs.out.join("inputs.json");
+        if !input_path.exists() {
+            write(&input_path, &inputs)?;
         }
-        state.phase="lifecycle_complete".into();save(&inputs.out,&state)?;
-        let overlay=prepare::lifecycle_inputs(&inputs,&state.canaries)?;
-        let qualified=bb::build(&inputs,"qualified-production",Some(&overlay))?;
-        if state.builds.len()==1 {state.builds.push(qualified);}
-        state.phase="pin_built".into();save(&inputs.out,&state)?;
-        let generator_preparation=admission::run(&inputs,&options,"generator-preparation-job",&command("qualified-production","admitted-generator-prepare"),300)?;
-        let request:api::Request=serde_json::from_slice(&durable::read(&inputs.out.join("generator-prepared/request.json"))?)?;
-        let gen_options:api::Options=serde_json::from_slice(&durable::read(&inputs.out.join("generator-journal/options.json"))?)?;
-        let mut result=live::collect(&inputs,request,gen_options,"generator")?;
-        generator::check(&inputs,&mut result)?;
-        if state.canaries.len()==3 {state.canaries.push(result.clone());}
-        save(&inputs.out,&state)?;
-        if result.status!="PASS" {return Err("generator canary did not pass; checkout pin not published".into());}
-        state.phase="generator_complete".into();save(&inputs.out,&state)?;
-        let verification=admission::run(&inputs,&options,"verification-job",&command("qualified-production","admitted-verify"),600)?;
-        let pin=publish::publish(&inputs,&overlay,&state.canaries)?;
-        let entries=evidence::pathset(&inputs.repo,&inputs.head)?;
-        let decisions:Vec<_>=state.canaries.iter().zip(policy::ORDER).map(|(c,kind)|(kind,match c.status.as_str(){"PASS"=>policy::Status::Pass,"FAIL"=>policy::Status::Fail,_=>policy::Status::Unknown})).collect();
-        if policy::verdict(&decisions,true)!=policy::Status::Pass {return Err("final decision refused incomplete qualification".into());}
-        state.phase="complete".into();save(&inputs.out,&state)?;
-        Ok(json!({"schema":"tl3.fx_executor_qualification.v1","status":"PASS","complete":true,
+        let options = admission::options(&inputs, &inputs.out.join("production"))?;
+        let command = |binary: &str, operation: &str| {
+            vec![
+                inputs
+                    .out
+                    .join(binary)
+                    .join("example_fx-stage-packet")
+                    .to_string_lossy()
+                    .into_owned(),
+                operation.into(),
+                input_path.to_string_lossy().into_owned(),
+            ]
+        };
+        let preparation = admission::run(
+            &inputs,
+            &options,
+            "preparation-job",
+            &command("production", "admitted-prepare"),
+            600,
+        )?;
+        state.phase = "lifecycle".into();
+        save(&inputs.out, &state)?;
+        for kind in ["launch_failure", "cancel", "success"] {
+            let packet = inputs.out.join(format!("packet-{kind}"));
+            let request: api::Request =
+                serde_json::from_slice(&durable::read(&packet.join("request.json"))?)?;
+            let options: api::Options =
+                serde_json::from_slice(&durable::read(&packet.join("held-options.json"))?)?;
+            let result = live::collect(&inputs, request, options, kind)?;
+            if !state.canaries.iter().any(|c| c.kind == kind) {
+                state.canaries.push(result.clone());
+            }
+            save(&inputs.out, &state)?;
+            if result.status != "PASS" {
+                return Err(
+                    format!("{kind} canary did not pass; no following job dispatched").into(),
+                );
+            }
+        }
+        state.phase = "lifecycle_complete".into();
+        save(&inputs.out, &state)?;
+        let overlay = prepare::lifecycle_inputs(&inputs, &state.canaries[..3])?;
+        let qualified = bb::build(&inputs, "qualified-production", Some(&overlay))?;
+        if state.builds.len() == 1 {
+            state.builds.push(qualified);
+        }
+        state.phase = "pin_built".into();
+        save(&inputs.out, &state)?;
+        let generator_preparation = admission::run(
+            &inputs,
+            &options,
+            "generator-preparation-job",
+            &command("qualified-production", "admitted-generator-prepare"),
+            300,
+        )?;
+        let request: api::Request = serde_json::from_slice(&durable::read(
+            &inputs.out.join("generator-prepared/request.json"),
+        )?)?;
+        let gen_options: api::Options = serde_json::from_slice(&durable::read(
+            &inputs.out.join("generator-journal/options.json"),
+        )?)?;
+        let mut result = live::collect(&inputs, request, gen_options, "generator")?;
+        generator::check(&inputs, &mut result)?;
+        if state.canaries.len() == 3 {
+            state.canaries.push(result.clone());
+        }
+        save(&inputs.out, &state)?;
+        if result.status != "PASS" {
+            return Err("generator canary did not pass; checkout pin not published".into());
+        }
+        state.phase = "generator_complete".into();
+        save(&inputs.out, &state)?;
+        let verification = admission::run(
+            &inputs,
+            &options,
+            "verification-job",
+            &command("qualified-production", "admitted-verify"),
+            600,
+        )?;
+        let pin = publish::publish(&inputs, &overlay, &state.canaries)?;
+        let entries = evidence::pathset(&inputs.repo, &inputs.head)?;
+        let decisions = evidence::decisions(&state.canaries)?;
+        if policy::verdict(&decisions, true) != policy::Status::Pass {
+            return Err("final decision refused incomplete qualification".into());
+        }
+        state.phase = "complete".into();
+        save(&inputs.out, &state)?;
+        Ok(
+            json!({"schema":"tl3.fx_executor_qualification.v1","status":"PASS","complete":true,
             "qualified_head":inputs.head,"qualified_tree":git(&inputs.repo,&["rev-parse","HEAD^{tree}"])?,
             "executor_pathset":{"version":policy::PATHSET_VERSION,"sha256":durable::digest(&serde_json::to_vec(&entries)?),"entries":entries},
             "inputs":{"image_map":identity(&inputs.image_map)?,"test_image":inputs.test_image,"generator_image":inputs.generator_image},
             "builds":state.builds,"preparation_jobs":[preparation,generator_preparation],"verification_jobs":[verification],"canaries":state.canaries,
-            "pin":pin,"coverage":{"lifecycle":true,"real_image_generator":true,"go_live_profiles":[]},"errors":[]}))
+            "pin":pin,"coverage":{"lifecycle":true,"real_image_generator":true,"go_live_profiles":[]},"errors":[]}),
+        )
     })();
+    if outcome.is_err() {
+        for kind in ["launch_failure", "cancel", "success", "generator"] {
+            if !state.canaries.iter().any(|c| c.kind == kind) {
+                state.canaries.push(evidence::CanaryEvidence {
+                    kind: kind.into(),
+                    job: None,
+                    status: "NOT_RUN".into(),
+                    ending: None,
+                    terminal_receipt: None,
+                    cleanup: None,
+                    executions: vec![],
+                    artifacts: vec![],
+                    checks: vec![],
+                });
+            }
+        }
+    }
     let verdict = match outcome {
         Ok(value) => value,
-        Err(error) => json!({"schema":"tl3.fx_executor_qualification.v1","status":"UNKNOWN","complete":false,
+        Err(error) => {
+            json!({"schema":"tl3.fx_executor_qualification.v1","status":if state.canaries.iter().any(|c|c.status=="FAIL"){"FAIL"}else{"UNKNOWN"},"complete":false,
             "qualified_head":inputs.head,"qualified_tree":git(&inputs.repo,&["rev-parse","HEAD^{tree}"])?,
             "executor_pathset":{"version":policy::PATHSET_VERSION,"entries":evidence::pathset(&inputs.repo,&inputs.head)?},
             "inputs":{"image_map":identity(&inputs.image_map)?,"test_image":inputs.test_image,"generator_image":inputs.generator_image},
             "builds":state.builds,"preparation_jobs":[],"verification_jobs":[],"canaries":state.canaries,"pin":null,
             "coverage":{"lifecycle":false,"real_image_generator":false,"go_live_profiles":[]},
-            "errors":[{"phase":state.phase,"code":error.to_string(),"evidence":[]}]}),
+            "errors":[{"phase":state.phase,"code":error.to_string(),"evidence":[]}]})
+        }
     };
-    durable::atomic(&inputs.out.join("verdict.json"), &serde_json::to_vec_pretty(&verdict)?)?;
-    println!("{}", json!({"verdict":inputs.out.join("verdict.json"),"status":verdict["status"]}));
-    if verdict["status"] == "PASS" { Ok(()) } else { Err("qualification did not pass; see verdict.json".into()) }
+    durable::atomic(
+        &inputs.out.join("verdict.json"),
+        &serde_json::to_vec_pretty(&verdict)?,
+    )?;
+    println!(
+        "{}",
+        json!({"verdict":inputs.out.join("verdict.json"),"status":verdict["status"]})
+    );
+    Ok(if dry || verdict["status"] == "PASS" {
+        0
+    } else if verdict["status"] == "FAIL" {
+        1
+    } else {
+        2
+    })
 }

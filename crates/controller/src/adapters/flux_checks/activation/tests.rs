@@ -30,14 +30,24 @@ impl Fixture {
             .tempdir_in("/mnt/shared")
             .unwrap();
         let source = root.path().join("source");
-        let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let fixtures = checkout.join("crates/controller/qualification/fx-exact42b/fixtures");
+        let controller = std::env::var_os("TL3_FX_QUALIFICATION_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+        let checkout = controller.join("../..");
+        let current = controller.join("qualification/current.json").is_file();
+        let fixtures = controller.join(if current {
+            "qualification/fx-current/fixtures"
+        } else {
+            "qualification/fx-exact42b/fixtures"
+        });
         let qualification: Qualification = serde_json::from_slice(PIN).unwrap();
         for file in &qualification.files {
             let path = source.join(&file.path);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             let name = file.path.file_name().unwrap();
-            let original = if fixtures.join(name).is_file() {
+            let original = if current {
+                fixtures.join(&file.path)
+            } else if fixtures.join(name).is_file() {
                 fixtures.join(name)
             } else {
                 checkout.join("harness/src/tl3_harness").join(name)
@@ -459,8 +469,10 @@ fn environment_override_child() {
 
 #[test]
 fn qualification_regeneration_is_byte_identical() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let output = qualification_generator::generate(&root.join("qualification/fx-exact42b"));
+    let root = std::env::var_os("TL3_FX_QUALIFICATION_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+    let output = qualification_generator::generate_checkout(&root);
     assert!(output.is_ok(), "{}", output.as_ref().unwrap_err());
     assert_eq!(output.unwrap(), PIN);
 }

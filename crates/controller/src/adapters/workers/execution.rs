@@ -4,8 +4,8 @@ use crate::run_backend::{self as backend, durable};
 use serde::{Deserialize, Serialize};
 mod inputs;
 mod waits;
-pub use inputs::{Command, command, execute};
 pub(crate) use inputs::reservation;
+pub use inputs::{Command, command, execute};
 pub use waits::Waits;
 
 /// The worker tests executor. Flux is the only one. Without a selected Flux executor every

@@ -24,7 +24,10 @@ pub const ORDER: [Canary; 4] = [
 
 pub fn verdict(canaries: &[(Canary, Status)], pin_checked: bool) -> Status {
     if canaries.len() != ORDER.len()
-        || canaries.iter().zip(ORDER).any(|((kind, _), expected)| *kind != expected)
+        || canaries
+            .iter()
+            .zip(ORDER)
+            .any(|((kind, _), expected)| *kind != expected)
     {
         return Status::Unknown;
     }
@@ -61,6 +64,7 @@ pub fn derived(path: &str) -> bool {
 pub fn relevant(path: &str) -> bool {
     if derived(path)
         || path.starts_with("crates/kernel/")
+        || path.starts_with("crates/verus-runner/")
         || PROOFS.iter().any(|prefix| path.starts_with(prefix))
         || path.starts_with("tools/pb_nightly/")
         || path.starts_with("tools/ci/verus_")
@@ -73,23 +77,52 @@ pub fn relevant(path: &str) -> bool {
     {
         return false;
     }
-    ["crates/", "harness/", "workers/", "tools/", "deploy/", ".cargo/"]
-        .iter().any(|prefix| path.starts_with(prefix))
-        || ["Cargo.toml", "Cargo.lock", "BUILD.bazel", "MODULE.bazel", "MODULE.bazel.lock",
-            ".bazelrc", ".bazelversion", ".bazelignore", ".gitignore", "gazelle_python.yaml"]
-            .contains(&path)
+    [
+        "crates/", "harness/", "workers/", "tools/", "deploy/", ".cargo/",
+    ]
+    .iter()
+    .any(|prefix| path.starts_with(prefix))
+        || [
+            "Cargo.toml",
+            "Cargo.lock",
+            "BUILD.bazel",
+            "MODULE.bazel",
+            "MODULE.bazel.lock",
+            ".bazelrc",
+            ".bazelversion",
+            ".bazelignore",
+            ".gitignore",
+            "gazelle_python.yaml",
+        ]
+        .contains(&path)
 }
 
 pub fn publication_order(paths: &[String]) -> Result<Vec<String>, &'static str> {
     let unique: std::collections::BTreeSet<_> = paths.iter().collect();
-    if unique.len() != paths.len() || !paths.iter().all(|p| derived(p))
-        || !paths.iter().any(|p| p == INDEX) || !paths.iter().any(|p| p == PIN)
-        || paths.iter().any(|p| p.split('/').any(|part| part == ".." || part == "." || part.is_empty()))
+    if unique.len() != paths.len()
+        || !paths.iter().all(|p| derived(p))
+        || !paths.iter().any(|p| p == INDEX)
+        || !paths.iter().any(|p| p == PIN)
+        || paths.iter().any(|p| {
+            p.split('/')
+                .any(|part| part == ".." || part == "." || part.is_empty())
+        })
     {
         return Err("qualification.publication.inventory");
     }
     let mut result = paths.to_vec();
-    result.sort_by_key(|path| (if path == INDEX { 2 } else if path == PIN { 1 } else { 0 }, path.clone()));
+    result.sort_by_key(|path| {
+        (
+            if path == INDEX {
+                2
+            } else if path == PIN {
+                1
+            } else {
+                0
+            },
+            path.clone(),
+        )
+    });
     Ok(result)
 }
 
@@ -169,7 +202,10 @@ mod tests {
             "crates/controller/qualification/current.json",
             "crates/controller/src/adapters/flux_checks/activation/qualification.json",
             "crates/controller/qualification/fx-current/success.json",
-        ].into_iter().map(String::from).collect();
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
         let ordered = publication_order(&fixture).unwrap();
         assert_eq!(ordered.last(), Some(&fixture[0]));
         assert_eq!(ordered.first(), Some(&fixture[2]));

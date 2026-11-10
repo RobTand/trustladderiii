@@ -157,13 +157,18 @@ fn main() {
 
 #[cfg(not(test))]
 fn run() -> Result<(), String> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut root = Path::new(env!("CARGO_MANIFEST_DIR")).to_owned();
     let mut output = root.join("src/adapters/flux_checks/activation/qualification.json");
     let mut check = false;
     let mut args = std::env::args_os().skip(1);
     while let Some(arg) = args.next() {
         if arg == "--check" {
             check = true;
+        } else if arg == "--repo" {
+            root = args
+                .next()
+                .ok_or("--repo requires the controller crate path")?
+                .into();
         } else if arg == "--output" {
             output = args.next().ok_or("--output requires a path")?.into();
         } else if arg == "--help" || arg == "-h" {
@@ -177,7 +182,13 @@ fn run() -> Result<(), String> {
             return Err("unrecognized argument".into());
         }
     }
-    let raw = generate_checkout(root)?;
+    if output
+        == Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/adapters/flux_checks/activation/qualification.json")
+    {
+        output = root.join("src/adapters/flux_checks/activation/qualification.json");
+    }
+    let raw = generate_checkout(&root)?;
     if check {
         if fs::read(output).map_err(|error| error.to_string())? != raw {
             return Err("qualification.regeneration".into());
