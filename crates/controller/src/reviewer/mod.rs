@@ -2,6 +2,7 @@
 mod decision;
 use decision::{Finding, Verdict};
 use serde_json::Value;
+use crate::adapters::workers::review::{BlockingFinding, CitationKind};
 
 /// Validate the wire boundary before reducing evidence to finite reviewer facts.
 pub fn validate(inputs: &Value, reply: &Value) -> crate::Result<()> {
@@ -10,17 +11,41 @@ pub fn validate(inputs: &Value, reply: &Value) -> crate::Result<()> {
     validate_findings(inputs, reply).map(|_| ())
 }
 
+pub(crate) fn reply_violations(inputs: &Value, reply: &Value) -> crate::Result<Vec<&'static str>> {
+    crate::adapters::workers::protocol::reviewer_schema(inputs, false)?;
+    crate::adapters::workers::protocol::reviewer_schema(reply, true)?;
+    let verdict = parse_verdict(reply)?;
+    let mut violations = Vec::new();
+    if let Err(rule) = decision::head(verdict, reply["head_sha"] == inputs["head_sha"]) {
+        violations.push(rule.message());
+    }
+    if verdict != Verdict::OutOfRoom {
+        let findings: Vec<BlockingFinding> = serde_json::from_value(reply["blocking_findings"].clone())
+            .map_err(|_| crate::Error::Invalid("invalid worker reply field"))?;
+        for finding in &findings {
+            if let Err(rule) = decision::finding(finding_facts(inputs, finding)) {
+                violations.push(rule.message());
+            }
+        }
+    }
+    Ok(violations)
+}
+
+fn parse_verdict(reply: &Value) -> crate::Result<Verdict> {
+    match reply["verdict"].as_str() {
+        Some("approve") => Ok(Verdict::Approve),
+        Some("changes") => Ok(Verdict::Changes),
+        Some("out_of_room") => Ok(Verdict::OutOfRoom),
+        _ => Err(crate::Error::Invalid("worker reply breaks role schema")),
+    }
+}
+
 pub(crate) fn validate_findings(
     inputs: &Value,
     reply: &Value,
 ) -> crate::Result<Vec<crate::adapters::workers::review::BlockingFinding>> {
-    use crate::{Error, adapters::workers::review::CitationKind};
-    let verdict = match reply["verdict"].as_str() {
-        Some("approve") => Verdict::Approve,
-        Some("changes") => Verdict::Changes,
-        Some("out_of_room") => Verdict::OutOfRoom,
-        _ => return Err(Error::Invalid("worker reply breaks role schema")),
-    };
+    use crate::Error;
+    let verdict = parse_verdict(reply)?;
     decision::head(verdict, reply["head_sha"] == inputs["head_sha"])
         .map_err(|v| Error::Invalid(v.message()))?;
     if verdict == Verdict::OutOfRoom {
@@ -29,19 +54,26 @@ pub(crate) fn validate_findings(
     let findings: Vec<crate::adapters::workers::review::BlockingFinding> =
         serde_json::from_value(reply["blocking_findings"].clone())
             .map_err(|_| Error::Invalid("invalid worker reply field"))?;
+    for finding in &findings {
+        decision::finding(finding_facts(inputs, finding))
+            .map_err(|v| Error::Invalid(v.message()))?;
+    }
+    Ok(findings)
+}
+
+fn finding_facts(inputs: &Value, finding: &BlockingFinding) -> Finding {
     let diff = inputs
         .get("scope_diff")
         .unwrap_or(&inputs["diff"])
         .as_str()
         .unwrap_or_default();
-    for finding in &findings {
-        let entries = match finding.citation.kind {
+    let entries = match finding.citation.kind {
             CitationKind::Goal => &inputs["goals"],
             CitationKind::StandingRule => &inputs["standing_rules"],
         };
         let scope = finding.citation.kind == CitationKind::StandingRule
             && finding.citation.id == crate::adapters::workers::review::SCOPE_RULE;
-        decision::finding(Finding {
+    Finding {
             known: entries.as_array().is_some_and(|entries| {
                 entries
                     .iter()
@@ -49,10 +81,7 @@ pub(crate) fn validate_findings(
             }),
             scope,
             quoted: !scope || quotes_changed_hunk(diff, &finding.evidence),
-        })
-        .map_err(|v| Error::Invalid(v.message()))?;
     }
-    Ok(findings)
 }
 
 fn quotes_changed_hunk(diff: &str, evidence: &str) -> bool {

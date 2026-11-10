@@ -8,14 +8,13 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 import openai
 
+from tl3_workers.reply_check import REPAIR_MESSAGE_BYTES
+
 
 # A refused connection, or a stream the proxy or network cut off mid-reply.
 DROPPED = (openai.APIConnectionError, httpx.TransportError)
 REPAIR = ("Your reply failed validation: {}\nTools are unavailable for this turn. Return one "
           "corrected JSON object matching your reply schema and nothing else.")
-
-
-REPAIR_MESSAGE_BYTES = 2_048
 
 
 def validation_message(error):

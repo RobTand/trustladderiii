@@ -1,7 +1,7 @@
 """Strict transport for ingest and audit verbatim material retention."""
 
 def preserve_verbatim(role, inputs, reply):
-    from tl3_workers.reply_check import run_check, ReplyViolation, ReplyCheckInfrastructureError
+    from tl3_workers.reply_check import run_check, render_violations, ReplyViolation, ReplyCheckInfrastructureError
     # Lazy transport dispatch only. Rust parses source material and decides what to retain.
     body = inputs.get('issue', {}).get('body') or ''
     if '```' not in body and '~~~' not in body:
@@ -12,7 +12,7 @@ def preserve_verbatim(role, inputs, reply):
             or any(not isinstance(item, str) for item in result['violations'])):
         raise ReplyCheckInfrastructureError('reply validator returned invalid output')
     if result['violations']:
-        raise ReplyViolation(result['violations'][0])
+        raise ReplyViolation(render_violations(result['violations']))
     reply.clear()
     reply.update(result['reply'])
 

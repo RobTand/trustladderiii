@@ -29,39 +29,49 @@ struct Maker {
 }
 
 pub fn maker(inputs: &Value) -> crate::Result<Vec<String>> {
+    // The pre-extraction oracle records the first diagnostic. The CLI reports all.
+    let mut violations = maker_violations(inputs)?;
+    violations.truncate(1);
+    Ok(violations)
+}
+
+fn maker_violations(inputs: &Value) -> crate::Result<Vec<String>> {
     let inputs: Maker = serde_json::from_value(inputs.clone())?;
     let goals: BTreeSet<_> = inputs.goals.iter().map(|goal| goal.id.as_str()).collect();
-    let violation = if goals.len() != inputs.goals.len() {
-        Some("goal ids must be unique")
-    } else if let Some(message) = inputs
-        .plan
-        .files
-        .iter()
-        .find_map(|path| declared_file(path).err())
-    {
-        Some(message)
-    } else if inputs
+    let mut violations = Vec::new();
+    if goals.len() != inputs.goals.len() {
+        violations.push("goal ids must be unique");
+    }
+    for path in &inputs.plan.files {
+        if let Err(message) = declared_file(path) {
+            if !violations.contains(&message) {
+                violations.push(message);
+            }
+        }
+    }
+    if inputs
         .plan
         .checks
         .iter()
         .chain(&inputs.feedback)
         .any(|check| check.goal_ids.iter().any(|id| !goals.contains(id.as_str())))
     {
-        Some("unknown goal id")
-    } else {
-        let covered: BTreeSet<_> = inputs
-            .plan
-            .checks
-            .iter()
-            .flat_map(|check| check.goal_ids.iter())
-            .collect();
-        inputs
-            .goals
-            .iter()
-            .any(|goal| goal.stage.as_deref() != Some("publishing") && !covered.contains(&goal.id))
-            .then_some("checks must cover every maker and checking goal")
-    };
-    Ok(violation.into_iter().map(str::to_owned).collect())
+        violations.push("unknown goal id");
+    }
+    let covered: BTreeSet<_> = inputs
+        .plan
+        .checks
+        .iter()
+        .flat_map(|check| check.goal_ids.iter())
+        .collect();
+    if inputs
+        .goals
+        .iter()
+        .any(|goal| goal.stage.as_deref() != Some("publishing") && !covered.contains(&goal.id))
+    {
+        violations.push("checks must cover every maker and checking goal");
+    }
+    Ok(violations.into_iter().map(str::to_owned).collect())
 }
 
 fn declared_file(path: &str) -> Result<(), &'static str> {
@@ -95,7 +105,7 @@ pub fn check(role: Option<&str>) -> crate::Result<()> {
     std::io::stdin().read_to_end(&mut bytes)?;
     let value = crate::adapters::workers::json::parse(&bytes)?;
     let violations = match role {
-        Some("maker") => maker(&value)?,
+        Some("maker") => maker_violations(&value)?,
         Some("request") => request(&value)?,
         _ => {
             return Err(crate::Error::Invalid(

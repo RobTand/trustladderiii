@@ -6,6 +6,7 @@ import subprocess
 
 
 TIMEOUT_SECONDS = 5
+REPAIR_MESSAGE_BYTES = 2_048
 
 
 class ReplyViolation(ValueError):
@@ -14,6 +15,28 @@ class ReplyViolation(ValueError):
 
 class ReplyCheckInfrastructureError(RuntimeError):
     """The validator did not decide; exit the worker without a model repair."""
+
+
+def render_violations(violations):
+    """Join the Rust role table's diagnostics, retaining order and omission counts."""
+    unique = list(dict.fromkeys(violations))
+    message = "\n".join(unique)
+    if len(message.encode()) <= REPAIR_MESSAGE_BYTES:
+        return message
+    kept = []
+    for index, violation in enumerate(unique):
+        remaining = len(unique) - index - 1
+        suffix = f"\n[{remaining} more violations omitted]" if remaining else ""
+        candidate = "\n".join([*kept, violation])
+        if len((candidate + suffix).encode()) <= REPAIR_MESSAGE_BYTES:
+            kept.append(violation)
+            continue
+        if kept:
+            return "\n".join(kept) + f"\n[{len(unique) - len(kept)} more violations omitted]"
+        suffix = f"\n[1 violation truncated; {remaining} more violations omitted]"
+        prefix = violation.encode()[:REPAIR_MESSAGE_BYTES - len(suffix.encode())]
+        return prefix.decode(errors="ignore") + suffix
+    return message
 
 
 def _unique_object(pairs):
@@ -62,7 +85,7 @@ def check_reply(role, inputs, reply):
     if not isinstance(violations, list) or any(not isinstance(item, str) for item in violations):
         raise ReplyCheckInfrastructureError("reply validator returned invalid output")
     if violations:
-        raise ReplyViolation(violations[0])
+        raise ReplyViolation(render_violations(violations))
 
 
 class MakerInputViolation(ValueError):
@@ -81,5 +104,5 @@ def check_inputs(kind, inputs):
         raise ReplyCheckInfrastructureError("input validator returned invalid output")
     if violations:
         if kind == "maker":
-            raise MakerInputViolation(violations[0])
-        raise ValueError(violations[0])
+            raise MakerInputViolation(render_violations(violations))
+        raise ValueError(render_violations(violations))
