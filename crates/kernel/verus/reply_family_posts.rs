@@ -396,4 +396,32 @@ pub(super) proof fn recheck_value_posts(n: Node, nq: u64, target: Phase)
     reveal(reply_family_values::recheck);
     reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);
 }
+
+pub(super) proof fn room_bound(n: Node, fast: bool, nq: u64, step: ReviewStop)
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+    ensures reply_family_values::retry_bound(n, nq, reply_family_values::room(n, fast, step)),
+{
+    reveal(reply_family_values::room);
+    if fast { reply_family_facts::stopped_review(n, step); }
+}
+
+pub(super) proof fn rebase_value_posts(n: Node, nq: u64, reply: Reply)
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+        matches!(reply, Reply::RebaseClean { .. } | Reply::RebaseNeedsChanges | Reply::RunFailed),
+    ensures reply_family_values::reply_bound(n, nq, reply_family_values::rebase(n, reply)),
+        (successful_reply_input(n, reply) ==>
+            distance(reply_family_values::finish(nq, reply_family_values::rebase(n, reply))) < distance(n)),
+        reply_family_values::finish(nq, reply_family_values::rebase(n, reply)).footprint == n.footprint,
+{
+    reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank);
+    match reply {
+        Reply::RebaseClean { head } => {
+            let m = Node { head: Some(head), checked: None,
+                review_restarted: n.head == Some(head) && n.review_restarted, ..n };
+            recheck_value_posts(m, nq, Phase::Checking);
+        },
+        _ => {},
+    }
+}
+
 }

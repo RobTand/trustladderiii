@@ -238,7 +238,7 @@ match reply {
             reply_family_safety::work_rows(n, c, value); } return value; }
 
         }
-        Reply::MakerOutOfRoom => { let value = out_of_room_node(node, c.fast, c.next_question, ReviewStop::MakerOutOfRoom); kernel_proof! { report::lemmas::work_kind(reply);
+        Reply::MakerOutOfRoom => { let value = out_of_room_node(node, c.fast, c.next_question, ReviewStop::MakerOutOfRoom); kernel_proof! { reply_family_posts::room_bound(node, c.fast, c.next_question, ReviewStop::MakerOutOfRoom); } kernel_proof! { report::lemmas::work_kind(reply);
             report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply));
             reply_family_safety::work_rows(n, c, value); } return value; },
         Reply::ChecksDone {
@@ -273,7 +273,7 @@ match reply {
         }
         Reply::ReviewerOutOfRoom => {
             if node.review_restarted {
-                { let value = out_of_room_node(node, c.fast, c.next_question, ReviewStop::ReviewerOutOfRoom); kernel_proof! { report::lemmas::work_kind(reply);
+                { let value = out_of_room_node(node, c.fast, c.next_question, ReviewStop::ReviewerOutOfRoom); kernel_proof! { reply_family_posts::room_bound(node, c.fast, c.next_question, ReviewStop::ReviewerOutOfRoom); } kernel_proof! { report::lemmas::work_kind(reply);
             report::lemmas::forward_round(before_report@, report.entries@, NodeId(i as u64), report::work_failure(reply));
             reply_family_safety::work_rows(n, c, value); } return value; }
             } else {
@@ -305,7 +305,8 @@ pub(super) fn reply_rebase_node(n: Node, c: ReplyCtx) -> (result: ReplyChange) [
         reply_family_safety::rows(n, c, result),
         (successful_reply_input(n, c.reply) ==> distance(reply_family_values::finish(c.next_question, result)) < distance(n)),
         reply_family_values::finish(c.next_question, result).footprint == n.footprint,
-] proof [reveal(distance); reveal_with_fuel(phase_rank, 3); reveal(continuation_rank); reveal(retirement::stopped);] {
+] {
+    kernel_proof! { reply_family_posts::rebase_value_posts(n, c.next_question, c.reply); }
     let mut node = n;
     let mut note: Option<Notice> = None;
     let i = c.node;
@@ -318,7 +319,7 @@ match reply {
         Reply::RebaseNeedsChanges => {
             let m = &mut node;
             if m.credit.can_spend(1) {
-                m.credit.spend(1);
+                m.credit = spend_v(m.credit, 1);
                 set_phase(m, Phase::Making);
             } else {
                 { let value = ReplyChange::Ask { node, kind: QKind::OutOfCredit, cont: Cont::Ready(Resume::Making), cost: 1, }; kernel_proof! { reply_family_safety::work_rows(n, c, value); } return value; }
