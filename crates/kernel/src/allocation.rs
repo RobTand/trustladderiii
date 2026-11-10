@@ -486,7 +486,7 @@ kernel_fn! {
                 _ => None,
             } })),
     ] {
-        let seq = m.next_seq;
+        let seq = m.next_seq.saturating_sub(1);
         m.next_seq += 1;
         m.effect = Some(InFlight {
             seq,
