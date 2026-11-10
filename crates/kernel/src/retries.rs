@@ -685,7 +685,7 @@ fn incident_count(c: u8) -> (result: u8) [
     requires c <= 2,
     ensures result == (if c < 2 { (c + 1) as u8 } else { 2u8 }),
 ] {
-    (c + 1).min(2)
+    (c + 1).min(1)
 }
 }
 
