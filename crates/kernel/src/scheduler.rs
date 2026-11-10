@@ -260,6 +260,20 @@ pub(super) fn advance(w: &mut World, i: usize, out: &mut Outbox, report: &mut Re
         ==> final(w).nodes@[i as int].run_failures == old(w).nodes@[i as int].run_failures && final(w).nodes@[i as int].run_incidents == old(w).nodes@[i as int].run_incidents && final(w).nodes@[i as int].fx_failures == old(w).nodes@[i as int].fx_failures && final(w).nodes@[i as int].fx_incidents == old(w).nodes@[i as int].fx_incidents
             && final(w).nodes@[i as int].question == old(w).nodes@[i as int].question && final(w).nodes@[i as int].credit == old(w).nodes@[i as int].credit
             && final(w).nodes@[i as int].generation == old(w).nodes@[i as int].generation && final(w).nodes@[i as int].ticket == old(w).nodes@[i as int].ticket,
+    // G22-F1 REQ R29 (v2.12, owner advance): a successful Ready grant is disjoint from every older
+    // same-repository Ready waiter (forwards first_in_line's older-overlap post).
+    (advance_family_post::ready_unobstructed(old(w).nodes@[i as int]) && result)
+        ==> forall|older: int| 0 <= older < old(w).nodes@.len()
+            && old(w).nodes@[older].phase is Ready
+            && old(w).nodes@[older].repo == old(w).nodes@[i as int].repo
+            && old(w).nodes@[older].ticket.is_some()
+            && old(w).nodes@[older].ticket.unwrap() < old(w).nodes@[i as int].ticket.unwrap()
+            ==> footprint::disjoint(*old(w), old(w).nodes@[older].footprint, old(w).nodes@[i as int].footprint),
+    // G22-F2 REQ R30 (phase) + framing (pos, paused) (v2.12, owner advance): a Ready grant resumes the
+    // waited-for step at its start, unpaused.
+    (advance_family_post::ready_unobstructed(old(w).nodes@[i as int]) && result)
+        ==> final(w).nodes@[i as int].phase == resumed_phase(match old(w).nodes@[i as int].phase { Phase::Ready(r) => r, _ => Resume::Making })
+            && final(w).nodes@[i as int].pos == 0 && !final(w).nodes@[i as int].paused,
 ] {
     advance_proved(w, i, out, report)
 }
