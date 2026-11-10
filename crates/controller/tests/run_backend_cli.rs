@@ -7090,6 +7090,7 @@ fn cleanup_maintenance_persistent_busy_owner_survives_restart_and_requires_stop_
         1,
         "a persistently held owner lock must surface"
     );
+    assert_eq!(report.pending, vec![owned.owner.clone()]);
     let failures = api::durable::maintenance_failures(&f.options.journal_root).unwrap();
     assert_eq!(failures.len(), 1);
     assert!(failures[0].message.contains("persistently held owner lock"));
@@ -7102,12 +7103,10 @@ fn cleanup_maintenance_persistent_busy_owner_survives_restart_and_requires_stop_
     assert!(!cleanup_debts(&f).is_empty());
     drop(lock);
     // Acquisition resets the streak, but absence of positive evidence keeps debt pending.
-    assert!(
-        !backend
-            .cleanup_maintenance(expired + 1)
-            .unwrap()
-            .pending
-            .is_empty()
+    assert_eq!(
+        backend.cleanup_maintenance(expired + 1).unwrap().pending,
+        vec![owned.owner.clone()],
+        "acquisition without positive stop evidence must keep the same incident owner pending"
     );
     assert!(!cleanup_debts(&f).is_empty());
     let lock = fs::OpenOptions::new()
