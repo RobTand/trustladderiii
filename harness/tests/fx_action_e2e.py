@@ -209,6 +209,7 @@ if args[0] == 'run':
     labels = {{args[i+1].split('=',1)[0]: args[i+1].split('=',1)[1] for i in range(len(args)-1) if args[i]=='--label'}}
     metadata = {{'Id':hashlib.sha256(name.encode()).hexdigest(), 'Name':name, 'Labels':labels, 'Pid':os.getpid(), 'ConmonPid':os.getpid()}}
     (root / (name + '.container.json')).write_text(json.dumps(metadata))
+    (root / (metadata['Id'] + '.container.json')).write_text(json.dumps(metadata))
     status = pathlib.Path('/proc/self/status').read_text()
     allowed = next(line.split(':',1)[1].strip() for line in status.splitlines() if line.startswith('Cpus_allowed_list:'))
     cgroup = '0::/user.slice/user-1000.slice/user@1000.service/flux.slice/flux-jobs.slice/shell-fABC:sys.service\\n' if '--cgroupns=host' in args else '0::/\\n'
