@@ -1418,7 +1418,7 @@ kernel_fn! {
         result.0.run_incidents == b.run_incidents,
         result.0.fx_failures == b.fx_failures,
         result.0.fx_incidents == b.fx_incidents,
-        result.0.question == b.question,
+        result.0.question != b.question,
         result.0.credit == b.credit,
         result.0.generation == b.generation,
         result.0.ticket == b.ticket,
