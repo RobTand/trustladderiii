@@ -630,7 +630,8 @@ bb = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bb)
 client = bb.BuildBuddy((pathlib.Path.home()/'.config/buildbuddy/api_key').read_text().strip())
 record = bb.status(client, invocation)
-source = {field: record.get(field) for field in ['invocationId', 'commitSha', 'repoUrl']}
+source = {field: record.get(field) for field in ['commitSha', 'repoUrl']}
+source['invocationId'] = record.get('id', {}).get('invocationId')
 print(bb.clean(client.key, json.dumps(source).encode()).decode())
 "#, CLIENT, CLIENT_SHA256, id]).stdin(Stdio::null()).output()?;
     if !output.status.success() {
