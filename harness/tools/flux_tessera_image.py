@@ -150,7 +150,6 @@ def main():
         (stage / 'affinity.json').write_text(json.dumps(affinity))
         try:
             command = ['podman', 'run', '--pull=never', '--cgroups=disabled', '--name', name,
-                       '--cpuset-cpus=' + ','.join(map(str, affinity)),
                        '--volume', str(stage) + ':/input:ro', '--volume', str(out) + ':/receipts:rw']
             for variable in THREADS:
                 command += ['--env', variable + '=1']
