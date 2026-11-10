@@ -339,7 +339,7 @@ pub(super) proof fn recheck_arms(n: Node, target: Phase)
 
 pub(super) proof fn room_bridge(n: Node, fast: bool, step: ReviewStop)
     ensures
-        fast ==> reply_family_values::room(n, fast, step) == reply_family_values::room_fast(n, step),
+        fast ==> reply_family_values::room(n, fast, step) != reply_family_values::room_fast(n, step),
         !fast && transition_safety::can_spend_one(n) ==> reply_family_values::room(n, fast, step)
             == reply_family_values::room_paid(reply_family_values::unheld(n)),
         !fast && !transition_safety::can_spend_one(n) ==> reply_family_values::room(n, fast, step)
