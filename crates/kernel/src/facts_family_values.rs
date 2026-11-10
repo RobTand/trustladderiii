@@ -611,7 +611,8 @@ pub(super) fn ordinary_fact_entry(w: &mut World, i: usize, fact: Fact,
         arithmetic_consistent(old(w).nodes@[i as int]),
         matches!(fact, Fact::Priority(_) | Fact::PrClosedByPerson
             | Fact::Conflict | Fact::IncidentCleared { .. }),
-    ensures retirement::fact_frame(*old(w), *final(w), i, *old(out), *final(out)),
+    ensures prefix_preserved(*old(out), *final(out)),
+        retirement::fact_frame(*old(w), *final(w), i, *old(out), *final(out)),
         final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], fact),
         matches!(fact, Fact::Priority(_) | Fact::PrClosedByPerson
             | Fact::Conflict | Fact::IncidentCleared { .. })
@@ -626,9 +627,11 @@ pub(super) fn ordinary_fact_entry(w: &mut World, i: usize, fact: Fact,
             && !(old(w).nodes@[i as int].phase is Closed)
             ==> distance(final(w).nodes@[i as int]) < distance(old(w).nodes@[i as int])),
 ] proof [reveal(retirement::fact_frame); reveal(notices);] {
+    kernel_snapshot! { before_out = *out }
     let (value, notes) = ordinary_fact_value(w.nodes[i], w.fail_fast, i, fact);
     w.nodes[i] = value;
     append_fact_notices(out, notes, i);
+    kernel_proof! { facts_family_tail::append_prefix(before_out@, *out, notes); }
 }
 }
 
@@ -638,7 +641,9 @@ pub(super) fn fact_dependency_entry(w: &mut World, i: usize, fact: Fact,
     requires i < old(w).nodes@.len(), i <= u64::MAX as int,
         old(out).len + 1 <= OUTBOX, dependencies::edges_indexable(*old(w)),
         fact is Dependency || fact is DependencyRemove,
-    ensures dependencies::dependency_frame(*old(w), *final(w), i as int),
+    ensures node_rows(old(w).nodes@[i as int], final(w).nodes@[i as int], old(w).fail_fast, i, fact),
+        notice_suffix(*old(out), *final(out), i), prefix_preserved(*old(out), *final(out)),
+        dependencies::dependency_frame(*old(w), *final(w), i as int),
         match fact {
             Fact::Dependency { target, status } =>
                 dependencies::fact_result(*old(w), *final(w), i as int, target, status),
@@ -657,6 +662,7 @@ pub(super) fn fact_dependency_entry(w: &mut World, i: usize, fact: Fact,
             && match fact { Fact::Dependency { target, .. } =>
                 dependencies::delivery_changed(*old(w), *final(w), i as int, target), _ => false }),
 ] {
+    kernel_snapshot! { before = *w }
     match fact {
         Fact::DependencyRemove { kind, number } => {
             w.remove_dependency(i, kind, number);
@@ -664,6 +670,10 @@ pub(super) fn fact_dependency_entry(w: &mut World, i: usize, fact: Fact,
         }
         Fact::Dependency { target, status } => w.dependency_fact(i, target, status, out),
         _ => {}
+    }
+    kernel_proof! {
+        reveal(notice_suffix); reveal(prefix_preserved);
+        facts_family_tail::dependency_rows(before@, *w, i, fact);
     }
 }
 }
@@ -750,5 +760,298 @@ pub(super) fn infrastructure_retry_value(n: Node) -> (result: (Node, Option<bool
     };
     kernel_proof! { infrastructure_retry_bridge(n); }
     result
+}
+}
+
+#[cfg(verus_keep_ghost)]
+verus! {
+pub(super) open spec fn ci_before_enqueue(n: Node) -> bool {
+    n.phase == Phase::Publishing && current_item(n) == Some(Item::Do(EffectKind::Enqueue))
+}
+
+pub(super) open spec fn ci_active(n: Node, infra: bool) -> bool {
+    !(n.phase == Phase::AwaitingDelivery && infra)
+        && (n.phase == Phase::AwaitingDelivery || ci_before_enqueue(n))
+}
+
+pub(super) open spec fn ci_prepared(n: Node, infra: bool) -> Node {
+    if ci_active(n, infra) && ci_before_enqueue(n) {
+        Node { effect: match n.effect {
+            Some(effect) => Some(InFlight { cancelling: true, ..effect }),
+            None => None,
+        }, ..n }
+    } else { n }
+}
+}
+
+kernel_fn! {
+/// Return the full effect value after the original cancellation write.
+fn ci_cancel_effect_value(effect: InFlight) -> (result: InFlight) [
+    ensures result == (InFlight { cancelling: true, ..effect }),
+] {
+    let mut value = effect;
+    value.cancelling = true;
+    value
+}
+}
+
+kernel_fn! {
+/// The original CI guards and pre-enqueue cancellation, before either retry path.
+pub(super) fn ci_prefix_value(n: Node, infra: bool) -> (result: (Node, bool)) [
+    ensures result.0 == ci_prepared(n, infra), result.1 == ci_active(n, infra),
+] {
+    let mut value = n;
+    if value.phase == Phase::AwaitingDelivery && infra {
+        return (value, false);
+    }
+    let before_enqueue = value.phase == Phase::Publishing
+        && value.current() == Some(Item::Do(EffectKind::Enqueue));
+    if value.phase != Phase::AwaitingDelivery && !before_enqueue {
+        return (value, false);
+    }
+    if before_enqueue {
+        if let Some(effect) = value.effect {
+            value.effect = Some(ci_cancel_effect_value(effect));
+        }
+    }
+    (value, true)
+}
+}
+
+pub(super) mod tail_values {
+use super::*;
+
+#[cfg(verus_keep_ghost)]
+verus! {
+#[verifier::opaque]
+pub(crate) open spec fn ci_change(n: Node, fast: bool, infra: bool) -> ReplyChange {
+    if !ci_active(n, infra) { ReplyChange::Done { node: n, note: None } }
+    else if infra {
+        let prepared = ci_prepared(n, infra);
+        let retry = retirement::infrastructure_retry(prepared);
+        match retry.1 {
+            Some(needs_rob) => ReplyChange::Incident { node: retry.0, needs_rob },
+            None => ReplyChange::Done { node: retry.0, note: None },
+        }
+    } else {
+        reply_family_values::failed_round(ci_prepared(n, infra), fast, ReviewStop::CiFailed)
+    }
+}
+
+pub(crate) open spec fn outside_active(n: Node) -> bool {
+    n.had_pr && matches!(n.phase,
+        Phase::Publishing | Phase::AwaitingDelivery | Phase::Ready(Resume::Publishing))
+}
+
+pub(crate) open spec fn outside_prepared(n: Node, head: HeadId) -> Node {
+    Node { head: Some(head), checked: None,
+        review_restarted: n.head == Some(head) && n.review_restarted, ..n }
+}
+
+#[verifier::opaque]
+pub(crate) open spec fn outside_change(n: Node, head: HeadId) -> ReplyChange {
+    if outside_active(n) {
+        reply_family_values::recheck(outside_prepared(n, head), Phase::Ready(Resume::Checking))
+    } else { ReplyChange::Done { node: n, note: None } }
+}
+
+pub(crate) open spec fn outside_items(n: Node, nq: u64, i: usize,
+    head: HeadId) -> Seq<Option<Out>> {
+    if !n.had_pr { Seq::empty() } else {
+        seq![Some(Out::Notice { node: NodeId(i as u64),
+            notice: Notice::Note(NoteKind::OutsidePush) })]
+        + match reply_family_values::item(nq, outside_change(n, head)) {
+            Some(note) => seq![Some(Out::Notice { node: NodeId(i as u64), notice: note })],
+            None => seq![],
+        }
+    }
+}
+}
+
+kernel_fn! {
+/// Preserve the local report work before resolving the canonical failed round.
+pub(crate) fn failed_round_unreported_value(n: Node, nq: u64, fast: bool,
+    i: usize, step: ReviewStop) -> (result: (Node, u64, Outbox)) [
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+    ensures result.0 == reply_family_values::finish(nq,
+            reply_family_values::failed_round(n, fast, step)),
+        result.1 == reply_family_values::next_question(nq,
+            reply_family_values::failed_round(n, fast, step)),
+        result.2.len == match reply_family_values::item(nq,
+            reply_family_values::failed_round(n, fast, step)) {
+            Some(_) => 1, None => 0,
+        },
+        result.2.items@ =~= facts_reply_adapter::reply_items(nq,
+            reply_family_values::failed_round(n, fast, step), i),
+        notices(result.2, i, 1), tail_frame(n, result.0),
+        result.1 as int <= nq as int + 1,
+] {
+    let mut unused_report = Report::new();
+    let change = failed_round_node(n, i, fast, nq, step, &mut unused_report);
+    let result = facts_reply_adapter::resolve_reply_value(change, nq, i);
+    kernel_proof! {
+        facts_family_tail::failed_round_frame(n, nq, fast, step);
+        facts_family_tail::reply_notice_bound(result.2, nq, change, i);
+    }
+    result
+}
+}
+
+kernel_fn! {
+/// The original CI guards, cancellation and selected canonical retry path.
+pub(crate) fn ci_fact_arm(n: Node, nq: u64, fast: bool, i: usize, infra: bool)
+    -> (result: (Node, u64, Outbox)) [
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+    ensures result.0 == reply_family_values::finish(nq, ci_change(n, fast, infra)),
+        result.1 == reply_family_values::next_question(nq, ci_change(n, fast, infra)),
+        result.2.len == match reply_family_values::item(nq, ci_change(n, fast, infra)) {
+            Some(_) => 1, None => 0,
+        },
+        result.2.items@ =~= facts_reply_adapter::reply_items(nq, ci_change(n, fast, infra), i),
+        notices(result.2, i, 1),
+] {
+    kernel_proof! { facts_family_tail::ci_prefix_frame(n, infra); }
+    let (prepared, active) = ci_prefix_value(n, infra);
+    kernel_proof! { reveal(ci_change); }
+    if !active {
+        let result = facts_reply_adapter::resolve_reply_value(
+            ReplyChange::Done { node: prepared, note: None }, nq, i);
+        kernel_proof! { reveal(notices); }
+        return result;
+    }
+    if !infra {
+        let result = failed_round_unreported_value(prepared, nq, fast, i, ReviewStop::CiFailed);
+        kernel_proof! { reveal(notices); }
+        return result;
+    }
+    let (node, escalation) = infrastructure_retry_value(prepared);
+    let change = match escalation {
+        Some(needs_rob) => ReplyChange::Incident { node, needs_rob },
+        None => ReplyChange::Done { node, note: None },
+    };
+    let result = facts_reply_adapter::resolve_reply_value(change, nq, i);
+    kernel_proof! { reveal(notices); }
+    result
+}
+}
+
+kernel_fn! {
+/// Preserve OutsidePush before the canonical head update and optional question.
+pub(crate) fn outside_push_arm(n: Node, nq: u64, fast: bool, i: usize, head: HeadId)
+    -> (result: (Node, u64, Outbox)) [
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+    ensures result.0 == reply_family_values::finish(nq, outside_change(n, head)),
+        result.1 == reply_family_values::next_question(nq, outside_change(n, head)),
+        result.2.len == outside_items(n, nq, i, head).len(),
+        result.2.items@ =~= padded_notices(outside_items(n, nq, i, head)),
+        notices(result.2, i, 2),
+] {
+    let mut value = n;
+    let mut next_question = nq;
+    let mut notes = Outbox::new();
+    kernel_proof! { reveal(empty_outbox); reveal(outside_change); }
+    if !value.had_pr {
+        kernel_proof! {
+            reveal(notices);
+            assert(notes.items@ =~= padded_notices(outside_items(n, nq, i, head)));
+        }
+        return (value, next_question, notes);
+    }
+    notice(&mut notes, i, Notice::Note(NoteKind::OutsidePush));
+    let published = matches!(value.phase,
+        Phase::Publishing | Phase::AwaitingDelivery | Phase::Ready(Resume::Publishing));
+    if published {
+        update_recheck_head(&mut value, head);
+        kernel_proof! { facts_family_tail::outside_prefix_frame(n, head); }
+        let change = recheck_node(value, next_question, Phase::Ready(Resume::Checking));
+        let (node, counter, tail) = facts_reply_adapter::resolve_reply_value(change, next_question, i);
+        value = node;
+        next_question = counter;
+        if let Some(item) = tail.items[0] {
+            notes.push(item);
+        }
+    }
+    kernel_proof! {
+        reveal(notices);
+        assert(notes.items@ =~= padded_notices(outside_items(n, nq, i, head)));
+    }
+    (value, next_question, notes)
+}
+}
+
+kernel_fn! {
+pub(crate) fn ci_fact_value(n: Node, nq: u64, fast: bool, i: usize, infra: bool)
+    -> (result: (Node, u64, Outbox)) [
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+    ensures tail_frame(n, result.0), node_rows(n, result.0, fast, i, Fact::CiFailed { infra }),
+        notices(result.2, i, 1), result.1 as int <= nq as int + 1,
+        infra ==> result.0 == retirement::fact_node(n, Fact::CiFailed { infra: true }),
+        infra ==> result.1 == nq,
+] {
+    let result = ci_fact_arm(n, nq, fast, i, infra);
+    kernel_proof! {
+        facts_family_tail::ci_scalar_posts(n, nq, fast, infra);
+        facts_family_tail::ci_node_rows(n, nq, fast, infra, i);
+    }
+    result
+}
+}
+
+kernel_fn! {
+pub(crate) fn outside_push_value(n: Node, nq: u64, fast: bool, i: usize, head: HeadId)
+    -> (result: (Node, u64, Outbox)) [
+    requires node_headroom(n), arithmetic_consistent(n), nq < u64::MAX,
+    ensures tail_frame(n, result.0), node_rows(n, result.0, fast, i, Fact::PushByOther { head }),
+        notices(result.2, i, 2), result.1 as int <= nq as int + 1,
+] {
+    let result = outside_push_arm(n, nq, fast, i, head);
+    kernel_proof! {
+        facts_family_tail::outside_scalar_posts(n, nq, head);
+        facts_family_tail::outside_node_rows(n, nq, fast, head, i);
+    }
+    result
+}
+}
+
+kernel_fn! {
+pub(crate) fn outside_fact_entry(w: &mut World, i: usize, head: HeadId, out: &mut Outbox)
+    -> (result: ()) [
+    requires i < old(w).nodes@.len(), old(out).len + 2 <= OUTBOX,
+        node_headroom(old(w).nodes@[i as int]), arithmetic_consistent(old(w).nodes@[i as int]),
+        old(w).next_question < u64::MAX,
+    ensures retirement::fact_frame(*old(w), *final(w), i, *old(out), *final(out)),
+        node_rows(old(w).nodes@[i as int], final(w).nodes@[i as int], old(w).fail_fast, i,
+            Fact::PushByOther { head }),
+        notice_suffix(*old(out), *final(out), i), prefix_preserved(*old(out), *final(out)),
+] proof [reveal(retirement::fact_frame); reveal(notices);] {
+    kernel_snapshot! { before = w.nodes@[i as int] }
+    kernel_snapshot! { before_out = *out }
+    let (value, counter, notes) = outside_push_value(w.nodes[i], w.next_question, w.fail_fast, i, head);
+    kernel_proof! { facts_family_tail::frame_fields(before@, value); }
+    w.nodes[i] = value;
+    w.next_question = counter;
+    append_fact_notices(out, notes, i);
+    kernel_proof! { facts_family_tail::append_prefix(before_out@, *out, notes); }
+}
+}
+
+}
+
+#[cfg(verus_keep_ghost)]
+verus! {
+#[verifier::opaque]
+pub(super) open spec fn tail_frame(b: Node, n: Node) -> bool {
+    (b.phase is Closed ==> n.phase is Closed)
+        && n.repo == b.repo && n.footprint == b.footprint
+        && (settle_shape(b) ==> settle_shape(n))
+        && n.generation as int <= b.generation as int + 1
+        && n.next_seq == b.next_seq && n.credit.start == b.credit.start
+        && n.credit.earned == b.credit.earned && n.credit.added == b.credit.added
+        && n.credit.spent as int <= b.credit.spent as int + 1 && n.last_cmd == b.last_cmd
+}
+
+#[verifier::opaque]
+pub(super) open spec fn prefix_preserved(ob: Outbox, oa: Outbox) -> bool {
+    forall|k: int| 0 <= k < ob.len ==> #[trigger] oa.items@[k] == ob.items@[k]
 }
 }

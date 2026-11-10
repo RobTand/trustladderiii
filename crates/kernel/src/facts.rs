@@ -11,7 +11,15 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox, rep
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         dependencies::edges_indexable(*old(w)), old(w).next_question < u64::MAX,
-    ensures report::fact_report(old(report).entries@, final(report).entries@, NodeId(i as u64),
+    ensures (retirement::node_rules(*old(w), old(w).nodes@[i as int]) ==>
+            transition_safety::node_safety(old(w).nodes@[i as int], final(w).nodes@[i as int],
+                old(w).fail_fast, Event::Fact { node: NodeId(i as u64), fact }, i as int,
+                *old(out), *final(out))),
+        facts_family_values::node_rows(old(w).nodes@[i as int], final(w).nodes@[i as int],
+            old(w).fail_fast, i, fact),
+        facts_family_values::notice_suffix(*old(out), *final(out), i),
+        facts_family_values::prefix_preserved(*old(out), *final(out)),
+        report::fact_report(old(report).entries@, final(report).entries@, NodeId(i as u64),
             old(w).nodes@[i as int].phase, current_item(old(w).nodes@[i as int]),
             final(w).nodes@[i as int].phase, fact),
         (fact_progress_input(*old(w), i as int, fact)
@@ -77,6 +85,7 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox, rep
 ] proof [reveal(dependencies::dependency_frame);] {
 
     kernel_snapshot! { before_fact = *w }
+    kernel_snapshot! { before_fact_out = *out }
     kernel_snapshot! { report_before = report.entries@ }
     let before_phase = w.nodes[i].phase;
     kernel_proof! {
@@ -104,6 +113,18 @@ pub(super) fn on_fact(w: &mut World, i: usize, fact: Fact, out: &mut Outbox, rep
             }
         }
     }
+    kernel_proof! {
+        if fact is PrMerged {
+            facts_family_values::value_node_rows(before_fact@.nodes@[i as int], w.nodes@[i as int],
+                before_fact@.fail_fast, i, fact);
+        }
+    }
+    kernel_proof! {
+        if retirement::node_rules(before_fact@, before_fact@.nodes@[i as int]) {
+            facts_family_tail::node_safety_rows(before_fact@.nodes@[i as int], w.nodes@[i as int],
+                before_fact@.fail_fast, i, fact, before_fact_out@, *out, before_fact@);
+        }
+    }
     report::record_fact(report, NodeId(i as u64), before_phase, w.nodes[i].phase, fact, ci);
     kernel_proof! { report::lemmas::bind_fact_cause(report_before@, report.entries@, NodeId(i as u64),
         before_phase, current_item(before_fact@.nodes@[i as int]), w.nodes@[i as int].phase, fact); }
@@ -123,7 +144,11 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
         !(fact is DependencyRemove || fact is Dependency || fact is PrMerged),
-    ensures (fact == Fact::IncidentCleared { by_rob: true }
+    ensures facts_family_values::node_rows(old(w).nodes@[i as int], final(w).nodes@[i as int],
+            old(w).fail_fast, i, fact),
+        facts_family_values::notice_suffix(*old(out), *final(out), i),
+        facts_family_values::prefix_preserved(*old(out), *final(out)),
+        (fact == Fact::IncidentCleared { by_rob: true }
             && old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none()
             && (!old(w).nodes@[i as int].paused || old(w).nodes@[i as int].phase is Stopping)
             && !(old(w).nodes@[i as int].phase is Closed)
@@ -174,22 +199,7 @@ pub(super) fn fact_transition(w: &mut World, i: usize, fact: Fact,
             w, i, Fact::Priority(priority), out),
         Fact::PrClosedByPerson => facts_family_values::ordinary_fact_entry(
             w, i, Fact::PrClosedByPerson, out),
-        Fact::PushByOther { head } => {
-            let m = &w.nodes[i];
-            if !m.had_pr {
-                return;
-            }
-            notice(out, i, Notice::Note(NoteKind::OutsidePush));
-            let published = matches!(
-                m.phase,
-                Phase::Publishing | Phase::AwaitingDelivery | Phase::Ready(Resume::Publishing)
-            );
-            if published {
-                update_recheck_head(&mut w.nodes[i], head);
-                recheck(w, i, Phase::Ready(Resume::Checking), out);
-                kernel_proof! { reveal(retry_bounds); }
-            }
-        }
+        Fact::PushByOther { head } => facts_family_values::tail_values::outside_fact_entry(w, i, head, out),
         Fact::CiFailed { infra } => ci_failed(w, i, infra, out),
         Fact::Conflict => conflict(w, i, out),
         Fact::IncidentCleared { by_rob } => incident_cleared(w, i, by_rob, out),
@@ -234,7 +244,8 @@ pub(super) fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bo
     out: &mut Outbox) -> (result: ()) [
     requires i < old(w).nodes@.len(), old(out).len + 4 <= OUTBOX,
         node_headroom(old(w).nodes@[i as int]),
-    ensures (node_checked(*old(w), old(w).nodes@[i as int])
+    ensures facts_family_values::prefix_preserved(*old(out), *final(out)),
+        (node_checked(*old(w), old(w).nodes@[i as int])
             && old(w).nodes@[i as int].phase == Phase::AwaitingDelivery && !old(w).nodes@[i as int].paused
             && !old(w).nodes@[i as int].waiting_incident && old(w).nodes@[i as int].effect.is_none()
             && old(w).nodes@[i as int].question.is_none()
@@ -276,10 +287,12 @@ pub(super) fn pr_merged(w: &mut World, i: usize, head: HeadId, checks_passed: bo
                 old(w).fail_fast, i, Fact::PrMerged { head, checks_passed }),
         facts_family_values::notice_suffix(*old(out), *final(out), i),
 ] proof [reveal(retirement::unapproved_note);] {
+    kernel_snapshot! { before_out = *out }
     let (value, notes) = facts_family_values::merge_fact_value(w.nodes[i], w.fail_fast, i, head, checks_passed);
     w.nodes[i] = value;
     kernel_proof! { reveal(facts_family_values::notices); }
     facts_family_values::append_fact_notices(out, notes, i);
+    kernel_proof! { facts_family_tail::append_prefix(before_out@, *out, notes); }
 }
 }
 
@@ -292,41 +305,24 @@ pub(super) fn ci_failed(w: &mut World, i: usize, infra: bool, out: &mut Outbox) 
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-    ensures retirement::fact_frame(*old(w), *final(w), i, *old(out), *final(out)),
+    ensures facts_family_values::node_rows(old(w).nodes@[i as int], final(w).nodes@[i as int],
+            old(w).fail_fast, i, Fact::CiFailed { infra }),
+        facts_family_values::notice_suffix(*old(out), *final(out), i),
+        facts_family_values::prefix_preserved(*old(out), *final(out)),
+        retirement::fact_frame(*old(w), *final(w), i, *old(out), *final(out)),
         infra ==> final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], Fact::CiFailed { infra }),
         infra ==> final(w).next_question == old(w).next_question,
         infra && retirement::notices_only(*old(out)) ==> retirement::notices_only(*final(out)),
 ] proof [reveal(retirement::fact_frame);] {
-    kernel_snapshot! { before_ci = w.nodes@[i as int] }
-    let m = &mut w.nodes[i];
-    if m.phase == Phase::AwaitingDelivery && infra {
-        kernel_proof! { reveal(retirement::fact_node); }
-        return;
-    }
-    let before_enqueue =
-        m.phase == Phase::Publishing && m.current() == Some(Item::Do(EffectKind::Enqueue));
-    if m.phase != Phase::AwaitingDelivery && !before_enqueue {
-        kernel_proof! { reveal(retirement::fact_node); }
-        return;
-    }
-    if before_enqueue {
-        if let Some(effect) = m.effect.as_mut() {
-            effect.cancelling = true;
-        }
-    }
-    kernel_snapshot! { prepared_ci = *w }
-    kernel_snapshot! { prepared_out = *out }
-    if !infra {
-        failed_round_unreported(w, i, ReviewStop::CiFailed, out);
-        kernel_proof! {
-            facts_ci_failed_lemmas::retry_frame(prepared_ci@, *w, i, prepared_out@, *out);
-        }
-        return;
-    }
-    kernel_proof! {
-        facts_ci_failed_lemmas::cancellation_input(before_ci@, w.nodes@[i as int]);
-    }
-    ci_infrastructure(w, i, out);
+    kernel_snapshot! { before = w.nodes@[i as int] }
+    kernel_snapshot! { before_out = *out }
+    let (value, counter, notes) = facts_family_values::tail_values::ci_fact_value(
+        w.nodes[i], w.next_question, w.fail_fast, i, infra);
+    kernel_proof! { facts_family_tail::frame_fields(before@, value); reveal(facts_family_values::notices); }
+    w.nodes[i] = value;
+    w.next_question = counter;
+    facts_family_values::append_fact_notices(out, notes, i);
+    kernel_proof! { facts_family_tail::append_prefix(before_out@, *out, notes); }
 }
 }
 
@@ -337,7 +333,11 @@ pub(super) fn conflict(w: &mut World, i: usize, _out: &mut Outbox) -> (result: (
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-    ensures retirement::fact_frame(*old(w), *final(w), i, *old(_out), *final(_out)),
+    ensures facts_family_values::node_rows(old(w).nodes@[i as int], final(w).nodes@[i as int],
+            old(w).fail_fast, i, Fact::Conflict),
+        facts_family_values::notice_suffix(*old(_out), *final(_out), i),
+        facts_family_values::prefix_preserved(*old(_out), *final(_out)),
+        retirement::fact_frame(*old(w), *final(w), i, *old(_out), *final(_out)),
         final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], Fact::Conflict),
         final(w).next_question == old(w).next_question,
         retirement::notices_only(*old(_out)) ==> retirement::notices_only(*final(_out)),
@@ -353,7 +353,11 @@ pub(super) fn incident_cleared(w: &mut World, i: usize, by_rob: bool, _out: &mut
         node_headroom(old(w).nodes@[i as int]),
         arithmetic_consistent(old(w).nodes@[i as int]),
         old(w).next_question < u64::MAX,
-    ensures retirement::fact_frame(*old(w), *final(w), i, *old(_out), *final(_out)),
+    ensures facts_family_values::node_rows(old(w).nodes@[i as int], final(w).nodes@[i as int],
+            old(w).fail_fast, i, Fact::IncidentCleared { by_rob }),
+        facts_family_values::notice_suffix(*old(_out), *final(_out), i),
+        facts_family_values::prefix_preserved(*old(_out), *final(_out)),
+        retirement::fact_frame(*old(w), *final(w), i, *old(_out), *final(_out)),
         final(w).nodes@[i as int] == retirement::fact_node(old(w).nodes@[i as int], Fact::IncidentCleared { by_rob }),
         by_rob && old(w).nodes@[i as int].waiting_incident
             && old(w).nodes@[i as int].effect.is_none()
@@ -422,7 +426,17 @@ fn failed_round_unreported(w: &mut World, i: usize, step: ReviewStop,
         retry_bounds(*old(w), *final(w), i as int, old(out).len, final(out).len),
         final(w).nodes@[i as int].last_cmd == old(w).nodes@[i as int].last_cmd,
 ] {
-    let mut unused_report = Report::new();
-    failed_round(w, i, step, out, &mut unused_report);
+    let (value, counter, notes) = facts_family_values::tail_values::failed_round_unreported_value(
+        w.nodes[i], w.next_question, w.fail_fast, i, step);
+    kernel_snapshot! { before = *w }
+    kernel_snapshot! { before_out = *out }
+    w.nodes[i] = value;
+    w.next_question = counter;
+    kernel_proof! { reveal(facts_family_values::notices); }
+    facts_family_values::append_fact_notices(out, notes, i);
+    kernel_proof! {
+        facts_family_tail::frame_fields(before@.nodes@[i as int], value);
+        reveal(retry_bounds); reveal(facts_family_values::notices);
+    }
 }
 }
