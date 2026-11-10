@@ -32,6 +32,7 @@ pub struct Flux {
     maintenance_busy_bound_ms: u64,
     native_deadline: Option<std::time::Instant>,
     maintenance_now_ms: Option<u64>,
+    maintenance_state: std::sync::Arc<std::sync::Mutex<maintenance::MaintenanceState>>,
 }
 
 impl Flux {
@@ -64,6 +65,7 @@ impl Flux {
             maintenance_busy_bound_ms: maintenance::CADENCE_MS,
             native_deadline: None,
             maintenance_now_ms: None,
+            maintenance_state: Default::default(),
         })
     }
 

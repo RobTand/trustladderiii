@@ -5,6 +5,12 @@ use std::time::Instant;
 
 pub(super) const CADENCE_MS: u64 = 300_000;
 
+#[derive(Default)]
+pub(super) struct MaintenanceState {
+    last_pass_ms: Option<u64>,
+    last_error_print_ms: Option<u64>,
+}
+
 pub(super) fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -29,7 +35,15 @@ impl Flux {
             now.saturating_add(CADENCE_MS),
         ) {
             // A broken error directory must not stop attempts for other owners.
-            eprintln!("cannot retain maintenance failure for {key}: {error}");
+            let mut state = self.maintenance_state.lock().expect("maintenance state mutex");
+            if state
+                .last_error_print_ms
+                .is_none_or(|last| now.saturating_sub(last) >= CADENCE_MS)
+            {
+                state.last_error_print_ms = Some(now);
+                drop(state);
+                eprintln!("cannot retain maintenance failure for {key}: {error}");
+            }
         }
     }
 
@@ -119,6 +133,17 @@ impl Flux {
         }
     }
 
+    fn failure_deadline(&self, due: u64, now: u64) -> u64 {
+        if due > now {
+            return due;
+        }
+        self.maintenance_state
+            .lock()
+            .expect("maintenance state mutex")
+            .last_pass_ms
+            .map_or(due, |last| due.max(last.saturating_add(CADENCE_MS)))
+    }
+
     fn owner_error_deadline(
         &self,
         key: &str,
@@ -128,7 +153,7 @@ impl Flux {
     ) -> u64 {
         failures
             .get(key)
-            .map(|failure| failure.next_attempt_ms)
+            .map(|failure| self.failure_deadline(failure.next_attempt_ms, now))
             .unwrap_or_else(|| {
                 self.maintenance_error(key, &error.to_string(), now);
                 now.saturating_add(CADENCE_MS)
@@ -154,7 +179,9 @@ impl Flux {
                     if record.terminal.is_some() {
                         continue;
                     }
-                    let retry = failures.get(&key).map(|failure| failure.next_attempt_ms);
+                    let retry = failures
+                        .get(&key)
+                        .map(|failure| self.failure_deadline(failure.next_attempt_ms, now));
                     for deadline in [record.cleanup_retry_ms, record.held_submission_ms]
                         .into_iter()
                         .flatten()
@@ -175,13 +202,13 @@ impl Flux {
                             failure.message.starts_with("persistently held owner lock")
                         })
                     {
-                        // Leave an elapsed deadline due. Advancing it here would let
-                        // timer scans postpone the incident-producing pass forever.
+                        // Keep the first pass due, then back off even if the pass
+                        // cannot rewrite a readable retained failure.
                         deadlines.push(
                             failures
                                 .get(&key)
                                 .map_or(now.saturating_add(CADENCE_MS), |failure| {
-                                    failure.next_attempt_ms
+                                    self.failure_deadline(failure.next_attempt_ms, now)
                                 }),
                         );
                     } else {
@@ -400,6 +427,10 @@ impl Flux {
                 pending.insert(key, record_owner(&record));
             }
         }
+        self.maintenance_state
+            .lock()
+            .expect("maintenance state mutex")
+            .last_pass_ms = Some(now);
         Ok(MaintenanceReport {
             pending: pending.into_values().collect(),
             skipped_busy,
