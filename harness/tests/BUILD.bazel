@@ -360,6 +360,16 @@ tl3_py_test(
 )
 
 tl3_py_test(
+    name = "test_flux_paths",
+    srcs = ["test_flux_paths.py"],
+    deps = [
+        ":conftest",
+        "//harness/src/tl3_harness",
+        "@tl3_pip//pytest",
+    ],
+)
+
+tl3_py_test(
     name = "test_runtime_cache",
     srcs = ["test_runtime_cache.py"],
     deps = [
