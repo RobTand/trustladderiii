@@ -96,7 +96,7 @@ pub(crate) fn decode(snapshot: &Snapshot) -> Result<World> {
         ));
     }
     if !world.valid() || !world.is_settled() {
-        return Err(Error::Invalid("invalid stored kernel world"));
+        return Err(Error::InvalidStoredKernelWorld);
     }
     Ok(world)
 }

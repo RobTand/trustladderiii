@@ -10,6 +10,11 @@ use tl3_kernel::NodeId;
 use tl3_store::{Commit, RowChange, Snapshot};
 
 pub(crate) const COUNTER_HEADROOM: &str = "kernel_counter_headroom";
+pub(crate) const INVALID_RESULT: &str = "kernel_result_invalid";
+
+pub(crate) fn kernel_halt(class: &str) -> bool {
+    matches!(class, COUNTER_HEADROOM | INVALID_RESULT)
+}
 pub(crate) const PENDING_KERNEL: &str = "pending_kernel_events";
 
 #[derive(Serialize, Deserialize)]
@@ -46,10 +51,10 @@ pub(crate) fn kernel_backlog(snapshot: &Snapshot) -> bool {
         .any(|row| row.table == "inbox" || row.table == PENDING_KERNEL)
 }
 
-fn counter_incident(row: &tl3_store::WorldRow) -> bool {
+pub(crate) fn kernel_incident(row: &tl3_store::WorldRow) -> bool {
     row.table == "incidents"
         && row.value["open"] == true
-        && row.value["signature"]["class"] == COUNTER_HEADROOM
+        && row.value["signature"]["class"].as_str().is_some_and(kernel_halt)
 }
 
 fn retain_input(commit: &mut Commit) {
@@ -151,7 +156,7 @@ impl InputFailure {
 pub(crate) fn recoverable(error: &Error) -> bool {
     !matches!(
         error,
-        Error::Store(_) | Error::Config(_) | Error::StoredJson(_)
+        Error::Store(_) | Error::Config(_) | Error::StoredJson(_) | Error::InvalidStoredKernelWorld
     )
 }
 
@@ -201,7 +206,7 @@ impl Controller {
     /// inputs across wakes and restarts. Only its authorized clearance can pass
     /// the retained head of the queue. A repair must also restore headroom.
     pub(crate) fn pause_kernel_inputs(&mut self, snapshot: &Snapshot) -> Result<Option<bool>> {
-        let incident = snapshot.rows.iter().find(|row| counter_incident(row));
+        let incident = snapshot.rows.iter().find(|row| kernel_incident(row));
         let pending = snapshot
             .rows
             .iter()
@@ -329,7 +334,7 @@ impl Controller {
                 .rows
                 .extend(attempted.rows.into_iter().filter(|change| {
                     matches!(change, RowChange::Put {table, value, ..}
-                    if table == "incidents" && value["signature"]["class"] == COUNTER_HEADROOM)
+                    if table == "incidents" && value["signature"]["class"].as_str().is_some_and(kernel_halt))
                 }));
             if !incident.rows.is_empty() {
                 self.store.commit(&incident)?;
@@ -518,7 +523,7 @@ impl Controller {
             .push(put(PENDING_KERNEL, id.clone(), json!(input)));
         self.store.commit(&queued)?;
         let current = self.store.load()?;
-        if current.rows.iter().any(counter_incident) {
+        if current.rows.iter().any(kernel_incident) {
             return Ok(true);
         }
         // Redelivery may retry the same retained head after a crash. Every
@@ -548,7 +553,7 @@ impl Controller {
         event: tl3_kernel::Event,
         commit: &mut Commit,
     ) -> Result<Option<tl3_kernel::StepResult>> {
-        if deferred(commit) || snapshot.rows.iter().any(counter_incident) {
+        if deferred(commit) || snapshot.rows.iter().any(kernel_incident) {
             retain_input(commit);
             return Ok(None);
         }
@@ -568,6 +573,10 @@ impl Controller {
                     }
                     result
                 };
+                if !result.world.valid() {
+                    self.invalid_kernel_result(snapshot, commit)?;
+                    return Ok(None);
+                }
                 Ok(Some(result))
             }
             Err(refusal) => {
@@ -586,7 +595,7 @@ impl Controller {
         snapshot: &Snapshot,
         commit: &mut Commit,
     ) -> Result<bool> {
-        if deferred(commit) || snapshot.rows.iter().any(counter_incident) {
+        if deferred(commit) || snapshot.rows.iter().any(kernel_incident) {
             retain_input(commit);
             return Ok(false);
         }
@@ -594,6 +603,20 @@ impl Controller {
         Ok(self
             .checked_kernel_step(snapshot, &mut world, settlement_event(), commit)?
             .is_some())
+    }
+
+    fn invalid_kernel_result(&self, snapshot: &Snapshot, commit: &mut Commit) -> Result<()> {
+        retain_input(commit);
+        self.input_failed(
+            snapshot,
+            "kernel-invalid-result",
+            None,
+            "Kernel result rejected",
+            None,
+            Upstream::Workers,
+            Error::InvalidKernelResult,
+            commit,
+        )
     }
 
     pub(crate) fn kernel_counter_refused(
@@ -696,7 +719,7 @@ impl Controller {
             })
             .count() as u64
             + 1;
-        let needs_rob = matches!(error, Error::CounterExhausted(_))
+        let needs_rob = matches!(error, Error::CounterExhausted(_) | Error::InvalidKernelResult)
             || crate::looks::incident_needs_rob(crate::looks::IncidentCause::ReadFailure {
                 incidents: count,
             });
@@ -711,6 +734,8 @@ impl Controller {
         );
         if let Error::CounterExhausted(message) = &error {
             summary.clone_from(message);
+        } else if matches!(error, Error::InvalidKernelResult) {
+            summary = error.to_string();
         }
         crate::worker_inputs::append(&mut summary, crate::worker_inputs::of(&error));
         crate::worker_inputs::append(&mut summary, resource_failure.as_ref());
@@ -719,7 +744,7 @@ impl Controller {
             node,
             open: true,
             needs_rob,
-            blocking: false,
+            blocking: matches!(error, Error::InvalidKernelResult),
             summary,
             signature,
             effect: None,
@@ -731,6 +756,7 @@ impl Controller {
                     "redaction_infra"
                         | "worker_input_schema"
                         | "kernel_counter_headroom"
+                        | "kernel_result_invalid"
                         | "worker_dispatch_missing"
                         | crate::input_resources::MISMATCH
                 ) || class == crate::postmortems::PAUSED

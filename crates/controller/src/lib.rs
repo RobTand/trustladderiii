@@ -133,6 +133,10 @@ pub enum Error {
     PrerequisiteNumber,
     #[error("{0}")]
     CounterExhausted(String),
+    #[error("kernel step returned an invalid world; input retained and kernel processing halted")]
+    InvalidKernelResult,
+    #[error("invalid stored kernel world")]
+    InvalidStoredKernelWorld,
     #[error("Hindsight returned HTTP {0}")]
     HindsightStatus(u16),
     #[error("writer drafts failed the message checker after two reruns")]
@@ -699,11 +703,7 @@ impl Controller {
         // Untracked edits never enter the kernel; its next input or dispatch
         // scan raises any counter halt.
         if !input_errors::kernel_backlog(&snapshot)
-            && !snapshot.rows.iter().any(|r| {
-                r.table == "incidents"
-                    && r.value["open"] == true
-                    && r.value["signature"]["class"] == input_errors::COUNTER_HEADROOM
-            })
+            && !snapshot.rows.iter().any(input_errors::kernel_incident)
             && !stored_repositories(&snapshot)?.iter().any(|repo| {
                 repo.owner.eq_ignore_ascii_case(&change.owner)
                     && repo.name.eq_ignore_ascii_case(&change.repo)
@@ -2763,7 +2763,7 @@ impl Controller {
         inbox: String,
         commit: &mut Commit,
     ) -> Result<()> {
-        if incident.blocking {
+        if incident.blocking && !input_errors::kernel_halt(&incident.signature.class) {
             commit.rows.push(put(
                 "inbox",
                 inbox,
@@ -2782,7 +2782,7 @@ impl Controller {
             {
                 failure.memory_version = Some(self.store.memory_feed_version()?);
             }
-            if incident.open && incident.signature.class == input_errors::COUNTER_HEADROOM {
+            if incident.open && input_errors::kernel_halt(&incident.signature.class) {
                 commit.rows.push(RowChange::Delete {
                     table: dispatch_liveness::PARKED.into(),
                     id: "headroom".into(),

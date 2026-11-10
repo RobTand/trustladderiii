@@ -131,11 +131,7 @@ fn blocked(snapshot: &Snapshot, world: &World, scan: &mut impl FnMut()) -> Optio
     if crate::input_errors::kernel_backlog(snapshot) {
         return Some(Deferral::Inputs);
     }
-    if snapshot.rows.iter().any(|r| {
-        r.table == "incidents"
-            && r.value["open"] == true
-            && r.value["signature"]["class"] == crate::input_errors::COUNTER_HEADROOM
-    }) {
+    if snapshot.rows.iter().any(crate::input_errors::kernel_incident) {
         return Some(Deferral::Incident);
     }
     scan();
@@ -433,7 +429,7 @@ impl Controller {
                 r.table == "incidents"
                     && r.value["open"] == true
                     && (r.value["node"] == json!(id)
-                        || r.value["signature"]["class"] == crate::input_errors::COUNTER_HEADROOM)
+                        || crate::input_errors::kernel_incident(r))
             }),
             paused: node.paused,
             ticket: node.ticket.is_some(),
