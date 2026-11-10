@@ -347,7 +347,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "requires admitted PrismaBuild action and FX_FIXTURE_EVIDENCE; run with --include-ignored"]
+    #[ignore = "requires admitted Flux job and FX_FIXTURE_EVIDENCE; run with --include-ignored"]
     fn served_fixture_verdicts_and_wait() {
         assert_eq!(FixtureKind::parse("success").unwrap(), FixtureKind::Success);
         assert_eq!(FixtureKind::parse("cancel").unwrap(), FixtureKind::Cancel);
@@ -657,9 +657,6 @@ mod tests {
             refusal(Stager::for_canary_qualification(&mutable)),
             "flux.activation.image"
         );
-        let mut prismabuild = flux_config(None);
-        prismabuild.execution_backend = tl3_config::ExecutionBackend::PrismaBuild;
-        assert!(Stager::for_canary_qualification(&prismabuild).is_err());
     }
 
     #[test]
