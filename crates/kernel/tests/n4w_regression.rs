@@ -89,7 +89,9 @@ fn auditing() -> World {
 
 fn continue_after_revoke(mut world: World, continuation: Cont, phase: Phase) {
     let node = NodeId(0);
-    let effect = world.nodes[0].effect.expect("early phase has an effect to fail");
+    let effect = world.nodes[0]
+        .effect
+        .expect("early phase has an effect to fail");
     send(
         &mut world,
         Event::Ack {
