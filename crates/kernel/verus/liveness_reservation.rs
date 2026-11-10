@@ -32,13 +32,13 @@ pub(super) fn first_visit(w: &mut World, i: usize, Ghost(k): Ghost<int>, Ghost(t
     requires context(*old(w), k), 0 <= k <= 500, 2 <= i < 4,
         advance_family_post::ready_unobstructed(old(w).nodes@[0]),
         old(w).nodes@[0].ticket == Some(t),
-        old(w).nodes@[i].repo == old(w).nodes@[0].repo,
-        (advance_family_post::ready_unobstructed(old(w).nodes@[i])
-            && old(w).nodes@[i].phase == Phase::Ready(Resume::Making)
-            && old(w).nodes@[i].ticket.unwrap() > t)
-        || (holder(old(w).nodes@[i]) && current_item(old(w).nodes@[i]) == Some(Item::Await)
-            && !old(w).nodes@[i].waiting_incident
-            && footprint::disjoint(*old(w), old(w).nodes@[i].footprint, old(w).nodes@[0].footprint)),
+        old(w).nodes@[i as int].repo == old(w).nodes@[0].repo,
+        (advance_family_post::ready_unobstructed(old(w).nodes@[i as int])
+            && old(w).nodes@[i as int].phase == Phase::Ready(Resume::Making)
+            && old(w).nodes@[i as int].ticket.unwrap() > t)
+        || (holder(old(w).nodes@[i as int]) && current_item(old(w).nodes@[i as int]) == Some(Item::Await)
+            && !old(w).nodes@[i as int].waiting_incident
+            && footprint::disjoint(*old(w), old(w).nodes@[i as int].footprint, old(w).nodes@[0].footprint)),
     ensures context(*final(w), k + 2), reserved(*final(w), i as int, t),
         final(w).nodes@ == old(w).nodes@.update(i as int, final(w).nodes@[i as int]),
         final(w).gates@ == old(w).gates@, final(w).file_sets@ == old(w).file_sets@,
@@ -61,6 +61,7 @@ pub(super) fn first_visit(w: &mut World, i: usize, Ghost(k): Ghost<int>, Ghost(t
                 before.next_ticket, w.next_ticket, moved);
         } else if moved {
             checking::accepted_node(*w, i as int);
+            checking::accepted_node(*w, 0);
             assert(footprint::disjoint(before, before.nodes@[0].footprint, before.nodes@[i as int].footprint));
             footprint::storage_frame(before, *w, before.nodes@[0].footprint, before.nodes@[i as int].footprint);
             footprint::disjoint_symmetric(*w, w.nodes@[0].footprint, w.nodes@[i as int].footprint);
