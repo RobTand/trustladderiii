@@ -233,3 +233,17 @@ def test_pq_plan_consumer_refuses_unbound_or_escaping_selection(damage):
         plan['deselect'] = ['tests/test_other.py::test_other']
     with pytest.raises(ValueError, match='identity mismatch|invalid PQ test selector|selected module node'):
         pq_builder().pytest_argv(plan, base='1' * 40, head='2' * 40)
+
+
+def test_pq_builder_bootstraps_setuptools_from_the_same_hashed_lock(tmp_path):
+    builder = pq_builder()
+    images = Path(__file__).parents[1] / 'tools/images'
+    manifest, inputs = builder.load_inputs(images)
+    builder.stage_inputs(tmp_path, inputs)
+    bootstrap = (tmp_path / 'bootstrap.txt').read_text()
+    assert bootstrap.startswith('setuptools==78.1.0 ')
+    assert '--hash=sha256:' in bootstrap
+    script = builder.install_script()
+    assert script.index('-r /input/bootstrap.txt') < script.index('-r /input/requirements_linux_x86_64.txt')
+    assert '--report /receipts/bootstrap-report.json' in script
+    assert manifest['commit'] == builder.COMMIT
