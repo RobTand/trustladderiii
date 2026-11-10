@@ -743,6 +743,11 @@ def verus_proofs():
             "kernel::port_t860_contracts::node_change": "Logical definition; typechecked in every Verus selection, with no standalone obligation.",
         }
         groups = {
+            "footprint_disjoint_under_table_growth": ("kernel::footprint#disjoint_under_table_growth", 1),
+            "footprint_node_rules_grow": ("kernel::footprint#node_rules_grow", 1),
+            "dependencies_append_preserves": ("kernel::dependencies#append_preserves", 1),
+            "dependency_preservation_append_preserves": ("kernel::dependencies::preservation#append_preserves", 1),
+            "dependency_preservation_append_cover": ("kernel::dependencies::preservation#append_cover", 1),
             "events_apply_new_request": ("kernel::events#apply_new_request", 1),
             "events_apply_reply": ("kernel::events#apply_reply", 1),
             "events_apply_ack": ("kernel::events#apply_ack", 1),
