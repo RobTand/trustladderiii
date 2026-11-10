@@ -232,7 +232,7 @@ pub(super) proof fn reply_notice_bound(notes: Outbox, nq: u64, change: ReplyChan
 }
 
 pub(super) proof fn append_prefix(ob: Outbox, oa: Outbox, notes: Outbox)
-    requires ob.len <= OUTBOX, facts_family_values::appended(ob, oa, notes),
+    requires facts_family_values::appended(ob, oa, notes),
     ensures facts_family_values::prefix_preserved(ob, oa),
 {
     reveal(facts_family_values::appended);
