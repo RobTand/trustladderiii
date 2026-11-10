@@ -937,32 +937,32 @@ fn ack_value(n: Node, i: usize, e: InFlight, ack: Ack, nq: u64, out: Outbox) -> 
 #[cfg(verus_keep_ghost)]
 verus! {
 
-open spec fn ack_view(r: (Node, u64, Outbox)) -> (Node, u64, Seq<Option<Out>>, int) {
+pub(super) open spec fn ack_view(r: (Node, u64, Outbox)) -> (Node, u64, Seq<Option<Out>>, int) {
     (r.0, r.1, r.2.items@, r.2.len as int)
 }
-open spec fn ack_abandon_spec(n: Node) -> Node {
+pub(super) open spec fn ack_abandon_spec(n: Node) -> Node {
     Node { run: None, job: None, pool: false,
         effect: match n.effect { Some(e) => Some(InFlight { cancelling: e.cancelling
             || matches!(e.kind, EffectKind::StartRun(_) | EffectKind::SubmitChecks | EffectKind::StartRebase), ..e }), None => None }, ..n }
 }
-open spec fn ack_cancel_spec(n: Node, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
+pub(super) open spec fn ack_cancel_spec(n: Node, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
     (n, nq, out.items@, out.len as int)
 }
-open spec fn ack_confirmed_spec(n: Node, kind: EffectKind, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
+pub(super) open spec fn ack_confirmed_spec(n: Node, kind: EffectKind, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
     (agenda_spec(resources_spec(n, kind), kind), nq, out.items@, out.len as int)
 }
-open spec fn ack_delivery_spec(n: Node, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
+pub(super) open spec fn ack_delivery_spec(n: Node, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
     (retirement::phased(Node { fx_failures: 0, fx_incidents: 0, holds: false,
         run: None, job: None, pool: false, question: None, ..n }, Phase::AwaitingDelivery), nq, out.items@, out.len as int)
 }
-open spec fn ack_emit_spec(n: Node, i: int, kind: EffectKind, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
+pub(super) open spec fn ack_emit_spec(n: Node, i: int, kind: EffectKind, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
     (Node { next_seq: (n.next_seq + 1) as u64, effect: Some(InFlight { seq: n.next_seq, kind, cancelling: false }),
         worktree: n.worktree || kind == EffectKind::PrepareWorktree,
         pr_open: n.pr_open || kind == EffectKind::OpenPr, had_pr: n.had_pr || kind == EffectKind::OpenPr, ..n }, 0u64,
         out.items@.update(out.len as int, Some(Out::Effect { node: NodeId(i as u64), seq: n.next_seq,
             kind, head: effect_head(kind, n.head) })), out.len as int + 1)
 }
-open spec fn ack_retry_spec(n: Node, i: int, kind: EffectKind, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
+pub(super) open spec fn ack_retry_spec(n: Node, i: int, kind: EffectKind, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
     if n.fx_failures == 0 {
         let r = ack_emit_spec(Node { fx_failures: 1, ..n }, i, kind, out);
         (r.0, nq, r.2, r.3)
@@ -977,21 +977,21 @@ open spec fn ack_retry_spec(n: Node, i: int, kind: EffectKind, nq: u64, out: Out
                 notice: Notice::Incident { needs_rob: m.fx_incidents >= 2 } })), out.len as int + 1)
     }
 }
-open spec fn ack_permanent_spec(n: Node, i: int, kind: EffectKind, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
+pub(super) open spec fn ack_permanent_spec(n: Node, i: int, kind: EffectKind, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
     (failed_spec(n, kind, nq), (nq + 1) as u64,
         out.items@.update(out.len as int, Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Incident { needs_rob: true } }))
             .update(out.len as int + 1, Some(Out::Notice { node: NodeId(i as u64), notice: Notice::Ask { question: nq } })), out.len as int + 2)
 }
-open spec fn ack_body_policy_spec(n: Node, i: int, kind: EffectKind, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
+pub(super) open spec fn ack_body_policy_spec(n: Node, i: int, kind: EffectKind, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
     if kind == EffectKind::OpenPr {
         (retirement::stopped(Node { review_stop: Some(ReviewStop::PublicationBody), ..n }, Outcome::Stopped), nq, out.items@, out.len as int)
     } else { ack_permanent_spec(n, i, kind, nq, out) }
 }
-open spec fn ack_quiet(e: InFlight, ack: Ack) -> bool {
+pub(super) open spec fn ack_quiet(e: InFlight, ack: Ack) -> bool {
     e.cancelling || ack == Ack::Confirmed || ack == Ack::DeliveryAccepted
         || (ack == Ack::BodyPolicyRefused && e.kind == EffectKind::OpenPr)
 }
-open spec fn ack_value_spec(b: Node, i: int, e: InFlight, ack: Ack, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
+pub(super) open spec fn ack_value_spec(b: Node, i: int, e: InFlight, ack: Ack, nq: u64, out: Outbox) -> (Node, u64, Seq<Option<Out>>, int) {
     let n = Node { effect: None, ..b };
     if e.cancelling { ack_cancel_spec(n, nq, out) } else { match ack {
         Ack::Confirmed => ack_confirmed_spec(n, e.kind, nq, out),
