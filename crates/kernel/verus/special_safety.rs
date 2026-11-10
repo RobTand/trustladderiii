@@ -623,7 +623,7 @@ mod invalid_command_assembly {
     /// Includes Answer at an absent target; no valid-node Answer premise is used.
     fn apply_invalid_target(mut w: World, event: Event, mut out: Outbox, mut report: Report)
         -> (result: (World, Outbox, Report))
-        requires checking::accepted(w),
+        requires
             world_headroom(w), footprint::ordered_table(w), dependencies::edges_indexable(w),
             out.len + 4 <= OUTBOX,
             forall|j: int| 0 <= j < w.nodes@.len() ==>
