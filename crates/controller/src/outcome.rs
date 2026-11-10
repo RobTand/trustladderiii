@@ -277,3 +277,53 @@ impl crate::Controller {
         Ok(())
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Bootstrap, Controller, LabelledIssue, Repository, adapters, executor::Observation};
+    use serde_json::json;
+    use tl3_kernel::{Event, Fact, NodeId};
+    use tl3_store::{Commit, RowChange, Store};
+
+    #[test]
+    fn m4_r2_merge_record_metadata_failure_cannot_suppress_fact() {
+        let mut database = crate::store_support::Database::start();
+        let settings = database.create("m4_r2_record_failure");
+        let root = tempfile::tempdir().unwrap();
+        let mut controller = Controller::open(
+            Store::open(&settings).unwrap(),
+            adapters::simulation(root.path()).unwrap(),
+            Bootstrap {
+                repos: vec![Repository {owner:"owner".into(), name:"sandbox".into(), installation:3}],
+                rob:42, slots:1, pool:1, fail_fast:false, operations:None,
+            },
+        ).unwrap();
+        controller.intake(LabelledIssue {
+            delivery:"m4-r2-record".into(), owner:"owner".into(), repo:"sandbox".into(), installation:3,
+            number:12, title:"merge record".into(), actor:42, label:"tl3".into(), labels:vec![],
+        }).unwrap();
+        let original = controller.snapshot().unwrap();
+        for corrupt in [false, true] {
+            let mut snapshot = original.clone();
+            if corrupt {
+                snapshot.rows.iter_mut().find(|r|r.table == "requests").unwrap().value = json!("invalid request");
+            } else { snapshot.rows.retain(|r|r.table != "requests"); }
+            let mut world = crate::snapshot::decode(&snapshot).unwrap();
+            let mut commit = Commit::new(format!("m4-r2-record-{corrupt}"), json!({}), &snapshot);
+            let observation = Observation::Outcome {
+                node:NodeId(0), receipt:Some(format!("m4-r2-merged-{corrupt}")),
+                outcome:Outcome::Merged {head:"a".repeat(40), checks_passed:true, evidence:Some(Box::new(MergeEvidence::empty("a".repeat(40))))},
+            };
+            let result = controller.translate(&snapshot, &mut world, observation, &mut commit, &mut crate::feedback::Evidence::default());
+            assert!(matches!(result, Ok(Some(Event::Fact {node:NodeId(0), fact:Fact::PrMerged {checks_passed:true,..}}))), "record metadata failure cannot suppress the known fact: {result:?}");
+            let records: Vec<_> = commit.rows.iter().filter_map(|row| match row {
+                RowChange::Put {table,value,..} if table == "merge_records" => Some(value),
+                _ => None,
+            }).collect();
+            assert_eq!(records.len(), 1, "rollback partial audit rows before recording degraded evidence");
+            assert!(records[0]["evidence_errors"].as_array().unwrap().iter().any(|error|error["read"] == "record_merge"));
+        }
+    }
+}
