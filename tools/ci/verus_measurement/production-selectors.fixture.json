@@ -1,10 +1,65 @@
 {
-  "source_head": "9e684834f78c2887a58562e8ef694617da816b46",
+  "source_head": "519e5de0380226e7591b2b538d26a0b9c26b2b03",
   "source_path": "tools/bazel/verus.bzl",
-  "source_sha256": "483f926e9acd09aeb15ca5dff64b5e2935a89a3a67c84cd04d2e58c3060ad0a3",
-  "groups": 818,
-  "obligations": 1023,
+  "source_sha256": "5759696f5e67a12047ae80ae0ac1e9d9f4f5cede459e40338bf1db16b4e7c161",
+  "groups": 829,
+  "obligations": 1034,
   "selections": [
+    {
+      "target": "//crates/kernel:verus_ranks_advance_blocked_value",
+      "selector": "kernel::ranks#advance_blocked_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_idle_value",
+      "selector": "kernel::ranks#advance_idle_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_holds_frame_intro",
+      "selector": "kernel::advance_family_post#holds_frame_intro",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_rules_holds_from_frame",
+      "selector": "kernel::advance_family_rules#holds_from_frame",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_do_value",
+      "selector": "kernel::ranks#advance_do_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_start_grant_value",
+      "selector": "kernel::ranks#start_grant_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_grant_no_new",
+      "selector": "kernel::advance_family_post#grant_no_new",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_grant_from_fields",
+      "selector": "kernel::advance_family_post#grant_from_fields",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_slot_grant_facts",
+      "selector": "kernel::advance_family_post#slot_grant_facts",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_ranks_advance_start_value",
+      "selector": "kernel::ranks#advance_start_value",
+      "expected": 1
+    },
+    {
+      "target": "//crates/kernel:verus_advance_family_post_start_item",
+      "selector": "kernel::advance_family_post#start_item",
+      "expected": 1
+    },
     {
       "target": "//crates/kernel:verus_apply_command_safety_command_step_last_cmd",
       "selector": "kernel::apply_command_safety#command_step_last_cmd",
